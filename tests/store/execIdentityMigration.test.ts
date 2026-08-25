@@ -30,7 +30,7 @@ describe('exec identity persistence migration', () => {
     db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({
       allowedExecs: [legacy, legacyOpenCode, 'sonnet'], hiddenPresets: [legacy],
       customModels: [{ label: 'Kimi', exec: legacy }], modelNotes: { [legacy]: 'note' },
-      autopilot: { pilotExec: legacy, overseerExec: interim }, defaults: { exec: legacy },
+      defaults: { exec: legacy },
       plugins: { config: {
         discord: { visionModel: legacy }, whatsapp: { visionModel: legacy },
         'image-gen': { model: legacy }, 'image-edit': { model: interim },
@@ -68,15 +68,16 @@ describe('exec identity persistence migration', () => {
     expect(settings).toMatchObject({
       allowedExecs: [canonical, canonicalOpenCode, 'sonnet'], hiddenPresets: [canonical],
       customModels: [{ label: 'Kimi', exec: canonical }], modelNotes: { [canonical]: 'note' },
-      autopilot: { pilotExec: canonical, overseerExec: canonical }, defaults: { exec: canonical },
+      defaults: { exec: canonical },
       plugins: { config: { discord: { visionModel: canonical }, whatsapp: { visionModel: canonical }, 'image-gen': { model: canonical }, 'image-edit': { model: canonical } } },
       unrelated: `keep ${legacy}`,
     });
     expect(db.prepare('SELECT allowed_execs, default_exec, advisor_exec FROM users WHERE id = 1').get())
       .toEqual({ allowed_execs: `${canonical},sonnet`, default_exec: canonical, advisor_exec: canonical });
-    expect(db.prepare("SELECT labels FROM tasks WHERE id = 't1'").get()).toEqual({ labels: `bug,exec:${canonical}` });
-    expect(db.prepare("SELECT pilot_exec, overseer_exec FROM missions WHERE id = 'm1'").get()).toEqual({ pilot_exec: canonical, overseer_exec: canonical });
-    expect(db.prepare("SELECT exec FROM task_usage WHERE task_id = 't1'").get()).toEqual({ exec: canonical });
+    // Retired plugin tables remain physical data only. Core migrations must not reinterpret their rows.
+    expect(db.prepare("SELECT labels FROM tasks WHERE id = 't1'").get()).toEqual({ labels: `bug,exec:${legacy}` });
+    expect(db.prepare("SELECT pilot_exec, overseer_exec FROM missions WHERE id = 'm1'").get()).toEqual({ pilot_exec: legacy, overseer_exec: interim });
+    expect(db.prepare("SELECT exec FROM task_usage WHERE task_id = 't1'").get()).toEqual({ exec: legacy });
 
     expect(db.prepare("SELECT model, provider FROM brain_sessions WHERE id = 's1'").get()).toEqual({ model: legacy, provider: legacy });
     expect(db.prepare("SELECT content FROM brain_messages WHERE id = 'b1'").get()).toEqual({ content: legacy });

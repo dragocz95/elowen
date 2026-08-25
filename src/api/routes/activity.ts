@@ -15,7 +15,7 @@ function surfaceOf(origin: string | null, kind: string | null): string {
 }
 
 /** The activity timeline, scoped to the caller's accessible projects. (The inter-agent handoff notes
- *  that used to live beside it are served by the agents plugin's root-mounted '/notes' now.) */
+ *  domain-specific timelines are contributed through plugin routes.) */
 export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void {
   const { d, accessibleProjects } = ctx;
 
@@ -155,7 +155,7 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     const limit = queryInt(c.req.query('limit'), { min: 1, max: 500, fallback: undefined });
     const type = c.req.query('type') || undefined;
     // `target` scopes the feed to one task (its decisions + review verdicts), read oldest-first — the
-    // detail pane's autopilot conversation. Project-scoping below still applies (fail closed for tenants).
+    // detail pane's plugin-owned conversation. Project-scoping below still applies (fail closed for tenants).
     const target = c.req.query('target') || undefined;
     // The team feed answers WHO worked and FROM WHERE. `target` is the session/channel id -- an
     // internal handle the tile does not render, and the feed is read by the whole instance, so it is

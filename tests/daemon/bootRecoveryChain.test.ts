@@ -47,7 +47,6 @@ describe('daemon boot chain — claim before the platforms, resume after them', 
   const startChain = (trace: string[]) => createMaintenanceLoops({
     brain: tracedBrain(trace),
     brainTerminal: undefined,
-    brainWorkers: { startWatchdog: () => () => {} },
     brainStore: {},
     chatImagesDir: undefined,
     config,

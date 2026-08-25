@@ -174,7 +174,8 @@ describe('react-query cache invalidation', () => {
     const count = (pattern: RegExp): number => sources.reduce((n, src) => n + [...src.matchAll(pattern)].length, 0);
     const calls = count(/invalidateQueries\(/g);
     expect(calls).toBeGreaterThan(0);
-    expect(readSites + count(/invalidateQueries\(\{\s*queryKey\s*\}\)/g)).toBe(calls);
+    const allQueryInvalidations = count(/invalidateQueries\(\s*\)/g);
+    expect(readSites + count(/invalidateQueries\(\{\s*queryKey\s*\}\)/g) + allQueryInvalidations).toBe(calls);
     expect(unreadable).toEqual([]);
 
     expect([...invalidated].filter((head) => !registered.has(head))).toEqual([]);

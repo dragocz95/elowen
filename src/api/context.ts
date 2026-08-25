@@ -7,7 +7,6 @@ import { discoverPlugins } from '../plugins/loader.js';
 import { elowenExec } from '../shared/execs.js';
 import { grantablePluginNames } from '../shared/pluginAccess.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
-import type { EventProjectDeps } from './eventProject.js';
 import type { Context, Hono } from 'hono';
 import type { User, TokenScope } from '../store/userStore.js';
 import type { ServerDeps } from './deps.js';
@@ -15,8 +14,8 @@ import { MicrosoftSsoService } from '../auth/msSso.js';
 import { createLoginRateLimiter, type LoginRateLimiter } from './loginRateLimit.js';
 
 /** The per-request Hono variables the auth middleware sets — the single source for `c.get('user')` etc.
- *  `agentTask` is the task an agent token was minted for (null for every unbound token). */
-type ElowenVariables = { user: User; token: string; tokenScope: TokenScope; agentTask: string | null };
+ */
+type ElowenVariables = { user: User; token: string; tokenScope: TokenScope };
 
 /** The daemon's Hono app, typed with the per-request variables the auth middleware sets. Shared by
  *  `createServer` and every route-family registrar so they all agree on `c.get('user')` etc. */
@@ -46,8 +45,6 @@ export interface RouteContext {
   loginRateLimiter: LoginRateLimiter;
   microsoftSso: MicrosoftSsoService | null;
 
-  /** Projects an AGENT-scoped token may currently touch (its live working set). */
-  agentProjects(): Set<number>;
   /** True when the caller may see/operate the given project (admin/open mode always pass). */
   canAccessProject(c: AccessCtx, id: number): boolean;
   /** True when the caller is NOT the admin on a gated daemon (open/single-user mode → false). Strict:
@@ -59,8 +56,6 @@ export interface RouteContext {
   notAdminUnlessSetup(c: UserCtx): boolean;
   /** Set of project ids the caller may see, or null for unrestricted (open mode / admin). */
   accessibleProjects(c: AccessCtx): Set<number> | null;
-  /** Resolve any live event's owning project — the same logic the activity log stamps rows with. */
-  eventDeps: EventProjectDeps;
   /** Vector retrieval + anti-duplication over the memory store, for the retrieval-debugging route. Built
    *  only when the memory store AND the embedder are both wired (else /memory/retrieve degrades to 400).
    *  CRUD/audit routes talk to the user-scoped store directly and don't need this. */
@@ -100,50 +95,11 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     },
     clock: d.clock,
     bus: d.bus,
-    advisor: () => d.advisor,
   }) : null);
-  // The projects an AGENT-scoped token may touch. The shared service token is owned by the admin user,
-  // so without this it would inherit admin's cross-project bypass and a prompt-injected agent could
-  // read/close tasks in tenants it isn't working in (finding S51). Bind it to the daemon's live work:
-  //   • workers   → projects with an in_progress `agent:`-labelled task
-  //   • overseers → projects of every active mission's epic (the overseer polls even between phases)
-  // A pilot only ever submits to the plan job it was handed (project checked on that job's route), so
-  // it needs no extra entry here.
-  // Reads the daemon's own tolerant REF view, not the task store: this is the boundary that decides
-  // what an agent token may reach, so it must not be served by the plugin whose callers it gates, and it
-  // must answer before any plugin has loaded. No task rows (or no table at all) ⇒ an empty set ⇒ the
-  // token reaches nothing, which is the fail-closed direction.
-  const agentProjects = (): Set<number> => {
-    const ids = new Set<number>();
-    // Single pass: one `list()` covers all three groups (in-progress agent tasks, active missions'
-    // epics, still-open epics of agent-labelled children) via an in-memory id→task map, instead of a
-    // `get()` per mission and per agent child — the query count no longer grows with historical tasks.
-    const all = (d.taskRefs?.all() ?? []);
-    const byId = new Map(all.map((t) => [t.id, t]));
-    for (const t of all) {
-      if (t.status === 'in_progress' && t.labels.some((l) => l.startsWith('agent:'))) ids.add(t.project_id);
-    }
-    for (const m of d.missions.active()) {
-      const epic = byId.get(m.epic_id);
-      if (epic) ids.add(epic.project_id);
-    }
-    // The final-phase agent closes the epic itself right after closing its own leaf — by then its task
-    // is no longer in_progress and the mission has disengaged, so neither set above covers it and the
-    // epic-close would 403. A still-open epic that hosted agent work keeps its project reachable to that
-    // agent until the epic is actually closed (then it drops out again). No permanent widening.
-    for (const t of all) {
-      if (!t.parent_id || !t.labels.some((l) => l.startsWith('agent:'))) continue;
-      const epic = byId.get(t.parent_id);
-      if (epic && epic.status !== 'closed' && epic.status !== 'cancelled') ids.add(epic.project_id);
-    }
-    return ids;
-  };
-
   // A non-admin user may only see/operate projects assigned to them; the admin (and open mode)
-  // sees everything. An agent-scoped token is confined to its live working set, never admin-bypass.
+  // sees everything.
   const canAccessProject = (c: AccessCtx, id: number): boolean => {
     if (!d.userProjects || !d.users) return true; // open mode / single-user → no gating
-    if (c.get('tokenScope') === 'agent') return agentProjects().has(id);
     const u = c.get('user');
     return !!u && d.userProjects.canAccess(u.id, id);
   };
@@ -172,24 +128,12 @@ export function createRouteContext(d: ServerDeps): RouteContext {
   };
 
   // The set of project ids the caller may see, or null for unrestricted (open mode / admin).
-  // Computed once for list endpoints so they don't run a per-row access query. An agent-scoped token
-  // is confined to its live working set (never the admin-bypass null).
+  // Computed once for list endpoints so they don't run a per-row access query.
   const accessibleProjects = (c: AccessCtx): Set<number> | null => {
     if (!d.userProjects || !d.users) return null;
-    if (c.get('tokenScope') === 'agent') return agentProjects();
     const u = c.get('user');
     if (!u || d.userProjects.isAdmin(u.id)) return null;
     return new Set(d.userProjects.forUser(u.id));
-  };
-
-  // Resolve any live event's owning project — the same single-source logic the activity log stamps
-  // rows with — so the SSE stream can gate each event per subscriber instead of broadcasting globally.
-  // `signal`/`plan` tenancy (session→task via the agent:<name> label, plan job → its runtime record)
-  // has NO core lookup: the agents plugin's registered event resolver is the sole source — with the
-  // plugin disabled those events resolve null and gate admin-only (fail closed).
-  const eventDeps: EventProjectDeps = {
-    taskProject: (id) => d.taskRefs?.get(id)?.project_id ?? null,
-    pluginResolvers: d.eventProjectResolvers,
   };
 
   // The retrieval-debugging seam — built only when both the memory store and the embedder are wired, so
@@ -207,7 +151,7 @@ export function createRouteContext(d: ServerDeps): RouteContext {
 
   return {
     d, log, loginRateLimiter, microsoftSso,
-    agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects,
-    eventDeps, memoryService,
+    canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects,
+    memoryService,
   };
 }

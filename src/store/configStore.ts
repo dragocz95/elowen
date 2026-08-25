@@ -1,6 +1,5 @@
 import type { Db } from './db.js';
 import { stripControlChars } from '../shared/text.js';
-import { defaultPromptTemplate } from '../prompts/plannerDefault.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, execRefSpec, isAllowedExec, parseExecRef } from '../shared/execs.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../shared/hostedToolSearchProtocol.js';
@@ -56,17 +55,16 @@ export interface ElowenConfig {
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
   modelNotes: Record<string, string>;
-  autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; tddMode: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
   providers: Providers;
   defaults: { exec: string; autonomy: string; maxSessions: number };
   security: { tokenTtlDays: number; trustProxy: boolean };
   /** Automatic cleanup of stale brain conversations. Off by default (opt-in): when on, an hourly janitor
    *  deletes user conversations whose last activity is older than `days`. Never touches running sessions,
-   *  the active pointer, sessions with running children, delegated children, or the non-user channel/task
-   *  sessions — only a user's own idle conversations. */
+   *  the active pointer, sessions with running children, delegated children, or platform channel sessions —
+   *  only a user's own idle conversations. */
   sessionRetention: { enabled: boolean; days: number };
   /** When on, the hourly systemd timer (`elowen update --auto`) upgrades to the latest npm release and
-   *  restarts the services — but only while no mission is running. Off by default (opt-in). */
+   *  restarts the services. Off by default (opt-in). */
   autoUpdate: boolean;
   /** Web Push VAPID public key (safe to expose) + whether a keypair has been generated. The private
    *  key NEVER leaves the daemon — read it only via `webPushKeys()`. */
@@ -81,7 +79,7 @@ export interface ElowenConfig {
    *  secrets) is NOT exposed here — read it daemon-side via `pluginConfig(name)`. */
   plugins: { enabled: string[]; removed: string[] };
   /** The brain's dedicated model providers (public view: API keys stripped to `apiKeySet`). Empty →
-   *  the brain falls back to the autopilot relay endpoint. `agentName` is the assistant's display
+   *  there is no configured API-key provider. `agentName` is the assistant's display
    *  identity ("Elowen" by default) — it feeds the persona prompts everywhere the brain speaks.
    *  `maxSteps` caps the agent's per-run model round-trips; `modelContextWindows` lets the operator pin a
    *  max context window per Elowen AI model (`providerId/model`) for endpoints that don't report one. */
@@ -242,9 +240,6 @@ export const DEFAULT_BRAIN_LIMITS: BrainLimits = {
   goalMaxTurns: 50,
   channelSessionCap: 32,
   delegateContextChars: 40_000,
-  // An ask thread is a short clarification exchange, not a conversation — 30 turns already reaches back
-  // past anything the overseer needs to answer the question that was just asked.
-  askHistoryTurns: 30,
 };
 
 /** Adjustable range of a tuning knob: its default ±50%, derived from the default so raising a default
@@ -299,9 +294,6 @@ const BRAIN_LIMIT_BOUNDS: Record<keyof BrainLimits, [min: number, max: number]> 
   goalTurnBudget: [4, 500],
   goalMaxTurns: [8, 500],
   channelSessionCap: [4, 256],
-  // Plain ±50% rule: the window only has to cover the exchange in progress, so the tuning margin around
-  // the default is the whole useful range — a far larger one would just re-send settled turns every ask.
-  askHistoryTurns: band('askHistoryTurns'),
 };
 /** Limits written before live recall became batch-based. Kept at this boundary so an old settings row
  *  cannot silently turn its former whole-turn count into an oversized per-batch count. */
@@ -657,7 +649,6 @@ const DEFAULT_CONFIG: ElowenConfig = {
   customModels: [],
   hiddenPresets: [],
   modelNotes: { ...EXEC_NOTES },
-  autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', providerId: '', apiKeySet: false, notes: '', prompt: defaultPromptTemplate(), pilotExec: '', overseerExec: '', reviewOnDone: false, tddMode: false, prEnabled: false, prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '', ghTokenSet: false },
   providers: { ...DEFAULT_PROVIDERS },
   defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 2 },
   // trustProxy on by default: the install wizard writes the nginx vhost itself, and that vhost is what
@@ -677,12 +668,10 @@ const DEFAULT_CONFIG: ElowenConfig = {
   // resp. a server is configured; lsp degrades to an honest "not installed" per language.
   //
   // What is deliberately NOT here: a plugin that owns a DOMAIN VERTICAL — its own pages in the main
-  // navigation, its own tables, its own object lifecycle (agents = missions/sessions/autopilot,
-  // work = tasks/kanban, editor = the code workspace). A new install must not open onto someone else's
-  // product; the owner installs those from Settings → Plugins when they actually want them. The
+  // navigation, tables and object lifecycle (the editor is the current example). A new install must not
+  // open onto someone else's product; the owner installs those from Settings → Plugins when wanted. The
   // fresh-default suite derives that rule from the manifests (`web.nav`), so it cannot rot into a
-  // name list nobody updates. Existing installs are untouched: migrateAgentsEnabled/migrateWorkPlugin/
-  // migrateEditorPlugin keep the subsystems those installs already had.
+  // name list nobody updates. Existing editor installs are retained by migrateEditorPlugin.
   //
   // The chat platforms stay OFF because each declares a required credential, and a plugin that ships on
   // may not open by asking for one — also enforced by the fresh-default suite.
@@ -708,10 +697,7 @@ interface Stored {
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
   modelNotes: Record<string, string>;
-  autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; tddMode: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string };
   providers: Providers;
-  apiKey: string | null;
-  ghToken: string | null;
   defaults: { exec: string; autonomy: string; maxSessions: number };
   security: { tokenTtlDays: number; trustProxy: boolean };
   sessionRetention: { enabled: boolean; days: number };
@@ -729,25 +715,12 @@ interface Stored {
   /** Enabled plugin names, soft-removed (hidden) bundled plugin names, + each plugin's own config slice
    *  (secrets included, never serialized to API). */
   plugins: { enabled: string[]; removed: string[]; config: Record<string, Record<string, unknown>> };
-  /** One-shot upgrade marker: the `agents` plugin (the extracted, previously-core tmux-agent/mission
-   *  subsystem) has been auto-enabled for this pre-existing install. See migrateAgentsEnabled(). */
-  agentsConfigMigrated: boolean;
-  /** One-shot upgrade marker: the autopilot keys consumed exclusively by the agents plugin runtime
-   *  have been COPIED into plugins.config.agents. See migrateAgentsPluginConfig(). */
-  agentsPluginConfigMigrated: boolean;
-  /** One-shot upgrade marker for config wave 2: the remaining agents-only keys (pilotExec,
-   *  overseerExec, reviewOnDone, tddMode, prEnabled + the top-level ghToken) have been COPIED into
-   *  plugins.config.agents. See migrateAgentsPluginConfigWave2(). */
-  agentsPluginConfigMigrated2: boolean;
   /** One-shot upgrade marker: the `lsp` plugin (the extracted, previously-core language-server
    *  subsystem) has been auto-enabled AND the core `lspEnabled` toggle COPIED into
    *  plugins.config.lsp.diagnosticsEnabled for this pre-existing install. See migrateLspPlugin(). */
   lspPluginMigrated: boolean;
   /** One-shot upgrade marker for the extracted project editor plugin. */
   editorPluginMigrated: boolean;
-  /** One-shot upgrade marker: the `work` plugin (the extracted, previously-core task domain) has been
-   *  auto-enabled for this pre-existing install. See migrateWorkPlugin(). */
-  workPluginMigrated: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
   brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
@@ -759,45 +732,6 @@ interface Stored {
   categorization: CategorizationBlock;
 }
 
-/** The autopilot fields that merge by the plain "incoming value wins, else keep the fallback" rule shared
- *  by hydrate (stored value over default) and update (patch value over current); a nullish (absent/null)
- *  value keeps the fallback in both. pilotExec/overseerExec are listed so hydrate merges them, but update
- *  overrides them afterwards with an allow-list-validated value. apiKey/ghToken are NOT here — they are
- *  secrets merged separately. A membership list, not exhaustive: a Stored['autopilot'] field missing here
- *  is simply never carried over. */
-const AUTOPILOT_FIELDS: readonly (keyof Stored['autopilot'])[] = [
-  'model', 'overseerModel', 'apiUrl', 'providerId', 'notes', 'prompt', 'pilotExec', 'overseerExec',
-  'reviewOnDone', 'tddMode', 'prEnabled', 'prBaseBranch', 'prAutoOpen', 'prVerifyCommand',
-];
-
-/** Merge autopilot fields onto `fallback`: for each field a non-nullish value in `src` wins, else the
- *  fallback is kept — exactly the per-field `src?.x ?? fallback.x` the read/update paths used to spell out. */
-function mergeAutopilot(src: Partial<Stored['autopilot']> | undefined, fallback: Stored['autopilot']): Stored['autopilot'] {
-  const out = { ...fallback };
-  if (src) {
-    for (const k of AUTOPILOT_FIELDS) {
-      const v = src[k];
-      // Keyed write: `out` and `src` share the Stored['autopilot'] shape at the same key, so the narrowed
-      // `v` is out[k]'s type — TS can't prove it across the key union, hence the localized unknown cast.
-      if (v !== undefined && v !== null) (out as Record<keyof Stored['autopilot'], unknown>)[k] = v;
-    }
-  }
-  return out;
-}
-
-/** The autopilot keys consumed EXCLUSIVELY by the agents plugin runtime (mission PR lifecycle + the
- *  overseer's decision model). Copied — never moved — into plugins.config.agents by the one-shot
- *  migrateAgentsPluginConfig(); the Settings web edits the plugin slice directly (F3), so the
- *  plugin slice is the single writable home. The remaining autopilot keys stay shared: the core
- *  plan/review paths read model/prompt/pilotExec/overseerExec/reviewOnDone/prEnabled/tddMode too. */
-const AGENTS_PLUGIN_CONFIG_KEYS = ['overseerModel', 'prBaseBranch', 'prAutoOpen', 'prVerifyCommand'] as const;
-
-/** Config wave 2 (batch 3a): the rest of the agents-only keys. The core plan/review paths stopped
- *  reading these when the review gate and the plan flow moved into the plugin, so the plugin slice
- *  became their single consumer — copied (never moved) by the one-shot migrateAgentsPluginConfigWave2().
- *  ghToken rides along separately (it is a top-level Stored secret, not an autopilot field). */
-const AGENTS_PLUGIN_CONFIG_KEYS_WAVE2 = ['pilotExec', 'overseerExec', 'reviewOnDone', 'tddMode', 'prEnabled'] as const;
-
 /** The plugins block for a settings row that predates the plugin system (or whose plugins block is
  *  malformed): NO plugins enabled. This is a DELIBERATE asymmetry with `defaultStored()`, which enables
  *  `DEFAULT_CONFIG.plugins.enabled` for FRESH installs — an existing install must never have new default
@@ -805,15 +739,31 @@ const AGENTS_PLUGIN_CONFIG_KEYS_WAVE2 = ['pilotExec', 'overseerExec', 'reviewOnD
  *  A fresh object each call so a caller can never mutate a shared default. */
 const legacyEmptyPlugins = (): Stored['plugins'] => ({ enabled: [], removed: [], config: {} });
 
+const RETIRED_DOMAIN_PLUGINS = new Set(['agents', 'work']);
+
+/** Retired domain plugins are removed from every persisted plugin collection at the config boundary.
+ *  This also discards their config slices (including legacy credentials) on the next settings write, so
+ *  deleting the old migration markers cannot resurrect either plugin on a later boot. */
+function sanitizePlugins(input: unknown, fallback: Stored['plugins']): Stored['plugins'] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return fallback;
+  const raw = input as Partial<Stored['plugins']>;
+  const keep = (name: string): boolean => !RETIRED_DOMAIN_PLUGINS.has(name);
+  const config = raw.config && typeof raw.config === 'object' && !Array.isArray(raw.config)
+    ? canonicalizePluginExecConfig(Object.fromEntries(Object.entries(raw.config).filter(([name]) => keep(name))) as Record<string, Record<string, unknown>>)
+    : {};
+  return {
+    enabled: (Array.isArray(raw.enabled) ? sanitizeStringList(raw.enabled) : []).filter(keep),
+    removed: (Array.isArray(raw.removed) ? sanitizeStringList(raw.removed) : []).filter(keep),
+    config,
+  };
+}
+
 const defaultStored = (): Stored => ({
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
   hiddenPresets: [],
   modelNotes: { ...EXEC_NOTES },
-  autopilot: { model: DEFAULT_CONFIG.autopilot.model, overseerModel: '', apiUrl: DEFAULT_CONFIG.autopilot.apiUrl, providerId: '', notes: '', prompt: DEFAULT_CONFIG.autopilot.prompt, pilotExec: '', overseerExec: '', reviewOnDone: false, tddMode: false, prEnabled: false, prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '' },
   providers: { ...DEFAULT_PROVIDERS },
-  apiKey: null,
-  ghToken: null,
   defaults: { ...DEFAULT_CONFIG.defaults },
   security: { ...DEFAULT_CONFIG.security },
   sessionRetention: { ...DEFAULT_CONFIG.sessionRetention },
@@ -822,18 +772,9 @@ const defaultStored = (): Stored => ({
   webPush: null,
   webPushContact: '',
   plugins: { enabled: [...DEFAULT_CONFIG.plugins.enabled], removed: [], config: {} },
-  // Every one-shot "preserve the previously-core subsystem" sweep is marked DONE on a fresh row. Those
-  // sweeps exist to keep an EXISTING install's missions/tasks/editor working across the extraction; a
-  // brand-new install never had them, so it must not be handed a domain vertical by an upgrade path it
-  // was never part of. The markers are what makes that permanent (a later boot cannot re-add them).
-  agentsConfigMigrated: true,
-  // Fresh installs need no autopilot→plugin config copy: the plugin's own defaults apply.
-  agentsPluginConfigMigrated: true,
-  agentsPluginConfigMigrated2: true,
   // A fresh row already enables `lsp` and needs no toggle copy: the plugin's own default (on) applies.
   lspPluginMigrated: true,
   editorPluginMigrated: true,
-  workPluginMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, remoteCompactionEnabled: DEFAULT_CONFIG.runtime.remoteCompactionEnabled, providerRequestCaptureEnabled: DEFAULT_CONFIG.runtime.providerRequestCaptureEnabled, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
@@ -845,7 +786,6 @@ export interface ConfigPatch {
   customModels?: { label: string; exec: string }[];
   hiddenPresets?: string[];
   modelNotes?: Record<string, string>;
-  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; providerId?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; tddMode?: boolean; prEnabled?: boolean; prBaseBranch?: string; prAutoOpen?: boolean; prVerifyCommand?: string; ghToken?: string };
   providers?: Providers;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
   security?: { tokenTtlDays?: number; trustProxy?: boolean };
@@ -858,7 +798,7 @@ export interface ConfigPatch {
   brain?: { providers?: unknown; agentName?: unknown; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: Partial<BrainLimits>; hiddenOauth?: string[] };
   /** Runtime knobs merged per-field (like the brain limits): a patch tuning one slider leaves the rest. */
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; subagentRunnerEnabled?: boolean; subagentRunnerPoolMax?: number | null; remoteCompactionEnabled?: boolean; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
-  /** Embedding config is merged per-field (like autopilot); `dimensions: null` clears the width hint. */
+  /** Embedding config is merged per-field; `dimensions: null` clears the width hint. */
   embedding?: { providerId?: string; model?: string; baseUrl?: string; dimensions?: number | null };
   /** Categorization config merged per-field (like embedding). */
   categorization?: { providerId?: string; model?: string; baseUrl?: string };
@@ -895,13 +835,7 @@ export class ConfigStore {
         // Seed built-in notes under any stored notes so known models always carry a description,
         // while user edits (including an explicit '' to clear one) take precedence.
         modelNotes: (p.modelNotes && typeof p.modelNotes === 'object' && !Array.isArray(p.modelNotes)) ? { ...d.modelNotes, ...sanitizeModelNotes(p.modelNotes) } : { ...d.modelNotes },
-        autopilot: (() => {
-          const value = mergeAutopilot(p.autopilot, d.autopilot);
-          return { ...value, pilotExec: canonicalExec(value.pilotExec) ?? '', overseerExec: canonicalExec(value.overseerExec) ?? '' };
-        })(),
         providers: { ...d.providers, ...sanitizeProviders(p.providers) },
-        apiKey: typeof p.apiKey === 'string' ? p.apiKey : null,
-        ghToken: typeof p.ghToken === 'string' ? p.ghToken : null,
         defaults: { exec: canonicalExec(p.defaults?.exec) ?? d.defaults.exec, autonomy: p.defaults?.autonomy ?? d.defaults.autonomy, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
         security: {
           tokenTtlDays: p.security?.tokenTtlDays ?? d.security.tokenTtlDays,
@@ -920,20 +854,9 @@ export class ConfigStore {
           ? { publicKey: p.webPush.publicKey, privateKey: p.webPush.privateKey } : null,
         // Existing row: honour its explicit enabled/removed lists (empty when malformed — the legacy
         // "no plugins" decision, never the fresh-install defaults). Absent block → legacyEmptyPlugins().
-        plugins: (p.plugins && typeof p.plugins === 'object' && !Array.isArray(p.plugins))
-          ? {
-              enabled: Array.isArray(p.plugins.enabled) ? sanitizeStringList(p.plugins.enabled) : [],
-              removed: Array.isArray(p.plugins.removed) ? sanitizeStringList(p.plugins.removed) : [],
-              config: (p.plugins.config && typeof p.plugins.config === 'object' && !Array.isArray(p.plugins.config))
-                ? canonicalizePluginExecConfig(p.plugins.config as Record<string, Record<string, unknown>>) : {},
-            }
-          : legacyEmptyPlugins(),
-        agentsConfigMigrated: p.agentsConfigMigrated === true,
-        agentsPluginConfigMigrated: p.agentsPluginConfigMigrated === true,
-        agentsPluginConfigMigrated2: p.agentsPluginConfigMigrated2 === true,
+        plugins: sanitizePlugins(p.plugins, legacyEmptyPlugins()),
         lspPluginMigrated: p.lspPluginMigrated === true,
         editorPluginMigrated: p.editorPluginMigrated === true,
-        workPluginMigrated: p.workPluginMigrated === true,
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
@@ -980,7 +903,6 @@ export class ConfigStore {
       customModels: s.customModels,
       hiddenPresets: s.hiddenPresets,
       modelNotes: s.modelNotes,
-      autopilot: { model: s.autopilot.model, overseerModel: s.autopilot.overseerModel, apiUrl: s.autopilot.apiUrl, providerId: s.autopilot.providerId, apiKeySet: !!s.apiKey, notes: s.autopilot.notes, prompt: s.autopilot.prompt, pilotExec: s.autopilot.pilotExec, overseerExec: s.autopilot.overseerExec, reviewOnDone: s.autopilot.reviewOnDone, tddMode: s.autopilot.tddMode, prEnabled: s.autopilot.prEnabled, prBaseBranch: s.autopilot.prBaseBranch, prAutoOpen: s.autopilot.prAutoOpen, prVerifyCommand: s.autopilot.prVerifyCommand, ghTokenSet: !!s.ghToken },
       providers: s.providers,
       defaults: s.defaults,
       security: s.security,
@@ -999,33 +921,6 @@ export class ConfigStore {
       // Likewise no secret in the categorization block → expose verbatim.
       categorization: s.categorization,
     };
-  }
-
-  apiKey(): string | null { return this.read().apiKey; }
-
-  /** Resolve the relay credentials the planner / overseer / curator use. When `autopilot.providerId`
-   *  references a brain provider, ITS endpoint + key are reused — so an operator picks an existing
-   *  provider instead of entering a second key. Otherwise the legacy top-level `apiKey` +
-   *  `autopilot.apiUrl` are the fallback (keeps pre-existing installs working). Null when no usable key
-   *  resolves → callers keep their pre-relay behaviour. */
-  autopilotRelay(): { baseUrl: string; apiKey: string } | null {
-    const s = this.read();
-    const pid = s.autopilot.providerId;
-    if (pid) {
-      const p = s.brain.providers.find((x) => x.id === pid);
-      return p && p.apiKey ? { baseUrl: p.baseUrl, apiKey: p.apiKey } : null;
-    }
-    return s.apiKey ? { baseUrl: s.autopilot.apiUrl, apiKey: s.apiKey } : null;
-  }
-
-  /** The LEGACY top-level GitHub token — the pre-extraction home of the secret, kept read-only for a
-   *  pre-migration row (a runner opens the DB read-only and can load a plugin before the daemon's
-   *  one-shot copy has run) and for a lossless rollback. Deliberately does NOT consult any plugin's
-   *  config slice: the writable home since config wave 2 is the owning plugin's own slice, and the
-   *  plugin resolves slice-first with THIS as its fallback. Core reading into a named plugin's slice
-   *  would make the core the arbiter of a value it neither owns nor uses. */
-  legacyGhToken(): string | null {
-    return this.read().ghToken;
   }
 
   /** The full VAPID keypair (private included) for the daemon-side push sender — never serialized to
@@ -1050,76 +945,12 @@ export class ConfigStore {
     return !!this.db.prepare('SELECT 1 FROM settings WHERE id = 1').get();
   }
 
-  /** One-shot upgrade: enable the `agents` plugin for EXISTING installs.
-   *
-   *  This is a DELIBERATE exception to the legacyEmptyPlugins rule ("an upgrade must never silently
-   *  turn new default plugins on"): `agents` is not a new capability but the extracted, previously-CORE
-   *  tmux-agent/mission subsystem — without this, upgrading a daemon with running missions would
-   *  silently stop every engine tick, scheduler spawn and overseer, i.e. the upgrade would break
-   *  behaviour the install already had. Runs once per install (the persisted marker), so an admin who
-   *  later disables the plugin stays disabled; a fresh install never gets here (no settings row — and
-   *  defaultStored() carries the marker, so the sweep can never hand a domain vertical to an install
-   *  that never had one; see DEFAULT_CONFIG.plugins). Daemon-only (the sub-agent
-   *  runner opens the DB read-only for schema and must not race a second writer). */
-  migrateAgentsEnabled(): void {
-    if (!this.hasSettings()) return;
-    const cur = this.read();
-    if (cur.agentsConfigMigrated) return;
-    // See migrateWorkPlugin: the one-shot marker is a config key and does not survive a rollback, so an
-    // explicitly removed plugin would come back enabled on the re-upgrade. `plugins.removed` does survive.
-    if (cur.plugins.removed.includes('agents')) return;
-    const enabled = cur.plugins.enabled.includes('agents') ? cur.plugins.enabled : [...cur.plugins.enabled, 'agents'];
-    this.write({ ...cur, plugins: { ...cur.plugins, enabled }, agentsConfigMigrated: true });
-  }
-
-  /** One-shot upgrade: COPY (never move — autopilot.* keeps its values for a lossless rollback) the
-   *  autopilot keys consumed exclusively by the agents plugin runtime into plugins.config.agents,
-   *  where the plugin reads them via its own config slice. Existing plugins.config.agents values win
-   *  (an admin who already configured the plugin slice is not overwritten). Runs once per install;
-   *  daemon-only, like migrateAgentsEnabled(). */
-  migrateAgentsPluginConfig(): void {
-    if (!this.hasSettings()) return;
-    const cur = this.read();
-    if (cur.agentsPluginConfigMigrated) return;
-    const slice: Record<string, unknown> = { ...cur.plugins.config['agents'] };
-    for (const k of AGENTS_PLUGIN_CONFIG_KEYS) {
-      if (slice[k] === undefined) slice[k] = cur.autopilot[k];
-    }
-    this.write({
-      ...cur,
-      plugins: { ...cur.plugins, config: { ...cur.plugins.config, agents: slice } },
-      agentsPluginConfigMigrated: true,
-    });
-  }
-
-  /** One-shot upgrade, config wave 2 (batch 3a): COPY (never move — the autopilot fields and the
-   *  top-level ghToken keep their values for a lossless rollback) the remaining agents-only keys into
-   *  plugins.config.agents. Same rules as migrateAgentsPluginConfig: existing slice values win, runs
-   *  once per install, daemon-only. Runs AFTER wave 1 in bootstrap, but the two are independent. */
-  migrateAgentsPluginConfigWave2(): void {
-    if (!this.hasSettings()) return;
-    const cur = this.read();
-    if (cur.agentsPluginConfigMigrated2) return;
-    const slice: Record<string, unknown> = { ...cur.plugins.config['agents'] };
-    for (const k of AGENTS_PLUGIN_CONFIG_KEYS_WAVE2) {
-      if (slice[k] === undefined) slice[k] = cur.autopilot[k];
-    }
-    // The GitHub token is a top-level Stored secret; empty string means "not set" in the slice, the
-    // same convention the plugin's own secret fields use.
-    if (slice['ghToken'] === undefined) slice['ghToken'] = cur.ghToken ?? '';
-    this.write({
-      ...cur,
-      plugins: { ...cur.plugins, config: { ...cur.plugins.config, agents: slice } },
-      agentsPluginConfigMigrated2: true,
-    });
-  }
-
   /** One-shot upgrade for the LSP extraction: enable the `lsp` plugin for EXISTING installs and COPY
    *  (never move — `lspEnabled` keeps its value so a rollback finds this choice) the live-diagnostics toggle
    *  into plugins.config.lsp.diagnosticsEnabled, where the plugin reads it.
    *
-   *  Same deliberate exception as migrateAgentsEnabled: `lsp` is not a new capability but the extracted,
-   *  previously-CORE language-server subsystem, so skipping this would silently take diagnostics away
+   *  `lsp` is not a new capability but the extracted, previously-CORE language-server subsystem, so
+   *  skipping this would silently take diagnostics away
    *  from an install that already had them. An existing plugins.config.lsp value wins (an admin who
    *  already configured the slice is not overwritten). Runs once per install (the persisted marker), so
    *  an admin who later disables the plugin — or flips the toggle — stays where they put it.
@@ -1147,47 +978,20 @@ export class ConfigStore {
     this.write({ ...cur, plugins: { ...cur.plugins, enabled }, editorPluginMigrated: true });
   }
 
-  /** Preserve task tracking on existing installs once. Same deliberate exception to "an upgrade never
-   *  silently enables a new plugin" as migrateAgentsEnabled: `work` is not a new capability but the
-   *  extracted, previously-CORE task domain, and skipping it would take an install's tasks, its Kanban
-   *  and its missions away on upgrade. The persisted marker means a later deliberate disable stands. */
-  migrateWorkPlugin(): void {
-    if (!this.hasSettings()) return;
-    const cur = this.read();
-    if (cur.workPluginMigrated) return;
-    // An explicit removal outranks the continuity sweep. The marker alone cannot carry that: it is a
-    // config KEY, so rolling back to a daemon that does not know it drops it on the next write and the
-    // re-upgrade re-runs this — handing the plugin back to an admin who had deliberately uninstalled it.
-    // `plugins.removed` survives that round trip (every version reads and writes it), and a name in it
-    // is a decision, never an accident, so honour it.
-    if (cur.plugins.removed.includes('work')) return;
-    const enabled = cur.plugins.enabled.includes('work') ? cur.plugins.enabled : [...cur.plugins.enabled, 'work'];
-    this.write({ ...cur, plugins: { ...cur.plugins, enabled }, workPluginMigrated: true });
-  }
-
   update(patch: ConfigPatch): ElowenConfig {
     const cur = this.read();
-    const newKey = patch.autopilot?.apiKey;
-    const newGhToken = patch.autopilot?.ghToken;
-    // The pilot/overseer/default exec must resolve to a real program — mirror the API's
-    // allowedExecs guard so an admin can't persist a bare bogus spec (e.g. 'foo') that
-    // resolveExecutor would silently turn into a non-existent claude-code model (audit O22).
-    // Element-level sanitised regardless of source: a stored value is already clean (idempotent), a
+    // The default exec must resolve to a real program — mirror the API's allowedExecs guard so an admin
+    // cannot persist a bare bogus spec that resolveExecutor would turn into a non-existent CLI model.
+    // Element-level sanitised regardless of source: a stored value is already clean (idempotent), while a
     // patched one might not be — the API's Zod schema is the first gate, this is the second.
     const allowed = sanitizeExecList(patch.allowedExecs ?? cur.allowedExecs);
-    const pilotExec = this.normalizeExec(patch.autopilot?.pilotExec, cur.autopilot.pilotExec, allowed, '');
-    const overseerExec = this.normalizeExec(patch.autopilot?.overseerExec, cur.autopilot.overseerExec, allowed, '');
     const defaultExec = this.normalizeExec(patch.defaults?.exec, cur.defaults.exec, allowed, cur.defaults.exec);
     this.write({
       allowedExecs: allowed,
       customModels: sanitizeCustomModels(patch.customModels ?? cur.customModels),
       hiddenPresets: sanitizeExecList(patch.hiddenPresets ?? cur.hiddenPresets),
       modelNotes: sanitizeModelNotes(patch.modelNotes ?? cur.modelNotes),
-      // Merge the plain fields, then override the two exec fields with their allow-list-validated values.
-      autopilot: { ...mergeAutopilot(patch.autopilot, cur.autopilot), pilotExec, overseerExec },
       providers: patch.providers ? { ...cur.providers, ...sanitizeProviders(patch.providers) } : cur.providers,
-      apiKey: (typeof newKey === 'string' && newKey.length > 0) ? newKey : cur.apiKey,
-      ghToken: (typeof newGhToken === 'string' && newGhToken.length > 0) ? newGhToken : cur.ghToken,
       defaults: { exec: defaultExec, autonomy: patch.defaults?.autonomy ?? cur.defaults.autonomy, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },
       // Clamp to a sane positive integer — the value is interpolated into a SQL date modifier.
       security: {
@@ -1205,21 +1009,15 @@ export class ConfigStore {
       lspEnabled: cur.lspEnabled,
       webPush: cur.webPush, // VAPID keys are managed via setWebPushKeys, never through the config patch
       webPushContact: typeof patch.webPushContact === 'string' ? patch.webPushContact.trim() : cur.webPushContact,
-      plugins: {
-        enabled: sanitizeStringList(patch.plugins?.enabled ?? cur.plugins.enabled),
-        removed: sanitizeStringList(patch.plugins?.removed ?? cur.plugins.removed),
-        // Merge per-plugin config so a patch touching one plugin never wipes another's slice.
-        // An autopilot patch is NOT mirrored in here: the extraction never shipped, so no release
-        // ever owned these keys via autopilot.* — plugins.config.agents (edited by the plugin's own
-        // settings deck, seeded once by migrateAgentsPluginConfig) is the single source.
-        config: canonicalizePluginExecConfig(patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config),
-      },
-      agentsConfigMigrated: cur.agentsConfigMigrated,
-      agentsPluginConfigMigrated: cur.agentsPluginConfigMigrated,
-      agentsPluginConfigMigrated2: cur.agentsPluginConfigMigrated2,
+      // Merge per-plugin config so a patch touching one plugin never wipes another's slice, then sweep
+      // retired domain names/slices in one place (including legacy credentials under config.agents).
+      plugins: sanitizePlugins({
+        enabled: patch.plugins?.enabled ?? cur.plugins.enabled,
+        removed: patch.plugins?.removed ?? cur.plugins.removed,
+        config: patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config,
+      }, cur.plugins),
       lspPluginMigrated: cur.lspPluginMigrated,
       editorPluginMigrated: cur.editorPluginMigrated,
-      workPluginMigrated: cur.workPluginMigrated,
       brain: {
         providers: patch.brain?.providers !== undefined
           ? sanitizeBrainProviders(patch.brain.providers).map((p) => ({

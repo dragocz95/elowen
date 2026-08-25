@@ -1,48 +1,27 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { AdvisorPanel } from '../../../modules/advisor/AdvisorPanel';
 import type { UseDockState } from '../../../lib/useDockState';
 
-const currentPath = vi.hoisted(() => ({ value: '/dash' }));
-vi.mock('next/navigation', () => ({ usePathname: () => currentPath.value }));
-// Every pane the dock's terminal mode can hold is a tmux pane owned by the agents plugin, so the panel
-// gates that mode on the plugin's presence. Default: present, the instance most tests here describe.
-const agents = vi.hoisted(() => ({ present: true }));
-vi.mock('../../../lib/queries', () => ({ useAgentsPlugin: () => agents.present }));
-beforeEach(() => { currentPath.value = '/dash'; agents.present = true; });
-
-vi.mock('../../../modules/advisor/AdvisorPane', () => ({
-  AdvisorPane: ({ pane }: { pane: { id: string } }) => <div data-testid="pane">{pane.id}</div>,
-}));
-vi.mock('../../../modules/advisor/SessionPicker', () => ({
-  SessionPicker: ({ open }: { open: boolean }) => (open ? <div data-testid="picker" /> : null),
-}));
 vi.mock('../../../modules/advisor/BrainChat', () => ({ BrainChat: () => <div data-testid="brain-chat" /> }));
-// The dock defaults to chat mode; these pane-stack tests exercise the terminal mode.
-beforeEach(() => localStorage.setItem('elowen.dock.mode', 'terminal'));
 
 function fakeDock(over: Partial<UseDockState['state']> = {}): UseDockState {
   return {
-    state: { open: true, side: 'right', width: 560, height: 420, advisor: true, panes: [{ id: 'advisor', kind: 'advisor' }], sizes: [1], ...over },
+    state: { open: true, side: 'right', width: 560, height: 420, ...over },
     setOpen: vi.fn(),
     setSide: vi.fn(),
     setWidth: vi.fn(),
     setHeight: vi.fn(),
-    setSizes: vi.fn(),
-    addSessionPane: vi.fn(),
-    removePane: vi.fn(),
-    addAdvisorPane: vi.fn(),
   };
 }
 
-const renderPanel = (dock: UseDockState) =>
-  render(<LanguageProvider><AdvisorPanel dock={dock} /></LanguageProvider>);
+const renderPanel = (dock: UseDockState) => render(<LanguageProvider><AdvisorPanel dock={dock} /></LanguageProvider>);
 
 describe('AdvisorPanel', () => {
-  it('renders a pane per dock pane', () => {
+  it('renders the brain chat surface', () => {
     renderPanel(fakeDock());
-    expect(screen.getByTestId('pane').textContent).toBe('advisor');
+    expect(screen.getByTestId('brain-chat')).toBeInTheDocument();
   });
 
   it('closes the panel via the close button', () => {
@@ -58,35 +37,5 @@ describe('AdvisorPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /dock position|pozice panelu/i }));
     fireEvent.click(screen.getByRole('button', { name: /dock to bottom|ukotvit dolů/i }));
     expect(dock.setSide).toHaveBeenCalledWith('bottom');
-  });
-
-  it('forces terminal-only on /chat: no Chat segment, terminal branch renders despite the stored mode', () => {
-    // The stored mode is chat (default), but /chat's ChatView owns the chat surface — the dock hides the
-    // Chat segment and renders the terminal branch regardless, without a second chat surface.
-    localStorage.setItem('elowen.dock.mode', 'chat');
-    currentPath.value = '/chat';
-    renderPanel(fakeDock());
-    expect(screen.queryByRole('radio', { name: /^chat$/i })).toBeNull();
-    expect(screen.getByRole('radio', { name: /^terminal|^terminál/i })).toBeInTheDocument();
-    expect(screen.queryByTestId('brain-chat')).toBeNull();
-    expect(screen.getByTestId('pane')).toBeInTheDocument();
-  });
-
-  it('offers no Terminál mode without the agents plugin', () => {
-    // The stored mode is terminal, so a panel that ignored the plugin would render an empty tmux stack
-    // behind a Terminál segment nothing can ever fill.
-    agents.present = false;
-    renderPanel(fakeDock());
-    expect(screen.queryByRole('radio', { name: /^terminal|^terminál/i })).toBeNull();
-    expect(screen.getByRole('radio', { name: /^chat$/i })).toBeInTheDocument();
-    expect(screen.getByTestId('brain-chat')).toBeInTheDocument();
-    expect(screen.queryByTestId('pane')).toBeNull();
-  });
-
-  it('renders nothing on /chat without the agents plugin: the page already IS the chat', () => {
-    agents.present = false;
-    currentPath.value = '/chat';
-    const { container } = renderPanel(fakeDock());
-    expect(container).toBeEmptyDOMElement(); // no second chat surface beside the full-page one
   });
 });

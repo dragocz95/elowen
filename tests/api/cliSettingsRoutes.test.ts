@@ -8,7 +8,6 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { UserSettingStore } from '../../src/store/userSettingStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 function setup() {
   const db = openPluginTablesDb(':memory:');
@@ -16,12 +15,12 @@ function setup() {
   const users = new UserStore(db);
   const amy = users.create('amy', 'pw');
   const config = new ConfigStore(db);
-  config.update({ autopilot: { model: 'claude-opus-4-8' } });
+  config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['claude-opus-4-8'], apiKey: 'k' }] } });
   const restart = vi.fn(async () => {});
   const applyUserInstructionsChange = vi.fn(async () => {});
   const applyAutoCompactSettings = vi.fn();
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -82,10 +81,10 @@ describe('cli-settings routes', () => {
     const users = new UserStore(db);
     const amy = users.create('amy', 'pw');
     const config = new ConfigStore(db);
-    config.update({ autopilot: { model: 'claude-opus-4-8' } });
+    config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['claude-opus-4-8'], apiKey: 'k' }] } });
     const applyUserInstructionsChange = vi.fn(() => new Promise<void>(() => {})); // never resolves
     const app = createServer({
-      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+      bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

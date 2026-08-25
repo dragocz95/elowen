@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { TaskRefs } from '../../src/store/taskRefs.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
@@ -11,9 +10,8 @@ import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
-import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { openDb } from '../../src/store/db.js';
 import type { MarketplaceService } from '../../src/plugins/marketplace.js';
-import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
 
 /** A plugin that is ENABLED in config but present in no plugin directory — the state a host lands in
  *  when a subsystem has moved out of the npm package into the registry and the boot reconciler could not
@@ -25,13 +23,12 @@ import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
  *  marketplace's registry cache so the answer becomes an explicit 503 instead.
  */
 function setup(opts: { enabled: string[]; cachedRoutes?: Record<string, string[]> }) {
-  const db = openPluginTablesDb(':memory:');
+  const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
   const config = new ConfigStore(db);
   config.update({ plugins: { enabled: opts.enabled } });
-  const tasks = new RefTaskStore(db);
   const projects = new ProjectStore(db);
   const bus = new EventBus();
 
@@ -54,7 +51,7 @@ function setup(opts: { enabled: string[]; cachedRoutes?: Record<string, string[]
   } as unknown as MarketplaceService;
 
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), missions: new RefMissions(db), bus,
+    bus,
     tmux: new FakeTmuxDriver() as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects, userProjects: new UserProjectStore(db),
@@ -68,35 +65,35 @@ const auth = (tok: string) => ({ headers: { authorization: `Bearer ${tok}` } });
 
 describe('a plugin that is enabled but not installed', () => {
   it('answers 503 and says the plugin is not installed, not merely off', async () => {
-    const { app, tok } = setup({ enabled: ['work'], cachedRoutes: { work: ['/tasks'] } });
-    const res = await app.request('/tasks', auth(tok));
+    const { app, tok } = setup({ enabled: ['demo'], cachedRoutes: { demo: ['/demo'] } });
+    const res = await app.request('/demo', auth(tok));
     expect(res.status).toBe(503);
     // The wording carries the diagnosis: "disabled" is a switch the user can flip, "not installed"
     // means the code is absent from this host and no amount of toggling will help.
-    expect(await res.json()).toEqual({ error: 'work plugin is enabled but not installed' });
+    expect(await res.json()).toEqual({ error: 'demo plugin is enabled but not installed' });
   });
 
   it('covers sub-paths of the recovered mount, not just its root', async () => {
-    const { app, tok } = setup({ enabled: ['work'], cachedRoutes: { work: ['/tasks'] } });
-    expect((await app.request('/tasks/t1', auth(tok))).status).toBe(503);
+    const { app, tok } = setup({ enabled: ['demo'], cachedRoutes: { demo: ['/demo'] } });
+    expect((await app.request('/demo/t1', auth(tok))).status).toBe(503);
   });
 
   it('still answers 404 when the registry cache knows nothing about the plugin', async () => {
     // The opposite direction, and the one that keeps this feature honest: without it the code could
     // answer 503 for every unmatched path in the daemon and this file would still be green.
-    const { app, tok } = setup({ enabled: ['work'] });
-    expect((await app.request('/tasks', auth(tok))).status).toBe(404);
+    const { app, tok } = setup({ enabled: ['demo'] });
+    expect((await app.request('/demo', auth(tok))).status).toBe(404);
   });
 
   it('does not claim a mount for a plugin that is not enabled', async () => {
     // A plugin the user switched off and never installed owns nothing; its paths must stay 404 so an
     // uninstalled optional feature cannot masquerade as a temporarily broken one.
-    const { app, tok } = setup({ enabled: [], cachedRoutes: { work: ['/tasks'] } });
-    expect((await app.request('/tasks', auth(tok))).status).toBe(404);
+    const { app, tok } = setup({ enabled: [], cachedRoutes: { demo: ['/demo'] } });
+    expect((await app.request('/demo', auth(tok))).status).toBe(404);
   });
 
   it('leaves unrelated unmatched paths at 404', async () => {
-    const { app, tok } = setup({ enabled: ['work'], cachedRoutes: { work: ['/tasks'] } });
+    const { app, tok } = setup({ enabled: ['demo'], cachedRoutes: { demo: ['/demo'] } });
     expect((await app.request('/no-such-thing', auth(tok))).status).toBe(404);
   });
 });

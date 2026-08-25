@@ -8,7 +8,7 @@ import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { useAutoSaveStatus } from '../../lib/useAutoSaveStatus';
 import { useTranslation } from '../../lib/i18n';
 
-/** Focused editor for a single model's autopilot description (config.modelNotes[exec]). Kept separate
+/** Focused editor for a single model's model description (config.modelNotes[exec]). Kept separate
  *  from ModelModal so the description never rides the label/provider/preset-override save path — it is
  *  keyed purely by exec, so it applies uniformly to presets and custom models. Auto-saves on edit;
  *  `onSave` only persists (it must not close the modal). */

@@ -7,7 +7,7 @@ import type { ElowenApp, RouteContext } from '../context.js';
 /** Project registration, tenancy and project metadata. The optional editor plugin owns project-file
  * routes; the core keeps icon validation because the project record persists that metadata. */
 export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
-  const { d, canAccessProject, notAdmin, log } = ctx;
+  const { d, canAccessProject, notAdmin } = ctx;
   app.get('/projects', (c) => {
     const all = d.projects ? d.projects.list() : [];
     if (!d.userProjects || !d.users) return c.json(all);
@@ -41,7 +41,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     const cur = d.projects.get(id);
     if (!cur) return c.json({ error: 'project not found' }, 404);
     const b = await parseBody(c, updateProjectSchema);
-    const patch: { path?: string; notes?: string; icon?: string; pr_enabled?: boolean | null } = {};
+    const patch: { path?: string; notes?: string; icon?: string } = {};
     if (typeof b.path === 'string' && b.path.trim()) patch.path = b.path.trim();
     if (typeof b.notes === 'string') patch.notes = b.notes;
     // Icon is a project-relative image path. '' clears it; anything else must resolve to a real image
@@ -50,13 +50,10 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (b.icon !== '' && !isProjectImage(cur.path, b.icon)) return c.json({ error: 'invalid icon path' }, 400);
       patch.icon = b.icon;
     }
-    // Tri-state PR-flow override: null = inherit the global default, a boolean = force on/off. Only a
-    // boolean or explicit null is accepted; an absent key leaves it unchanged.
-    if (b.pr_enabled === null || typeof b.pr_enabled === 'boolean') patch.pr_enabled = b.pr_enabled;
     return c.json(d.projects.update(id, patch));
   });
-  // Remove a project from elowen entirely: cascades to its tasks, missions, agents and access grants
-  // (ProjectStore.remove), but never touches the files on disk. Admin-only; the daemon's home project
+  // Remove a project from Elowen's core registry and access grants, but never touch files on disk.
+  // Retired agents/work rows remain until their separately-authorized physical drop. Admin-only; the home project
   // can't be removed (it's where the daemon itself lives).
   app.delete('/projects/:id', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
@@ -64,56 +61,6 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     const id = Number(c.req.param('id'));
     if (id === d.project.id) return c.json({ error: 'cannot remove the home project' }, 400);
     if (!d.projects.get(id)) return c.json({ error: 'project not found' }, 404);
-    // Stop every live agent this project drives BEFORE the transactional cascade removes its rows —
-    // otherwise a running tmux session/embedded worker keeps editing a checkout whose project the UI
-    // already shows as gone. A mission's worktree also leaks (missionGit resolves it via the epic TASK
-    // row, which the cascade deletes), so every mission is freed here too, not just the running ones.
-    // Mirrors the epic-delete teardown at DELETE /tasks/:id.
-    // With no owner for the task domain the rows are still THERE (disabling a plugin drops no table)
-    // and the cascade below still deletes them — so the loop must walk core's own tolerant view instead
-    // of skipping. Skipping stranded the mission's worktree on disk with the epic row that resolves it
-    // erased, and let a LIVE mission's rows go while nothing could stop it. TaskRefs carries exactly the
-    // fields this teardown reads, and it answers before any plugin has loaded.
-    const doomed: { id: string; type: string; status: string; labels: string[] }[] =
-      d.tasks?.list({ project_id: id }) ?? d.taskRefs?.all().filter((t) => t.project_id === id) ?? [];
-    for (const t of doomed) {
-      if (t.type === 'epic') {
-        const missionId = `m-${t.id}`;
-        // Read the mission from the ROWS, not from `d.missions`: that seam answers null for everything
-        // while the agents plugin is absent, so the guards below could never fire in the one shape that
-        // needs them — the delete returned 200 while the worktree stayed on disk with every record
-        // naming it erased. The rows answer whether or not a plugin is loaded, exactly like the doomed
-        // list above.
-        const mission = d.taskRefs?.missionTeardown(missionId) ?? null;
-        const state = mission?.state ?? d.missions.get(missionId)?.state ?? null;
-        // Teardown must SUCCEED before the rows go, exactly as at DELETE /tasks/:id. Swallowing a
-        // failure here — or proceeding with the agents plugin disabled, where nothing can stop a
-        // mission's agents at all — deletes the only records by which a live agent or an on-disk
-        // worktree could still be found.
-        try {
-          if (state && state !== 'disengaged') {
-            if (!d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
-            await d.engine.disengage(missionId);
-          }
-          // A worktree is freed by its owner or not at all. With a mission_pr row present and no
-          // missionGit to act on it, the cascade would delete the row that resolves the directory and
-          // strand it — so refuse, which is recoverable (re-enable the plugin, delete again) where the
-          // leak is not.
-          if (mission?.worktree && !d.missionGit) return c.json({ error: 'agents plugin is disabled' }, 503);
-          await d.missionGit?.cleanup(missionId);
-        } catch (e) {
-          log.error(`project ${id} not deleted — mission ${missionId} teardown failed`, e);
-          return c.json({ error: 'mission teardown failed' }, 500);
-        }
-        continue;
-      }
-      if (t.status !== 'in_progress') continue;
-      const agent = t.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
-      if (!agent) continue;
-      const session = `elowen-${agent}`;
-      if (d.brainWorkers?.isLive(session)) await d.brainWorkers.abort(session).catch(() => { /* already gone */ });
-      else await d.tmux.kill(session).catch(() => { /* already gone */ });
-    }
     d.projects.remove(id);
     return c.json({ ok: true });
   });

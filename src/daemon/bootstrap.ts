@@ -10,7 +10,6 @@ import { buildTurnDone } from '../push/messages.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import { logger, setLogSink } from '../shared/logger.js';
 import { PluginLogBuffer } from '../shared/logBuffer.js';
-import { personalityText } from '../brain/personality.js';
 import { BrainTerminalService } from '../brain/terminalService.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { isSubagentSession } from '../brain/sessionId.js';
@@ -20,8 +19,6 @@ import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { BrainWorkerService } from '../brain/worker/brainWorker.js';
-import { toolAuthorityForUser } from '../brain/brainDeps.js';
 import { buildBrainCore } from './brainCore.js';
 import { SubagentRunnerPool } from '../subagent/pool.js';
 import { resolvePoolMax } from '../subagent/sizing.js';
@@ -118,13 +115,13 @@ export async function buildApp(opts: BuildOpts) {
   // no server, no platform gateway, no scheduler and no loop, so a second process can build the identical
   // brain by calling the same factory instead of re-deriving the wiring.
   const {
-    taskRefs, tasksDomain, config, users, homeProject, projects, userProjects,
+    config, users, homeProject, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, prompts, git,
-    cli, cliArgv, elowenCli, bus, events,
+    cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
-    brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
+    brainCreds, brainOauth, embeddings,
     brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, embedQueue, memoryCategorizer,
-    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker, setPluginHostPush, setPluginHostTerminals, setPluginHostAdvisor,
+    pluginProvider, hookAudit, brain, themes, brand, setPluginHostPush,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
     project: opts.project,
@@ -143,33 +140,14 @@ export async function buildApp(opts: BuildOpts) {
   runtimeConfigForPool = () => config.get().runtime;
   pluginsForPool = pluginProvider;
   ensureVapidKeys(config); // generate the web-push VAPID keypair on first boot (idempotent thereafter)
-  // The tmux-agent/mission subsystem (spawn, mission engine, scheduler, deriver, overseers, PR git,
-  // push dispatch, usage recorder, all its sweeps and boot reconciles) lives in the `agents` PLUGIN
-  // now. The daemon reaches it through the typed 'missions' control, resolved LIVE from the loaded
-  // registry on every access: undefined until the plugin loads, swapped by a plugin reload, absent
-  // for good when the operator disables the plugin (routes answer 503, the CLI/web degrade).
-  const missionsControl = () => loadedPlugins()?.control('missions');
-
-  // The missions/notes TABLES belong to the agents plugin now (part 2 of the extraction deleted the
-  // core store classes). Core routes/tenancy read them through these live facades: each call resolves
-  // the control fresh (a plugin reload swaps the store instance), and with the plugin disabled reads
-  // degrade to empty — every mission WRITE already flows through the engine and answers 503 without it.
-  const missions: import('../plugins/api.js').AgentsMissions = {
-    get: (id) => missionsControl()?.missions().get(id) ?? null,
-    active: () => missionsControl()?.missions().active() ?? [],
-    live: () => missionsControl()?.missions().live() ?? [],
-    activeForEpic: (epicId) => missionsControl()?.missions().activeForEpic(epicId) ?? null,
-  };
-
-  // Phone push TRANSPORT stays core: the sender owns the device subscriptions + VAPID keys. The agents
-  // plugin's dispatcher resolves recipients and hands over ids + payload through ctx.host.push().
+  // Phone push transport stays core: the sender owns device subscriptions and VAPID keys.
   // Contact is read per send, so changing it in Settings reaches the next notification without a restart.
   const pushSender = new PushSender(pushSubscriptions, () => config.webPushKeys(), undefined,
     () => ({ configured: config.get().webPushContact, instanceUrl: elowenCli.url }));
-  // …and the plugin host's late binding, so ctx.host.push() resolves (the agents plugin's dispatcher).
+  // Bind the generic plugin push seam to the core transport.
   setPluginHostPush(pushSender);
 
-  const pluginEventResolvers = installEventRecording({ taskRefs, loadedPlugins, bus, events, log });
+  installEventRecording({ bus, events, log });
   // Setup mode: with no users yet the daemon is open so the onboarding page can run before login;
   // auth (in authMiddleware) re-engages automatically once the first admin is created.
   if (users.count() === 0) {
@@ -178,31 +156,10 @@ export async function buildApp(opts: BuildOpts) {
   // Per-process secret for short-lived signed avatar URLs (finding W2) — keeps the long-lived session
   // token out of <img> src query strings. Rotates on restart; links live ~5 min, so that's harmless.
   const avatarSecret = randomBytes(32).toString('hex');
-  // Per-user tmux advisor: the SERVICE lives in the agents plugin now; core hands it its collaborators
-  // through the host advisor seam — user prefs/token, the neutral per-user working dir (alongside the
-  // DB, NOT a project checkout, so the per-program MCP config never pollutes a repo), the resolved
-  // communication-style paragraph and the instance brand. Disabled for the in-memory DB (tests wire
-  // their own seam through agentsTestHost).
-  if (opts.dbPath !== ':memory:') {
-    setPluginHostAdvisor({
-      users: {
-        get: (id) => {
-          const u = users.get(id);
-          return u ? { name: u.name, username: u.username, isAdmin: u.is_admin, allowedExecs: u.allowed_execs, advisorExec: u.advisor_exec ?? '', advisorAutostart: u.advisor_autostart ?? false } : null;
-        },
-        setExec: (id, exec) => users.setAdvisorExec(id, exec),
-        setAutostart: (id, on) => users.setAdvisorAutostart(id, on),
-        ensureToken: (id) => users.ensureAdvisorToken(id),
-      },
-      dir: (id) => { const p = join(dirname(opts.dbPath), 'advisor', String(id)); mkdirSync(p, { recursive: true }); return p; },
-      personality: (id) => personalityText(userSettings.cliSettings(id).advisorStyle),
-      brand: () => { const b = brand(); return { agentName: b.agentName, productName: b.productName }; },
-    });
-  }
   // Admin-only interactive `elowen chat` terminals bound to existing brain conversations. Its cwd is a
   // neutral per-admin scratch dir alongside the DB (never a project checkout), mirroring the advisor dir.
   // Constructed after `brain` (it needs store+users+url); the delete-conversation teardown is attached back
-  // onto the brain via a late setter to avoid a constructor cycle (mirrors spawn.attachBrainWorker).
+  // onto the brain via a late setter to avoid a constructor cycle.
   const brainTerminal = opts.dbPath === ':memory:' ? undefined : new BrainTerminalService({
     tmux, users, store: brainStore, url: elowenCli.url, cliArgv,
     terminalDir: (id) => { const p = join(dirname(opts.dbPath), 'terminal', String(id)); mkdirSync(p, { recursive: true }); return p; },
@@ -247,39 +204,9 @@ export async function buildApp(opts: BuildOpts) {
     })
       .catch(() => { /* best-effort wake */ });
   });
-  // The elowen exec engine: tasks with an `elowen:` exec run on an embedded PI session instead of a
-  // spawned CLI. Shares the brain's providers/auth/plugins; closes tasks through the same REST route.
-  const brainWorkers = new BrainWorkerService({
-    store: brainStore, bus, chatImagesDir,
-    // The task domain resolves per use: its owning plugin can be disabled or swapped by a reload while
-    // a worker runs, and a captured store would keep writing into a dead generation.
-    tasks: () => tasksDomain()?.store(), taskUsage: () => tasksDomain()?.usage(),
-    config: brainConfig, runtimeConfig: () => config.get().runtime, runtime: brainRuntime, prompts,
-    url: elowenCli.url, token: elowenCli.token,
-    plugins: pluginProvider, // the SAME shared registry — a plugin toggle reaches workers too
-    userSettings: (userId) => userSettings.cliSettings(userId), // the task owner's auto-compact threshold
-    userInstructions: (userId) => {
-      const body = userSettings.cliSettings(userId).personalityBody.trim();
-      return body || undefined;
-    },
-    toolAuthorityFor: (userId) => toolAuthorityForUser({ users, plugins: pluginProvider }, userId),
-  });
-  // The plugin host's late binding, so ctx.host.brainWorker() resolves from now on — the agents
-  // plugin's spawn attaches through this accessor (its stuck detector and startup reconcile also read
-  // the live embedded-worker sessions through it).
-  setPluginHostBrainWorker(brainWorkers);
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  // Terminal/session controls for the agents plugin's '/sessions' surface: teardown that must run
-  // through the owning service (chat-terminal token revocation), the embedded brain-worker session
-  // controls, and the SAME ticket store /ws/terminal redeems.
-  setPluginHostTerminals({
-    chatTerminalStop: async (userId, session) => { await brainTerminal?.stop(userId, session); },
-    brainWorkerLive: (session) => brainWorkers.isLive(session),
-    brainWorkerAbort: async (session) => { await brainWorkers.abort(session); },
-    ticketIssue: (session, userId) => tickets.issue({ session, userId }),
-  });
   // The plugin marketplace: install/update/remove plugins from the curated GitHub registry into the
   // writable user plugin dir (pluginDirs[1]), applied live via the brain's plugin hot-reload. The registry
   // repo is a shallow-clone cache next to the DB; ELOWEN_PLUGIN_REGISTRY overrides the repo URL (tests).
@@ -341,26 +268,18 @@ export async function buildApp(opts: BuildOpts) {
   // same systemd path the web/CLI command uses. Built here (needs the units + marker), wired now.
   if (brain && restartDaemon) brain.restartHandler = restartDaemon;
 
-  // The agents-subsystem deps resolve LIVE off the loaded registry's control (getters, not values):
-  // the plugin loads after this server is built and a plugin reload swaps the whole runtime, so a
-  // captured instance would strand the routes on a dead generation. Absent control ⇒ undefined ⇒ the
-  // routes answer 503 ("agents plugin is disabled").
   const app = createServer({
-    // The task domain is plugin-owned: live getters, undefined while nothing owns it (the routes then
-    // answer 503 rather than an empty list). `taskRefs` is the daemon's own tenancy read view.
-    get tasks() { return tasksDomain()?.store(); },
-    get taskUsage() { return tasksDomain()?.usage(); },
-    taskRefs,
-    missions, tmux, bus, events,
-    eventProjectResolvers: pluginEventResolvers,
-    get engine() { return missionsControl()?.engine(); },
-    get missionGit() { return missionsControl()?.missionGit(); },
-    get advisor() { return missionsControl()?.advisor(); },
-    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
+    bus, events,
+    project: homeProject, clock: new SystemClock(), config, users, projects, userProjects,
+    pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth,
+    brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal,
+    restartDaemon, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig,
+    memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes,
+    ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
 
   const startLoops = createMaintenanceLoops({
-    brain, brainTerminal, brainWorkers, brainStore, chatImagesDir, config, embedQueue, events,
+    brain, brainTerminal, brainStore, chatImagesDir, config, embedQueue, events,
     memoryStore, users, usageOrigins, tickets, pluginReconcile, dbPath: opts.dbPath,
     restartMarker, bootMarker, version: ELOWEN_VERSION, log,
     onShutdownInstalled: (control) => { shutdown = control; },

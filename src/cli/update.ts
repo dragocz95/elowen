@@ -9,7 +9,6 @@ import { start, stop, isAlive } from './launcher.js';
 import { readInstallInfo } from './installInfo.js';
 import { SERVICES, systemctl } from './systemd.js';
 import { launchdRestart } from './launchd.js';
-import { hasLiveMission } from './missionGate.js';
 import { dataDir } from '../shared/paths.js';
 import { fetchLatestVersion } from '../shared/registry.js';
 
@@ -92,10 +91,6 @@ export interface UpdateDeps {
   install?: () => Promise<void>;
   /** Restart running services after a successful install. */
   restart?: (env: NodeJS.ProcessEnv) => Promise<void>;
-  /** Re-checked RIGHT BEFORE the restart (after the multi-second npm install) — false means "don't
-   *  restart now". Defaults to "no mission is live", so a mission that started during the install isn't
-   *  killed by the restart. Injected for tests. */
-  confirmReadyToRestart?: () => boolean;
   /** File lock serialising concurrent update runs. Injected for tests; the real default writes
    *  `update.lock` under ~/.config/elowen, next to the launcher's own start.lock. */
   lock?: UpdateLockDeps;
@@ -138,9 +133,7 @@ export function acquireUpdateLock(env: NodeJS.ProcessEnv, deps: UpdateLockDeps):
   }
 }
 
-/** `restartDeferred`: the new version installed but a restart was withheld (a mission went live during
- *  the install) — it takes over on the next restart/boot. */
-export interface UpdateResult { updated: boolean; from: string; to: string; restartDeferred?: boolean }
+export interface UpdateResult { updated: boolean; from: string; to: string }
 
 /** Check npm for a newer release; if there is one, install it and restart the (running) services so
  *  the new binary takes over. The DB migrates itself on the next boot (openDb runs additive
@@ -159,11 +152,6 @@ export async function update(env: NodeJS.ProcessEnv, deps: UpdateDeps): Promise<
 
     const install = deps.install ?? (() => reinstall());
     await install();
-
-    // A mission may have started during the install — re-check before the restart (which would kill its
-    // agents). If so, leave the freshly-installed binary in place to take over on the next restart/boot.
-    const readyToRestart = deps.confirmReadyToRestart ?? (() => !hasLiveMission(env));
-    if (!readyToRestart()) return { updated: true, from: deps.current, to: latest, restartDeferred: true };
 
     // A box provisioned by `elowen install` is systemd-managed — restart those units (sudo when not root).
     // A plain launcher install has no install.json — fall back to stop/start of our own spawned daemon.

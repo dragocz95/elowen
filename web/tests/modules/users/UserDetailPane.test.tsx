@@ -20,7 +20,7 @@ const user = (over: Partial<User> = {}): User => ({
   allowed_execs: [], disabled_tools: [], allowed_tools: [], granted_plugins: [], default_exec: '', advisor_exec: '', advisor_autostart: false, ...over,
 });
 
-const project = (id: number, slug: string): Project => ({ id, slug, path: `/p/${slug}`, notes: '', icon: '', pr_enabled: null });
+const project = (id: number, slug: string): Project => ({ id, slug, path: `/p/${slug}`, notes: '', icon: '' });
 
 function mount(u: User, projects: Project[] = [], globalExecs: string[] = []) {
   const { wrapper: Wrapper } = createWrapper();

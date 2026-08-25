@@ -29,9 +29,7 @@ export const READ_ONLY_AGENT_TOOLS: readonly string[] = [
   'LspDocumentSymbol', 'LspWorkspaceSymbol',
   // Outside world and documentation.
   'WebSearch', 'WebFetch', 'DocsSearch', 'ScanCode',
-  // Control-plane and memory reads. Listed one by one rather than by prefix: the write halves of both
-  // families (ElowenCreateTask/UpdateTask/StopTask, MemoryAdd/Update/Delete/Merge) must stay out.
-  'ElowenListTasks', 'ElowenGetTask', 'ElowenTaskOutput', 'ElowenListMissions', 'ElowenListSessions',
+  // Memory reads are listed one by one rather than by prefix so write operations stay out.
   'MemorySearch', 'MemoryListRecent', 'MemoryCategories',
   // Its own checklist, and reading what earlier sub-agents concluded.
   'TodoRead', 'TodoWrite', 'DelegateList', 'DelegateRead',
@@ -141,6 +139,6 @@ export function resolveAgentTools(def: AgentDef): readonly string[] | undefined 
 }
 
 /** The catalog the subagent plugin advertises in its tool description (name + one-line description). */
-export function agentCatalog(reg: Map<string, AgentDef>): { name: string; description: string }[] {
+export function subagentCatalog(reg: Map<string, AgentDef>): { name: string; description: string }[] {
   return [...reg.values()].map((d) => ({ name: d.name, description: d.description }));
 }

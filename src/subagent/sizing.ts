@@ -19,7 +19,7 @@ export interface MachineInputs {
 
 /** A conservative first guess at one runner's resident size, used ONLY until a live runner reports its
  *  own. Calibrated against this build: the daemon process — a strict superset of a runner, since it also
- *  holds the HTTP server, the platform gateway, cron and autopilot — sits around 0.8 GB RSS.
+ *  holds the HTTP server, the platform gateway, cron and other background services — sits around 0.8 GB RSS.
  *
  *  It errs HIGH on purpose. The estimate only ever DIVIDES the memory budget, so guessing high spawns
  *  fewer runners than the box could really hold (a performance cost), while guessing low is how a fan-out

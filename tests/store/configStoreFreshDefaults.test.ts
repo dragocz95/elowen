@@ -138,32 +138,25 @@ describe('a fresh install enables no plugin that owns a domain vertical', () => 
   });
 });
 
-/** The other half of the promise: trimming the fresh defaults must not take anything away from an
- *  install that already has it. Those installs keep their subsystems through the one-shot migrations,
- *  which run only when a settings row already exists. */
-describe('existing installs keep their domain plugins across the upgrade', () => {
-  it('a pre-existing row that predates the extraction still gets agents/work/editor enabled', () => {
+/** The editor continuity migration remains; retired agents/work names never reappear. */
+describe('existing installs keep the editor plugin across the upgrade', () => {
+  it('a pre-existing row that predates the extraction gets editor enabled only', () => {
     const db = openDb(':memory:');
-    // A settings row written before the subsystems were extracted: no migration markers at all.
     db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({
       allowedExecs: ['sonnet'],
-      plugins: { enabled: ['files', 'terminal'], removed: [], config: {} },
+      plugins: { enabled: ['files', 'terminal', 'agents', 'work'], removed: [], config: {} },
     }));
 
     const upgraded = new ConfigStore(db);
-    upgraded.migrateAgentsEnabled();
     upgraded.migrateEditorPlugin();
-    upgraded.migrateWorkPlugin();
 
-    expect(upgraded.get().plugins.enabled).toEqual(['files', 'terminal', 'agents', 'editor', 'work']);
+    expect(upgraded.get().plugins.enabled).toEqual(['files', 'terminal', 'editor']);
   });
 
-  it('a FRESH install is never handed one by those same sweeps (the markers ship set)', () => {
+  it('a fresh install is never handed the editor by the continuity sweep', () => {
     const cfg = new ConfigStore(openDb(':memory:'));
-    cfg.update({ autoUpdate: true }); // materialise the fresh row exactly as a first boot does
-    cfg.migrateAgentsEnabled();
+    cfg.update({ autoUpdate: true });
     cfg.migrateEditorPlugin();
-    cfg.migrateWorkPlugin();
     expect(cfg.get().plugins.enabled).toEqual(SAFE_DEFAULT_PLUGINS);
   });
 });

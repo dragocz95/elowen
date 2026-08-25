@@ -6,7 +6,6 @@ export type BrainService = NonNullable<RouteContext['d']['brain']>;
 
 export interface BrainRouteContext {
   d: RouteContext['d'];
-  forbidden: (c: { get: (k: 'tokenScope') => string }) => boolean;
   /** The API-wide setup-tolerant admin gate, passed through so a brain route uses the SAME predicate as
    *  every other route instead of re-deriving one from `d.users.count()` and `user.is_admin` by hand. */
   notAdminUnlessSetup: RouteContext['notAdminUnlessSetup'];
@@ -19,8 +18,6 @@ export interface BrainRouteContext {
 
 export function createBrainRouteContext(ctx: RouteContext): BrainRouteContext {
   const { d } = ctx;
-  const forbidden = (c: { get: (k: 'tokenScope') => string }): boolean => c.get('tokenScope') === 'agent';
-
   /** Pin this request's origin to the conversation whose turn it is about to start, so the spend of that
    *  turn is attributed to the address that ORDERED it — read now, at request time, not at settle, when
    *  the requester may be gone or on another network.
@@ -42,22 +39,22 @@ export function createBrainRouteContext(ctx: RouteContext): BrainRouteContext {
     });
   };
 
-  /** The prologue almost every brain route shares: 503 when the engine isn't wired, 403 for an agent-scope
-   *  token (a spawned agent must never drive a human's brain), and — with `{ admin: true }` — 403 for a
-   *  non-admin. Wrapping it hands the handler a guaranteed-present `brain`, so the guard is the DEFAULT a new
+  /** The prologue almost every brain route shares: 503 when the engine isn't wired and — with
+   *  `{ admin: true }` — 403 for a non-admin. Wrapping it hands the handler a guaranteed-present `brain`,
+   *  so the guard is the DEFAULT a new
    *  route can't forget rather than a two-line prologue copy-pasted (and occasionally mis-ordered) per handler.
    *  Routes whose unavailable response is a benign default (`status`/`sessions`/`rate-limits` → {} / [] / null)
-   *  and the SSE stream keep their bespoke guard — this covers only the uniform `503 + forbidden` shape. */
+   *  and the SSE stream keep their bespoke guard — this covers only the uniform unavailable shape. */
   const withBrain = (
     handler: (c: ElowenContext, brain: BrainService) => Response | Promise<Response>,
     opts?: { admin?: boolean },
   ) => async (c: ElowenContext): Promise<Response> => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    if (forbidden(c) || (opts?.admin === true && !c.get('user')?.is_admin)) return c.json({ error: 'forbidden' }, 403);
+    if (opts?.admin === true && !c.get('user')?.is_admin) return c.json({ error: 'forbidden' }, 403);
     return handler(c, d.brain);
   };
 
-  return { d, forbidden, pinOrigin, withBrain, notAdminUnlessSetup: ctx.notAdminUnlessSetup };
+  return { d, pinOrigin, withBrain, notAdminUnlessSetup: ctx.notAdminUnlessSetup };
 }
 
 /** Opt-in backwards pagination for the message history (the chat's lazy-load): undefined when `?limit` is

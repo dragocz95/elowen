@@ -66,12 +66,6 @@ const WEB_TYPES_FILE = join(repoRoot(), 'web/lib/types.ts');
 const DAEMON_ROOT = join(repoRoot(), 'src/');
 
 const PAIRS: MirrorPair[] = [
-  // The web lists and opens tasks; the git bookkeeping and the authoring principal never reach the UI.
-  // This pair is deliberately NOT shared: the web's copy is a relaxed subset — daemon-required fields
-  // are optional, `outcome` is narrowed to the two values the daemon actually records, and the three
-  // omitted fields stay omitted. Collapsing it into one shared shape would either force the web to
-  // declare fields it deliberately does not render or weaken the daemon's type.
-  { web: 'Task', daemonFile: `${DAEMON_ROOT}store/types.ts`, daemon: 'Task', allowMissing: ['base_sha', 'head_sha', 'created_by'] },
   // showThoughtsCli is optional on the web but always sent by the daemon — a tolerated relaxation the
   // mirror keeps honest (the web's test literals construct the settings without it).
   { web: 'TerminalSettings', daemonFile: `${DAEMON_ROOT}store/terminalSettings.ts`, daemon: 'TerminalSettings' },

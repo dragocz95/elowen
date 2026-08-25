@@ -29,9 +29,8 @@ describe('liveRecallAllowed — which sessions may recall mid-turn', () => {
   });
 
   it('refuses an ownerless session', () => {
-    // Task/worker sessions carry ownerUserId 0 — there is no one whose memory it would even be.
+    // There is no one whose memory an ownerless session could search.
     expect(liveRecallAllowed('brain-0', 0)).toBe(false);
-    expect(liveRecallAllowed('brain-task-7', 0)).toBe(false);
   });
 
   it('refuses a negative or non-integer owner id rather than trusting the caller', () => {

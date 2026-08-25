@@ -1,8 +1,4 @@
-import type { TaskStoreContract, TaskUsageContract } from '../store/taskStoreContract.js';
-import type { TaskRefs } from '../store/taskRefs.js';
-import type { AgentsExecSpec, AgentsMissionEngine, AgentsMissionGit, AgentsMissions } from '../plugins/api.js';
-import type { TmuxDriver } from '../tmux/types.js';
-import type { ElowenEvent, EventBus } from './sse.js';
+import type { EventBus } from './sse.js';
 import type { Clock } from '../shared/clock.js';
 import type { ConfigStore } from '../store/configStore.js';
 import type { UserStore } from '../store/userStore.js';
@@ -28,30 +24,8 @@ export interface ServerDeps {
   /** The sub-agent pool's live state, for `/health`. Absent in a process with no pool (the in-memory test
    *  database, and the runner itself), which is reported as an absent block rather than a fake empty one. */
   subagentPool?: () => SubagentPoolStats;
-  /** The task domain, owned by whichever plugin registers the `tasks` control. A live getter in the
-   *  daemon (the owner can be swapped by a plugin reload) and the plugin's own store in tests. ABSENT
-   *  while no plugin owns it: every route that needs task rows must then answer 503 rather than serve
-   *  an empty list, which would read as "you have no tasks". */
-  tasks?: TaskStoreContract;
-  /** The tenancy boundary's own read view of task rows — daemon-owned and tolerant of the table being
-   *  absent, so an agent token's working set can be resolved before any plugin loads. Absent (minimal
-   *  test wiring) → agent tokens resolve no projects at all, which is the fail-closed direction. */
-  taskRefs?: TaskRefs;
-  /** Read view of the agents plugin's missions table (a live facade over the control in the daemon;
-   *  the plugin's own store instance in tests). Reads degrade to empty while the plugin is disabled —
-   *  every mission WRITE goes through `engine` and answers 503 without it. */
-  missions: AgentsMissions;
-  /** The agents plugin's mission engine (structural — see MissionsDomainControl). Absent while the plugin is
-   *  disabled/not yet loaded: engage/pause/resume/disengage and plan-engage answer 503. */
-  engine?: AgentsMissionEngine;
-  tmux: TmuxDriver; bus: EventBus;
-  /** PR-native git lifecycle. Absent (or PR mode off) → phases never commit, no worktree, no PR. */
-  missionGit?: AgentsMissionGit;
+  bus: EventBus;
   project: { id: number; path: string };
-  fallback: AgentsExecSpec;
-  /** How spawned agents invoke the elowen CLI (`elowen` globally, or `node <path>` in a checkout). Same
-   *  value threaded to spawn/pilot/overseer; used by the guide service to render `elowen help`. Absent → `elowen`. */
-  cli?: string;
   clock: Clock;
   config: ConfigStore;
   users?: UserStore;
@@ -68,10 +42,6 @@ export interface ServerDeps {
   userSettings?: UserSettingStore;
   /** Plugin scan roots (bundled first, then user) for the admin /plugins listing. Absent → empty list. */
   pluginDirs?: string[];
-  /** Plugin-contributed event→project resolvers (live registry read, so a reload swaps them). The SSE
-   *  per-subscriber gate and the activity recorder consult them for events whose tenancy lookup lives
-   *  in a plugin (agents: signal/plan). Absent → those events resolve null = admin-only (fail closed). */
-  eventProjectResolvers?: () => readonly ((e: ElowenEvent) => number | null)[];
   /** Root of per-plugin writable data dirs (serves generated images from plugins-data/image-gen). */
   pluginDataRoot?: string;
   /** Where a chat turn's own attachments are kept, so a bubble still shows them after a reload. Absent
@@ -85,16 +55,12 @@ export interface ServerDeps {
   /** User-aware prompt renderer (resolves a user's override else the file default). Absent → callers
    *  fall back to the plain file `render`, i.e. defaults for everyone. */
   prompts?: PromptService;
-  taskUsage?: TaskUsageContract;
   git?: GitReader;
   /** Directory where uploaded user avatars are stored/served. Absent → avatar upload disabled. */
   avatarsDir?: string;
   /** HMAC secret for short-lived signed avatar URLs (so an <img> src never carries the long-lived
    *  session token). Per-daemon-process; absent → signed avatar links unavailable (bearer only). */
   avatarSecret?: string;
-  /** The agents plugin's advisor lifecycle hooks (login autostart, user-deletion teardown). The
-   *  /advisor routes are plugin root mounts; absent (plugin disabled) → both hooks are skipped. */
-  advisor?: import('../plugins/api.js').AgentsAdvisorHooks;
   /** Per-user embedded brain (PI agent) — the new advisor engine. Absent → brain routes degrade to 503. */
   brain?: import('../brain/brainService.js').BrainService;
   /** Admin-only interactive `elowen chat` terminals bound to existing brain conversations. Absent →
@@ -103,9 +69,7 @@ export interface ServerDeps {
   /** Restart the Elowen daemon (the admin-only `/restart` slash command): announce it on the platforms,
    *  drop a marker so the next boot announces "back online", then hand off to systemd. Absent → 501. */
   restartDaemon?: (byUserId: number) => Promise<void>;
-  /** Elowen exec engine (embedded-brain workers): kill controls + task transcripts. */
-  brainWorkers?: { isLive(session: string): boolean; abort(session: string): Promise<void> };
-  /** Brain message store — feeds GET /tasks/:id/conversation for elowen workers. */
+  /** Brain message store for chat usage and history. */
   brainStore?: import('../store/brainStore.js').BrainStore;
   /** Where a turn's spend is attributed: which request origin ordered it, rolled up per day × user ×
    *  origin. The ONLY source of the admin origin view. Absent (minimal test wiring) → nothing is

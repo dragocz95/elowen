@@ -1,25 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, isArchivedChannelSession, channelIdOf, platformOfSession, isOwnedUserSession, mayDeliverToSession, contributionOwnerForSession, resolvesContributionsPerTurn } from '../../src/brain/sessionId.js';
+import { defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId, isNonUserSession, isChannelSession, isSubagentSession, isArchivedChannelSession, channelIdOf, platformOfSession, isOwnedUserSession, mayDeliverToSession, contributionOwnerForSession, resolvesContributionsPerTurn } from '../../src/brain/sessionId.js';
 
 describe('brain session id conventions', () => {
-  it('builds the four id shapes', () => {
+  it('builds the user and channel id shapes', () => {
     expect(defaultUserSessionId(7)).toBe('brain-7');
     expect(freshUserSessionId(7)).toMatch(/^brain-7-[a-z0-9]+$/);
     expect(channelSessionId('discord-123')).toBe('brain-ch-discord-123');
-    expect(taskSessionId('t42')).toBe('brain-task-t42');
   });
 
-  it('classifies channel/task sessions as non-user (excluded from list/resume/delete)', () => {
+  it('classifies channel sessions as non-user (excluded from list/resume/delete)', () => {
     expect(isNonUserSession(channelSessionId('x'))).toBe(true);
-    expect(isNonUserSession(taskSessionId('x'))).toBe(true);
     expect(isNonUserSession(defaultUserSessionId(1))).toBe(false);
     expect(isNonUserSession('brain-1-abc123')).toBe(false);
   });
 
-  it('classifies channel / task / subagent sessions and recovers the channel id', () => {
+  it('classifies channel and subagent sessions and recovers the channel id', () => {
     expect(isChannelSession(channelSessionId('discord-1'))).toBe(true);
-    expect(isChannelSession(taskSessionId('t1'))).toBe(false);
-    expect(isTaskSession(taskSessionId('t1'))).toBe(true);
     // A subagent session is a channel sub-family.
     expect(isSubagentSession('brain-ch-subagent-abc')).toBe(true);
     expect(isChannelSession('brain-ch-subagent-abc')).toBe(true);
@@ -35,7 +31,6 @@ describe('brain session id conventions', () => {
   // exactly one turn, so it keeps whoever delegated it.
   it('contributionOwnerForSession: own conversations keep the owner, a shared room follows the writer', () => {
     expect(contributionOwnerForSession(defaultUserSessionId(7), 7)).toBe(7);
-    expect(contributionOwnerForSession(taskSessionId('t1'), 7)).toBe(7);
     // A sub-agent inherits from the turn that delegated it: the row owner out of an owner conversation
     // (they are the same person), and out of a room the writer its caller read off the parent's live
     // record — never the row owner there, who is only whoever opened the room.
@@ -75,7 +70,6 @@ describe('brain session id conventions', () => {
     expect(resolvesContributionsPerTurn(channelSessionId('msteams-personal-1'), true)).toBe(false);
     expect(resolvesContributionsPerTurn('brain-ch-subagent-abc', false)).toBe(false);
     expect(resolvesContributionsPerTurn(defaultUserSessionId(7), false)).toBe(false);
-    expect(resolvesContributionsPerTurn(taskSessionId('t1'), false)).toBe(false);
   });
 
   // Delivering INTO a conversation and MANAGING it are different rights, so the two predicates differ on
@@ -92,7 +86,6 @@ describe('brain session id conventions', () => {
     expect(mayDeliverToSession({ user_id: 7, direct: 0 }, 7, room)).toBe(false); // shared room: never
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 8, dm)).toBe(false); // someone else's DM
     expect(mayDeliverToSession(undefined, 7, dm)).toBe(false); // no row
-    expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, taskSessionId('t1'))).toBe(false); // task session
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, 'brain-ch-subagent-job')).toBe(false); // delegated
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, archivedChannelSessionId('msteams-personal-1'))).toBe(false); // archive
     expect(mayDeliverToSession({ user_id: 7, direct: 0 }, 7, own)).toBe(true); // an ordinary conversation is unaffected
@@ -107,10 +100,9 @@ describe('brain session id conventions', () => {
     expect(platformOfSession(archivedChannelSessionId('msteams-a:1uAUss#4'))).toBe('msteams');
     expect(platformOfSession(channelSessionId('discord-123'))).toBe('discord');
     expect(platformOfSession('brain-ch-subagent-sub-dlg-c06bc20d')).toBe('subagent');
-    // Not a channel at all: an ordinary conversation and a task worker have no platform to report.
+    // Not a channel at all: an ordinary conversation has no platform to report.
     expect(platformOfSession(defaultUserSessionId(7))).toBeNull();
     expect(platformOfSession(freshUserSessionId(7))).toBeNull();
-    expect(platformOfSession(taskSessionId('t42'))).toBeNull();
     // A channel id with nothing after the platform is malformed; claiming a platform anyway would invent one.
     expect(platformOfSession(channelSessionId('discord'))).toBeNull();
   });
@@ -121,7 +113,6 @@ describe('brain session id conventions', () => {
     expect(isOwnedUserSession({ user_id: 9 }, 7, id)).toBe(false); // not the owner
     expect(isOwnedUserSession(undefined, 7, id)).toBe(false); // no row
     expect(isOwnedUserSession({ user_id: 7 }, 7, channelSessionId('c'))).toBe(false); // channel session
-    expect(isOwnedUserSession({ user_id: 7 }, 7, taskSessionId('t'))).toBe(false); // task session
     // Narrows: after the guard, the row's own fields are accessible.
     const row: { user_id: number; title: string } | undefined = { user_id: 7, title: 'kept' };
     expect(isOwnedUserSession(row, 7, id) ? row.title : null).toBe('kept');

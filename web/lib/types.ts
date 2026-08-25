@@ -1,41 +1,8 @@
-export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancelled';
-/** Outcome the daemon records when a task closes (`src/store/types.ts`). */
-type TaskOutcome = 'ok' | 'fail';
-export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: TaskOutcome | null; closed_at?: string | null; created_at?: string; parent_id?: string | null; project_id?: number; changed_files?: CommitFileChange[]; resume_note?: string | null }
-type SessionRole = 'overseer' | 'pilot' | 'agent' | 'advisor' | 'chat';
-/** Structured identity of a live agent session, classified by the daemon (single source of truth).
- *  Clients render from `role` — they never parse meaning out of the raw session name. */
-export interface SessionInfo { name: string; role: SessionRole; agent: string; missionId?: string; projectId?: number; userId?: number }
-/** Autonomy level the overseer runs a mission at (`L0` manual … `L3` fully autonomous). */
-type Autonomy = 'L0' | 'L1' | 'L2' | 'L3';
-/** Lifecycle state of a mission, set by the daemon (`src/overseer/missionEngine.ts`). */
-type MissionState = 'active' | 'paused' | 'disengaged' | 'stalled';
-export interface Mission { id: string; epic_id: string; autonomy: Autonomy; max_sessions: number; state: MissionState; pr?: MissionPrInfo | null }
-export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[]; project_id?: number }
-export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[]; addDep?: string; parent_id?: string }
-export interface PlanInput { goal: string; name?: string; exec?: string; autoModel?: boolean; pilotExec?: string; overseerExec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title: string; type?: string }[]; project_id?: number; prEnabled?: boolean | null }
-interface PlanResult { epic: Task; phases: Task[]; mission?: Mission }
-interface PlanPhase { title: string; type: string; agent?: string; details?: string }
-type PlanJobStatus = 'planning' | 'done' | 'failed';
-export interface PlanJob { id: string; epicId: string | null; goal: string; status: PlanJobStatus; phases: PlanPhase[]; error?: string; sessionName?: string }
-/** Autopilot planning is async: the endpoint returns a job to poll. Manual mode still returns a PlanResult. */
-export type PlanSubmitResult = { jobId: string; epicId?: string } | PlanResult;
-export interface InsertPhasesInput { phases?: { title: string; type?: string; details?: string }[]; goal?: string; exec?: string; prompt?: string }
-export interface InsertPhasesResult { epic: Task; phases: Task[] }
-export interface EngageInput { epicId: string; autonomy: string; maxSessions: number }
-export type PromptOption = { id: string; label: string };
-export type DerivedSignal =
-  | { type: 'working' }
-  | { type: 'complete' }
-  // `options` is present when the agent asked a multiple-choice question (the overseer escalated it):
-  // the id is the option's 1-based list position, so the UI navigates with Down × (id-1) then Enter.
-  | { type: 'needs_input'; question: string; options?: PromptOption[]; context?: string };
 export interface ElowenConfig {
   allowedExecs: string[];
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
   modelNotes: Record<string, string>;
-  autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; tddMode: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
   providers: Record<string, { bin: string; args: string; skipPermissions: boolean; resume: boolean }>;
   defaults: { exec: string; autonomy: string; maxSessions: number };
   security: { tokenTtlDays: number; trustProxy: boolean };
@@ -86,7 +53,7 @@ export interface BrainSessionInfo { id: string; title: string; provider?: string
 /** A row in the admin session-management panel (all brain sessions the operator anchors). `platform` says
  *  WHERE it happened (null for web/CLI) and `direct` whether `ownerId` is the person talking there or only
  *  the account hosting a shared room — see ManagedSessionView in src/brain/service/statusService.ts. */
-export interface ManagedSession { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean; kind: 'conversation' | 'channel' | 'task'; tokens: number; platform: string | null; direct: boolean; ownerId: number; ownerLabel: string; lastWriterId: number | null; lastWriterLabel: string | null }
+export interface ManagedSession { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean; kind: 'conversation' | 'channel'; tokens: number; platform: string | null; direct: boolean; ownerId: number; ownerLabel: string; lastWriterId: number | null; lastWriterLabel: string | null }
 /** Mirror of the daemon's slash-command def (src/brain/slashCommands.ts) — published at GET /brain/commands.
  *  `kind:'prompt'` is a plugin prompt macro: the surface sends the RAW `/name args` slash and PI expands
  *  the template's arguments ($ARGUMENTS/$1..$9) on the daemon; `prompt` is kept for menu/identification. */
@@ -240,7 +207,6 @@ export interface ConfigPatch {
   customModels?: { label: string; exec: string }[];
   hiddenPresets?: string[];
   modelNotes?: Record<string, string>;
-  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; providerId?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; tddMode?: boolean; prEnabled?: boolean; prBaseBranch?: string; prAutoOpen?: boolean; prVerifyCommand?: string; ghToken?: string };
   providers?: Record<string, { bin: string; args: string }>;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
   security?: { tokenTtlDays?: number; trustProxy?: boolean };
@@ -252,7 +218,6 @@ export interface ConfigPatch {
   /** Runtime knobs merged per-field by the daemon, like the brain limits above. */
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
 }
-interface MissionPrInfo { branch: string; prNumber: number | null; prUrl: string | null; prState: string | null; fixRounds: number; lastFeedback: string | null }
 export interface UserPatch { is_admin?: boolean; name?: string; username?: string; allowed_execs?: string[]; disabled_tools?: string[]; allowed_tools?: string[]; granted_plugins?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
 
@@ -582,6 +547,9 @@ export interface ToolCatalogOption {
 /** Live WhatsApp pairing state for the plugin "Pair" modal: a QR rendered as a PNG data URL, the phone
  *  pairing code (phoneNumber flow), and whether the device is already linked. */
 
+// @platform-keep session-task-list :: SessionTask && useSessionTasks && TasksModal && brain_cards && /plugins/todo/api/tasks
+/** Generic per-conversation checklist platform for future github/sandblox consumers; zero callers is expected.
+ * This is the todo/session-card system, not the retired work plugin domain. */
 export interface SessionTask {
   id: string;
   subject: string;
@@ -677,16 +645,11 @@ export interface ActivityEvent {
   count: number;
   last_ts: string | null;
 }
-/** A worker's `elowen ask` question parked on a human (overseer escalated / none), shown in the Escalations inbox. */
-export interface PendingAsk { askId: string; taskId: string; question: string; since: number; title: string; epicId: string | null; projectId: number }
-export interface Project { id: number; slug: string; path: string; notes: string; icon: string; pr_enabled: boolean | null }
+export interface Project { id: number; slug: string; path: string; notes: string; icon: string }
 interface GitStatus { branch: string; ahead: number; behind: number; dirty: number; clean: boolean }
 interface GitBranch { name: string; current: boolean }
 interface GitCommit { hash: string; subject: string; author: string; relative: string }
 export interface ProjectGit { isRepo: boolean; status: GitStatus | null; branches: GitBranch[]; commits: GitCommit[] }
-/** A handoff note one agent left for later agents on the same mission. */
-export interface Note { id: number; scope: string; target: string; author: string; body: string; created_at: string }
-
 
 /** One entry in a project's file tree. */
 export interface FileNode { path: string; type: 'file' | 'dir' }
@@ -715,21 +678,6 @@ export interface SystemInfo {
  *  the agent cannot answer. Admin-only endpoint. */
 interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
 export interface SystemReadiness { checks: ReadinessCheck[] }
-
-/** Per-provider install status of the `elowen-workflow` agent skill (Settings → System). The backend also
- *  returns a parsed `version`, but the panel renders only the derived state below, so it's omitted here. */
-interface SkillStatus {
-  provider: string;
-  present: boolean;
-  installed: boolean;
-  upToDate: boolean;
-}
-export interface SkillsInfo {
-  skills: SkillStatus[];
-}
-export interface SkillInstallResult {
-  results: Array<{ provider: string; installed: boolean; skipped: boolean; error?: string }>;
-}
 
 // One stored memory — the daemon's `MemoryRow`, shared via the wire contract (re-exported at the top
 // of this file). Per-user and private — every route derives identity from the session, never a
@@ -819,8 +767,7 @@ export interface RetrievalResult {
 /** Where a cost figure came from, so the UI never presents an estimate as billed truth. */
 type CostSource = 'provider_reported' | 'calculated' | 'unavailable';
 
-/** Token/cost usage for a task's agent run, read from the executor CLI's local session storage or the
- *  embedded brain's session (+ the provider's reported cost, when it sends one). */
+/** Normalized token/cost usage for one model bucket. */
 export interface TokenUsage {
   input: number;
   output: number;
@@ -879,9 +826,7 @@ export interface UserStats {
   topModel: string | null;
 }
 
-/** One day's rolled-up spend, for the dashboard's 7-day trend. `day` is `YYYY-MM-DD` (UTC, by task
- *  settlement date); `cost` is null when no task closed that day carried a cost (claude/codex → "—").
- *  Only days with settled tasks are returned — the client pads the gaps with zero. */
+/** One UTC day's rolled-up brain spend. Days without recorded usage are omitted. */
 export interface DayUsage {
   day: string;
   tokens: number;
@@ -891,7 +836,6 @@ export interface DayUsage {
 /** Result of a usage reset: how many rows each of the three independent counters lost. */
 export interface ResetUsageResult {
   ok: boolean;
-  cleared: number;
   chatCleared?: number;
   originsCleared?: number;
 }

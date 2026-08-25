@@ -76,7 +76,7 @@ async function showDoctorModal(body: string, allOk: boolean): Promise<void> {
 export async function runDoctor(args: string[], env: NodeJS.ProcessEnv, base: string, version: string): Promise<void> {
   void version; // no version-gated behavior yet — kept for dispatch-signature parity with runSetup
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('elowen doctor — check Elowen\'s health (daemon, providers, memory, tasks).\n  In a TTY it prompts for admin credentials; non-interactively set ELOWEN_TOKEN.');
+    console.log('elowen doctor — check Elowen\'s health (daemon, providers, memory, plugins).\n  In a TTY it prompts for admin credentials; non-interactively set ELOWEN_TOKEN.');
     return;
   }
 

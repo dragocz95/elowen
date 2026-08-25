@@ -13,7 +13,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 function resolvePromptsDir(): string {
   const candidates = [here, join(here, '..', '..', 'prompts')];
   for (const dir of candidates) {
-    // Probe with a template that stays core (the agents plugin owns pilot.md and friends now).
+    // Probe with a template that stays core; retired workflow templates are intentionally absent.
     if (existsSync(join(dir, 'elowen.md'))) return dir;
   }
   // Fall back to the compiled-sibling location; readTemplate surfaces a clear error if it is wrong.
@@ -27,8 +27,8 @@ const cache = new Map<string, string>();
  *  core file (resolution: user override → plugin file → core file); swapped whole on plugin reload. */
 let pluginSources = new Map<string, string>();
 
-/** Install the plugin prompt-source overlay (from the merged plugin registry). Drops the read cache for
- *  every name leaving OR entering the overlay so a reload re-resolves them from the right file. */
+/** Generic plugin prompt platform for future github/sandblox consumers; zero in-repo callers is expected.
+ * Installs the merged prompt-source overlay and drops cached names entering or leaving it. */
 export function setPluginPromptSources(sources: ReadonlyMap<string, string>): void {
   for (const name of pluginSources.keys()) cache.delete(name);
   for (const name of sources.keys()) cache.delete(name);

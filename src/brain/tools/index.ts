@@ -10,7 +10,7 @@ export { buildMemoryTools } from './memoryTools.js';
  *  manifest icons to resolve a `tool` event's icon. Keys are exact names or `prefix*` patterns. */
 export const BUILTIN_TOOL_ICONS: Record<string, string> = {
   // Kept as a PREFIX even though every Elowen* tool now lives in a plugin (work: the task control
-  // plane, agents: missions/sessions): the icon map is merged with the plugin manifests' own icons and
+  // plane): the icon map is merged with the plugin manifests' own icons and
   // this is the family's historical look, so a tool that moves between owners never changes glyph.
   'Elowen*': '🔥',
   'Memory*': '🧠',
@@ -46,7 +46,7 @@ export const BUILTIN_TOOL_OUTPUT_SHOWN: string[] = [
  *  (ElowenCreateTask), `Memory*` likewise (MemoryDelete), so only exact names can be right. */
 export const BUILTIN_TOOL_PLAN_SAFE: string[] = [
   // Every Elowen* tool lives in a plugin now (ElowenListTasks in `work`, ElowenListMissions/Sessions in
-  // `agents`); those manifests' `planSafe` declare them, so the composed plan-mode set is unchanged
+  // external integrations); their manifests' `planSafe` declare them, so the composed plan-mode set is unchanged
   // while the plugins are enabled.
   'MemorySearch', 'MemoryListRecent', 'MemoryCategories',
   // The six Lsp* tools live in the lsp plugin now; its manifest `planSafe` declares them, so the

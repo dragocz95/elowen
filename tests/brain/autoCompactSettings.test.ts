@@ -1,13 +1,10 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ModelRuntime, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { BrainService } from '../../src/brain/brainService.js';
-import { BrainWorkerService } from '../../src/brain/worker/brainWorker.js';
 import { compactionReserveTokens } from '../../src/brain/session/factory.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
-import { openWorkDb } from '../helpers/workDb.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { EventBus } from '../../src/api/sse.js';
-import { RefTaskStore } from '../helpers/refStores.js';
+import { openDb } from '../../src/store/db.js';
 
 let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
@@ -73,7 +70,7 @@ function brainHarness(settings: (userId: number) => CliSettings | undefined) {
     return { session };
   });
   const d = {
-    store: new BrainStore(openWorkDb(':memory:')),
+    store: new BrainStore(openDb(':memory:')),
     runtime: sharedRuntime,
     users: { ensureAdvisorToken: () => 'tok', get: () => ({ name: 'Filip', username: 'filip' }) },
     config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] },
@@ -213,53 +210,3 @@ describe('auto-compact threshold on live sessions', () => {
   });
 });
 
-describe('auto-compact threshold on task workers', () => {
-  function workerHarness(userSettings?: (userId: number) => CliSettings) {
-    const db = openWorkDb(':memory:');
-    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/repo')").run();
-    const tasks = new RefTaskStore(db);
-    tasks.create({ id: 'T-1', project_id: 1, title: 'Fix bug' });
-    tasks.setStatus('T-1', 'in_progress');
-    const spawned: { settings: SettingsManager }[] = [];
-    const models: { contextWindow: number }[] = [];
-    const settingsReads: number[] = [];
-    const session = fakeSession();
-    const svc = new BrainWorkerService({
-      store: new BrainStore(db), tasks: () => tasks, bus: new EventBus(),
-      runtime: sharedRuntime,
-      config: () => ({ providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] }),
-      url: 'http://daemon', token: 'tok',
-      userSettings: (userId: number) => { settingsReads.push(userId); return userSettings?.(userId); },
-      createSession: vi.fn(async (opts: { model?: { contextWindow: number } }) => {
-        if (opts.model) models.push(opts.model);
-        return { session };
-      }) as never,
-      resourceLoaderFactory: (o) => { spawned.push({ settings: o.settingsManager }); return undefined; },
-    });
-    const launch = { projectId: 1, projectPath: '/repo', taskId: 'T-1', agentName: 'a1', spec: { program: 'elowen', model: 'relay/m' } };
-    return { svc, launch, spawned, models, settingsReads };
-  }
-
-  it('compacts at the task owner’s threshold, per-model override included', async () => {
-    // Only owner 7 carries the override; every other row is a plain 20 %, so a lookup under the wrong id
-    // lands on a visibly different reserve.
-    const { svc, launch, spawned, models, settingsReads } = workerHarness((id) => (id === 7
-      ? { autoCompactAt: 50, autoCompactAtByModel: { 'relay/m': 40 } }
-      : { autoCompactAt: 20 }));
-
-    await svc.launch({ ...launch, ownerId: 7 });
-
-    expect([...new Set(settingsReads)]).toEqual([7]);
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 40));
-  });
-
-  it('falls back to the default for an ownerless task', async () => {
-    const { svc, launch, spawned, models, settingsReads } = workerHarness(() => ({ autoCompactAt: 50 }));
-
-    await svc.launch(launch);
-
-    // Nobody owns this task, so there is no row to read at all.
-    expect(settingsReads).toEqual([]);
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 80));
-  });
-});

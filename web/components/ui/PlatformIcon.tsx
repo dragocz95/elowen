@@ -27,7 +27,7 @@ const NAMES: Record<string, string> = {
   internal: 'Automation',
 };
 
-export function platformName(platform: string): string {
+function platformName(platform: string): string {
   return NAMES[platform] ?? platform;
 }
 

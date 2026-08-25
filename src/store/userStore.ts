@@ -23,18 +23,11 @@ export function readIsAdmin(db: Db, userId: number): boolean {
   const r = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(userId) as { is_admin: number } | undefined;
   return !!r?.is_admin;
 }
-/** What a token may do. 'full' = an interactive user session (the user's own rights). 'agent' = a
- *  spawned worker/overseer/pilot, restricted to its task-close / plan-submit / overseer verbs.
- *  'advisor' is stored in the DB for the per-user advisor session; it grants full access (mapped to
- *  'full' at the guard) but is isolated so rotating/stopping the advisor never touches login tokens.
- *  'terminal' is the same isolation for an admin's interactive `elowen chat` terminal (BrainTerminalService):
- *  full access at the guard, its own DB scope so revoking a terminal never disturbs login/advisor/agent tokens. */
-export type TokenScope = 'full' | 'agent';
+/** What a token may do. `full` is an interactive user session. `advisor` and `terminal` are stored
+ *  separately so revoking those sessions never disturbs login tokens; both resolve to full user access. */
+export type TokenScope = 'full';
 export type StoredScope = TokenScope | 'advisor' | 'terminal';
-/** A resolved token: the owning user, the token's scope, and — for an agent token minted for one
- *  specific task — that task's id, so route guards can narrow an agent to its own work. `taskId` is
- *  null for every other token (interactive sessions, and the unbound shared service token). */
-export interface Principal { user: User; scope: TokenScope; taskId: string | null }
+export interface Principal { user: User; scope: TokenScope }
 export interface ExternalIdentityInput {
   provider: string;
   tenantId: string;
@@ -462,57 +455,24 @@ export class UserStore {
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
   }
-  issueToken(userId: number, scope: StoredScope = 'full', taskId: string | null = null): string {
+  issueToken(userId: number, scope: StoredScope = 'full'): string {
     const token = randomBytes(32).toString('hex');
-    this.db.prepare('INSERT INTO auth_tokens (token, user_id, scope, task_id) VALUES (?, ?, ?, ?)').run(token, userId, scope, taskId);
+    this.db.prepare('INSERT INTO auth_tokens (token, user_id, scope) VALUES (?, ?, ?)').run(token, userId, scope);
     return token;
   }
-  /** Resolve a token to its owning user AND scope, so route guards can restrict agent tokens.
-   *  Tokens expire after the configured TTL — an old token captured from a log / URL stops working
-   *  even if it was never explicitly revoked. */
+  /** Resolve a token to its owning user. Tokens expire after the configured TTL, so an old token
+   *  captured from a log or URL stops working even when it was never explicitly revoked. */
   principalForToken(token: string, days?: number): Principal | null {
     const r = this.db
-      .prepare(`SELECT u.*, t.scope AS token_scope, t.task_id AS token_task FROM auth_tokens t JOIN users u ON u.id = t.user_id WHERE t.token = ? AND t.created_at > datetime('now', '-${ttlDays(days)} days')`)
-      .get(token) as (Row & { token_scope: string; token_task: string | null }) | undefined;
-    if (!r) return null;
-    const scope: TokenScope = r.token_scope === 'agent' ? 'agent' : 'full';
-    // Only an agent token carries a task binding; anything else is unbound by definition.
-    return { user: mask(r), scope, taskId: scope === 'agent' ? r.token_task : null };
-  }
-  /** The daemon's UNBOUND agent service token, reused across restarts: return the existing valid agent
-   *  token if one is still within TTL, else clear stale ones and mint a fresh token. Called at boot —
-   *  unlike a blind rotate, this keeps in-flight agents' credential alive across a daemon restart (they'd
-   *  otherwise 401 on `elowen close`) while still bounding accumulation (at most one live token).
-   *  Scoped to `task_id IS NULL` throughout, so it neither returns nor sweeps away the per-task tokens
-   *  minted by {@link ensureAgentTokenForTask} for live workers. */
-  ensureAgentToken(userId: number, days?: number): string {
-    return this.db.transaction(() => {
-      const existing = this.db
-        .prepare(`SELECT token FROM auth_tokens WHERE user_id = ? AND scope = 'agent' AND task_id IS NULL AND created_at > datetime('now', '-${ttlDays(days)} days') ORDER BY created_at DESC LIMIT 1`)
-        .get(userId) as { token?: string } | undefined;
-      if (existing?.token) return existing.token;
-      this.db.prepare("DELETE FROM auth_tokens WHERE user_id = ? AND scope = 'agent' AND task_id IS NULL").run(userId);
-      return this.issueToken(userId, 'agent');
-    })();
-  }
-  /** The agent token for ONE task, reused within TTL. A worker is spawned with this instead of the
-   *  shared service token, so the API can refuse it on any task but its own (and its parent epic) —
-   *  the shared token alone cannot distinguish two workers in the same project. Reuse keeps a resumed
-   *  or re-spawned worker on the same credential, exactly like {@link ensureAgentToken} does at boot. */
-  ensureAgentTokenForTask(userId: number, taskId: string, days?: number): string {
-    return this.db.transaction(() => {
-      const existing = this.db
-        .prepare(`SELECT token FROM auth_tokens WHERE user_id = ? AND scope = 'agent' AND task_id = ? AND created_at > datetime('now', '-${ttlDays(days)} days') ORDER BY created_at DESC LIMIT 1`)
-        .get(userId, taskId) as { token?: string } | undefined;
-      if (existing?.token) return existing.token;
-      this.db.prepare("DELETE FROM auth_tokens WHERE user_id = ? AND scope = 'agent' AND task_id = ?").run(userId, taskId);
-      return this.issueToken(userId, 'agent', taskId);
-    })();
+      .prepare(`SELECT u.* FROM auth_tokens t JOIN users u ON u.id = t.user_id
+        WHERE t.token = ? AND t.scope IN ('full', 'advisor', 'terminal')
+          AND t.created_at > datetime('now', '-${ttlDays(days)} days')`)
+      .get(token) as Row | undefined;
+    return r ? { user: mask(r), scope: 'full' } : null;
   }
   /** The user's advisor token, reused across restarts. Stored under DB scope 'advisor' so it is
-   *  isolated from login ('full') and worker ('agent') tokens — stopping/rotating the advisor never
-   *  disturbs the user's web session. principalForToken maps any non-'agent' scope to full access, so
-   *  the advisor acts with the user's own rights (mirrors ensureAgentToken's reuse-within-TTL shape). */
+   *  isolated from login ('full') tokens — stopping or rotating the advisor never disturbs the user's
+   *  web session. principalForToken maps the stored scope to full user access. */
   ensureAdvisorToken(userId: number, days?: number): string {
     return this.db.transaction(() => {
       const existing = this.db

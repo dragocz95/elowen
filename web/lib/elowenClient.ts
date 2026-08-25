@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, ElowenConfig, ConfigPatch, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, ManagedSession, BrainSearchHit, BrainMessage, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, PendingAsk, Project, ProjectGit, CommitLogEntry, Note, TokenUsage, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SystemReadiness, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
+import type { ElowenConfig, ConfigPatch, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, Project, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
 import { clearToken } from './token';
 import type { BrainBinding } from './brainSession';
 
@@ -80,35 +80,21 @@ const ownerQuery = (owner?: SkillOwner): string =>
   (owner === undefined ? '' : `?owner=${encodeURIComponent(owner === null ? 'me' : String(owner))}`);
 
 export const elowenClient = {
-  tasks: (projectId?: number) => req<Task[]>(projectId != null ? `/tasks?project_id=${projectId}` : '/tasks'),
-  sessions: () => req<SessionInfo[]>('/sessions'),
-  missions: () => req<Mission[]>('/missions'),
   health: () => req<{ ok: boolean; version?: string }>('/health'),
   setupStatus: () => req<{ needsSetup: boolean }>('/setup'),
-  createTask: (input: CreateTaskInput) => req<Task>('/tasks', json(input)),
-  updateTask: (id: string, patch: UpdateTaskInput) => req<Task>(`/tasks/${encodeURIComponent(id)}`, json(patch, 'PATCH')),
-  deleteTask: (id: string) => req<{ ok: boolean }>(`/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  /** Remove a whole mission: the epic, its child tasks and the mission row (not just one task). */
-  deleteMission: (epicId: string) => req<{ ok: boolean; tasks: number }>(`/tasks/${encodeURIComponent(epicId)}?subtree=1`, { method: 'DELETE' }),
-  /** Admin cleanup: wipe all tasks, missions and the activity feed; stop every live session. */
-  cleanupAll: () => req<{ ok: boolean; tasks: number; missions: number; events: number }>('/admin/cleanup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
-  taskUsage: (id: string) => req<TokenUsage | null>(`/tasks/${encodeURIComponent(id)}/usage`),
   /** Total token/cost usage aggregated per model; optional project filter and date window. `window`
    *  bounds come from `rangeBounds()` (lib/dateRange.ts) and can be `±Infinity` for an open-ended
    *  preset — an infinite bound is simply omitted rather than serialized as an Invalid Date. */
-  usageByModel: (projectId?: number, window?: { fromMs: number; toMs: number }) => {
+  usageByModel: (window?: { fromMs: number; toMs: number }) => {
     const params = new URLSearchParams();
-    if (projectId != null) params.set('project_id', String(projectId));
     if (window && Number.isFinite(window.fromMs)) params.set('from', new Date(window.fromMs).toISOString());
     if (window && Number.isFinite(window.toMs)) params.set('to', new Date(window.toMs).toISOString());
     const qs = params.toString();
     return req<ModelUsage[]>(`/usage/by-model${qs ? `?${qs}` : ''}`);
   },
-  /** Daily spend/token totals over the last `days` days, for the dashboard's spend sparkline. Scoped
-   *  to the caller's projects; only days with settled tasks come back (client pads the gaps). */
-  usageByDay: (projectId?: number, days = 7) => {
+  /** Daily brain spend/token totals over the last `days` days. */
+  usageByDay: (days = 7) => {
     const params = new URLSearchParams();
-    if (projectId != null) params.set('project_id', String(projectId));
     params.set('days', String(days));
     return req<DayUsage[]>(`/usage/by-day?${params.toString()}`);
   },
@@ -121,25 +107,9 @@ export const elowenClient = {
     if (window && Number.isFinite(window.toMs)) params.set('to', new Date(window.toMs).toISOString());
     return req<UsageByOriginResult>(`/usage/by-origin?${params.toString()}`);
   },
-  /** Admin: destructively clear every executor's CLI session store. Refused (409) while agents run. */
+  /** Admin: clear the caller's recorded brain usage and origin rollup. */
   resetUsage: () => req<ResetUsageResult>('/usage/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
-  allDeps: () => req<{ task_id: string; depends_on_id: string }[]>('/tasks/deps'),
-  planTask: (input: PlanInput) => req<PlanSubmitResult>('/tasks/plan', json(input)),
-  getPlanJob: (jobId: string) => req<PlanJob>(`/plan/${encodeURIComponent(jobId)}`),
-  insertPhases: (epicId: string, input: InsertPhasesInput) => req<InsertPhasesResult>(`/tasks/${encodeURIComponent(epicId)}/phases`, json(input)),
-  engage: (input: EngageInput) => req<Mission>('/missions', json(input)),
-  spawn: (input: { taskId: string; exec?: string }) => req<{ session: string }>('/sessions', json(input)),
-  closeTask: (id: string) => req<Task>(`/tasks/${id}`, json({ status: 'closed' }, 'PATCH')),
-  setTaskStatus: (id: string, status: string) => req<Task>(`/tasks/${id}`, json({ status }, 'PATCH')),
-  setTaskExec: (id: string, exec: string) => req<Task>(`/tasks/${id}`, json({ exec }, 'PATCH')),
-  approveGate: (id: string) => req<{ released: string[] }>(`/tasks/${id}/approve-gate`, { method: 'POST' }),
-  /** Every `elowen ask` parked on a human (overseer escalated / no overseer), for the Escalations inbox. */
-  pendingAsks: () => req<PendingAsk[]>('/asks/pending'),
-  /** Answer a worker's escalated question — unblocks the agent waiting on `elowen ask`. */
-  replyAsk: (taskId: string, askId: string, text: string) => req<{ ok: boolean }>(`/tasks/${encodeURIComponent(taskId)}/ask/${encodeURIComponent(askId)}/reply`, json({ text })),
   sessionPane: (name: string, ansi = false) => req<{ pane: string }>(`/sessions/${encodeURIComponent(name)}/pane${ansi ? '?ansi=1' : ''}`),
-  killSession: (name: string) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  sendKeys: (name: string, keys: string[]) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/keys`, json({ keys })),
   resizeSession: (name: string, cols: number, rows: number) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/resize`, json({ cols, rows })),
   /** Forward raw xterm `onData` bytes to a session's pane (snapshot-mirror interactive terminal). */
   sessionInput: (name: string, data: string) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/input`, json({ data })),
@@ -148,17 +118,6 @@ export const elowenClient = {
   // Web-native (not proxied to the daemon): how to reach the terminal WS. `directPort` set ⇒ connect
   // straight to the daemon (proxy-less IP mode); null ⇒ same-origin `/ws/`. Stable per deployment.
   wsConfig: () => req<{ directPort: number | null }>('/ws-config'),
-  advisorStatus: () => req<{ running: boolean; exec: string; session: string | null; autostart: boolean }>('/advisor/status'),
-  advisorStart: (exec: string) => req<{ session: string }>('/advisor/start', json({ exec })),
-  advisorStop: () => req<{ ok: boolean }>('/advisor/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
-  pauseMission: (id: string) => req<Mission>(`/missions/${id}`, json({ action: 'pause' }, 'PATCH')),
-  resumeMission: (id: string) => req<Mission>(`/missions/${id}`, json({ action: 'resume' }, 'PATCH')),
-  disengageMission: (id: string) => req<{ ok: boolean }>(`/missions/${id}`, { method: 'DELETE' }),
-  /** Manually open the PR for a PR-native mission (auto-open off). Returns the PR url + number. */
-  openMissionPr: (id: string) => req<{ url: string; number: number }>(`/missions/${id}/pr`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
-  /** Squash-merge a PR-native mission's PR into the base branch. Resolves on success; rejects with the
-   *  gate reason (PR not open / conflicts / CI not green) so the UI can show why it was refused. */
-  mergeMissionPr: (id: string) => req<{ ok: boolean }>(`/missions/${id}/merge-pr`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
   // Enabled plugins with a browser UI (menu metadata + bundle URL). `lang` localizes menu labels.
   pluginUi: (lang?: string) => req<PluginUiListing[]>(`/plugins/ui${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`),
   getConfig: () => req<ElowenConfig>('/config'),
@@ -167,8 +126,6 @@ export const elowenClient = {
   systemReadiness: () => req<SystemReadiness>('/system/readiness'),
   systemUpdate: () => req<{ started: boolean }>('/system/update', json({})),
   systemRestart: (target: 'daemon' | 'web') => req<{ ok: boolean }>('/system/restart', json({ target })),
-  systemSkills: () => req<SkillsInfo>('/system/skills'),
-  installSkills: () => req<SkillInstallResult>('/system/skills/install', json({})),
   login: (username: string, password: string) => req<AuthResult>('/auth/login', json({ username, password })),
   ssoProviders: () => req<{ id: string; label: string }[]>('/auth/sso/providers'),
   logout: () => req<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
@@ -252,7 +209,6 @@ export const elowenClient = {
   notificationDestinations: () => req<NotificationDestinationOption[]>('/plugins/destinations'),
   pluginTools: () => req<ToolCatalogOption[]>('/plugins/tools'),
   brainModels: () => req<BrainModelOption[]>('/brain/models'),
-  taskBrainConversation: (taskId: string) => req<BrainMessage[]>(`/tasks/${encodeURIComponent(taskId)}/conversation`),
   /** `session` binds the query to the caller's own explicit conversation (a session-bound chat client);
    *  absent → the server's active pointer. */
   brainStatus: (session?: string) => req<BrainStatus>(`/brain/status${session ? `?session=${encodeURIComponent(session)}` : ''}`),
@@ -273,9 +229,6 @@ export const elowenClient = {
     // an otherwise identical body, and inferring it from headers would trust a client-written value.
     req<{ ok: boolean }>('/brain/send', json({ text, surface: 'web', ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}), ...bind, ...(mode ? { mode } : {}) })),
   brainAnswer: (id: string, answers: AskAnswer[]) => req<{ ok: boolean; matched: boolean }>('/brain/answer', json({ id, answers })),
-  /** Admin: launch (or reuse) an `elowen chat` TUI terminal bound to the given brain conversation.
-   *  Returns the opaque tmux terminal name to stack as a dock pane; `created:false` when one already runs. */
-  brainTerminal: (session: string) => req<{ terminal: string; created: boolean }>('/brain/terminal', json({ session })),
   /** Remove one pending queued message by id (the × button). The reduced snapshot rides back on the
    *  `queue` stream event — the server is authoritative. `session` scopes it to a bound conversation. */
   brainQueueRemove: (id: string, session?: string) => req<{ removed: boolean }>(`/brain/queue/${encodeURIComponent(id)}${session ? `?session=${encodeURIComponent(session)}` : ''}`, { method: 'DELETE' }),
@@ -412,7 +365,7 @@ export const elowenClient = {
   },
   projects: () => req<Project[]>('/projects'),
   createProject: (v: { slug: string; path: string; notes?: string }) => req<Project>('/projects', json(v)),
-  updateProject: (id: number, patch: { path?: string; notes?: string; icon?: string; pr_enabled?: boolean | null }) => req<Project>(`/projects/${id}`, json(patch, 'PATCH')),
+  updateProject: (id: number, patch: { path?: string; notes?: string; icon?: string }) => req<Project>(`/projects/${id}`, json(patch, 'PATCH')),
   removeProject: (id: number) => req<{ ok: boolean }>(`/projects/${id}`, { method: 'DELETE' }),
   projectGit: (id: number) => req<ProjectGit>(`/projects/${id}/git`),
   projectFiles: (id: number) => req<FileNode[]>(`/projects/${id}/files`),
@@ -436,12 +389,8 @@ export const elowenClient = {
   renameProjectEntry: (id: number, from: string, to: string) => req<{ ok: boolean }>(`/projects/${id}/rename`, json({ from, to })),
   copyProjectEntry: (id: number, from: string, to: string) => req<{ ok: boolean }>(`/projects/${id}/copy`, json({ from, to })),
   deleteProjectEntry: (id: number, path: string) => req<{ ok: boolean }>(`/projects/${id}/entry?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
-  projectCommits: (id: number, limit = 30) => req<{ commits: CommitLogEntry[] }>(`/projects/${id}/commits?limit=${limit}`),
   projectChanged: (id: number) => req<{ changed: string[] }>(`/projects/${id}/changed`),
   projectChanges: (id: number) => req<{ diff: string }>(`/projects/${id}/changes`),
-  taskCommits: (id: string) => req<{ commits: CommitLogEntry[] }>(`/tasks/${encodeURIComponent(id)}/commits`),
-  taskCommitFileDiff: (id: string, hash: string, path: string) => req<{ diff: string }>(`/tasks/${encodeURIComponent(id)}/commit/${encodeURIComponent(hash)}/diff?path=${encodeURIComponent(path)}`),
-  missionNotes: (target: string) => req<Note[]>(`/notes?scope=mission&target=${encodeURIComponent(target)}`),
   userTools: (userId: number) => req<UserToolPill[]>(`/users/${userId}/tools`),
   userStats: (userId: number) => req<UserStats>(`/users/${userId}/stats`),
   userProjects: (userId: number) => req<number[]>(`/users/${userId}/projects`),

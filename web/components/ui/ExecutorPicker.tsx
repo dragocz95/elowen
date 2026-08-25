@@ -26,10 +26,10 @@ export function ExecutorPicker({ value, onChange, models, defaultLabel, allowDef
       value={value}
       onChange={onChange}
       models={models}
-      relayLabel={defaultLabel ?? t.tasks.defaultExecutor}
+      relayLabel={defaultLabel ?? t.common.defaultExecutor}
       allowRelay={allowDefault}
       kind={kind}
-      title={t.tasks.fieldExecutor}
+      title={t.common.fieldExecutor}
     />
   );
 }

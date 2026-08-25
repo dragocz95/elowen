@@ -4,7 +4,6 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ELOWEN_CLI_VERSION } from './version.js';
-import { ElowenClient } from './client.js';
 import { defaultLifecycleDeps, runLifecycle, runApiCommand } from './commands.js';
 import { callElowenApi } from '../shared/apiClient.js';
 import { menu } from './menu.js';
@@ -20,7 +19,7 @@ const USAGE = "usage: elowen [command] [options]  —  run `elowen --help` for t
 
 /** The full, grouped help shown for `elowen --help`. Kept as a function so the version is interpolated. */
 function helpText(version: string): string {
-  return `elowen ${version} - control plane for autonomous coding agents
+  return `elowen ${version} - personal AI workspace
 
 USAGE
   elowen                            open the interactive Elowen chat (in a terminal)
@@ -67,29 +66,6 @@ CHAT
                                     a /slash prompt runs that command, e.g. -p "/status", -p "/goal pause"
   login                           sign in and cache a token for \`elowen chat\` (no password prompt next time)
 
-TASKS
-  ls                              list all tasks (JSON)
-  ready                           list tasks ready to run (JSON)
-  sessions                        list live agent sessions (JSON)
-  send <session> "<text>"         type a message into a live agent's tmux and submit it
-                                    --no-enter                send the text without pressing Enter
-  close <id> [options]            close a task
-                                    --summary "<text>"        closing note
-                                    --outcome ok|fail         record the outcome
-
-AGENT-FACING                      (invoked by running agents — rarely needed by hand; requires the agents plugin)
-  help                            print this task's Elowen control guide (needs ELOWEN_TASK)
-  ask "<text>"                    ask the autopilot a free-text question and wait for the reply
-                                    (needs ELOWEN_TASK; the answer is printed to stdout)
-                                    --history                 print this task's chat history instead
-  note add <missionId> "<text>"   leave a handoff note for later phases of this mission
-  note ls  <missionId>            read this mission's handoff notes (oldest-first)
-  api <METHOD> <path> [body]      generic authenticated REST call (needs ELOWEN_URL/ELOWEN_TOKEN)
-  plan submit --phases '<json>'   submit an autopilot plan        (needs ELOWEN_PLAN_JOB)
-  overseer poll                   wait for the next decision       (needs ELOWEN_MISSION)
-  overseer decide --id <id> …     resolve a decision: --approve | --escalate | --choice <optionId> | --message "<reply>" | --restart
-                                    [--confidence <0..1>] [--rationale "<text>"]
-
 OPTIONS
   -h, --help                      show this help
   -v, --version                   print the version
@@ -100,23 +76,15 @@ Docs & issues: https://github.com/dragocz95/elowen`;
 /** Commands that talk to the daemon API — only these justify auto-starting it. Everything else
  *  (help, unknown verbs) must NOT spawn a daemon: a stray detached daemon squats the port and starves
  *  the systemd-managed one into a restart loop. */
-const API_COMMANDS = new Set(['ls', 'ready', 'sessions', 'send', 'close', 'note', 'plan', 'overseer', 'api', 'ask', 'chat', 'login']);
+const API_COMMANDS = new Set(['api', 'chat', 'login']);
 
 /** True only for verbs that need the daemon API up — the gate for ensureDaemon's auto-spawn. */
 export function needsDaemon(cmd: string | undefined): boolean {
   return cmd !== undefined && API_COMMANDS.has(cmd);
 }
 
-/** The env a dispatched command runs with, carrying the credential it will authenticate with.
- *
- *  Every task verb reaches the API through one token, resolved the same way `chat` and `run` already do:
- *  the env first — the daemon injects ELOWEN_TOKEN into every agent it spawns, so an agent authenticates
- *  exactly as before — and otherwise the token `elowen login` cached. Reading only the env is why a human
- *  who HAD signed in still met a bare 401 on `elowen ls|api|ready`: nothing outside the chat path ever
- *  consulted that cache, and the failure named neither the cause nor `elowen login`.
- *
- *  `chat` and `login` are exempt because they resolve — or create — their own credential. Gating them on
- *  one already existing would make `elowen login` impossible to run without being logged in already. */
+/** The env a dispatched command runs with. Chat and login resolve or create their own credential; the
+ * generic API command receives the cached token when no explicit ELOWEN_TOKEN is present. */
 export function cliEnvFor(
   cmd: string | undefined, env: NodeJS.ProcessEnv, resolve: (e: NodeJS.ProcessEnv) => string = resolveToken,
 ): NodeJS.ProcessEnv {
@@ -186,24 +154,12 @@ export async function ensureDaemon(deps: Partial<EnsureDaemonDeps> = {}) {
   if (!healthy) throw new Error('elowen daemon did not become healthy');
 }
 
-/** Companion to the shared `flag()` reader: tells "absent" apart from "present but valueless". */
-function has(args: string[], name: string): boolean { return args.includes(name); }
-
-export async function run(argv: string[], c: ElowenClient, env: NodeJS.ProcessEnv): Promise<void> {
-  const [cmd, arg, ...rest] = argv;
+export async function run(argv: string[], env: NodeJS.ProcessEnv): Promise<void> {
+  const [cmd] = argv;
   switch (cmd) {
-    case 'ls': console.log(JSON.stringify(await c.tasks(), null, 2)); break;
-    case 'ready': console.log(JSON.stringify(await c.ready(), null, 2)); break;
-    case 'sessions': console.log(JSON.stringify(await c.sessions(), null, 2)); break;
     case 'chat': {
-      // Interactive Elowen chat: a thin pi-tui client over the server-side brain. The shared launcher
-      // resolves a token (env → cache → interactive login) and opens the TUI — same path as the menu.
       const chatArgs = argv.slice(1);
       const session = flag(chatArgs, '--session');
-      // Launching the CLI opens a BLANK conversation. Silently resuming whatever was last said in this
-      // directory made every launch a guess about intent, and the old thread is never lost — `-c` resumes
-      // it explicitly, and /resume + the /sessions picker reach any of them. An explicit --session (or
-      // --new) still means exactly what it says.
       const resume = chatArgs.includes('--continue') || chatArgs.includes('-c');
       await launchChat(BASE, env, {
         model: flag(chatArgs, '--model'),
@@ -212,152 +168,18 @@ export async function run(argv: string[], c: ElowenClient, env: NodeJS.ProcessEn
       });
       break;
     }
-    case 'login': {
+    case 'login':
       await interactiveLogin(BASE, env);
       console.log('Signed in — token saved.');
       break;
-    }
-    case 'send': {
-      // Type a message straight into a running agent's tmux — the manual unblock for when an agent
-      // asks a free-text question (which the deriver can't detect) and otherwise hangs forever.
-      const session = arg;
-      const noEnter = has(rest, '--no-enter');
-      const text = rest.filter((a) => a !== '--no-enter')[0];
-      if (!session || text === undefined || text === '') { console.error('usage: elowen send <session> "<text>" [--no-enter]'); process.exit(1); }
-      // Default appends a newline so the agent actually receives the message (Enter submits);
-      // --no-enter types it without submitting (stage text, or send a lone control char).
-      await c.sendInput(session, noEnter ? text : `${text}\n`);
-      console.log(`sent to ${session}`); break;
-    }
     case 'api': {
-      const code = await runApiCommand(argv.slice(1), env, { call: callElowenApi, out: (s) => console.log(s), err: (s) => console.error(s) });
+      const code = await runApiCommand(argv.slice(1), env, { call: callElowenApi, out: (line) => console.log(line), err: (line) => console.error(line) });
       process.exit(code);
       break;
     }
-    case 'close': {
-      if (!arg) { console.error('usage: elowen close <taskId> [--summary "<text>"] [--outcome ok|fail]'); process.exit(1); }
-      const outcome = flag(rest, '--outcome');
-      // A flag given with no value (`--outcome` at the end, or followed by another flag) is a mistake,
-      // not "no outcome" — error instead of silently closing with none, which would let the agent think
-      // it recorded ok/fail when it didn't. Same for an empty --summary.
-      if (has(rest, '--outcome') && outcome === undefined) { console.error('elowen close: --outcome requires a value (ok or fail)'); process.exit(2); }
-      if (has(rest, '--summary') && flag(rest, '--summary') === undefined) { console.error('elowen close: --summary requires a value'); process.exit(2); }
-      // Reject a typo'd outcome instead of silently storing null — the agent would otherwise think it
-      // closed "ok"/"fail" while the task records no outcome at all.
-      if (outcome !== undefined && outcome !== 'ok' && outcome !== 'fail') { console.error('elowen close: --outcome must be ok or fail'); process.exit(2); }
-      await c.close(arg, { summary: flag(rest, '--summary'), outcome });
-      console.log(`closed ${arg}`); break;
-    }
-    case 'ask': {
-      // A worker asks the autopilot a free-text question and blocks until it gets an answer. The task
-      // is taken from ELOWEN_TASK (set at spawn), so the agent needs only the question text.
-      const taskId = (env.ELOWEN_TASK);
-      if (!taskId) { console.error('elowen ask: ELOWEN_TASK is not set'); process.exit(1); }
-      // `elowen ask --history` prints this task's chat history so the agent (or a human in the terminal)
-      // can review the whole conversation, e.g. after resuming.
-      if (arg === '--history') {
-        const rows = await c.askHistory(taskId) as { detail: string }[];
-        for (const r of rows) { try { const m = JSON.parse(r.detail) as { role: string; text: string }; console.log(`${m.role}: ${m.text}`); } catch { /* skip malformed row */ } }
-        break;
-      }
-      if (!arg) { console.error('usage: elowen ask "<question>"  |  elowen ask --history'); process.exit(1); }
-      const { askId } = await c.askStart(taskId, arg) as { askId: string };
-      // Long-poll until the autopilot/human answers (or the sentinel fires). The server returns `{}`
-      // every ~25s as a heartbeat (keeps the HTTP request alive); just re-poll. Print the reply so the
-      // agent reads it from stdout, then continue its work. Tolerate a transient blip (proxy/network)
-      // with a short backoff so a multi-minute wait isn't killed by one failed request; a 404 means the
-      // exchange is gone (e.g. the daemon restarted) — proceed on our own rather than abort the task.
-      for (;;) {
-        let r: { text?: string };
-        try {
-          r = await c.askPoll(taskId, askId) as { text?: string };
-        } catch (e) {
-          const err = String(e);
-          // The plugin serving this surface is absent, so the gate itself is gone — not one lost
-          // exchange. Telling the agent to "use its own best judgement" here would quietly convert a
-          // human-in-the-loop checkpoint into unattended work, which is the opposite of what asking
-          // meant. Report it instead and let the agent stop at the decision it could not get answered.
-          if (err.includes('not installed or not enabled')) {
-            console.log('The ask surface is unavailable: the plugin that answers it is not installed on this daemon, so no human or autopilot can reply. Do NOT proceed with the decision you asked about — report that the question could not be delivered.');
-            break;
-          }
-          if (err.includes('404')) { console.log('No answer is available (the request was lost). Proceed using your own best judgement: make the safest reasonable, reversible assumption and continue.'); break; }
-          await new Promise((res) => setTimeout(res, 2000)); // transient — back off and re-poll
-          continue;
-        }
-        if (typeof r.text === 'string') { console.log(r.text); break; }
-      }
-      break;
-    }
-    case 'help': {
-      // `elowen help` with ELOWEN_TASK set is the agent-facing path: print this task's context-aware control
-      // guide (how to work / ask / close), rendered by the daemon. The human `elowen help` (no ELOWEN_TASK)
-      // never reaches here — main() prints the CLI usage and returns before dispatch.
-      const taskId = (env.ELOWEN_TASK);
-      if (!taskId) { console.error(USAGE); process.exit(1); }
-      const { text } = await c.guide(taskId) as { text?: string };
-      if (typeof text === 'string') console.log(text);
-      break;
-    }
-    case 'note': {
-      // Handoff notes between agents working the same mission. `<missionId>` is the epic id (or `m-<epicId>`);
-      // the daemon normalizes the prefix. add → leave a note; ls → read the mission's notes (oldest-first).
-      if (arg === 'add') {
-        const target = rest[0]; const text = rest[1];
-        if (!target || !text) { console.error('usage: elowen note add <missionId> "<text>"'); process.exit(1); }
-        await c.noteAdd(target, text);
-        console.log(`noted on ${target}`); break;
-      }
-      if (arg === 'ls') {
-        if (!rest[0]) { console.error('usage: elowen note ls <missionId>'); process.exit(1); }
-        console.log(JSON.stringify(await c.notes(rest[0]), null, 2)); break;
-      }
-      console.error('usage: elowen note <add <missionId> "<text>"|ls <missionId>>'); process.exit(1); break;
-    }
-    case 'plan': {
-      if (arg !== 'submit') { console.error("usage: elowen plan submit --phases '<json>'"); process.exit(1); }
-      const jobId = (env.ELOWEN_PLAN_JOB);
-      if (!jobId) { console.error('elowen plan submit: ELOWEN_PLAN_JOB is not set'); process.exit(1); }
-      const raw = flag(rest, '--phases') ?? '[]';
-      let phases: unknown;
-      try { phases = JSON.parse(raw); } catch { console.error('elowen plan submit: --phases is not valid JSON'); process.exit(1); }
-      await c.planSubmit(jobId, phases);
-      console.log(`submitted plan to ${jobId}`); break;
-    }
-    case 'overseer': {
-      const missionId = (env.ELOWEN_MISSION);
-      if (!missionId) { console.error('elowen overseer: ELOWEN_MISSION is not set'); process.exit(1); }
-      if (arg === 'poll') {
-        // Absorb heartbeats HERE, in the CLI process, so the (LLM-driven) overseer agent is woken
-        // only for a real decision. The server long-poll returns `{}` every ~25s to keep the HTTP
-        // request from hanging; surfacing those heartbeats to the model would force a fresh round-trip
-        // (and token spend) every 25s for an otherwise-idle overseer. Loop until a decision (`id`) or
-        // an error arrives; when the mission ends the daemon kills this session, ending the loop.
-        for (;;) {
-          const r = await c.overseerPoll(missionId) as Record<string, unknown> | null;
-          if (r && (r.id || r.error)) { console.log(JSON.stringify(r, null, 2)); break; }
-          // heartbeat (`{}`) — the server already blocked ~25s, so just poll again.
-        }
-        break;
-      }
-      if (arg === 'decide') {
-        const id = flag(rest, '--id');
-        if (!id) { console.error('usage: elowen overseer decide --id <id> (--approve|--escalate|--choice <optionId>|--message "<reply>"|--restart) [--confidence <0..1>] [--rationale "<text>"]'); process.exit(1); }
-        // A 'question' decision picks an option (--choice <id>); a 'message' decision answers with free
-        // text (--message); a permission/review decision approves or escalates (--approve|--escalate).
-        // Either way confidence rides along for the autonomy gate; --escalate is the absence of all.
-        const choice = flag(rest, '--choice');
-        const message = flag(rest, '--message');
-        const approve = has(rest, '--approve');
-        // A 'check' decision (idle worker) may instead --restart it; rides along like the other verbs.
-        const restart = has(rest, '--restart');
-        const confidence = (approve || choice !== undefined || message !== undefined) ? Number(flag(rest, '--confidence') ?? '0.7') : 0;
-        await c.overseerDecide(missionId, { id, approve, confidence: Number.isFinite(confidence) ? confidence : 0, rationale: flag(rest, '--rationale') ?? '', ...(choice !== undefined ? { choice } : {}), ...(message !== undefined ? { message } : {}), ...(restart ? { restart: true } : {}) });
-        console.log(`decided ${id}`); break;
-      }
-      console.error('usage: elowen overseer <poll|decide ...>'); process.exit(1); break;
-    }
-    default: console.error(USAGE); process.exit(1);
+    default:
+      console.error(USAGE);
+      process.exit(1);
   }
 }
 
@@ -372,17 +194,7 @@ export async function main() {
   // so it runs BEFORE ensureDaemon like install/setup.
   if (argv[0] === 'menu') { await menu(process.env, version); return; }
   // Help / bare non-TTY invocation: print usage and stop. Must NOT fall through to ensureDaemon.
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') {
-    // A running agent invokes `elowen help` with ELOWEN_TASK set to get its task control guide (not the CLI
-    // usage). That path DOES need the daemon, so start it and dispatch through `run`. The `-h`/`--help`
-    // flags and a human's bare `elowen help` (no ELOWEN_TASK) still just print usage.
-    if (argv[0] === 'help' && (process.env.ELOWEN_TASK)) {
-      await ensureDaemon();
-      await run(['help'], new ElowenClient(BASE, (process.env.ELOWEN_TOKEN)), process.env);
-      return;
-    }
-    console.log(helpText(version)); return;
-  }
+  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(helpText(version)); return; }
   if (argv[0] === '--version' || argv[0] === '-v') { console.log(version); return; }
   // `elowen install` is the root provisioning wizard — it sets up systemd, the proxy and the admin
   // itself, so it must run BEFORE ensureDaemon (no auto-spawn) and before the lifecycle commands.
@@ -415,19 +227,15 @@ export async function main() {
     if (!process.stdout.write('')) await new Promise<void>((r) => process.stdout.once('drain', () => r()));
     process.exit(code);
   }
-  // `elowen update --auto` is the hourly systemd timer's entrypoint: gated on the opt-in flag + live
-  // missions (read straight from the DB), it never auto-spawns a daemon and stays silent-success when
+  // `elowen update --auto` is the hourly systemd timer's entrypoint: gated on the opt-in flag, it never
+  // auto-spawns a daemon and stays silent-success when
   // it decides not to update — so handle it before both runLifecycle and ensureDaemon.
   if (argv[0] === 'update' && argv.includes('--auto')) {
     const { autoUpdate } = await import('./autoUpdate.js');
     const out = await autoUpdate(process.env, { current: version });
     console.log(out.ran
-      ? (out.result.updated
-          ? (out.result.restartDeferred
-              ? `Installed ${out.result.to} — restart deferred (a mission went live); it takes over on the next restart`
-              : `Auto-updated ${out.result.from} → ${out.result.to}`)
-          : `Already up to date (${out.result.to})`)
-      : out.reason === 'busy' ? 'Auto-update deferred — a mission is running' : 'Auto-update is off');
+      ? (out.result.updated ? `Auto-updated ${out.result.from} → ${out.result.to}` : `Already up to date (${out.result.to})`)
+      : 'Auto-update is off');
     return;
   }
   // Install-lifecycle commands manage the daemon/web themselves — handle them BEFORE ensureDaemon so
@@ -437,8 +245,7 @@ export async function main() {
   if (!needsDaemon(argv[0])) { console.error(USAGE); process.exit(1); }
   await ensureDaemon();
   const env = cliEnvFor(argv[0], process.env);
-  const c = new ElowenClient(BASE, env.ELOWEN_TOKEN);
-  await run(argv, c, env);
+  await run(argv, env);
 }
 
 // Run only when invoked as the binary, not when imported (e.g. by tests). A global npm install exposes

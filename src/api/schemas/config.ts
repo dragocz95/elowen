@@ -47,7 +47,6 @@ export const brainLimitsPatchSchema = z.object({
   goalMaxTurns: z.number().optional(),
   channelSessionCap: z.number().optional(),
   delegateContextChars: z.number().optional(),
-  askHistoryTurns: z.number().optional(),
 });
 
 /** The operator-tunable runtime limits, all optional for the same reason as the brain limits above —
@@ -106,24 +105,6 @@ export const configPatchSchema = z.object({
   customModels: z.array(z.object({ label: z.string(), exec: z.string() })).optional(),
   hiddenPresets: z.array(z.string()).optional(),
   modelNotes: z.record(z.string(), z.string()).optional(),
-  autopilot: z.object({
-    model: z.string().optional(),
-    overseerModel: z.string().optional(),
-    apiUrl: z.string().optional(),
-    providerId: z.string().optional(),
-    apiKey: z.string().optional(),
-    notes: z.string().optional(),
-    prompt: z.string().optional(),
-    pilotExec: z.string().optional(),
-    overseerExec: z.string().optional(),
-    reviewOnDone: z.boolean().optional(),
-    tddMode: z.boolean().optional(),
-    prEnabled: z.boolean().optional(),
-    prBaseBranch: z.string().optional(),
-    prAutoOpen: z.boolean().optional(),
-    prVerifyCommand: z.string().optional(),
-    ghToken: z.string().optional(),
-  }).optional(),
   providers: z.record(z.string(), providerConfigPatchSchema).optional(),
   defaults: z.object({
     exec: z.string().optional(),

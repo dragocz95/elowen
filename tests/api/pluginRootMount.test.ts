@@ -32,13 +32,12 @@ function rootPluginProvider(marker = 'gen1'): { provider: PluginRegistryProvider
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name: 'rooty', version: '1.0.0', apiVersion: '1', description: 'root mount demo', entry: 'index.mjs',
-    provides: { apiRoutes: ['/rooty', '/rooty/agent-poll', '/rooty/admin-knob', '/rooty/feed', '/projects', '/plugins/rooty/:x', 'ns-ping'] },
+    provides: { apiRoutes: ['/rooty', '/rooty/admin-knob', '/rooty/feed', '/projects', '/plugins/rooty/:x', 'ns-ping'] },
   }));
   writeFileSync(join(dir, 'index.mjs'), `
     export function register(ctx){
       ctx.registerApiRoute({ rootMount: '/rooty', path: '', access: 'user', handler: async (req) => ({ body: { marker: '${marker}', remainder: req.path, auth: req.auth } }) });
       ctx.registerApiRoute({ rootMount: '/rooty', path: '', method: 'POST', access: 'user', handler: async (req) => ({ status: 201, body: { created: await req.json() } }) });
-      ctx.registerApiRoute({ rootMount: '/rooty/agent-poll', path: '', access: 'agent', handler: async (req) => ({ body: { scope: req.auth.tokenScope } }) });
       ctx.registerApiRoute({ rootMount: '/rooty/admin-knob', path: '', access: 'admin', handler: async () => ({ body: { secret: 7 } }) });
       ctx.registerApiRoute({ rootMount: '/rooty/feed', path: '', access: 'user', handler: async () => ({ sse: async (send) => { await send('one', 'tick'); await send('two', 'tick'); } }) });
       // Collides with the core '/projects' family — the dispatcher must skip it with a warning.
@@ -103,16 +102,12 @@ describe('root-mounted plugin API routes', () => {
     expect(await ok.json()).toEqual({ created: { a: 1 } });
   });
 
-  it('enforces declared access levels on root mounts (agent / admin)', async () => {
+  it('enforces admin access on root mounts', async () => {
     const { provider } = rootPluginProvider();
     const { app, token, deps } = await makeTestApp({ extra: { plugins: provider } });
-    // A user token may call an agent route; an agent token must NOT reach a plain user route.
-    expect((await app.request('/rooty/agent-poll', auth(token))).status).toBe(200);
-    const admin = deps.users.list()[0]!;
-    const agentTok = deps.users.ensureAgentTokenForTask(admin.id, 'task-x');
-    expect((await app.request('/rooty/agent-poll', auth(agentTok))).status).toBe(200); // declared access:'agent'
-    expect((await app.request('/rooty', auth(agentTok))).status).toBe(403);
-    expect((await app.request('/rooty/admin-knob', auth(token))).status).toBe(200); // admin user passes
+    const plain = deps.users.create('plain', 'pw');
+    expect((await app.request('/rooty/admin-knob', auth(deps.users.issueToken(plain.id)))).status).toBe(403);
+    expect((await app.request('/rooty/admin-knob', auth(token))).status).toBe(200);
   });
 
   it('skips a mount a core route owns, with a warning — core wins (mutation test)', async () => {

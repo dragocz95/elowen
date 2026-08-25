@@ -66,13 +66,4 @@ describe('POST /brain/think', () => {
 
     expect(settings.cliSettings(1).thinkingLevel).toBe('high');
   });
-
-  it('is closed to an agent-scoped token, which must not rewrite a person\u2019s default', async () => {
-    const { app, deps, settings } = await appWithBrain();
-    const agentTok = deps.users.issueToken(1, 'agent');
-
-    const res = await app.request('/brain/think', post(agentTok, { level: 'low' }));
-    expect(res.status).toBe(403);
-    expect(settings.cliSettings(1).thinkingLevel).toBe('');
-  });
 });

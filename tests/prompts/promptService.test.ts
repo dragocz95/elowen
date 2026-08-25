@@ -72,17 +72,14 @@ describe('PromptService.render', () => {
     expect(prompts.render('elowen', { userName: 'Bob' })).toContain('<elowen_advisor>'); // default elowen text, not CUSTOM
   });
 
-  // 'worker-brain' is the embedded worker's template — the one that stayed core when the tmux-agent
-  // templates left with the agents plugin. It takes the same vars, so these two keep testing override
-  // resolution over a template with substitutions rather than a bare advisor prompt.
-  it("uses the user's override and substitutes vars", () => {
-    store.set(1, 'worker-brain', 'Hello {{agentName}}, do {{taskId}}.');
-    expect(prompts.render('worker-brain', { agentName: 'a1', taskId: 't9' }, 1)).toBe('Hello a1, do t9.');
+  it("uses the user's CLI prompt override and substitutes vars", () => {
+    store.set(1, 'cli/plan-mode', 'Write the plan to {{planFile}}.');
+    expect(prompts.render('cli/plan-mode', { planFile: '/tmp/plan.md' }, 1)).toBe('Write the plan to /tmp/plan.md.');
   });
 
   it('isolates overrides per user', () => {
-    store.set(1, 'worker-brain', 'USER ONE');
-    expect(prompts.render('worker-brain', {}, 2)).toBe(rawTemplate('worker-brain'));
+    store.set(1, 'cli/workflow-mode', 'USER ONE');
+    expect(prompts.render('cli/workflow-mode', {}, 2)).toBe(rawTemplate('cli/workflow-mode'));
   });
 
   it('renders nested CLI prompt templates', () => {
@@ -92,11 +89,6 @@ describe('PromptService.render', () => {
       .toContain('/tmp/plans/brave-otter-3f9a.md');
     store.set(1, 'cli/plan-mode', 'CUSTOM PLAN MODE');
     expect(prompts.render('cli/plan-mode', {}, 1)).toBe('CUSTOM PLAN MODE');
-  });
-
-  it('ignores an override for a non-editable template name', () => {
-    store.set(1, 'planner-fallback', 'SHOULD NOT WIN');
-    expect(prompts.render('planner-fallback', {}, 1)).toBe(rawTemplate('planner-fallback'));
   });
 
   it('appends (never replaces) the elowen override — the system identity stays intact', () => {

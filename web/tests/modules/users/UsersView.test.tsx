@@ -46,7 +46,7 @@ describe('UsersView', () => {
     let patched: { id?: string; body?: unknown } = {};
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/users', () => HttpResponse.json([
         { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
         { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },
@@ -78,7 +78,7 @@ describe('UsersView', () => {
     let deleteHit = false;
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/users', () => HttpResponse.json([
         { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
         { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },

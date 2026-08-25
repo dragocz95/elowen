@@ -1,16 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ElowenClient } from '../../src/cli/client.js';
 
 const launchChat = vi.fn(async () => {});
 vi.mock('../../src/cli/chat/launch.js', () => ({ launchChat: (...args: unknown[]) => launchChat(...args as []) }));
 
 const { run } = await import('../../src/cli/index.js');
 
-const client = {} as ElowenClient;
 const env = {} as NodeJS.ProcessEnv;
 /** The options `elowen chat …` would hand the TUI launcher. */
 const optionsFor = async (args: string[]): Promise<{ model?: string; session?: string; fresh?: boolean }> => {
-  await run(['chat', ...args], client, env);
+  await run(['chat', ...args], env);
   return launchChat.mock.calls.at(-1)![2] as { model?: string; session?: string; fresh?: boolean };
 };
 

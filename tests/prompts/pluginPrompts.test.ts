@@ -55,26 +55,26 @@ describe('registerPrompts', () => {
 describe('prompt catalog + renderer overlay', () => {
   it('plugin entries extend the catalog but never displace a core entry', () => {
     setPluginPromptCatalog([
-      { name: 'agents-brief', group: 'agents', vars: ['x'], jsonContract: false, appendOnly: true },
-      { name: 'planner', group: 'agents', vars: [], jsonContract: true }, // core name — must be dropped
+      { name: 'demo-brief', group: 'demo', vars: ['x'], jsonContract: false, appendOnly: true },
+      { name: 'scheduled', group: 'demo', vars: [], jsonContract: true }, // core name — must be dropped
     ]);
     const all = editablePrompts();
-    expect(all.filter((p) => p.name === 'planner')).toHaveLength(1);
-    expect(all.find((p) => p.name === 'planner')?.group).toBe('pilot');
-    expect(isEditablePrompt('agents-brief')).toBe(true);
-    expect(isAppendOnlyPrompt('agents-brief')).toBe(true);
-    expect(isEditablePrompt('agents-missing')).toBe(false);
+    expect(all.filter((p) => p.name === 'scheduled')).toHaveLength(1);
+    expect(all.find((p) => p.name === 'scheduled')?.group).toBe('advisor');
+    expect(isEditablePrompt('demo-brief')).toBe(true);
+    expect(isAppendOnlyPrompt('demo-brief')).toBe(true);
+    expect(isEditablePrompt('demo-missing')).toBe(false);
   });
 
   it('a plugin source shadows the core file and un-shadows on swap-out', () => {
-    writeFileSync(join(tmp, 'planner.md'), 'plugin planner {{goal}}');
-    const core = render('planner', { goal: 'g' });
-    expect(core).not.toContain('plugin planner');
-    setPluginPromptSources(new Map([['planner', join(tmp, 'planner.md')]]));
-    expect(render('planner', { goal: 'g' })).toBe('plugin planner g');
+    writeFileSync(join(tmp, 'scheduled.md'), 'plugin scheduled {{agentName}}');
+    const core = render('scheduled', { agentName: 'Ada' });
+    expect(core).not.toContain('plugin scheduled');
+    setPluginPromptSources(new Map([['scheduled', join(tmp, 'scheduled.md')]]));
+    expect(render('scheduled', { agentName: 'Ada' })).toBe('plugin scheduled Ada');
     // Swap the overlay out again — the cache entry must drop with it, not pin the plugin text.
     setPluginPromptSources(new Map());
-    expect(render('planner', { goal: 'g' })).toBe(core);
+    expect(render('scheduled', { agentName: 'Ada' })).toBe(core);
   });
 });
 

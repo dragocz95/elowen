@@ -253,9 +253,9 @@ describe('buildMemoryTools', () => {
     expect(txt(search)).toBe('Memory is only available to you — in your own Elowen chat or from your linked platform account.');
   });
 
-  it('task-worker (no identity established): refused', async () => {
+  it('a turn with no established identity is refused', async () => {
     const { store, byName } = toolset();
-    // A task-worker turn runs without a turn identity → currentIdentity() is null.
+    // No turn identity means currentIdentity() is null.
     const r = await run(undefined, () => byName('MemoryAdd').execute('c1', { body: 'worker leak' }));
     expect(txt(r)).toBe('Memory is only available to you — in your own Elowen chat or from your linked platform account.');
     expect(store.list(1)).toHaveLength(0);

@@ -14,7 +14,6 @@ import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { CORE_MCP_TOOLS } from '../../src/mcp/tools.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
 
 /** How the daemon's OWN /mcp server COMPOSES: its escape hatch plus whatever the loaded plugins
  *  contribute, and what happens to a plugin tool when its owner is switched off. The contributors are a
@@ -57,7 +56,7 @@ function makeApp(enabled: string[]) {
   const bob = users.create('bob', 'pw');
   users.setGrantedPlugins(bob.id, ['fixture']);
   const app = createServer({
-    tasks: new RefTaskStore(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     tmux: new FakeTmuxDriver() as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

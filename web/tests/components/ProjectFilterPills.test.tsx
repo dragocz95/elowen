@@ -9,7 +9,7 @@ import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
 import { createWrapper } from '../test-utils';
 
 // 8 projects → the tail past the 5-pill preview folds behind "+N more".
-const PROJECTS = Array.from({ length: 8 }, (_, i) => ({ id: i + 1, slug: `proj-${i + 1}`, path: `/repo/p${i + 1}`, notes: '', icon: '', pr_enabled: null }));
+const PROJECTS = Array.from({ length: 8 }, (_, i) => ({ id: i + 1, slug: `proj-${i + 1}`, path: `/repo/p${i + 1}`, notes: '', icon: '' }));
 
 const server = setupServer(http.get('*/api/projects', () => HttpResponse.json(PROJECTS)));
 beforeAll(() => server.listen({ onUnhandledRequest })); afterAll(() => server.close());

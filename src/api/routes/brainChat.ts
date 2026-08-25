@@ -79,7 +79,7 @@ export const SERVER_COMMANDS: Readonly<Record<string, ServerCommandHandler>> = {
 };
 
 export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext): void {
-  const { d, forbidden, pinOrigin, withBrain } = route;
+  const { d, pinOrigin, withBrain } = route;
   // Stop the streaming turn (the Esc key in chat clients). `session` scopes it to the caller's own
   // bound conversation (the CLI); absent → the active one.
   app.post('/brain/abort', withBrain(async (c, brain) => {
@@ -268,7 +268,6 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   // (src/brain/slashCommands.ts). Every chat client renders its menu / registers its commands from this,
   // so a new command is added in one place and appears in CLI, Discord and the web dock at once.
   app.get('/brain/commands', async c => {
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const q = c.req.query('surface');
     const surface: SlashSurface = q === 'cli' || (!!q && (PLATFORM_SURFACES as readonly string[]).includes(q)) ? (q as SlashSurface) : 'web';
     // Built-ins + any plugin-contributed prompt commands from the live registry (surface-scoped; a plugin
@@ -360,7 +359,6 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   // seed and reconcile alike.
   app.get('/brain/queue', c => {
     if (!d.brain) return c.json([]);
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     try { return c.json(d.brain.queueList(c.get('user').id, c.req.query('session'))); }
     catch { return c.json({ error: 'unknown session' }, 404); }
   });
@@ -397,7 +395,6 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   // bound conversation (the CLI); absent → the active one.
   app.get('/brain/goal', c => {
     if (!d.brain) return c.json(null);
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     try { return c.json(d.brain.goalStatus(c.get('user').id, c.req.query('session'))); }
     catch { return c.json({ error: 'unknown session' }, 404); }
   });

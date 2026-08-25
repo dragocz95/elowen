@@ -8,7 +8,6 @@ import type { ConfigStore } from '../store/configStore.js';
 import type { Clock } from '../shared/clock.js';
 import { MicrosoftGraphDirectoryError, MicrosoftGraphMembership } from './msGraphMembership.js';
 import type { EventBus } from '../api/sse.js';
-import type { AgentsAdvisorHooks } from '../plugins/api.js';
 import { logger } from '../shared/logger.js';
 import { platformIdentity } from '../shared/platformIdentity.js';
 
@@ -110,7 +109,6 @@ export interface MicrosoftSsoDependencies {
   catalogs?: MicrosoftSsoCatalogs;
   clock: Clock;
   bus: EventBus;
-  advisor?: () => AgentsAdvisorHooks | undefined;
   fetch?: typeof fetch;
   keyResolver?: (jwksUri: URL) => JWTVerifyGetKey;
 }
@@ -333,7 +331,6 @@ export class MicrosoftSsoService {
       }
 
       const token = this.d.users.issueToken(user.id);
-      void this.d.advisor?.()?.ensureOnLogin(user.id);
       this.publish('sso.login', subject, 'linked', user.username);
       return { token, user, tokenTtlDays: this.d.config.get().security.tokenTtlDays, next: flow.next };
     } catch (error) {

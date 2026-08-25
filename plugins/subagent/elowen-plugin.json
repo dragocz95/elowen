@@ -92,7 +92,7 @@
       "workflow-dag"
     ],
     "reads": [
-      "agent-catalog"
+      "subagent-catalog"
     ]
   },
   "web": {

@@ -1,6 +1,5 @@
 import type { Db } from './db.js';
 import type { TokenUsage, CostSource, ModelUsage } from '../integrations/usage/types.js';
-import { TASK_PREFIX } from '../brain/sessionId.js';
 import { BRAIN_REGISTRY_PROVIDER_PREFIX, execRefSpec } from '../shared/execs.js';
 
 // Read a numeric JSON field ONLY when it really holds a number. `json_extract` alone also yields a string
@@ -128,20 +127,6 @@ const USAGE_ROWS = `
                      AND sm.model = NULLIF(json_extract(je.value, '$.model'), '')
    WHERE m.role = 'compaction' AND je.type = 'object'`;
 
-// A `brain-task-<id>` worker session is EXCLUDED from the brain aggregates ONLY when its spend is
-// already snapshotted in task_usage (merged separately by /usage/by-model & /usage/by-day) — excluding
-// it here too would double-count a task creator's spend. A worker that crashed BEFORE snapshotting
-// (task then failed/cancelled, never relaunched) has NO task_usage row, so its persisted spend is KEPT
-// here instead of vanishing from every stat. Non-task chat sessions always pass.
-// `substr(id, TASK_PREFIX.length + 1)` recovers the task id (SQLite substr is 1-indexed) — derived from
-// the prefix so a rename can't leave the old magic offset behind.
-// `task_usage` is a WORK-PLUGIN table: a fresh install with that plugin disabled has none at all, and
-// then nothing is snapshotted anywhere — so the clause degrades to "keep every row", which is exactly
-// what an existing-but-empty task_usage already evaluates to. Chat usage stays intact either way.
-const taskSnapshotExclusion = (hasTaskUsage: boolean) => hasTaskUsage
-  ? `NOT (session_id LIKE '${TASK_PREFIX}%' AND EXISTS (SELECT 1 FROM task_usage tu WHERE tu.task_id = substr(session_id, ${TASK_PREFIX.length + 1})))`
-  : '1 = 1';
-
 /** How long a usage view may be served from memory. Both /usage/by-* views run TWO full scans of
  *  brain_messages (the largest table) behind a UNION ALL with per-row json_extract/json_each — yet the
  *  numbers they produce move on the scale of a settled turn, so the dashboard's 30 s/60 s pollers (and
@@ -149,21 +134,19 @@ const taskSnapshotExclusion = (hasTaskUsage: boolean) => hasTaskUsage
  *  TTL used for the provider-usage upstream cache (brain/providerUsage.ts). */
 const USAGE_VIEW_TTL_MS = 60_000;
 
-/** Cheap freshness probe compared before a cached view is served: all four reads are b-tree descents
- *  (or a MAX over a short datetime column), not scans. An append/compaction grows a rowid, a model
- *  switch bumps updated_at, a settled task lands a task_usage row (which flips the snapshot exclusion)
- *  — so a real write invalidates the cache immediately and the TTL is only the backstop for the rare
+/** Cheap freshness probe compared before a cached view is served: every read is a b-tree descent
+ *  (or a MAX over a short datetime column), not a scan. An append/compaction grows a rowid and a model
+ *  switch bumps updated_at, so normal writes invalidate the cache immediately; the TTL is the backstop for a rare
  *  mid-table delete/update that leaves every MAX untouched (deleteMessage, reassignSession); such a
  *  change is served stale until the TTL lapses. The probe runs before EVERY read, cached or not, so the
  *  stored sentinel always describes the data the value was computed from. */
-const usageSentinelSql = (hasTaskUsage: boolean, hasUsageRollup: boolean) => `SELECT
+const usageSentinelSql = (hasUsageRollup: boolean) => `SELECT
   (SELECT MAX(rowid) FROM brain_messages) AS m,
   (SELECT MAX(rowid) FROM brain_sessions) AS s,
   (SELECT MAX(updated_at) FROM brain_sessions) AS su,
-  ${hasTaskUsage ? '(SELECT MAX(rowid) FROM task_usage)' : 'NULL'} AS tu,
   ${hasUsageRollup ? '(SELECT generation FROM brain_usage_rollup_state WHERE id = 1)' : 'NULL'} AS ur`;
 
-interface UsageSentinel { m: number | null; s: number | null; su: string | null; tu: number | null; ur: number | null }
+interface UsageSentinel { m: number | null; s: number | null; su: string | null; ur: number | null }
 interface ViewCacheEntry { at: number; sentinel: UsageSentinel; value: unknown }
 
 /** Bound on distinct (user × window) keys held at once; a flood of distinct windows clears and starts
@@ -281,27 +264,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string }[]): Usa
 export class BrainUsageStore {
   private readonly viewCache = new Map<string, ViewCacheEntry>();
 
-  constructor(
-    private db: Db,
-    private readonly now: () => number = Date.now,
-    /** Does the task domain currently have an OWNER, i.e. does /usage/* merge task snapshots at all?
-     *  Supplied by the daemon (which alone knows the live plugin registry); a process that has no such
-     *  notion — a unit test, a store opened on its own — omits it and the answer falls back to the table
-     *  itself. Read per query, never cached: enabling the plugin swaps the owner inside a LIVE process. */
-    private readonly taskDomainOwned?: () => boolean,
-  ) {}
-
-  /** Is a `brain-task-*` worker's spend accounted for SOMEWHERE ELSE — i.e. may these views hide it?
-   *  Two conditions, both required. The table must exist (a fresh install with the work plugin disabled
-   *  never created it), and the domain must have an OWNER: the snapshots are merged into /usage/* by the
-   *  owner's aggregate, so with no owner nothing reports them and hiding the worker's rows here would
-   *  delete real spend from every statistic instead of deduplicating it. Keying on the table alone was
-   *  exactly that bug — disabling the plugin drops no table, so the money vanished from both halves.
-   *  The sqlite_master read is a lookup, nothing beside the full brain_messages scans these views run. */
-  private hasTaskUsage(): boolean {
-    if (this.taskDomainOwned && !this.taskDomainOwned()) return false;
-    return !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'task_usage'").get();
-  }
+  constructor(private db: Db, private readonly now: () => number = Date.now) {}
 
   /** Existing databases opt into the projection only after the explicit historical backfill commits.
    * Fresh databases start ready because the trigger sees every message from the beginning. */
@@ -351,11 +314,11 @@ export class BrainUsageStore {
    *  pattern is borrowed from, a local SQL read has no transient failure mode worth riding out, and a
    *  genuinely broken database should surface errors, not hide behind last-known numbers. */
   private cachedView<T>(key: string, compute: () => T): T {
-    const sentinel = this.db.prepare(usageSentinelSql(this.hasTaskUsage(), this.hasUsageRollupTable())).get() as UsageSentinel;
+    const sentinel = this.db.prepare(usageSentinelSql(this.hasUsageRollupTable())).get() as UsageSentinel;
     const hit = this.viewCache.get(key);
     if (hit && this.now() - hit.at < USAGE_VIEW_TTL_MS
         && hit.sentinel.m === sentinel.m && hit.sentinel.s === sentinel.s
-        && hit.sentinel.su === sentinel.su && hit.sentinel.tu === sentinel.tu
+        && hit.sentinel.su === sentinel.su
         && hit.sentinel.ur === sentinel.ur) {
       return hit.value as T;
     }
@@ -365,10 +328,7 @@ export class BrainUsageStore {
     return value;
   }
 
-  /** Per-day token/cost totals of the user's OWN brain chat sessions (NOT task worker or channel-anchor
-   *  sessions) over the last `days` days, for the dashboard spend tiles — task_usage only covers task
-   *  workers, so without this a paid chat model burned money invisibly. `brain-task-%` sessions are
-   *  excluded only when already snapshotted in task_usage (see {@link taskSnapshotExclusion}). */
+  /** Per-day token and cost totals of the user's brain sessions over the last `days` days. */
   usageByDay(userId: number, days = 7): { day: string; tokens: number; cost: number | null }[] {
     const daysArg = `-${Math.max(0, Math.floor(days) - 1)} days`;
     return this.cachedView(`byDay${userId}${daysArg}`, () => {
@@ -384,22 +344,19 @@ export class BrainUsageStore {
            FROM ${source}
           WHERE user_id = ?
             AND ts IS NOT NULL
-            AND ${taskSnapshotExclusion(this.hasTaskUsage())}
             AND ts >= unixepoch(date('now', ?)) * 1000
           GROUP BY day ORDER BY day`
       ).all(userId, daysArg) as { day: string; tokens: number; cost: number | null }[];
     });
   }
 
-  /** Total token/cost usage of the user's OWN brain CHAT sessions aggregated per executor identity, for
+  /** Total token/cost usage of the user's brain sessions aggregated per executor identity, for
    *  the web Stats page's /usage/by-model view — the analogue of usageByDay, so chat spend on a paid
    *  model is no longer invisible there. Groups the normalized USAGE_ROWS by the provider + model that
    *  ACTUALLY produced each assistant row (its own fields, or a rollup bucket's) — NOT the session's
    *  current selection, so switching a conversation's model never retroactively re-attributes its history.
    *  A missing provider remains an explicit legacy `elowen:<model>` bucket; it is neither discarded nor
-   *  merged into any canonical `<provider>/<model>` identity. `brain-task-%` sessions are excluded only
-   *  when already snapshotted in
-   *  task_usage (taskSnapshotExclusion); platform channel sessions (Discord) ARE included — the operator
+   *  merged into any canonical `<provider>/<model>` identity. Platform channel sessions are included — the operator
    *  anchors them, so their spend counts as the operator's. Brain chat cost is OpenRouter provider-reported, so a costed
    *  bucket is `provider_reported`; an uncosted one is `unavailable` (costUsd null), matching usageByDay's
    *  null-vs-real-$0 distinction. Optional `window` narrows by each row's own attribution timestamp (ms
@@ -407,7 +364,7 @@ export class BrainUsageStore {
    *  view (`ts IS NOT NULL`) so windowed totals always sum to the unwindowed total. A bucket comes back
    *  if it has any tokens OR any cost (a provider that reports cost with zero tokens still counts). */
   usageByModel(userId: number, window?: { fromIso?: string; toIso?: string }): ModelUsage[] {
-    const clauses = [`user_id = ?`, `ts IS NOT NULL`, `model != ''`, taskSnapshotExclusion(this.hasTaskUsage())];
+    const clauses = [`user_id = ?`, `ts IS NOT NULL`, `model != ''`];
     const params: (string | number)[] = [userId];
     const fromMs = window?.fromIso ? Date.parse(window.fromIso) : NaN;
     const toMs = window?.toIso ? Date.parse(window.toIso) : NaN;
@@ -461,8 +418,7 @@ export class BrainUsageStore {
    *  the SAME normalized rows used by the global usage views. This includes compaction `usageRollup`
    *  buckets, so archiving old child context never makes its spend disappear. The root itself is
    *  intentionally excluded: its live PI session remains authoritative for its own statusline usage.
-   *  No task-snapshot exclusion applies here — this is one conversation tree, not the global task/chat
-   *  merge. The owner predicate is defensive against a manually-corrupted cross-user relation. */
+   *  The owner predicate is defensive against a manually-corrupted cross-user relation. */
   descendantUsage(sessionId: string): BrainDescendantUsage {
     interface Row {
       input: number; output: number; cache_read: number; cache_write: number;

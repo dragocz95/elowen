@@ -2,7 +2,7 @@
  * Single source of truth for executor (exec) metadata.
  *
  * An "exec" is a model spec carried in a task's `exec:<spec>` label or in config fields
- * (defaults.exec, autopilot.pilotExec/overseerExec). It resolves to an agent *program*
+ * (for example defaults.exec). It resolves to an agent *program*
  * (the CLI that runs the model). Previously this knowledge was duplicated between
  * `overseer/routing.ts` (PROGRAM_PREFIXES) and `store/configStore.ts` (KNOWN_EXECS); both
  * now import from here so adding/changing an executor is a one-line edit. See audit #43/S21/O22.
@@ -338,7 +338,7 @@ export const KNOWN_EXECS: readonly string[] = [
 /**
  * Default capability notes for the built-in models, keyed by exec. Seeded into config so a fresh
  * install ships with sensible descriptions, and merged *under* stored notes (user edits win) so the
- * autopilot model picker has something to reason about out of the box. Keep keys aligned with
+ * model picker has something to reason about out of the box. Keep keys aligned with
  * KNOWN_EXECS. Notes are English — they are fed verbatim into the (English) planner prompt.
  */
 export const EXEC_NOTES: Readonly<Record<string, string>> = {

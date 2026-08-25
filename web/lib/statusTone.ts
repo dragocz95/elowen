@@ -1,10 +1,9 @@
-import type { TaskStatus } from './types';
 import type { Tone } from '../components/ui/tone';
 
-/** Tone per task status. HOST-owned like `taskMeta`/`eventMeta` rather than owned by a view: the plugin
- *  UI runtime hands it to every bundle (`utils.statusTone`), so it must not live in a feature module —
- *  the contract would then depend on a module that is free to move into a plugin. */
-const MAP: Record<TaskStatus, Tone> = {
+type StatusToneState = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancelled';
+
+/** Stable visual tones for the generic lifecycle states shared by host and plugin surfaces. */
+const MAP: Record<StatusToneState, Tone> = {
   open: 'success',     // green — ready
   in_progress: 'warning', // amber — actively working
   blocked: 'danger',
@@ -12,6 +11,6 @@ const MAP: Record<TaskStatus, Tone> = {
   cancelled: 'muted',
 };
 
-export function statusTone(status: TaskStatus): Tone {
+export function statusTone(status: StatusToneState): Tone {
   return MAP[status];
 }

@@ -14,10 +14,8 @@ export const MODULES: ModuleMeta[] = [dashboard, settings, projects, users, memo
  * a few stable user-facing worlds. This keeps route compatibility separate from information
  * architecture, so regrouping the UI never requires redirects or aliases.
  *
- * A plugin's pages are NOT listed here: they arrive at runtime from the /plugins/ui listing
- * (`lib/pluginNav.ts`), so a world exists exactly while the plugin that owns it is enabled. The work
- * world (tasks, kanban, timeline, stats) left with the work plugin, the way sessions and the editor
- * did before it.
+ * Plugin pages are not listed here: they arrive at runtime from the /plugins/ui listing
+ * (`lib/pluginNav.ts`), so a world exists exactly while the plugin that owns it is enabled.
  */
 type NavigationWorldId = 'home' | 'chat' | 'projects' | 'memory';
 

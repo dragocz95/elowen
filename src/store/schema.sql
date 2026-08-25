@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', pr_enabled INTEGER);
+CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '');
 -- The agents/missions/mission_pr/notes tables are AGENTS-PLUGIN-owned now: their DDL lives in
 -- plugins/agents/src/store/migrations.ts and is applied only when that plugin is enabled. The same is
 -- true of the task domain — tasks/task_deps/task_usage and their indexes live in
@@ -44,8 +44,6 @@ CREATE INDEX IF NOT EXISTS idx_user_external_identities_user ON user_external_id
 CREATE TABLE IF NOT EXISTS auth_tokens (
   token TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
   scope TEXT NOT NULL DEFAULT 'full',
-  -- The task an 'agent'-scoped token was minted for; NULL for every other token (see db.ts).
-  task_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS user_projects (

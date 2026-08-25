@@ -5,7 +5,6 @@ import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 function makeApp() {
   const db = openPluginTablesDb(':memory:');
@@ -13,7 +12,6 @@ function makeApp() {
   const users = new UserStore(db);
   users.create('alice', 'secret');
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db),
     bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), users,
@@ -60,15 +58,6 @@ describe('POST /mcp auth gating', () => {
     // tools ride the work plugin (see tests/api/mcpSurface.test.ts for the composed surface).
     expect(toolsBody).toContain('elowen_request');
     expect(toolsBody).not.toContain('elowen_tasks');
-  });
-
-  it('agent-scope service token gets 403 (not in agentAllowed)', async () => {
-    const { app, users } = makeApp();
-    const agentTok = users.ensureAgentToken(users.list()[0]!.id);
-    const res = await app.request('/mcp', {
-      method: 'POST', headers: mcpHeaders(agentTok), body: mcpInitBody(),
-    });
-    expect(res.status).toBe(403);
   });
 
   it('missing token gets 401', async () => {

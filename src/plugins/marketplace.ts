@@ -464,7 +464,7 @@ export class MarketplaceService {
    *
    *  This exists so a subsystem that moved out of the npm package into the registry degrades to an
    *  explicit 503 ("enabled but not installed") instead of a bare 404. A 404 tells a caller the endpoint
-   *  never existed, which for `/tasks` or `/missions` is a lie that reads as data loss; the boot
+   *  never existed, which for a removed integration route is a lie that reads as data loss; the boot
    *  reconciler normally reinstalls such a plugin, so reaching this path at all means the registry was
    *  unreachable and the honest answer is "temporarily unavailable".
    *

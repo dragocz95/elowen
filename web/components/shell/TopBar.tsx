@@ -3,11 +3,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ChevronRight, LogOut, Menu, Search, User } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { useMe, useAgentsPlugin } from '../../lib/queries';
+import { useMe } from '../../lib/queries';
 import { useSignOut } from '../../lib/mutations';
 import { usePageHeader } from '../../lib/pageHeader';
 import { navigationWorldForPath } from '../../modules/registry';
-import { NotificationBell } from '../ui/NotificationBell';
 import { Avatar } from '../ui/Avatar';
 import { LanguageSwitcher } from '../ui/LanguageSwitcher';
 import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
@@ -17,7 +16,6 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
   const { t } = useTranslation();
   const me = useMe();
   const pathname = usePathname();
-  const agentsUi = useAgentsPlugin();
   const pageHeader = usePageHeader();
   const { signOut, isPending: signingOut } = useSignOut();
   const { title, count, icon: Icon } = pageHeader?.header ?? {};
@@ -26,9 +24,7 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
     ? t.nav[world.id]
     : pathname.startsWith('/account') || pathname.startsWith('/settings') || pathname.startsWith('/users')
       ? t.nav.system
-      : agentsUi && pathname.startsWith('/p/agents/escalations')
-        ? t.sidebar.notifications
-        : undefined;
+      : undefined;
 
   return (
     <header data-testid="future-page-header" className="relative z-30 flex min-h-16 shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-3">
@@ -68,7 +64,6 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
           <Search size={17} aria-hidden />
           <span className="hidden font-mono text-[10px] tracking-wide text-text-muted/70 lg:inline">⌘K</span>
         </button>
-        <NotificationBell />
         {/* Only when there is a session to end — the login screen has nothing to sign out of. */}
         {me.data?.user ? (
           <button

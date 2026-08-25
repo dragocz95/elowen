@@ -16,17 +16,6 @@ describe('cli/autoUpdate.autoUpdate', () => {
     expect(installed).toBe(false);
   });
 
-  it('defers (no update) while a mission is live, even when enabled', async () => {
-    let installed = false;
-    const out = await autoUpdate(env, {
-      current: '1.0.0',
-      gate: () => ({ enabled: true, busy: true }),
-      runUpdate: async () => { installed = true; return { updated: true, from: '1.0.0', to: '1.1.0' }; },
-    });
-    expect(out).toEqual({ ran: false, reason: 'busy' });
-    expect(installed).toBe(false);
-  });
-
   it('updates when enabled and idle', async () => {
     const out = await autoUpdate(env, {
       current: '1.0.0',

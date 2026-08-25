@@ -1,30 +1,12 @@
-import { useMemo } from 'react';
-import { useQuery, useQueries, useInfiniteQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { useTranslation } from './i18n';
-import { pendingEscalations, type Escalation } from './escalations';
-import type { DerivedSignal, PlanJob, MemoryFilters, SlashCommandDef, ProcessInfo, UsageOriginGroup } from './types';
-
-/** Poll an async plan job until it leaves the 'planning' state. The SSE `plan` handler also pushes
- *  updates into this cache (keyed by jobId) so the poll is a fallback. Disabled when jobId is null. */
-export function usePlanJob(jobId: string | null) {
-  return useQuery<PlanJob>({
-    queryKey: ['plan-job', jobId],
-    queryFn: () => elowenClient.getPlanJob(jobId!),
-    enabled: !!jobId,
-    refetchInterval: (q) => (q.state.data?.status === 'planning' ? 1000 : false),
-  });
-}
+import type { MemoryFilters, SlashCommandDef, ProcessInfo, UsageOriginGroup } from './types';
 
 export const QUERY_KEYS = {
-  tasks: ['tasks'] as const,
-  sessions: ['sessions'] as const,
-  missions: ['missions'] as const,
   health: ['health'] as const,
   config: ['config'] as const,
   me: ['me'] as const,
-  sessionSignals: ['session-signals'] as const,
-  advisorStatus: ['advisor-status'] as const,
   system: ['system'] as const,
   systemReadiness: ['system-readiness'] as const,
   systemSkills: ['system-skills'] as const,
@@ -66,77 +48,15 @@ export const useBrainProcesses = () =>
     staleTime: 1000,
   });
 
-/** The current user's advisor session state, polled so the dock reflects start/stop/crash. The
- *  /advisor routes are agents-plugin root mounts, so polling only runs when the plugin is present —
- *  a plugin-less instance never spams 503s. */
-export const useAdvisorStatus = () => {
-  const agents = useAgentsPlugin();
-  return useQuery({ queryKey: QUERY_KEYS.advisorStatus, queryFn: elowenClient.advisorStatus, refetchInterval: 5000, enabled: agents });
-};
-
-/** Latest derived signal per session, populated by the SSE stream (see useElowenEvents). */
-export const useSessionSignals = (): Record<string, DerivedSignal> => {
-  const { data } = useQuery<Record<string, DerivedSignal>>({ queryKey: QUERY_KEYS.sessionSignals, queryFn: () => ({}), staleTime: Infinity, initialData: {} });
-  return data;
-};
-
-export const useSessionSignal = (name: string): DerivedSignal | undefined => useSessionSignals()[name];
-
-export const useTasks = (projectId?: number) => {
-  // Gated on the work plugin: it owns `/tasks`, so once we know it is gone the request is a guaranteed
-  // 503 that every consumer would have to tell apart from an empty register. Undelivered beats wrong.
-  const work = useTaskDomainReachable();
-  // A bare `useTasks()` keeps the shared `['tasks']` cache key (Kanban/Timeline/Sidebar/… all share
-  // one "all tasks" fetch). A scoped `useTasks(projectId)` gets its own entry so a project-filtered
-  // Tasks view doesn't replace the global cache. Prefix invalidations still hit both.
-  // No refetchInterval: the SSE bus invalidates ['tasks'] on every task/plan/review event (see
-  // useElowenEvents), so the list stays live without a 5s poll. The EventSource self-reconnects with
-  // backoff, so a dropped stream still recovers — no silent staleness.
-  return useQuery({ queryKey: projectId == null ? QUERY_KEYS.tasks : ['tasks', projectId], queryFn: () => elowenClient.tasks(projectId), enabled: work });
-};
-
-/** Live session names — the stable handles used for liveness checks, signal keys and ops.
- *  Backed by the same query as useSessionInfos (one fetch); selects just the names. Gated on the agents
- *  plugin, which owns the `/sessions` root mount: the sidebar, the bell and the needs-input banner all
- *  read it on every page, so without the gate a plugin-less instance runs a permanent 503 loop. Every
- *  consumer already treats "no sessions" as an empty list, so what they render does not change. */
-export const useSessions = () => {
-  const agents = useAgentDomainReachable();
-  // SSE `signal` events invalidate ['sessions']; no poll needed.
-  return useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: elowenClient.sessions, select: (s) => s.map((x) => x.name), enabled: agents });
-};
-
-/** Live sessions with their daemon-classified role/identity, for display surfaces. Same query, same gate. */
-export const useSessionInfos = () => {
-  const agents = useAgentDomainReachable();
-  return useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: elowenClient.sessions, enabled: agents });
-};
-
-export const useAllDeps = () => {
-  const work = useTaskDomainReachable(); // same domain, same gate as useTasks
-  return useQuery({ queryKey: ['tasks', 'deps'], queryFn: elowenClient.allDeps, enabled: work });
-};
-
-/** Token/cost usage for a task's agent run. Polls while the agent is live; for a finished task
- *  it's fetched once and cached (the numbers no longer change). */
-export const useTaskUsage = (taskId: string, live = false) =>
-  useQuery({
-    queryKey: ['task-usage', taskId],
-    queryFn: () => elowenClient.taskUsage(taskId),
-    enabled: !!taskId,
-    refetchInterval: live ? 5000 : false,
-    staleTime: live ? 0 : 5 * 60 * 1000,
-  });
-
 /** Total token/cost usage aggregated per model, for the stats page and the dashboard's monthly usage
  *  card. Cost/tokens move slowly. `window` (finite bounds only go into the key — an open `±Infinity`
  *  bound collapses to `null` so every rolling/all-time preset shares one cache entry). */
-export const useModelUsage = (projectId?: number, window?: { fromMs: number; toMs: number }) =>
+export const useModelUsage = (window?: { fromMs: number; toMs: number }) =>
   useQuery({
-    queryKey: [...QUERY_KEYS.usageByModel, projectId ?? null,
+    queryKey: [...QUERY_KEYS.usageByModel,
       Number.isFinite(window?.fromMs) ? window!.fromMs : null,
       Number.isFinite(window?.toMs) ? window!.toMs : null],
-    queryFn: () => elowenClient.usageByModel(projectId, window),
+    queryFn: () => elowenClient.usageByModel(window),
     refetchInterval: 30_000,
     staleTime: 60_000,
     placeholderData: (previous) => previous,
@@ -144,10 +64,10 @@ export const useModelUsage = (projectId?: number, window?: { fromMs: number; toM
 
 /** Daily spend over the last `days` days, for the dashboard's spend sparkline. Slow-moving, so a
  *  gentle 60 s poll. Only days with settled tasks come back — the tile pads the missing days. */
-export const useUsageByDay = (projectId?: number, days = 7) =>
+export const useUsageByDay = (days = 7) =>
   useQuery({
-    queryKey: [...QUERY_KEYS.usageByDay, projectId ?? null, days],
-    queryFn: () => elowenClient.usageByDay(projectId, days),
+    queryKey: [...QUERY_KEYS.usageByDay, days],
+    queryFn: () => elowenClient.usageByDay(days),
     refetchInterval: 60_000,
     staleTime: 60_000,
     placeholderData: (previous) => previous,
@@ -172,14 +92,6 @@ export const useUsageByOrigin = (
     refetchInterval: 60_000,
   });
 
-/** Autopilot missions. The agents plugin owns the `/missions` root mount, and the work plugin's Kanban
- *  reads this through the plugin runtime — so with agents off and work on, the board polled a route that
- *  answers 503. Gated like every other agents-domain read. */
-export const useMissions = () => {
-  const agents = useAgentDomainReachable();
-  return useQuery({ queryKey: QUERY_KEYS.missions, queryFn: elowenClient.missions, enabled: agents });
-};
-
 export const useHealth = () =>
   useQuery({
     queryKey: QUERY_KEYS.health,
@@ -195,10 +107,6 @@ export const useConfig = () =>
 export const useSystem = () =>
   useQuery({ queryKey: QUERY_KEYS.system, queryFn: elowenClient.system, refetchInterval: 60000 });
 
-/** Per-provider install/version status of the `elowen-workflow` agent skill, for the System panel. */
-export const useSystemSkills = () =>
-  useQuery({ queryKey: QUERY_KEYS.systemSkills, queryFn: elowenClient.systemSkills, refetchInterval: 60000 });
-
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: elowenClient.listUsers });
 
 /** The presence line of the team feed. Invalidated by the same SSE 'activity' event as the feed
@@ -212,7 +120,7 @@ export const usePulse = (days: number) =>
   useQuery({ queryKey: ['activity-pulse', days], queryFn: () => elowenClient.activityPulse(days) });
 
 export const useActivity = (type?: string, limit?: number) =>
-  // SSE task/mission/signal/review events all invalidate ['activity']; no 5s poll needed. `limit` joins
+  // SSE activity events invalidate this key; no polling is needed. `limit` joins
   // the key so a small dashboard tail and the full timeline never share one cached payload.
   useQuery({
     queryKey: ['activity', type ?? 'all', limit ?? null],
@@ -221,31 +129,6 @@ export const useActivity = (type?: string, limit?: number) =>
       ...(limit ? { limit } : {}),
     }),
   });
-
-/** Pending overseer escalations — phases a post-done review rejected that still need a human, derived
- *  from the persisted review feed joined to live task/dep state. Shared by the Escalations page, the
- *  sidebar alert and the notification bell so the count is one source of truth. */
-/** Overseer escalations, derived in the browser from activity + tasks + deps. Without the work plugin
- *  the two task inputs never arrive and this is empty — which is why both consumers (the bell's inbox
- *  row and the dashboard's decisions pod) hide the affordance entirely rather than render a zero. */
-export const useEscalations = (): Escalation[] => {
-  const reviews = useActivity('review');
-  const tasks = useTasks();
-  const deps = useAllDeps();
-  return useMemo(
-    () => pendingEscalations(reviews.data ?? [], tasks.data ?? [], deps.data ?? []),
-    [reviews.data, tasks.data, deps.data],
-  );
-};
-
-/** Worker `elowen ask` questions parked on a human (overseer escalated / none) — shown in the Escalations
- *  inbox so a person can answer and unblock the agent. Refreshed live by the SSE `ask` event. */
-export const usePendingAsks = () => {
-  // `/asks/pending` is an agents root mount. The notification bell reads this on every page and already
-  // hides the inbox row without the plugin, so the fetch was the one half that stayed unconditional.
-  const agents = useAgentDomainReachable();
-  return useQuery({ queryKey: ['pending-asks'], queryFn: () => elowenClient.pendingAsks(), enabled: agents });
-};
 
 export const useProjects = () =>
   useQuery({ queryKey: ['projects'], queryFn: elowenClient.projects, staleTime: 60_000 });
@@ -271,57 +154,8 @@ export const useProjectCommitFileDiff = (id: number | null, hash: string | null,
 export const useProjectChanged = (id: number | null, enabled = true) =>
   useQuery({ queryKey: ['project-changed', id], queryFn: () => elowenClient.projectChanged(id as number), enabled: !!id && enabled });
 
-/** A task's autopilot conversation (its decision + review events), oldest-first. SSE `decision`/`review`
- *  events invalidate ['task-activity']; no poll. */
-export const useTaskConversation = (taskId: string | null) =>
-  useQuery({ queryKey: ['task-activity', taskId], queryFn: () => elowenClient.activity({ target: taskId as string }), enabled: !!taskId });
-
-/** An elowen (embedded-brain) worker's transcript for the task detail. Polled lightly while the task
- *  runs; brain messages persist only on settled turns, so there is no SSE signal to invalidate on. */
-export const useTaskBrainConversation = (taskId: string | null, enabled: boolean) =>
-  useQuery({ queryKey: ['task-brain-conversation', taskId], queryFn: () => elowenClient.taskBrainConversation(taskId as string), enabled: !!taskId && enabled, refetchInterval: 15000 });
-
-/** The commits a task landed (live git history). SSE `change` events invalidate ['task-commits']; no poll. */
-export const useTaskCommits = (taskId: string | null) =>
-  useQuery({ queryKey: ['task-commits', taskId], queryFn: () => elowenClient.taskCommits(taskId as string), enabled: !!taskId });
-
-/** Lazy diff of one file as introduced by a single task commit (`git show <hash>`), fetched on open. */
-export const useTaskCommitFileDiff = (taskId: string | null, hash: string | null, path: string | null) =>
-  useQuery({ queryKey: ['task-commit-diff', taskId, hash, path], queryFn: () => elowenClient.taskCommitFileDiff(taskId as string, hash as string, path as string), enabled: !!taskId && !!hash && !!path });
-
-/** Handoff notes for a mission (keyed by epic id), shown read-only in the detail pane. `/notes` is an
- *  agents root mount like the mission it belongs to, so it carries the same domain gate. */
-export const useMissionNotes = (target: string | null) => {
-  const agents = useAgentDomainReachable();
-  return useQuery({ queryKey: ['mission-notes', target], queryFn: () => elowenClient.missionNotes(target as string), enabled: !!target && agents, refetchInterval: 10000 });
-};
-
 export const useProjectChanges = (id: number | null, enabled: boolean) =>
   useQuery({ queryKey: ['project-changes', id], queryFn: () => elowenClient.projectChanges(id as number), enabled: !!id && enabled });
-
-/** Commit history across several projects, merged into one time-sorted stream tagged with projectId,
- *  for the timeline's "changes over time" view. Each commit older than the window is dropped so the
- *  stream lines up with the axis above it. */
-export const useProjectsCommits = (projectIds: number[], hours: number, enabled = true) =>
-  useQueries({
-    queries: projectIds.map((id) => ({
-      queryKey: ['project-commits', id],
-      queryFn: () => elowenClient.projectCommits(id, 25),
-      enabled,
-      // Commits change on the scale of a push, not seconds — poll lazily to keep the timeline's
-      // background git fan-out (one `git log` per project) light.
-      refetchInterval: 60000,
-      staleTime: 30000,
-    })),
-    combine: (results) => {
-      const cutoff = Date.now() - hours * 3600_000;
-      const commits = results
-        .flatMap((r, i) => (r.data?.commits ?? []).map((c) => ({ ...c, projectId: projectIds[i] })))
-        .filter((c) => c.timestamp >= cutoff)
-        .sort((a, b) => b.timestamp - a.timestamp);
-      return { commits, isLoading: results.some((r) => r.isLoading) };
-    },
-  });
 
 export const useMe = () =>
   useQuery({ queryKey: QUERY_KEYS.me, queryFn: elowenClient.me, staleTime: 5 * 60 * 1000 });
@@ -343,47 +177,11 @@ export const usePluginUi = (locale: string) =>
  *  listing the sidebar nav uses, so every affordance a plugin owns gates on one source. False while the
  *  listing loads: a plugin's affordances appear only once it is confirmed, so a plugin-less instance
  *  never flashes them. */
-const usePluginPresent = (name: string): boolean => {
+export const usePluginPresent = (name: string): boolean => {
   const { locale } = useTranslation();
   const pluginUi = usePluginUi(locale);
   return (pluginUi.data ?? []).some((p) => p.name === name);
 };
-
-/** The agents plugin: dashboard pods, the escalations inbox, engage controls, agent status dots and
- *  every /p/agents/* link hang off this one gate. */
-export const useAgentsPlugin = (): boolean => usePluginPresent('agents');
-
-/** The optional project editor. Core project screens check it before linking to plugin-owned file
- *  routes, so a disabled editor cannot leave dead affordances or 503 requests. */
-export const useEditorPlugin = (): boolean => usePluginPresent('editor');
-
-/** The cron scheduler. The dashboard's "next run" pod reads its jobs, so without the plugin the pod
- *  would report an empty schedule — indistinguishable from a schedule with nothing in it. */
-export const useCronjobPlugin = (): boolean => usePluginPresent('cronjob');
-
-/** The work domain — the task register, the board, the timeline and the spend stats, together with the
- *  tables and routes behind them. Every core surface that reads a task hangs off this gate: without the
- *  plugin `/tasks` answers 503, and a surface rendering the empty list would say "nothing to do" where
- *  the truth is "this instance does not track work at all". Affordances hide; they never report zero. */
-export const useWorkPlugin = (): boolean => usePluginPresent('work');
-
-/** Whether asking a domain's routes for data can possibly be answered. Deliberately NOT
- *  `usePluginPresent()`: an affordance hides until the plugin listing confirms it (never flash a dead
- *  link), but a READ must not be suppressed on a state we do not know yet — that would blank every
- *  surface of that domain for the length of the /plugins/ui round-trip. So: fetch until the listing
- *  says the domain has no owner. Once it does, the request is a guaranteed 503 on a root mount the
- *  plugin no longer serves, and react-query would keep re-running it on every mount and window focus. */
-const useDomainReachable = (plugin: string): boolean => {
-  const { locale } = useTranslation();
-  const pluginUi = usePluginUi(locale);
-  return pluginUi.data === undefined || pluginUi.data.some((p) => p.name === plugin);
-};
-
-/** The work domain's routes: /tasks and everything under it. */
-const useTaskDomainReachable = (): boolean => useDomainReachable('work');
-
-/** The agents domain's routes: /missions, /sessions, /asks/pending, /notes, /advisor. */
-const useAgentDomainReachable = (): boolean => useDomainReachable('agents');
 
 /** First-run subsystem readiness (admin-only endpoint). Gated by `enabled` so non-admin surfaces never
  *  fire the 403 request. Powers the dashboard "finish setup" nudge and the onboarding checklist. */

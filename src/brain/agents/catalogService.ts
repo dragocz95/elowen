@@ -4,20 +4,20 @@ import { stringify as stringifyYaml } from 'yaml';
 import { loadAgentRegistry, parseAgentFile } from './agentRegistry.js';
 import { NAME_RE } from '../../shared/nameGrammar.js';
 import { builtinToolMetas } from '../tools/index.js';
-import type { PluginAgentCatalog, AgentCatalogEntry, AgentCatalogResult } from '../../plugins/api.js';
+import type { PluginSubagentCatalog, SubagentCatalogEntry, SubagentCatalogResult } from '../../plugins/api.js';
 
 /** The core-owned editor over the typed sub-agent catalog (one `.md` per agent: frontmatter
  *  name/description/tools + a body prompt). Built-in explore/plan ship in dist/prompts/agents and are
  *  read-only; user agents live next to the DB in <config>/agents. The catalog FORMAT — and therefore
  *  its validation — is core's (agentRegistry parses these files for delegation), so the editor lives
- *  here too; the subagent plugin serves the HTTP surface over it via ctx.host.agentCatalog(). */
-export function makeAgentCatalog(opts: {
+ *  here too; the subagent plugin serves the HTTP surface over it via ctx.host.subagentCatalog(). */
+export function makeSubagentCatalog(opts: {
   builtinDir: string;
   /** Absent for an in-memory DB (tests) — writes then answer 503. */
   userDir?: string;
   /** Tool names of the LIVE merged plugin registry — resolved per save so a reload is picked up. */
   pluginToolNames: () => Promise<string[]>;
-}): PluginAgentCatalog {
+}): PluginSubagentCatalog {
   const isBuiltin = (name: string): boolean => existsSync(join(opts.builtinDir, `${name}.md`));
   // Normalize the tools spec: a preset keyword, or an explicit tool-name list.
   const agentToolsValue = (tools: unknown): string | string[] => {
@@ -34,7 +34,7 @@ export function makeAgentCatalog(opts: {
   };
 
   return {
-    list(): AgentCatalogEntry[] {
+    list(): SubagentCatalogEntry[] {
       const reg = loadAgentRegistry({ builtinDir: opts.builtinDir, userDir: opts.userDir });
       // A user file body is returned so the editor can prefill; built-in bodies are read-only, so they
       // are left off the payload (and kept smaller).
@@ -51,7 +51,7 @@ export function makeAgentCatalog(opts: {
     // Create or overwrite a user sub-agent. A name shadowing a built-in is refused (built-ins are
     // read-only); the composed file is validated with the real registry parser before it is written, so
     // an invalid tools spec / frontmatter never lands on disk.
-    async save(name, input): Promise<AgentCatalogResult> {
+    async save(name, input): Promise<SubagentCatalogResult> {
       if (!NAME_RE.test(name)) return { error: 'name must be kebab-case (a-z, 0-9, dashes), max 64 chars', status: 400 };
       if (isBuiltin(name)) return { error: `a built-in agent named "${name}" already exists and is read-only`, status: 400 };
       if (!opts.userDir) return { error: 'agents dir unavailable', status: 503 };
@@ -86,7 +86,7 @@ export function makeAgentCatalog(opts: {
       return { ok: true };
     },
 
-    remove(name): AgentCatalogResult {
+    remove(name): SubagentCatalogResult {
       if (!NAME_RE.test(name)) return { error: 'invalid agent name', status: 400 };
       if (isBuiltin(name)) return { error: 'built-in agents cannot be deleted', status: 400 };
       const file = opts.userDir ? join(opts.userDir, `${name}.md`) : null;

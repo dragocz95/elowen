@@ -4,28 +4,23 @@ import { EventBus } from '../../src/api/sse.js';
 afterEach(() => vi.restoreAllMocks());
 
 describe('EventBus', () => {
-  it('fans out emitted signals to subscribers and unsubscribes', () => {
-    const bus = new EventBus(); const got: any[] = [];
-    const off = bus.subscribe(e => got.push(e));
-    bus.emit('elowen-A', { type: 'working' });
-    off();
-    bus.emit('elowen-A', { type: 'complete' });
-    expect(got).toEqual([{ type: 'signal', session: 'elowen-A', signal: { type: 'working' } }]);
-  });
-  it('delivers a plan event to subscribers', () => {
+  it('fans out published events and unsubscribes', () => {
     const bus = new EventBus();
-    const seen: unknown[] = [];
-    bus.subscribe((e) => seen.push(e));
-    bus.publish({ type: 'plan', jobId: 'pj-1', status: 'done', epicId: 'elowen-ep', phases: [{ title: 'A', type: 'task' }] });
-    expect(seen).toEqual([{ type: 'plan', jobId: 'pj-1', status: 'done', epicId: 'elowen-ep', phases: [{ title: 'A', type: 'task' }] }]);
+    const got: unknown[] = [];
+    const off = bus.subscribe((event) => got.push(event));
+    bus.publish({ type: 'plugin', plugin: 'demo', kind: 'first', projectId: null, data: null });
+    off();
+    bus.publish({ type: 'plugin', plugin: 'demo', kind: 'second', projectId: null, data: null });
+    expect(got).toEqual([{ type: 'plugin', plugin: 'demo', kind: 'first', projectId: null, data: null }]);
   });
+
   it('isolates a throwing subscriber so the rest still receive the event', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
     const bus = new EventBus();
     const got: unknown[] = [];
     bus.subscribe(() => { throw new Error('boom'); });
-    bus.subscribe((e) => got.push(e));
-    expect(() => bus.emit('elowen-A', { type: 'working' })).not.toThrow();
-    expect(got).toEqual([{ type: 'signal', session: 'elowen-A', signal: { type: 'working' } }]);
+    bus.subscribe((event) => got.push(event));
+    const event = { type: 'plugins' } as const;
+    expect(() => bus.publish(event)).not.toThrow();
+    expect(got).toEqual([event]);
   });
 });

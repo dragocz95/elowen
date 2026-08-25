@@ -9,15 +9,6 @@ describe('brainConfigFromElowen', () => {
     expect(brainConfigFromElowen(config)).toBeNull();
   });
 
-  it('falls back to the relay endpoint as a synthetic provider', () => {
-    const config = new ConfigStore(openDb(':memory:'));
-    config.update({ autopilot: { apiUrl: 'https://relay.example.test/v1', model: 'gpt-x', apiKey: 'cs-key' } });
-    const cfg = brainConfigFromElowen(config);
-    expect(cfg?.providers).toEqual([
-      { id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'https://relay.example.test/v1', models: ['gpt-x'], apiKey: 'cs-key', origin: 'relay' },
-    ]);
-  });
-
   it('surfaces a connected OAuth account as a synthetic provider', () => {
     const config = new ConfigStore(openDb(':memory:'));
     const auth = { get: (p: string) => (p === 'anthropic' ? { type: 'oauth' } : undefined) } as never;
@@ -60,12 +51,9 @@ describe('brainConfigFromElowen', () => {
     expect(brainConfigFromElowen(config, reconnected)?.providers.map((p) => p.models)).toEqual([['claude-opus-4-5']]);
   });
 
-  it('dedicated brain.providers win over the relay fallback', () => {
+  it('uses dedicated brain providers', () => {
     const config = new ConfigStore(openDb(':memory:'));
-    config.update({
-      autopilot: { apiUrl: 'https://relay.example.test/v1', model: 'gpt-x', apiKey: 'cs-key' },
-      brain: { providers: [{ id: 'own', label: 'Own', type: 'openai', baseUrl: 'https://x/v1', models: ['m'], apiKey: 'k' }] },
-    });
+    config.update({ brain: { providers: [{ id: 'own', label: 'Own', type: 'openai', baseUrl: 'https://x/v1', models: ['m'], apiKey: 'k' }] } });
     expect(brainConfigFromElowen(config)?.providers.map((p) => p.id)).toEqual(['own']);
   });
 });
@@ -102,11 +90,5 @@ describe('configuredBrainProviders', () => {
     const config = new ConfigStore(openDb(':memory:'));
     const auth = { get: (p: string) => (p === 'anthropic' ? { type: 'oauth' } : undefined) } as never;
     expect(configuredBrainProviders(config, auth)).toEqual([{ id: 'anthropic', models: [] }]);
-  });
-
-  it('carries the relay fallback\'s single model', () => {
-    const config = new ConfigStore(openDb(':memory:'));
-    config.update({ autopilot: { apiUrl: 'https://relay.example.test/v1', model: 'gpt-x', apiKey: 'cs-key' } });
-    expect(configuredBrainProviders(config)).toEqual([{ id: 'relay', models: ['gpt-x'] }]);
   });
 });

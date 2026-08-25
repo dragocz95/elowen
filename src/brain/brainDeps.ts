@@ -135,8 +135,8 @@ export interface BrainDeps {
   memoryService?: MemoryService;
   /** Operator budget for mid-turn recall, read per search so a change applies to a running conversation. */
   liveRecallBudget?: () => { passes: number; count: number; bytes: number };
-  /** Builds a CHEAP inference client for the post-turn memory curator (mirrors the overseer relay,
-   *  keyed on autopilot.model). Returns null when no key/model is configured → the curator no-ops. */
+  /** Builds a cheap inference client for the post-turn memory curator. Returns null when no key/model
+   *  is configured, in which case the curator no-ops. */
   inference?: () => InferenceClient | null;
   /** Auto-categorizer handed to the curator so a newly-added durable memory is classified into one of
    *  the owner's categories (fire-and-forget). Absent → new memories are left uncategorized. */

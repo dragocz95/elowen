@@ -1,7 +1,6 @@
 'use client';
 import { useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
-import { useAdvisorStatus } from '../../lib/queries';
 
 /**
  * Opens the existing Brain dock. The launcher deliberately uses Elowen's flat product icon rather
@@ -10,8 +9,6 @@ import { useAdvisorStatus } from '../../lib/queries';
 export function AdvisorLauncher({ onOpen }: { onOpen: () => void }) {
   const { t } = useTranslation();
   const { iconSrc } = useBrand();
-  const status = useAdvisorStatus();
-  const running = status.data?.running ?? false;
 
   return (
     <button
@@ -23,11 +20,6 @@ export function AdvisorLauncher({ onOpen }: { onOpen: () => void }) {
     >
       <span className="ambient-pulse absolute inset-1 animate-pulse rounded-[0.8rem] bg-accent/10 opacity-60" aria-hidden />
       <img src={iconSrc} alt="" className="relative h-9 w-9 rounded-xl transition-transform duration-300 group-hover:scale-105" aria-hidden />
-      {running ? (
-        <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-bg bg-success" aria-hidden>
-          <span className="ambient-pulse h-1.5 w-1.5 animate-pulse rounded-full bg-bg/70" />
-        </span>
-      ) : null}
     </button>
   );
 }

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
-import { CHANNEL_PREFIX, SUBAGENT_PLATFORM, TASK_PREFIX } from '../brain/sessionId.js';
+import { CHANNEL_PREFIX, SUBAGENT_PLATFORM } from '../brain/sessionId.js';
 import type {
   BrainDebugPage, BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugRequestDetail,
   BrainDebugRequestItem, BrainDebugRequestStatus, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
@@ -118,7 +118,6 @@ function boundedLimit(limit: number | undefined, fallback: number, max: number):
 function sessionSurface(id: string): BrainDebugSurface {
   if (id.startsWith(`${CHANNEL_PREFIX}${SUBAGENT_PLATFORM}-`)) return 'subagent';
   if (id.startsWith(CHANNEL_PREFIX)) return 'channel';
-  if (id.startsWith(TASK_PREFIX)) return 'task';
   return 'conversation';
 }
 
@@ -448,8 +447,7 @@ export class ProviderRequestStore {
       const subagent = `${CHANNEL_PREFIX}${SUBAGENT_PLATFORM}-%`;
       if (filters.surface === 'subagent') { where.push('s.id LIKE ?'); params.push(subagent); }
       else if (filters.surface === 'channel') { where.push('s.id LIKE ? AND s.id NOT LIKE ?'); params.push(`${CHANNEL_PREFIX}%`, subagent); }
-      else if (filters.surface === 'task') { where.push('s.id LIKE ?'); params.push(`${TASK_PREFIX}%`); }
-      else { where.push('s.id NOT LIKE ? AND s.id NOT LIKE ?'); params.push(`${CHANNEL_PREFIX}%`, `${TASK_PREFIX}%`); }
+      else { where.push('s.id NOT LIKE ?'); params.push(`${CHANNEL_PREFIX}%`); }
     }
     if (filters.provider) {
       where.push(`COALESCE((SELECT r.configured_provider FROM brain_provider_requests r WHERE r.session_id = s.id ORDER BY r.seq DESC LIMIT 1), s.provider) = ?`);

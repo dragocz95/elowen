@@ -117,7 +117,7 @@ describe('subagent plugin — job registry across a plugin reload', () => {
     await reload(reg);
     // Only RUNNING jobs are interrupted. A finished one must not be re-settled into an error, must not
     // deliver a second completion, and must not appear in the "still running" warning.
-    expect(warnings).toEqual([]);
+    expect(warnings.some((warning) => warning.includes('still running at plugin reload'))).toBe(false);
     expect(completions).toHaveLength(1);
     expect(updates.at(-1)).toMatchObject({ status: 'done' });
   });

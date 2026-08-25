@@ -21,7 +21,7 @@ export interface BrainProviderEntry {
    *  see {@link openAiApiFor}. */
   api?: BrainProviderApi;
   /** How this entry authenticates — drives the picker's provenance badge (OAuth account vs API key vs
-   *  the autopilot relay fallback). Set by `brainConfigFromElowen`; absent reads as 'api-key'. */
+   *  relay endpoint). Set by `brainConfigFromElowen`; absent reads as 'api-key'. */
   origin?: 'api-key' | 'oauth' | 'relay';
   /** Sampling temperature for this endpoint; absent sends none. Per-provider rather than global because
    *  some models accept only their own default and 400 on anything else. */

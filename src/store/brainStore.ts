@@ -6,7 +6,7 @@ import { extractText } from '../brain/messageView.js';
 import { dbTsToIso } from '../shared/time.js';
 import { planFilePath, toolResultSpillDir } from '../shared/paths.js';
 import { logger } from '../shared/logger.js';
-import { CHANNEL_PREFIX, TASK_PREFIX, SUBAGENT_PREFIX, CRON_PREFIX, isArchivedChannelSession } from '../brain/sessionId.js';
+import { CHANNEL_PREFIX, SUBAGENT_PREFIX, CRON_PREFIX, isArchivedChannelSession } from '../brain/sessionId.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
 import { collectChatFiles, type StoredChatFile } from '../brain/chatFiles.js';
 import { rollupActivatedTools } from '../brain/continuity/activatedTools.js';
@@ -161,14 +161,8 @@ export class BrainStore {
   /** Exact provider request attempts and their content-addressed payload segments. Public so the session
    * recorder and later debugger API share one store contract instead of reaching for the raw Db. */
   readonly providerRequests: ProviderRequestStore;
-  constructor(
-    private db: Db,
-    /** Whether the task domain has a loaded owner — passed straight through to the usage views, which
-     *  may only hide a task worker's spend while somebody else reports it. The daemon supplies it; a
-     *  process with no plugin registry omits it. */
-    taskDomainOwned?: () => boolean,
-  ) {
-    this.usage = new BrainUsageStore(db, Date.now, taskDomainOwned);
+  constructor(private db: Db) {
+    this.usage = new BrainUsageStore(db);
     this.delegation = new BrainDelegationStore(db);
     this.providerRequests = new ProviderRequestStore(db);
   }
@@ -507,7 +501,7 @@ export class BrainStore {
          AND (
            -- The caller's own conversations: only roots, so a child is never deleted out from under
            -- the transcript that links to it.
-           (s.parent_session_id IS NULL AND s.id NOT LIKE '${CHANNEL_PREFIX}%' AND s.id NOT LIKE '${TASK_PREFIX}%')
+           (s.parent_session_id IS NULL AND s.id NOT LIKE '${CHANNEL_PREFIX}%')
            -- One-shot runs (see isEphemeralRunSession): judged on their OWN age, parent or not. A
            -- finished delegation is finished whether or not the conversation that started it lives on,
            -- and these are what actually accumulate. A real platform channel stays excluded.
@@ -1120,8 +1114,8 @@ export class BrainStore {
   }
 
   /** Case-insensitive fulltext search across the user's OWN chat conversations. Shared platform
-   *  sessions (`brain-ch-*`, which carry other members' messages) and ephemeral subagent runs
-   *  (`brain-task-*`) are excluded — the search backs the personal chat sidebar, not the Discord logs.
+   *  sessions (`brain-ch-*`, which carry other members' messages) are excluded — the search backs the
+   *  personal chat sidebar, not the Discord logs.
    *  The LIKE over the raw content JSON is a coarse prefilter; each candidate is confirmed against its
    *  extracted display text (so JSON keys never match) and shaped into a ±60-char snippet. Newest first.
    *  The SQL row scan is bounded (recent-biased) so a broad `%q%` can't scan the whole table. */
@@ -1133,7 +1127,7 @@ export class BrainStore {
       `SELECT m.session_id, s.title, m.role, m.content, m.created_at
          FROM brain_messages m JOIN brain_sessions s ON s.id = m.session_id
         WHERE s.user_id = ? AND m.role IN ('user', 'assistant') AND m.content LIKE ? ESCAPE '\\'
-          AND m.session_id NOT LIKE '${CHANNEL_PREFIX}%' AND m.session_id NOT LIKE '${TASK_PREFIX}%'
+          AND m.session_id NOT LIKE '${CHANNEL_PREFIX}%'
         ORDER BY m.created_at DESC, m.rowid DESC
         LIMIT 500`
     ).all(userId, like) as { session_id: string; title: string; role: string; content: string; created_at: string }[];

@@ -13,9 +13,14 @@ function sources(dir: string): string[] {
   });
 }
 
-/** The feature modules that LEFT core for a plugin bundle. The work domain (its register, board,
- *  timeline and spend stats) is owned by the work plugin; the editor and the agents views by theirs. */
-const DEPARTED = ['tasks', 'kanban', 'timeline', 'stats', 'editor', 'sessions', 'escalations'];
+/** The feature modules that LEFT core for a plugin bundle, and whose plugin still exists to own them.
+ *
+ *  This list used to also carry `tasks`, `kanban`, `timeline`, `sessions` and `escalations`. Those
+ *  belonged to `agents`/`work`, which are gone entirely — core re-growing a module named `tasks` is no
+ *  longer a boundary violation, just new code, so guarding the name would only misfire. `editor` and
+ *  `stats` are different: both are installed plugins that own their page today, so a second copy in
+ *  core is still the quiet two-implementations failure this guard exists to catch. */
+const DEPARTED = ['editor', 'stats'];
 // Both spellings reach the same place: `../modules/tasks/x` from web/lib, and the sibling-relative
 // `../tasks/x` a file inside web/modules uses. Missing the second one would let exactly the imports
 // this guard exists for pass unnoticed.

@@ -26,7 +26,7 @@ describe('AccountView', () => {
   it('uses the compact control deck with the approved Account section order and no hero mascot', async () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
       http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '', whatsappNumber: '' })),
     );
@@ -48,7 +48,7 @@ describe('AccountView', () => {
     let patched: Record<string, unknown> | null = null;
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
       http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '', whatsappNumber: '', msteamsUserId: '' })),
       http.patch('*/api/auth/me/cli-settings', async ({ request }) => { patched = await request.json() as Record<string, unknown>; return HttpResponse.json({}); }),
@@ -67,7 +67,7 @@ describe('AccountView', () => {
     let patched: Record<string, unknown> | null = null;
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
       http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '' })),
       http.patch('*/api/auth/me/cli-settings', async ({ request }) => { patched = await request.json() as Record<string, unknown>; return HttpResponse.json({}); }),
@@ -87,7 +87,7 @@ describe('AccountView', () => {
     let patched: Record<string, unknown> | null = null;
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
       http.patch('*/api/auth/me', async ({ request }) => { patched = await request.json() as Record<string, unknown>; return HttpResponse.json(meUser({ default_exec: 'sonnet' })); }),
     );
@@ -113,7 +113,7 @@ describe('AccountView', () => {
     localStorage.setItem('elowen.account.section', 'plugins'); // the Plugins tab no longer exists
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
     );
     const { wrapper: Wrapper } = createWrapper();
@@ -128,7 +128,7 @@ describe('AccountView', () => {
     localStorage.setItem('elowen.account.section', 'profile');
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
       http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({
         model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '',
@@ -179,7 +179,7 @@ describe('AccountView', () => {
         serverName = body.name ?? serverName;
         return HttpResponse.json(meUser({ name: serverName }));
       }),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
     );
     const { wrapper: Wrapper, client } = createWrapper();
@@ -213,7 +213,7 @@ describe('AccountView', () => {
         if (typeof patched.email === 'string') stored.email = patched.email;
         return HttpResponse.json(meUser(stored));
       }),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
     );
     const { wrapper: Wrapper } = createWrapper();
@@ -253,7 +253,7 @@ describe('AccountView', () => {
         if (typeof body.email === 'string') stored.email = body.email;
         return HttpResponse.json({ user: meUser(stored) });
       }),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
     );
     const { wrapper: Wrapper } = createWrapper();
@@ -283,7 +283,7 @@ describe('AccountView', () => {
         attempts += 1;
         return attempts === 1 ? HttpResponse.json({ error: 'boom' }, { status: 500 }) : HttpResponse.json({ user: meUser() });
       }),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
     );
     const { wrapper: Wrapper } = createWrapper();

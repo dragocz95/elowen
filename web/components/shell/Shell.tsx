@@ -73,7 +73,6 @@ function ShellLayout({ children }: { children: ReactNode }) {
     const target = advisorOpenTarget({ onChat, mobile });
     if (target === 'none') return;
     if (target === 'chat-page') { router.push('/chat'); return; }
-    dock.addAdvisorPane();
     dock.setOpen(true);
   }, [onChat, mobile, router, dock]);
   // Open (and reveal the advisor pane of) the dock when another view asks to continue a conversation in

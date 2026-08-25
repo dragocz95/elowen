@@ -1,40 +1,30 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PluginRegistry } from '../../src/plugins/registry.js';
-import { eventProjectId, type EventProjectDeps } from '../../src/api/eventProject.js';
 import type { ElowenEvent } from '../../src/api/sse.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 
-const deps = (resolvers: ((e: ElowenEvent) => number | null)[] = []): EventProjectDeps => ({
-  taskProject: () => null,
-  pluginResolvers: () => resolvers,
-});
-
-describe('ctx.publishEvent', () => {
-  it('requires the mutates:[events] capability and stamps the publisher on plugin events', () => {
+describe('plugin event capabilities', () => {
+  it('requires mutates:[events] and stamps the publisher on plugin events', () => {
     const published: ElowenEvent[] = [];
     const reg = new PluginRegistry();
     const wire = (caps?: { mutates?: ('events')[] }) => reg.contextFor(
       'demo', {}, noopLog, undefined, undefined, undefined, undefined, caps, undefined, undefined,
       undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, undefined, undefined,
-      (e) => { published.push(e); },
+      (event) => { published.push(event); },
     );
-    expect(() => wire().publishEvent({ type: 'task', taskId: 't1', status: 'open' })).toThrow("mutates:['events']");
+    expect(() => wire().publishEvent({ type: 'plugins' })).toThrow("mutates:['events']");
     const ctx = wire({ mutates: ['events'] });
-    ctx.publishEvent({ type: 'task', taskId: 't1', status: 'open' });
+    ctx.publishEvent({ type: 'plugins' });
     ctx.publishEvent({ type: 'plugin', plugin: 'spoofed-other', kind: 'tick', projectId: 7, data: { n: 1 } });
     expect(published).toEqual([
-      { type: 'task', taskId: 't1', status: 'open' }, // core-shaped passes through byte-identical
-      { type: 'plugin', plugin: 'demo', kind: 'tick', projectId: 7, data: { n: 1 } }, // publisher stamped
+      { type: 'plugins' },
+      { type: 'plugin', plugin: 'demo', kind: 'tick', projectId: 7, data: { n: 1 } },
     ]);
   });
 
-  it('deleteEventsForTarget rides the same grant, and no-ops where there is no log', () => {
-    // The purge verb is what a plugin owes the feed when it deletes the row that history describes. It
-    // must not be reachable on a weaker grant than publishing — a plugin able to erase another tenant's
-    // activity without declaring an event mutation would be a silent hole — but an absent event store
-    // is not a failure: there is simply nothing to purge.
+  it('deleteEventsForTarget rides the same grant and tolerates an absent event log', () => {
     const purged: string[] = [];
     const reg = new PluginRegistry();
     const wire = (caps?: { mutates?: ('events')[] }, sink?: (target: string) => void) => reg.contextFor(
@@ -43,51 +33,24 @@ describe('ctx.publishEvent', () => {
       undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
       sink,
     );
-    expect(() => wire(undefined, (t) => { purged.push(t); }).deleteEventsForTarget('t1')).toThrow("mutates:['events']");
-    expect(purged).toEqual([]);
-    wire({ mutates: ['events'] }, (t) => { purged.push(t); }).deleteEventsForTarget('t1');
-    expect(purged).toEqual(['t1']);
-    expect(() => wire({ mutates: ['events'] }).deleteEventsForTarget('t2')).not.toThrow();
+    expect(() => wire(undefined, (target) => { purged.push(target); }).deleteEventsForTarget('x')).toThrow("mutates:['events']");
+    wire({ mutates: ['events'] }, (target) => { purged.push(target); }).deleteEventsForTarget('x');
+    expect(purged).toEqual(['x']);
+    expect(() => wire({ mutates: ['events'] }).deleteEventsForTarget('missing')).not.toThrow();
   });
 
-  it('registerEventProjectResolver is capability-gated and merge preserves ownership', () => {
+  it('registerEventRowResolver is capability-gated and merge preserves ownership', () => {
     const reg = new PluginRegistry();
     const warn = vi.fn();
-    reg.contextFor('demo', {}, { info() {}, warn, error() {} }).registerEventProjectResolver(() => 1);
-    expect(reg.eventProjectResolvers).toHaveLength(0);
+    reg.contextFor('demo', {}, { info() {}, warn, error() {} }).registerEventRowResolver(() => ({ type: 'x', target: 'y', detail: '' }));
+    expect(reg.eventRowResolvers).toHaveLength(0);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("mutates:['events']"));
+
     const staged = new PluginRegistry();
-    staged.contextFor('demo', {}, noopLog, undefined, undefined, undefined, undefined, { mutates: ['events'] }).registerEventProjectResolver(() => 1);
+    staged.contextFor('demo', {}, noopLog, undefined, undefined, undefined, undefined, { mutates: ['events'] })
+      .registerEventRowResolver(() => ({ type: 'x', target: 'y', detail: '' }));
     const merged = new PluginRegistry();
     merged.merge(staged);
-    expect(merged.eventProjectResolvers.map((r) => r.plugin)).toEqual(['demo']);
-  });
-});
-
-describe('eventProjectId with plugin contributions', () => {
-  it('a plugin event carries authoritative tenancy — resolvers cannot widen a null', () => {
-    const resolver = vi.fn(() => 42);
-    const scoped: ElowenEvent = { type: 'plugin', plugin: 'demo', kind: 'tick', projectId: 7, data: null };
-    const adminOnly: ElowenEvent = { type: 'plugin', plugin: 'demo', kind: 'tick', projectId: null, data: null };
-    expect(eventProjectId(scoped, deps([resolver]))).toBe(7);
-    expect(eventProjectId(adminOnly, deps([resolver]))).toBeNull();
-    expect(resolver).not.toHaveBeenCalled();
-  });
-
-  it('core-shaped events fall through to resolvers only when core yields nothing; first non-null wins', () => {
-    const e = { type: 'signal', session: 'elowen-x', signal: { type: 'progress' } } as unknown as ElowenEvent;
-    const second = vi.fn(() => 9);
-    expect(eventProjectId(e, deps([() => null, second, () => 99]))).toBe(9);
-    // Core answered → resolvers are not consulted at all (task tenancy stays a core lookup).
-    const t = { type: 'task', taskId: 't1', status: 'open' } as ElowenEvent;
-    const coreDeps = { ...deps([second]), taskProject: () => 5 };
-    second.mockClear();
-    expect(eventProjectId(t, coreDeps)).toBe(5);
-    expect(second).not.toHaveBeenCalled();
-  });
-
-  it('a throwing resolver fails closed instead of crashing the bus', () => {
-    const e: ElowenEvent = { type: 'task', taskId: 'gone', status: 'closed' };
-    expect(eventProjectId(e, deps([() => { throw new Error('boom'); }]))).toBeNull();
+    expect(merged.eventRowResolvers.map((resolver) => resolver.plugin)).toEqual(['demo']);
   });
 });

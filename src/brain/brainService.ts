@@ -465,7 +465,7 @@ export class BrainService {
 
   /** Tear down the admin chat terminal bound to a conversation before it is deleted (BrainTerminalService.
    *  stopForSession). Late-bound: the terminal service is constructed AFTER the brain (it needs store+users),
-   *  so bootstrap attaches this once ready — avoids a constructor cycle (mirrors SpawnService.attachBrainWorker).
+   *  so bootstrap attaches this once ready and avoids a constructor cycle.
    *  Undefined ⇒ no terminals wired; the janitor sweep still reaps an orphaned binding as a backstop. */
   private terminalTeardown?: (userId: number, sessionId: string) => Promise<void>;
   attachTerminalTeardown(fn: (userId: number, sessionId: string) => Promise<void>): void {

@@ -93,7 +93,7 @@ WantedBy=multi-user.target
 }
 
 /** Oneshot unit the timer fires: `elowen update --auto`. Runs as the same unprivileged service user and
- *  with the same ELOWEN_DB as the daemon, so it reads the opt-in flag + live missions from the right DB.
+ *  with the same ELOWEN_DB as the daemon, so it reads the auto-update opt-in from the right DB.
  *  No [Install] section — it's never enabled directly, only triggered by elowen-update.timer. */
 export function updateService(p: UnitParams): string {
   return `[Unit]

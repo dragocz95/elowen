@@ -1,13 +1,12 @@
 /** The single source of truth for which prompt templates a user may override, how they group in the
  *  account UI, which `{{vars}}` each one expects (shown as hints so a user doesn't drop a required
  *  placeholder), and whether the model's output is parsed as JSON (so the UI can warn — though the
- *  parser is hardened with a repair pass, see overseer/jsonRepair). `planner-fallback` is intentionally
- *  excluded: it's the built-in safety net used only when `planner` is unreadable, not a user surface. */
+ *  parser may harden downstream where needed. */
 
 export interface PromptCatalogEntry {
   /** Template name == the `.md` filename without suffix; the override key in `user_prompts`. */
   name: string;
-  /** Grouping in the account UI. Core uses workers|pilot|overseer|advisor|cli; a plugin may extend. */
+  /** Grouping in the account UI. Core uses advisor|cli; a plugin may extend. */
   group: string;
   /** Placeholders the template substitutes — surfaced in the editor so users keep them intact. */
   vars: string[];
@@ -19,14 +18,6 @@ export interface PromptCatalogEntry {
 }
 
 export const EDITABLE_PROMPTS: PromptCatalogEntry[] = [
-  // The tmux-agent/mission templates (worker*, agent-guide*, pilot, overseer, code-review, decision-*)
-  // live in the agents plugin now (plugins/agents/prompts + registerPrompts): the plugin runtime is
-  // their only renderer, so their catalog entries ride the plugin overlay and disappear with it.
-  // The embedded (Elowen AI) worker stays core — rendered by src/brain/worker/brainWorker.ts, which
-  // runs with or without the agents plugin. No CLI: it closes its task via the ElowenCloseTask tool.
-  { name: 'worker-brain', group: 'workers', vars: ['agentName', 'taskId', 'titlePart', 'detailsPart', 'resumePart'], jsonContract: false },
-  // Rendered by the core plan path too (plugin-less /tasks/plan via plannerDefault.ts) — stays core.
-  { name: 'planner', group: 'pilot', vars: ['goal', 'project', 'models', 'parallelism'], jsonContract: true },
   { name: 'elowen', group: 'advisor', vars: ['userName', 'personality', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
   { name: 'elowen-platform', group: 'advisor', vars: ['ownerName', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
   // A scheduled/unattended turn (any plugin that fires timer-driven work — the bundled cronjob today)

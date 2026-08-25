@@ -6,9 +6,6 @@ const parseHeadlessFlags = vi.fn(() => ({}));
 const systemctl = vi.fn(async () => ({ code: 0, stdout: '' }));
 /** Whether this box looks like an `elowen install` one (systemd units) or a plain local install. */
 let installed = false;
-/** Whether a mission is live on this box — the gate that decides if the daemon may be replaced at all. */
-let liveMission = false;
-
 vi.mock('../../../src/cli/commands.js', () => ({
   runLifecycle: (...args: unknown[]) => runLifecycle(...(args as [])),
   defaultLifecycleDeps: () => ({}),
@@ -20,9 +17,6 @@ vi.mock('../../../src/cli/installInfo.js', () => ({
 vi.mock('../../../src/cli/systemd.js', () => ({
   SERVICES: ['elowen-daemon', 'elowen-web'],
   systemctl: (...args: unknown[]) => systemctl(...(args as [])),
-}));
-vi.mock('../../../src/cli/missionGate.js', () => ({
-  hasLiveMission: () => liveMission,
 }));
 vi.mock('../../../src/cli/setup/headless.js', () => ({
   parseHeadlessFlags: (...args: unknown[]) => parseHeadlessFlags(...(args as [])),
@@ -51,7 +45,6 @@ async function runSetupFast(args: string[], base = 'http://localhost:4400'): Pro
 
 beforeEach(() => {
   installed = false;
-  liveMission = false;
   runLifecycle.mockClear();
   runHeadlessSetup.mockClear();
   systemctl.mockClear();
@@ -160,55 +153,6 @@ describe('cli/setup/command bringUp recovery', () => {
     await expect(runSetupFast(['--non-interactive'])).rejects.toThrow('exit');
     expect(err.mock.calls[0]?.[0]).toMatch(/did not become healthy/);
     expect(runHeadlessSetup).not.toHaveBeenCalled();
-    exit.mockRestore();
-    err.mockRestore();
-  });
-});
-
-/** Replacing the daemon SIGTERMs the agents it is running, which throws away a live mission's in-flight
- *  work. `elowen update` already withholds its restart for exactly that reason (`update.ts`); setup, which
- *  restarts on nothing more than an unhealthy /health, has to hold the same line. */
-describe('cli/setup/command bringUp mission gate', () => {
-  /** Same box, same unhealthy daemon, only the mission differs — the restart happens without one. */
-  it('restarts the systemd units when no mission is live', async () => {
-    installed = true;
-    let restarted = false;
-    systemctl.mockImplementation(async () => { restarted = true; return { code: 0, stdout: '' }; });
-    vi.stubGlobal('fetch', vi.fn(async () => (restarted ? new Response('{"ok":true}', { status: 200 }) : new Response('boom', { status: 500 }))));
-    await runSetupFast(['--non-interactive']);
-    expect(systemctl).toHaveBeenCalledWith('restart', 'elowen-daemon', 'elowen-web');
-    expect(runHeadlessSetup).toHaveBeenCalledOnce();
-  });
-
-  it('never restarts the systemd units while a mission is live', async () => {
-    installed = true;
-    liveMission = true;
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 500 })));
-    const exit = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null): never => {
-      throw new Error(`exit:${String(code)}`);
-    });
-    const err = vi.spyOn(console, 'error').mockImplementation(() => { /* silenced */ });
-    await expect(runSetupFast(['--non-interactive'])).rejects.toThrow('exit:1');
-    expect(systemctl).not.toHaveBeenCalled();
-    expect(runLifecycle).not.toHaveBeenCalled();
-    expect(runHeadlessSetup).not.toHaveBeenCalled();
-    expect(String(err.mock.calls[0]?.[0])).toMatch(/mission is live/);
-    exit.mockRestore();
-    err.mockRestore();
-  });
-
-  /** The locally-owned path is just as lethal: `down` kills the daemon (and its agents) outright. */
-  it('never downs a locally-owned daemon while a mission is live', async () => {
-    liveMission = true;
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 500 })));
-    const exit = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null): never => {
-      throw new Error(`exit:${String(code)}`);
-    });
-    const err = vi.spyOn(console, 'error').mockImplementation(() => { /* silenced */ });
-    await expect(runSetupFast(['--non-interactive'])).rejects.toThrow('exit:1');
-    expect(runLifecycle).not.toHaveBeenCalled();
-    expect(runHeadlessSetup).not.toHaveBeenCalled();
-    expect(String(err.mock.calls[0]?.[0])).toMatch(/mission is live/);
     exit.mockRestore();
     err.mockRestore();
   });

@@ -1,7 +1,6 @@
 import { streamSSE } from 'hono/streaming';
-import { accessSync, constants, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, delimiter } from 'node:path';
 import { resolveBrand } from '../../shared/brand.js';
 import { THEME_ASSET_FILES, ASSET_MAX_BYTES, activeThemeName, type ThemeAssetFile, type ThemeAssetSlot } from '../../store/themeStore.js';
 import { isNewer } from '../../cli/version.js';
@@ -12,8 +11,6 @@ import { parseBody, queryInt } from '../validation.js';
 import { LOG_DIR, logger } from '../../shared/logger.js';
 import { listLogFiles, readLogFile, deleteLogFile, deleteAllLogFiles, DEFAULT_LOG_TAIL_LINES, MAX_LOG_TAIL_LINES } from '../../integrations/logFiles.js';
 import { pushSubscribeSchema, pushUnsubscribeSchema, systemRestartSchema, configPatchSchema } from '../schemas/config.js';
-import { resolveExecutor } from '../../shared/execRouting.js';
-import { DEFAULT_BINS, BARE_PLAIN_PROGRAM, parseExecRef } from '../../shared/execs.js';
 import type { ElowenEvent } from '../sse.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import { readSystemDiagnostics } from '../systemDiagnostics.js';
@@ -143,43 +140,15 @@ export function buildToolDeferralCatalog(registry: PluginRegistry | undefined, r
   }));
 }
 
-/** True when `bin` resolves to an executable on the daemon's PATH — the readiness check for a task exec
- *  that names an external agent CLI (the embedded `elowen:` engine skips this, it's always runnable). */
-function binOnPath(bin: string): boolean {
-  if (!bin) return false;
-  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
-    if (!dir) continue;
-    try { accessSync(join(dir, bin), constants.X_OK); return true; } catch { /* try the next PATH entry */ }
-  }
-  return false;
-}
-
-/** Whether a non-`elowen:` task exec spec names an installed agent CLI: resolve it to its program (the
- *  same routing the scheduler uses) and probe that program's binary on PATH. */
-function execCliInstalled(spec: string, providers: Record<string, { bin: string }>): boolean {
-  if (!spec) return false;
-  const { program } = resolveExecutor([`exec:${spec}`], { program: BARE_PLAIN_PROGRAM, model: spec });
-  // Honor a configured bin path (what the scheduler actually spawns — `elowen install` sets these) before
-  // falling back to the program's default name. An absolute/relative path is probed directly; a bare name
-  // is searched on PATH.
-  const bin = providers[program]?.bin || (DEFAULT_BINS as Record<string, string>)[program];
-  if (!bin) return false;
-  return bin.includes('/') ? binExists(bin) : binOnPath(bin);
-}
-
-/** True when an absolute/relative binary path is executable (a configured `providers.<program>.bin`). */
-function binExists(path: string): boolean { try { accessSync(path, constants.X_OK); return true; } catch { return false; } }
-
 /** Daemon-wide surface: the stateless MCP endpoint, web-push key + per-user subscribe/unsubscribe,
  *  config read/write (admin-gated write), the System panel (version/update-available) and the live
  *  SSE event stream (per-subscriber tenancy gate). */
 export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
-  const { d, accessibleProjects, eventDeps, notAdminUnlessSetup, notAdmin } = ctx;
+  const { d, accessibleProjects, notAdminUnlessSetup, notAdmin } = ctx;
   // MCP endpoint: the advisor agent connects here to control Elowen with native tools. Each request is
   // handled statelessly with the toolset bound to the caller's token, and every tool delegates to the
   // same `callElowenApi` core as the `elowen api` CLI verb — so a new REST endpoint needs zero edits here.
-  // Plugin-contributed tools (the agents plugin's mission/session/notes surface) are resolved from the
-  // LIVE registry per request, so a plugin reload/disable applies to the very next tools/list.
+  // Plugin-contributed tools resolve from the live registry per request, so reloads apply immediately.
   app.all('/mcp', async c => {
     const token = c.get('token');
     const registry = await d.plugins?.get().catch(() => undefined);
@@ -367,25 +336,8 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     checks.push({ id: 'chat', label: 'Chat', ok: model != null, detail: model ?? 'no provider',
       ...(model ? {} : { hint: 'Run `elowen setup` to connect an AI provider.' }) });
 
-    // tasks — the embedded engine is always runnable; any other exec must name an installed CLI.
-    // Reported only while the task domain HAS an owner: `d.tasks` is absent when no plugin provides it,
-    // and a green "Tasks: sonnet" on an install with no task subsystem is worse than no row at all — it
-    // sends someone debugging a configured executor when the answer is that nothing can run a task. The
-    // row disappearing is the same honest answer the extracted 'missions' check gives.
-    const exec = cfg.defaults.exec;
-    if (d.tasks) {
-      // Embedded engine: runnable iff the provider its identity names still exists. Which engine it is
-      // comes from the shared parser — readiness must not re-derive "is this the brain?" on its own.
-      const ref = parseExecRef(exec);
-      const brainRef = ref?.program === 'elowen' ? ref : null;
-      const tasksOk = brainRef ? cfg.brain.providers.some((pr) => pr.id === brainRef.provider) : execCliInstalled(exec, cfg.providers);
-      checks.push({ id: 'tasks', label: 'Tasks', ok: tasksOk, detail: exec || 'not set',
-        ...(tasksOk ? {} : { hint: brainRef ? 'The provider its executor points at is gone — re-run `elowen setup`.' : 'The setup wizard points this at the built-in engine — re-run `elowen setup`.' }) });
-    }
-
-    // Plugin-contributed rows slot in here (where the extracted 'missions' check used to sit): the
-    // agents plugin reports missions readiness while enabled; a disabled plugin's checks disappear
-    // with it — which is itself the honest first-run answer. A throwing check is dropped, never a 500.
+    // Plugin-contributed readiness rows disappear when their plugin is disabled. A throwing check is
+    // dropped rather than taking down the whole report.
     const registry = await d.plugins?.get();
     for (const { fn } of registry?.readinessChecks ?? []) {
       try {
@@ -422,11 +374,9 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ checks });
   });
 
-  // Trigger a manual in-place update. Admin-only (mirrors /config) and refused while a mission is live
-  // — the update restarts the services, which would kill the running agent sessions.
+  // Trigger a manual in-place update. Admin-only, mirroring /config.
   app.post('/system/update', (c) => {
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
-    if (d.missions.live().length > 0) return c.json({ error: 'mission_running' }, 409);
     (d.startUpdate ?? defaultStartUpdate)();
     return c.json({ started: true });
   });
@@ -494,7 +444,7 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       // turn in a personal conversation resolves to no project at all.
       if (e.type === 'activity') return true;
       if (!allowed) return true;
-      const pid = eventProjectId(e, eventDeps);
+      const pid = eventProjectId(e);
       return pid !== null && allowed.has(pid);
     };
     const off = d.bus.subscribe(e => { if (visible(e)) void stream.writeSSE({ data: JSON.stringify(e), event: e.type }); });

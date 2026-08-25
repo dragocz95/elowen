@@ -6778,13 +6778,12 @@ describe('BrainService.bindChannelContext (/context move-binding)', () => {
     expect(d.store.getSession('brain-ch-discord-c1')).toBeUndefined();
   });
 
-  it('rejects the bare default and any channel/task session (bare-default + non-user guard)', async () => {
+  it('rejects the bare default and channel sessions (bare-default + non-user guard)', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1); // brain-1 exists
     await expect(svc.bindChannelContext(1, 'discord-c1', 'brain-1')).rejects.toThrow('cannot be bound to a channel');
     await expect(svc.bindChannelContext(1, 'discord-c1', 'brain-ch-other')).rejects.toThrow('cannot be bound to a channel');
-    await expect(svc.bindChannelContext(1, 'discord-c1', 'brain-task-42')).rejects.toThrow('cannot be bound to a channel');
   });
 
   it('is single-channel unique: a second bind of the same session fails, and the channel keeps the chosen history', async () => {

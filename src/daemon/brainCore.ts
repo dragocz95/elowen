@@ -1,8 +1,7 @@
 import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
-import { TaskRefs } from '../store/taskRefs.js';
-import type { PluginBrainWorker, PluginHostAdvisor, PluginHostPush, PluginHostTerminals, TasksDomainControl } from '../plugins/api.js';
+import type { PluginHostPush } from '../plugins/api.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -44,11 +43,11 @@ import { EmbeddingQueue } from '../embeddings/embedQueue.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { brainConfigFromElowen, configuredBrainProviders } from '../brain/config.js';
-import { loadAgentRegistry, agentCatalog, type AgentDef } from '../brain/agents/agentRegistry.js';
-import { makeAgentCatalog } from '../brain/agents/catalogService.js';
+import { loadAgentRegistry, subagentCatalog, type AgentDef } from '../brain/agents/agentRegistry.js';
+import { makeSubagentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
-import { setToolOutputCaps, setToolOutputPolicy, shapeBrainMessages } from '../brain/messageView.js';
-import { isSubagentSession, isTaskSession, taskSessionId } from '../brain/sessionId.js';
+import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js';
+import { isSubagentSession } from '../brain/sessionId.js';
 import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
 import { setSpillNamespaceResolver } from '../shared/paths.js';
@@ -74,15 +73,7 @@ import { WORKFLOW_ADD_NODES_RPC, type WorkflowExpansionRpc } from '../subagent/h
 const log = logger('daemon');
 
 /** Compact, human-readable one-liner for a bus event — the daemon's activity trail in the log file. */
-function describeEvent(e: { type: string } & Record<string, unknown>): string {
-  switch (e.type) {
-    case 'task': return `task ${e.taskId} → ${e.status}`;
-    case 'mission': return `mission ${e.missionId} → ${e.state}`;
-    case 'plan': return `plan ${e.jobId} → ${e.status}${e.epicId ? ` (epic ${e.epicId})` : ''}${e.error ? ` — ${e.error}` : ''}`;
-    case 'signal': return `signal ${e.session} → ${(e.signal as { type?: string })?.type ?? '?'}`;
-    default: return e.type;
-  }
-}
+function describeEvent(e: { type: string }): string { return e.type; }
 
 /** The plugin-facing bridge to the brain's DIRECT sub-agent delegation, keyed on the parent session
  *  the registry reads off the live turn so a plugin can only ever reach its OWN children. Lifted out
@@ -145,7 +136,7 @@ export interface BrainCoreOpts {
  *  server, no platform gateways, no scheduler and no background loop attached.
  *
  *  This is deliberately the single construction path: the daemon's `buildApp` calls it and wires its own
- *  daemon-only layers (API, autopilot, platforms, sweeps) on top of what comes back. The point is that a
+ *  daemon-only layers (API, platforms, sweeps) on top of what comes back. The point is that a
  *  second process can obtain a byte-identical brain — same prompts, same tools, same limits — by calling
  *  the same function, instead of re-deriving the wiring and drifting from it.
  *
@@ -155,25 +146,11 @@ export interface BrainCoreOpts {
  *  error at all, which is the exact failure this factory exists to make impossible. */
 export async function buildBrainCore(opts: BrainCoreOpts) {
   // Annotated (not inferred) so declaration emit names the `Db` alias — the composite build for the
-  // agents plugin (tsconfig.plugins.json) needs this factory's return type to be declaration-emittable.
+  // plugin declaration builds need this factory's return type to be declaration-emittable.
   const db: Db = openDb(opts.dbPath, opts.migrate === false ? { migrate: false } : {});
   db.prepare('INSERT OR IGNORE INTO projects (id,slug,path) VALUES (?,?,?)').run(opts.project.id, opts.project.slug, opts.project.path);
   const tmux = opts.tmux;
-  // The task ROWS are owned by whichever plugin registers the `tasks` domain control (see tasksSeam
-  // below). What stays here is the tenancy boundary's own read view of them — it must answer before any
-  // plugin is loaded, and must never be served by a plugin whose callers it gates.
-  const taskRefs = new TaskRefs(db);
   const config = new ConfigStore(db);
-  // One-shot upgrade: auto-enable the extracted `agents` plugin for pre-existing installs (it replaces
-  // previously-core behaviour — see migrateAgentsEnabled). Daemon-only, like schema migrations: the
-  // sub-agent runner attaches to a database the daemon already prepared and must not write settings.
-  if (opts.migrate !== false) config.migrateAgentsEnabled();
-  // One-shot copy of the plugin-exclusive autopilot keys into plugins.config.agents (lossless —
-  // autopilot.* keeps its values for rollback). Same daemon-only discipline as above.
-  if (opts.migrate !== false) config.migrateAgentsPluginConfig();
-  // Config wave 2 (batch 3a): the remaining agents-only keys (pilot/overseer execs, reviewOnDone,
-  // tddMode, prEnabled, ghToken) follow the same one-shot lossless copy.
-  if (opts.migrate !== false) config.migrateAgentsPluginConfigWave2();
   // One-shot copy of the core `lspEnabled` toggle into plugins.config.lsp + auto-enable of the
   // extracted `lsp` plugin for pre-existing installs (lossless — lspEnabled keeps its value for
   // rollback). The plugin's own service seeds its manager from that slice at start.
@@ -181,9 +158,6 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // The project editor was previously core, so existing installs retain it once; later operator
   // disables remain authoritative through the persisted marker.
   if (opts.migrate !== false) config.migrateEditorPlugin();
-  // Task tracking was core until this wave; keep it on for installs that already had it (the marker
-  // makes it one-shot, so a deliberate disable is never undone).
-  if (opts.migrate !== false) config.migrateWorkPlugin();
   const users = new UserStore(db);
   if (opts.bootstrap != null) {
     if (users.count() === 0) {
@@ -208,48 +182,19 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const userPluginConfig = new UserPluginConfigStore(db);
   const prompts = new PromptService(userPrompts);
   const git = new RealGitReader();
-  // Give spawned agents a way to close their task: the elowen CLI path + daemon URL + a service token.
-  // The token is AGENT-SCOPED (not the admin's full token): a prompt-injected agent can only drive
-  // its own worker/overseer/pilot verbs (close task, plan submit, overseer poll/decide, read-only
-  // listings) — never manage users, PUT /config, or register/delete projects (finding S51). Reused
-  // across restarts (see ensureAgentToken) so a restart doesn't 401 in-flight agents. Owned by the
-  // lowest-id user purely to satisfy the FK; the scope, not the owner, is what bounds it.
   const cliPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'index.js');
-  // How spawned agents invoke the elowen CLI. In a global install the `elowen` command is on PATH, so set
-  // ELOWEN_CLI=elowen (the systemd unit does); a source checkout leaves it unset and falls back to running
-  // this daemon's own CLI by absolute path via node. Single source — threaded to spawn/pilot/overseer.
-  const cli = (process.env.ELOWEN_CLI) ?? `node ${cliPath}`;
-  // The SAME invocation as argv tokens (not a split of the shell string), for the direct tmux launch of an
-  // admin's chat terminal (BrainTerminalService → tmux `-- <argv>`). Prod's ELOWEN_CLI=elowen → ['elowen'];
-  // a checkout → ['node', <cliPath>]. (Space-bearing checkout paths would mis-tokenize; ours has none.)
-  const cliArgv = (process.env.ELOWEN_CLI) ? process.env.ELOWEN_CLI.split(' ') : ['node', cliPath];
-  // Reuse the existing agent token across restarts so a daemon restart doesn't 401 in-flight agents
-  // mid-task (they hold the token they were spawned with); only mints fresh when none is valid.
-  const serviceUserId = users.count() > 0 ? users.list()[0]?.id ?? null : null;
-  const serviceToken = serviceUserId !== null ? users.ensureAgentToken(serviceUserId) : '';
-  // Per-task agent credential: a worker is spawned with a token bound to the task it was spawned for,
-  // so the API can refuse it on any other task — one shared token cannot tell two workers apart inside
-  // the same project. Only ids that are REAL task rows bind; the overseer (`overseer-<mission>`), the
-  // pilot (a plan job id) and the advisor have no task row and keep the unbound service token.
-  const tokenForTask = (taskId: string): string | undefined =>
-    serviceUserId !== null && taskRefs.get(taskId) ? users.ensureAgentTokenForTask(serviceUserId, taskId) : undefined;
-  // A credential that acts as ONE REAL USER, for a plugin that took over a core surface which always ran
-  // with the user's own rights (the Elowen* control-plane tools). Deliberately the SAME mint the core
-  // path uses (`ensureAdvisorToken`, DB scope 'advisor', reused within its TTL), so moving that surface
-  // into a plugin changes neither the tenancy it acts under nor the token rows the database accumulates.
-  // Only a REAL user binds — an unknown id gets nothing rather than a token attributed to a ghost row.
+  const cli = process.env.ELOWEN_CLI ?? `node ${cliPath}`;
+  const cliArgv = process.env.ELOWEN_CLI ? process.env.ELOWEN_CLI.split(' ') : ['node', cliPath];
+  // A credential that acts as one real user for a plugin-owned user surface. Only an existing account
+  // binds; an unknown id gets nothing rather than a token attributed to a ghost row.
   const tokenForUser = (userId: number): string | undefined =>
     users.get(userId) ? users.ensureAdvisorToken(userId) : undefined;
-  const elowenCli = { cli, url: `http://localhost:${(process.env.ELOWEN_PORT) ?? 4400}`, token: serviceToken, tokenForTask };
-  // NOTE: the SpawnService (and the AgentStore it records into) is owned by the agents plugin now —
-  // the daemon reaches it through the 'missions' control; nothing here launches agent sessions.
+  const elowenCli = { cli, cliArgv, url: `http://localhost:${process.env.ELOWEN_PORT ?? 4400}`, tokenForUser };
   const bus = new EventBus();
-  // The activity-log recorder resolves plugin-owned event shapes (mission/review/decision/message/
-  // signal → the agents plugin) through the LIVE registry — a reload swaps the resolver set, and with
-  // the owning plugin disabled those events are simply not persisted.
+  // Plugin-owned event-row mappings resolve through the live registry, so reloads replace them without
+  // restarting the core and disabling a plugin cleanly removes its mapper.
   const events = new EventStore(db, () => (loadedPluginRegistry?.eventRowResolvers ?? []).map((r) => r.fn));
-  // Activity trail: mirror every bus event into the log file as a readable one-liner, so the log on
-  // its own tells the story of a run (spawns, advances, plans) without cross-referencing the DB.
+  // Activity trail: mirror every bus event into the log file as a readable one-liner.
   bus.subscribe((e) => log.info(describeEvent(e)));
   const avatarsDir = opts.dbPath === ':memory:' ? undefined : join(dirname(opts.dbPath), 'avatars');
   // A chat turn's image attachments, kept beside the database like avatars. They are read back through an
@@ -357,12 +302,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // Text→vector embedder for Elowen memory (consumed by Phase-4 retrieval); reuses the operator's brain
   // provider credentials via the same resolver plugins get. Pure network service, no DB access.
   const embeddings = new EmbeddingService({ resolveProvider });
-  // The usage views may hide a task worker's spend ONLY while the other half of /usage/* reports it —
-  // that half is the task domain owner's snapshot aggregate (`tasksDomain()?.usage()`, exactly what the
-  // route reads). Resolved live per query, so toggling the owning plugin applies with no restart, and
-  // the boot window (registry not loaded yet) reads as unowned, which keeps spend VISIBLE rather than
-  // hiding money nobody else is reporting.
-  const brainStore = new BrainStore(db, () => !!tasksDomain()?.usage());
+  const brainStore = new BrainStore(db);
   // Session id → immutable spill namespace, for pathGuard's spill-dir allowance and the
   // toolResultClearing default dir. Wired HERE because this is the single construction path every
   // process shares (daemon and forked sub-agent runner alike) — an unwired process would fall back to
@@ -402,25 +342,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // The provider's own memo is a Promise, which a synchronous status read cannot await; refreshed by the
   // same `.then` that refreshes the output-show snapshot, so it can never lag behind a reload.
   let loadedPluginRegistry: PluginRegistry | undefined;
-  // The task domain's CURRENT owner, or undefined when no loaded plugin claims it. Resolved through the
-  // live registry on every call — a plugin reload swaps the owner, so a captured control would keep a
-  // dead generation alive. Core never names the owning plugin: it asks for the domain.
-  const tasksDomain = (): TasksDomainControl | undefined => loadedPluginRegistry?.control('tasks');
-  const tasksSeam = (): TasksDomainControl => {
-    const domain = tasksDomain();
-    // Fail closed and LOUD: a seam that answered an unowned domain with an empty store would let a caller
-    // which never asked `tasksAvailable()` report "no tasks" as fact.
-    if (!domain) throw new Error('the tasks domain is unavailable — no loaded plugin owns it');
-    return domain;
-  };
-  // Late binding for ctx.host.brainWorker(): the BrainWorkerService is constructed in bootstrap AFTER
-  // this factory returns (it needs the brain store + bus), mirroring SpawnService.attachBrainWorker.
-  let hostBrainWorker: PluginBrainWorker | undefined;
   // Same late binding for the push transport: the PushSender is a bootstrap construct (it needs the
   // subscriptions store + web-push keys wired there).
   let hostPush: PluginHostPush | undefined;
-  let hostTerminals: PluginHostTerminals | undefined;
-  let hostAdvisor: PluginHostAdvisor | undefined;
   // Status reads verify a `running` workflow row against the ENGINE (the subagent plugin's `workflow`
   // control) instead of trusting the row + origin-session liveness — see statusService.workflowRuns.
   setWorkflowLivenessProbe(workflowEngineProbeFrom(() => loadedPluginRegistry));
@@ -459,7 +383,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // auto-save (the curator distilling durable facts) AND category classification — it resolves the
   // referenced brain provider's endpoint+key at call time (no second secret stored), mirroring how
   // embeddings reuse the brain key. Null when unconfigured/keyless → both no-op (memory still works via
-  // the explicit Memory* tools). NOTE: deliberately NOT the autopilot model — memory is its own concern.
+  // the explicit Memory* tools). Memory is deliberately its own concern.
   const memoryModelInference = (): InferenceClient | null => {
     const block = config.get().categorization;
     if (!block.providerId || !block.model) return null;
@@ -470,7 +394,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const memoryCategorizer = new MemoryCategorizer({
     categories: memoryCategoryStore, memories: memoryStore, inference: memoryModelInference, logger: log,
   });
-  // ONE shared plugin registry for the whole daemon (brain chat + elowen-exec workers + platforms):
+  // ONE shared plugin registry for the whole daemon (brain chat + platforms):
   // loading is lazy (plugins load on first use, not at boot), and a plugin toggle invalidates every consumer at once —
   // a per-service memo would leave the workers on a stale registry until a daemon restart.
   const pluginProvider = new PluginRegistryProvider(() => {
@@ -492,7 +416,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
       // The typed sub-agent catalog, read synchronously by the subagent plugin at register time to compose
       // its Delegate tool description.
-      subagentTypes: () => agentCatalog(getAgentRegistry()),
+      subagentTypes: () => subagentCatalog(getAgentRegistry()),
       // The operator's ceiling on the context a delegating plugin may attach to a child (Settings →
       // Elowen AI → Limits). Read live, so raising it applies to the next delegation without a restart.
       delegateContextChars: () => config.get().brain.limits.delegateContextChars,
@@ -556,42 +480,26 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       // ctx.deleteEventsForTarget(): the feed's purge verb, for a plugin deleting the row its activity
       // history describes. Same store the recorder writes to, same capability gate as publishing.
       deleteEvents: (target) => events.deleteForTarget(target),
-      // ctx.host.*: the core-owned machinery an extracted subsystem (agents) builds on. The brain
-      // worker resolves LIVE — bootstrap constructs it after this load (setPluginHostBrainWorker).
+      // ctx.host.* exposes narrow, capability-gated infrastructure for present and future plugins.
       host: {
         tmux,
-        brainWorker: () => hostBrainWorker,
-        elowenCli: { cli, cliArgv, url: elowenCli.url, token: elowenCli.token, tokenForTask, tokenForUser },
+        elowenCli,
         stores: {
-          // The task domain resolves LIVE through its control on every read (see tasksSeam): the owner is
-          // whichever plugin registered `tasks`, and a getter — rather than the instance — is what keeps a
-          // held `stores()` object correct across a plugin reload that swapped that owner.
-          get tasks() { return tasksSeam().store(); },
-          get readiness() { return tasksSeam().readiness(); },
-          get taskUsage() { return tasksSeam().usage(); },
-          tasksAvailable: () => tasksDomain() !== undefined,
           projects,
-          // Live row read: `homeProject` may be the narrow bootstrap fallback {id,slug,path}, but the
-          // row always exists (inserted at open), so the store yields the full Project shape.
-          homeProject: () => projects.get(homeProject.id) ?? { id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '', pr_enabled: null },
+          homeProject: () => projects.get(homeProject.id) ?? {
+            id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '',
+          },
           usersRead: {
             list: () => users.list().map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
             isAdmin: (id) => users.isAdmin(id),
             allowedExecs: (id) => users.list().find((u) => u.id === id)?.allowed_execs ?? null,
-            // Read the row LIVE and answer through the shared predicate: a grant revoked a minute ago has
-            // to be visible to the next tick of whatever is acting for that account.
             mayUsePlugin: (id, plugin) => {
               const user = users.list().find((u) => u.id === id);
               if (!user) return false;
               return isPluginAllowedForUser(user, { name: plugin, userGrantable: loadedPluginRegistry?.userGrantable.has(plugin) });
             },
           },
-          ...(events ? { eventsRead: { list: (opts: { target?: string; type?: string }) => events.list(opts) } } : {}),
-          // The task transcript, shaped HERE: the `brain-task-<id>` session name and the message view are
-          // both core conventions shared with chat, so the plugin serving the route asks for a task's
-          // conversation and never for a session id it would have to spell itself.
-          taskConversation: (taskId: string) => shapeBrainMessages(
-            brainStore.getMessages(taskSessionId(taskId)), brainStore.getSubagentRuns(taskSessionId(taskId))),
+          eventsRead: { list: (opts: { target?: string; type?: string }) => events.list(opts) },
         },
         externalUsers: {
           resolvePlatformUser: (platform, platformUserId, verifiedEmail) => {
@@ -635,24 +543,13 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           rawTemplate,
           userOverride: (userId, name) => userPrompts.get(userId, name),
         },
-        config: {
-          get: () => {
-            const c = config.get();
-            return { autopilot: c.autopilot, allowedExecs: c.allowedExecs, customModels: c.customModels, hiddenPresets: c.hiddenPresets, modelNotes: c.modelNotes, defaults: c.defaults, providers: c.providers, brain: c.brain };
-          },
-          autopilotRelay: () => config.autopilotRelay(),
-          hasSettings: () => config.hasSettings(),
-          legacyGhToken: () => config.legacyGhToken(),
-        },
         relayClient: (cfg) => new RelayClient(cfg),
         git: { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff },
         push: () => hostPush,
-        terminals: () => hostTerminals,
-        advisor: () => hostAdvisor,
-        // The typed sub-agent catalog editor (the subagent plugin's '/plugins/agents/*' surface).
+        // The typed sub-agent catalog editor used by delegation plugins.
         // Tool names resolve through the provider so a save validates against the LIVE merged
         // registry — including the reload this very load is part of (get() memoizes per generation).
-        agentCatalog: makeAgentCatalog({
+        subagentCatalog: makeSubagentCatalog({
           builtinDir: agentsBuiltinDir,
           ...(agentsUserDir ? { userDir: agentsUserDir } : {}),
           pluginToolNames: async (): Promise<string[]> => (await pluginProvider.get()).tools.map((t) => t.name),
@@ -683,13 +580,12 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // shutdown drain reads it through BrainService.midStepWork. A parked OWNER conversation and a parked
   // ordinary PLATFORM CHANNEL turn both write the durable park marker here, synchronously, so their boot
   // resume sweeps can continue the turn — sub-agent sessions (the only ones a runner process ever parks)
-  // have their own run-row/journal recovery and deliberately leave no marker, and task-worker sessions
-  // never park at all. A platform channel turn is park-eligible only when its current turn's durable
+  // have their own run-row/journal recovery and deliberately leave no marker. A platform channel turn is park-eligible only when its current turn's durable
   // resume envelope proves a faithful resume exists (platformTurnParkEligible — fail closed, and never
   // for cron/scheduled turns).
   const stepDrain = new StepDrainCoordinator({
     onParked: (sessionId) => {
-      if (isSubagentSession(sessionId) || isTaskSession(sessionId)) return;
+      if (isSubagentSession(sessionId)) return;
       try { brainStore.markSessionParked(sessionId); } catch (e) { log.error(`park marker write failed for ${sessionId}`, e); }
     },
     parksPlatformTurn: (sessionId) => platformTurnParkEligible(brainStore, sessionId),
@@ -747,7 +643,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         brainLimits: () => config.get().brain.limits,
         runtimeConfig: () => config.get().runtime,
         resolvePlatformUser,
-        // Same allow-list semantics as the task/session routes: admins unrestricted in their NARROWING,
+        // Same allow-list semantics as the model-selection routes: admins unrestricted in their NARROWING,
         // everyone else bounded by the global list AND their personal whitelist (empty personal = global
         // only). A brain model that no longer exists in Settings → Brain is refused for everyone — that is
         // an existence check, not a permission — which is what makes a session pinned to a removed model
@@ -788,12 +684,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       })
     : undefined;
   return {
-    db, taskRefs, config, users, homeProject, projects, userProjects,
+    db, config, users, homeProject, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, prompts, git,
-    // The task domain's CURRENT owner, for the daemon layers that legitimately drive task rows (the
-    // embedded worker, the instance-cleanup route). Resolved per call — never captured — and undefined
-    // while no loaded plugin owns it, which is what those layers must degrade on.
-    tasksDomain,
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
@@ -801,12 +693,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     memoryService, embedQueue, memoryModelInference, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand,
     // Sync view of the last loaded registry (undefined before the first load) — for wiring that must
-    // read plugin contributions without awaiting the provider (e.g. event tenancy resolvers).
+    // read plugin contributions without awaiting the provider.
     loadedPlugins: () => loadedPluginRegistry,
-    // Bootstrap hands the constructed BrainWorkerService here so ctx.host.brainWorker() resolves.
-    setPluginHostBrainWorker: (worker: PluginBrainWorker) => { hostBrainWorker = worker; },
     setPluginHostPush: (sender: PluginHostPush) => { hostPush = sender; },
-    setPluginHostTerminals: (terminals: PluginHostTerminals) => { hostTerminals = terminals; },
-    setPluginHostAdvisor: (advisor: PluginHostAdvisor) => { hostAdvisor = advisor; },
   };
 }

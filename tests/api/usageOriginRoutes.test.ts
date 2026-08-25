@@ -10,7 +10,6 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { UsageOriginStore } from '../../src/store/usageOriginStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 const AT = Date.UTC(2026, 7, 17, 10, 0);
 const ip = (value: string, trusted = true) => ({ value, kind: 'ip' as const, trusted });
@@ -31,7 +30,7 @@ function setup() {
   userProjects.assign(bob.id, 1);
   const usageOrigins = new UsageOriginStore(db);
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: { disengage: async () => {} } as never, tmux: new FakeTmuxDriver(),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
@@ -95,7 +94,7 @@ describe('GET /usage/by-origin', () => {
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const app = createServer({
-      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+      bus: new EventBus(),
       engine: { disengage: async () => {} } as never, tmux: new FakeTmuxDriver(),
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db),

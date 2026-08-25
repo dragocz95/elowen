@@ -9,7 +9,6 @@ import { PluginRegistry } from '../../src/plugins/registry.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import type { PluginHttpRoute } from '../../src/plugins/api.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 class FakeClock { constructor(private t: number) {} now(): number { return this.t; } }
 
@@ -35,7 +34,7 @@ function setup(registry: PluginRegistry | undefined) {
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0) as never, config: new ConfigStore(db), users,
@@ -141,7 +140,7 @@ describe('hook routes', () => {
     const users = new UserStore(db);
     users.create('admin', 'pw');
     const app = createServer({
-      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+      bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0) as never, config: new ConfigStore(db), users,

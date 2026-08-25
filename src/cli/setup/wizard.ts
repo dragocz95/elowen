@@ -15,7 +15,7 @@ import type { ReadinessCheck } from '../doctor.js';
 // The wizard sets up the ASSISTANT and nothing else — sign in, connect the provider your own
 // conversations run on, tune its behaviour, then the optional memory/code-intelligence add-ons. It
 // deliberately configures no plugin: a fresh install ships a bare assistant, and asking about a
-// subsystem that is not installed (autopilot/missions, tasks) is asking about somebody else's product.
+// subsystem that is not installed (for example retired workflow domains) is asking about somebody else's product.
 const BASE_STEPS: WizardStep[] = [
   { id: 'account', title: 'Account', run: runAccountStep },
   { id: 'project', title: 'Project', run: runProjectStep },

@@ -1,6 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
-import { TaskRefs } from '../../src/store/taskRefs.js';
-import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
+import { describe, it, expect } from 'vitest';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
@@ -8,34 +6,23 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
-import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
+import { openDb } from '../../src/store/db.js';
 
-/** The daemon's OWN permission surface: /users management, impersonation, and the admin cleanup wipe.
- *
- *  The task domain is the reference store (refStores.ts) over the frozen plugin tables, which is exactly
- *  what the cleanup route needs — it counts and purges rows, it does not serve them. The permission rules
- *  observed through a PLUGIN-served route (task-dep tenancy, the exec allow-list at spawn, mission and
- *  session teardown) moved with those routes to the plugin registry:
- *  tests/work-userPermissions.test.ts there. */
-async function setup(extra: { missionGit?: unknown } = {}) {
-  const db = openPluginTablesDb(':memory:');
+/** The daemon's own permission surface: account management and impersonation. */
+async function setup() {
+  const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw'); // first user -> is_admin
   const bob = users.create('bob', 'pw');
   const userProjects = new UserProjectStore(db);
-  const tasks = new RefTaskStore(db);
-  const tmux = new FakeTmuxDriver();
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), missions: new RefMissions(db), bus: new EventBus(),
-    engine: { disengage: async () => {} } as never, tmux,
-    missionGit: extra.missionGit as never,
+    bus: new EventBus(),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
     users, projects: new ProjectStore(db), userProjects,
   });
-  return { app, db, users, userProjects, tasks, tmux, admin, bob, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
+  return { app, db, users, userProjects, admin, bob, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -165,34 +152,6 @@ describe('admin impersonation (sign in as)', () => {
     expect(user.id).toBe(bob.id);
     // the issued token really acts as bob
     expect((await (await app.request('/auth/me', auth(token))).json()).user.id).toBe(bob.id);
-  });
-});
-
-describe('POST /admin/cleanup — the daemon-owned operational wipe', () => {
-  it('POST /admin/cleanup is admin-only and wipes all tasks + missions', async () => {
-    const { app, adminTok, bobTok, tasks, db } = await setup();
-    tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
-    tasks.create({ id: 'elowen-2', project_id: 1, title: 'Y', type: 'epic' });
-    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m1','elowen-2','L3','active')").run();
-    expect((await app.request('/admin/cleanup', post(bobTok, {}))).status).toBe(403); // non-admin blocked
-    const res = await app.request('/admin/cleanup', post(adminTok, {}));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, tasks: 2, missions: 1 });
-    expect(tasks.list()).toEqual([]);
-    expect(db.prepare('SELECT COUNT(*) c FROM missions').get()).toEqual({ c: 0 });
-  });
-
-  it('POST /admin/cleanup frees a paused mission\'s worktree even though it is not "live"', async () => {
-    const cleanup = vi.fn().mockResolvedValue(undefined);
-    const { app, adminTok, tasks, db } = await setup({ missionGit: { cleanup } });
-    tasks.create({ id: 'elowen-paused-ep', project_id: 1, title: 'Epic', type: 'epic' });
-    // 'paused' is not in RefMissions.live() ('active'/'stalled' only), so the disengage sweep never
-    // reaches it — but it still holds a worktree (pause keeps it for resume). cleanup() must still run.
-    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m-elowen-paused-ep','elowen-paused-ep','L3','paused')").run();
-
-    const res = await app.request('/admin/cleanup', post(adminTok, {}));
-    expect(res.status).toBe(200);
-    expect(cleanup).toHaveBeenCalledWith('m-elowen-paused-ep');
   });
 });
 
