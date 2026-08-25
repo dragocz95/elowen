@@ -6,6 +6,7 @@ import { parseTs, compactElapsed } from '../../lib/format';
 import { LoadingState } from '../../components/ui/states';
 import { Avatar } from '../../components/ui/Avatar';
 import { PlatformIcon } from '../../components/ui/PlatformIcon';
+import { ToolPills } from './ToolPills';
 import type { ActivityEvent } from '../../lib/types';
 import type { LocaleDict } from '../../lib/i18n/types';
 
@@ -90,19 +91,27 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
       </span>
 
       <span className="min-w-0">
-        <span className="block truncate text-[13px] font-medium leading-tight text-text">
-          {teamFeed
-            ? (event.actor_label || t.dashboard.ev.someone)
-            : eventVerb(t, event.type, event.detail)}
+        <span className="flex items-baseline gap-2">
+          <span className="truncate text-[13px] font-medium leading-tight text-text">
+            {teamFeed
+              ? (event.actor_label || t.dashboard.ev.someone)
+              : eventVerb(t, event.type, event.detail)}
+          </span>
+          {teamFeed && event.count > 1 ? (
+            <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-subtle">×{event.count}</span>
+          ) : null}
         </span>
-        <span className="mt-0.5 block truncate text-[11px] leading-tight text-text-muted">
-          {teamFeed ? (
-            <>
-              {t.dashboard.ev.turn} · {surfaceLabel(t, event.surface)}
-              {event.count > 1 ? <span className="ml-1 font-mono tabular-nums text-text-subtle">×{event.count}</span> : null}
-            </>
+        {/* What the turn actually ran. Falls back to the surface label when the daemon has no transcript
+            for that window — an older row, or a turn whose tools have aged out of the read window. */}
+        <span className="mt-1 block min-w-0">
+          {teamFeed && event.tools?.length ? (
+            <ToolPills tools={event.tools} />
           ) : (
-            event.label || event.target
+            <span className="block truncate text-[11px] leading-tight text-text-muted">
+              {teamFeed
+                ? `${t.dashboard.ev.turn} · ${surfaceLabel(t, event.surface)}`
+                : (event.label || event.target)}
+            </span>
           )}
         </span>
       </span>

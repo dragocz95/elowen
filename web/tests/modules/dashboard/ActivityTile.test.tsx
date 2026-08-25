@@ -40,6 +40,45 @@ describe('ActivityTile — team feed rows', () => {
     expect(screen.getByText(new RegExp(en.dashboard.surfaces.discord))).toBeInTheDocument();
   });
 
+  it('says what the turn ran instead of only where it ran', async () => {
+    // The tools ARE the content of the row: "worked · web" is true and says nothing about the work.
+    mount([row({ tools: [{ name: 'Bash', count: 3 }, { name: 'Read', count: 1 }] })]);
+
+    expect(await screen.findByText('Bash')).toBeInTheDocument();
+    expect(screen.getByText('×3')).toBeInTheDocument();
+    expect(screen.getByText('Read')).toBeInTheDocument();
+    // With tools present the surface line is replaced rather than stacked below it.
+    expect(screen.queryByText(new RegExp(`${en.dashboard.ev.turn}.*${en.dashboard.surfaces.web}`))).not.toBeInTheDocument();
+  });
+
+  it('falls back to the surface when the turn has no tools to show', async () => {
+    // Tools age out of the daemon's read window, and older rows never had them. The row must still speak.
+    mount([row({ tools: [] })]);
+    expect(await screen.findByText(new RegExp(`${en.dashboard.ev.turn}.*${en.dashboard.surfaces.web}`))).toBeInTheDocument();
+  });
+
+  it('drops the MCP namespace from a tool name but keeps it in the title', async () => {
+    mount([row({ tools: [{ name: 'mcp__chrome_devtools__take_screenshot', count: 1 }] })]);
+
+    expect(await screen.findByText('take_screenshot')).toBeInTheDocument();
+    expect(screen.getByTitle('mcp__chrome_devtools__take_screenshot')).toBeInTheDocument();
+  });
+
+  it('caps the pills and counts the rest rather than wrapping a long list', async () => {
+    mount([row({
+      tools: [
+        { name: 'Read', count: 9 }, { name: 'Edit', count: 8 }, { name: 'Bash', count: 7 },
+        { name: 'Grep', count: 6 }, { name: 'Write', count: 5 }, { name: 'Search', count: 4 },
+      ],
+    })]);
+
+    expect(await screen.findByText('Read')).toBeInTheDocument();
+    expect(screen.getByText('+2')).toBeInTheDocument();
+    // The overflow keeps the names reachable without drawing them.
+    expect(screen.queryByText('Search')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Write, Search')).toBeInTheDocument();
+  });
+
   it('says "someone" rather than leaving the row anonymous when the account is gone', async () => {
     mount([row({ actor_label: '', actor_user_id: 9 })]);
     expect(await screen.findByText(en.dashboard.ev.someone)).toBeInTheDocument();

@@ -10,6 +10,7 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openDb } from '../../src/store/db.js';
 import { UsageOriginStore } from '../../src/store/usageOriginStore.js';
 import { MemoryStore } from '../../src/store/memoryStore.js';
+import { BrainStore } from '../../src/store/brainStore.js';
 
 function setup() {
   const db = openDb(':memory:');
@@ -49,6 +50,76 @@ describe('GET /activity tenancy filtering', () => {
 // The pulse tile reports spend per person. Its numbers come from the usage_by_origin rollup ALONE —
 // the only source of origin-attributed usage — and money is the one thing on the dashboard nobody
 // double-checks by hand, so the aggregation is pinned here.
+// The feed says what a turn RAN, which is read by parsing transcript bodies — the only place tool calls
+// exist. Two things matter here: that the tools arrive, and that resolving them does not leak the session
+// id they were looked up by.
+describe('GET /activity tool attribution', () => {
+  function setupTools() {
+    const db = openDb(':memory:');
+    const users = new UserStore(db);
+    const admin = users.create('admin', 'pw');
+    const events = new EventStore(db);
+    const brainStore = new BrainStore(db);
+    const sessionId = 'brain-1';
+    brainStore.createSession({ id: sessionId, userId: admin.id, title: 'work', workDir: '/o', model: 'claude-opus-5' });
+    events.record({ type: 'activity', kind: 'turn', actorUserId: admin.id, surface: 'web', target: sessionId });
+    const app = createServer({
+      bus: new EventBus(), events, project: { id: 1, path: '/o' }, clock: new FakeClock(0),
+      config: new ConfigStore(db), users, projects: new ProjectStore(db), brainStore,
+    });
+    return { app, brainStore, sessionId, tok: users.issueToken(admin.id) };
+  }
+  const appendTools = (store: BrainStore, sessionId: string, id: string, names: string[]) =>
+    store.appendMessage({
+      id, sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: names.map((name) => ({ type: 'toolCall', id: `${id}-${name}`, name })) },
+    });
+  const feed = async (app: ReturnType<typeof setupTools>['app'], tok: string) =>
+    (await (await app.request('/activity', auth(tok))).json()) as
+      { type: string; target: string; tools?: { name: string; count: number }[] }[];
+
+  it('reports the tools a turn ran, busiest first', async () => {
+    const { app, brainStore, sessionId, tok } = setupTools();
+    appendTools(brainStore, sessionId, 'm1', ['Read', 'Read', 'Bash']);
+    appendTools(brainStore, sessionId, 'm2', ['Read']);
+
+    const [row] = await feed(app, tok);
+    expect(row!.tools).toEqual([{ name: 'Read', count: 3 }, { name: 'Bash', count: 1 }]);
+  });
+
+  it('never ships the session id it resolved those tools by', async () => {
+    const { app, brainStore, sessionId, tok } = setupTools();
+    appendTools(brainStore, sessionId, 'm1', ['Bash']);
+
+    const [row] = await feed(app, tok);
+    // `target` is an internal handle. Looking tools up by it must not turn it into a shipped field.
+    expect(row!.target).toBe('');
+    expect(JSON.stringify(row)).not.toContain(sessionId);
+  });
+
+  it('leaves a turn with no tool calls alone rather than inventing an empty list entry', async () => {
+    const { app, brainStore, sessionId, tok } = setupTools();
+    // A plain answer with no tools at all.
+    brainStore.appendMessage({
+      id: 'm1', sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+    });
+
+    const [row] = await feed(app, tok);
+    expect(row!.tools).toEqual([]);
+  });
+
+  it('survives a transcript row it cannot parse', async () => {
+    const { app, brainStore, sessionId, tok } = setupTools();
+    appendTools(brainStore, sessionId, 'm1', ['Bash']);
+    // One corrupt row must not take the whole timeline down with it.
+    brainStore.appendMessage({ id: 'm2', sessionId, parentId: null, role: 'assistant', content: 'not an object' });
+
+    const [row] = await feed(app, tok);
+    expect(row!.tools).toEqual([{ name: 'Bash', count: 1 }]);
+  });
+});
+
 describe('GET /activity/pulse', () => {
   function setupPulse() {
     const db = openDb(':memory:');

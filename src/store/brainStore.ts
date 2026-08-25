@@ -599,6 +599,49 @@ export class BrainStore {
       .run(Math.max(0, Math.round(durationMs)), messageId, sessionId);
   }
 
+  /** Which tools each session ran recently, newest first — what the activity feed draws under a name.
+   *
+   *  Read from `brain_messages` because tool calls are recorded nowhere else: `events` knows only THAT
+   *  somebody took a turn, and `brain_session_events` tracks delegations alone. The read is therefore
+   *  HARD-BOUNDED by both a time window and a row cap rather than left open-ended — better-sqlite3 is
+   *  synchronous, so every row parsed here is time the daemon's event loop spends serving nobody else.
+   *  Measured at ~86 ms for 300 rows on the live database, which is why the caller caches it.
+   *
+   *  A malformed row is skipped rather than thrown on: this feeds a decorative column, and one unparseable
+   *  message must not take down the whole timeline. */
+  recentToolCalls(opts: { sinceHours: number; limit: number }): Map<string, { at: string; names: string[] }[]> {
+    const hours = Math.max(1, Math.min(48, Math.trunc(opts.sinceHours)));
+    const limit = Math.max(1, Math.min(600, Math.trunc(opts.limit)));
+    const rows = this.db.prepare(
+      `SELECT session_id, content, created_at
+         FROM brain_messages
+        WHERE role = 'assistant'
+          AND created_at >= datetime('now', ?)
+        ORDER BY created_at DESC
+        LIMIT ?`
+    ).all(`-${hours} hours`, limit) as { session_id: string; content: string; created_at: string }[];
+
+    const out = new Map<string, { at: string; names: string[] }[]>();
+    for (const row of rows) {
+      let names: string[] = [];
+      try {
+        const parsed = JSON.parse(row.content) as { content?: unknown };
+        if (!Array.isArray(parsed.content)) continue;
+        names = parsed.content
+          .filter((part): part is { type: string; name: string } =>
+            !!part && typeof part === 'object'
+            && (part as { type?: unknown }).type === 'toolCall'
+            && typeof (part as { name?: unknown }).name === 'string')
+          .map((part) => part.name);
+      } catch { continue; }
+      if (names.length === 0) continue;
+      const list = out.get(row.session_id) ?? [];
+      list.push({ at: row.created_at, names });
+      out.set(row.session_id, list);
+    }
+    return out;
+  }
+
   /** Seed one brand-new conversation with imported platform transcript rows. The empty-session check and
    *  every insert share one SQLite transaction, so a crash cannot leave a partial history prefix. */
   seedMessages(sessionId: string, messages: readonly { id: string; role: string; content: unknown }[]): number {

@@ -22,6 +22,45 @@ function surfaceOf(origin: string | null, kind: string | null): string {
 export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void {
   const { d, accessibleProjects } = ctx;
 
+  /** Tool calls are read by parsing message bodies, which is far too expensive to repeat per request on
+   *  a synchronous database. The window is short and the cache lives on the app instance rather than the
+   *  module, so tests and multiple apps never share one. */
+  const TOOL_CACHE_TTL_MS = 30_000;
+  const TOOL_WINDOW_HOURS = 6;
+  let toolCache: { at: number; data: Map<string, { at: string; names: string[] }[]> } | null = null;
+  const toolCalls = (): Map<string, { at: string; names: string[] }[]> => {
+    const now = Date.now();
+    if (toolCache && now - toolCache.at < TOOL_CACHE_TTL_MS) return toolCache.data;
+    const data = d.brainStore?.recentToolCalls({ sinceHours: TOOL_WINDOW_HOURS, limit: 400 })
+      ?? new Map<string, { at: string; names: string[] }[]>();
+    toolCache = { at: now, data };
+    return data;
+  };
+
+  /** Fold one feed row's tool calls into ordered `name ×count` pairs.
+   *
+   *  Matched by session within a generous window rather than an exact interval: a turn's messages are
+   *  persisted in one batch when it settles, so a tool's `created_at` is its SAVE time and can land after
+   *  the event that describes it (see the timing note in the message-cost runbook). The feed is an
+   *  overview, so a little overlap between adjacent rows beats dropping the tools entirely. */
+  function toolsForRow(row: { target: string; ts: string; last_ts?: string | null }): { name: string; count: number }[] {
+    const entries = toolCalls().get(row.target);
+    if (!entries?.length) return [];
+    const from = Date.parse(`${row.ts.replace(' ', 'T')}Z`) - 60_000;
+    const to = Date.parse(`${(row.last_ts || row.ts).replace(' ', 'T')}Z`) + 15 * 60_000;
+    const counts = new Map<string, number>();
+    for (const entry of entries) {
+      const at = Date.parse(`${entry.at.replace(' ', 'T')}Z`);
+      if (!Number.isFinite(at) || at < from || at > to) continue;
+      for (const name of entry.names) counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    // Busiest first, capped: a row that ran thirty tools should still read as one line.
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6);
+  }
+
   /** Who is working at this moment, for the team feed's presence line. Instance-wide like the feed
    *  itself, and just as content-free: names only, never what anyone is working ON. Registered before
    *  the '/activity' route below so the literal path is matched first. */
@@ -221,11 +260,11 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     // `target` scopes the feed to one task (its decisions + review verdicts), read oldest-first — the
     // detail pane's plugin-owned conversation. Project-scoping below still applies (fail closed for tenants).
     const target = c.req.query('target') || undefined;
-    // The team feed answers WHO worked and FROM WHERE. `target` is the session/channel id -- an
-    // internal handle the tile does not render, and the feed is read by the whole instance, so it is
-    // dropped from feed rows here rather than shipped and ignored by the client.
+    // The team feed answers WHO worked, FROM WHERE and — now — WITH WHAT. `target` is the session id,
+    // an internal handle the tile does not render, so it is resolved into the row's tool list here and
+    // then dropped rather than shipped to a client that is not allowed to see it.
     const rows = d.events.list({ limit, type, target })
-      .map((r) => (isTeamFeedRow(r) ? { ...r, target: '' } : r));
+      .map((r) => (isTeamFeedRow(r) ? { ...r, tools: toolsForRow(r), target: '' } : r));
     // Scope the timeline to the caller's projects (admin/open mode → null → unrestricted). A row with no
     // project (legacy/unresolved) is shown only to the unrestricted caller — fail closed for tenants.
     const allowed = accessibleProjects(c);

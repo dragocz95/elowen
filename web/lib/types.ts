@@ -661,6 +661,9 @@ export interface ActivityEvent {
   /** How many identical events this row folds, and when the last landed. `ts` is the first occurrence. */
   count: number;
   last_ts: string | null;
+  /** Which tools the turn ran, busiest first — present on team-feed rows only, and absent entirely when
+   *  the daemon has no transcript to read them from. */
+  tools?: { name: string; count: number }[];
 }
 export interface Project { id: number; slug: string; path: string; notes: string; icon: string }
 interface GitStatus { branch: string; ahead: number; behind: number; dirty: number; clean: boolean }
