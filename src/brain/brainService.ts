@@ -1321,7 +1321,7 @@ export class BrainService {
    *
    *  Note this deliberately does NOT report a "typing" state: Discord, Teams, Telegram and WhatsApp
    *  never tell the daemon that someone is composing. A turn running is the only thing actually known. */
-  presence(): { userId: number | null }[] {
+  presence(): { userId: number | null; sessionId: string; title: string }[] {
     // Channel sessions live in their own registry, so iterating only liveEntries() would record a
     // Discord or Teams turn into the feed while the presence line right above it showed nobody.
     // `hasActiveChildren` matches the chat surface's own definition (statusService): a turn that has
@@ -1329,7 +1329,12 @@ export class BrainService {
     const entries = [...this.sessions.liveEntries(), ...this.sessions.channelEntries()];
     return entries
       .filter(([, live]) => live.session.isStreaming || this.sessions.hasActiveChildren(live.sessionId))
-      .map(([, live]) => ({ userId: this.d.store.getSession(live.sessionId)?.user_id ?? null }));
+      .map(([, live]) => {
+        // The row is already loaded to attribute the turn, so the title rides along for free. Callers
+        // that only answer "who is working" ignore it; /activity/pulse renders it.
+        const row = this.d.store.getSession(live.sessionId);
+        return { userId: row?.user_id ?? null, sessionId: live.sessionId, title: row?.title ?? '' };
+      });
   }
 
 

@@ -270,4 +270,30 @@ describe('EventStore — activity heatmap rollup', () => {
     expect(events.heatmap(7)).toEqual([]);
     expect(events.heatmap(60)).toHaveLength(1);
   });
+
+  it('keeps the people apart for the ridgeline, which heatmap() folds together', () => {
+    turn(1); turn(1); turn(2);
+
+    // Same hour, same rollup — but the dashboard draws a layer per person and needs the split back.
+    expect(events.heatmap(7)).toHaveLength(1);
+    const byUser = events.heatmapByUser(7);
+    expect(byUser.map((b) => [b.userId, b.count]).sort()).toEqual([[1, 2], [2, 1]]);
+  });
+
+  it('leaves the unattributed turns out of the per-user view', () => {
+    turn(1); turn(null);
+
+    // User 0 is the "nobody" bucket. It still belongs in the instance total, but a ridgeline layer
+    // needs a name to label it with, so it is dropped here rather than drawn as a nameless ridge.
+    expect(events.heatmap(7).reduce((n, b) => n + b.count, 0)).toBe(2);
+    expect(events.heatmapByUser(7).map((b) => b.userId)).toEqual([1]);
+  });
+
+  it('does not reach outside the window for the per-user view either', () => {
+    turn(1);
+    db.prepare("UPDATE activity_buckets SET day = strftime('%Y-%m-%d','now','-40 days')").run();
+
+    expect(events.heatmapByUser(7)).toEqual([]);
+    expect(events.heatmapByUser(60)).toHaveLength(1);
+  });
 });

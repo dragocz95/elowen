@@ -206,10 +206,10 @@ export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: elowenCli
 export const usePresence = () =>
   useQuery({ queryKey: ['activity-presence'], queryFn: elowenClient.activityPresence });
 
-/** The activity heatmap. Invalidated by the same SSE 'activity' event as the feed, so a new turn
- *  brightens the current hour without a poll. */
-export const useHeatmap = (days: number) =>
-  useQuery({ queryKey: ['activity-heatmap', days], queryFn: () => elowenClient.activityHeatmap(days) });
+/** The team pulse tile. Invalidated by the same SSE 'activity' event as the feed, so somebody starting
+ *  a turn lights up their layer without a poll. */
+export const usePulse = (days: number) =>
+  useQuery({ queryKey: ['activity-pulse', days], queryFn: () => elowenClient.activityPulse(days) });
 
 export const useActivity = (type?: string, limit?: number) =>
   // SSE task/mission/signal/review events all invalidate ['activity']; no 5s poll needed. `limit` joins

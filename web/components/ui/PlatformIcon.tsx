@@ -1,5 +1,5 @@
 'use client';
-import { Bot, Clock, MessageSquare } from 'lucide-react';
+import { Bot, Clock, Globe, MessageSquare, SquareTerminal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 /** Platforms we ship a brand mark for, under `web/public/platforms/`. Deliberately an ALLOW-LIST rather
@@ -7,9 +7,12 @@ import { useEffect, useState } from 'react';
  *  make every unknown platform cost a 404 on first paint. */
 const BRAND_MARKS = new Set(['msteams', 'discord', 'whatsapp', 'telegram']);
 
-/** Machine surfaces that are not places people talk. They get a plain glyph, since a delegated run and a
- *  scheduled job have no brand to show. */
-const GLYPHS: Record<string, typeof Bot> = { subagent: Bot, cron: Clock };
+/** Surfaces that are not places people talk. They get a plain glyph, since a delegated run, a scheduled
+ *  job, the web app and the terminal have no brand to show. The last three are surfaces the dashboard
+ *  reports and a conversation never had, which is why they arrived later than the rest. */
+const GLYPHS: Record<string, typeof Bot> = {
+  subagent: Bot, cron: Clock, web: Globe, cli: SquareTerminal, internal: Bot,
+};
 
 /** How a platform id is spelled out for a screen reader and the hover title. */
 const NAMES: Record<string, string> = {
@@ -19,6 +22,9 @@ const NAMES: Record<string, string> = {
   telegram: 'Telegram',
   subagent: 'Sub-agent',
   cron: 'Scheduled run',
+  web: 'Web app',
+  cli: 'Terminal',
+  internal: 'Automation',
 };
 
 export function platformName(platform: string): string {

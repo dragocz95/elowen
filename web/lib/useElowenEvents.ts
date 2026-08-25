@@ -120,7 +120,7 @@ export function useElowenEvents(opts?: { onReview?: (e: ReviewEvent) => void }):
     const activityHandler = makeHandler(() => {
       qc.invalidateQueries({ queryKey: ['activity'] });
       qc.invalidateQueries({ queryKey: ['activity-presence'] }); // someone started working
-      qc.invalidateQueries({ queryKey: ['activity-heatmap'] });
+      qc.invalidateQueries({ queryKey: ['activity-pulse'] });
     });
 
     // Same-origin SSE through the /api proxy; the httpOnly session cookie rides along via credentials.
@@ -144,7 +144,7 @@ export function useElowenEvents(opts?: { onReview?: (e: ReviewEvent) => void }):
         qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
         qc.invalidateQueries({ queryKey: ['activity'] });
         qc.invalidateQueries({ queryKey: ['activity-presence'] });
-        qc.invalidateQueries({ queryKey: ['activity-heatmap'] });
+        qc.invalidateQueries({ queryKey: ['activity-pulse'] });
       };
 
       // Native EventSource auto-reconnects on transport drops (browser-managed retry per HTML spec); we

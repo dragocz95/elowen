@@ -599,6 +599,10 @@ export const cs = {
     pulseNobody: 'Zatím tu nikdo nebyl',
     pulseTurns: '{count} tahů / {days} dní',
     pulseAria: 'Aktivita po hodinách za poslední dva týdny',
+    pulseSeen: 'naposledy aktivní',
+    pulseUnpriced: 'bez ceny',
+    pulseSpendOff: 'spotřeba nedostupná',
+    pulseTodayLabel: 'dnes',
     surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', internal: 'automatizace', unknown: 'neznámý klient' },
     ev: {
       turn: 'pracuje',

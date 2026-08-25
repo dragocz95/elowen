@@ -630,6 +630,38 @@ export interface PresenceEntry {
   lastTs: string;
 }
 
+/** One person on the dashboard's team pulse. Unlike {@link PresenceEntry}, which is content-free by
+ *  design, this carries what somebody is working on and what they spent today — see the '/activity/pulse'
+ *  route comment for why that is a deliberate product decision rather than a leak. */
+export interface PulsePerson {
+  userId: number;
+  label: string;
+  username: string;
+  avatar?: string;
+  /** The daemon's LIVE view of a running turn, never inferred from history. */
+  working: boolean;
+  /** The open conversation's title while they are working, else ''. */
+  title: string;
+  lastTs: string;
+  turns: number;
+  tokens: number;
+  /** null when no contributing turn carried a price — distinct from 0, which means "priced at zero". */
+  cost: number | null;
+  /** Where today's turns came from: 'web', 'cli', 'internal', 'discord', 'cron', … */
+  surfaces: string[];
+  rhythm: HeatmapBucket[];
+}
+
+/** The whole team pulse tile in one response. */
+export interface PulseResponse {
+  days: number;
+  today: string;
+  people: PulsePerson[];
+  totals: { turns: number; tokens: number; cost: number | null };
+  /** False when the usage rollup is unavailable, so the tile says so instead of a confident $0. */
+  spendAvailable: boolean;
+}
+
 export interface ActivityEvent {
   id: number; ts: string; type: string; target: string; detail: string; project_id: number | null; label: string;
   /** Team-feed attribution. `actor_label` is resolved server-side by JOIN (display name, username

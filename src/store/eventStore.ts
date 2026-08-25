@@ -144,6 +144,23 @@ export class EventStore {
     ).all(`-${Math.max(1, Math.min(90, Math.trunc(days)))} days`) as { day: string; hour: number; count: number }[];
   }
 
+  /** The same rollup kept per person, for the dashboard's ridgeline. `activity_buckets` has carried
+   *  `user_id` since it was created; `heatmap()` above folds it away because the heatmap is one shape
+   *  for the whole instance, while the ridgeline draws one layer per person and needs it back.
+   *  Unattributable turns are written under user 0 and dropped here: a layer nobody owns has no name
+   *  to label it with, and the instance total already counts them. */
+  heatmapByUser(days: number): { day: string; hour: number; userId: number; count: number }[] {
+    return this.db.prepare(
+      `SELECT day, hour, user_id AS userId, SUM(count) AS count
+         FROM activity_buckets
+        WHERE day >= strftime('%Y-%m-%d', 'now', ?)
+          AND user_id <> 0
+        GROUP BY day, hour, user_id
+        ORDER BY day, hour`
+    ).all(`-${Math.max(1, Math.min(90, Math.trunc(days)))} days`) as
+      { day: string; hour: number; userId: number; count: number }[];
+  }
+
   /** Who has been active in the last `hours`, most recent first, from the feed rows themselves.
    *  Presence alone would leave the rail empty whenever nobody happens to be mid-turn, which is most of
    *  the time; this answers "who is around today" without inventing a second state table. */
