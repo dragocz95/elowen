@@ -6,7 +6,7 @@ import { PLATFORM_SURFACES } from '../../src/shared/platformIdentity.js';
 
 describe('slash command registry', () => {
   it('exposes the core commands', () => {
-    for (const n of ['new', 'stop', 'status', 'compact', 'plan', 'build', 'model', 'fast', 'reasoning', 'rename', 'restart', 'help']) {
+    for (const n of ['new', 'stop', 'stats', 'compact', 'plan', 'build', 'model', 'fast', 'reasoning', 'rename', 'restart', 'help']) {
       expect(findCommand(n), n).toBeDefined();
     }
   });
@@ -59,18 +59,16 @@ describe('slash command registry', () => {
     }
   });
 
-  /** `/stats` replaced `/status` on the CLI and the web dock (it is a strict superset there — the same
-   *  session rows plus per-model totals and the context breakdown). The chat platforms keep `/status`:
-   *  their one-line answer comes from the adapters' shared control core (runControlCommand), which cannot
-   *  draw the overlay, so retiring it there would leave a channel with no session info at all. */
-  it('splits session info: /stats on cli+web, /status on the chat platforms only', () => {
-    for (const surface of ['cli', 'web'] as const) {
+  /** Session info is ONE command on every surface. It used to be two — `/stats` on the CLI and the web
+   *  dock, `/status` published to the chat platforms only, because an adapter cannot draw the overlay and
+   *  a channel would otherwise have had no session info at all. Two names for one question is the exact
+   *  duplication this catalog exists to prevent, so the platform-only name is gone. How the answer is
+   *  DRAWN stays per-surface (overlay vs one-line reply); that is renderer capability, not a second name.
+   *  This asserts the split cannot come back on ANY surface, not just the four platforms it lived on. */
+  it('publishes session info as one command everywhere, under one name', () => {
+    for (const surface of ['cli', 'web', ...PLATFORM_SURFACES] as const) {
       expect(commandsFor(surface, true).some((c) => c.name === 'stats'), surface).toBe(true);
       expect(commandsFor(surface, true).some((c) => c.name === 'status'), surface).toBe(false);
-    }
-    for (const surface of ['discord', 'whatsapp', 'telegram', 'msteams'] as const) {
-      expect(commandsFor(surface, true).some((c) => c.name === 'status'), surface).toBe(true);
-      expect(commandsFor(surface, true).some((c) => c.name === 'stats'), surface).toBe(false);
     }
   });
 

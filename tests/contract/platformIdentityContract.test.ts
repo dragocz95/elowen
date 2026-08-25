@@ -115,13 +115,18 @@ describe('platform identity is data, not literals', () => {
       expect(ACTIVITY_SURFACES as readonly string[]).toContain(platform);
     }
     // A platform-facing slash command reaches every platform, never a subset somebody typed out. Checked
-    // for the WHOLE catalog, not just `/status`: a subset is only ever right when core knows something
+    // for the WHOLE catalog, not just one example: a subset is only ever right when core knows something
     // about one adapter that it does not know about the others, and that knowledge belongs to the adapter.
     // (`/voice` and `/display` are the tempting case — Discord and Telegram dispatch both, Teams only one,
     // WhatsApp neither — and they are declared across every platform precisely because the reservation,
     // not the implementation, is core's to state.)
-    const status = SLASH_COMMANDS.find((c) => c.name === 'status');
-    expect(status?.surfaces).toEqual([...PLATFORM_SURFACES]);
+    // The channel re-key `/context` is the named example because it is platform-ONLY: continuing a channel
+    // in one of your own conversations has no meaning on the CLI or the web dock, so it is the shape most
+    // likely to tempt somebody into typing out three of the four platforms. It is matched on `execution`
+    // as well as name, because the CLI's context-breakdown overlay deliberately shares the NAME — no
+    // surface ever sees both, so the duplicate name is not a duplicate command.
+    const platformOnly = SLASH_COMMANDS.find((c) => c.name === 'context' && c.execution === 'session-control');
+    expect(platformOnly?.surfaces, 'the platform-only /context re-key').toEqual([...PLATFORM_SURFACES]);
     for (const c of SLASH_COMMANDS) {
       const platforms = (c.surfaces ?? []).filter((s) => (PLATFORM_SURFACES as readonly string[]).includes(s));
       if (!platforms.length) continue;

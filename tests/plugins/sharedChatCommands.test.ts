@@ -56,7 +56,7 @@ const PLATFORM_CATALOG = commandsWithPlugins(
 describe('control set derived from the published catalog', () => {
   it('routes the session-control non-pickers and nothing else', () => {
     expect([...controlCommandsFrom(PLATFORM_CATALOG)].sort())
-      .toEqual(['compact', 'fast', 'new', 'restart', 'status', 'stop']);
+      .toEqual(['compact', 'fast', 'new', 'restart', 'stats', 'stop']);
   });
 
   /** The complement, and the half that used to be answered by a hardcoded switch in every adapter: the
@@ -126,7 +126,7 @@ describe('control set derived from the published catalog', () => {
    *  bot runs is kept out of the transcript" is stated independently of it. */
   it('treats every daemon- and surface-executed command, plus the adapter own, as bot control', () => {
     expect([...botControlCommandsFrom(PLATFORM_CATALOG, ['display'])].sort())
-      .toEqual(['compact', 'context', 'display', 'fast', 'help', 'model', 'new', 'reasoning', 'restart', 'status', 'stop']);
+      .toEqual(['compact', 'context', 'display', 'fast', 'help', 'model', 'new', 'reasoning', 'restart', 'stats', 'stop']);
     expect(botControlCommandsFrom(PLATFORM_CATALOG, ['display']).has('deploy')).toBe(false);
   });
 });
@@ -152,13 +152,13 @@ describe('shared control-command core', () => {
     expect(live.replies).toEqual(['STOPPED']);
   });
 
-  it('/status renders the session line or reports none', async () => {
+  it('/stats renders the session line or reports none', async () => {
     const withS = binding({ ctl: { status: () => ({ model: 'gpt', usage: { percent: 50, tokens: 12 } }) } });
-    await runControlCommand('status', withS.b);
+    await runControlCommand('stats', withS.b);
     expect(withS.replies).toEqual(['STATUS gpt 50 12']);
 
     const noCtl = binding({ ctl: undefined });
-    await runControlCommand('status', noCtl.b);
+    await runControlCommand('stats', noCtl.b);
     expect(noCtl.replies).toEqual(['NO_SESSION']);
   });
 

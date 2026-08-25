@@ -38,18 +38,16 @@ export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   // caller's own conversation, and a shared channel has no such conversation to clear.
   { name: 'clear', description: 'Clear this conversation and start from an empty context', kind: 'action', execution: 'session-control', surfaces: ['cli', 'web'] },
   { name: 'stop', description: 'Stop the running agent', kind: 'action', execution: 'session-control' },
-  // CHAT PLATFORMS ONLY. `/stats` below is the single session-info command on the CLI and the web dock,
-  // and it is a superset of what this ever showed there. The platforms keep `/status` because their
-  // one-line answer is rendered by the adapters' own shared control core (runControlCommand in
-  // packages/plugin-shared/chatCommands.mjs, plus Telegram's BotFather list), which has no way to draw the
-  // /stats overlay — dropping it there would leave a chat channel with no session info at all.
-  // `session-control` even though it only READS: the answer is `PlatformControlApi.status(ref)` over the
-  // channel's live session, which is exactly why POST /brain/command (actions only) cannot serve it and
-  // why this survived the CLI/web removal — the mechanism, not the catalog, kept it alive.
-  { name: 'status', description: 'Session info — model, context and usage', kind: 'info', execution: 'session-control', surfaces: [...PLATFORM_SURFACES] },
-  // The ONE session-info command on the CLI and the web dock: conversation usage, per-model totals and the
-  // context breakdown, plus the session rows (model, reasoning, mode, project, goal) `/status` used to own.
-  { name: 'stats', description: 'Usage stats — this conversation and per-model totals', kind: 'info', execution: 'surface-local', surfaces: ['cli', 'web'] },
+  // THE session-info command, on every surface. There used to be a second one, `/status`, published to the
+  // chat platforms only, because an adapter cannot draw the /stats overlay and a channel would otherwise
+  // have had no session info at all. Two names for one question is exactly the duplication this catalog
+  // exists to prevent, so `/status` is gone and this one covers every surface.
+  // `session-control` because the ANSWER is computed by the daemon — `PlatformControlApi.status(ref)` over
+  // the live session — not because it mutates anything; it only reads. How that answer is DRAWN stays a
+  // per-surface concern: the CLI and the web dock open their overlay (both dispatch on the name, never on
+  // `execution`), while the adapters render the one-line reply from the shared control core. That split is
+  // renderer capability, not a second source of truth.
+  { name: 'stats', description: 'Session info — model, context and usage', kind: 'info', execution: 'session-control' },
   // CLI-only: the /stats overlay opened straight on its context-breakdown section. The name is
   // deliberately shared with the channel re-key `context` further down, which is explicitly absent from
   // the CLI — every surface renders and dispatches from `commandsFor`, and no surface ever sees both.

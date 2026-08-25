@@ -194,12 +194,12 @@ describe('PluginRegistry', () => {
       const ctx = reg.contextFor('ops', {}, noopLog, U, U, U, U, U, U, U, U, U, U, U, U, U,
         () => [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy to $1', plugin: 'ops' }]);
       const cmds = ctx.chatCommands('discord');
-      expect(cmds.find((c) => c.name === 'status')).toMatchObject({ kind: 'info', execution: 'session-control' });
+      expect(cmds.find((c) => c.name === 'stats')).toMatchObject({ kind: 'info', execution: 'session-control' });
       expect(cmds.find((c) => c.name === 'model')).toMatchObject({ kind: 'picker', execution: 'surface-local' });
       expect(cmds.find((c) => c.name === 'deploy')).toMatchObject({ kind: 'prompt', execution: 'plugin-prompt' });
       expect(cmds.every((c) => typeof c.execution === 'string')).toBe(true);
       // The six the shared control core owns, derived from what this call publishes.
-      expect([...controlCommandsFrom(cmds) as Set<string>].sort()).toEqual(['compact', 'fast', 'new', 'restart', 'status', 'stop']);
+      expect([...controlCommandsFrom(cmds) as Set<string>].sort()).toEqual(['compact', 'fast', 'new', 'restart', 'stats', 'stop']);
     });
 
     /** A portable argument set travels with the command, so an adapter builds its option schema from the

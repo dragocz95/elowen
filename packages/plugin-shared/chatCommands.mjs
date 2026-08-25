@@ -111,7 +111,7 @@ export async function runControlCommand(cmd, b) {
       await reply(msg.fastSet(wanted));
       return true;
     }
-    case 'stop': case 'status': case 'compact': {
+    case 'stop': case 'stats': case 'compact': {
       if (!isAdmin()) { await reply(msg.controlForbidden); return true; }
       if (!ctl) { await reply(msg.noSession); return true; }
       if (cmd === 'stop') {
@@ -121,7 +121,7 @@ export async function runControlCommand(cmd, b) {
         await reply(msg.stopped);
         return true;
       }
-      if (cmd === 'status') {
+      if (cmd === 'stats') {
         const st = ctl.status(ref);
         await reply(st ? msg.status(st.model, st.usage.percent ?? 0, st.usage.tokens ?? 0) : msg.noSession);
         return true;
