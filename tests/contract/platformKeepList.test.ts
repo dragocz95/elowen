@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const ROOT = process.cwd();
@@ -22,13 +22,22 @@ const EXPECTED = [
   'session-task-list',
 ].sort();
 
+/** Directories that hold no source of ours but do hold tens of thousands of files. `web/` alone carries
+ *  ~34k of them under `node_modules` and `.next`, and walking those made this scan take over three
+ *  seconds on a plain checkout — enough to blow Vitest's 5s default outright on a tree with more plugins
+ *  installed, which is how this first failed. Skipping them is not an optimisation for its own sake: a
+ *  marker cannot live in built output or a dependency, so the files were never candidates. */
+const IGNORED_DIRS = new Set(['node_modules', '.next', 'dist', 'web-dist', 'coverage', 'test-results']);
+
 function sourceFiles(): string[] {
   const files: string[] = [];
   const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      const path = join(dir, entry);
-      if (statSync(path).isDirectory()) walk(path);
-      else if (SOURCE_EXTENSIONS.test(entry)) files.push(path);
+    // withFileTypes reports directory-ness from the single readdir syscall, instead of one statSync per
+    // entry across the whole tree.
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRS.has(entry.name)) walk(join(dir, entry.name));
+      } else if (SOURCE_EXTENSIONS.test(entry.name)) files.push(join(dir, entry.name));
     }
   };
   for (const root of SOURCE_ROOTS) walk(join(ROOT, root));
