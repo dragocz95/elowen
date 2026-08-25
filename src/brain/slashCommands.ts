@@ -17,12 +17,17 @@ export type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface };
  *  a review note. */
 export type PublishedSlashCommand = SlashCommandDef & { execution: SlashExecution };
 
-/** The canonical command set. Order is the display order in menus.
+/** The canonical command set — EVERY command that exists on any surface, including the ones a chat
+ *  adapter dispatches entirely by itself (`execution: 'adapter-state'`). Order is the display order in
+ *  menus.
  *
  *  `kind` is how a surface RENDERS the command; `execution` is which mechanism RUNS it (see
- *  {@link SlashExecution}). Nothing dispatches on `execution` yet — the adapters still route the six
- *  control commands through their own `CONTROL_COMMANDS` name set (packages/plugin-shared/chatCommands.mjs)
- *  and everything else through a `switch (name)`. It is declared here so that can stop being true. */
+ *  {@link SlashExecution}). Together they are the whole answer to "can I handle this command?", which is
+ *  why no surface needs a second name list to decide: `POST /brain/command` dispatches exactly the
+ *  `session-control` actions (src/api/routes/brainChat.ts), and an adapter's control set is the
+ *  `session-control` non-pickers of its own surface — the set `CONTROL_COMMANDS`
+ *  (packages/plugin-shared/chatCommands.mjs) spells out by hand today, held equal to this one by
+ *  tests/brain/slashCommands.test.ts until the adapters read `execution` off `ctx.chatCommands()`. */
 export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   // `session-control` on every surface, by two different mechanisms: the HTTP surfaces get a fresh
   // conversation from the daemon (POST /brain/command → brain.start), while an adapter starts a fresh
@@ -138,13 +143,42 @@ export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   { name: 'rename', description: 'Rename this conversation', kind: 'picker', execution: 'surface-local', surfaces: ['cli', 'web'] },
   { name: 'delete', description: 'Delete a conversation', kind: 'picker', execution: 'surface-local', surfaces: ['cli'] },
   { name: 'quit', description: 'Exit', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
+  // ADAPTER-OWNED (`execution: 'adapter-state'`), and declared HERE so this file is the one place any
+  // command is declared. Both are dispatched end to end by a chat adapter against its own per-channel
+  // state — the daemon has no operation behind either — and both were previously known to core only as a
+  // negative name list (RESERVED_ADAPTER_COMMANDS) whose whole job was to stop a plugin macro colliding
+  // with them. That list was a second declaration site and had to track the adapters by hand; catalog
+  // membership now IS the reserved-name check (see isReservedCommandName).
+  //
+  // They are deliberately WITHHELD from the published projection — see commandsFor — because each adapter
+  // still appends them to its OWN registration payload; publishing them today would put the same name
+  // twice in one Discord bulk registration, a 400 that drops every slash command for the guild.
+  //
+  // `surfaces` is therefore the RESERVATION scope, not a publication list, and it is every platform on
+  // purpose. Which adapters actually implement one is the ADAPTER's fact and varies (Discord and Telegram
+  // dispatch both, Teams only /display, WhatsApp neither) — core copying that subset in would be a second
+  // place to keep in step, and the reservation has to hold on a platform whose adapter adds /voice
+  // tomorrow anyway. Core's claim is exactly "this name is taken on the chat platforms"; the adapter that
+  // owns the command states what it runs. Descriptions are the adapters' own registration strings
+  // verbatim, so the later stage that moves registration onto this catalog is a delete on their side
+  // rather than a re-wording.
+  { name: 'voice', description: 'Toggle spoken audio replies in this channel', kind: 'action', execution: 'adapter-state', surfaces: [...PLATFORM_SURFACES] },
+  { name: 'display', description: 'Configure live tools and answer delivery in this channel', kind: 'action', execution: 'adapter-state', surfaces: [...PLATFORM_SURFACES] },
 ];
 
 /** The subset a given surface shows to a given user: surface-scoped, and admin-only commands hidden
- *  from non-operators. This is what `GET /brain/commands` returns and what each surface renders. */
+ *  from non-operators. This is what `GET /brain/commands` returns and what each surface renders.
+ *
+ *  `adapter-state` entries are declared in the catalog but NOT published: the adapter that owns one also
+ *  registers it itself, so handing it back here would duplicate the name in that adapter's own
+ *  registration payload (see the entries at the end of SLASH_COMMANDS). The stage that moves adapter
+ *  registration onto this catalog drops this clause — deliberately, because it changes what Discord and
+ *  Telegram register. */
 export function commandsFor(surface: SlashSurface, isAdmin: boolean): PublishedSlashCommand[] {
   return SLASH_COMMANDS.filter(
-    (c) => (!c.surfaces || c.surfaces.includes(surface)) && (!c.adminOnly || isAdmin),
+    (c) => c.execution !== 'adapter-state'
+      && (!c.surfaces || c.surfaces.includes(surface))
+      && (!c.adminOnly || isAdmin),
   );
 }
 
@@ -156,24 +190,16 @@ export function findCommand(name: string): PublishedSlashCommand | undefined {
   return SLASH_COMMANDS.find((c) => c.name === name);
 }
 
-/** True when `name` is a built-in command — used to refuse a plugin command that would shadow one. */
-export function isBuiltinCommand(name: string): boolean {
-  return SLASH_COMMANDS.some((c) => c.name === name);
-}
-
-/** Command names the chat adapters own locally — NOT daemon commands (so absent from SLASH_COMMANDS), but
- *  still reserved: a plugin command sharing one collides with the adapter's own slash on that surface. On
- *  Discord both would land in one bulk registration payload → a 400 that drops EVERY slash command for the
- *  guild; across surfaces the shadow resolves inconsistently (Discord runs the macro, Telegram the built-in).
- *  Kept beside the built-ins so there is ONE reserved-name check. Must track the adapter-local commands.
- *  This negative model is what `execution:'adapter-state'` is for: once these are declared TO the catalog
- *  (a later phase — it changes what Discord registers), the list stops needing to track anything. */
-const RESERVED_ADAPTER_COMMANDS = new Set(['voice', 'display']);
-
-/** True when `name` is a built-in OR an adapter-local reserved command — the single guard a plugin command
- *  must clear so it can never shadow/collide with either on any surface. */
+/** True when `name` is declared in the catalog — the single guard a plugin command must clear so it can
+ *  never shadow a built-in or collide with an adapter-owned command on any surface.
+ *
+ *  This covers the unpublished `adapter-state` entries too, which is the point of declaring them: a plugin
+ *  macro named `voice` would land beside Discord's own /voice in one bulk registration payload → a 400 that
+ *  drops EVERY slash command for the guild, and across surfaces the shadow would resolve inconsistently
+ *  (Discord runs the macro, Telegram the adapter's). Membership here replaced a hand-maintained list of
+ *  those names, which was the second place a command was declared. */
 export function isReservedCommandName(name: string): boolean {
-  return isBuiltinCommand(name) || RESERVED_ADAPTER_COMMANDS.has(name);
+  return SLASH_COMMANDS.some((c) => c.name === name);
 }
 
 /** A plugin-contributed prompt command as a SlashCommandDef, for merging into a surface's menu. */

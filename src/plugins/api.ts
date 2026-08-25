@@ -5,7 +5,7 @@ import type { AskAnswer, AskQuestion, BrainCard, WorkflowCompletion, WorkflowUpd
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import type { DelegatingTurnAccess } from '../brain/delegatedScope.js';
-import type { SlashCommandDef, SlashSurface } from '../brain/slashCommands.js';
+import type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface } from '../brain/slashCommands.js';
 import type { PlatformSurface } from '../shared/platformIdentity.js';
 import type { DelegatedChildSummary } from '../store/brainDelegationStore.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -1314,9 +1314,23 @@ export interface PluginContext {
    *  plugin's command. */
   registerCommand(command: PluginCommand): void;
   /** Core chat command metadata for a platform: built-ins + plugin prompt commands, each with its `kind`
-   *  (so an adapter can tell a native/control command from a plugin `prompt` macro it must route RAW).
-   *  Adapters own presentation only; names/help/kind live once in the canonical slash-command catalog. */
-  chatCommands(surface: PlatformSurface): { name: string; description: string; kind: SlashCommandDef['kind']; adminOnly?: boolean }[];
+   *  (how to render it) AND its `execution` (which mechanism runs it) — together the whole answer to
+   *  "do I accept this command, and how?", so an adapter needs no name list of its own to decide. A
+   *  `session-control` non-picker is a control command for the shared control core; a `prompt` macro is
+   *  routed RAW to the brain; a `surface-local` picker is the adapter's own chooser.
+   *
+   *  Adapters own presentation only; names/help/kind/execution live once in the canonical slash-command
+   *  catalog (src/brain/slashCommands.ts). `argument` rides along only where the accepted values are the
+   *  same on every surface publishing the command, so an adapter can build its option schema from it
+   *  instead of restating the values. */
+  chatCommands(surface: PlatformSurface): {
+    name: string;
+    description: string;
+    kind: SlashCommandDef['kind'];
+    execution: SlashExecution;
+    adminOnly?: boolean;
+    argument?: SlashArgument;
+  }[];
   /** Append a chunk of instructions to the brain's system prompt, after the Elowen persona. */
   registerSystemPromptFragment(fragment: string): void;
   registerHook(hook: PluginHook): void;

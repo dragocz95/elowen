@@ -114,9 +114,19 @@ describe('platform identity is data, not literals', () => {
     for (const platform of PLATFORM_SURFACES) {
       expect(ACTIVITY_SURFACES as readonly string[]).toContain(platform);
     }
-    // A platform-facing slash command reaches every platform, never a subset somebody typed out.
+    // A platform-facing slash command reaches every platform, never a subset somebody typed out. Checked
+    // for the WHOLE catalog, not just `/status`: a subset is only ever right when core knows something
+    // about one adapter that it does not know about the others, and that knowledge belongs to the adapter.
+    // (`/voice` and `/display` are the tempting case — Discord and Telegram dispatch both, Teams only one,
+    // WhatsApp neither — and they are declared across every platform precisely because the reservation,
+    // not the implementation, is core's to state.)
     const status = SLASH_COMMANDS.find((c) => c.name === 'status');
     expect(status?.surfaces).toEqual([...PLATFORM_SURFACES]);
+    for (const c of SLASH_COMMANDS) {
+      const platforms = (c.surfaces ?? []).filter((s) => (PLATFORM_SURFACES as readonly string[]).includes(s));
+      if (!platforms.length) continue;
+      expect([...platforms].sort(), `/${c.name} names a platform subset`).toEqual([...PLATFORM_SURFACES].sort());
+    }
   });
 
   // The partial UNIQUE indexes are the backstop against two accounts claiming one identity. They are

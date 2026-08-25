@@ -219,8 +219,13 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     return c.json({ commands: commandsWithPlugins(surface, !!c.get('user').is_admin, pluginCommands, registry?.loadedNames ?? new Set()) });
   });
 
-  // Execute a server-side (`action`) slash command through ONE dispatch path for every surface. Pickers
+  // Execute a server-side slash command through ONE dispatch path for every surface. Pickers
   // (`model`/`think`) and info (`stats`/`help`) stay client-side (their own endpoints / rendering).
+  //
+  // The catalog decides what is dispatchable here, not this switch: a command must be an `action` (so a
+  // client-rendered kind can never be executed by name) AND `session-control` (so a `surface-local`
+  // action like /maskot, or an adapter-owned one like /voice, is refused up front rather than falling
+  // through to a `default` that happens to have no case).
   app.post('/brain/command', withBrain(async (c, brain) => {
     const user = c.get('user');
     // Polymorphic dispatch body: `name` selects the command and the remaining fields are per-command, so
@@ -228,7 +233,7 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     // handler). A bad `name` is a 400 below either way.
     const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; session?: unknown; on?: unknown; instruction?: unknown };
     const cmd = typeof body.name === 'string' ? findCommand(body.name) : undefined;
-    if (!cmd || cmd.kind !== 'action') return c.json({ error: 'unknown command' }, 400);
+    if (!cmd || cmd.kind !== 'action' || cmd.execution !== 'session-control') return c.json({ error: 'unknown command' }, 400);
     if (cmd.adminOnly && !user.is_admin) return c.json({ error: 'forbidden' }, 403);
     try {
       switch (cmd.name) {
@@ -257,6 +262,9 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
           if (!d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
           await d.restartDaemon(user.id);
           return c.json({ ok: true, message: 'Restarting the Elowen daemon…' });
+        // Unreachable while the catalog's `session-control` actions all have a case above — which
+        // tests/brain/slashCommands.test.ts holds. Kept so adding one without its case answers a 400
+        // instead of falling off the end of the handler.
         default: return c.json({ error: 'command is not server-dispatchable' }, 400);
       }
     } catch (e) { return c.json({ error: (e as Error).message }, 409); }

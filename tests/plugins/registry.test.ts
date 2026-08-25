@@ -182,6 +182,47 @@ describe('PluginRegistry', () => {
       expect(cmds.findIndex((c) => c.name === 'help')).toBeLessThan(cmds.findIndex((c) => c.name === 'deploy'));
     });
 
+    /** THE reason an adapter needed a parallel command list: this projection used to hand over `kind` and
+     *  nothing about HOW a command runs, so "is this one of mine?" could only be answered by a hardcoded
+     *  name set (CONTROL_COMMANDS in packages/plugin-shared/chatCommands.mjs) that drifts from the catalog
+     *  silently. With `execution` on the wire the adapter's control set is a derived value — and the
+     *  derivation has to reproduce that set exactly, which is what the second assertion checks. */
+    it('carries `execution` so an adapter can derive its control set instead of hardcoding one', () => {
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('ops', {}, noopLog, U, U, U, U, U, U, U, U, U, U, U, U, U,
+        () => [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy to $1', plugin: 'ops' }]);
+      const cmds = ctx.chatCommands('discord');
+      expect(cmds.find((c) => c.name === 'status')).toMatchObject({ kind: 'info', execution: 'session-control' });
+      expect(cmds.find((c) => c.name === 'model')).toMatchObject({ kind: 'picker', execution: 'surface-local' });
+      expect(cmds.find((c) => c.name === 'deploy')).toMatchObject({ kind: 'prompt', execution: 'plugin-prompt' });
+      expect(cmds.every((c) => typeof c.execution === 'string')).toBe(true);
+      // The six the shared control core owns, derived from what this call publishes.
+      const derived = cmds.filter((c) => c.execution === 'session-control' && c.kind !== 'picker').map((c) => c.name);
+      expect(derived.sort()).toEqual(['compact', 'fast', 'new', 'restart', 'status', 'stop']);
+    });
+
+    /** A portable argument set travels with the command, so an adapter builds its option schema from the
+     *  catalog rather than restating the values. Only `/fast` declares one today; a command that does not
+     *  must not grow an empty `argument` key that an adapter would render as a choiceless option. */
+    it('carries a declared `argument` and omits the key entirely when there is none', () => {
+      const reg = new PluginRegistry();
+      const cmds = reg.contextFor('ops', {}, noopLog).chatCommands('discord');
+      expect(cmds.find((c) => c.name === 'fast')?.argument).toEqual({ kind: 'enum', values: ['on', 'off'] });
+      expect(cmds.find((c) => c.name === 'compact')).not.toHaveProperty('argument');
+    });
+
+    /** `voice`/`display` are declared in the catalog as `adapter-state` but every adapter still registers
+     *  them itself; handing them back here would put the same name twice in one Discord bulk registration,
+     *  a 400 that drops every slash command for the guild. */
+    it('never publishes an adapter-owned command back to the adapter that owns it', () => {
+      const reg = new PluginRegistry();
+      for (const surface of ['discord', 'telegram', 'msteams', 'whatsapp'] as const) {
+        const names = reg.contextFor('ops', {}, noopLog).chatCommands(surface).map((c) => c.name);
+        expect(names, surface).not.toContain('voice');
+        expect(names, surface).not.toContain('display');
+      }
+    });
+
     it('honours a plugin command\'s surface restriction', () => {
       const reg = new PluginRegistry();
       const ctx = reg.contextFor('ops', {}, noopLog, U, U, U, U, U, U, U, U, U, U, U, U, U,

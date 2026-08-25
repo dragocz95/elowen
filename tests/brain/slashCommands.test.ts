@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { CONTROL_COMMANDS } from '../../packages/plugin-shared/chatCommands.mjs';
-import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates, isPromptCommand, isBuiltinCommand, isReservedCommandName, findCommand } from '../../src/brain/slashCommands.js';
+import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates, isPromptCommand, isReservedCommandName, findCommand } from '../../src/brain/slashCommands.js';
 import type { SlashSurface } from '../../src/brain/slashCommands.js';
+import { PLATFORM_SURFACES } from '../../src/shared/platformIdentity.js';
 
 describe('slash command registry', () => {
   it('exposes the core commands', () => {
@@ -22,7 +23,7 @@ describe('slash command registry', () => {
       expect(commandsFor(surface, true).some((c) => c.name === 'clear'), surface).toBe(false);
     }
     // Reserved like every other built-in: a plugin macro can never shadow a destructive command.
-    expect(isBuiltinCommand('clear')).toBe(true);
+    expect(isReservedCommandName('clear')).toBe(true);
     expect(commandsWithPlugins('cli', true, [{ name: 'clear', description: 'x', prompt: 'wipe it' }], new Set())
       .filter((c) => c.name === 'clear')).toHaveLength(1);
     expect(commandsWithPlugins('cli', true, [{ name: 'clear', description: 'x', prompt: 'wipe it' }], new Set())
@@ -132,8 +133,8 @@ describe('slash command registry', () => {
       const merged = commandsWithPlugins('cli', true, [{ name: 'help', description: 'x', prompt: 'y' }], LOADED);
       expect(merged.filter((c) => c.name === 'help')).toHaveLength(1);
       expect(merged.find((c) => c.name === 'help')?.kind).toBe('info');
-      expect(isBuiltinCommand('help')).toBe(true);
-      expect(isBuiltinCommand('deploy')).toBe(false);
+      expect(isReservedCommandName('help')).toBe(true);
+      expect(isReservedCommandName('deploy')).toBe(false);
     });
 
     it('drops a plugin command that collides with an adapter-local reserved name (voice/display)', () => {
@@ -305,8 +306,17 @@ describe('slash command registry', () => {
         'fast:action:cli,web,discord,msteams,telegram,whatsapp',
         'restart:action:*',
       ]);
+      // The adapter-owned pair: dispatched entirely by a chat adapter's own per-channel state, declared
+      // here only so the catalog is the one declaration site (and the one reserved-name check).
+      const adapterState = new Set([
+        'voice:action:discord,msteams,telegram,whatsapp',
+        'display:action:discord,msteams,telegram,whatsapp',
+      ]);
       for (const c of SLASH_COMMANDS) {
-        expect(c.execution, `/${identity(c)}`).toBe(sessionControls.has(identity(c)) ? 'session-control' : 'surface-local');
+        const expected = sessionControls.has(identity(c)) ? 'session-control'
+          : adapterState.has(identity(c)) ? 'adapter-state'
+            : 'surface-local';
+        expect(c.execution, `/${identity(c)}`).toBe(expected);
       }
       const macro = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy $1' }];
       const loaded = new Set(['skills', 'mcp', 'lsp', 'statusline', 'todo']);
@@ -323,7 +333,12 @@ describe('slash command registry', () => {
      *  actually execute. `/status` proved they can part ways: it was dropped from the CLI and the web dock
      *  while `runControlCommand` kept executing it on the platforms. Declaring `execution` only helps if
      *  the two sets are held equal, so hold them here — the catalog's platform control commands must be
-     *  exactly the ones that shared core owns. */
+     *  exactly the ones that shared core owns.
+     *
+     *  The rule below (`session-control` and not a `picker`) is the one an adapter can now evaluate for
+     *  itself: `ctx.chatCommands(surface)` carries `execution`, so the hand-written `CONTROL_COMMANDS`
+     *  literal becomes a derived value on the adapter side and this equality stops needing to be
+     *  maintained at all. Until that ships through npm, it is asserted. */
     it('declares exactly the control set the adapters shared core executes', () => {
       for (const surface of PLATFORMS) {
         // Pickers are excluded: /context is also `session-control`, but its listing/binding runs through
@@ -335,12 +350,39 @@ describe('slash command registry', () => {
       }
     });
 
-    it('keeps `adapter-state` reserved for the adapter-owned names, which are still not catalog entries', () => {
-      expect(SLASH_COMMANDS.some((c) => c.execution === 'adapter-state')).toBe(false);
-      for (const name of ['voice', 'display']) {
-        expect(findCommand(name), name).toBeUndefined();
+    /** The adapter-owned commands are DECLARED in the catalog (so this file is the one place a command is
+     *  declared, and catalog membership is the only reserved-name check) but must stay OUT of every
+     *  published projection: each adapter still appends them to its own registration payload, and the same
+     *  name twice in one Discord bulk registration is a 400 that drops every slash command for the guild.
+     *  Both halves are load-bearing, so both are asserted here. */
+    it('declares the adapter-owned commands but publishes them to no surface', () => {
+      const owned = SLASH_COMMANDS.filter((c) => c.execution === 'adapter-state').map((c) => c.name);
+      expect(owned.sort()).toEqual(['display', 'voice']);
+      for (const name of owned) {
+        expect(findCommand(name), name).toBeDefined();
         expect(isReservedCommandName(name), name).toBe(true);
+        // The reservation spans every platform — including one whose adapter does not dispatch the
+        // command today, so a plugin macro can never claim the name ahead of an adapter that adds it.
+        expect(findCommand(name)?.surfaces, name).toEqual([...PLATFORM_SURFACES]);
+        for (const surface of SURFACES) {
+          expect(commandsFor(surface, true).some((c) => c.name === name), `${surface} /${name}`).toBe(false);
+          // …and a plugin macro of that name is still refused on every surface, gate or no gate.
+          expect(
+            commandsWithPlugins(surface, true, [{ name, description: 'x', prompt: 'y' }], new Set()).some((c) => c.name === name),
+            `${surface} macro /${name}`,
+          ).toBe(false);
+        }
       }
+    });
+
+    /** `execution` is what `POST /brain/command` dispatches on (src/api/routes/brainChat.ts): an `action`
+     *  that is also `session-control`. Its switch must therefore have a case for exactly these names —
+     *  adding a seventh without one would answer 400 for a command the catalog advertises as server-run. */
+    it('keeps the server-dispatchable set equal to the switch in POST /brain/command', () => {
+      const dispatchable = SLASH_COMMANDS
+        .filter((c) => c.kind === 'action' && c.execution === 'session-control')
+        .map((c) => c.name);
+      expect(dispatchable.sort()).toEqual(['clear', 'compact', 'fast', 'new', 'restart', 'stop']);
     });
 
     /** The duplicated `context` name stays two commands, and `execution` is now the field that PROVES it:

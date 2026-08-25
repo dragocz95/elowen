@@ -196,9 +196,25 @@ a reminder that must sit directly after the request. This context is not a
 durable system-prompt mutation.
 
 `registerCommand({ name, description, prompt, surfaces? })` adds a reusable
-prompt macro. Names must be unique kebab-case and cannot shadow a built-in
-command. The prompt supports PI argument substitutions such as `$ARGUMENTS`,
+prompt macro. Names must be unique kebab-case and cannot shadow a name declared
+in the canonical slash-command catalog (`src/brain/slashCommands.ts`) — that
+includes the commands a chat adapter dispatches itself, such as `/voice` and
+`/display`. The prompt supports PI argument substitutions such as `$ARGUMENTS`,
 `$1`, and `$@`.
+
+`ctx.chatCommands(surface)` is the other side of the same catalog: the ordered
+menu for that surface, each entry carrying `kind` (how to render it) and
+`execution` (which mechanism runs it), plus `adminOnly` and a portable
+`argument` where one is declared. Those two fields are the whole answer to "do I
+accept this command, and how?", so an adapter needs no command list of its own:
+
+| `execution` | what it means for an adapter |
+| --- | --- |
+| `session-control` (and `kind` is not `picker`) | hand it to `runControlCommand` from `_shared/chatCommands.mjs` |
+| `session-control` with `kind: 'picker'` | your own chooser, driven by the dedicated `ctx.control` methods (`/context`) |
+| `surface-local` | your own chooser or renderer (`/model`, `/reasoning`, `/help`) |
+| `plugin-prompt` (`kind: 'prompt'`) | forward the raw `/name …` text to the brain and let PI expand it |
+| `adapter-state` | your own per-channel state. Not published by `chatCommands()` today — you still register these yourself |
 
 ### Inbound HTTP routes (webhooks)
 
@@ -483,7 +499,7 @@ reuse it so a fix or a new field lands once, not three times:
 | `_shared/images.mjs` | `platformImageDirs(dataDir)`, `resolveImageFiles`, `imageMimeType` | Turning image names into upload-ready buffers: the directories an outgoing image may come from (the image plugins' data dirs plus the daemon's `chat-images` dir beside the database), reading them off disk, and the content type to declare. Hand it only names that passed `extractImageRefs` / `imageRefName` — they are joined onto a path. |
 | `_shared/messages.mjs` | `SHARED_MESSAGES` | The service-message keys that are identical on every surface (`noModels`, `restarting`, `compacted`, …). Spread these into your `MESSAGES[lang]` and layer your surface-specific texts (channel-vs-chat wording, your emphasis markers, picker prompts) on top. |
 | `_shared/help.mjs` | `HELP_DESCRIPTIONS`, `renderHelpLines` | The per-command `/help` wording, localized once. Give `renderHelpLines` the ordered command names your surface exposes, your `mono` inline-code wrapper and the container noun (`{place}`/`{placeLoc}`); it returns the command lines so a command can never be listed on one surface/language and dropped on another. |
-| `_shared/chatCommands.mjs` | `CONTROL_COMMANDS`, `runControlCommand` | The transport-agnostic control commands — `new` / `fast` / `stop` / `status` / `compact` / `restart`. Route those names to the core with a small binding (reply, admin gate, state, ctl/ref, active-model lookup); keep only the pickers and `/help` in your own switch. |
+| `_shared/chatCommands.mjs` | `CONTROL_COMMANDS`, `runControlCommand` | The transport-agnostic control commands — `new` / `fast` / `stop` / `status` / `compact` / `restart`. Route those names to the core with a small binding (reply, admin gate, state, ctl/ref, active-model lookup); keep only the pickers and `/help` in your own switch. `CONTROL_COMMANDS` is a hand-written copy of that set and can drift from the daemon's catalog; prefer deriving it from `ctx.chatCommands(surface)` (`execution === 'session-control' && kind !== 'picker'`). |
 | `_shared/liveTrace.mjs` | `makeTextHelpers`, `makeFoldedCalls`, `makeToolLinesFor`, `makeCardLines`, `makeOutputSummary`, `outputFailed`, `diffSummary`, `sanitizeControl` | The live-tool-trace render/fold rule: how a settled tool result is summarized, how consecutive calls fold into one counted row (mirroring the CLI transcript), and how a row/card becomes text. Build these from a per-surface `style` (mention/fence hardening, bold/strike, the output-line prefix). |
 
 A plugin's own `lib/state.mjs` / `lib/display.mjs` are one-line re-exports of the

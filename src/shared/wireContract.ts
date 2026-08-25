@@ -151,15 +151,16 @@ type SlashKind = 'action' | 'info' | 'picker' | 'mode' | 'prompt';
  *  - `surface-local` — the surface owns the execution end to end: its own overlay or modal, its own local
  *    process/preferences, or its own dedicated endpoint driven by its own UI. There is nothing here for a
  *    generic dispatcher to route, and nothing that another surface could run on its behalf.
- *  - `adapter-state` — owned by a chat adapter's local per-channel state. NO catalog entry declares this
- *    yet: `voice` and `display` are still adapter-owned names reserved AGAINST the catalog
- *    (RESERVED_ADAPTER_COMMANDS in src/brain/slashCommands.ts). The value exists so that declaring them
- *    TO the catalog becomes a data change rather than a contract change.
+ *  - `adapter-state` — owned by a chat adapter's local per-channel state end to end; the daemon has no
+ *    operation behind it. `voice` and `display` are declared this way in src/brain/slashCommands.ts so
+ *    the catalog is the ONE place a command is declared, but they are withheld from the published
+ *    projection while the adapters still register them themselves.
  *  - `plugin-prompt` — a plugin's prompt macro (`kind:'prompt'`), expanded by PI itself when the raw
  *    slash arrives. Never a catalog entry; carried by the merged menu.
  *
- *  Nothing DISPATCHES on this field yet. It is published so the adapters can stop dispatching on the
- *  command NAME (their own `CONTROL_COMMANDS` set is a second, independently drifting registry). */
+ *  Core DISPATCHES on this field: `POST /brain/command` executes exactly the `session-control` actions
+ *  (src/api/routes/brainChat.ts). It rides `ctx.chatCommands()` too, so an adapter can stop dispatching on
+ *  the command NAME — its own `CONTROL_COMMANDS` set is a second, independently drifting registry. */
 export type SlashExecution = 'session-control' | 'surface-local' | 'adapter-state' | 'plugin-prompt';
 
 /** What a command accepts after its name, when that value set is the SAME on every surface that publishes

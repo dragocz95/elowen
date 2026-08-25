@@ -845,12 +845,21 @@ export class PluginRegistry {
         this.commandOwner.set(clean, name);
       },
       // The SINGLE source for a chat surface's command menu: built-ins (surface-scoped, admin included so
-      // an operator-run adapter sees /restart) PLUS every plugin-contributed prompt command, each carrying
-      // its `kind` so the adapter can tell a native/control command from a plugin prompt macro. Reads the
-      // MERGED registry lazily (allChatCommands closes over it, like allToolNames) so a plugin registered
-      // later — or a reload — is reflected without a stale snapshot.
+      // an operator-run adapter sees /restart) PLUS every plugin-contributed prompt command. Each carries
+      // its `kind` (how to render it) and its `execution` (which mechanism runs it) — the two fields that
+      // let an adapter route a command without a second name list of its own. Reads the MERGED registry
+      // lazily (allChatCommands closes over it, like allToolNames) so a plugin registered later — or a
+      // reload — is reflected without a stale snapshot.
+      //
+      // Still an explicit pick, not a pass-through: `surfaces`, `requiresPlugin` and `plugin` are gates
+      // this call has ALREADY applied, and handing them on invites an adapter to re-apply one against a
+      // different surface.
       chatCommands: (surface) => commandsWithPlugins(surface, true, allChatCommands?.() ?? [], this.loadedNames).map(
-        ({ name: commandName, description, kind, adminOnly }) => ({ name: commandName, description, kind, ...(adminOnly ? { adminOnly } : {}) }),
+        ({ name: commandName, description, kind, execution, adminOnly, argument }) => ({
+          name: commandName, description, kind, execution,
+          ...(adminOnly ? { adminOnly } : {}),
+          ...(argument ? { argument } : {}),
+        }),
       ),
       registerSystemPromptFragment: (f) => { this.promptFragments.push(f); this.promptFragmentOwners.push(name); },
       registerHook: (h) => { this.hooks.push(h); this.hookOwners.push(name); },
