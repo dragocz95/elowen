@@ -107,7 +107,7 @@
     "baileys": "^7.0.0-rc13",
     "better-sqlite3": "^11.0.0",
     "botframework-connector": "^4.23.3",
-    "elowen-plugin-shared": "0.1.4",
+    "elowen-plugin-shared": "0.1.5",
     "grammy": "^1.44.0",
     "hono": "^4.6.0",
     "jose": "^5.10.0",

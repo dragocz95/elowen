@@ -1,6 +1,6 @@
 {
   "name": "elowen-plugin-shared",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Shared runtime helpers for Elowen chat-platform plugins: message formatting, live-message streaming, chat commands, access checks, display settings and atomic JSON state.",
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,7 @@
     "./messages": "./messages.mjs",
     "./stateStore": "./stateStore.mjs",
     "./turnResult": "./turnResult.mjs",
+    "./turnRunner": "./turnRunner.mjs",
     "./voice": "./voice.mjs"
   },
   "files": [
@@ -41,6 +42,7 @@
     "messages.mjs",
     "stateStore.mjs",
     "turnResult.mjs",
+    "turnRunner.mjs",
     "voice.mjs"
   ]
 }
