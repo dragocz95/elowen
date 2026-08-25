@@ -1077,12 +1077,12 @@ export function register(ctx) {
   registerWorkflow(ctx, () => run, { resolveDelegateTools, principalOf, delegateContextChunks });
 
   // ── Typed sub-agent editor API (root mounts, grandfathered core URLs): the catalog `.md` files are
-  // core-owned (agentRegistry parses them for delegation), reached through the host's agentCatalog
+  // core-owned (agentRegistry parses them for delegation), reached through the host's subagentCatalog
   // seam; this plugin owns the HTTP surface. NOTE the URL family says "agents" for historic reasons —
   // these are THIS plugin's typed sub-agents, not the agents plugin. A successful write requests a
   // plugin reload (deferred + coalesced by the host) so the refreshed catalog reaches new
   // conversations. ──
-  const catalog = () => ctx.host.agentCatalog();
+  const catalog = () => ctx.host.subagentCatalog();
   const jsonRes = (body, status = 200) => ({ status, body });
   const catalogRes = (result, okStatus = 200) => {
     if (result.ok) { ctx.requestReload?.(); return jsonRes({ ok: true }, okStatus); }

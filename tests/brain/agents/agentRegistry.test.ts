@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import {
   parseAgentFile,
   resolveAgentTools,
-  agentCatalog,
+  subagentCatalog,
   loadAgentRegistry,
   READ_ONLY_AGENT_TOOLS,
   type AgentDef,
@@ -108,7 +108,7 @@ describe('loadAgentRegistry', () => {
     // User overrides the built-in explore (description, source and tools all come from the user file).
     expect(reg.get('explore')).toMatchObject({ description: 'user explore', source: 'user', toolsSpec: 'all' });
     expect(reg.get('plan')?.source).toBe('builtin');
-    expect(agentCatalog(reg)).toContainEqual({ name: 'custom', description: 'my custom' });
+    expect(subagentCatalog(reg)).toContainEqual({ name: 'custom', description: 'my custom' });
   });
 
   it('returns an empty map when the dirs do not exist', () => {

@@ -44,8 +44,8 @@ import { EmbeddingQueue } from '../embeddings/embedQueue.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { brainConfigFromElowen, configuredBrainProviders } from '../brain/config.js';
-import { loadAgentRegistry, agentCatalog, type AgentDef } from '../brain/agents/agentRegistry.js';
-import { makeAgentCatalog } from '../brain/agents/catalogService.js';
+import { loadAgentRegistry, subagentCatalog, type AgentDef } from '../brain/agents/agentRegistry.js';
+import { makeSubagentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
 import { setToolOutputCaps, setToolOutputPolicy, shapeBrainMessages } from '../brain/messageView.js';
 import { isSubagentSession, isTaskSession, taskSessionId } from '../brain/sessionId.js';
@@ -492,7 +492,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
       // The typed sub-agent catalog, read synchronously by the subagent plugin at register time to compose
       // its Delegate tool description.
-      subagentTypes: () => agentCatalog(getAgentRegistry()),
+      subagentTypes: () => subagentCatalog(getAgentRegistry()),
       // The operator's ceiling on the context a delegating plugin may attach to a child (Settings →
       // Elowen AI → Limits). Read live, so raising it applies to the next delegation without a restart.
       delegateContextChars: () => config.get().brain.limits.delegateContextChars,
@@ -649,10 +649,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         push: () => hostPush,
         terminals: () => hostTerminals,
         advisor: () => hostAdvisor,
-        // The typed sub-agent catalog editor (the subagent plugin's '/plugins/agents/*' surface).
+        // The typed sub-agent type catalog editor (the subagent plugin's '/plugins/agents/*' surface).
         // Tool names resolve through the provider so a save validates against the LIVE merged
         // registry — including the reload this very load is part of (get() memoizes per generation).
-        agentCatalog: makeAgentCatalog({
+        subagentCatalog: makeSubagentCatalog({
           builtinDir: agentsBuiltinDir,
           ...(agentsUserDir ? { userDir: agentsUserDir } : {}),
           pluginToolNames: async (): Promise<string[]> => (await pluginProvider.get()).tools.map((t) => t.name),

@@ -16,7 +16,7 @@ import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { makeAgentCatalog } from '../../src/brain/agents/catalogService.js';
+import { makeSubagentCatalog } from '../../src/brain/agents/catalogService.js';
 import { promptsPath } from '../../src/prompts/index.js';
 import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
@@ -393,7 +393,7 @@ describe('notification destination routes', () => {
 
 describe('sub-agent (typed .md) routes', () => {
   // The '/plugins/agents/*' editor surface is served by the REAL subagent plugin (root mounts) over the
-  // core agentCatalog host seam — wire the seam the way brainCore does, against an isolated user dir.
+  // core subagentCatalog host seam — wire the seam the way brainCore does, against an isolated user dir.
   function agentSetup(opts: { enabled?: string[] } = {}) {
     const cfgDir = tmpDir('agentcfg');
     const pluginDataRoot = join(cfgDir, 'plugins-data');
@@ -407,7 +407,7 @@ describe('sub-agent (typed .md) routes', () => {
     const provider = new PluginRegistryProvider(() => loadPlugins({
       dirs: [pluginsDir], enabled: opts.enabled ?? ['subagent'], dataRoot: pluginDataRoot,
       host: {
-        agentCatalog: makeAgentCatalog({
+        subagentCatalog: makeSubagentCatalog({
           builtinDir: promptsPath('agents'), userDir: userAgentsDir,
           pluginToolNames: async () => [],
         }),

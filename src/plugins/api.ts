@@ -665,17 +665,18 @@ export interface PluginHost {
    *  personality paragraph, brand). Gated by `reads:['terminals']` (same trust domain); wired late by
    *  bootstrap like the brain worker. */
   advisor(): PluginHostAdvisor;
-  /** The core-owned typed sub-agent catalog editor (the `.md` files agentRegistry loads for
-   *  delegation). The subagent plugin serves the '/plugins/agents/*' editor surface over it. Gated by
-   *  `reads:['agent-catalog']`. */
-  agentCatalog(): PluginAgentCatalog;
+  /** The core-owned typed sub-agent type catalog editor (the `.md` files agentRegistry loads for
+   *  delegation). The subagent plugin serves its type-editor surface over it. This remains platform
+   *  infrastructure so future delegation plugins can reuse the same validated catalog rather than own a
+   *  second file format. Gated by `reads:['subagent-catalog']`. */
+  subagentCatalog(): PluginSubagentCatalog;
   /** The canonical project path guard. Gated by `reads:['project-files']`; editor operations must use
    *  it instead of reproducing path traversal or symlink handling. */
   projectFiles(): PluginProjectFiles;
 }
 
-/** One row of the typed sub-agent catalog (see PluginHost.agentCatalog). */
-export interface AgentCatalogEntry {
+/** One row of the typed sub-agent catalog (see PluginHost.subagentCatalog). */
+export interface SubagentCatalogEntry {
   name: string;
   description: string;
   /** The frontmatter tools spec: a preset keyword ('read-only' | 'all' | 'inherit') or a tool list. */
@@ -688,17 +689,17 @@ export interface AgentCatalogEntry {
 
 /** Outcome of a catalog write: ok, or a refusal with the HTTP status the editor surface should map
  *  it to (400 invalid, 404 unknown, 503 no writable dir). */
-export type AgentCatalogResult = { ok: true } | { error: string; status: 400 | 404 | 503 };
+export type SubagentCatalogResult = { ok: true } | { error: string; status: 400 | 404 | 503 };
 
-/** Editor over the typed sub-agent catalog (see PluginHost.agentCatalog). Validation — name shape,
+/** Editor over the typed sub-agent catalog (see PluginHost.subagentCatalog). Validation — name shape,
  *  built-in shadowing, size bounds, tools-spec + frontmatter parse — lives core-side with the
  *  registry parser that consumes these files. */
-export interface PluginAgentCatalog {
-  list(): AgentCatalogEntry[];
+export interface PluginSubagentCatalog {
+  list(): SubagentCatalogEntry[];
   /** Create or overwrite a user agent. Async: an explicit tool list is validated against the live
    *  merged registry. */
-  save(name: string, input: { description?: unknown; tools?: unknown; body?: unknown }): Promise<AgentCatalogResult>;
-  remove(name: string): AgentCatalogResult;
+  save(name: string, input: { description?: unknown; tools?: unknown; body?: unknown }): Promise<SubagentCatalogResult>;
+  remove(name: string): SubagentCatalogResult;
 }
 
 /** The request function a daemon-MCP tool handler receives — the shared `callElowenApi` core already

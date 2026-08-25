@@ -141,6 +141,6 @@ export function resolveAgentTools(def: AgentDef): readonly string[] | undefined 
 }
 
 /** The catalog the subagent plugin advertises in its tool description (name + one-line description). */
-export function agentCatalog(reg: Map<string, AgentDef>): { name: string; description: string }[] {
+export function subagentCatalog(reg: Map<string, AgentDef>): { name: string; description: string }[] {
   return [...reg.values()].map((d) => ({ name: d.name, description: d.description }));
 }

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginAgentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -154,7 +154,7 @@ export interface PluginHostWiring {
   /** Live accessor — the advisor collaborators are constructed after the plugin load. */
   advisor?: () => PluginHostAdvisor | undefined;
   /** The typed sub-agent catalog editor (core-owned; the subagent plugin's editor surface). */
-  agentCatalog?: PluginAgentCatalog;
+  subagentCatalog?: PluginSubagentCatalog;
   /** The canonical lexical-and-symlink project path guard, kept in core for extracted file operations. */
   projectFiles?: PluginProjectFiles;
   /** Read ONE account's own values for ONE plugin (`ctx.userConfig()`). Not gated by a `reads` grant: a
@@ -1105,10 +1105,10 @@ export class PluginRegistry {
           if (!a) throw new Error('the advisor collaborators are not available in this process (daemon-only, wired after boot)');
           return a;
         },
-        agentCatalog: () => {
-          if (!capabilities.reads?.includes('agent-catalog')) throw new Error(`plugin "${name}" did not declare the reads:['agent-catalog'] capability`);
-          if (!host?.agentCatalog) throw new Error('no agent catalog wired for plugins in this process');
-          return host.agentCatalog;
+        subagentCatalog: () => {
+          if (!capabilities.reads?.includes('subagent-catalog')) throw new Error(`plugin "${name}" did not declare the reads:['subagent-catalog'] capability`);
+          if (!host?.subagentCatalog) throw new Error('no subagent catalog wired for plugins in this process');
+          return host.subagentCatalog;
         },
         projectFiles: () => {
           if (!capabilities.reads?.includes('project-files')) throw new Error(`plugin "${name}" did not declare the reads:['project-files'] capability`);
