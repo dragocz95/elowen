@@ -466,9 +466,11 @@ describe('PluginRegistry', () => {
       expect(warns.length).toBe(3);
     });
 
-    it('refuses an adapter-local reserved name (voice/display) so it cannot collide with the native slash', () => {
-      // These are not in SLASH_COMMANDS but are owned by the Discord/Telegram adapters; a plugin macro of
-      // the same name would break Discord's bulk registration and shadow the built-in inconsistently.
+    it('refuses an adapter-owned reserved name (voice/display) so it cannot collide with the native slash', () => {
+      // These ARE declared in SLASH_COMMANDS (`execution: 'adapter-state'`) but published to no surface —
+      // the declaration exists precisely to reserve the name. They are dispatched by the Discord/Telegram
+      // adapters against their own channel state; a plugin macro of the same name would break Discord's
+      // bulk registration and shadow the built-in inconsistently.
       const warns: string[] = [];
       const reg = new PluginRegistry();
       const ctx = reg.contextFor('p', {}, { info() {}, warn: (m: string) => warns.push(m), error() {} });

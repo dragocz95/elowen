@@ -37,22 +37,44 @@ export function controlCommandsFrom(commands) {
     .map((c) => String(c.name)));
 }
 
-/** The names that address the BOT rather than the conversation: everything the daemon executes
- *  (`session-control`) or the surface itself executes (`surface-local`), plus the `adapter-state`
- *  commands the calling adapter implements. A surface that records a transcript keeps these OUT of it —
- *  they are said to the plugin, not to the room, and recording them teaches the model to answer `/model`
- *  as if it were a question. A plugin prompt macro (`execution: 'plugin-prompt'`) is deliberately absent:
- *  that one IS a turn the conversation had.
+/** The complement of {@link controlCommandsFrom}: the names an adapter dispatches ITSELF. Everything the
+ *  surface executes (`execution: 'surface-local'` — `/help`, `/model`, `/reasoning`) plus the pickers the
+ *  daemon owns but cannot draw (`session-control` + `kind: 'picker'` — `/context`, whose listing and
+ *  binding are PlatformControlApi calls behind a per-surface chooser). Together the two sets partition
+ *  exactly what the daemon published for this surface, so no name is claimed twice and none is dropped.
  *
- *  `adapter-state` entries are declared in the catalog but never published — each adapter registers its
- *  own, and the same name twice in one Discord bulk registration is a 400 that drops every slash command
- *  for the guild — so the adapter that implements one passes its names in `adapterOwned`. */
-export function botControlCommandsFrom(commands, adapterOwned = []) {
-  const names = new Set((Array.isArray(adapterOwned) ? adapterOwned : []).map((n) => String(n)));
-  for (const c of Array.isArray(commands) ? commands : []) {
-    if (c?.execution === 'session-control' || c?.execution === 'surface-local') names.add(String(c.name));
-  }
+ *  FAIL CLOSED, and that is the whole point of the function. An empty projection means the adapter never
+ *  received a catalog — a core too old to publish one, a failed fetch, a surface the daemon does not know
+ *  — and an adapter that answered its hardcoded pickers anyway would be running commands the daemon never
+ *  published. Then "the catalog decides which commands exist" would hold for the daemon-run half and
+ *  quietly not for the local half. With nothing published, nothing is accepted: every `/word` falls
+ *  through to the adapter's unknown-command path and reaches the brain as ordinary text.
+ *
+ *  `adapterOwned` carries the `adapter-state` names the CALLER implements (`voice`, `display`). Those are
+ *  declared in the catalog but deliberately never published — each adapter registers its own, and the same
+ *  name twice in one Discord bulk registration is a 400 that drops every slash command for the guild — so
+ *  the catalog cannot answer for them and the adapter states them. They are gated on the projection being
+ *  non-empty all the same: a live catalog is the adapter's evidence that it is talking to a daemon at all,
+ *  and a channel whose commands have gone silent must not keep flipping local state as if nothing were
+ *  wrong. */
+export function localCommandsFrom(commands, adapterOwned = []) {
+  const published = Array.isArray(commands) ? commands : [];
+  if (published.length === 0) return new Set();
+  const names = new Set(published
+    .filter((c) => c?.execution === 'surface-local' || (c?.execution === 'session-control' && c?.kind === 'picker'))
+    .map((c) => String(c.name)));
+  for (const n of Array.isArray(adapterOwned) ? adapterOwned : []) names.add(String(n));
   return names;
+}
+
+/** The names that address the BOT rather than the conversation, which is the union of the two sets above
+ *  and is derived as exactly that — a third filter over `execution` would be a third place the same
+ *  classification is written down, and the one that goes stale. A surface that records a transcript keeps
+ *  these OUT of it: they are said to the plugin, not to the room, and recording them teaches the model to
+ *  answer `/model` as if it were a question. A plugin prompt macro (`execution: 'plugin-prompt'`) is
+ *  deliberately absent — that one IS a turn the conversation had. */
+export function botControlCommandsFrom(commands, adapterOwned = []) {
+  return new Set([...controlCommandsFrom(commands), ...localCommandsFrom(commands, adapterOwned)]);
 }
 
 /** Run one control command. Returns true when handled (a reply was sent), false when `cmd` is not one

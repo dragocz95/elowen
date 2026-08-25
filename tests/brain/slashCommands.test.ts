@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { controlCommandsFrom, runControlCommand } from '../../packages/plugin-shared/chatCommands.mjs';
 import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates, isPromptCommand, isReservedCommandName, findCommand } from '../../src/brain/slashCommands.js';
-import type { SlashSurface } from '../../src/brain/slashCommands.js';
 import { SERVER_COMMANDS } from '../../src/api/routes/brainChat.js';
 import { PLATFORM_SURFACES } from '../../src/shared/platformIdentity.js';
 
@@ -138,9 +137,10 @@ describe('slash command registry', () => {
       expect(isReservedCommandName('deploy')).toBe(false);
     });
 
-    it('drops a plugin command that collides with an adapter-local reserved name (voice/display)', () => {
-      // voice/display are adapter-local (not in SLASH_COMMANDS) yet reserved: a plugin macro of that name
-      // would break Discord's bulk slash registration, so it must never reach a surface menu.
+    it('drops a plugin command that collides with an adapter-owned reserved name (voice/display)', () => {
+      // voice/display are declared in SLASH_COMMANDS (`execution: 'adapter-state'`) but published to no
+      // surface — the declaration is what reserves the name. A plugin macro of that name would break
+      // Discord's bulk slash registration, so it must never reach a surface menu.
       const merged = commandsWithPlugins('discord', true, [
         { name: 'voice', description: 'x', prompt: 'y' },
         { name: 'display', description: 'x', prompt: 'y' },
@@ -258,72 +258,72 @@ describe('slash command registry', () => {
     expect(commandsFor('cli', true).some((c) => c.name === 'tdd')).toBe(false);
   });
 
-  /** `execution` says WHICH MECHANISM runs a command; `kind` says how a surface renders it. The field is
-   *  published but nothing dispatches on it yet, so these tests guard two things: that the catalog states
-   *  the truth about today's behaviour, and that adding the field moved nothing. */
+  /** `execution` says WHICH MECHANISM runs a command; `kind` says how a surface renders it. Together they
+   *  are the whole answer to "who runs this", and every consumer now dispatches on them, so these tests
+   *  guard the CONSEQUENCES of the classification rather than restating it. */
   describe('execution contract', () => {
     const PLATFORMS = ['discord', 'whatsapp', 'telegram', 'msteams'] as const;
     const SURFACES = ['cli', 'web', ...PLATFORMS] as const;
-    /** Identity of a published entry as it existed BEFORE `execution` — name, rendering and both gates,
-     *  in menu order. */
-    const shape = (c: { name: string; kind: string; adminOnly?: boolean; requiresPlugin?: string }): string =>
-      `${c.name}:${c.kind}${c.adminOnly ? '!' : ''}${c.requiresPlugin ? `@${c.requiresPlugin}` : ''}`;
 
-    /** Frozen from the catalog as it stood before this field existed (generated from `HEAD`, surface by
-     *  surface). A phase that is supposed to be purely additive must leave every one of these untouched;
-     *  the later phases that DO move commands have to change this table deliberately. */
-    const PUBLISHED_SHAPE: Record<SlashSurface, string[]> = {
-      cli: ['new:action', 'clear:action', 'stop:action', 'stats:info', 'context:info', 'mcp:picker@mcp', 'skills:picker@skills', 'tasks:picker@todo', 'goal:action', 'subgoal:action', 'tools:picker', 'compact:action', 'plan:mode', 'build:mode', 'workflow:mode', 'yolo:action', 'model:picker', 'fast:action', 'reasoning:picker', 'theme:picker', 'maskot:action', 'keybinds:info', 'statusline:picker@statusline', 'cd:action', 'paste:action', 'editor:picker', 'export:action', 'lsp:picker!@lsp', 'restart:action!', 'help:info', 'sessions:picker', 'resume:picker', 'rename:picker', 'delete:picker', 'quit:action'],
-      web: ['new:action', 'clear:action', 'stop:action', 'stats:info', 'skills:picker@skills', 'tasks:picker@todo', 'compact:action', 'plan:mode', 'build:mode', 'workflow:mode', 'model:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info', 'rename:picker'],
-      discord: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
-      whatsapp: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
-      telegram: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
-      msteams: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
-    };
+    /** `commandsFor` is a filter, and the property a filter can silently lose is ORDER — the menu each
+     *  surface draws is this list, top to bottom. Asserted as a relative-index invariant against the
+     *  catalog rather than against a frozen roster: a table of every published name per surface was a
+     *  second copy of the catalog, kept in step by hand, and every per-surface fact it encoded is pinned
+     *  deliberately by the tests above (`/clear`, `/rename`, the CLI pickers, `/stats` vs `/status`,
+     *  `/fast`, the work modes, `/yolo`, `/lsp`, `/context`). What it alone covered is here. */
+    it('keeps every surface menu in catalog declaration order', () => {
+      const order = new Map(SLASH_COMMANDS.map((c, i) => [c, i]));
+      for (const surface of SURFACES) {
+        const positions = commandsFor(surface, true).map((c) => order.get(c)!);
+        expect(positions, surface).toEqual([...positions].sort((a, b) => a - b));
+        expect(positions.length, surface).toBeGreaterThan(0);
+      }
+    });
 
-    it('leaves every surface roster, order, kind and gate unchanged for both admin projections', () => {
+    /** The admin projection is a strict subset, and the only thing withheld is what the catalog marked
+     *  `adminOnly` — a filter that dropped anything else would still look like "fewer commands". */
+    it('withholds exactly the admin-only commands from a non-operator', () => {
+      for (const surface of SURFACES) {
+        const asAdmin = commandsFor(surface, true).map((c) => c.name);
+        const asUser = commandsFor(surface, false).map((c) => c.name);
+        const withheld = commandsFor(surface, true).filter((c) => c.adminOnly).map((c) => c.name);
+        expect(asUser, surface).toEqual(asAdmin.filter((n) => !withheld.includes(n)));
+        expect(withheld.length, surface).toBeGreaterThan(0);
+      }
+    });
+
+    it('appends plugin prompt macros after every built-in, on every surface', () => {
       const macro = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy $1' }];
       const loaded = new Set(['skills', 'mcp', 'lsp', 'statusline', 'todo']);
       for (const surface of SURFACES) {
         for (const isAdmin of [false, true]) {
-          const expected = PUBLISHED_SHAPE[surface].filter((entry) => isAdmin || !entry.includes('!'));
-          expect(commandsFor(surface, isAdmin).map(shape), `${surface} admin=${isAdmin}`).toEqual(expected);
-          expect(commandsWithPlugins(surface, isAdmin, macro, loaded).map(shape), `${surface}+plugins admin=${isAdmin}`)
-            .toEqual([...expected, 'deploy:prompt']);
+          expect(commandsWithPlugins(surface, isAdmin, macro, loaded).map((c) => c.name), `${surface} admin=${isAdmin}`)
+            .toEqual([...commandsFor(surface, isAdmin).map((c) => c.name), 'deploy']);
         }
       }
     });
 
-    it('states the exact execution mechanism for every built-in and plugin prompt', () => {
-      const identity = (c: { name: string; kind: string; surfaces?: readonly string[] }) =>
-        `${c.name}:${c.kind}:${c.surfaces?.join(',') ?? '*'}`;
-      const sessionControls = new Set([
-        'new:action:*',
-        'clear:action:cli,web',
-        'stop:action:*',
-        'status:info:discord,msteams,telegram,whatsapp',
-        'compact:action:*',
-        'context:picker:discord,msteams,telegram,whatsapp',
-        'fast:action:cli,web,discord,msteams,telegram,whatsapp',
-        'restart:action:*',
-      ]);
-      // The adapter-owned pair: dispatched entirely by a chat adapter's own per-channel state, declared
-      // here only so the catalog is the one declaration site (and the one reserved-name check).
-      const adapterState = new Set([
-        'voice:action:discord,msteams,telegram,whatsapp',
-        'display:action:discord,msteams,telegram,whatsapp',
-      ]);
-      for (const c of SLASH_COMMANDS) {
-        const expected = sessionControls.has(identity(c)) ? 'session-control'
-          : adapterState.has(identity(c)) ? 'adapter-state'
-            : 'surface-local';
-        expect(c.execution, `/${identity(c)}`).toBe(expected);
-      }
+    /** A `session-control` PICKER is the one classification no generic dispatcher can serve: too stateful
+     *  for `POST /brain/command` (which takes actions only) and un-drawable by the adapters' shared control
+     *  core (`controlCommandsFrom` excludes pickers), so it needs a dedicated endpoint and a chooser per
+     *  surface. `/context` is the only command that has ever paid for that, and this list is small and
+     *  deliberate for exactly that reason: adding a second one is a real design decision — three surfaces'
+     *  worth of UI and a new PlatformControlApi pair — not a catalog edit. The two sets that used to
+     *  restate the whole classification here are gone: the `action` half is pinned against the route's own
+     *  dispatch table below, the daemon-run non-pickers against what `runControlCommand` really handles,
+     *  and `adapter-state` against the published projection. */
+    it('leaves /context the only command needing its own dispatch path', () => {
+      const needsOwnPath = SLASH_COMMANDS
+        .filter((c) => c.execution === 'session-control' && c.kind === 'picker')
+        .map((c) => c.name);
+      expect([...new Set(needsOwnPath)]).toEqual(['context']);
+    });
+
+    it('marks a plugin prompt macro, and only a plugin prompt macro, as plugin-executed', () => {
       const macro = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy $1' }];
       const loaded = new Set(['skills', 'mcp', 'lsp', 'statusline', 'todo']);
       for (const surface of SURFACES) {
-        const published = commandsWithPlugins(surface, true, macro, loaded);
-        for (const c of published) {
+        for (const c of commandsWithPlugins(surface, true, macro, loaded)) {
           expect(c.execution === 'plugin-prompt', `${surface} /${c.name}`).toBe(c.kind === 'prompt');
         }
       }

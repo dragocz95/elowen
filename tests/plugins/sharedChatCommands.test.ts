@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { botControlCommandsFrom, controlCommandsFrom, runControlCommand } from '../../packages/plugin-shared/chatCommands.mjs';
+import { botControlCommandsFrom, controlCommandsFrom, localCommandsFrom, runControlCommand } from '../../packages/plugin-shared/chatCommands.mjs';
+import { commandsWithPlugins } from '../../src/brain/slashCommands.js';
 
 const MSG = {
   newConversation: 'NEW',
@@ -40,27 +41,59 @@ function binding(over: Record<string, unknown> = {}) {
   };
 }
 
-/** The projection `GET /brain/commands?surface=discord` really returns (recorded 25 Aug) — identical on
- *  all four chat platforms — plus a plugin prompt macro, which only ever reaches a real surface. This is
- *  the ONLY input the derivations below get: there is no name list left on either side. */
-const PLATFORM_CATALOG = [
-  { name: 'new', kind: 'action', execution: 'session-control' },
-  { name: 'stop', kind: 'action', execution: 'session-control' },
-  { name: 'status', kind: 'info', execution: 'session-control' },
-  { name: 'compact', kind: 'action', execution: 'session-control' },
-  { name: 'model', kind: 'picker', execution: 'surface-local' },
-  { name: 'context', kind: 'picker', execution: 'session-control' },
-  { name: 'fast', kind: 'action', execution: 'session-control' },
-  { name: 'reasoning', kind: 'picker', execution: 'surface-local' },
-  { name: 'restart', kind: 'action', execution: 'session-control' },
-  { name: 'help', kind: 'info', execution: 'surface-local' },
-  { name: 'deploy', kind: 'prompt', execution: 'plugin-prompt' },
-];
+/** The REAL projection `GET /brain/commands?surface=discord` returns for an operator, built from the
+ *  catalog rather than transcribed from it — plus a plugin prompt macro, which only ever reaches a live
+ *  surface. Transcribing it meant a second copy that stayed green while the catalog moved underneath it,
+ *  and the whole point of the derivations below is that the projection is their only input.
+ *
+ *  The EXPECTATIONS stay written out by hand. A test whose expected value is derived from the same source
+ *  as its input asserts nothing about the function in between; these name the commands that must route one
+ *  way or the other, so a catalog edit that changes where one goes has to be acknowledged here. */
+const PLATFORM_CATALOG = commandsWithPlugins(
+  'discord', true, [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy $1' }], new Set(),
+);
 
 describe('control set derived from the published catalog', () => {
   it('routes the session-control non-pickers and nothing else', () => {
     expect([...controlCommandsFrom(PLATFORM_CATALOG)].sort())
       .toEqual(['compact', 'fast', 'new', 'restart', 'status', 'stop']);
+  });
+
+  /** The complement, and the half that used to be answered by a hardcoded switch in every adapter: the
+   *  pickers each surface draws itself plus `/help`. Together with the control set it must partition the
+   *  projection exactly — a name in neither set is a published command nobody runs, a name in both is a
+   *  command two code paths claim. */
+  it('claims the surface-run remainder, and the two sets partition the projection', () => {
+    expect([...localCommandsFrom(PLATFORM_CATALOG)].sort())
+      .toEqual(['context', 'help', 'model', 'reasoning']);
+
+    const control = controlCommandsFrom(PLATFORM_CATALOG);
+    const local = localCommandsFrom(PLATFORM_CATALOG);
+    expect([...control].filter((n) => local.has(n))).toEqual([]);
+    // `deploy` is the one published entry neither claims: a prompt macro is a turn, not a command.
+    const dispatched = [...control, ...local].sort();
+    expect(PLATFORM_CATALOG.map((c) => c.name).filter((n) => n !== 'deploy').sort()).toEqual(dispatched);
+  });
+
+  /** Fail closed, and for the local half this is new behaviour. An empty projection is what a core too old
+   *  to publish one, or a failed fetch, looks like — and an adapter that answered its own pickers anyway
+   *  was running commands the daemon had never published. `adapterOwned` goes with it: those names are
+   *  never in the projection, so nothing in it could gate them by name, and a live catalog is the
+   *  adapter's only evidence it is talking to a daemon at all. */
+  it('claims nothing at all from an empty projection, adapter-owned names included', () => {
+    expect(localCommandsFrom([]).size).toBe(0);
+    expect(localCommandsFrom([], ['voice', 'display']).size).toBe(0);
+    expect(botControlCommandsFrom([], ['voice', 'display']).size).toBe(0);
+    for (const bad of [undefined, null, 'nonsense', 42, {}]) {
+      expect(localCommandsFrom(bad as never, ['voice']).size, String(bad)).toBe(0);
+    }
+  });
+
+  it('adds the adapter-owned names once the projection is live', () => {
+    const local = localCommandsFrom(PLATFORM_CATALOG, ['voice', 'display']);
+    expect(local.has('voice')).toBe(true);
+    expect(local.has('display')).toBe(true);
+    expect(local.has('deploy')).toBe(false);
   });
 
   /** `/context` is `session-control` too, but its chooser is drawn per surface and its listing/binding go
@@ -86,12 +119,15 @@ describe('control set derived from the published catalog', () => {
   /** The transcript question: what was said TO the bot rather than in the room. `adapter-state` commands
    *  are deliberately absent from the projection (each adapter registers its own), so the adapter that
    *  implements one passes its names in — and a plugin prompt macro must stay OUT, because that one is a
-   *  turn the conversation actually had. */
+   *  turn the conversation actually had.
+   *
+   *  Derived as the union of the two sets above rather than by filtering `execution` a third time. Written
+   *  out here all the same: the union is the implementation's own claim, and this is where "everything the
+   *  bot runs is kept out of the transcript" is stated independently of it. */
   it('treats every daemon- and surface-executed command, plus the adapter own, as bot control', () => {
     expect([...botControlCommandsFrom(PLATFORM_CATALOG, ['display'])].sort())
       .toEqual(['compact', 'context', 'display', 'fast', 'help', 'model', 'new', 'reasoning', 'restart', 'status', 'stop']);
     expect(botControlCommandsFrom(PLATFORM_CATALOG, ['display']).has('deploy')).toBe(false);
-    expect([...botControlCommandsFrom([], ['display'])]).toEqual(['display']);
   });
 });
 
