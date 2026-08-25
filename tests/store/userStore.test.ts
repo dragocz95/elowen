@@ -122,6 +122,18 @@ describe('UserStore', () => {
     expect(users.principalForToken(t1)?.user.id).toBe(u.id);
   });
 
+  it('every scope the codebase still mints resolves, and a retired one does not', () => {
+    const u = users.create('tess', 'pw');
+    // The three live scopes, each from the seam that actually mints it: login/SSO issue the default,
+    // terminalService mints 'terminal', ensureAdvisorToken mints 'advisor'. principalForToken is an
+    // ALLOW-list, so a scope that stops being listed silently stops authenticating its owner — for
+    // 'terminal' that is `elowen chat` dying with no failing test to say why.
+    for (const scope of ['full', 'terminal'] as const) {
+      expect(users.principalForToken(users.issueToken(u.id, scope))?.user.id).toBe(u.id);
+    }
+    expect(users.principalForToken(users.ensureAdvisorToken(u.id))?.user.id).toBe(u.id);
+  });
+
   it('advisor config: defaults, set exec, toggle autostart', () => {
     const u = users.create('amy', 'pw');
     expect(u.advisor_exec).toBe('');

@@ -906,8 +906,12 @@ export class PluginRegistry {
           scoped.warn(`registerApiRoute('${route.path}') refused: path must be lowercase slash-separated segments`);
           return;
         }
-        if (route.access !== 'admin' && route.access !== 'user' && route.access !== 'agent') {
-          scoped.warn(`registerApiRoute('${clean}') refused: access must be admin, user or agent`);
+        // `agent` was a third level here while agent-scoped tokens existed. It must NOT be tolerated
+        // now that they do not: the dispatcher gates `admin` alone, so a route still declaring `agent`
+        // would be accepted by this validator and then served at ordinary authenticated-user level —
+        // a silent widening of the exact gate that used to 403 everyone without an agent token.
+        if (route.access !== 'admin' && route.access !== 'user') {
+          scoped.warn(`registerApiRoute('${clean}') refused: access must be admin or user`);
           return;
         }
         if (route.rootMount !== undefined) {
