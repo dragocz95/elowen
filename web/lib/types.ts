@@ -581,8 +581,10 @@ export interface PluginSubagent { name: string; description: string; tools: 'rea
 // Login no longer surfaces a token to the browser — the proxy sets it as an httpOnly cookie and
 // returns only a success flag.
 export type AuthResult = { ok: true };
-/** One hour of the dashboard heatmap. Counts only -- who did what is the feed's job. */
-export interface HeatmapBucket { day: string; hour: number; count: number }
+/** One hour of a person's rhythm on the pulse tile. Counts only -- who did what is the feed's job.
+ *  Not exported: it used to back an instance-wide `/activity/heatmap` that callers imported directly,
+ *  and now reaches the UI only as `PulsePerson.rhythm`. */
+interface HeatmapBucket { day: string; hour: number; count: number }
 
 /** Somebody on the presence rail. `working` is the daemon's LIVE view of a running turn; `lastTs` is
  *  when they were last seen, which is what keeps the rail populated the rest of the day. */
