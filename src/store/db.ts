@@ -156,7 +156,7 @@ function applyAdditiveMigrations(db: Db): void {
   // The default is the `*` wildcard, NOT the empty string, and that is deliberate: ALTER TABLE writes the
   // default into every existing row, so migrating an instance cannot silently strip its accounts of every
   // plugin tool. Existing accounts therefore stay unrestricted until an admin narrows them (or
-  // deploy/migrate-tool-allowlist.js converts the wildcard into the explicit catalogue-minus-deny list,
+  // scripts/migrate-tool-allowlist.mjs converts the wildcard into the explicit catalogue-minus-deny list,
   // which is what actually starts the fail-closed behaviour for newly installed tools).
   // A NEWLY created account is inserted with an empty list instead — see UserStore.create.
   addColumn(db, 'users', 'allowed_tools', "TEXT NOT NULL DEFAULT '*'");
