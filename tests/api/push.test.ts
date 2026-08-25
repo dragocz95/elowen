@@ -7,7 +7,6 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { PushSubscriptionStore } from '../../src/store/pushSubscriptionStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 function setup() {
   const db = openPluginTablesDb(':memory:');
@@ -19,7 +18,7 @@ function setup() {
   config.setWebPushKeys({ publicKey: 'pub-123', privateKey: 'priv-123' });
   const pushSubscriptions = new PushSubscriptionStore(db);
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), pushSubscriptions,

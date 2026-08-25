@@ -3,7 +3,7 @@
  *  `actions` array means tap-to-open only (the SW opens `url`).
  *
  *  Only the owner-chat turn notification is built here. The mission builders (review/needs_input/
- *  stalled/blocked/done) live in the agents plugin (plugins/agents/src/push/messages.ts); PushPayload
+ *  domain-specific states live in their owning plugins; PushPayload
  *  keeps the full kind union because plugin-built payloads flow through the host push seam. */
 
 type PushKind = 'review' | 'needs_input' | 'stalled' | 'blocked' | 'done' | 'turn_done';

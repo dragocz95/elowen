@@ -94,7 +94,7 @@ import {
   useCronJobs, useNotificationDestinations, usePluginSkills, usePluginSubagents, usePluginDetail,
   useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
   useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
-  useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin, useEditorPlugin,
+  useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin,
 } from './queries';
 import {
   useUpdateConfig, useSaveCronJob, useDeleteCronJob,
@@ -110,7 +110,10 @@ import { openTerminalWindow } from './openTerminalWindow';
 import { buildUsageSummary } from './usageBars';
 import { eventIcon } from './eventMeta';
 
-/** Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
+// @platform-keep plugin-ui-runtime :: window.ElowenUiRuntime && PLUGIN_UI_API_VERSION
+/** Generic browser-plugin platform for future github/sandblox consumers; zero in-repo callers is expected.
+ *
+ * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
 export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 2;
 export type { PluginPageProps, PluginUiRegistration };
@@ -274,8 +277,9 @@ export function ensurePluginUiRuntime(): void {
     react: React,
     reactDom: ReactDom,
     jsxRuntime: JsxRuntime,
-    // Curated: what a plugin page needs to look native. Growing this list is cheap; shrinking it is a
-    // breaking change, so every addition is deliberate.
+    // @platform-keep plugin-ui-primitives :: DataTable, DataTableRow, DataTableCell && PatchView && ProgressRibbon && TerminalModal && LiveTail
+    // Generic UI platform for future github/sandblox bundles; zero callers for any one primitive is expected.
+    // Growing this list is cheap; shrinking it is a breaking change.
     components: {
       Button, Input, Avatar: PluginAvatar, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
       Toggle, ModuleHeader, Segmented, SelectMenu, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
@@ -300,7 +304,7 @@ export function ensurePluginUiRuntime(): void {
     } as Record<string, ComponentType<never>>,
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a
-    // plugin page and the core tasks UI share one cache and one invalidation path.
+    // plugin pages and core surfaces share one cache and one invalidation path.
     hooks: {
       useTranslation, useToast, usePersistentState,
       useConfig, useUpdateConfig,
@@ -314,12 +318,12 @@ export function ensurePluginUiRuntime(): void {
       useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
       useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
       useMobile, useProjectFilter, useFillHeight,
-      useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin, useResetUsage, useEditorPlugin,
+      useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin, useResetUsage,
       // Batched queries against the host's react-query client: a bundle that imported the library
       // itself would get a second QueryClient context and read an empty cache.
       useQueries,
     },
-    // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
+    // Pure helpers shared with plugin bundles (formatting, navigation and error shaping).
     utils: {
       apiErrorMessage, contextMenuDivider: DIVIDER,
       allModels, cliProviders: PROVIDERS,

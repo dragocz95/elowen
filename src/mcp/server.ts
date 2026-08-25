@@ -13,7 +13,7 @@ export interface McpDeps {
 }
 
 /** Build an MCP server exposing the Elowen toolset bound to one caller's token: the core tools plus
- *  whatever the enabled plugins contribute (the agents plugin owns the mission/session/notes surface).
+ *  whatever the enabled plugins contribute.
  *  Every tool delegates to the shared `callElowenApi` core via `makeMcpRequest`, so there is no
  *  request logic here to maintain and a tool can never act with wider rights than its caller. */
 function createElowenMcpServer(deps: McpDeps): McpServer {

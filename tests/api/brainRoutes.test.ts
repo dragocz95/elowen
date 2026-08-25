@@ -16,7 +16,6 @@ import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
 import type { BrainEvent } from '../../src/brain/events.js';
 import type { ProcessInfo } from '../../src/brain/processRegistry.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { chatFilesDir, storeFileByContent } from '../../src/brain/chatFiles.js';
 
@@ -372,7 +371,7 @@ function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegist
   const brainStore = new BrainStore(db);
   const bus = new EventBus();
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus,
+    bus,
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -1235,7 +1234,7 @@ describe('GET /brain/models allow-list', () => {
       { id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x', models: ['kimi', 'glm'], apiKey: 'k' },
     ] } } as never);
     const app = createServer({
-      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+      bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

@@ -177,7 +177,7 @@ export const usePluginUi = (locale: string) =>
  *  listing the sidebar nav uses, so every affordance a plugin owns gates on one source. False while the
  *  listing loads: a plugin's affordances appear only once it is confirmed, so a plugin-less instance
  *  never flashes them. */
-const usePluginPresent = (name: string): boolean => {
+export const usePluginPresent = (name: string): boolean => {
   const { locale } = useTranslation();
   const pluginUi = usePluginUi(locale);
   return (pluginUi.data ?? []).some((p) => p.name === name);

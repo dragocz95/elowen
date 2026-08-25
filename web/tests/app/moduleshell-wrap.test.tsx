@@ -9,7 +9,7 @@ import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 
 const server = setupServer(
-  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: false } })),
+  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [] })),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterAll(() => server.close());
 

@@ -100,10 +100,6 @@ export default function SettingsPage() {
   const me = useMe();
   const brand = useBrand();
   const brainModels = useBrainModels();
-  // CLI-agent models (Claude Code / OpenCode / Codex / Kilo presets + custom execs) only ever run
-  // through the agents plugin's spawner — without the plugin they are dead catalog entries, so the
-  // Models section shows just the embedded Elowen AI group.
-  const agentsUi = useAgentsPlugin();
   const { toast } = useToast();
   const { t, locale } = useTranslation();
   const agentAiLabel = interpolate(t.settings.brain, { agentName: brand.agentName });
@@ -180,7 +176,7 @@ export default function SettingsPage() {
   // in the Models section next to where models are enabled — one home for all Elowen AI model config.
   const [modelWindows, setModelWindows] = useState<Record<string, number>>({});
   const [modelQuery, setModelQuery] = useState('');
-  // The model whose autopilot description is being edited (null = editor closed).
+  // The model whose model description is being edited (null = editor closed).
   const [noteFor, setNoteFor] = useState<{ label: string; exec: string } | null>(null);
   // The Elowen AI model whose context-window override is being edited (null = editor closed).
   const [ctxFor, setCtxFor] = useState<{ model: string; key: string; effective: number } | null>(null);
@@ -303,7 +299,7 @@ export default function SettingsPage() {
     setModelNotes(mn);
   };
 
-  // Persist a single model's autopilot description (empty string clears the entry). Persist-only — the
+  // Persist a single model's model description (empty string clears the entry). Persist-only — the
   // modal auto-saves and owns its own close, so this must NOT dismiss it.
   const saveNote = (exec: string, note: string) => {
     const next = { ...modelNotes };

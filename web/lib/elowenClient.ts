@@ -370,7 +370,7 @@ export const elowenClient = {
   },
   projects: () => req<Project[]>('/projects'),
   createProject: (v: { slug: string; path: string; notes?: string }) => req<Project>('/projects', json(v)),
-  updateProject: (id: number, patch: { path?: string; notes?: string; icon?: string; pr_enabled?: boolean | null }) => req<Project>(`/projects/${id}`, json(patch, 'PATCH')),
+  updateProject: (id: number, patch: { path?: string; notes?: string; icon?: string }) => req<Project>(`/projects/${id}`, json(patch, 'PATCH')),
   removeProject: (id: number) => req<{ ok: boolean }>(`/projects/${id}`, { method: 'DELETE' }),
   projectGit: (id: number) => req<ProjectGit>(`/projects/${id}/git`),
   projectFiles: (id: number) => req<FileNode[]>(`/projects/${id}/files`),

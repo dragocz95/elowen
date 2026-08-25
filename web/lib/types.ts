@@ -547,6 +547,9 @@ export interface ToolCatalogOption {
 /** Live WhatsApp pairing state for the plugin "Pair" modal: a QR rendered as a PNG data URL, the phone
  *  pairing code (phoneNumber flow), and whether the device is already linked. */
 
+// @platform-keep session-task-list :: SessionTask && useSessionTasks && TasksModal && brain_cards && /plugins/todo/api/tasks
+/** Generic per-conversation checklist platform for future github/sandblox consumers; zero callers is expected.
+ * This is the todo/session-card system, not the retired work plugin domain. */
 export interface SessionTask {
   id: string;
   subject: string;

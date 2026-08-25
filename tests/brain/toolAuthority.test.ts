@@ -436,7 +436,7 @@ describe('tool authority is resolved in exactly one place', () => {
     // (resolvePlatformTurnAuthority): it resolves the account's grant AND runs the resumed turn, so it is
     // the same shape as the other two and is held to the same rule rather than exempted from it.
     expect(surfaces.map((m) => m.path).sort(), 'the turn surfaces this contract covers')
-      .toEqual(['brain/channels.ts', 'brain/service/turnContextBuilder.ts', 'brain/worker/brainWorker.ts']);
+      .toEqual(['brain/channels.ts', 'brain/service/turnContextBuilder.ts']);
     const offenders = surfaces.filter(({ code }) => !ESTABLISHES_POLICY.test(code)).map(({ path }) => path);
     expect(offenders, 'resolved authority that never reaches runWithPolicy gates nothing').toEqual([]);
   });

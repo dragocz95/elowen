@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { type Db } from '../../src/store/db.js';
-import { openWorkDb } from '../helpers/workDb.js';
+import { openDb, type Db } from '../../src/store/db.js';
 import { BrainUsageStore } from '../../src/store/brainUsageStore.js';
 
 // The /usage/by-model and /usage/by-day views each run two full scans of brain_messages behind a
@@ -26,7 +25,7 @@ describe('BrainUsageStore view cache', () => {
     spy.mock.calls.filter((call) => call[0].includes('usage_rows')).length;
 
   beforeEach(() => {
-    db = openWorkDb(':memory:');
+    db = openDb(':memory:');
     now = Date.parse('2026-07-29T12:00:00Z');
     store = new BrainUsageStore(db, () => now);
     addSession('s1');
@@ -73,16 +72,6 @@ describe('BrainUsageStore view cache', () => {
     expect(store.usageByModel(1).map((r) => r.usage.total)).toEqual([100]);
     addUsage('s1', 'b', 50, now - 500); // the same instant — the TTL alone would keep the stale answer
     expect(store.usageByModel(1).map((r) => r.usage.total)).toEqual([150]);
-  });
-
-  it('sees a task_usage snapshot immediately (the session leaves the brain aggregate mid-TTL)', () => {
-    addSession('brain-task-9');
-    addUsage('brain-task-9', 't1', 999, now - 500);
-    expect(store.usageByModel(1).map((r) => r.usage.total)).toEqual([1099]);
-    // The worker settles and BrainWorkerService records its snapshot — from that moment the session's
-    // spend is merged from task_usage instead, so the brain view must drop it at once, not in 60 s.
-    db.prepare("INSERT INTO task_usage (task_id, project_id, exec, total) VALUES ('9', 1, 'elowen:m', 999)").run();
-    expect(store.usageByModel(1).map((r) => r.usage.total)).toEqual([100]);
   });
 
   it('shares one cache entry for two ISO spellings of the same window instant', () => {

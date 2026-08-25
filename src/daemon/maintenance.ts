@@ -67,7 +67,7 @@ interface MaintenanceDeps {
 export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void {
   return () => {
     const clock = new SystemClock();
-    // The agents plugin owns the subsystem's own boot reconciles (zombie tasks, overseer re-park) and
+    // Plugins own their domain-specific boot reconciles and
     // sweeps — they run through the plugin runner's registerBootReconcile/registerInterval hooks.
     // Restart zombies on the brain side: goals still marked 'active' whose in-memory continuation timers
     // died with the process. Pause them so nothing falsely claims to be running (the user /goal resumes).

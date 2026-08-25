@@ -1,5 +1,5 @@
 'use client';
-import { SlidersHorizontal, AlignLeft, Type, HardDrive, Layers, ShieldAlert, Timer, Brain, ListChecks, Target, Repeat, MessagesSquare, Share2, MessageCircleQuestion, type LucideIcon } from 'lucide-react';
+import { SlidersHorizontal, AlignLeft, Type, HardDrive, Layers, ShieldAlert, Timer, Brain, ListChecks, Target, Repeat, MessagesSquare, Share2, type LucideIcon } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -15,7 +15,7 @@ export const BRAIN_LIMIT_DEFAULTS: BrainLimits = {
   memoryRecallCount: 10, memoryRecallChars: 20000,
   memoryLiveRecallPasses: 10, memoryLiveRecallCount: 2, memoryLiveRecallBytes: 20000,
   goalTurnBudget: 50, goalMaxTurns: 50, channelSessionCap: 32,
-  delegateContextChars: 40000, askHistoryTurns: 30,
+  delegateContextChars: 40000,
 };
 
 const MILLISECONDS_PER_MINUTE = 60_000;
@@ -52,7 +52,6 @@ const BRAIN_LIMIT_FIELDS: BrainLimitField[] = [
   { key: 'goalMaxTurns', kind: 'count', min: 8, max: 500, step: 1, icon: Repeat },
   { key: 'channelSessionCap', kind: 'count', min: 4, max: 256, step: 1, icon: MessagesSquare },
   { key: 'delegateContextChars', kind: 'size', min: 20000, max: 80000, step: 1000, icon: Share2 },
-  { key: 'askHistoryTurns', kind: 'count', min: 15, max: 45, step: 1, icon: MessageCircleQuestion },
 ];
 
 const DISPLAY_DIVISORS: Record<BrainLimitKind, number> = {

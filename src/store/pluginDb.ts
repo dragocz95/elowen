@@ -5,11 +5,11 @@ import type { PluginDb, PluginDbHandle, PluginDbMigrationStep } from '../plugins
 
 const log = logger('plugin-db');
 
-/** Build the namespaced main-database handle a plugin receives as `ctx.db()`.
+// @platform-keep plugin-db :: makePluginDb && plugin_migrations
+/** Generic plugin persistence retained for future github/sandblox consumers; zero in-repo callers is expected.
  *
- *  One shared SQLite file, not a per-plugin sidecar: a plugin migrated out of the core (agents) keeps
- *  transacting across its own tables and the core's (mission row + task status is one logical write),
- *  there is one WAL/backup/busy_timeout discipline, and existing installs keep their data in place.
+ * One shared SQLite file preserves one WAL/backup/busy-timeout discipline and lets a plugin transact
+ * atomically across its own tables and the host rows it is explicitly allowed to reach.
  *  Namespacing is a convention (`p_<plugin>_*`, enforced by marketplace review, not runtime — an
  *  admin-installed plugin already runs in-process with full DB reach, so a runtime SQL parser would be
  *  theatre). What IS enforced here is migration bookkeeping: each step runs exactly once per plugin,

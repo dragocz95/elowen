@@ -8,8 +8,7 @@ import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
-import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
+import { openDb } from '../../src/store/db.js';
 
 /** A body streamed in chunks with NO content-length header — the chunked shape a hard cap has to stop.
  *  `pulled()` reports how many bytes the daemon actually read, so a test can tell "rejected after
@@ -27,10 +26,9 @@ function streamedBody(totalBytes: number, chunkBytes = 16 * 1024) {
 }
 
 function makeApp() {
-  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tasks = new RefTaskStore(db);
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const bus = new EventBus();
-  const a = createServer({ tasks, missions: new RefMissions(db), bus, engine: null as any, spawn: null as any, tmux: null as any, project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db) });
+  const a = createServer({ bus, engine: null as any, spawn: null as any, tmux: null as any, project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db) });
   return { app: a, bus };
 }
 
@@ -89,9 +87,9 @@ it('GET /events flushes an initial comment so headers reach the client immediate
   // Through the web BFF proxy, a streamed response sends no HTTP headers until the first body byte.
   // The event bus is silent on a quiet system, so /events must emit an immediate SSE comment or the
   // dashboard's live channel never connects. Comments (lines starting with ':') are ignored by EventSource.
-  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const app = createServer({
-    tasks: new RefTaskStore(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: new FakeTmuxDriver(), project: { id: 1, path: '/o' },
     fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
@@ -107,18 +105,18 @@ it('GET /events flushes an initial comment so headers reach the client immediate
 
 
 it('GET /config returns masked config; PUT updates without exposing the key', async () => {
-  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
   const app = createServer({
-    tasks: new RefTaskStore(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: new FakeTmuxDriver(), project: { id: 1, path: '/o' },
     fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
   });
-  const put = await app.request('/config', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ allowedExecs: ['sonnet'], autopilot: { apiKey: 'sk-secret' } }) });
+  const put = await app.request('/config', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ allowedExecs: ['sonnet'], brain: { providers: [{ id: 'test', label: 'Test', type: 'openai', baseUrl: 'https://api.example/v1', models: ['m'], apiKey: 'sk-secret' }] } }) });
   expect(put.status).toBe(200);
   const get = await (await app.request('/config')).json();
   expect(get.allowedExecs).toEqual(['sonnet']);
-  expect(get.autopilot.apiKeySet).toBe(true);
+  expect(get.brain.providers[0].apiKeySet).toBe(true);
   expect(JSON.stringify(get)).not.toContain('sk-secret');
 });
 
@@ -135,10 +133,10 @@ it('GET /activity returns [] without an EventStore (legacy)', async () => {
 it('POST /auth/login caps the body before parsing it, without buffering the stream', async () => {
   // /auth/login is public, so an anonymous caller reaches a handler that reads the whole body. A
   // chunked request carries no content-length to pre-check — the cap has to stop the read itself.
-  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db); users.create('admin', 'pw');
   const app = createServer({
-    tasks: new RefTaskStore(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), users,
@@ -177,9 +175,9 @@ it('GET /health surfaces the real pool: spawn failure as a stable code, never th
   children[0]?.emit('message', { type: 'fatal', reason: 'build mismatch (daemon /var/www/secret-internal-path 1.2.3)' });
   await run;
 
-  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const app = createServer({
-    tasks: new RefTaskStore(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
     subagentPool: () => pool.stats(),

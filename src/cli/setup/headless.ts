@@ -94,14 +94,14 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
     if (!saved.ok) return die(`Saving the provider failed (${saved.status}).`);
     aiProviderId = id;
     // A usable OpenAI key exists if one was passed now OR is already stored on the reused provider —
-    // both let memory-reuse and the autopilot relay work on a re-run without re-passing the key.
+    // both let memory-reuse and the retired workflow relay work on a re-run without re-passing the key.
     aiIsOpenAiKey = type === 'openai' && (!!o.apiKey || !!existing?.apiKeySet);
     aiHasModel = models.length > 0;
     ok('ai', model ? `${label} (${model})` : `${label} — saved keyless (add --api-key/--model later to make it answer)`);
 
     // The core default executor points at the embedded engine on this provider, so work run by a plugin
     // added later needs no external agent CLI. Not announced as "tasks": a fresh install ships no task
-    // tracking, and the autopilot relay this used to configure alongside it belongs to a subsystem that
+    // tracking, and the retired workflow relay this used to configure alongside it belongs to a subsystem that
     // is not installed either — writing it made a bare install look configured for a product it lacks.
     if (model && !(await putEmbeddedExec(ctx, id, model))) warn('ai', 'couldn\'t set the default executor (config save failed).');
   }

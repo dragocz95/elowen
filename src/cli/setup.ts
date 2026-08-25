@@ -41,7 +41,7 @@ export async function isFirstRun(fetchFn: typeof fetch, base: string): Promise<b
 
 /** Pure mapper: wizard answers → the API payloads. The config half configures the ASSISTANT's own model
  *  access (a brain provider) — the one thing an unattended install cannot leave for later without
- *  handing over a box that cannot answer. It used to write the `autopilot` relay block instead, which
+ *  handing over a box that cannot answer. It used to write a retired subsystem's relay block instead, which
  *  is read only by the mission subsystem: on an install that does not ship it, `--llm-key` configured a
  *  subsystem that was not there and left the assistant itself with no provider at all.
  *  A blank apiKey is omitted rather than sent, so a keyless local endpoint stays keyless and an existing

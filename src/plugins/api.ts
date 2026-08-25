@@ -517,18 +517,6 @@ export interface PluginHostStores {
   eventsRead?: { list(opts: { target?: string; type?: string }): { detail: string }[] };
 }
 
-/** Generic embedded brain-worker seam reserved for plugins that need an isolated background turn.
- * The core host may leave it unwired; callers must fail clearly instead of substituting another executor. */
-export interface BrainWorkerLauncher {
-  launch(input: { session: string; cwd: string; prompt: string; userId?: number | null; model?: string }): Promise<{ session: string }>;
-}
-
-export interface PluginBrainWorker extends BrainWorkerLauncher {
-  liveSessionNames(): string[];
-  isLive(session: string): boolean;
-  abort(session: string): Promise<void>;
-}
-
 /** User-override-aware prompt rendering (the core PromptService): resolves a user's saved prompt
  *  override before the file default — the file default itself may come from this plugin's own
  *  registerPrompts() overlay. */
@@ -549,19 +537,20 @@ export interface PluginProjectFiles {
 /** Narrow core infrastructure exposed to plugins. Every accessor is deny-by-default behind its own
  *  `reads` grant, and throws (never degrades) — a subsystem built on these cannot half-work. */
 export interface PluginHost {
-  /** The daemon's tmux driver. Gated by `reads:['tmux']`. */
+  // @platform-keep plugin-host-tmux :: tmux(): TmuxDriver
+  /** Generic plugin platform retained for future github/sandblox consumers; zero in-repo callers is expected. */
   tmux(): TmuxDriver;
-  /** Optional embedded brain-worker executor. Gated by `reads:['brain-worker']`. */
-  brainWorker(): PluginBrainWorker;
-  /** CLI invocation, daemon URL and per-user tokens. Gated by `reads:['elowen-cli']`. */
+  // @platform-keep plugin-host-cli :: elowenCli(): PluginElowenCli && tokenForUser(userId: number): string | undefined
+  /** Generic CLI/token platform retained for future github/sandblox consumers; zero in-repo callers is expected. */
   elowenCli(): PluginElowenCli;
-  /** Typed seams over the core stores. Gated by `reads:['stores']`. */
+  // @platform-keep plugin-host-identity-files-stores :: stores(): PluginHostStores && externalUsers(): PluginHostExternalUsers && projectFiles(): PluginProjectFiles && usersRead:
+  /** Generic identity, project-file and read-store platform for future github/sandblox consumers; zero callers is expected. */
   stores(): PluginHostStores;
-  /** External identity account linking and provisioning. Gated by `mutates:['users']` and operator consent. */
   externalUsers(): PluginHostExternalUsers;
   /** User-override-aware prompt rendering. Gated by `reads:['prompts']`. */
   prompts(): PluginHostPrompts;
-  /** Build a relay inference client. Gated by `reads:['inference']`. */
+  // @platform-keep plugin-host-relay :: relayClient(cfg: RelayConfig): InferenceClient
+  /** Generic inference relay platform retained for future github/sandblox consumers; zero in-repo callers is expected. */
   relayClient(cfg: RelayConfig): InferenceClient;
   /** Read-only git helpers over a project checkout. Gated by `reads:['git']`. */
   git(): {
@@ -575,12 +564,10 @@ export interface PluginHost {
     projectCommitFileDiff(root: string, hash: string, rel: string): Promise<string>;
   };
   /** The web-push transport (send only — recipients are the plugin's own concern via usersRead).
-   *  Gated by `reads:['push']`; wired late by bootstrap like the brain worker. */
+   *  Gated by `reads:['push']`; wired late by bootstrap. */
   push(): PluginHostPush;
-  /** The core-owned typed sub-agent type catalog editor (the `.md` files agentRegistry loads for
-   *  delegation). The subagent plugin serves its type-editor surface over it. This remains platform
-   *  infrastructure so future delegation plugins can reuse the same validated catalog rather than own a
-   *  second file format. Gated by `reads:['subagent-catalog']`. */
+  // @platform-keep plugin-host-subagent-catalog :: subagentCatalog(): PluginSubagentCatalog
+  /** Generic catalog platform retained for future github/sandblox delegation consumers; zero callers is expected. */
   subagentCatalog(): PluginSubagentCatalog;
   /** The canonical project path guard. Gated by `reads:['project-files']`; editor operations must use
    *  it instead of reproducing path traversal or symlink handling. */
@@ -1055,10 +1042,13 @@ export interface PluginContext {
   /** Host capabilities for core-subsystem extraction (see {@link PluginHost}). Each accessor carries
    *  its own deny-by-default `reads` grant. */
   host: PluginHost;
-  /** Contribute editable prompt templates: `<name>.md` files under `dir`, catalogued for the account UI
-   *  and resolved user override → plugin file → core file. Gated by `mutates:['prompt']`. */
+  // @platform-keep plugin-prompts :: setPluginPromptSources && registerPrompts(opts:
+  /** Generic prompt platform retained for future github/sandblox consumers; zero in-repo callers is expected. */
   registerPrompts(opts: { dir: string; entries: PluginPromptEntry[] }): void;
-  /** Publish an event onto the daemon's event bus (SSE + activity log). Core-shaped events keep their
+  // @platform-keep plugin-events :: publishEvent(event: ElowenEvent) && deleteEventsForTarget(target: string) && registerEventRowResolver(resolve:
+  /** Generic event platform retained for future github/sandblox consumers; zero in-repo callers is expected.
+   *
+   * Publish an event onto the daemon's event bus (SSE + activity log). Core-shaped events keep their
    *  exact core contract (consumers cannot tell the publisher moved into a plugin); a `type:'plugin'`
    *  event carries its own tenancy in `projectId` (null = admins only) and its `plugin` field is
    *  overwritten with the publishing plugin's name. Gated by `mutates:['events']`; throws unwired. */

@@ -13,26 +13,18 @@ import { EmberFall } from './EmberFall';
 import { useElementHeight } from '../../lib/useElementWidth';
 import { entryIsActive, type NavEntry } from './navEntry';
 
-/** Top to bottom: where you land, then the work, then the context behind it, then administration.
- *  Home first and the admin surfaces last, so the axis reads in the order you actually use it.
- *
- *  This is the DEFAULT arrangement only — the order a menu nobody has touched appears in. A user's own
- *  arrangement overrides it entirely. Routes that no enabled plugin serves simply never appear, which
- *  is why the work pages can sit here without showing up on an instance that has the plugin off. */
+/** Top to bottom: where you land, then project context and automation, then administration.
+ *  This is only the untouched default; a user's own arrangement overrides it entirely. Unknown plugin
+ *  worlds stay dynamic and fall after the named platform integrations rather than being special-cased. */
 const SPATIAL_ROUTE_ORDER = [
-  '/dash', '/chat',                                                    // home, then chat
-  '/p/work/tasks', '/p/work/kanban', '/p/work/timeline',               // the work, when that plugin is on
-  '/projects', '/p/editor',                                            // what you work on
-  '/p/agents', '/p/subagent', '/p/cronjob', '/p/skills',               // what runs it
-  '/memory', '/p/stats', '/p/work/stats',                              // what it leaves behind
-  '/account', '/users', '/settings',                                   // administration
+  '/dash', '/chat',
+  '/projects', '/p/editor',
+  '/p/subagent', '/p/cronjob', '/p/skills',
+  '/memory', '/p/stats',
+  '/account', '/users', '/settings',
 ];
-/** Where an entry parks on the axis. Prefix-matched, not exact: a plugin world links to its first
- *  page (e.g. /p/agents/sessions), which must claim its plugin's slot ('/p/agents') — an unmatched
- *  entry would fall past the administration block and become the wheel's last stop. A plugin whose
- *  pages belong in different bands (work's register, board and timeline are the work itself; its spend
- *  stats sit with what the work runs on) names those pages individually, so extracting a subsystem
- *  never reshuffles the axis the reader knows. */
+/** Where an entry parks on the axis. Prefix matching lets a plugin's nested pages share its slot; an
+ *  unmatched dynamic plugin falls after the administration block. */
 function spatialOrderIndex(href: string | undefined): number {
   if (!href) return Number.MAX_SAFE_INTEGER;
   const index = SPATIAL_ROUTE_ORDER.findIndex((route) => href === route || href.startsWith(`${route}/`));

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { openDb, type Db } from '../../src/store/db.js';
-import { applyWorkMigrations, openWorkDb } from '../helpers/workDb.js';
-import { AGENTS_TABLES, WORK_TABLES } from '../fixtures/pluginSchema.js';
+import { AGENTS_TABLES, WORK_TABLES, applyWorkSchema } from '../fixtures/pluginSchema.js';
 
 /** The pin that keeps tests/fixtures/pluginSchema.ts honest.
  *
@@ -80,13 +79,11 @@ const FRESH_INSTALL_SHAPE: Record<string, TableShape> = {
   },
 };
 
-describe('the frozen plugin-table fixture still equals the schema a real install has', () => {
-  it('openWorkDb hands a test byte-for-byte the shape core used to create', () => {
-    expect(taskSchemaShape(openWorkDb())).toEqual(FRESH_INSTALL_SHAPE);
-  });
-
-  it('applyWorkMigrations over an already-open database produces the same shape', () => {
-    expect(taskSchemaShape(applyWorkMigrations(openDb(':memory:')))).toEqual(FRESH_INSTALL_SHAPE);
+describe('the frozen retired-plugin fixture still equals the last core-owned schema', () => {
+  it('applyWorkSchema produces the captured shape over an already-open database', () => {
+    const db = openDb(':memory:');
+    applyWorkSchema(db);
+    expect(taskSchemaShape(db)).toEqual(FRESH_INSTALL_SHAPE);
   });
 
   it('core itself ships none of them — the fixture is the only thing that creates them', () => {

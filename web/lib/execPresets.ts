@@ -46,7 +46,7 @@ export function removeModel(s: ModelState, exec: string): ModelState {
  *  leave the old copy behind as a duplicate (the old bug: it filtered by the new exec). If the edited
  *  model shadows a preset, that preset is hidden so it doesn't reappear next to the override. The note
  *  (keyed by exec) follows the model across a rename — otherwise editing a model's exec silently drops
- *  its description, which is what the autopilot model-picker reads. */
+ *  its description, which is what the model picker reads. */
 export function upsertModel(s: ModelState, model: { label: string; exec: string }, original?: string): ModelState {
   const key = original ?? model.exec;
   const customModels = [...s.customModels.filter((x) => x.exec !== key && x.exec !== model.exec), model];

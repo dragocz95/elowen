@@ -170,7 +170,7 @@ export function isNonUserSession(id: string): boolean {
 }
 
 /** The three-clause "this is the caller's own continuable conversation" rule — the row exists, the caller
- *  owns it, and it is a real user conversation (not a channel/task session). Shared by delete / rename /
+ *  owns it, and it is a real user conversation (not a channel session). Shared by delete / rename /
  *  terminal / listing, so the rule can't drift between them.
  *
  *  A direct 1:1 platform chat deliberately does NOT pass: it stays out of the web conversation list and

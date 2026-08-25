@@ -31,7 +31,7 @@ export async function defaultLatestVersion(): Promise<string | null> {
  *  install. The updater still runs inside elowen-daemon's systemd cgroup, so it can't outlive the daemon
  *  restart it triggers — that's why `update()` restarts the units with `systemctl --no-block`, handing
  *  both jobs to PID 1 up front so elowen-web restarts even after this process is killed. Caller gates on
- *  missions first. */
+ *  update eligibility first. */
 export function defaultStartUpdate(): void {
   spawn('elowen', ['update'], { detached: true, stdio: 'ignore' }).unref();
 }

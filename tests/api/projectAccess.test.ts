@@ -6,11 +6,10 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
-import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
+import { openDb } from '../../src/store/db.js';
 
 function setup() {
-  const db = openPluginTablesDb(':memory:');
+  const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen',?)").run(process.cwd());
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw'); // first user → is_admin
@@ -18,11 +17,10 @@ function setup() {
   const adminTok = users.issueToken(admin.id);
   const bobTok = users.issueToken(bob.id);
   const projects = new ProjectStore(db);
-  const tasks = new RefTaskStore(db);
   const config = new ConfigStore(db);
   const bus = new EventBus();
   const app = createServer({
-    tasks, missions: new RefMissions(db), bus,
+    bus,
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: process.cwd() }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config,

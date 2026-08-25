@@ -34,7 +34,8 @@ export function registerRoutes(app: ElowenApp, ctx: RouteContext): void {
   registerPluginApiRoutes(app, ctx);
   registerMemoryRoutes(app, ctx);
   registerHookRoutes(app, ctx);
-  // ROOT-mounted plugin routes — MUST register last: it is a fallback catch-all, so a core route
-  // registered above always wins over a plugin's root mount by construction.
+  // @platform-keep root-plugin-routes :: registerRootPluginApiRoutes(app, ctx)
+  // Generic plugin platform for future github/sandblox consumers; zero in-repo callers is expected.
+  // MUST remain last: core routes win over the fallback root mount by construction.
   registerRootPluginApiRoutes(app, ctx);
 }

@@ -67,9 +67,9 @@ describe('PUT /config validates the patch at the trust boundary', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects a non-string autopilot field with a 400', async () => {
+  it('rejects a non-number security field with a 400', async () => {
     const { app, token } = await makeTestApp({});
-    const res = await app.request('/config', put(token, { autopilot: { model: 123 } }));
+    const res = await app.request('/config', put(token, { security: { tokenTtlDays: 'bad' } }));
     expect(res.status).toBe(400);
   });
 

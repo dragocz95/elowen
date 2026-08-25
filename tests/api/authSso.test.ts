@@ -10,7 +10,6 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
 
 const NOW = 2_000_000_000_000;
 const TENANT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -130,8 +129,6 @@ function setup(options: SetupOptions = {}) {
     keyResolver,
   });
   const app = createServer({
-    tasks: new RefTaskStore(db),
-    missions: new RefMissions(db),
     bus,
     engine: null as never,
     spawn: null as never,

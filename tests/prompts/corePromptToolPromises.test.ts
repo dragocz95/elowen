@@ -29,7 +29,7 @@ function pluginToolNames(): Set<string> {
  *  `cli/*` mode templates are deliberately not here: they are injected only while a mode is active and
  *  they are written around plugin-owned tooling end to end, so the durable fix for those is to move the
  *  template into its owning plugin (registerPrompts owns whole templates) — tracked separately. */
-const ALWAYS_RENDERED = ['elowen', 'elowen-platform', 'scheduled', 'worker-brain', 'planner', 'planner-fallback'];
+const ALWAYS_RENDERED = ['elowen', 'elowen-platform', 'scheduled'];
 
 /** A core template is read with no knowledge of which plugins the instance runs. Naming a plugin-owned
  *  tool in one therefore instructs the model to prefer a tool it may not have been given — which is
@@ -65,11 +65,4 @@ describe('core prompt templates', () => {
     expect(promised).toEqual([]);
   });
 
-  it('still names the core tools they depend on', () => {
-    // The rule is about OWNERSHIP, not about scrubbing every tool name: a template may name a tool the
-    // core itself registers. `ElowenCloseTask` comes from src/brain/worker/brainWorker.ts and is the
-    // only way an embedded worker settles its task, so worker-brain.md has to keep naming it.
-    expect(readFileSync(join(repoRoot, 'prompts', 'worker-brain.md'), 'utf8')).toContain('`ElowenCloseTask`');
-    expect(pluginToolNames().has('ElowenCloseTask')).toBe(false);
-  });
 });

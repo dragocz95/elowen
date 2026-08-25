@@ -1080,8 +1080,8 @@ export class BrainStore {
   }
 
   /** Case-insensitive fulltext search across the user's OWN chat conversations. Shared platform
-   *  sessions (`brain-ch-*`, which carry other members' messages) and ephemeral subagent runs
-   *  (`brain-task-*`) are excluded — the search backs the personal chat sidebar, not the Discord logs.
+   *  sessions (`brain-ch-*`, which carry other members' messages) are excluded — the search backs the
+   *  personal chat sidebar, not the Discord logs.
    *  The LIKE over the raw content JSON is a coarse prefilter; each candidate is confirmed against its
    *  extracted display text (so JSON keys never match) and shaped into a ±60-char snippet. Newest first.
    *  The SQL row scan is bounded (recent-biased) so a broad `%q%` can't scan the whole table. */

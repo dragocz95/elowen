@@ -6,23 +6,15 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
-import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefAdvisorHooks, RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
-/** Server wired with the reference advisor hooks (refStores.ts, over a fake tmux) plus a brain stub
- *  that records how much of the user's durable state is still visible at the moment live teardown runs
- *  — that ordering is the whole point of the delete route. The advisor SERVICE is plugin-owned; what
- *  the daemon owns, and what is measured here, is calling its two hooks before the row is gone. */
-function setup() {
+function setup(onUserRemoved?: (userId: number) => void | Promise<void>) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw'); // first user → is_admin
   const carol = users.create('carol', 'pw');
   const config = new ConfigStore(db);
-  const tmux = new FakeTmuxDriver();
-  const advisor = new RefAdvisorHooks(tmux, users);
   /** Terminal bindings still resolvable when deleteAllManagedSessions was invoked (-1 = never invoked). */
   let bindingsAtTeardown = -1;
   const brain = {
@@ -32,40 +24,46 @@ function setup() {
     },
   };
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
-    engine: null as never, spawn: null as never, tmux: tmux as never,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
-    advisor, brain: brain as never,
+    bus: new EventBus(), project: { id: 1, path: '/o' }, clock: new FakeClock(0), config,
+    users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db), brain: brain as never,
+    plugins: onUserRemoved ? {
+      get: async () => ({ userRemovedHandlers: [{ plugin: 'fixture', fn: onUserRemoved }] }),
+    } as never : undefined,
   });
-  return { app, db, users, tmux, carol, advisor, adminTok: users.issueToken(admin.id), bindings: () => bindingsAtTeardown };
+  return { app, db, users, carol, adminTok: users.issueToken(admin.id), bindings: () => bindingsAtTeardown };
 }
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('DELETE /users/:id tears down what is running before it deletes what is stored', () => {
-  it('kills the deleted user\'s advisor tmux instead of orphaning it', async () => {
-    const { app, tmux, carol, advisor, adminTok } = setup();
-    const session = RefAdvisorHooks.session(carol.id);
-    tmux.setPane(session, ''); // carol's advisor is live — a full agent CLI with shell access
-    expect(await tmux.list()).toContain(session);
-
-    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
-    expect(await tmux.list()).not.toContain(session); // nothing else ever reaps this session
-    // …and the hook ran while the row was still there: stop() persists advisor_autostart=false, which
-    // is a no-op against a deleted user, so calling it after the delete would silently do nothing.
-    expect(advisor.stoppedAfterDelete).toEqual([]);
-  });
-
   it('runs brain-session teardown while the user\'s brain_terminals bindings still exist', async () => {
     const { app, db, carol, adminTok, bindings } = setup();
     db.prepare("INSERT INTO brain_terminals (terminal_name, user_id, brain_session_id, token) VALUES ('elowen-chat-x', ?, 'brain-1', 'tok')").run(carol.id);
 
     expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
-    // The teardown resolves each conversation's binding to kill its tmux and revoke its token; running
-    // it after users.delete() wiped brain_terminals would leave the terminal alive.
     expect(bindings()).toBe(1);
     expect(db.prepare('SELECT COUNT(*) c FROM brain_terminals WHERE user_id = ?').get(carol.id)).toEqual({ c: 0 });
+  });
+
+  it('runs loaded plugin cleanup while the user row still exists', async () => {
+    let existedAtCleanup = false;
+    const { app, db, carol, adminTok } = setup((userId) => {
+      existedAtCleanup = db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId) !== undefined;
+      db.prepare('DELETE FROM tasks WHERE created_by = ?').run(userId);
+    });
+    db.prepare("INSERT INTO tasks (id, project_id, title, type, created_by) VALUES ('owned', 1, 'Owned', 'task', ?)").run(carol.id);
+
+    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
+    expect(existedAtCleanup).toBe(true);
+    expect(db.prepare("SELECT COUNT(*) c FROM tasks WHERE id = 'owned'").get()).toEqual({ c: 0 });
+  });
+
+  it('keeps retired plugin rows but scrubs their deleted-user attribution without a handler', async () => {
+    const { app, db, carol, adminTok } = setup();
+    db.prepare("INSERT INTO tasks (id, project_id, title, type, created_by) VALUES ('orphan', 1, 'Orphan', 'task', ?)").run(carol.id);
+
+    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
+    expect(db.prepare("SELECT created_by FROM tasks WHERE id = 'orphan'").get()).toEqual({ created_by: null });
   });
 
   it('still removes the user and their assignments', async () => {
@@ -85,8 +83,6 @@ describe('DELETE /users/:id tears down what is running before it deletes what is
                 VALUES ('brain-1', '203.0.113.7', ?, 1, 1, 1, 1)`).run(carol.id);
 
     expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
-    // An IP address is personal data: deleting the account must delete it, not leave it for the next
-    // retention sweep — and certainly not leave it for a recycled user id to inherit.
     expect(db.prepare('SELECT COUNT(*) c FROM usage_by_origin WHERE user_id = ?').get(carol.id)).toEqual({ c: 0 });
     expect(db.prepare('SELECT COUNT(*) c FROM brain_session_origins WHERE user_id = ?').get(carol.id)).toEqual({ c: 0 });
   });
@@ -98,8 +94,6 @@ describe('POST /users/:id/projects requires both sides to exist', () => {
     const res = await app.request(`/users/${carol.id}/projects`, post(adminTok, { projectId: 42 }));
     expect(res.status).toBe(404);
     expect(db.prepare('SELECT COUNT(*) c FROM user_projects WHERE user_id = ?').get(carol.id)).toEqual({ c: 0 });
-    // projects.id is a plain rowid, so id 42 can later be handed to a real project — which would have
-    // inherited this grant without any approval.
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (42,'later','/l')").run();
     expect((await app.request(`/users/${carol.id}/projects`, post(adminTok, { projectId: 42 }))).status).toBe(200);
   });

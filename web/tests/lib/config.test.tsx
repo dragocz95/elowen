@@ -9,8 +9,8 @@ import { useUpdateConfig } from '../../lib/mutations';
 
 let body: unknown = null;
 const server = setupServer(
-  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: false } })),
-  http.put('*/api/config', async ({ request }) => { body = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: true } }); }),
+  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], security: { tokenTtlDays: 30 } })),
+  http.put('*/api/config', async ({ request }) => { body = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], security: { tokenTtlDays: 45 } }); }),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
 
@@ -23,8 +23,8 @@ describe('config hooks', () => {
   });
   it('useUpdateConfig PUTs the patch', async () => {
     const { result } = renderHook(() => useUpdateConfig(), { wrapper: wrap() });
-    result.current.mutate({ autopilot: { apiKey: 'k' } });
+    result.current.mutate({ security: { tokenTtlDays: 45 } });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(body).toMatchObject({ autopilot: { apiKey: 'k' } });
+    expect(body).toMatchObject({ security: { tokenTtlDays: 45 } });
   });
 });

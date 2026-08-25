@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -137,7 +137,6 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
  * plugin bind infrastructure after registry construction without rebuilding the registry. */
 export interface PluginHostWiring {
   tmux?: TmuxDriver;
-  brainWorker?: () => PluginBrainWorker | undefined;
   elowenCli?: PluginElowenCli;
   stores?: PluginHostStores;
   externalUsers?: PluginHostExternalUsers;
@@ -180,8 +179,8 @@ export class PluginRegistry {
   /** Authenticated API mounts, keyed `<plugin>/<path>` — dispatched by the daemon's `/plugins/:name/api`
    *  router. A key holds every method variant registered on that path (exact method beats method-less). */
   readonly apiRoutes = new Map<string, { plugin: string; routes: { method?: string; access: PluginApiAccess; handler: PluginApiRoute['handler'] }[] }>();
-  /** ROOT-mounted authenticated plugin routes, keyed by the full absolute mount (e.g. '/missions',
-   *  '/missions/overseer'). Served by the daemon's root fallback dispatcher with the same auth/access
+  /** ROOT-mounted authenticated plugin routes, keyed by the full absolute mount (e.g. '/integrations/github',
+   *  '/sandboxes/:id'). Served by the daemon's root fallback dispatcher with the same auth/access
    *  mechanics as `apiRoutes`; a mount that collides with a core route is skipped there (core wins). */
   readonly rootApiRoutes = new Map<string, { plugin: string; routes: { method?: string; access: PluginApiAccess; handler: PluginApiRoute['handler'] }[] }>();
   /** Host-managed background services (started after boot reconcile, cycled around plugin reloads) and
@@ -443,7 +442,7 @@ export class PluginRegistry {
     // the more specific owner, whether it names those segments literally or with ':param'. Ranking the
     // two KINDS separately (all literals, then all patterns) would let a one-segment literal mount
     // swallow a three-segment pattern of another plugin — the shape two plugins take when they share a
-    // prefix (work's '/tasks' beside agents' '/tasks/:id/ask'). Literal beats pattern only at EQUAL
+    // prefix ('/integrations/:name' beside '/integrations/github'). Literal beats pattern only at EQUAL
     // depth, where the literal genuinely describes the path more precisely.
     const candidates: { mount: string; remainder: string; params: Record<string, string>; literals: number; depth: number }[] = [];
     for (let depth = parts.length; depth >= 1; depth--) {
@@ -917,7 +916,7 @@ export class PluginRegistry {
           // plugin serves. Trust: plugins are admin-installed by definition (bundled or marketplace),
           // so the root namespace is not a wider grant than the namespaced one — just a wider PATH.
           const mount = route.rootMount.trim().replace(/\/+$/g, '');
-          // Segments are lowercase literals or ':param' placeholders (e.g. '/tasks/:id/ask') — a
+          // Segments are lowercase literals or ':param' placeholders (e.g. '/sandboxes/:id') — a
           // pattern mount lets a plugin grandfather a core path family with an id in the middle.
           const segsOk = mount.startsWith('/') && mount.slice(1).split('/').every((seg) =>
             /^[a-z0-9][a-z0-9\-]*$/.test(seg) || /^:[a-zA-Z][a-zA-Z0-9]*$/.test(seg));
@@ -1000,7 +999,7 @@ export class PluginRegistry {
         };
       },
       // Editable prompt templates. Shadowing what the model reads is a prompt mutation, so it rides the
-      // existing mutates:['prompt'] grant. Names stay BARE (`worker`, not `agents/worker`) — the
+      // existing mutates:['prompt'] grant. Names stay BARE (`review`, not `github/review`) — the
       // override key in `user_prompts` must survive a template migrating from core into a plugin.
       registerPrompts: ({ dir, entries }) => {
         if (!capabilities.mutates?.includes('prompt')) { scoped.warn(`registerPrompts refused: missing mutates:['prompt'] capability`); return; }
@@ -1030,12 +1029,6 @@ export class PluginRegistry {
           if (!capabilities.reads?.includes('tmux')) throw new Error(`plugin "${name}" did not declare the reads:['tmux'] capability`);
           if (!host?.tmux) throw new Error('no tmux driver wired for plugins in this process');
           return host.tmux;
-        },
-        brainWorker: () => {
-          if (!capabilities.reads?.includes('brain-worker')) throw new Error(`plugin "${name}" did not declare the reads:['brain-worker'] capability`);
-          const worker = host?.brainWorker?.();
-          if (!worker) throw new Error('the brain worker is not available in this process (daemon-only, wired after boot)');
-          return worker;
         },
         elowenCli: () => {
           if (!capabilities.reads?.includes('elowen-cli')) throw new Error(`plugin "${name}" did not declare the reads:['elowen-cli'] capability`);

@@ -48,14 +48,12 @@ export function initialActiveToolNames(tools: readonly ToolDefinition[], deferre
   return deferred && deferred.size > 0 ? names.filter((n) => !deferred.has(n)) : names;
 }
 
-/** Everything one PI brain session needs, composed by the caller: the chat brain renders the Elowen
- *  persona and gates Elowen* tools by session kind; the task worker bakes in its close tool and the
- *  worker-brain prompt. The factory only assembles. */
+/** Everything one PI brain session needs, composed by the caller. The factory only assembles. */
 export interface SessionSpec {
   sessionId: string;
   /** Mid-turn memory recall, when the caller wants it for this session. */
   liveRecall?: LiveRecallOptions;
-  /** The Elowen user the store row belongs to (0 for ownerless task sessions). */
+  /** The Elowen user the store row belongs to. */
   ownerUserId: number;
   /** Parent conversation for delegated sessions; persisted for usage/navigation. */
   parentSessionId?: string;

@@ -1,5 +1,5 @@
 /** Program + model an agent session runs — the exec spec every routing/usage path shares. Moved
- *  here from the plugin-owned spawn command builder (part 2 of the agents extraction). */
+ *  here from plugin-owned command builders. */
 export interface AgentSpec { program: string; model: string }
 import { parseExecRef } from './execs.js';
 

@@ -5,7 +5,7 @@ import { convertToLlm } from '@earendil-works/pi-coding-agent';
 import { convertResponsesMessages } from '@earendil-works/pi-ai/api/openai-responses-shared';
 import type { AgentSession, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { openWorkDb } from '../helpers/workDb.js';
+import { openDb } from '../../src/store/db.js';
 import { rehydrate } from '../../src/brain/persistence.js';
 import {
   COMPACTION_UNAVAILABLE_NOTE,
@@ -443,7 +443,7 @@ describe('remote compaction v2 — cross-provider sanitizer', () => {
 
 describe('remote compaction v2 — storage and rehydration', () => {
   it('survives the store round trip and becomes a compaction item, never raw text', () => {
-    const db = openWorkDb(':memory:');
+    const db = openDb(':memory:');
     const store = new BrainStore(db);
     store.createSession({ id: 's1', userId: 1, model: 'gpt-5.5' });
     store.appendMessage({ id: 'old', sessionId: 's1', parentId: null, role: 'user', content: { role: 'user', content: 'ancient question' } });

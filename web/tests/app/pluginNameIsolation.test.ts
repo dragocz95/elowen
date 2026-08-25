@@ -35,72 +35,42 @@ const PATTERNS: { re: RegExp; label: (m: RegExpMatchArray) => string }[] = [
 /** Every binding core is still allowed to carry, keyed by file → matched text → why it may stay.
  *  A reason must say what makes it legitimate or what would remove it — never just "existing". */
 const ALLOWED: Record<string, Record<string, string>> = {
-  'components/shell/CommandPalette.tsx': {
-    '/p/work': 'Core command palette entries, each already gated on workUi/agentsUi; the target route is the work plugin\'s own. Removal path: let a plugin contribute its palette commands through the UI runtime.',
+  'app/editor/page.tsx': {
+    '/p/editor': 'Legacy /editor bookmarks redirect to the optional editor plugin route.',
   },
   'components/shell/OrbitalNav.tsx': {
-    '/p/work': 'The nav ORDER is core (which slot a world occupies) while the worlds themselves come from the plugin listing; an unlisted plugin simply never claims its slot. Removal path: a manifest-declared nav weight.',
-    '/p/agents': 'Same ordered-slot list — the order is core, the world is not.',
-    '/p/editor': 'Same ordered-slot list — the order is core, the world is not.',
-    '/p/subagent': 'Same ordered-slot list — the order is core, the world is not.',
-    '/p/cronjob': 'Same ordered-slot list — the order is core, the world is not.',
-    '/p/skills': 'Same ordered-slot list — the order is core, the world is not.',
-    '/p/stats': 'Same ordered-slot list — the order is core, the world is not.',
+    '/p/editor': 'The default nav order gives the optional editor integration a stable slot.',
+    '/p/subagent': 'The default nav order gives the bundled subagent integration a stable slot.',
+    '/p/cronjob': 'The default nav order gives the bundled scheduler integration a stable slot.',
+    '/p/skills': 'The default nav order gives the bundled skills integration a stable slot.',
+    '/p/stats': 'The default nav order gives the bundled statistics integration a stable slot.',
   },
-  'components/shell/TopBar.tsx': {
-    '/p/agents': 'Page-title resolution for a plugin route, already gated on agentsUi. Removal path: page titles declared by the plugin manifest instead of matched by pathname.',
-  },
-  'components/ui/NotificationBell.tsx': {
-    '/p/agents': 'Escalation link inside a bell section already gated on agentsUi && workUi. Removal path: the notification source declares its own target route.',
-  },
-  'lib/queries.ts': {
-    "usePluginPresent('agents')": 'The presence hooks ARE the name→boolean boundary: something has to name the plugin once so every other surface can ask a domain question instead. Keeping them here is what keeps the names out of the components.',
-    "usePluginPresent('editor')": 'Same single presence boundary.',
-    "usePluginPresent('cronjob')": 'Same single presence boundary.',
-    "usePluginPresent('work')": 'Same single presence boundary.',
-    "useDomainReachable('work')": 'Same single boundary, for the fetch gates (a disabled plugin\'s routes answer 503).',
-    "useDomainReachable('agents')": 'Same single boundary, for the fetch gates.',
-  },
-  'modules/advisor/BrainChatProvider.tsx': {
-    "name === 'model'": 'Not a plugin name — a built-in SLASH COMMAND name from the core command catalog.',
-    "name === 'new'": 'Built-in slash command.',
-    "name === 'help'": 'Built-in slash command.',
-    "name === 'stats'": 'Built-in slash command.',
-    "name === 'reasoning'": 'Built-in slash command.',
-    "name === 'skills'": 'Built-in slash command.',
-    "name === 'tasks'": 'Built-in slash command.',
-    "name === 'rename'": 'Built-in slash command.',
-  },
-  'modules/dashboard/HeroCosmos.tsx': {
-    '/p/agents': 'Dashboard pod target, rendered only when that pod\'s plugin gate is on. Removal path: pods contributed by the owning plugin through the UI runtime.',
-    '/p/cronjob': 'Same dashboard pod set, same removal path.',
-    '/p/work': 'Same dashboard pod set (already `work ? … : undefined`), same removal path.',
-  },
-  'modules/dashboard/HeroNowTile.tsx': {
-    '/p/work': 'Hero tile target chosen behind useWorkPlugin(); falls back to /chat when the plugin is absent. Same removal path as the dashboard pods.',
-    '/p/agents': 'Same hero tile, chosen behind agentsUi.',
+  'components/ui/ProjectIcon.tsx': {
+    "usePluginPresent('editor')": 'Project icons are served by the optional editor integration and hide when it is absent.',
   },
   'modules/projects/ProjectsView.tsx': {
-    '/p/editor': 'Opens the extracted editor on a project/commit, behind an editorEnabled gate. Removal path: the editor plugin declares the "open this project here" target it wants links to use.',
+    "usePluginPresent('editor')": 'Project editor actions are gated on the optional editor integration.',
+    '/p/editor': 'The gated project action opens the optional editor integration.',
   },
   'modules/settings/PluginConfigEditor.tsx': {
-    "detail.name === 'msteams'": 'The Teams app-package section is not extracted yet.',
+    "detail.name === 'msteams'": 'The Teams app-package section has a product-specific payload shape.',
   },
   'modules/settings/PluginLivePreview.tsx': {
-    "name === 'discord'": 'Decorative per-platform config preview rendered inside the core schema editor; extraction candidate for a later batch.',
-    "name === 'whatsapp'": 'Same live-preview set.',
-    "name === 'cronjob'": 'Same live-preview set.',
-    "name === 'terminal'": 'Same live-preview set.',
+    "name === 'discord'": 'Decorative preview for the Discord configuration schema.',
+    "name === 'whatsapp'": 'Decorative preview for the WhatsApp configuration schema.',
+    "name === 'cronjob'": 'Decorative preview for the scheduler configuration schema.',
+    "name === 'terminal'": 'Decorative preview for the terminal configuration schema.',
   },
-  // The redirect shims exist ONLY to name the new plugin route: they keep pre-extraction bookmarks and
-  // links working, so naming the target is the entire feature and there is no removal path.
-  'app/tasks/page.tsx': { '/p/work': 'Redirect shim for a pre-extraction bookmark (/tasks) — naming the target route is its only job.' },
-  'app/kanban/page.tsx': { '/p/work': 'Redirect shim for a pre-extraction bookmark (/kanban).' },
-  'app/timeline/page.tsx': { '/p/work': 'Redirect shim for a pre-extraction bookmark (/timeline).' },
-  'app/stats/page.tsx': { '/p/work': 'Redirect shim for a pre-extraction bookmark (/stats).' },
-  'app/sessions/page.tsx': { '/p/agents': 'Redirect shim for a pre-extraction bookmark (/sessions).' },
-  'app/escalations/page.tsx': { '/p/agents': 'Redirect shim for a pre-extraction bookmark (/escalations).' },
-  'app/editor/page.tsx': { '/p/editor': 'Redirect shim for a pre-extraction bookmark (/editor).' },
+  'modules/advisor/BrainChatProvider.tsx': {
+    "name === 'model'": 'Built-in slash-command name, not a plugin dispatch.',
+    "name === 'new'": 'Built-in slash-command name, not a plugin dispatch.',
+    "name === 'help'": 'Built-in slash-command name, not a plugin dispatch.',
+    "name === 'stats'": 'Built-in slash-command name, not a plugin dispatch.',
+    "name === 'reasoning'": 'Built-in slash-command name, not a plugin dispatch.',
+    "name === 'skills'": 'Built-in slash-command name, not a plugin dispatch.',
+    "name === 'tasks'": 'Built-in session-checklist command, not a plugin dispatch.',
+    "name === 'rename'": 'Built-in slash-command name, not a plugin dispatch.',
+  },
 };
 
 /** Drop whole-line comments before matching. A plugin name in prose (`… as /p/skills/settings/skills

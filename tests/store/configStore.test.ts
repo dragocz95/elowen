@@ -8,38 +8,14 @@ let cfg: ConfigStore;
 beforeEach(() => { db = openDb(':memory:'); cfg = new ConfigStore(db); });
 
 describe('ConfigStore', () => {
-  it('returns defaults when empty (all execs allowed, key unset, customModels empty)', () => {
+  it('returns core defaults when empty', () => {
     const c = cfg.get();
     expect(c.allowedExecs).toContain('sonnet');
     expect(c.allowedExecs.length).toBe(11);
-    expect(c.autopilot.apiKeySet).toBe(false);
     expect(c.customModels).toEqual([]);
   });
-  it('update merges allowedExecs + autopilot and never returns the raw key', () => {
-    const c = cfg.update({ allowedExecs: ['sonnet'], autopilot: { model: 'gpt-5.5', apiKey: 'secret-key' } });
-    expect(c.allowedExecs).toEqual(['sonnet']);
-    expect(c.autopilot.model).toBe('gpt-5.5');
-    expect(c.autopilot.apiKeySet).toBe(true);
-    expect(JSON.stringify(c)).not.toContain('secret-key');
-    expect(cfg.apiKey()).toBe('secret-key');
-  });
-  it('tddMode round-trips, defaults off, and a partial patch preserves siblings', () => {
-    expect(cfg.get().autopilot.tddMode).toBe(false); // default off
-    cfg.update({ autopilot: { reviewOnDone: true } });
-    cfg.update({ autopilot: { tddMode: true } });
-    const c = cfg.get();
-    expect(c.autopilot.tddMode).toBe(true);
-    expect(c.autopilot.reviewOnDone).toBe(true); // the tddMode patch left the sibling alone
-    // Flipping it back off round-trips too, without disturbing reviewOnDone.
-    const c2 = cfg.update({ autopilot: { tddMode: false } });
-    expect(c2.autopilot.tddMode).toBe(false);
-    expect(c2.autopilot.reviewOnDone).toBe(true);
-  });
-  it('update without apiKey keeps the existing key', () => {
-    cfg.update({ autopilot: { apiKey: 'k1' } });
-    cfg.update({ autopilot: { model: 'x' } });
-    expect(cfg.apiKey()).toBe('k1');
-    expect(cfg.get().autopilot.apiKeySet).toBe(true);
+  it('update replaces allowedExecs', () => {
+    expect(cfg.update({ allowedExecs: ['sonnet'] }).allowedExecs).toEqual(['sonnet']);
   });
   it('brain.hiddenOauth defaults empty, sanitizes, survives a sibling patch, and clears on an empty list', () => {
     expect(cfg.get().brain.hiddenOauth).toEqual([]);
@@ -53,25 +29,6 @@ describe('ConfigStore', () => {
     cfg.update({ brain: { hiddenOauth: [] } });
     expect(cfg.get().brain.hiddenOauth).toEqual([]);
   });
-
-  describe('autopilotRelay (planner/overseer/curator credentials)', () => {
-    it('falls back to the legacy top-level apiKey + autopilot.apiUrl when no provider is picked', () => {
-      cfg.update({ autopilot: { apiUrl: 'https://relay.example/v1', apiKey: 'relay-key' } });
-      expect(cfg.autopilotRelay()).toEqual({ baseUrl: 'https://relay.example/v1', apiKey: 'relay-key' });
-    });
-    it('is null when neither a provider nor a legacy key is set', () => {
-      expect(cfg.autopilotRelay()).toBeNull();
-    });
-    it('reuses the referenced brain provider endpoint+key when providerId is set (legacy key ignored)', () => {
-      cfg.update({ brain: { providers: [{ id: 'p1', label: 'P1', type: 'openai', baseUrl: 'https://p1.example/v1', models: ['m'], apiKey: 'p1-key' }] } });
-      cfg.update({ autopilot: { providerId: 'p1', apiKey: 'legacy-should-be-ignored' } });
-      expect(cfg.autopilotRelay()).toEqual({ baseUrl: 'https://p1.example/v1', apiKey: 'p1-key' });
-    });
-    it('is null when providerId points at a missing or keyless provider', () => {
-      cfg.update({ autopilot: { providerId: 'ghost', apiKey: 'legacy' } });
-      expect(cfg.autopilotRelay()).toBeNull();
-    });
-  });
   it('exposes only the VAPID public key, never the private one', () => {
     expect(cfg.get().webPush).toEqual({ publicKey: '', publicKeySet: false });
     expect(cfg.webPushKeys()).toBeNull();
@@ -84,19 +41,15 @@ describe('ConfigStore', () => {
   });
   it('keeps the VAPID keypair across an unrelated config update', () => {
     cfg.setWebPushKeys({ publicKey: 'pub', privateKey: 'priv' });
-    cfg.update({ autopilot: { model: 'x' } });
+    cfg.update({ autoUpdate: true });
     expect(cfg.webPushKeys()).toEqual({ publicKey: 'pub', privateKey: 'priv' });
   });
-  it('defaults include empty autopilot notes and launch defaults', () => {
-    const c = cfg.get();
-    expect(c.autopilot.notes).toBe('');
-    expect(c.defaults).toEqual({ exec: 'sonnet', autonomy: 'L3', maxSessions: 2 });
+  it('defaults launch settings', () => {
+    expect(cfg.get().defaults).toEqual({ exec: 'sonnet', autonomy: 'L3', maxSessions: 2 });
   });
-  it('update merges notes and defaults', () => {
-    cfg.update({ autopilot: { notes: 'be careful' }, defaults: { exec: 'codex:gpt-5.4', maxSessions: 3 } });
-    const c = cfg.get();
-    expect(c.autopilot.notes).toBe('be careful');
-    expect(c.defaults).toEqual({ exec: 'codex:gpt-5.4', autonomy: 'L3', maxSessions: 3 });
+  it('update merges launch defaults', () => {
+    cfg.update({ defaults: { exec: 'codex:gpt-5.4', maxSessions: 3 } });
+    expect(cfg.get().defaults).toEqual({ exec: 'codex:gpt-5.4', autonomy: 'L3', maxSessions: 3 });
   });
   it('seeds modelNotes from the built-in defaults and lets user edits win', () => {
     const seeded = cfg.get().modelNotes;
@@ -167,7 +120,6 @@ describe('ConfigStore', () => {
     // write a raw pre-L2-8 row that lacks notes and defaults fields
     db.prepare("INSERT INTO settings (id, data) VALUES (1, ?)").run(JSON.stringify({ allowedExecs: ['sonnet'], autopilot: { model: 'm', apiUrl: 'u' }, apiKey: null }));
     const c = cfg.get();
-    expect(c.autopilot.notes).toBe('');
     expect(c.defaults).toEqual({ exec: 'sonnet', autonomy: 'L3', maxSessions: 2 });
   });
   it('reads an old row without customModels as empty array', () => {
@@ -194,7 +146,6 @@ describe('ConfigStore', () => {
     expect(c.allowedExecs).toContain('sonnet'); // defaulted, not the raw string
     expect(c.customModels).toEqual([]);
     expect(c.hiddenPresets).toEqual([]);
-    expect(c.autopilot.apiKeySet).toBe(false); // numeric apiKey rejected → no key
   });
   it('drops malformed provider entries on read and update', () => {
     // Persist a row with a bad provider value (bin as a number).
@@ -212,11 +163,6 @@ describe('ConfigStore', () => {
     expect(p['kilo']).toEqual({ bin: 'kilo', args: '', skipPermissions: true, resume: true });
     expect(p['pi']).toEqual({ bin: 'pi', args: '', skipPermissions: true, resume: true });
     expect(p['omp']).toEqual({ bin: 'omp', args: '', skipPermissions: true, resume: true });
-  });
-  it('accepts a well-formed new-CLI exec for pilot/overseer (prefix passes the allow-list guard)', () => {
-    const c = cfg.update({ autopilot: { pilotExec: 'kilo:anthropic/claude-sonnet-4-5', overseerExec: 'pi:sonnet' } });
-    expect(c.autopilot.pilotExec).toBe('kilo:anthropic/claude-sonnet-4-5');
-    expect(c.autopilot.overseerExec).toBe('pi:sonnet');
   });
   it('round-trips the per-provider skipPermissions toggle and defaults it on', () => {
     // Default providers carry skipPermissions: true out of the box.
@@ -238,93 +184,7 @@ describe('ConfigStore', () => {
   });
 });
 
-describe('ConfigStore pilot/overseer exec', () => {
-  it('defaults both exec fields to empty string', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    expect(c.get().autopilot.pilotExec).toBe('');
-    expect(c.get().autopilot.overseerExec).toBe('');
-  });
-  it('persists pilotExec and overseerExec independently', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    c.update({ autopilot: { pilotExec: 'claude:opus' } });
-    expect(c.get().autopilot.pilotExec).toBe('claude:opus');
-    expect(c.get().autopilot.overseerExec).toBe('');
-    c.update({ autopilot: { overseerExec: 'opencode:deepseek/deepseek-v4-flash' } });
-    expect(c.get().autopilot.pilotExec).toBe('claude:opus'); // untouched
-    expect(c.get().autopilot.overseerExec).toBe('opencode:deepseek/deepseek-v4-flash');
-  });
-  it('defaults reviewOnDone to false and persists true', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    expect(c.get().autopilot.reviewOnDone).toBe(false);
-    c.update({ autopilot: { reviewOnDone: true } });
-    expect(c.get().autopilot.reviewOnDone).toBe(true);
-  });
-});
-
-describe('ConfigStore PR-native config', () => {
-  it('defaults the four PR fields and ghTokenSet to off', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    const a = c.get().autopilot;
-    expect(a.prEnabled).toBe(false);
-    expect(a.prBaseBranch).toBe('');
-    expect(a.prAutoOpen).toBe(false);
-    expect(a.prVerifyCommand).toBe('');
-    expect(a.ghTokenSet).toBe(false);
-  });
-  it('persists the PR fields and never returns the raw ghToken', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    const got = c.update({ autopilot: { prEnabled: true, prBaseBranch: 'develop', prAutoOpen: true, prVerifyCommand: 'npm test', ghToken: 'ghp_secret123' } });
-    expect(got.autopilot.prEnabled).toBe(true);
-    expect(got.autopilot.prBaseBranch).toBe('develop');
-    expect(got.autopilot.prAutoOpen).toBe(true);
-    expect(got.autopilot.prVerifyCommand).toBe('npm test');
-    expect(got.autopilot.ghTokenSet).toBe(true);
-    expect(JSON.stringify(got)).not.toContain('ghp_secret123');
-    expect(c.legacyGhToken()).toBe('ghp_secret123');
-  });
-  it('update without ghToken keeps the existing token', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    c.update({ autopilot: { ghToken: 'ghp_keepme' } });
-    c.update({ autopilot: { prEnabled: true } });
-    expect(c.legacyGhToken()).toBe('ghp_keepme');
-    expect(c.get().autopilot.ghTokenSet).toBe(true);
-  });
-  it('reads a legacy row without PR fields as defaults', () => {
-    const db2 = openDb(':memory:');
-    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({ allowedExecs: ['sonnet'], autopilot: { model: 'm', apiUrl: 'u' }, apiKey: null }));
-    const a = new ConfigStore(db2).get().autopilot;
-    expect(a.prEnabled).toBe(false);
-    expect(a.prBaseBranch).toBe('');
-    expect(a.prAutoOpen).toBe(false);
-    expect(a.prVerifyCommand).toBe('');
-    expect(a.ghTokenSet).toBe(false);
-  });
-});
-
 describe('ConfigStore exec validation (O22)', () => {
-  it('rejects a bare bogus overseerExec/pilotExec, normalizing to empty', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    c.update({ autopilot: { overseerExec: 'foo', pilotExec: 'bar' } });
-    expect(c.get().autopilot.overseerExec).toBe(''); // bogus → unset, never reaches resolveExecutor
-    expect(c.get().autopilot.pilotExec).toBe('');
-  });
-  it('accepts an allow-listed bare exec', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    c.update({ autopilot: { overseerExec: 'sonnet' } }); // in default allowedExecs
-    expect(c.get().autopilot.overseerExec).toBe('sonnet');
-  });
-  it('accepts a well-formed prefixed/slash exec not on the allow-list', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    c.update({ autopilot: { pilotExec: 'claude:opus', overseerExec: 'opencode:deepseek/deepseek-v4-flash' } });
-    expect(c.get().autopilot.pilotExec).toBe('claude:opus');
-    expect(c.get().autopilot.overseerExec).toBe('opencode:deepseek/deepseek-v4-flash');
-  });
-  it('validates against the allowedExecs supplied in the same patch', () => {
-    const c = new ConfigStore(openDb(':memory:'));
-    // 'newbare' is bare + not well-formed; even allow-listing it in the same patch makes it valid.
-    c.update({ allowedExecs: ['newbare'], autopilot: { overseerExec: 'newbare' } });
-    expect(c.get().autopilot.overseerExec).toBe('newbare');
-  });
   it('rejects an invalid defaults.exec, keeping the current value', () => {
     const c = new ConfigStore(openDb(':memory:'));
     c.update({ defaults: { exec: 'codex:gpt-5.4' } });
@@ -378,6 +238,33 @@ describe('ConfigStore element-level sanitisation on corrupt stored JSON (finding
     expect(p.removed).toEqual(['skills']);
   });
 
+
+  it('retires agents/work config and discards their legacy tokens on the next settings write', () => {
+    const db2 = openDb(':memory:');
+    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({
+      ghToken: 'top-level-secret',
+      plugins: {
+        enabled: ['files', 'agents', 'work'], removed: ['agents'],
+        config: { agents: { ghToken: 'plugin-secret' }, files: { maxBytes: 10 } },
+      },
+    }));
+    const cs = new ConfigStore(db2);
+    expect(cs.get().plugins.enabled).toEqual(['files']);
+    expect(cs.pluginConfig('agents')).toEqual({});
+    expect((db2.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string }).data).toContain('top-level-secret');
+
+    cs.update({ autoUpdate: true });
+    const stored = (db2.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string }).data;
+    const parsed = JSON.parse(stored) as { plugins: { enabled: string[]; removed: string[]; config: Record<string, unknown> } };
+    expect(stored).not.toContain('top-level-secret');
+    expect(stored).not.toContain('plugin-secret');
+    expect(parsed.plugins.enabled).not.toContain('agents');
+    expect(parsed.plugins.enabled).not.toContain('work');
+    expect(parsed.plugins.removed).not.toContain('agents');
+    expect(parsed.plugins.config).not.toHaveProperty('agents');
+    expect(parsed.plugins.config).not.toHaveProperty('work');
+  });
+
   it('drops non-string hiddenPresets elements on read', () => {
     const db = openDb(':memory:');
     db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({ hiddenPresets: ['a', 3, 'b'] }));
@@ -398,90 +285,6 @@ describe('ConfigStore element-level sanitisation on corrupt stored JSON (finding
     expect(c.allowedExecs).toEqual(['sonnet']);
     expect(c.customModels).toEqual([{ label: 'Good', exec: 'g/m' }]);
     expect(c.plugins.enabled).toEqual(['files']);
-  });
-});
-
-describe('ConfigStore agents plugin config (F2 step 7)', () => {
-  const OLD_ROW = () => JSON.stringify({
-    allowedExecs: ['sonnet'],
-    autopilot: { model: 'm', apiUrl: 'u', overseerModel: 'ov-model', prBaseBranch: 'main', prAutoOpen: true, prVerifyCommand: 'npm test' },
-    plugins: { enabled: ['agents'], removed: [], config: {} },
-    agentsConfigMigrated: true,
-  });
-
-  it('migrateAgentsPluginConfig copies the plugin-exclusive autopilot keys once (old DB)', () => {
-    const db2 = openDb(':memory:');
-    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(OLD_ROW());
-    const cs = new ConfigStore(db2);
-    cs.migrateAgentsPluginConfig();
-    expect(cs.pluginConfig('agents')).toEqual({ overseerModel: 'ov-model', prBaseBranch: 'main', prAutoOpen: true, prVerifyCommand: 'npm test' });
-    // Lossless: the autopilot originals stay for rollback.
-    expect(cs.get().autopilot.prBaseBranch).toBe('main');
-    // Idempotent: a second run (and one after a slice edit) changes nothing.
-    cs.update({ plugins: { config: { agents: { ...cs.pluginConfig('agents'), prBaseBranch: 'develop' } } } });
-    cs.migrateAgentsPluginConfig();
-    expect(cs.pluginConfig('agents')['prBaseBranch']).toBe('develop');
-  });
-
-  it('migration never overwrites an existing plugins.config.agents value', () => {
-    const db2 = openDb(':memory:');
-    const row = JSON.parse(OLD_ROW());
-    row.plugins.config = { agents: { prBaseBranch: 'release' } };
-    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify(row));
-    const cs = new ConfigStore(db2);
-    cs.migrateAgentsPluginConfig();
-    expect(cs.pluginConfig('agents')['prBaseBranch']).toBe('release'); // admin's own value wins
-    expect(cs.pluginConfig('agents')['overseerModel']).toBe('ov-model'); // absent key copied
-  });
-
-  it('is a no-op on a fresh install (no settings row → defaults already carry the marker)', () => {
-    const cs = new ConfigStore(openDb(':memory:'));
-    cs.migrateAgentsPluginConfig();
-    expect(cs.pluginConfig('agents')).toEqual({});
-  });
-
-  it('migrateAgentsPluginConfigWave2 copies the remaining agents keys + ghToken once (old DB)', () => {
-    const db2 = openDb(':memory:');
-    const row = JSON.parse(OLD_ROW());
-    row.autopilot = { ...row.autopilot, pilotExec: 'claude:opus', overseerExec: 'claude:sonnet', reviewOnDone: true, tddMode: true, prEnabled: true };
-    row.ghToken = 'gh-secret';
-    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify(row));
-    const cs = new ConfigStore(db2);
-    cs.migrateAgentsPluginConfigWave2();
-    const slice = cs.pluginConfig('agents');
-    expect(slice).toMatchObject({ pilotExec: 'claude:opus', overseerExec: 'claude:sonnet', reviewOnDone: true, tddMode: true, prEnabled: true, ghToken: 'gh-secret' });
-    // Lossless: the originals stay for rollback, and legacyGhToken() keeps reporting the core row's
-    // own value — resolving the copy in the slice against it is the owning plugin's job.
-    expect(cs.get().autopilot.pilotExec).toBe('claude:opus');
-    expect(cs.legacyGhToken()).toBe('gh-secret');
-    // Idempotent: a second run (and one after a slice edit) changes nothing.
-    cs.update({ plugins: { config: { agents: { ...slice, pilotExec: 'codex:gpt' } } } });
-    cs.migrateAgentsPluginConfigWave2();
-    expect(cs.pluginConfig('agents')['pilotExec']).toBe('codex:gpt');
-  });
-
-  it('wave 2 never overwrites an existing slice value; the core accessor stays on the core row', () => {
-    const db2 = openDb(':memory:');
-    const row = JSON.parse(OLD_ROW());
-    row.autopilot = { ...row.autopilot, pilotExec: 'claude:opus' };
-    row.ghToken = 'legacy-token';
-    row.plugins.config = { agents: { pilotExec: 'codex:gpt', ghToken: 'slice-token' } };
-    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify(row));
-    const cs = new ConfigStore(db2);
-    cs.migrateAgentsPluginConfigWave2();
-    expect(cs.pluginConfig('agents')['pilotExec']).toBe('codex:gpt'); // admin's own value wins
-    expect(cs.pluginConfig('agents')['reviewOnDone']).toBe(false); // absent key copied (with its value)
-    // Core answers with ITS row, not the plugin's slice: the plugin resolves slice-first against this.
-    expect(cs.legacyGhToken()).toBe('legacy-token');
-  });
-
-  it('an autopilot patch does NOT leak into plugins.config.agents (mirror removed)', () => {
-    // The transitional mirror is gone: plugins.config.agents is the single writable home for the
-    // plugin-owned keys (edited via the plugin settings deck), seeded once by the migration above.
-    const cs = new ConfigStore(openDb(':memory:'));
-    cs.update({ autopilot: { prBaseBranch: 'trunk', prAutoOpen: true } });
-    expect(cs.pluginConfig('agents')).toEqual({});
-    expect(cs.get().autopilot.prBaseBranch).toBe('trunk'); // the autopilot value itself still persists
   });
 });
 
@@ -538,82 +341,5 @@ describe('ConfigStore lsp plugin migration', () => {
     // EXISTING installs across (the cases above), not to reinstate a default that was deliberately
     // dropped. Enabling it here would leave every new instance pointing at a plugin it does not have.
     expect(cs.get().plugins.enabled).not.toContain('lsp');
-  });
-});
-
-// The task domain became a plugin in this wave, so on EVERY pre-existing install this one-shot upgrade is
-// the only thing standing between the operator and an instance that boots without its tasks, its Kanban
-// and its missions — the rows survive, but nothing owns them. It deserves the same pinning as its
-// siblings above: this store method, and (in tests/daemon/upgradeMigrations.test.ts) the boot that runs it.
-describe('ConfigStore work plugin migration', () => {
-  /** A pre-extraction install: task tracking was core, so there is no `work` plugin and no marker. */
-  const OLD_ROW = (over: Record<string, unknown> = {}) => JSON.stringify({
-    allowedExecs: ['sonnet'],
-    plugins: { enabled: ['files', 'agents'], removed: [], config: {} },
-    ...over,
-  });
-  const storeWith = (row: string): { cs: ConfigStore; stored: () => Record<string, unknown> } => {
-    const db2 = openDb(':memory:');
-    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(row);
-    return {
-      cs: new ConfigStore(db2),
-      stored: () => JSON.parse((db2.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string }).data) as Record<string, unknown>,
-    };
-  };
-
-  it('keeps task tracking on an upgraded install by enabling the plugin that now owns it', () => {
-    const { cs, stored } = storeWith(OLD_ROW());
-    expect(cs.get().plugins.enabled).not.toContain('work'); // the install as it was before the upgrade
-    cs.migrateWorkPlugin();
-    expect(cs.get().plugins.enabled).toContain('work');
-    expect(stored()['workPluginMigrated']).toBe(true); // persisted, so the sweep is genuinely one-shot
-    // Nothing else about the operator's plugin choice moves.
-    expect(cs.get().plugins.enabled).toContain('agents');
-  });
-
-  it('never re-enables the plugin after a deliberate disable (the marker makes it one-shot)', () => {
-    const { cs } = storeWith(OLD_ROW());
-    cs.migrateWorkPlugin();
-    cs.update({ plugins: { enabled: ['files', 'agents'] } }); // the admin turns task tracking off
-    cs.migrateWorkPlugin();
-    expect(cs.get().plugins.enabled).not.toContain('work');
-  });
-
-  it('leaves an already-enabled plugin list untouched (no duplicate entry)', () => {
-    const { cs } = storeWith(OLD_ROW({ plugins: { enabled: ['files', 'work'], removed: [], config: {} } }));
-    cs.migrateWorkPlugin();
-    expect(cs.get().plugins.enabled.filter((n) => n === 'work')).toEqual(['work']);
-  });
-
-  // The marker is a config KEY, so it does not survive a rollback: a daemon that predates it drops the
-  // key on its next write, and the re-upgrade runs this sweep again. That is survivable for a plugin the
-  // admin merely disabled (it comes back on, they turn it off again), but not for one they explicitly
-  // REMOVED — that decision is recorded in `plugins.removed`, which every version reads and writes, and
-  // it must outrank a continuity sweep whose whole premise is "keep what this install already had".
-  it('never resurrects a plugin the admin explicitly removed', () => {
-    const { cs, stored } = storeWith(OLD_ROW({ plugins: { enabled: ['files'], removed: ['work'], config: {} } }));
-    cs.migrateWorkPlugin();
-    expect(cs.get().plugins.enabled).not.toContain('work');
-    // Not marked done either: the sweep did not run, so an admin who later RESTORES the plugin from the
-    // Available tab still gets the continuity it was written for.
-    expect(stored()['workPluginMigrated']).toBeUndefined();
-  });
-
-  // The agents twin is the same sweep over the same rollback-fragile marker, so it carries the same hole.
-  it('never resurrects an explicitly removed agents plugin either', () => {
-    const { cs } = storeWith(JSON.stringify({
-      allowedExecs: ['sonnet'],
-      plugins: { enabled: ['files'], removed: ['agents'], config: {} },
-    }));
-    cs.migrateAgentsEnabled();
-    expect(cs.get().plugins.enabled).not.toContain('agents');
-  });
-
-  it('is a no-op on a fresh install (no settings row → the defaults already carry the marker)', () => {
-    const cs = new ConfigStore(openDb(':memory:'));
-    cs.migrateWorkPlugin();
-    // A fresh install is a bare assistant: task tracking is a domain vertical its owner opts into, and
-    // this continuity sweep must never hand it to an install that never had it.
-    expect(cs.get().plugins.enabled).not.toContain('work');
   });
 });

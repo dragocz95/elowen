@@ -3,7 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { type Db } from '../../src/store/db.js';
-import { openWorkDb } from '../helpers/workDb.js';
+import { openDb } from '../../src/store/db.js';
 import { BrainStore, SESSION_EVENT_KINDS, syntheticRestartResultId } from '../../src/store/brainStore.js';
 import { rollupDroppedUsage } from '../../src/store/brainUsageStore.js';
 import { planSlug } from '../../src/shared/planSlug.js';
@@ -19,7 +19,7 @@ describe('BrainStore', () => {
   let db: Db;
   let dirs: string[] = [];
   afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
-  beforeEach(() => { db = openWorkDb(':memory:'); store = new BrainStore(db); });
+  beforeEach(() => { db = openDb(':memory:'); store = new BrainStore(db); });
 
   it('creates and reads back a session', () => {
     const s = store.createSession({ id: 's1', userId: 7, model: 'anthropic/claude' });
@@ -646,7 +646,6 @@ describe('BrainStore', () => {
     store.createSession({ id: 'fresh-convo', userId: 7, model: 'm' }); spoke('fresh-convo'); // recent → kept
     store.createSession({ id: 'old-unspoken', userId: 7, model: 'm' }); age('old-unspoken'); // empty shell → skip
     store.createSession({ id: 'brain-ch-x', userId: 7, model: 'm' }); spoke('brain-ch-x'); age('brain-ch-x'); // channel → skip
-    store.createSession({ id: 'brain-task-y', userId: 7, model: 'm' }); spoke('brain-task-y'); age('brain-task-y'); // task → skip
     store.createSession({ id: 'root', userId: 7, model: 'm' }); spoke('root'); age('root');
     store.createSession({ id: 'delegated', userId: 7, model: 'm', parentSessionId: 'root' }); spoke('delegated'); age('delegated'); // child → skip
     store.createSession({ id: 'other-user', userId: 9, model: 'm' }); spoke('other-user'); age('other-user'); // not this user → skip
@@ -853,12 +852,6 @@ describe('BrainStore', () => {
           timestamp: tsMs,
         },
       });
-    /** Write the task_usage snapshot BrainWorkerService.recordUsage would leave for a healthy worker run
-     *  — its presence is what makes a `brain-task-<id>` session's spend get excluded from the brain
-     *  aggregates (no double count); a crashed worker leaves none. */
-    const snapshotTask = (taskId: string) =>
-      db.prepare("INSERT INTO task_usage (task_id, project_id, exec, total) VALUES (?, 1, 'elowen:claude-opus-4-8', 1)").run(taskId);
-
     it('computes outputTps over ONLY the generations that carried timing (legacy rows dilute nothing)', () => {
       store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
       // Measured: 100 output over 2000 ms → 50 tok/s. Unmeasured legacy row: output but no durationMs —
@@ -910,30 +903,6 @@ describe('BrainStore', () => {
       expect(rows[0]!.usage.costUsd).toBeCloseTo(0.3);
       expect(rows[0]!.usage.currency).toBe('USD');
       expect(rows[0]!.usage.costSource).toBe('provider_reported');
-    });
-
-    it('EXCLUDES a brain-task session that already snapshotted to task_usage (no double count)', () => {
-      store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
-      usageMsg('brain-a', 'm1', { totalTokens: 100, cost: 0.1 });
-      store.createSession({ id: 'brain-task-9', userId: 1, model: 'claude-opus-4-8' });
-      usageMsg('brain-task-9', 't1', { totalTokens: 999, cost: 9.9 });
-      snapshotTask('9'); // healthy worker → its spend lives in task_usage, so it must NOT re-count here
-      const rows = store.usageByModel(1);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.usage.total).toBe(100); // the task worker's 999 is NOT folded in
-      expect(rows[0]!.usage.costUsd).toBeCloseTo(0.1);
-    });
-
-    it('KEEPS a crashed brain-task session with NO task_usage snapshot (spend would otherwise vanish)', () => {
-      store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
-      usageMsg('brain-a', 'm1', { totalTokens: 100, cost: 0.1 });
-      // Worker died mid-run and the task was failed/cancelled, never relaunched → no snapshot ever written.
-      store.createSession({ id: 'brain-task-9', userId: 1, model: 'claude-opus-4-8' });
-      usageMsg('brain-task-9', 't1', { totalTokens: 40, cost: 0.04 }, Date.now(), 'claude-opus-4-8');
-      const rows = store.usageByModel(1);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.usage.total).toBe(140); // 100 chat + 40 crashed-worker spend, both counted
-      expect(rows[0]!.usage.costUsd).toBeCloseTo(0.14);
     });
 
     it('scopes to the caller, drops empty-model and zero-token rows', () => {
@@ -1169,19 +1138,6 @@ describe('BrainStore', () => {
       // The undated 70 is excluded from both, so a window that covers everything sums to the same total.
       expect(unwindowed[0]!.usage.total).toBe(100);
       expect(windowed[0]!.usage.total).toBe(100);
-    });
-
-    it('excludes a snapshotted brain-task session from usageByDay but keeps a crashed one', () => {
-      store.createSession({ id: 'brain-a', userId: 1, model: 'm' });
-      usageMsg('brain-a', 'm1', { totalTokens: 100, cost: 0.1 });
-      store.createSession({ id: 'brain-task-9', userId: 1, model: 'm' });
-      usageMsg('brain-task-9', 't1', { totalTokens: 900, cost: 0.9 });
-      snapshotTask('9'); // in task_usage → excluded here
-      store.createSession({ id: 'brain-task-8', userId: 1, model: 'm' });
-      usageMsg('brain-task-8', 't2', { totalTokens: 30, cost: 0.03 }); // crashed, no snapshot → kept
-      const days = store.usageByDay(1, 7);
-      const tokens = days.reduce((s, d) => s + d.tokens, 0);
-      expect(tokens).toBe(130); // 100 chat + 30 crashed-worker; the snapshotted 900 is NOT counted
     });
 
     it('includes platform channel (brain-ch-*) sessions in usageByDay', () => {
@@ -1492,9 +1448,9 @@ describe('BrainStore', () => {
 
     it('excludes shared channel and ephemeral subagent sessions (personal chat search only)', () => {
       store.createSession({ id: 'brain-ch-42', userId: 1, title: 'Discord', model: 'm' });
-      store.createSession({ id: 'brain-task-9', userId: 1, title: 'Subagent', model: 'm' });
+      store.createSession({ id: 'brain-ch-subagent-job', userId: 1, title: 'Subagent', model: 'm' });
       userMsg('c1', 'brain-ch-42', 'Restart NGINX please');
-      userMsg('t1', 'brain-task-9', 'Restart NGINX please');
+      userMsg('t1', 'brain-ch-subagent-job', 'Restart NGINX please');
       expect(store.searchMessages(1, 'nginx')).toHaveLength(0);
     });
 

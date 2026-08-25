@@ -191,12 +191,9 @@ function applyAdditiveMigrations(db: Db): void {
   // Created HERE, not in schema.sql: that file is applied first, so on a pre-existing database the
   // index would reference columns the ALTERs above have not added yet and abort the whole migration.
   db.exec('CREATE INDEX IF NOT EXISTS idx_events_actor_bucket ON events(actor_user_id, type, last_ts DESC)');
-  // The mission_pr/missions column additions that used to sit here (fix_rounds, last_feedback,
-  // created_by, pilot_exec, overseer_exec) moved to the agents plugin's migration v2, and the
-  // tasks/task_usage ones (description … resume_note, created_by; reasoning, cost_source, currency,
-  // raw_usage_metadata) to the work plugin's — those tables are plugin-owned and a fresh install with
-  // the plugin disabled does not have them at all. Both plugins add their columns in the ORDER core
-  // used to, so an ancient database upgrading through them lands in the exact shape it always did.
+  // Retired agents/work tables may still be present on an upgraded database, but core no longer owns or
+  // migrates their columns. Leaving those physical rows untouched preserves recoverability without
+  // reintroducing either domain into the platform schema.
   // Memory categories: a memory's assigned category (nullable, id-addressed — a rename never re-tags).
   // Index created here (not schema.sql) so it runs after the column exists on migrated DBs.
   addColumn(db, 'memories', 'category_id', 'INTEGER');

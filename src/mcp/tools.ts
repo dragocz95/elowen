@@ -18,8 +18,7 @@ export function makeMcpRequest(d: ElowenToolDeps): PluginMcpRequest {
 }
 
 /** The CORE Elowen MCP toolset: the generic escape hatch, and nothing else. The task/plan tools left
- *  with the work plugin and the agents-domain ones (sessions/missions/notes/session control) with the
- *  agents plugin, both via `registerMcpTool` — with the owning plugin disabled they vanish from
+ *  with their owning plugins via `registerMcpTool` — with the owning plugin disabled they vanish from
  *  `tools/list`, which is the correct MCP answer for an absent capability (a tool that would only ever
  *  answer 503 is worse than none: the model reasons around the error instead of the absence). Same declaration shape as a plugin's
  *  ({@link PluginMcpTool}), so the server composes both lists identically. Names, descriptions and

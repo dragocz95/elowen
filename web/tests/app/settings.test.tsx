@@ -11,7 +11,7 @@ import { en } from '../../lib/i18n/dictionaries/en';
 
 let putBody: unknown = null;
 const server = setupServer(
-  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, providers: { 'claude-code': { bin: 'claude', args: '' }, opencode: { bin: 'opencode', args: '' }, codex: { bin: 'codex', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
+  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], providers: { 'claude-code': { bin: 'claude', args: '' }, opencode: { bin: 'opencode', args: '' }, codex: { bin: 'codex', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
   http.get('*/api/system', () => HttpResponse.json({
     version: '0.26.0', latest: '0.26.0', updateAvailable: false, autoUpdate: false, lastUpdatedAt: '2026-07-11T12:00:00.000Z',
     diagnostics: { cpuPercent: 12, memoryUsedBytes: 3_200_000_000, memoryTotalBytes: 16_000_000_000, uptimeSeconds: 1_098_000 },
@@ -26,7 +26,7 @@ const server = setupServer(
   // section — the GitHub section moved to the agents settings deck (tests/pluginUi).
   http.get('*/api/plugins/agents', () => HttpResponse.json({ name: 'agents', config: {}, configSchema: [], secretsSet: [] })),
   http.get('*/api/brain/debug/sessions', () => HttpResponse.json({ items: [], nextCursor: null, captureStartedAt: Date.UTC(2026, 7, 1, 10, 0, 0) })),
-  http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } }); }),
+  http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } }); }),
 );
 beforeEach(() => localStorage.setItem('elowen.settings.category', 'models'));
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => {
@@ -194,7 +194,7 @@ describe('SettingsPage', () => {
   });
 
   it('opens the ConfirmDialog when deleting a custom model', async () => {
-    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'my/custom'], customModels: [{ label: 'My Custom Model', exec: 'my/custom' }], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })));
+    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'my/custom'], customModels: [{ label: 'My Custom Model', exec: 'my/custom' }], defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })));
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('My Custom Model')).toBeTruthy());
@@ -207,7 +207,7 @@ describe('SettingsPage', () => {
   });
 
   it('toggles conversation auto-cleanup from the System section and persists sessionRetention', async () => {
-    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 }, sessionRetention: { enabled: false, days: 90 } })));
+    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 }, sessionRetention: { enabled: false, days: 90 } })));
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
@@ -221,7 +221,7 @@ describe('SettingsPage', () => {
   });
 
   it('commits the retention days field on blur from the System section, clamped to >= 1', async () => {
-    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 }, sessionRetention: { enabled: true, days: 30 } })));
+    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 }, sessionRetention: { enabled: true, days: 30 } })));
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
@@ -245,7 +245,7 @@ describe('SettingsPage', () => {
   });
 });
 
-const config = { allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: false, notes: 'mind the guardrails' }, defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 2 }, security: { tokenTtlDays: 30 } };
+const config = { allowedExecs: ['sonnet'], customModels: [], defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 2 }, security: { tokenTtlDays: 30 } };
 
 describe('Settings depth', () => {
   it('renders model toggles and falls back to System for a stale moved-section deep-link', async () => {

@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { TaskRefs } from '../../src/store/taskRefs.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
@@ -12,11 +11,10 @@ import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { BrainTerminalService } from '../../src/brain/terminalService.js';
 import { classifySession } from '../../src/shared/sessionInfo.js';
 import { freshUserSessionId, brainTerminalName } from '../../src/brain/sessionId.js';
-import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
+import { openDb } from '../../src/store/db.js';
 
 function setup() {
-  const db = openPluginTablesDb(':memory:');
+  const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw'); // id 1, is_admin
@@ -34,12 +32,10 @@ function setup() {
     tmux, users, store: brainStore, url: 'http://localhost:4400', cliArgv: ['elowen'],
     terminalDir: (id) => `/tmp/terminal/${id}`,
   });
-  const tasks = new RefTaskStore(db);
-  const readiness = new RefReadiness(db);
   const config = new ConfigStore(db);
   const projects = new ProjectStore(db);
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness, missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: tmux as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config,

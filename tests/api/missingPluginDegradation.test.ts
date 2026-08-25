@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { TaskRefs } from '../../src/store/taskRefs.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
@@ -11,9 +10,8 @@ import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
-import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { openDb } from '../../src/store/db.js';
 import type { MarketplaceService } from '../../src/plugins/marketplace.js';
-import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
 
 /** A plugin that is ENABLED in config but present in no plugin directory — the state a host lands in
  *  when a subsystem has moved out of the npm package into the registry and the boot reconciler could not
@@ -25,13 +23,12 @@ import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
  *  marketplace's registry cache so the answer becomes an explicit 503 instead.
  */
 function setup(opts: { enabled: string[]; cachedRoutes?: Record<string, string[]> }) {
-  const db = openPluginTablesDb(':memory:');
+  const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
   const config = new ConfigStore(db);
   config.update({ plugins: { enabled: opts.enabled } });
-  const tasks = new RefTaskStore(db);
   const projects = new ProjectStore(db);
   const bus = new EventBus();
 
@@ -54,7 +51,7 @@ function setup(opts: { enabled: string[]; cachedRoutes?: Record<string, string[]
   } as unknown as MarketplaceService;
 
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), missions: new RefMissions(db), bus,
+    tasks, bus,
     tmux: new FakeTmuxDriver() as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects, userProjects: new UserProjectStore(db),

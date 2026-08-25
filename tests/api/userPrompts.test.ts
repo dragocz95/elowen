@@ -10,7 +10,6 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { UserPromptStore } from '../../src/store/userPromptStore.js';
 import { rawTemplate } from '../../src/prompts/index.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 function setup() {
   const db = openPluginTablesDb(':memory:');
@@ -20,7 +19,7 @@ function setup() {
   const bob = users.create('bob', 'pw');
   const userPrompts = new UserPromptStore(db);
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: new FakeTmuxDriver(),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
@@ -38,57 +37,56 @@ describe('GET /auth/me/prompts', () => {
     const res = await app.request('/auth/me/prompts', auth(adminTok));
     expect(res.status).toBe(200);
     const body = await res.json() as { name: string; default: string; override: string | null; jsonContract: boolean }[];
-    const worker = body.find((p) => p.name === 'worker-brain')!;
-    expect(worker.default).toBe(rawTemplate('worker-brain'));
+    const worker = body.find((p) => p.name === 'scheduled')!;
+    expect(worker.default).toBe(rawTemplate('scheduled'));
     expect(worker.override).toBeNull();
-    // The JSON-contract flag is surfaced: the planner's reply is parsed as JSON, so a user editing that
-    // template has to be told it cannot be rewritten into prose.
-    expect(body.find((p) => p.name === 'planner')!.jsonContract).toBe(true);
+    expect(body.some((p) => p.name === 'worker-brain')).toBe(false);
+    expect(body.some((p) => p.name === 'planner')).toBe(false);
   });
 
   it('reflects a saved override', async () => {
     const { app, adminTok, userPrompts } = setup();
-    userPrompts.set((await (await app.request('/auth/me', auth(adminTok))).json()).user.id, 'worker-brain', 'MINE');
+    userPrompts.set((await (await app.request('/auth/me', auth(adminTok))).json()).user.id, 'scheduled', 'MINE');
     const body = await (await app.request('/auth/me/prompts', auth(adminTok))).json() as { name: string; override: string | null }[];
-    expect(body.find((p) => p.name === 'worker-brain')!.override).toBe('MINE');
+    expect(body.find((p) => p.name === 'scheduled')!.override).toBe('MINE');
   });
 });
 
 describe('PUT /auth/me/prompts/:name', () => {
   it('saves an override for the calling user only', async () => {
     const { app, bobTok, bobId, userPrompts } = setup();
-    const res = await app.request('/auth/me/prompts/worker-brain', put(bobTok, { content: 'bob worker-brain' }));
+    const res = await app.request('/auth/me/prompts/scheduled', put(bobTok, { content: 'bob scheduled' }));
     expect(res.status).toBe(200);
-    expect(userPrompts.get(bobId, 'worker-brain')).toBe('bob worker-brain');
+    expect(userPrompts.get(bobId, 'scheduled')).toBe('bob scheduled');
   });
 
   it('rejects an unknown / non-editable template name with 400', async () => {
     const { app, adminTok } = setup();
-    expect((await app.request('/auth/me/prompts/planner-fallback', put(adminTok, { content: 'x' }))).status).toBe(400);
+    expect((await app.request('/auth/me/prompts/worker-brain', put(adminTok, { content: 'x' }))).status).toBe(400);
     expect((await app.request('/auth/me/prompts/nope', put(adminTok, { content: 'x' }))).status).toBe(400);
   });
 
   it('rejects an empty prompt with 400', async () => {
     const { app, adminTok } = setup();
-    expect((await app.request('/auth/me/prompts/worker-brain', put(adminTok, { content: '   ' }))).status).toBe(400);
+    expect((await app.request('/auth/me/prompts/scheduled', put(adminTok, { content: '   ' }))).status).toBe(400);
   });
 });
 
 describe('DELETE /auth/me/prompts/:name', () => {
   it('resets an override back to the default', async () => {
     const { app, bobTok, bobId, userPrompts } = setup();
-    userPrompts.set(bobId, 'worker-brain', 'temp');
-    const res = await app.request('/auth/me/prompts/worker-brain', del(bobTok));
+    userPrompts.set(bobId, 'scheduled', 'temp');
+    const res = await app.request('/auth/me/prompts/scheduled', del(bobTok));
     expect(res.status).toBe(200);
-    expect(userPrompts.get(bobId, 'worker-brain')).toBeNull();
+    expect(userPrompts.get(bobId, 'scheduled')).toBeNull();
   });
 });
 
 describe('prompt overrides are per-user', () => {
   it("one user's override never leaks into another's view", async () => {
     const { app, adminTok, bobTok } = setup();
-    await app.request('/auth/me/prompts/worker-brain', put(bobTok, { content: 'BOB ONLY' }));
+    await app.request('/auth/me/prompts/scheduled', put(bobTok, { content: 'BOB ONLY' }));
     const adminBody = await (await app.request('/auth/me/prompts', auth(adminTok))).json() as { name: string; override: string | null }[];
-    expect(adminBody.find((p) => p.name === 'worker-brain')!.override).toBeNull();
+    expect(adminBody.find((p) => p.name === 'scheduled')!.override).toBeNull();
   });
 });

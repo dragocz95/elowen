@@ -81,7 +81,7 @@ export async function maybeOfferSetup(base: string, env: NodeJS.ProcessEnv, vers
  *  apt-install like `elowen install` does. */
 function warnMissingPrereqs(): void {
   if (hasCommand('tmux')) return;
-  p.log.warn('tmux is required to run agents and is not installed — tasks will not run until it is.');
+  p.log.warn('tmux is required to run agent CLIs and is not installed — delegated CLI sessions will not run until it is.');
   p.note(tmuxInstallHint(), 'Install tmux');
 }
 

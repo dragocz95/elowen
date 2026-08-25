@@ -8,7 +8,6 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PushSubscriptionStore } from '../../src/store/pushSubscriptionStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
 
 function makeAuthedApp() {
   const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
@@ -16,7 +15,6 @@ function makeAuthedApp() {
   const brainStore = new BrainStore(db);
   const pushSubscriptions = new PushSubscriptionStore(db);
   const app = createServer({
-    tasks: new RefTaskStore(db), missions: new RefMissions(db),
     bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), users, brainStore, pushSubscriptions,

@@ -143,7 +143,10 @@ export interface PluginManifest {
    *  Same field vocabulary as `configSchema` — the difference is only whose values they are. A `secret`
    *  here never leaves the daemon, not even for an admin. */
   userConfigSchema?: PluginConfigField[];
-  /** Opt in to PER-USER grants: the plugin's API routes, tools and pages are then deny-by-default for
+  // @platform-keep plugin-user-config :: userGrantable?: boolean && user_plugin_config
+  /** Generic per-user plugin platform for future github/sandblox consumers; zero in-repo callers is expected.
+   *
+   * Opt in to PER-USER grants: the plugin's API routes, tools and pages are then deny-by-default for
    *  non-admins until an admin grants the plugin to that user (`users.granted_plugins`). Omitted (the
    *  default) means the plugin behaves as it always has — reachable by every authenticated user. Only
    *  declare it for a subsystem where one user's work must not be another's (schedules, skills). */

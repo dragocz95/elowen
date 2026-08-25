@@ -6,7 +6,7 @@ import type { MemoryCategory } from '../../../lib/types';
 
 const createCategory = vi.fn();
 const updateCategory = vi.fn();
-const projects = [{ id: 9, slug: 'kolin', path: '/work/kolin', notes: '', icon: '', pr_enabled: null }];
+const projects = [{ id: 9, slug: 'kolin', path: '/work/kolin', notes: '', icon: '' }];
 
 vi.mock('../../../lib/queries', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),

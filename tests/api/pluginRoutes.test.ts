@@ -18,7 +18,6 @@ import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { makeSubagentCatalog } from '../../src/brain/agents/catalogService.js';
 import { promptsPath } from '../../src/prompts/index.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 let dirs: string[] = [];
 const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
@@ -64,7 +63,7 @@ function setup() {
   // deferred until running work settles (see the 202 case below).
   const reloadPlugins = vi.fn(async () => true);
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -235,7 +234,7 @@ describe('plugin routes', () => {
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const app = createServer({
-      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+      bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -345,7 +344,7 @@ describe('notification destination routes', () => {
       dirs: [root], enabled: ['teams'], logger: { info() {}, warn() {}, error() {} },
     }));
     const app = createServer({
-      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+      bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -379,7 +378,7 @@ describe('notification destination routes', () => {
     const db = openPluginTablesDb(':memory:');
     const users = new UserStore(db);
     const app = createServer({
-      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+      bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -415,7 +414,7 @@ describe('sub-agent (typed .md) routes', () => {
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     }));
     const app = createServer({
-      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+      bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

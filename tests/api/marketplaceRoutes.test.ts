@@ -15,7 +15,6 @@ import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { MarketplaceError } from '../../src/plugins/marketplace.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 const noCreds: BrainCredentialAccess = { get: () => undefined, getApiKey: async () => undefined };
 let sharedRuntime: ModelRuntime;
@@ -50,7 +49,7 @@ function setup(marketplace?: Record<string, unknown>, pluginDirs: string[] = [],
   const amy = users.create('amy', 'pw');
   const config = new ConfigStore(db);
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

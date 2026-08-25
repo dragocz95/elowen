@@ -7,7 +7,7 @@ import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 
 const server = setupServer(
-  http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '', pr_enabled: null }])),
+  http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '' }])),
   http.get('*/api/projects/1/git', () => HttpResponse.json({ isRepo: true, status: { branch: 'master', ahead: 0, behind: 0, dirty: 3, clean: false }, branches: [{ name: 'master', current: true }], commits: [{ hash: 'deadbee', subject: 'feat: x', author: 'me', relative: '2 hours ago' }] })),
   http.get('*/api/projects/1/files', () => HttpResponse.json([])),
   http.get('*/api/projects/1/commit/deadbee', () => HttpResponse.json({ diff: '', files: [] })),
@@ -94,8 +94,8 @@ describe('ProjectsView', () => {
 
   it('filters the project register without losing the workspace layout', async () => {
     server.use(http.get('*/api/projects', () => HttpResponse.json([
-      { id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '', pr_enabled: null },
-      { id: 2, slug: 'website', path: '/var/www/site', notes: 'public', icon: '', pr_enabled: true },
+      { id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '' },
+      { id: 2, slug: 'website', path: '/var/www/site', notes: 'public', icon: '' },
     ])));
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);

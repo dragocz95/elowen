@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { openWorkDb } from '../helpers/workDb.js';
+import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 
 /** Query plans of every statement `descendantUsage` executes, as SQLite itself reports them. `db.prepare`
  *  is intercepted so the test observes the REAL SQL, not a copy kept in the test — a copy would keep
  *  passing after the implementation was rewritten, which is the regression this guards against. */
 function plansOf(run: (store: BrainStore) => void): string[] {
-  const db = openWorkDb(':memory:');
+  const db = openDb(':memory:');
   const store = new BrainStore(db);
   const plans: string[] = [];
   const original = db.prepare.bind(db);

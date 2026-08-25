@@ -82,8 +82,8 @@ describe('brain limits — web editor against the daemon clamp', () => {
   // Guards the parsing itself: were a regex to stop matching, every table above would silently be empty
   // and all three assertions would pass on nothing.
   it('actually read both tables', () => {
-    expect(Object.keys(daemonBounds())).toHaveLength(16);
-    expect(Object.keys(webBounds())).toHaveLength(16);
+    expect(Object.keys(daemonBounds())).toHaveLength(15);
+    expect(Object.keys(webBounds())).toHaveLength(15);
     expect(daemonBounds().delegateContextChars).toEqual([20000, 80000]);
     expect(daemonBounds().elicitationTimeoutMs).toEqual([30000, 21600000]);
     expect(webBounds().toolOutputMaxChars).toEqual([20500, 80000]);

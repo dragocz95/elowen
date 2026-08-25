@@ -5,26 +5,23 @@ import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
-import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
+import { openDb } from '../../src/store/db.js';
 
 function makeApp(over: { latestVersion?: () => Promise<string | null>; startUpdate?: () => void; startRestart?: (target: 'daemon' | 'web') => void; autoUpdate?: boolean; withUsers?: boolean } = {}) {
-  const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
   if (over.autoUpdate) config.update({ autoUpdate: true });
-  const missions = new RefMissions(db);
   // Gated mode on demand: the first user is the admin, the second is a plain user.
   const users = over.withUsers ? new UserStore(db) : undefined;
   const adminTok = users ? users.issueToken(users.create('admin', 'pw').id) : undefined;
   const userTok = users ? users.issueToken(users.create('amy', 'pw').id) : undefined;
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions,
     bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, projects: new ProjectStore(db), git: null as any, users,
     latestVersion: over.latestVersion, startUpdate: over.startUpdate, startRestart: over.startRestart,
   });
-  return { app, missions, adminTok, userTok };
+  return { app, adminTok, userTok };
 }
 
 describe('GET /system', () => {
@@ -78,15 +75,6 @@ describe('POST /system/update', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ started: true });
     expect(started).toBe(true);
-  });
-  it('refuses with 409 while a mission is live, without starting an update', async () => {
-    let started = false;
-    const { app, missions } = makeApp({ startUpdate: () => { started = true; } });
-    missions.create({ id: 'm-e1', epic_id: 'e1', autonomy: 'L3', max_sessions: 1 });
-    const res = await app.request('/system/update', { method: 'POST' });
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'mission_running' });
-    expect(started).toBe(false);
   });
 });
 

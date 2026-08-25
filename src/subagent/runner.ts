@@ -8,7 +8,7 @@
  *  daemon's own layers deliberately absent:
  *   - NO boot reconcile. `reconcileDelegationsOnBoot` terminalizes every `running` delegation row it
  *     cannot see live in ITS OWN memory; from here that would kill the daemon's live children.
- *   - NO second HTTP port, no platform gateway, no cron, no autopilot, no background loop. The ONE
+ *   - NO second HTTP port, no platform gateway, no cron, no platform automation loop or other daemon-only services. The ONE
  *     platform it does start is `subagent` — that adapter is how delegation is wired at all, and without
  *     its `listen` the plugin's `run` handle stays null and a NESTED delegation fails outright. Nested
  *     delegation therefore stays inside this same runner (this process holds no runner of its own).

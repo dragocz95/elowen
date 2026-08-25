@@ -1,7 +1,7 @@
 'use client';
 import { useDeferredValue, useMemo, useState } from 'react';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
-import { useProjects, useProjectGit, useEditorPlugin, useMe } from '../../lib/queries';
+import { useProjects, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
@@ -26,7 +26,7 @@ import { copyText } from '../../lib/clipboard';
 
 export function ProjectsView() {
   const projects = useProjects();
-  const editorEnabled = useEditorPlugin();
+  const editorEnabled = usePluginPresent('editor');
   // Registering, editing and removing a project is admin-only on the daemon (notAdmin guards POST,
   // PATCH and DELETE /projects). Offering those actions to a member produced a button that could only
   // ever answer 403, and implied members hand themselves new roots -- a project IS the path boundary
