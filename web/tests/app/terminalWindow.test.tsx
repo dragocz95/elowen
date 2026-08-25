@@ -14,8 +14,8 @@ describe('TerminalWindow (pop-out route)', () => {
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(<Wrapper><TerminalWindow /></Wrapper>);
     expect((await screen.findByTestId('stream')).textContent).toBe('elowen-advisor-1'); // dynamic, ssr:false
-    expect(screen.getByText('advisor-1')).toBeTruthy(); // header shows the friendly name
-    expect(document.title).toBe('Elowen — advisor-1'); // per-page tab title
+    expect(screen.getAllByText('elowen-advisor-1')).toHaveLength(2);
+    expect(document.title).toBe('Elowen — elowen-advisor-1');
     expect(container.firstElementChild).toHaveClass('h-dvh', 'bg-bg');
     expect(container.querySelector('.bg-surface')).not.toBeNull();
     expect(container.querySelector('[data-control-surface]')).toBeNull();

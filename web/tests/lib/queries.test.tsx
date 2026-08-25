@@ -2,22 +2,20 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { useTasks } from '../../lib/queries';
+import { useProjects } from '../../lib/queries';
 import { createWrapper } from '../test-utils';
 
 const server = setupServer(
-  http.get('*/api/tasks', () =>
-    HttpResponse.json([{ id: 'elowen-1', title: 'A', status: 'open' }]),
-  ),
+  http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'elowen', path: '/var/www/elowen' }])),
 );
 
 beforeAll(() => server.listen());
 afterAll(() => server.close());
 
-describe('useTasks', () => {
-  it('fetches tasks via elowenClient', async () => {
+describe('useProjects', () => {
+  it('fetches projects via elowenClient', async () => {
     const { wrapper } = createWrapper();
-    const { result } = renderHook(() => useTasks(), { wrapper });
-    await waitFor(() => expect(result.current.data?.[0].id).toBe('elowen-1'));
+    const { result } = renderHook(() => useProjects(), { wrapper });
+    await waitFor(() => expect(result.current.data?.[0]?.slug).toBe('elowen'));
   });
 });

@@ -10,7 +10,7 @@ export function OutcomeBadge({ outcome }: { outcome?: string | null }) {
   return (
     <Badge tone={fail ? 'danger' : 'success'}>
       {fail ? <XCircle size={11} className="mr-1 inline" aria-hidden /> : <CheckCircle2 size={11} className="mr-1 inline" aria-hidden />}
-      {fail ? t.tasks.outcomeFail : t.tasks.outcomeOk}
+      {fail ? t.common.outcomeFail : t.common.outcomeOk}
     </Badge>
   );
 }

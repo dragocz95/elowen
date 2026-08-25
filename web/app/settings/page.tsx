@@ -1,7 +1,7 @@
 'use client';
 export const dynamic = 'force-dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
-import { SlidersHorizontal, Plus, X, Pencil, Gauge, Lock, Trash2, RefreshCw, RotateCcw, Sparkles, KeyRound, Search, Server, CalendarClock, ScrollText, BellRing, MessageSquareText } from 'lucide-react';
+import { SlidersHorizontal, X, Pencil, Gauge, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Search, Server, CalendarClock, ScrollText, BellRing, MessageSquareText } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
@@ -20,7 +20,6 @@ import { formatBytes } from '../../lib/format';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useUpdateConfig, useSystemUpdate, useSystemRestart } from '../../lib/mutations';
-import { ElowenApiError } from '../../lib/elowenClient';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useRouter, useSearchParams } from 'next/navigation';

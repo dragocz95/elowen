@@ -382,9 +382,7 @@ function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegist
     app,
     bus,
     adminTok: users.issueToken(admin.id),
-    adminAgentTok: users.issueToken(admin.id, 'agent'),
     amyTok: users.issueToken(amy.id),
-    agentTok: users.issueToken(amy.id, 'agent'),
     brain,
     brainStore,
     config,
@@ -433,12 +431,10 @@ describe('brain routes', () => {
   });
 
   it('protects the request-debug namespace and marks every response private no-store', async () => {
-    const { app, adminTok, adminAgentTok, amyTok } = setup();
-    for (const token of [amyTok, adminAgentTok]) {
-      const denied = await app.request('/brain/debug/sessions', auth(token));
-      expect(denied.status).toBe(403);
-      expect(denied.headers.get('cache-control')).toBe('private, no-store');
-    }
+    const { app, adminTok, amyTok } = setup();
+    const denied = await app.request('/brain/debug/sessions', auth(amyTok));
+    expect(denied.status).toBe(403);
+    expect(denied.headers.get('cache-control')).toBe('private, no-store');
     const allowed = await app.request('/brain/debug/sessions?limit=1&search=needle', auth(adminTok));
     expect(allowed.status).toBe(200);
     expect(allowed.headers.get('cache-control')).toBe('private, no-store');
@@ -819,25 +815,6 @@ describe('brain routes', () => {
     expect((await app.request('/brain/fast', post(amyTok, {}))).status).toBe(200);
   });
 
-  it('an agent-scoped token cannot use brain routes', async () => {
-    const { app, agentTok } = setup();
-    expect((await app.request('/brain/status', auth(agentTok))).status).toBe(403);
-    expect((await app.request('/brain/start', post(agentTok, {}))).status).toBe(403);
-    expect((await app.request('/brain/send', post(agentTok, { text: 'x' }))).status).toBe(403);
-    expect((await app.request('/brain/messages', auth(agentTok))).status).toBe(403);
-    expect((await app.request('/brain/search?q=hi', auth(agentTok))).status).toBe(403);
-    expect((await app.request('/brain/queue', auth(agentTok))).status).toBe(403);
-    expect((await app.request('/brain/queue/x', del(agentTok))).status).toBe(403);
-    expect((await app.request('/brain/rate-limits', auth(agentTok))).status).toBe(403);
-    expect((await app.request('/brain/fast', post(agentTok, { on: true }))).status).toBe(403);
-    expect((await app.request('/brain/session/stop', post(agentTok, {}))).status).toBe(403);
-    expect((await app.request('/brain/interrupt-queued', post(agentTok, {}))).status).toBe(403);
-    expect((await app.request('/brain/subagents/background', post(agentTok, {}))).status).toBe(403);
-    expect((await app.request('/brain/commands/background', post(agentTok, {}))).status).toBe(403);
-    expect((await app.request('/brain/commands/kill', post(agentTok, {}))).status).toBe(403);
-    expect((await app.request('/brain/workflows/background', post(agentTok, {}))).status).toBe(403);
-  });
-
   it('toggles Fast for the bound session through both action routes', async () => {
     const { app, amyTok, brain } = setup();
     const direct = await app.request('/brain/fast', post(amyTok, { on: true, session: 'brain-child' }));
@@ -1035,10 +1012,7 @@ describe('brain routes', () => {
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchSpy);
     try {
-      const { app, amyTok, agentTok } = setup({ brainAuth });
-      // Agent-scoped tokens are refused, like the single-provider route.
-      expect((await app.request('/brain/rate-limits/all', auth(agentTok))).status).toBe(403);
-
+      const { app, amyTok } = setup({ brainAuth });
       const res = await app.request('/brain/rate-limits/all', auth(amyTok));
       expect(res.status).toBe(200);
       const body = await res.json() as Record<string, { provider: string; windows: unknown[] }>;
@@ -1094,18 +1068,16 @@ describe('brain routes', () => {
   });
 
   it('POST /brain/sessions/:id/fork returns the new conversation, 404s an unreachable source', async () => {
-    const { app, amyTok, agentTok } = setup();
+    const { app, amyTok } = setup();
     const res = await app.request('/brain/sessions/s-2/fork', post(amyTok, {}));
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ id: 'brain-2-fork', title: 'A', forkedFrom: 's-2' });
     expect((await app.request('/brain/sessions/missing/fork', post(amyTok, {}))).status).toBe(404);
-    expect((await app.request('/brain/sessions/s-2/fork', post(agentTok, {}))).status).toBe(403);
   });
 
-  it('export 404s an unknown/foreign session and 403s an agent token', async () => {
-    const { app, amyTok, agentTok } = setup();
+  it('export 404s an unknown or foreign session', async () => {
+    const { app, amyTok } = setup();
     expect((await app.request('/brain/sessions/missing/export', auth(amyTok))).status).toBe(404);
-    expect((await app.request('/brain/sessions/s-2/export', auth(agentTok))).status).toBe(403);
   });
 
   it('search scopes to the caller and passes q through; short q yields []', async () => {
@@ -1139,10 +1111,9 @@ describe('brain routes', () => {
   });
 
   it('POST /brain/context is admin-gated (shared channel state) and validates its body', async () => {
-    const { app, adminTok, amyTok, agentTok } = setup();
+    const { app, adminTok, amyTok } = setup();
     // Binding mutates SHARED channel state on a caller-supplied target, so unlike /brain/model it is
-    // admin-only: an agent token and a plain non-admin user are both rejected before any binding.
-    expect((await app.request('/brain/context', post(agentTok, { channel: 'discord-1', session: 'brain-1-x' }))).status).toBe(403);
+    // admin-only: a plain non-admin user is rejected before any binding.
     expect((await app.request('/brain/context', post(amyTok, { channel: 'discord-1', session: 'brain-1-x' }))).status).toBe(403);
     expect((await app.request('/brain/context', post(adminTok, { session: 'brain-1-x' }))).status).toBe(400);
     expect((await app.request('/brain/context', post(adminTok, { channel: 'discord-1' }))).status).toBe(400);

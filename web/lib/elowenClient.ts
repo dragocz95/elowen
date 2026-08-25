@@ -1,4 +1,4 @@
-import type { ElowenConfig, ConfigPatch, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, HeatmapBucket, PresenceEntry, Project, ProjectGit, CommitLogEntry, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
+import type { ElowenConfig, ConfigPatch, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, HeatmapBucket, PresenceEntry, Project, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
 import { clearToken } from './token';
 import type { BrainBinding } from './brainSession';
 
@@ -110,8 +110,6 @@ export const elowenClient = {
   /** Admin: clear the caller's recorded brain usage and origin rollup. */
   resetUsage: () => req<ResetUsageResult>('/usage/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
   sessionPane: (name: string, ansi = false) => req<{ pane: string }>(`/sessions/${encodeURIComponent(name)}/pane${ansi ? '?ansi=1' : ''}`),
-  killSession: (name: string) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  sendKeys: (name: string, keys: string[]) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/keys`, json({ keys })),
   resizeSession: (name: string, cols: number, rows: number) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/resize`, json({ cols, rows })),
   /** Forward raw xterm `onData` bytes to a session's pane (snapshot-mirror interactive terminal). */
   sessionInput: (name: string, data: string) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/input`, json({ data })),
@@ -231,9 +229,6 @@ export const elowenClient = {
     // an otherwise identical body, and inferring it from headers would trust a client-written value.
     req<{ ok: boolean }>('/brain/send', json({ text, surface: 'web', ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}), ...bind, ...(mode ? { mode } : {}) })),
   brainAnswer: (id: string, answers: AskAnswer[]) => req<{ ok: boolean; matched: boolean }>('/brain/answer', json({ id, answers })),
-  /** Admin: launch (or reuse) an `elowen chat` TUI terminal bound to the given brain conversation.
-   *  Returns the opaque tmux terminal name to stack as a dock pane; `created:false` when one already runs. */
-  brainTerminal: (session: string) => req<{ terminal: string; created: boolean }>('/brain/terminal', json({ session })),
   /** Remove one pending queued message by id (the × button). The reduced snapshot rides back on the
    *  `queue` stream event — the server is authoritative. `session` scopes it to a bound conversation. */
   brainQueueRemove: (id: string, session?: string) => req<{ removed: boolean }>(`/brain/queue/${encodeURIComponent(id)}${session ? `?session=${encodeURIComponent(session)}` : ''}`, { method: 'DELETE' }),
@@ -394,7 +389,6 @@ export const elowenClient = {
   renameProjectEntry: (id: number, from: string, to: string) => req<{ ok: boolean }>(`/projects/${id}/rename`, json({ from, to })),
   copyProjectEntry: (id: number, from: string, to: string) => req<{ ok: boolean }>(`/projects/${id}/copy`, json({ from, to })),
   deleteProjectEntry: (id: number, path: string) => req<{ ok: boolean }>(`/projects/${id}/entry?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
-  projectCommits: (id: number, limit = 30) => req<{ commits: CommitLogEntry[] }>(`/projects/${id}/commits?limit=${limit}`),
   projectChanged: (id: number) => req<{ changed: string[] }>(`/projects/${id}/changed`),
   projectChanges: (id: number) => req<{ diff: string }>(`/projects/${id}/changes`),
   userTools: (userId: number) => req<UserToolPill[]>(`/users/${userId}/tools`),

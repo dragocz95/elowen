@@ -69,13 +69,13 @@ export function LiveTail({ name, lines = 20, heightClass = 'max-h-80', onExpand 
         tabIndex={0}
         onClick={onExpand}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onExpand(); } }}
-        title={t.tasks.openTerminal}
+        title={t.common.openTerminal}
         className="block w-full cursor-pointer rounded-md border border-border bg-bg p-3 transition-colors hover:border-accent/60 focus:border-accent focus:outline-none"
       >
         {pane}
       </div>
       <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-md border border-border bg-surface/90 px-2 py-1 text-[11px] text-text-muted opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
-        <Maximize2 size={12} aria-hidden /> {t.tasks.openTerminal}
+        <Maximize2 size={12} aria-hidden /> {t.common.openTerminal}
       </span>
     </div>
   );

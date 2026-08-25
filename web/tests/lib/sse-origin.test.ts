@@ -22,7 +22,7 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('SSE hooks', () => {
   it('opens a same-origin /api/events stream with credentials and no token query', () => {
-    renderHook(() => useElowenEvents({}), { wrapper });
+    renderHook(() => useElowenEvents(), { wrapper });
     expect(instances[0].url).toBe('/api/events');
     expect(instances[0].url).not.toContain('token=');
     expect(instances[0].withCredentials).toBe(true);

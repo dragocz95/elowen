@@ -47,7 +47,6 @@ function setup() {
     adminTok: users.issueToken(admin.id),
     admin2Tok: users.issueToken(admin2.id),
     bobTok: users.issueToken(bob.id),
-    agentTok: users.issueToken(admin.id, 'agent'),
     adminId: admin.id, admin2Id: admin2.id,
   };
 }
@@ -59,11 +58,6 @@ describe('POST /brain/terminal RBAC + idempotence', () => {
   it('rejects an ordinary full-scope non-admin (403)', async () => {
     const { app, bobTok, sessionId } = setup();
     expect((await post(app, bobTok, { session: sessionId })).status).toBe(403);
-  });
-
-  it('rejects an agent-scoped token (403)', async () => {
-    const { app, agentTok, sessionId } = setup();
-    expect((await post(app, agentTok, { session: sessionId })).status).toBe(403);
   });
 
   it('rejects a foreign admin with 404 (ownership miss)', async () => {

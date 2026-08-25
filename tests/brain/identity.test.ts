@@ -189,23 +189,12 @@ describe('IdentityResolver — owner vs admin gating', () => {
 
 describe('composeSessionTools — the channel/tool security invariant', () => {
   const tool = (name: string) => ({ name }) as ToolDefinition;
-  const pluginTools = [tool('MemorySearch'), tool('DiscordApi')];
-
-  it('task-worker sessions receive no interactive-only group at all', () => {
-    // The Elowen* control plane is plugin-owned now and gates itself at execute time on
-    // `currentAccess().owner`; what composition still decides structurally is the interactive groups.
-    const tools = composeSessionTools({ kind: 'task-worker', memoryTools: () => [tool('MemoryAdd')], shareImage: () => [tool('ShareImage')], pluginTools });
-    expect(tools.map((t) => t.name)).toEqual(['MemorySearch', 'DiscordApi']);
-  });
-
-  it('memory tools compose into every interactive session (incl. foreign-channel), but not task-workers', () => {
+  it('memory tools compose into every interactive session', () => {
     const memoryTools = () => [tool('MemoryAdd'), tool('MemorySearch')];
     for (const kind of ['owner-chat', 'trusted-channel', 'foreign-channel'] as const) {
       const tools = composeSessionTools({ kind, memoryTools, pluginTools: [] });
-      expect(tools.map((t) => t.name)).toContain('MemoryAdd'); // per-user; the execute-time elowenUserId gate is the guard
+      expect(tools.map((t) => t.name)).toContain('MemoryAdd');
     }
-    const worker = composeSessionTools({ kind: 'task-worker', memoryTools, pluginTools: [] });
-    expect(worker.map((t) => t.name)).not.toContain('MemoryAdd');
   });
 
   it('plugin tools are always composed, but gated at EXECUTE time by the turn ToolPolicy', async () => {

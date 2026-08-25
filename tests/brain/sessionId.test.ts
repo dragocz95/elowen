@@ -86,7 +86,6 @@ describe('brain session id conventions', () => {
     expect(mayDeliverToSession({ user_id: 7, direct: 0 }, 7, room)).toBe(false); // shared room: never
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 8, dm)).toBe(false); // someone else's DM
     expect(mayDeliverToSession(undefined, 7, dm)).toBe(false); // no row
-    expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7('t1'))).toBe(false); // task session
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, 'brain-ch-subagent-job')).toBe(false); // delegated
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, archivedChannelSessionId('msteams-personal-1'))).toBe(false); // archive
     expect(mayDeliverToSession({ user_id: 7, direct: 0 }, 7, own)).toBe(true); // an ordinary conversation is unaffected
@@ -114,7 +113,6 @@ describe('brain session id conventions', () => {
     expect(isOwnedUserSession({ user_id: 9 }, 7, id)).toBe(false); // not the owner
     expect(isOwnedUserSession(undefined, 7, id)).toBe(false); // no row
     expect(isOwnedUserSession({ user_id: 7 }, 7, channelSessionId('c'))).toBe(false); // channel session
-    expect(isOwnedUserSession({ user_id: 7 }, 7('t'))).toBe(false); // task session
     // Narrows: after the guard, the row's own fields are accessible.
     const row: { user_id: number; title: string } | undefined = { user_id: 7, title: 'kept' };
     expect(isOwnedUserSession(row, 7, id) ? row.title : null).toBe('kept');

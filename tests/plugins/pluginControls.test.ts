@@ -4,20 +4,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
-import type { PluginCapabilities, PluginControl, TasksDomainControl } from '../../src/plugins/api.js';
+import type { KnownControls, PluginCapabilities, PluginControl } from '../../src/plugins/api.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
+const fakeLsp = (): KnownControls['lsp'] => ({ diagnosticsEnabled: () => true });
+const fakeWorkflow = (): KnownControls['workflow'] => ({
+  cancelForSession: () => ({ cancelled: 0 }),
+  detachForeground: () => ({ detached: 0 }),
+  activeCount: () => 0,
+  isWorkflowLive: () => false,
+  addNodesFromSession: () => ({ added: [] }),
+  resumeInterrupted: async () => ({ status: 'done', nodes: [] }) as never,
+} as unknown as KnownControls['workflow']);
 
-/** A complete `tasks` domain control — only the three accessors matter here; what they return is the
- *  owner's business, so the fakes are minimal. */
-const fakeTasksDomain = (): TasksDomainControl => ({
-  store: () => ({ marker: 'store' }) as never,
-  readiness: () => ({ marker: 'readiness' }) as never,
-  usage: () => ({ marker: 'usage' }) as never,
-});
-
-/** Build a context whose `control()` resolves against `merged` — exactly how the loader wires it. */
-function contextOver(merged: PluginRegistry, caps?: PluginCapabilities, warn?: (m: string) => void) {
+function contextOver(merged: PluginRegistry, caps?: PluginCapabilities, warn?: (message: string) => void) {
   const staging = new PluginRegistry();
   const logger = warn ? { info() {}, warn, error() {} } : noopLog;
   return staging.contextFor(
@@ -28,104 +28,45 @@ function contextOver(merged: PluginRegistry, caps?: PluginCapabilities, warn?: (
   );
 }
 
-/** Register a control into a merged registry the way the loader does (stage, then merge). */
-function ownerMerges(merged: PluginRegistry, owner: string, key: string, control: PluginControl): void {
+function ownerMerges(merged: PluginRegistry, owner: string, key: string, control: unknown, requires?: string): void {
   const staging = new PluginRegistry();
-  staging.contextFor(owner, {}, noopLog).registerControl(key, control);
+  staging.contextFor(owner, {}, noopLog).registerControl(key, control as PluginControl, requires ? { requires } : undefined);
   merged.merge(staging);
 }
 
 describe('ctx.control — one plugin reaching another plugin domain', () => {
-  it('is denied (and warned) without the controls read capability', () => {
+  it('requires the controls read capability', () => {
     const merged = new PluginRegistry();
-    ownerMerges(merged, 'work', 'tasks', fakeTasksDomain());
+    ownerMerges(merged, 'lsp', 'lsp', fakeLsp());
     const warnings: string[] = [];
-    expect(contextOver(merged, {}, (m) => warnings.push(m)).control('tasks')).toBeUndefined();
-    expect(warnings.join('\n')).toContain("control('tasks') denied");
-    // A neighbouring grant must not open it either — this is its own capability, not a side effect.
-    expect(contextOver(merged, { reads: ['stores'] }).control('tasks')).toBeUndefined();
+    expect(contextOver(merged, {}, (message) => warnings.push(message)).control('lsp')).toBeUndefined();
+    expect(warnings.join('\n')).toContain("control('lsp') denied");
+    expect(contextOver(merged, { reads: ['stores'] }).control('lsp')).toBeUndefined();
   });
 
-  it('hands the granted consumer the owner’s control', () => {
-    const merged = new PluginRegistry();
-    const domain = fakeTasksDomain();
-    ownerMerges(merged, 'work', 'tasks', domain);
-    expect(contextOver(merged, { reads: ['controls'] }).control('tasks')).toBe(domain);
-  });
-
-  it('answers undefined — never throws — when nobody owns the domain', () => {
-    // The honest "the owner is switched off" state: the caller must be able to degrade, and an exception
-    // on a legitimate configuration would instead take out whatever code path happened to ask.
-    expect(contextOver(new PluginRegistry(), { reads: ['controls'] }).control('tasks')).toBeUndefined();
-  });
-
-  it('refuses a registration that does not carry the whole contract', () => {
-    const merged = new PluginRegistry();
-    // A half-built owner (say a partially initialised plugin) must not be handed over typed as the full
-    // domain: the caller would then blow up at an arbitrary later call site instead of degrading here.
-    ownerMerges(merged, 'work', 'tasks', { store: () => ({}), readiness: () => ({}) } as unknown as PluginControl);
-    expect(contextOver(merged, { reads: ['controls'] }).control('tasks')).toBeUndefined();
-  });
-
-  it('resolves at CALL time, so a context built before the owner existed still sees it', () => {
+  it('resolves a complete known control at call time', () => {
     const merged = new PluginRegistry();
     const ctx = contextOver(merged, { reads: ['controls'] });
-    expect(ctx.control('tasks')).toBeUndefined();
-    const first = fakeTasksDomain();
-    ownerMerges(merged, 'work', 'tasks', first);
-    expect(ctx.control('tasks')).toBe(first);
-  });
-});
-
-/** A control BUILT ON another plugin's domain (missions are made of tasks). The failure this prevents is
- *  a dependent subsystem that stays reachable after its foundation is switched off: every accessor then
- *  throws inside whichever request touched it, and callers — which all have a "the plugin is disabled"
- *  path already — never get to take it. */
-describe('a control that declares the domain it is built on', () => {
-  /** Stage + merge a dependent control the way the loader does. */
-  const ownerMergesDependent = (merged: PluginRegistry, requires: string) => {
-    const staging = new PluginRegistry();
-    staging.contextFor('agents', {}, noopLog).registerControl('missions', fakeMissionsControl(), { requires });
-    merged.merge(staging);
-  };
-  /** Every method KNOWN_CONTROL_METHODS.missions demands — the shape check must not be what fails here. */
-  const fakeMissionsControl = (): PluginControl => Object.fromEntries(
-    ['engine', 'spawn', 'planFlow', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock',
-      'missions', 'liveTaskUsage', 'advisor', 'onTaskClosed'].map((m) => [m, () => ({})]),
-  ) as PluginControl;
-
-  it('does not resolve while that domain has no owner', () => {
-    const merged = new PluginRegistry();
-    ownerMergesDependent(merged, 'tasks');
-    expect(merged.control('missions')).toBeUndefined();
+    expect(ctx.control('lsp')).toBeUndefined();
+    const control = fakeLsp();
+    ownerMerges(merged, 'lsp', 'lsp', control);
+    expect(ctx.control('lsp')).toBe(control);
   });
 
-  it('resolves once the domain has one, and stops again if it goes away', () => {
+  it('refuses an incomplete known control', () => {
     const merged = new PluginRegistry();
-    ownerMergesDependent(merged, 'tasks');
-    ownerMerges(merged, 'work', 'tasks', fakeTasksDomain());
-    expect(merged.control('missions')).toBeDefined();
-    // A reload that drops the owner must take the dependent with it — resolution is live, not a snapshot
-    // taken when the dependency happened to be there.
-    merged.controls.delete('tasks');
-    expect(merged.control('missions')).toBeUndefined();
+    ownerMerges(merged, 'workflow', 'workflow', { activeCount: () => 0 } as unknown as PluginControl);
+    expect(contextOver(merged, { reads: ['controls'] }).control('workflow')).toBeUndefined();
   });
 
-  it('is not satisfied by an owner that only half implements the domain', () => {
+  it('resolves a dependent control only while its complete dependency exists', () => {
     const merged = new PluginRegistry();
-    ownerMergesDependent(merged, 'tasks');
-    ownerMerges(merged, 'work', 'tasks', { store: () => ({}) } as unknown as PluginControl);
-    // The dependent would be handed a domain whose readiness()/usage() are missing — the same "blows up
-    // at an arbitrary later call site" the shape check exists to prevent, one level removed.
-    expect(merged.control('missions')).toBeUndefined();
-  });
-
-  it('leaves a control that declares nothing alone', () => {
-    const merged = new PluginRegistry();
-    const staging = new PluginRegistry();
-    staging.contextFor('agents', {}, noopLog).registerControl('missions', fakeMissionsControl());
-    merged.merge(staging);
-    expect(merged.control('missions')).toBeDefined(); // no dependency declared, no gate
+    ownerMerges(merged, 'workflow', 'workflow', fakeWorkflow(), 'lsp');
+    expect(merged.control('workflow')).toBeUndefined();
+    ownerMerges(merged, 'lsp', 'lsp', fakeLsp());
+    expect(merged.control('workflow')).toBeDefined();
+    merged.controls.delete('lsp');
+    expect(merged.control('workflow')).toBeUndefined();
   });
 });
 
@@ -141,14 +82,12 @@ describe('ctx.control through the real loader', () => {
       }));
       writeFileSync(join(dir, 'index.mjs'), body);
     };
-    // 'aconsumer' sorts BEFORE 'zowner', so the loader registers it while the owner does not yet exist —
-    // the exact ordering that makes a register-time lookup impossible and a call-time one work.
     plugin('aconsumer', `export function register(ctx){
-      globalThis.__controlProbe = () => ctx.control('tasks');
-      ctx.registerSystemPromptFragment('at-register:' + (ctx.control('tasks') === undefined ? 'absent' : 'present'));
+      globalThis.__controlProbe = () => ctx.control('lsp');
+      ctx.registerSystemPromptFragment('at-register:' + (ctx.control('lsp') === undefined ? 'absent' : 'present'));
     }`, { capabilities: { reads: ['controls'] } });
     plugin('zowner', `export function register(ctx){
-      ctx.registerControl('tasks', { store: () => 'S', readiness: () => 'R', usage: () => 'U' });
+      ctx.registerControl('lsp', { diagnosticsEnabled: () => true });
     }`);
   });
   afterAll(() => {
@@ -156,13 +95,10 @@ describe('ctx.control through the real loader', () => {
     delete (globalThis as { __controlProbe?: unknown }).__controlProbe;
   });
 
-  it('a consumer loaded BEFORE the owner still resolves it once loading finished', async () => {
-    const reg = await loadPlugins({ dirs: [root], enabled: ['aconsumer', 'zowner'], logger: noopLog });
-    // Proof the ordering problem is real and not accidentally avoided: at its own register() the owner
-    // was genuinely absent…
-    expect(reg.promptFragments).toContain('at-register:absent');
-    // …yet the same context resolves the domain now that every plugin has merged.
-    const probe = (globalThis as { __controlProbe?: () => TasksDomainControl | undefined }).__controlProbe;
-    expect(probe?.()?.store()).toBe('S');
+  it('a consumer loaded before the owner resolves it after loading finishes', async () => {
+    const registry = await loadPlugins({ dirs: [root], enabled: ['aconsumer', 'zowner'], logger: noopLog, delegatedTurnsOutOfProcess: () => false });
+    expect(registry.promptFragments).toContain('at-register:absent');
+    const probe = (globalThis as { __controlProbe?: () => KnownControls['lsp'] | undefined }).__controlProbe;
+    expect(probe?.()?.diagnosticsEnabled()).toBe(true);
   });
 });

@@ -51,20 +51,8 @@ describe('ConfigStore brain limits', () => {
       memoryRecallCount: 10, memoryRecallChars: 20000,
       memoryLiveRecallPasses: 10, memoryLiveRecallCount: 2, memoryLiveRecallBytes: 20000,
       goalTurnBudget: 50, goalMaxTurns: 50, channelSessionCap: 32,
-      delegateContextChars: 40000, askHistoryTurns: 30,
+      delegateContextChars: 40000,
     });
-  });
-
-  // The ask window follows the plain ±50% band rule, so its edges are the derivation rather than written
-  // numbers — pinning them here is what would catch the default and the bound drifting apart.
-  it('bands the ask history window at ±50% of its default', () => {
-    const cs = new ConfigStore(openDb(':memory:'));
-    cs.update({ brain: { limits: { askHistoryTurns: 45 } } });
-    expect(cs.get().brain.limits.askHistoryTurns).toBe(45);
-    cs.update({ brain: { limits: { askHistoryTurns: 400 } } });
-    expect(cs.get().brain.limits.askHistoryTurns).toBe(45); // 30 + 50%
-    cs.update({ brain: { limits: { askHistoryTurns: 1 } } });
-    expect(cs.get().brain.limits.askHistoryTurns).toBe(15); // 30 − 50%
   });
 
   // Every tuning knob's LOWER bound is its default −50%, derived from the default so the two cannot drift

@@ -282,7 +282,7 @@ export function ProjectsView() {
                     {git.data && !git.data.isRepo ? <div className="py-4"><Badge tone="muted">{t.projects.notGit}</Badge></div> : null}
                     {git.data?.status ? (
                       <section className="border-b border-border/70 py-4">
-                        <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text"><Github size={14} className="text-text-muted" aria-hidden />{t.projects.git}</h3>
+                        <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text"><FolderGit2 size={14} className="text-text-muted" aria-hidden />{t.projects.git}</h3>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Badge tone="accent"><GitBranch size={11} className="mr-1" aria-hidden />{git.data.status.branch}</Badge>
                           {git.data.status.clean

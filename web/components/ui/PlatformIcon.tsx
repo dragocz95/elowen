@@ -21,7 +21,7 @@ const NAMES: Record<string, string> = {
   cron: 'Scheduled run',
 };
 
-export function platformName(platform: string): string {
+function platformName(platform: string): string {
   return NAMES[platform] ?? platform;
 }
 

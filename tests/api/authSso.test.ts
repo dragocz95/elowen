@@ -95,7 +95,6 @@ function setup(options: SetupOptions = {}) {
   const bus = new EventBus();
   const events: unknown[] = [];
   bus.subscribe((event) => events.push(event));
-  const ensureOnLogin = vi.fn(async () => {});
   let idToken = '';
   const fetchImpl = vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
@@ -116,7 +115,6 @@ function setup(options: SetupOptions = {}) {
     userSettings,
     clock,
     bus,
-    advisor: () => ({ ensureOnLogin } as never),
     projects,
     userProjects,
     project: { id: 1 },
@@ -142,7 +140,6 @@ function setup(options: SetupOptions = {}) {
     projects,
     userProjects,
     microsoftSso,
-    advisor: { ensureOnLogin } as never,
   } as never);
 
   const claimsFor = (nonce: string, claims: Record<string, unknown> = {}) => {
@@ -184,7 +181,7 @@ function setup(options: SetupOptions = {}) {
   });
 
   return {
-    app, db, users, userSettings, userProjects, user, config, clock, events, ensureOnLogin, fetchImpl, keyResolver,
+    app, db, users, userSettings, userProjects, user, config, clock, events, fetchImpl, keyResolver,
     microsoftSso, start, callback, claimsFor, signFor, setIdToken,
   };
 }
@@ -720,8 +717,8 @@ describe('Microsoft SSO routes', () => {
     expect(users.count()).toBe(before);
   });
 
-  it('matches password-login session shape, TTL, and ensureOnLogin side effect', async () => {
-    const { app, start, signFor, callback, ensureOnLogin, user } = setup();
+  it('matches the password-login session shape and TTL', async () => {
+    const { app, start, signFor, callback } = setup();
     const password = await app.request('/auth/login', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'alice', password: 'secret' }),
     });
@@ -733,9 +730,6 @@ describe('Microsoft SSO routes', () => {
     expect(ssoBody.tokenTtlDays).toBe(passwordBody.tokenTtlDays);
     expect(ssoBody.user).toEqual(passwordBody.user);
     expect(typeof ssoBody.token).toBe('string');
-    expect(ensureOnLogin).toHaveBeenCalledTimes(2);
-    expect(ensureOnLogin).toHaveBeenNthCalledWith(1, user?.id);
-    expect(ensureOnLogin).toHaveBeenNthCalledWith(2, user?.id);
   });
 
   it('shares the fixed-window rate limit with password login', async () => {

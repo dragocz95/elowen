@@ -569,7 +569,7 @@ describe('personal-contribution ownership is decided in exactly one place', () =
     // (or the instance set literally). The admin route answers a question ABOUT an account rather than
     // acting as one, so it legitimately names that account's id and does neither.
     const composing = callers.filter(({ code }) => /\brunWithPolicy\s*\(|\bcomposeSessionTools\s*\(/.test(code));
-    expect(composing.length, 'the session/turn composers seem to have been renamed').toBeGreaterThan(1);
+    expect(composing.length, 'the session composer seems to have been renamed').toBeGreaterThan(0);
     const ACCEPTED = /^(null|.*[Cc]ontribution(Owner)?UserId)$/;
     const offenders = composing.flatMap(({ path, args }) => args.filter((arg) => !ACCEPTED.test(arg)).map((arg) => ({ path, arg })));
     expect(offenders, 'compose contributions from contributionOwnerForSession, never from a locally chosen account id').toEqual([]);

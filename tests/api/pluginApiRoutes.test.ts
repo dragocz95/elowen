@@ -19,13 +19,12 @@ function apiPluginProvider(): PluginRegistryProvider {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name: 'demo', version: '1.0.0', apiVersion: '1', description: 'demo', entry: 'index.mjs',
-    provides: { apiRoutes: ['ping', 'admin-only', 'agent-work', 'items', 'echo', 'whoami'] },
+    provides: { apiRoutes: ['ping', 'admin-only', 'items', 'echo', 'whoami'] },
   }));
   writeFileSync(join(dir, 'index.mjs'), `
     export function register(ctx){
       ctx.registerApiRoute({ path: 'ping', access: 'user', handler: async (req) => ({ body: { ok: true, auth: req.auth } }) });
       ctx.registerApiRoute({ path: 'admin-only', access: 'admin', handler: async () => ({ body: { secret: 42 } }) });
-      ctx.registerApiRoute({ path: 'agent-work', access: 'agent', handler: async (req) => ({ body: { scope: req.auth.tokenScope, task: req.auth.agentTask } }) });
       ctx.registerApiRoute({ path: 'items', method: 'POST', access: 'user', handler: async (req) => ({ status: 201, body: { created: await req.json() } }) });
       ctx.registerApiRoute({ path: 'items', access: 'user', handler: async (req) => ({ body: { listed: true, remainder: req.path } }) });
       ctx.registerApiRoute({ path: 'echo', access: 'user', handler: async (req) => ({ body: { q: req.query } }) });
@@ -49,11 +48,10 @@ describe('authenticated plugin API routes (/plugins/:name/api/*)', () => {
     expect((await app.request('/plugins/demo/api/ping')).status).toBe(401);
     const res = await app.request('/plugins/demo/api/ping', auth(token));
     expect(res.status).toBe(200);
-    const body = await res.json() as { ok: boolean; auth: { userId: number; admin: boolean; tokenScope: string; agentTask: string | null; accessibleProjects: number[] | null } };
+    const body = await res.json() as { ok: boolean; auth: { userId: number; admin: boolean; tokenScope: string; accessibleProjects: number[] | null } };
     expect(body.ok).toBe(true);
     expect(body.auth.admin).toBe(true);
     expect(body.auth.tokenScope).toBe('user');
-    expect(body.auth.agentTask).toBeNull();
     expect(body.auth.accessibleProjects).toBeNull(); // admin = unrestricted
   });
 
@@ -104,19 +102,6 @@ describe('authenticated plugin API routes (/plugins/:name/api/*)', () => {
     const { app, token } = await makeApp();
     const res = await app.request('/plugins/demo/api/echo?x=1&y=two', auth(token));
     expect(await res.json()).toEqual({ q: { x: '1', y: 'two' } });
-  });
-
-  // The agent service token runs with skipped permissions — it must reach ONLY a route that opted into
-  // access:'agent'. This is the plugin-surface twin of the core agent allow-list.
-  it("an agent token reaches only routes declaring access:'agent' (deny-by-default)", async () => {
-    const { app, deps } = await makeApp();
-    const admin = deps.users.list()[0]!;
-    const agentTok = deps.users.ensureAgentTokenForTask(admin.id, 'task-x');
-    expect((await app.request('/plugins/demo/api/ping', auth(agentTok))).status).toBe(403);
-    expect((await app.request('/plugins/demo/api/admin-only', auth(agentTok))).status).toBe(403);
-    const res = await app.request('/plugins/demo/api/agent-work', auth(agentTok));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ scope: 'agent', task: 'task-x' });
   });
 
   it('an admin route refuses a non-admin user and serves the admin', async () => {

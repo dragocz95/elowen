@@ -464,7 +464,9 @@ export class UserStore {
    *  captured from a log or URL stops working even when it was never explicitly revoked. */
   principalForToken(token: string, days?: number): Principal | null {
     const r = this.db
-      .prepare(`SELECT u.* FROM auth_tokens t JOIN users u ON u.id = t.user_id WHERE t.token = ? AND t.created_at > datetime('now', '-${ttlDays(days)} days')`)
+      .prepare(`SELECT u.* FROM auth_tokens t JOIN users u ON u.id = t.user_id
+        WHERE t.token = ? AND t.scope IN ('full', 'advisor', 'terminal')
+          AND t.created_at > datetime('now', '-${ttlDays(days)} days')`)
       .get(token) as Row | undefined;
     return r ? { user: mask(r), scope: 'full' } : null;
   }

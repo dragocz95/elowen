@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ProjectStore } from '../../src/store/projectStore.js';
-import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
 import { MemoryStore } from '../../src/store/memoryStore.js';
 import { openDb } from '../../src/store/db.js';

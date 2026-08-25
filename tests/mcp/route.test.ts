@@ -60,15 +60,6 @@ describe('POST /mcp auth gating', () => {
     expect(toolsBody).not.toContain('elowen_tasks');
   });
 
-  it('agent-scope service token gets 403 (not in agentAllowed)', async () => {
-    const { app, users } = makeApp();
-    const agentTok = users.ensureAgentToken(users.list()[0]!.id);
-    const res = await app.request('/mcp', {
-      method: 'POST', headers: mcpHeaders(agentTok), body: mcpInitBody(),
-    });
-    expect(res.status).toBe(403);
-  });
-
   it('missing token gets 401', async () => {
     const { app } = makeApp();
     const res = await app.request('/mcp', {

@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { UserStore } from '../../src/store/userStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
+let db: ReturnType<typeof openPluginTablesDb>;
 let users: UserStore;
-beforeEach(() => { users = new UserStore(openPluginTablesDb(':memory:')); });
+beforeEach(() => { db = openPluginTablesDb(':memory:'); users = new UserStore(db); });
 
 describe('UserStore', () => {
   it('create + verify round-trips and never exposes the hash', () => {
@@ -55,41 +56,16 @@ describe('UserStore', () => {
     store.purgeExpiredTokens(30);                             // sweep at the 30-day TTL
     expect(db.prepare('SELECT COUNT(*) c FROM auth_tokens').get()).toEqual({ c: 0 });
   });
-  it('carries a token scope and defaults to full (S51)', () => {
+  it('defaults issued tokens to full user access and rejects retired token scopes', () => {
     const u = users.create('a', 'x');
-    const full = users.issueToken(u.id);                       // default scope
-    const agent = users.issueToken(u.id, 'agent');
-    expect(users.principalForToken(full)).toEqual({ user: expect.objectContaining({ id: u.id }), scope: 'full', taskId: null });
-    expect(users.principalForToken(agent)?.scope).toBe('agent');
-  });
-  it('binds a per-task agent token to its task and keeps it apart from the shared service token', () => {
-    const u = users.create('a', 'x');
-    const shared = users.ensureAgentToken(u.id);
-    const forA = users.ensureAgentTokenForTask(u.id, 'task-a');
-    const forB = users.ensureAgentTokenForTask(u.id, 'task-b');
-    expect(new Set([shared, forA, forB]).size).toBe(3);
-    expect(users.principalForToken(forA)).toMatchObject({ scope: 'agent', taskId: 'task-a' });
-    expect(users.principalForToken(shared)?.taskId).toBeNull();
-    // Reused within TTL, so a re-spawn / daemon restart keeps the same worker credential valid.
-    expect(users.ensureAgentTokenForTask(u.id, 'task-a')).toBe(forA);
-    // A boot-time ensureAgentToken must neither return nor sweep away a live worker's bound token.
-    expect(users.ensureAgentToken(u.id)).toBe(shared);
-    users.revokeToken(shared);
-    expect(users.ensureAgentToken(u.id)).not.toBe(forA);
-    expect(users.principalForToken(forA)?.taskId).toBe('task-a');
-    expect(users.principalForToken(forB)?.taskId).toBe('task-b');
-  });
-  it('ensureAgentToken reuses an existing valid agent token across restarts, mints when absent', () => {
-    const u = users.create('a', 'x');
-    const first = users.ensureAgentToken(u.id);
-    const second = users.ensureAgentToken(u.id);
-    expect(second).toBe(first);                                 // reused — a restart keeps in-flight agents valid
-    expect(users.principalForToken(first)?.scope).toBe('agent');
-    // Once the prior token is gone, ensure mints a new (different) one.
-    users.revokeToken(first);
-    const third = users.ensureAgentToken(u.id);
-    expect(third).not.toBe(first);
-    expect(users.principalForToken(third)?.scope).toBe('agent');
+    const full = users.issueToken(u.id);
+    expect(users.principalForToken(full)).toEqual({ user: expect.objectContaining({ id: u.id }), scope: 'full' });
+
+    // Old installs may still contain credentials minted for the removed task-agent runtime. They must not
+    // become full user tokens merely because the current principal shape has only one public scope.
+    const retired = 'retired-agent-token';
+    db.prepare("INSERT INTO auth_tokens (token, user_id, scope) VALUES (?, ?, 'agent')").run(retired, u.id);
+    expect(users.principalForToken(retired)).toBeNull();
   });
   it('changePassword swaps the hash when the current password matches, rejects a wrong one', () => {
     const u = users.create('alice', 'oldpass');

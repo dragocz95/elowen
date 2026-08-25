@@ -36,20 +36,20 @@ export function ProjectFilterPills({ value, onChange, includeAll = true, variant
           type="button"
           aria-haspopup="menu"
           aria-expanded={open}
-          aria-label={t.tasks.filterProjectsAria}
+          aria-label={t.common.filterProjectsAria}
           onClick={() => setOpen((current) => !current)}
           className={`inline-flex h-9 max-w-full items-center gap-2 rounded-md border px-3 text-sm font-medium transition-[border-color,background-color,box-shadow] ${open ? 'border-accent/60 bg-accent/10 text-accent shadow-[0_0_0_3px_rgb(255_82_54_/_0.08)]' : 'border-border bg-surface text-text hover:border-border-strong hover:bg-elevated'}`}
         >
           <FolderGit2 size={13} className="shrink-0 text-accent" aria-hidden />
-          <span className="max-w-32 truncate">{selected?.slug ?? t.tasks.filterAllProjects}</span>
+          <span className="max-w-32 truncate">{selected?.slug ?? t.common.filterAllProjects}</span>
           <ChevronDown size={13} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
         </button>
         {open ? (
-          <div role="menu" aria-label={t.tasks.filterProjectsAria} className="absolute left-0 top-full z-40 mt-2 w-64 origin-top-left animate-fade-up rounded-xl border border-border bg-surface p-1.5 shadow-[var(--shadow-raised)]">
+          <div role="menu" aria-label={t.common.filterProjectsAria} className="absolute left-0 top-full z-40 mt-2 w-64 origin-top-left animate-fade-up rounded-xl border border-border bg-surface p-1.5 shadow-[var(--shadow-raised)]">
             {includeAll ? (
               <button type="button" role="menuitemradio" aria-checked={value === 'all'} onClick={() => choose('all')} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-text transition-colors hover:bg-elevated">
                 <FolderGit2 size={14} className="shrink-0 text-accent" aria-hidden />
-                <span className="min-w-0 flex-1 truncate">{t.tasks.filterAllProjects}</span>
+                <span className="min-w-0 flex-1 truncate">{t.common.filterAllProjects}</span>
                 {value === 'all' ? <Check size={15} className="shrink-0 text-accent" aria-hidden /> : null}
               </button>
             ) : null}
@@ -73,10 +73,10 @@ export function ProjectFilterPills({ value, onChange, includeAll = true, variant
   const pillClass = (on: boolean) =>
     `inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${on ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`;
   return (
-    <div role="group" aria-label={t.tasks.filterProjectsAria} className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
+    <div role="group" aria-label={t.common.filterProjectsAria} className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
       {includeAll ? (
         <button type="button" aria-pressed={value === 'all'} onClick={() => onChange('all')} className={pillClass(value === 'all')} style={{ transitionDuration: 'var(--motion-fast)' }}>
-          <FolderGit2 size={13} className="shrink-0" aria-hidden />{t.tasks.filterAllProjects}
+          <FolderGit2 size={13} className="shrink-0" aria-hidden />{t.common.filterAllProjects}
         </button>
       ) : null}
       {visible.map((p) => (

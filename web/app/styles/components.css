@@ -576,15 +576,6 @@ html[data-effects='full'] .hero-cosmos__orb::after { animation: spatial-ember-fl
 .dashboard-trunk .cosmos-fil--flow { stroke: rgb(255 154 98 / 0.7); }
 .dashboard-field--trunk .dash-beam { display: none; }
 
-/* entrance — same reduced-motion gate as the constellation block above */
-@media (prefers-reduced-motion: no-preference) {
-  .hero-cosmos--enter[data-mode='orbit'] .hero-cosmos__pod { opacity: 0; animation: cosmos-pod-in 0.75s var(--ease-out) forwards; animation-delay: calc(var(--i) * 90ms + 100ms); }
-  .hero-cosmos--enter[data-mode='orbit'] .cosmos-fil--base { stroke-dashoffset: var(--len); animation: cosmos-fil-in 0.9s var(--ease-out) forwards; animation-delay: calc(var(--i) * 90ms + 250ms); }
-  .hero-cosmos--enter[data-mode='orbit'] .cosmos-fil--flow { opacity: 0; animation: cosmos-fil-appear 0.4s linear forwards; animation-delay: calc(var(--i) * 90ms + 900ms); }
-  html[data-effects='full'] .hero-cosmos--enter[data-mode='orbit'] .cosmos-fil--flow { animation: cosmos-fil-flow 3.2s linear infinite, cosmos-fil-appear 0.4s linear forwards; animation-delay: calc(var(--i) * -0.9s), calc(var(--i) * 90ms + 900ms); }
-  .hero-cosmos--enter[data-mode='stack'] .hero-cosmos__pod { opacity: 0; animation: cosmos-pod-in-stack 0.55s var(--ease-out) forwards; animation-delay: calc(var(--i) * 70ms); }
-}
-
 /* ══════ Command field (chat telemetry mascot) ══════
    The owl as the core of an orbital field of slash-command pods, opened as an overlay from the
    telemetry rail (which is far too narrow to hold an orbit). Same filament classes and entrance

@@ -93,9 +93,8 @@ export function railSpacing(count: number, stageHeight: number): number {
   return Math.min(SPACING, Math.max(MIN_SPACING, (stageHeight - NODE_HEADROOM) / (count - 1)));
 }
 
-/** How far the axis may travel in each direction. Zero means every destination already fits, and the
- *  rail must not move at all — an axis that drifts when there is nothing to reach reads as broken. */
-export function railScrollRange(count: number, spacing: number, stageHeight: number): number {
+/** How far the axis may travel in each direction. */
+function railScrollRange(count: number, spacing: number, stageHeight: number): number {
   if (stageHeight <= 0 || count < 2) return 0;
   const span = (count - 1) * spacing + NODE_HEADROOM;
   return Math.max(0, (span - stageHeight) / 2);

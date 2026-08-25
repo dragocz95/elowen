@@ -8,7 +8,6 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { UserPromptStore } from '../../src/store/userPromptStore.js';
-import { rawTemplate } from '../../src/prompts/index.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 function setup() {
@@ -32,13 +31,13 @@ const put = (t: string, body: unknown) => ({ method: 'PUT', headers: { authoriza
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 
 describe('GET /auth/me/prompts', () => {
-  it('returns every editable template with its default and null override', async () => {
+  it('returns every editable template without exposing append-only system prompts', async () => {
     const { app, adminTok } = setup();
     const res = await app.request('/auth/me/prompts', auth(adminTok));
     expect(res.status).toBe(200);
     const body = await res.json() as { name: string; default: string; override: string | null; jsonContract: boolean }[];
     const worker = body.find((p) => p.name === 'scheduled')!;
-    expect(worker.default).toBe(rawTemplate('scheduled'));
+    expect(worker.default).toBe('');
     expect(worker.override).toBeNull();
     expect(body.some((p) => p.name === 'worker-brain')).toBe(false);
     expect(body.some((p) => p.name === 'planner')).toBe(false);

@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { useSpawn, useAssignProject, useSavePluginConfig, useTogglePlugin, useSetTaskStatus, useResetUsage, useWriteProjectFile } from '../../lib/mutations';
-import type { Task } from '../../lib/types';
+import { useAssignProject, useSavePluginConfig, useTogglePlugin, useResetUsage, useWriteProjectFile } from '../../lib/mutations';
 
 let lastAssignCall: { method: string; userId: string; projectId?: string } | null = null;
 const server = setupServer(
-  http.post('*/api/sessions', () => HttpResponse.json({ session: 'elowen-A' }, { status: 201 })),
   http.post('*/api/users/:userId/projects', async ({ params, request }) => {
     const body = (await request.json()) as { projectId: number };
     lastAssignCall = { method: 'POST', userId: String(params.userId), projectId: String(body.projectId) };
@@ -21,45 +19,10 @@ const server = setupServer(
   }),
   http.patch('*/api/plugins/:name/config', () => HttpResponse.json({ ok: true })),
   http.patch('*/api/plugins/:name', () => HttpResponse.json({ name: 'dev-commands', enabled: false })),
-  http.patch('*/api/tasks/:id', async ({ params, request }) => {
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    const patch = (await request.json()) as Partial<Task>;
-    return HttpResponse.json({ id: String(params.id), title: 'Task', status: 'open', ...patch });
-  }),
   http.post('*/api/usage/reset', () => HttpResponse.json({ ok: true })),
   http.put('*/api/projects/:id/file', () => HttpResponse.json({ ok: true })),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
-
-describe('useSpawn', () => {
-  it('invalidates tasks + sessions on success', async () => {
-    const client = new QueryClient();
-    const spy = vi.spyOn(client, 'invalidateQueries');
-    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-    const { result } = renderHook(() => useSpawn(), { wrapper });
-    result.current.mutate({ taskId: 'elowen-1', exec: 'sonnet' });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(spy).toHaveBeenCalledWith({ queryKey: ['sessions'] });
-    expect(spy).toHaveBeenCalledWith({ queryKey: ['tasks'] });
-  });
-});
-
-describe('task mutations', () => {
-  it('updates every scoped task cache optimistically', async () => {
-    const client = new QueryClient();
-    const task: Task = { id: 'task-1', title: 'Task', status: 'open', project_id: 7 };
-    client.setQueryData(['tasks'], [task]);
-    client.setQueryData(['tasks', 7], [task]);
-    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-    const { result } = renderHook(() => useSetTaskStatus(), { wrapper });
-
-    act(() => result.current.mutate({ id: task.id, status: 'in_progress' }));
-
-    await waitFor(() => expect(client.getQueryData<Task[]>(['tasks'])?.[0]?.status).toBe('in_progress'));
-    expect(client.getQueryData<Task[]>(['tasks', 7])?.[0]?.status).toBe('in_progress');
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-  });
-});
 
 describe('plugin mutations re-pull the slash menu', () => {
   // A plugin's config (e.g. dev-commands' enabled set) or on/off state changes which slash commands the
@@ -111,9 +74,7 @@ describe('useAssignProject', () => {
 });
 
 describe('useResetUsage', () => {
-  // Stats reads usage-by-model, the dashboard's daily chart reads usage-by-day, and open task badges
-  // read task-usage — a reset that invalidates only the first leaves the other two on stale numbers.
-  it('invalidates the by-model, by-day and task-usage caches', async () => {
+  it('invalidates the by-model and by-day caches', async () => {
     const client = new QueryClient();
     const spy = vi.spyOn(client, 'invalidateQueries');
     const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -122,7 +83,6 @@ describe('useResetUsage', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(spy).toHaveBeenCalledWith({ queryKey: ['usage-by-model'] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ['usage-by-day'] });
-    expect(spy).toHaveBeenCalledWith({ queryKey: ['task-usage'] });
   });
 });
 
