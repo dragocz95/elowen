@@ -50,34 +50,53 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
   const modeLabel = state.mode === 'confined' ? s.modeConfined : state.mode === 'direct' ? s.modeDirect : s.modeUnavailable;
   const ModeIcon = state.mode === 'unavailable' ? ShieldX : ShieldCheck;
 
+  const facts: [string, string][] = [
+    [s.homeSize, `${formatBytes(state.home.bytes)}${state.home.truncated ? '+' : ''}`],
+    [s.homeGeneration, String(state.home.generation)],
+    [s.processes, String(state.home.activeProcesses)],
+  ];
+
+  // A dialog is a form, not a page: settings CARDS inside one repeat the frame it already draws and
+  // stack their own headings under its title. So this is the shape the other dialogs use — an identity
+  // block, then plain fields, with the actions in the footer.
   const document = (
-    <C.SettingsDocument>
-      <C.SettingsGroup title={s.mode} description={s.environmentHint}>
-        <C.SettingsRow label={s.mode} hint={state.mode === 'confined' ? s.networkCaveat : undefined}>
-          <C.Badge tone={state.mode === 'unavailable' ? 'danger' : state.mode === 'confined' ? 'success' : 'accent'}><ModeIcon size={12} className="mr-1" aria-hidden />{modeLabel}</C.Badge>
-        </C.SettingsRow>
-        <C.SettingsRow label={s.probe} hint={state.probe.reason ?? undefined}>
-          <C.Badge tone={state.probe.available ? 'success' : 'danger'}>{state.probe.available ? s.probeReady : s.probeFailed}</C.Badge>
-        </C.SettingsRow>
-        {state.mode === 'confined' ? <C.SettingsRow label={s.networkCaveat}><Network size={18} className="text-text-muted" aria-hidden /></C.SettingsRow> : null}
-      </C.SettingsGroup>
+    <>
+      <div className="flex items-center gap-3 rounded-lg border border-border bg-elevated/40 p-3">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-bg">
+          <ModeIcon size={20} className={state.mode === 'unavailable' ? 'text-danger' : 'text-accent'} aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-text">{modeLabel}</div>
+          <div className="truncate font-mono text-xs text-text-muted" title={state.home.path}>{state.home.path}</div>
+        </div>
+        <C.Badge tone={state.probe.available ? 'success' : 'danger'}>{state.probe.available ? s.probeReady : s.probeFailed}</C.Badge>
+      </div>
 
-      <C.SettingsGroup title={s.home} description={state.home.path}>
-        <C.SettingsRow label={s.homeSize}><span className="font-mono text-sm text-text">{formatBytes(state.home.bytes)}{state.home.truncated ? '+' : ''}</span></C.SettingsRow>
-        <C.SettingsRow label={s.homeGeneration}><span className="font-mono text-sm text-text">{state.home.generation}</span></C.SettingsRow>
-        <C.SettingsRow label={s.processes}><span className="font-mono text-sm text-text">{state.home.activeProcesses}</span></C.SettingsRow>
-      </C.SettingsGroup>
+      {state.probe.reason ? <p className="text-xs leading-relaxed text-text-muted">{state.probe.reason}</p> : null}
+      {state.mode === 'confined' ? (
+        <p className="flex items-start gap-2 text-xs leading-relaxed text-text-muted">
+          <Network size={13} className="mt-0.5 shrink-0" aria-hidden />{s.networkCaveat}
+        </p>
+      ) : null}
 
-      <C.SettingsGroup title={s.gitAuthor}>
-        <C.SettingsRow label={s.authorName}><C.Input value={author.name} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setAuthor({ ...author, name: event.target.value })} /></C.SettingsRow>
-        <C.SettingsRow label={s.authorEmail}><C.Input type="email" value={author.email} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setAuthor({ ...author, email: event.target.value })} /></C.SettingsRow>
-        <div className="flex justify-end p-4 pt-0"><C.Button variant="accent" disabled={saveAuthor.isPending || !author.name.trim() || !author.email.trim()} onClick={() => saveAuthor.mutate(author)}>{s.saveAuthor}</C.Button></div>
-      </C.SettingsGroup>
+      <C.Field label={s.home}>
+        <div className="grid grid-cols-3 gap-2">
+          {facts.map(([label, value]) => (
+            <div key={label} className="min-w-0 rounded-md border border-border bg-bg px-3 py-2">
+              <div className="truncate font-mono text-sm text-text" title={value}>{value}</div>
+              <div className="truncate text-[11px] text-text-muted" title={label}>{label}</div>
+            </div>
+          ))}
+        </div>
+      </C.Field>
 
-      <C.SettingsGroup title={s.resetHome} description={s.resetWarning}>
-        <div className="flex justify-end p-4"><C.Button variant="danger" disabled={previewReset.isPending || state.home.activeProcesses > 0} onClick={() => previewReset.mutate({})}>{s.resetHome}</C.Button></div>
-      </C.SettingsGroup>
-    </C.SettingsDocument>
+      <C.Field label={s.authorName}>
+        <C.Input value={author.name} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setAuthor({ ...author, name: event.target.value })} />
+      </C.Field>
+      <C.Field label={s.authorEmail}>
+        <C.Input type="email" value={author.email} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setAuthor({ ...author, email: event.target.value })} />
+      </C.Field>
+    </>
   );
 
   // In the user drawer this is ONE row among the account's other summaries, not a page: it reads as the
@@ -97,6 +116,26 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
     {settingsOpen ? (
       <C.Modal title={s.environmentTitle} description={s.environmentHint} icon={Boxes} size="md" onClose={() => setSettingsOpen(false)}>
         <C.ModalBody>{document}</C.ModalBody>
+        {/* Destructive left, primary right — the footer's own split, so neither needs a card to sit in. */}
+        <C.ModalFooter status={(
+          <C.Button
+            variant="ghost-danger"
+            disabled={previewReset.isPending || state.home.activeProcesses > 0}
+            title={state.home.activeProcesses > 0 ? s.error_home_in_use : undefined}
+            onClick={() => previewReset.mutate({})}
+          >
+            {s.resetHome}
+          </C.Button>
+        )}>
+          <C.Button variant="ghost" onClick={() => setSettingsOpen(false)}>{s.cancel}</C.Button>
+          <C.Button
+            variant="accent"
+            disabled={saveAuthor.isPending || !author.name.trim() || !author.email.trim()}
+            onClick={() => saveAuthor.mutate(author)}
+          >
+            {s.saveAuthor}
+          </C.Button>
+        </C.ModalFooter>
       </C.Modal>
     ) : null}
     {resetPreview ? (
