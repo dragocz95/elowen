@@ -1,24 +1,13 @@
-// Terminal plugin: shell commands with the working directory confined to the caller's accessible
-// repos (cwd guarded via ctx.assertPathAllowed). Long-running work goes to the background: a process
-// registry keeps spawned children + their rolling output, and the
-// list/read/kill tools manage them.
+// Terminal plugin: Bash plus foreground/background process lifecycle. Filesystem authority, account HOME,
+// workspace selection and confinement belong to the live Sandbox control. Terminal resolves that control
+// for every launch so plugin reloads apply immediately and no stale security generation is retained.
 //
-// The plugin is `userGrantable` and carries NO gate of its own: an account reaches the shell only when an
-// administrator granted it (or is an administrator), which is the same decision, made in one place, that
-// governs every other tool.
-//
-// cwd guarding alone does NOT contain a shell — the command reads and writes any absolute path once it is
-// running. For a NON-ADMIN that gap is closed by sandbox.mjs, which runs the command inside a mount
-// namespace holding only that account's own projects, so the shell and the file tools enforce the same
-// boundary. An ADMIN shell stays bare on purpose: an admin already has all-access file tools and can edit
-// the daemon's own source, so confining their shell buys nothing and breaks operator work.
+// The plugin is `userGrantable` and carries no grant gate of its own: the host's per-account tool policy
+// decides who may reach Bash and the process tools.
 import { defineTool, truncateTail, formatSize, createLocalBashOperations } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { sandboxRun, sandboxAvailable } from './sandbox.mjs';
 
 const DEFAULT_MAX = 60_000;              // output cap per foreground run / background buffer
 const DEFAULT_TIMEOUT_MS = 120_000;      // foreground runs get killed after this
@@ -59,34 +48,49 @@ const newProcessId = () => `${Date.now().toString(36)}${Math.random().toString(3
 // processes stay on our own spawn (BgProcess) — PI has no live, re-readable, kill-by-id registry.
 const bashOps = createLocalBashOperations();
 
+const startLeaseHeartbeat = (lease) => {
+  const timer = setInterval(() => { void lease.heartbeat(); }, 5_000);
+  timer.unref?.();
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    clearInterval(timer);
+    await lease.release();
+  };
+};
+
 /** One background child: rolling output buffer + exit state, addressable by a short id. */
 class BgProcess {
-  constructor(id, command, cwd, outputCap, onClose, launch) {
+  constructor(id, command, cwd, outputCap, onClose, prepared) {
     this.id = id;
-    // What the caller asked for — shown in listings and cards. `launch` is what is actually spawned, which
-    // for a sandboxed account is the bwrap invocation wrapping it. They must stay separate: the model and
-    // the process card should read the command as written, not the wrapper.
     this.command = command;
     this.cwd = cwd;
     this.output = '';
     this.readOffset = 0;
     this.exitCode = null;
     this.startedAt = new Date().toISOString();
-    // `detached: true` puts the child shell in its OWN process group (pgid == its pid) instead of the
-    // daemon's. Without it, `shell: true` runs `/bin/sh -c "<cmd>"` and kill() would only reap the shell —
-    // any grandchild (e.g. the `sleep`/dev-server the shell forked) is orphaned to init and keeps running.
-    // With its own group we can signal the whole tree via `process.kill(-pid)` in kill().
-    this.child = spawn(launch.command, { cwd, shell: true, env: launch.env, detached: true });
-    // Streaming UTF-8 decoders: a multibyte character delivered across two `data` events is held until
-    // complete, so the rolling buffer never contains a U+FFFD from a chunk boundary (a plain per-chunk
-    // `d.toString()` would corrupt it). stdout and stderr are TWO independent pipes that interleave at
-    // arbitrary byte boundaries, so each gets its OWN decoder — sharing one would let a stderr chunk be
-    // fed to the decoder mid-way through an unfinished stdout character and mangle it (and vice versa).
+    this.workspaceId = prepared.workspace?.workspaceId ?? null;
+    this.homeGeneration = prepared.lease.homeGeneration;
+    const launch = prepared.launch;
+    if (launch.type !== 'shell') {
+      void prepared.lease.release();
+      throw new Error('Sandbox returned an unsupported launch type for Bash');
+    }
+    this.releaseLease = startLeaseHeartbeat(prepared.lease);
+    try {
+      // `detached: true` puts the child shell in its own process group, so kill() reaps the shell and all
+      // descendants rather than orphaning a dev server or watcher.
+      this.child = spawn(launch.command, { cwd, shell: true, env: launch.env, detached: true });
+    } catch (error) {
+      void this.releaseLease();
+      throw error;
+    }
     this.stdoutDecoder = new StringDecoder('utf8');
     this.stderrDecoder = new StringDecoder('utf8');
     const onData = (decoder) => (d) => {
       this.output += decoder.write(d);
-      if (this.output.length > outputCap) { // keep the tail; new-output reads follow the trim
+      if (this.output.length > outputCap) {
         const drop = this.output.length - outputCap;
         this.output = this.output.slice(drop);
         this.readOffset = Math.max(0, this.readOffset - drop);
@@ -94,29 +98,31 @@ class BgProcess {
     };
     this.child.stdout.on('data', onData(this.stdoutDecoder));
     this.child.stderr.on('data', onData(this.stderrDecoder));
-    // Flush any bytes either decoder was holding for a trailing partial character before the state flips.
-    this.child.on('close', (code) => { this.output += this.stdoutDecoder.end() + this.stderrDecoder.end(); this.exitCode = code ?? -1; onClose?.(); });
-    this.child.on('error', (e) => { this.output += `\n[spawn error: ${e.message}]`; this.exitCode = -1; onClose?.(); });
+    let settled = false;
+    const finish = (code, error) => {
+      if (settled) return;
+      settled = true;
+      this.output += this.stdoutDecoder.end() + this.stderrDecoder.end();
+      if (error) this.output += `\n[spawn error: ${error.message}]`;
+      this.exitCode = code ?? -1;
+      void this.releaseLease().finally(() => onClose?.());
+    };
+    this.child.on('close', (code) => finish(code));
+    this.child.on('error', (error) => finish(-1, error));
   }
   get running() { return this.exitCode === null; }
-  // Kill the whole process group (negative pid) so the shell AND anything it forked die together; fall
-  // back to a plain child kill if the group signal fails (e.g. the child already exited).
   kill() {
     try { process.kill(-this.child.pid, 'SIGKILL'); }
     catch { try { this.child.kill('SIGKILL'); } catch { /* already gone */ } }
   }
 }
 
-/** One FOREGROUND Bash run that Ctrl+B can detach into a background job. It wraps PI's exec (for the
- *  same tree-kill + pipe handling the old plain path had) but owns its OWN AbortController and deadline
- *  timer instead of PI's built-in timeout — that ownership is what lets a detach cancel the deadline and
- *  leave the process running. Its field shape matches BgProcess so `handleFor` registers it unchanged;
- *  on detach the plugin flips the handle's completionMode to 'job' and it becomes an ordinary process. */
+/** One foreground Bash run that Ctrl+B can detach into a background job. The durable Sandbox lease stays
+ * attached to the actual process promise, not to the Bash tool call, so detaching never releases it early. */
 class ForegroundRun {
-  constructor(id, command, cwd, outputCap, timeoutMs, launch) {
+  constructor(id, command, cwd, outputCap, timeoutMs, prepared) {
     this.id = id;
-    this.command = command;   // as written by the caller; `launch` is what actually runs (see BgProcess)
-    this.launch = launch;
+    this.command = command;
     this.cwd = cwd;
     this.startedAt = new Date().toISOString();
     this.output = '';
@@ -128,35 +134,33 @@ class ForegroundRun {
     this.timedOut = false;
     this.spawnError = null;
     this.controller = new AbortController();
-    // NOTE: PI's exec funnels BOTH stdout and stderr into one `onData`, so — unlike BgProcess where we own
-    // the pipes — we keep a single decoder; a multibyte char split exactly across a stdout/stderr boundary
-    // is an unavoidable PI-level edge (rare, merged stream).
+    this.workspaceId = prepared.workspace?.workspaceId ?? null;
+    this.homeGeneration = prepared.lease.homeGeneration;
+    if (prepared.launch.type !== 'shell') {
+      void prepared.lease.release();
+      throw new Error('Sandbox returned an unsupported launch type for Bash');
+    }
+    this.launch = prepared.launch;
+    this.releaseLease = startLeaseHeartbeat(prepared.lease);
     this._decoder = new StringDecoder('utf8');
     this._timer = null;
     this._resolveDetached = null;
     this.detachedPromise = new Promise((resolve) => { this._resolveDetached = resolve; });
   }
   get running() { return this.exitCode === null; }
-  /** Move to the background: resolve the race and drop the deadline (parity with background=true, which
-   *  has no time limit). The process is NOT signalled — it keeps running as a detached job. Idempotent. */
   detach() {
     if (this.detached) return;
     this.detached = true;
     if (this._timer) { clearTimeout(this._timer); this._timer = null; }
     this._resolveDetached();
   }
-  /** Registry kill / session delete: cancel via the same signal PI wires to killProcessTree. */
   kill() {
     if (this._timer) { clearTimeout(this._timer); this._timer = null; }
     this.controller.abort();
   }
-  /** Run to completion or abort. Appends to the rolling buffer (bounded, cursor-adjusted on trim like
-   *  BgProcess) and sets exitCode/timedOut/spawnError; the caller reads those fields once it settles.
-   *  Never rejects — every failure mode is captured into state. */
   async run(onProgress) {
     let lastEmit = 0;
     const emitProgress = () => {
-      // Stop pushing once detached: the tool's onUpdate sink belongs to a turn that has already moved on.
       if (!onProgress || this.detached) return;
       const now = Date.now();
       if (now - lastEmit < PROGRESS_THROTTLE_MS) return;
@@ -165,27 +169,23 @@ class ForegroundRun {
     };
     const onData = (d) => {
       this.output += this._decoder.write(d);
-      if (this.output.length > this.outputCap * 2) { // keep the tail; new-output reads follow the trim
+      if (this.output.length > this.outputCap * 2) {
         const drop = this.output.length - this.outputCap * 2;
         this.output = this.output.slice(drop);
         this.readOffset = Math.max(0, this.readOffset - drop);
       }
       emitProgress();
     };
-    // Plugin-owned deadline (PI's own timer is disarmed with timeout: undefined so we can cancel it on
-    // detach). Firing it aborts the tree via the signal PI wired to killProcessTree — same effect PI's
-    // built-in timeout had.
     this._timer = setTimeout(() => { this.timedOut = true; this.controller.abort(); }, this.timeoutMs);
     try {
       const res = await bashOps.exec(this.launch.command, this.cwd, { onData, env: this.launch.env, signal: this.controller.signal, timeout: undefined });
       this.exitCode = res.exitCode;
-    } catch (e) {
-      // An abort (deadline OR registry kill) surfaces as a throw; exitCode stays null so the run reads as
-      // killed. Any other throw (missing cwd, shell-spawn failure) is a real error the caller reports bare.
-      if (!this.controller.signal.aborted) this.spawnError = e instanceof Error ? e.message : String(e);
+    } catch (error) {
+      if (!this.controller.signal.aborted) this.spawnError = error instanceof Error ? error.message : String(error);
     } finally {
       if (this._timer) { clearTimeout(this._timer); this._timer = null; }
-      this.output += this._decoder.end(); // flush any bytes held for a trailing partial character
+      this.output += this._decoder.end();
+      await this.releaseLease();
     }
   }
 }
@@ -273,35 +273,22 @@ export function register(ctx) {
   // re-established every run — an explicit `cwd` from one call never carries into the next.
   const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? ctx.defaultCwd());
 
-  const sandboxEnabled = ctx.config.sandboxNonAdmins !== false;
-
-  /** Decide how a command is actually launched. Admins run bare; everyone else runs confined to their own
-   *  projects. The admin test is `isAdminSession()` and never "has no roots": allowedRoots() is empty for
-   *  an admin AND for a non-admin with no project assigned, so treating an empty list as admin would hand
-   *  the unconfined host to exactly the account with the least access. */
-  const prepareLaunch = (command, cwd) => {
-    if (!sandboxEnabled || ctx.isAdminSession()) return { command, env: process.env };
-    // Fail closed. The sandbox depends on a distro-provided AppArmor profile for unprivileged bubblewrap;
-    // if that ever goes away the shell must break loudly rather than quietly run unconfined.
-    if (!sandboxAvailable()) {
-      throw new Error('the shell is unavailable: this host cannot sandbox commands (bubblewrap is missing), and running unconfined is not permitted for a non-administrator');
+  /** Resolve the live Sandbox owner for every command. A disabled/missing owner never becomes an implicit
+   * host-shell grant: only a true instance operator gets the explicit compatibility fallback. */
+  const prepareLaunch = async (command, cwd) => {
+    const sandbox = ctx.control('sandbox');
+    if (sandbox) return sandbox.prepareExecution({ command: { type: 'shell', command }, cwd, leaseKind: 'terminal' });
+    if (ctx.currentAccess().owner !== true) {
+      throw new Error('the shell is unavailable because the Sandbox plugin is disabled or failed to load; non-operator commands cannot run directly on the host');
     }
-    return sandboxRun({
-      command,
-      cwd,
-      roots: ctx.allowedRoots(),
-      dataDir: ctx.dataDir(),
-      userId: currentAccountUserId(),
-      sessionId: currentSessionId(),
-    });
+    const home = process.env.HOME || '/';
+    const env = Object.fromEntries(Object.entries(process.env).filter((entry) => typeof entry[1] === 'string'));
+    env.HOME = home;
+    return {
+      mode: 'direct', cwd, home, roots: ctx.allowedRoots(), launch: { type: 'shell', command, env }, workspace: null,
+      lease: { id: `terminal-direct-${Date.now()}`, accountUserId: currentAccountUserId(), workspaceId: null, homeGeneration: null, heartbeat() {}, release() {} },
+    };
   };
-
-  // The sandbox keeps a writable HOME per account (npm cache, .gitconfig). It is per-account state, so it
-  // has to go when the account does — otherwise a deleted user's caches and credentials sit there forever.
-  // A session-keyed home has no account to hang off and is left to the data dir's own lifecycle.
-  ctx.registerUserRemoved?.((userId) => {
-    rmSync(join(ctx.dataDir(), 'sandbox-home', `user-${userId}`), { recursive: true, force: true });
-  });
 
   ctx.registerTool(defineTool({
     name: 'Bash', label: 'Run command',
@@ -342,7 +329,7 @@ export function register(ctx) {
           // that don't stream (background path never uses it — it has ProcessOutput instead).
           const onProgress = onUpdate ? (text) => onUpdate(ok(text)) : undefined;
           const id = newProcessId();
-          const run = new ForegroundRun(id, p.command, cwd, outputCap, timeoutMs, prepareLaunch(p.command, cwd));
+          const run = new ForegroundRun(id, p.command, cwd, outputCap, timeoutMs, await prepareLaunch(p.command, cwd));
           // Register the run as `foreground` so Ctrl+B (which reads the live process list) can detach it,
           // and so a detach flips the SAME handle to `job` — an ordinary background process from then on,
           // with no further special-casing. A sessionless (worker/cron) run stays plain and non-detachable:
@@ -351,7 +338,7 @@ export function register(ctx) {
           const foregroundAccountUserId = currentAccountUserId();
           let handle = null;
           if (fgSession) {
-            handle = handleFor(id, run, foregroundAccountUserId, fgSession, 'foreground');
+            handle = handleFor(id, run, foregroundAccountUserId, fgSession, 'foreground', run.workspaceId, run.homeGeneration);
             ctx.processes.register(handle);
             // The principal is the contribution account actually running the turn — a delegated child has
             // no account identity of its own but still belongs to its delegator.
@@ -405,8 +392,8 @@ export function register(ctx) {
         // The operator who started it (+ the session they started it in) → wake THAT conversation when it
         // exits (markExited on close). Field is `elowenUserId` (was mis-typed as the pre-rebrand `orcaUserId`,
         // which is undefined → the wake never fired).
-        const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId, accountUserId); ctx.processes.markExited(id); }, prepareLaunch(p.command, cwd));
-        ctx.processes.register(handleFor(id, bg, accountUserId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job'));
+        const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId, accountUserId); ctx.processes.markExited(id); }, await prepareLaunch(p.command, cwd));
+        ctx.processes.register(handleFor(id, bg, accountUserId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job', bg.workspaceId, bg.homeGeneration));
         emitProcCard();
         return ok(`Started background process ${id}: ${p.command}\n(cwd: ${cwd})\nUse ProcessOutput("${id}") to check on it.`);
       } catch (e) { return fail(e); }

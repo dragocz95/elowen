@@ -95,6 +95,13 @@ export async function ensureTerminalStreaming(r: Runner, platform = process.plat
   await must(r, 'bash', ['-lc', `cd '${pkgRoot}' && npm install --no-save --no-audit --no-fund node-pty@1.0.0`]);
 }
 
+/** Provision the Linux namespace launcher used by the bundled Sandbox plugin. Runtime readiness still runs
+ * a real namespace probe because package presence alone cannot prove the host policy permits it. */
+export async function ensureSandboxSupport(r: Runner, platform = process.platform): Promise<void> {
+  if (platform === 'darwin' || await r.which('bwrap')) return;
+  await aptInstall(r, 'bubblewrap');
+}
+
 /** Write + bootstrap the three launchd LaunchAgents (daemon, web, hourly update) in the invoking
  *  user's gui domain — the macOS counterpart of provisionSystemd. Idempotent: a stale bootstrap from a
  *  previous run is booted out first, so a re-install replaces rather than fails. Returns the plists it
@@ -219,6 +226,10 @@ async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> 
     const { cmd, args } = installCommand(agentCli(id));
     await step(`Installing ${id}`, () => must(r, cmd, args));
   }
+
+  // The bundled Sandbox is the security boundary for every non-operator shell on Linux. Installation is
+  // required here; readiness separately proves the host kernel/profile can actually create a namespace.
+  await step('Installing Sandbox isolation', () => ensureSandboxSupport(r));
 
   // Provision node-pty before the daemon boots, so it can load it on the first terminal WS. Non-fatal:
   // the daemon falls back to the snapshot mirror if this fails.

@@ -163,6 +163,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const canonicalPublicWebUrl = trustedPublicWebUrl(webBaseUrl());
   const config = new ConfigStore(db);
   if (opts.migrate !== false) config.migrateRetiredPluginConfig();
+  // Sandbox now owns Terminal's account HOME and confinement setting. Existing installs that had Terminal
+  // enabled receive the bundled owner first, while the legacy key remains stored for rollback only.
+  if (opts.migrate !== false) config.migrateSandboxPlugin();
   // One-shot copy of the core `lspEnabled` toggle into plugins.config.lsp + auto-enable of the
   // extracted `lsp` plugin for pre-existing installs (lossless — lspEnabled keeps its value for
   // rollback). The plugin's own service seeds its manager from that slice at start.

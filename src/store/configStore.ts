@@ -681,7 +681,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   // enabled by default: they are not on disk until someone asks for them.
   plugins: {
     enabled: [
-      'files', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs',
+      'files', 'sandbox', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs',
       'statusline', 'mcp',
     ],
     removed: [],
@@ -721,6 +721,8 @@ interface Stored {
   lspPluginMigrated: boolean;
   /** One-shot upgrade marker for the extracted project editor plugin. */
   editorPluginMigrated: boolean;
+  /** One-shot handoff from Terminal's legacy isolation setting to the bundled Sandbox owner. */
+  sandboxPluginMigrated: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
   brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
@@ -775,6 +777,7 @@ const defaultStored = (): Stored => ({
   // A fresh row already enables `lsp` and needs no toggle copy: the plugin's own default (on) applies.
   lspPluginMigrated: true,
   editorPluginMigrated: true,
+  sandboxPluginMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, remoteCompactionEnabled: DEFAULT_CONFIG.runtime.remoteCompactionEnabled, providerRequestCaptureEnabled: DEFAULT_CONFIG.runtime.providerRequestCaptureEnabled, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
@@ -857,6 +860,7 @@ export class ConfigStore {
         plugins: sanitizePlugins(p.plugins, legacyEmptyPlugins()),
         lspPluginMigrated: p.lspPluginMigrated === true,
         editorPluginMigrated: p.editorPluginMigrated === true,
+        sandboxPluginMigrated: p.sandboxPluginMigrated === true,
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
@@ -1015,6 +1019,37 @@ export class ConfigStore {
     this.write({ ...cur, plugins: { ...cur.plugins, enabled }, editorPluginMigrated: true });
   }
 
+  /** Transfer Terminal's legacy isolation ownership to Sandbox exactly once. The old Terminal key remains
+   * stored for one rollback release, but current Terminal code never reads it. An existing Sandbox value
+   * wins, and installations that did not enable Terminal gain no new shell capability. */
+  migrateSandboxPlugin(): void {
+    if (!this.hasSettings()) return;
+    const cur = this.read();
+    if (cur.sandboxPluginMigrated) return;
+    if (!cur.plugins.enabled.includes('terminal')) {
+      this.write({ ...cur, sandboxPluginMigrated: true });
+      return;
+    }
+    const enabledWithoutSandbox = cur.plugins.enabled.filter((name) => name !== 'sandbox');
+    const terminalAt = enabledWithoutSandbox.indexOf('terminal');
+    const enabled = [...enabledWithoutSandbox];
+    enabled.splice(terminalAt < 0 ? enabled.length : terminalAt, 0, 'sandbox');
+    const sandboxConfig = { ...cur.plugins.config['sandbox'] };
+    const legacy = cur.plugins.config['terminal']?.['sandboxNonAdmins'];
+    if (sandboxConfig['confineNonOperators'] === undefined && typeof legacy === 'boolean') {
+      sandboxConfig['confineNonOperators'] = legacy;
+    }
+    this.write({
+      ...cur,
+      plugins: {
+        enabled,
+        removed: cur.plugins.removed.filter((name) => name !== 'sandbox'),
+        config: { ...cur.plugins.config, sandbox: sandboxConfig },
+      },
+      sandboxPluginMigrated: true,
+    });
+  }
+
   update(patch: ConfigPatch): ElowenConfig {
     const cur = this.read();
     // The default exec must resolve to a real program — mirror the API's allowedExecs guard so an admin
@@ -1055,6 +1090,7 @@ export class ConfigStore {
       }, cur.plugins),
       lspPluginMigrated: cur.lspPluginMigrated,
       editorPluginMigrated: cur.editorPluginMigrated,
+      sandboxPluginMigrated: cur.sandboxPluginMigrated,
       brain: {
         providers: patch.brain?.providers !== undefined
           ? sanitizeBrainProviders(patch.brain.providers).map((p) => ({

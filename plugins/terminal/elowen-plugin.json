@@ -1,8 +1,8 @@
 {
   "name": "terminal",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "apiVersion": "1",
-  "description": "Shell commands (foreground or background) with the working directory confined to accessible repositories. Background processes are managed with list/read/kill tools. With the sandbox on, a non-administrator's commands run inside a mount namespace holding only that account's own projects, so the shell respects the same boundary as the file tools. An administrator's shell is never confined.",
+  "description": "Shell commands with foreground/background process lifecycle. Filesystem authority, account HOME, workspaces and confinement are resolved live from the Sandbox control; a missing owner fails closed except for an explicit instance-operator host fallback.",
   "entry": "index.mjs",
   "userGrantable": true,
   "provides": {
@@ -28,19 +28,6 @@
     "ProcessOutput"
   ],
   "configSchema": [
-    {
-      "key": "sec_isolation",
-      "label": "Isolation",
-      "type": "section",
-      "hint": "How commands from non-administrator accounts are contained."
-    },
-    {
-      "key": "sandboxNonAdmins",
-      "label": "Sandbox non-administrator commands",
-      "type": "boolean",
-      "default": true,
-      "hint": "Run a non-administrator's shell commands inside a mount namespace containing only the projects assigned to that account, so the shell cannot read or write the rest of the machine. Privilege escalation is blocked as well: setuid binaries stop conferring rights, so sudo is refused. The toolchain, the network and the account's own projects stay fully available. An administrator's shell is never sandboxed. Requires bubblewrap on the host; without it a non-administrator's shell is refused rather than run unconfined."
-    },
     {
       "key": "sec_limits",
       "label": "Limits",
@@ -78,7 +65,12 @@
       "step": 1,
       "placeholder": "16",
       "default": 16,
-      "hint": "How many background processes one session may keep running at once; starting another is refused until one is killed. Range 1-64, default 16."
+      "hint": "How many background processes one session and account may keep running at once; starting another is refused until one is killed. Range 1-64, default 16."
     }
-  ]
+  ],
+  "capabilities": {
+    "reads": [
+      "controls"
+    ]
+  }
 }

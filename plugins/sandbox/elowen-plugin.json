@@ -1,0 +1,175 @@
+{
+  "name": "sandbox",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Account-scoped execution environment: persistent HOME, bubblewrap confinement, Git worktree workspaces, durable process leases, explicit-path commits and safe cleanup.",
+  "entry": "index.mjs",
+  "provides": {
+    "tools": [
+      "SandboxListWorkspaces",
+      "SandboxCreateWorkspace",
+      "SandboxUseWorkspace",
+      "SandboxCommit",
+      "SandboxRemoveWorkspace"
+    ],
+    "apiRoutes": [
+      "overview",
+      "workspaces/create",
+      "workspaces/use",
+      "workspaces/commit",
+      "workspaces/diff",
+      "workspaces/remove-preview",
+      "workspaces/remove",
+      "environment",
+      "environment/author",
+      "environment/reset-preview",
+      "environment/reset"
+    ]
+  },
+  "icons": {
+    "SandboxListWorkspaces": "🧰",
+    "SandboxCreateWorkspace": "🌿",
+    "SandboxUseWorkspace": "📍",
+    "SandboxCommit": "✅",
+    "SandboxRemoveWorkspace": "🧹"
+  },
+  "planSafe": [
+    "SandboxListWorkspaces"
+  ],
+  "showOutput": [
+    "SandboxListWorkspaces",
+    "SandboxCreateWorkspace",
+    "SandboxUseWorkspace",
+    "SandboxCommit",
+    "SandboxRemoveWorkspace"
+  ],
+  "configSchema": [
+    {
+      "key": "sec_execution",
+      "label": "Execution",
+      "type": "section",
+      "hint": "How commands from accounts without instance-operator authority are contained."
+    },
+    {
+      "key": "confineNonOperators",
+      "label": "Confine non-operator commands",
+      "type": "boolean",
+      "default": true,
+      "hint": "Run non-operator commands in bubblewrap with only their accessible Projects, workspaces and account HOME mounted. Network access remains available. If the live namespace probe fails, execution is refused rather than run unconfined."
+    }
+  ],
+  "capabilities": {
+    "reads": [
+      "db",
+      "stores",
+      "git",
+      "project-files"
+    ]
+  },
+  "web": {
+    "entry": "web/index.js",
+    "css": "web/index.css",
+    "requiresApiVersion": 3,
+    "settings": [
+      {
+        "id": "workspaces",
+        "label": "Workspaces",
+        "icon": "GitBranch"
+      },
+      {
+        "id": "environment",
+        "label": "Environment",
+        "icon": "Box"
+      }
+    ],
+    "strings": {
+      "workspacesTitle": "Workspaces",
+      "workspacesHint": "Account-scoped Git worktrees for parallel branches. One workspace can be active per conversation and Project.",
+      "workspaceCount": "Workspaces",
+      "activeCount": "Active",
+      "changedCount": "Changed files",
+      "search": "Search workspaces",
+      "filterAll": "All Projects",
+      "tableLabel": "Sandbox workspaces",
+      "columnWorkspace": "Workspace",
+      "columnProject": "Project",
+      "columnBranch": "Branch",
+      "columnState": "State",
+      "emptyWorkspaces": "No workspaces match this filter.",
+      "loading": "Loading sandbox data…",
+      "loadError": "Sandbox data could not be loaded.",
+      "retry": "Retry",
+      "create": "Create workspace",
+      "createTitle": "Create workspace",
+      "label": "Label",
+      "labelPlaceholder": "Feature or fix name",
+      "project": "Project",
+      "baseRef": "Base ref",
+      "baseRefPlaceholder": "main",
+      "cancel": "Cancel",
+      "save": "Create",
+      "use": "Use",
+      "useTitle": "Use workspace",
+      "conversation": "Conversation",
+      "commit": "Commit selected paths",
+      "commitTitle": "Commit workspace changes",
+      "commitMessage": "Commit message",
+      "commitPaths": "Paths",
+      "commitPathsHint": "One workspace-relative path per line. Only these paths are staged.",
+      "remove": "Remove workspace",
+      "removeTitle": "Remove workspace",
+      "removeCleanDescription": "The clean worktree and its generated branch will be removed.",
+      "discardTitle": "Discard workspace",
+      "discardWarning": "This workspace contains local changes or commits not present in its base ref. Review the loss preview and type the exact phrase to continue.",
+      "confirmationPhrase": "Confirmation phrase",
+      "changedFiles": "Changed files",
+      "patch": "Working patch",
+      "emptyPatch": "No tracked patch is available.",
+      "active": "Active",
+      "clean": "Clean",
+      "dirty": "Changed",
+      "untracked": "Untracked",
+      "ahead": "Ahead",
+      "behind": "Behind",
+      "orphaned": "Orphaned",
+      "processes": "Active processes",
+      "lastUsed": "Last used",
+      "created": "Workspace created.",
+      "activated": "Workspace activated.",
+      "committed": "Changes committed.",
+      "removed": "Workspace removed.",
+      "environmentTitle": "Environment",
+      "environmentHint": "Execution mode, account HOME and Git identity used by shell commands and workspace operations.",
+      "mode": "Execution mode",
+      "modeConfined": "Confined",
+      "modeDirect": "Direct host",
+      "modeUnavailable": "Unavailable",
+      "probe": "bubblewrap probe",
+      "probeReady": "Ready",
+      "probeFailed": "Failed",
+      "networkCaveat": "Confined commands keep network access for package installation, Git and development servers.",
+      "home": "Account HOME",
+      "homeSize": "HOME size",
+      "homeGeneration": "Generation",
+      "gitAuthor": "Git author",
+      "authorName": "Author name",
+      "authorEmail": "Author email",
+      "saveAuthor": "Save Git author",
+      "authorSaved": "Git author saved.",
+      "resetHome": "Reset HOME",
+      "resetTitle": "Reset account HOME",
+      "resetWarning": "This removes account-scoped Git, npm and tool configuration. Workspaces are preserved. Active processes block the reset.",
+      "reset": "Reset HOME",
+      "homeReset": "Account HOME reset.",
+      "migrationCollision": "Legacy HOME migration requires operator attention before this environment is safe to use.",
+      "error_project_forbidden": "This Project is no longer accessible.",
+      "error_workspace_not_clean": "The workspace is not clean. Use the loss preview in the browser or preserve the work.",
+      "error_workspace_in_use": "An active process is using this workspace.",
+      "error_workspace_changed": "The workspace changed after the preview. Refresh and review it again.",
+      "error_home_in_use": "An active process is using this HOME.",
+      "error_home_changed": "HOME changed after the preview. Refresh and review it again.",
+      "error_confirmation_mismatch": "The confirmation phrase does not match.",
+      "errorFallback": "The sandbox operation failed."
+    }
+  }
+}

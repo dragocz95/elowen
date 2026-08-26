@@ -1,0 +1,323 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { activeExecutionLeases, withRepoLease } from './db.mjs';
+import { assertRelativePath, runPrepared, userWorkspacesRoot } from './execution.mjs';
+
+const GIT_BASE_ARGS = [
+  '-c', 'core.hooksPath=/dev/null',
+  '-c', 'core.fsmonitor=false',
+  '-c', 'commit.gpgsign=false',
+  '-c', 'diff.external=',
+];
+
+const coded = (message, code, status = 400) => Object.assign(new Error(message), { code, status });
+
+function rowWorkspace(row) {
+  return {
+    id: String(row.id),
+    userId: Number(row.user_id),
+    projectId: Number(row.project_id),
+    label: String(row.label),
+    path: String(row.path),
+    branch: String(row.branch),
+    baseRef: String(row.base_ref),
+    lifecycle: row.lifecycle === 'orphaned' ? 'orphaned' : 'active',
+    orphanReason: row.orphan_reason == null ? null : String(row.orphan_reason),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    lastUsedAt: String(row.last_used_at),
+  };
+}
+
+function slug(value) {
+  const clean = String(value).normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36);
+  return clean || 'workspace';
+}
+
+function accessibleProjectIds(ctx, explicit) {
+  if (explicit) return explicit;
+  const access = ctx.currentAccess();
+  return access.admin ? ctx.host.stores().projects.list().map((project) => project.id) : access.projectIds;
+}
+
+function assertProjectAccess(ctx, projectId, explicit) {
+  const project = ctx.host.stores().projects.get(projectId);
+  if (!project) throw coded('project not found', 'project_not_found', 404);
+  if (!accessibleProjectIds(ctx, explicit).includes(projectId)) throw coded('project is not accessible to this account', 'project_forbidden', 403);
+  return project;
+}
+
+export function createWorkspaceService({ ctx, db, dataDir, execution }) {
+  const listWorkspaces = (filters = {}) => {
+    const clauses = [];
+    const params = [];
+    if (filters.userId !== undefined) { clauses.push('user_id = ?'); params.push(filters.userId); }
+    if (filters.projectId !== undefined) { clauses.push('project_id = ?'); params.push(filters.projectId); }
+    if (filters.lifecycle !== undefined) { clauses.push('lifecycle = ?'); params.push(filters.lifecycle); }
+    const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+    return db.prepare(`SELECT * FROM p_sandbox_workspaces${where} ORDER BY last_used_at DESC, created_at DESC`).all(...params).map(rowWorkspace);
+  };
+
+  const workspaceById = (id) => {
+    const row = db.prepare('SELECT * FROM p_sandbox_workspaces WHERE id = ?').get(id);
+    return row ? rowWorkspace(row) : null;
+  };
+
+  const currentAccount = () => ctx.currentContributionUserId() ?? ctx.currentIdentity()?.elowenUserId ?? null;
+  const requireAccount = (override) => {
+    const userId = override ?? currentAccount();
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw coded('a linked Elowen account is required', 'account_required', 401);
+    return userId;
+  };
+
+  const safeGit = async (cwd, args, roots, options = {}) => {
+    const prepared = await execution.prepare({
+      command: { type: 'argv', file: 'git', args: [...GIT_BASE_ARGS, ...args] },
+      cwd,
+      leaseKind: options.leaseKind ?? 'terminal',
+    }, { roots, accountUserId: options.accountUserId, owner: options.owner, skipHomeLock: options.skipHomeLock });
+    Object.assign(prepared.launch.env, {
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: join(prepared.home, '.gitconfig'),
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_PAGER: 'cat',
+    });
+    return runPrepared(prepared, { allowFailure: options.allowFailure, outputCap: options.outputCap });
+  };
+
+  const gitText = async (cwd, args, roots, options) => (await safeGit(cwd, args, roots, options)).output.trim();
+
+  const commonDir = async (root, roots, options) => {
+    const raw = await gitText(root, ['-C', root, 'rev-parse', '--git-common-dir'], roots, options);
+    const absolute = resolve(root, raw);
+    return realpathSync(absolute);
+  };
+
+  const activeWorkspace = ({ accountUserId, sessionId, projectId }) => {
+    const row = db.prepare(`SELECT w.* FROM p_sandbox_session_bindings b
+      JOIN p_sandbox_workspaces w ON w.id = b.workspace_id
+      WHERE b.session_id = ? AND b.user_id = ? AND b.project_id = ? AND w.lifecycle = 'active'`)
+      .get(sessionId, accountUserId, projectId);
+    return row ? rowWorkspace(row) : null;
+  };
+
+  const workspaceRoots = ({ accountUserId, projectIds }) => {
+    if (!Number.isSafeInteger(accountUserId) || !Array.isArray(projectIds) || projectIds.length === 0) return [];
+    const allowed = new Set(projectIds.map(Number));
+    return listWorkspaces({ userId: accountUserId, lifecycle: 'active' })
+      .filter((workspace) => allowed.has(workspace.projectId) && existsSync(workspace.path))
+      .map((workspace) => ({ workspaceId: workspace.id, projectId: workspace.projectId, path: workspace.path }));
+  };
+
+  const statusFor = async (workspace, options = {}) => {
+    if (!existsSync(workspace.path)) return { isRepo: false, status: null, files: [], diff: '', uniqueCommits: 0 };
+    const snapshot = await ctx.host.git().projectSnapshot(workspace.path);
+    if (!snapshot.isRepo) return { isRepo: false, status: null, files: [], diff: '', uniqueCommits: 0 };
+    const roots = [workspace.path];
+    const raw = await gitText(workspace.path, ['-C', workspace.path, 'status', '--porcelain=v1', '-z'], roots, { ...options, allowFailure: true });
+    const tokens = raw ? raw.split('\0').filter(Boolean) : [];
+    const files = [];
+    for (let i = 0; i < tokens.length; i += 1) {
+      const token = tokens[i];
+      const code = token.slice(0, 2);
+      const path = token.slice(3);
+      files.push({ path, code, untracked: code === '??' });
+      if (code[0] === 'R' || code[0] === 'C') i += 1;
+    }
+    const diff = await gitText(workspace.path, ['-C', workspace.path, 'diff', '--no-ext-diff', 'HEAD', '--'], roots, { ...options, allowFailure: true, outputCap: 1_500_000 });
+    const uniqueRaw = await gitText(workspace.path, ['-C', workspace.path, 'rev-list', '--count', `${workspace.baseRef}..HEAD`], roots, { ...options, allowFailure: true });
+    const uniqueCommits = /^\d+$/.test(uniqueRaw) ? Number(uniqueRaw) : 0;
+    return { isRepo: true, status: snapshot.status, remotes: snapshot.remotes, files, diff, uniqueCommits };
+  };
+
+  const createWorkspace = async (input, options = {}) => {
+    const userId = requireAccount(options.userId);
+    const projectId = Number(input.projectId);
+    const project = assertProjectAccess(ctx, projectId, options.accessibleProjects);
+    const label = String(input.label ?? '').trim();
+    if (!label || label.length > 80) throw coded('workspace label must be 1-80 characters', 'invalid_label');
+    const baseRef = String(input.baseRef ?? '').trim();
+    if (!baseRef || baseRef.length > 200 || baseRef.startsWith('-')) throw coded('a valid base ref is required', 'invalid_base_ref');
+    const snapshot = await ctx.host.git().projectSnapshot(project.path);
+    if (!snapshot.isRepo) throw coded('the selected Project is not a Git repository', 'not_git_repo');
+
+    const workspaceRoot = userWorkspacesRoot(dataDir, userId);
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    const roots = [project.path, workspaceRoot];
+    await safeGit(project.path, ['-C', project.path, 'rev-parse', '--verify', `${baseRef}^{commit}`], roots, { accountUserId: userId });
+    const common = await commonDir(project.path, roots, { accountUserId: userId });
+
+    return withRepoLease(db, common, async () => {
+      let id;
+      let branch;
+      let path;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        id = `ws_${randomUUID()}`;
+        branch = `elowen/u${userId}/${slug(label)}-${randomUUID().slice(0, 8)}`;
+        path = resolve(workspaceRoot, id);
+        const exists = db.prepare('SELECT 1 FROM p_sandbox_workspaces WHERE user_id = ? AND project_id = ? AND branch = ?').get(userId, projectId, branch);
+        if (!exists && !existsSync(path)) break;
+      }
+      if (!id || !branch || !path) throw coded('could not allocate a unique workspace', 'workspace_collision', 409);
+      await safeGit(project.path, ['-C', project.path, 'worktree', 'add', '-b', branch, path, baseRef], roots, { accountUserId: userId });
+      try {
+        db.prepare(`INSERT INTO p_sandbox_workspaces
+          (id, user_id, project_id, label, path, branch, base_ref) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .run(id, userId, projectId, label, path, branch, baseRef);
+        if (input.sessionId) useWorkspace({ workspaceId: id, sessionId: input.sessionId, projectId }, options);
+      } catch (error) {
+        await safeGit(project.path, ['-C', project.path, 'worktree', 'remove', '--force', path], roots, { accountUserId: userId, allowFailure: true });
+        rmSync(path, { recursive: true, force: true });
+        throw error;
+      }
+      return workspaceById(id);
+    });
+  };
+
+  const useWorkspace = (input, options = {}) => {
+    const userId = requireAccount(options.userId);
+    const sessionId = String(input.sessionId ?? '').trim();
+    if (!sessionId) throw coded('a conversation is required', 'session_required');
+    const workspace = workspaceById(String(input.workspaceId));
+    if (!workspace || workspace.userId !== userId) throw coded('workspace not found', 'workspace_not_found', 404);
+    if (workspace.lifecycle !== 'active') throw coded('orphaned workspaces cannot be activated', 'workspace_orphaned', 409);
+    assertProjectAccess(ctx, workspace.projectId, options.accessibleProjects);
+    if (Number(input.projectId ?? workspace.projectId) !== workspace.projectId) throw coded('workspace project mismatch', 'project_mismatch', 409);
+    if (options.verifySessionOwner) options.verifySessionOwner(sessionId, userId);
+    db.prepare(`INSERT INTO p_sandbox_session_bindings (session_id, user_id, project_id, workspace_id)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(session_id, user_id, project_id) DO UPDATE SET
+        workspace_id = excluded.workspace_id, updated_at = CURRENT_TIMESTAMP`)
+      .run(sessionId, userId, workspace.projectId, workspace.id);
+    db.prepare("UPDATE p_sandbox_workspaces SET last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(workspace.id);
+    return workspace;
+  };
+
+  const commitWorkspace = async (input, options = {}) => {
+    const userId = requireAccount(options.userId);
+    const workspace = workspaceById(String(input.workspaceId));
+    if (!workspace || workspace.userId !== userId) throw coded('workspace not found', 'workspace_not_found', 404);
+    if (workspace.lifecycle !== 'active') throw coded('orphaned workspaces cannot be committed', 'workspace_orphaned', 409);
+    assertProjectAccess(ctx, workspace.projectId, options.accessibleProjects);
+    const paths = [...new Set((Array.isArray(input.paths) ? input.paths : []).map(assertRelativePath))];
+    if (paths.length === 0) throw coded('commit requires at least one explicit path', 'paths_required');
+    for (const path of paths) ctx.host.projectFiles().safe(workspace.path, path, true);
+    const message = String(input.message ?? '').trim();
+    if (!message || message.length > 500) throw coded('commit message must be 1-500 characters', 'invalid_commit_message');
+    const project = ctx.host.stores().projects.get(workspace.projectId);
+    if (!project) throw coded('project not found', 'project_not_found', 404);
+    const common = await commonDir(workspace.path, [workspace.path], { accountUserId: userId });
+    return withRepoLease(db, common, async () => {
+      await safeGit(workspace.path, ['-C', workspace.path, 'add', '--', ...paths], [workspace.path], { accountUserId: userId });
+      const staged = await safeGit(workspace.path, ['-C', workspace.path, 'diff', '--cached', '--quiet', '--'], [workspace.path], { accountUserId: userId, allowFailure: true });
+      if (staged.code === 0) throw coded('the selected paths contain no changes to commit', 'nothing_to_commit', 409);
+      if (staged.code !== 1) throw coded(staged.output.trim() || 'could not inspect staged changes', 'git_status_failed', 500);
+      await safeGit(workspace.path, ['-C', workspace.path, 'commit', '-m', message, '--', ...paths], [workspace.path], { accountUserId: userId });
+      const head = await gitText(workspace.path, ['-C', workspace.path, 'rev-parse', 'HEAD'], [workspace.path], { accountUserId: userId });
+      const remaining = await statusFor(workspace, { accountUserId: userId });
+      db.prepare("UPDATE p_sandbox_workspaces SET updated_at = CURRENT_TIMESTAMP, last_used_at = CURRENT_TIMESTAMP WHERE id = ?").run(workspace.id);
+      return { workspace, head, remaining };
+    });
+  };
+
+  const removalPreview = async (workspace) => {
+    const state = await statusFor(workspace, { accountUserId: workspace.userId });
+    const active = activeExecutionLeases(db, { workspaceId: workspace.id });
+    const payload = {
+      workspaceId: workspace.id,
+      head: state.status?.head ?? '',
+      dirty: state.status?.dirty ?? 0,
+      untracked: state.status?.untracked ?? 0,
+      uniqueCommits: state.uniqueCommits,
+      activeProcesses: active.length,
+      files: state.files.map((file) => `${file.code}:${file.path}`),
+    };
+    const previewHash = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    return { ...payload, previewHash, phrase: `discard ${workspace.label}` };
+  };
+
+  const removeWorkspace = async (input, options = {}) => {
+    const userId = requireAccount(options.userId);
+    const workspace = workspaceById(String(input.workspaceId));
+    if (!workspace || workspace.userId !== userId) throw coded('workspace not found', 'workspace_not_found', 404);
+    const project = ctx.host.stores().projects.get(workspace.projectId);
+    if (!project) throw coded('the source Project no longer exists; the orphaned workspace is preserved on disk', 'workspace_orphaned', 409);
+    const roots = [project.path, workspace.path, dirname(workspace.path)];
+    const common = await commonDir(project.path, roots, { accountUserId: userId });
+    return withRepoLease(db, common, async () => {
+      const preview = await removalPreview(workspace, options);
+      const destructive = options.allowDiscard === true;
+      if (preview.activeProcesses > 0) throw coded('workspace is in use by an active process', 'workspace_in_use', 409);
+      if (!destructive && (preview.dirty > 0 || preview.untracked > 0 || preview.uniqueCommits > 0)) {
+        throw coded('workspace removal requires a clean tree with no unpushed commits', 'workspace_not_clean', 409);
+      }
+      if (destructive) {
+        if (input.previewHash !== preview.previewHash) throw coded('workspace changed since the removal preview', 'workspace_changed', 409);
+        if (String(input.phrase ?? '') !== preview.phrase) throw coded('the typed confirmation phrase does not match', 'confirmation_mismatch', 400);
+      }
+      await safeGit(project.path, ['-C', project.path, 'worktree', 'remove', ...(destructive ? ['--force'] : []), workspace.path], roots, { accountUserId: userId });
+      await safeGit(project.path, ['-C', project.path, 'branch', '-D', workspace.branch], [project.path], { accountUserId: userId, allowFailure: true });
+      db.transaction(() => {
+        db.prepare('DELETE FROM p_sandbox_session_bindings WHERE workspace_id = ?').run(workspace.id);
+        db.prepare('DELETE FROM p_sandbox_workspaces WHERE id = ?').run(workspace.id);
+      });
+      rmSync(workspace.path, { recursive: true, force: true });
+      return { removed: workspace.id };
+    });
+  };
+
+  const markProjectOrphaned = (projectId, reason = 'project_removed') => {
+    db.prepare(`UPDATE p_sandbox_workspaces SET lifecycle = 'orphaned', orphan_reason = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE project_id = ?`).run(reason, projectId);
+    db.prepare('DELETE FROM p_sandbox_session_bindings WHERE project_id = ?').run(projectId);
+  };
+
+  const reconcile = async () => {
+    const users = new Set(ctx.host.stores().usersRead.list().map((user) => user.id));
+    const projects = new Set(ctx.host.stores().projects.list().map((project) => project.id));
+    for (const workspace of listWorkspaces()) {
+      if (!users.has(workspace.userId)) continue;
+      if (!projects.has(workspace.projectId)) { markProjectOrphaned(workspace.projectId); continue; }
+      if (!existsSync(workspace.path)) {
+        db.prepare(`UPDATE p_sandbox_workspaces SET lifecycle = 'orphaned', orphan_reason = 'path_missing', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(workspace.id);
+        db.prepare('DELETE FROM p_sandbox_session_bindings WHERE workspace_id = ?').run(workspace.id);
+      }
+    }
+    db.prepare('DELETE FROM p_sandbox_session_bindings WHERE workspace_id NOT IN (SELECT id FROM p_sandbox_workspaces)').run();
+    return { users, projects };
+  };
+
+  const removeAccount = async (userId) => withRepoLease(db, `home:${userId}`, async () => {
+    const owned = listWorkspaces({ userId });
+    if (activeExecutionLeases(db, { accountUserId: userId }).length > 0) throw coded('account sandbox data is in use by an active process', 'account_in_use', 409);
+    for (const workspace of owned) {
+      const project = ctx.host.stores().projects.get(workspace.projectId);
+      if (!project) continue;
+      const roots = [project.path, workspace.path, dirname(workspace.path)];
+      try {
+        const common = await commonDir(project.path, roots, { accountUserId: userId, owner: true, skipHomeLock: true });
+        await withRepoLease(db, common, () => safeGit(project.path, ['-C', project.path, 'worktree', 'remove', '--force', workspace.path], roots, { accountUserId: userId, owner: true, skipHomeLock: true, allowFailure: true }));
+      } catch { /* filesystem cleanup below remains authoritative for a deleted account */ }
+    }
+    db.transaction(() => {
+      db.prepare('DELETE FROM p_sandbox_session_bindings WHERE user_id = ?').run(userId);
+      db.prepare('DELETE FROM p_sandbox_workspaces WHERE user_id = ?').run(userId);
+    });
+  });
+
+  const sessionListForUser = (userId) => db.prepare(`SELECT id, title, updated_at FROM brain_sessions
+    WHERE user_id = ? AND parent_session_id IS NULL ORDER BY updated_at DESC LIMIT 50`).all(userId)
+    .map((row) => ({ id: String(row.id), title: String(row.title || 'Untitled conversation'), updatedAt: String(row.updated_at) }));
+
+  const verifySessionOwner = (sessionId, userId) => {
+    const row = db.prepare('SELECT user_id FROM brain_sessions WHERE id = ?').get(sessionId);
+    if (!row || Number(row.user_id) !== userId) throw coded('conversation not found for this account', 'session_forbidden', 403);
+  };
+
+  return {
+    listWorkspaces, workspaceById, workspaceRoots, activeWorkspace, statusFor,
+    createWorkspace, useWorkspace, commitWorkspace, removalPreview, removeWorkspace,
+    markProjectOrphaned, reconcile, removeAccount, sessionListForUser, verifySessionOwner,
+  };
+}
