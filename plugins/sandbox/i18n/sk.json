@@ -15,7 +15,7 @@
       "environment": "Vývojové prostredie"
     },
     "project": {
-      "workspaces": "Moje pracovné priestory"
+      "workspaces": "Sandbox"
     },
     "strings": {
       "workspacesTitle": "Pracovné priestory",

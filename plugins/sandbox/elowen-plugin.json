@@ -80,7 +80,7 @@
     "project": [
       {
         "id": "workspaces",
-        "label": "My workspaces",
+        "label": "Sandbox",
         "icon": "GitBranch"
       }
     ],

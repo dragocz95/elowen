@@ -41,7 +41,7 @@ describe('ProjectsView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
     fireEvent.click(await screen.findByText('elowen'));
-    fireEvent.click(await screen.findByRole('radio', { name: 'Access' }));
+    fireEvent.click(await screen.findByRole('radio', { name: 'People' }));
     expect(await screen.findByText('1 of 1 users have access')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
     const dialog = await screen.findByRole('dialog', { name: 'User access' });

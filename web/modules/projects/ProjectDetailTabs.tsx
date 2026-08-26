@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import type { PluginProjectPanelProps, PluginUiRegistration } from 'elowen-plugin-ui-kit';
-import { FolderGit2, Info, UsersRound } from 'lucide-react';
+import { Info, UsersRound } from 'lucide-react';
 import type { Project } from '../../lib/types';
 import type { PluginUiListing } from '../../lib/types';
 import { usePluginUi, useProjectUsers, useUsers } from '../../lib/queries';
@@ -11,7 +11,7 @@ import { useTranslation } from '../../lib/i18n';
 import { PLUGIN_UI_API_VERSION, loadPluginUi } from '../../lib/pluginUi';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { Segmented } from '../../components/ui/Segmented';
-import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
+import { LoadingState, ErrorState } from '../../components/ui/states';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { Avatar } from '../../components/ui/Avatar';
@@ -86,12 +86,8 @@ function ProjectAccessPanel({ project }: { project: Project }) {
   };
 
   return (
-    <div className="space-y-4 py-4">
-      <div>
-        <h3 className="text-sm font-semibold text-text">{t.projects.accessTitle}</h3>
-        <p className="mt-1 text-xs leading-relaxed text-text-muted">{t.projects.accessHint}</p>
-      </div>
-      {assignable.length === 0 ? <EmptyState title={t.projects.accessEmpty} icon={FolderGit2} /> : (
+    <div className="py-3">
+      {assignable.length === 0 ? <p className="text-xs text-text-muted">{t.projects.accessEmpty}</p> : (
         <SelectionSummary
           countText={t.projects.accessCount.replace('{n}', String(assigned.length)).replace('{total}', String(assignable.length))}
           samples={assigned.slice(0, 3).map((user) => ({ label: user.name || user.username, icon: <Avatar user={user} size={16} /> }))}
@@ -100,7 +96,6 @@ function ProjectAccessPanel({ project }: { project: Project }) {
           manageLabel={t.managePicker.manage}
         />
       )}
-      <p className="text-[11px] leading-relaxed text-text-muted">{t.projects.adminAccessHint}</p>
       <ManageSelectionModal
         title={t.projects.accessTitle}
         subtitle={t.projects.accessHint}

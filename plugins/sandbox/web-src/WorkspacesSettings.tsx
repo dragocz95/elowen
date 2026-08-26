@@ -134,8 +134,12 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
     <C.LoadingState variant="list" />
   ) : (
     <div className="flex min-h-0 flex-1 flex-col gap-4 py-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {!projectMode ? <>
+      {projectMode ? (
+        <div className="flex justify-end">
+          <C.Button variant="accent" icon={Plus} onClick={() => setCreateForm({ projectId: String(project?.id ?? ''), label: '', baseRef: 'main' })}>{s.create}</C.Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative min-w-0 flex-1">
             <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
             <C.Input value={search} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)} placeholder={s.search} className="pl-9" />
@@ -146,9 +150,9 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
             label={s.project}
             options={[{ value: 'all', label: s.filterAll }, ...projects.map((item) => ({ value: String(item.id), label: item.slug }))]}
           />
-        </> : <p className="min-w-0 flex-1 text-xs leading-relaxed text-text-muted">{s.workspacesHint}</p>}
-        <C.Button variant="accent" icon={Plus} onClick={() => setCreateForm({ projectId: String(project?.id ?? projects[0]?.id ?? ''), label: '', baseRef: 'main' })} disabled={projects.length === 0}>{s.create}</C.Button>
-      </div>
+          <C.Button variant="accent" icon={Plus} onClick={() => setCreateForm({ projectId: String(projects[0]?.id ?? ''), label: '', baseRef: 'main' })} disabled={projects.length === 0}>{s.create}</C.Button>
+        </div>
+      )}
 
       {filtered.length === 0 ? <C.EmptyState title={s.emptyWorkspaces} icon={FolderGit2} /> : (
         <C.DataTable ariaLabel={s.tableLabel} columns="minmax(14rem,1.2fr) minmax(9rem,.7fr) minmax(14rem,1fr) minmax(13rem,1fr)" compactColumns="minmax(0,1fr)">
