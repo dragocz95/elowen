@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { dbTsToIso } from '../shared/time.js';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
@@ -585,10 +585,17 @@ function replayRow(sm: SessionManager, msg: { role: string; content: unknown }):
   sm.appendCompaction(summary, '', tokensBefore, undefined, undefined, undefined);
 }
 
+/** PI forwards its internal session id as OpenAI's prompt_cache_key. Elowen session ids can be much
+ *  longer than OpenAI's 64-character limit (especially delegated children), so hash the durable id rather
+ *  than letting PI mint a fresh UUID on every respawn or passing a truncation-collision-prone raw prefix. */
+function piSessionId(sessionId: string): string {
+  return createHash('sha256').update(sessionId).digest('hex');
+}
+
 /** Rebuild an in-memory PI session manager pre-seeded with the stored history (D1). Spike-proven:
  *  messages appended before createAgentSession appear as session.messages. */
 export function rehydrate(store: BrainStore, sessionId: string, cwd: string): SessionManager {
-  const sm = SessionManager.inMemory(cwd);
+  const sm = SessionManager.inMemory(cwd, { id: piSessionId(sessionId) });
   for (const { msg } of parsedRows(store, sessionId)) replayRow(sm, msg);
   return sm;
 }

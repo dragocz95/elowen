@@ -22,6 +22,17 @@ describe('brain persistence', () => {
     expect(JSON.parse(msgs.at(-1)!.content)).toMatchObject({ content: 'hi there' });
   });
 
+  it('rehydrates one durable conversation under a stable PI session id', () => {
+    const first = rehydrate(store, 's1', process.cwd()).getSessionId();
+    const second = rehydrate(store, 's1', process.cwd()).getSessionId();
+
+    expect(first).toBe(second);
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+
+    store.createSession({ id: 's2', userId: 1, model: 'm' });
+    expect(rehydrate(store, 's2', process.cwd()).getSessionId()).not.toBe(first);
+  });
+
   it('projectEvent persists assistant messages from agent_end', () => {
     projectEvent(store, 's1', { type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'hello' }] } as never);
     const msgs = store.getMessages('s1');
