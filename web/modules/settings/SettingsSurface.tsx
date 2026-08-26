@@ -1,5 +1,5 @@
 'use client';
-import type { ReactNode } from 'react';
+import { Children, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { HelpTip } from '../../components/ui/HelpTip';
 
@@ -16,11 +16,11 @@ export function SettingsDocument({ children, className = '' }: { children: React
 /** One section card: an accent-marked header (icon, title, optional description and actions) above a
  *  body of records.
  *
- *  `columns={2}` lays the records out as two independent stacks separated by a rule, which is what keeps
- *  a six-row form on one screen instead of a column with half of it empty. It is CSS multi-column rather
- *  than a grid on purpose: a grid would force a tall record (a slider carrying its scale) to stretch
- *  whatever sits beside it. Multi-column reading order follows the visual columns, so the keyboard walks
- *  the form the way it looks. */
+ *  `columns={2}` splits the records into two explicit stacks side by side, which keeps a six-row form on
+ *  one screen instead of a column with half of it empty. The split happens HERE rather than in CSS
+ *  because each stack has to be its own grid: the records inside one stack share their column tracks
+ *  through subgrid, and that is what makes every status and every action line up. CSS multi-column would
+ *  reflow the same rows into one box and take that alignment away. */
 export function SettingsGroup({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', columns = 1, children, className = '' }: {
   title?: string;
   description?: string;
@@ -48,8 +48,23 @@ export function SettingsGroup({ title, description, icon: Icon, actions, tone = 
           {actions ? <div className="settings-group__actions">{actions}</div> : null}
         </header>
       ) : null}
-      {children ? <div className="settings-group__body" data-columns={columns}>{children}</div> : null}
+      {children ? <div className="settings-group__body" data-columns={columns}>{splitIntoColumns(children, columns)}</div> : null}
     </section>
+  );
+}
+
+/** One stack, or two balanced ones. The first stack takes the extra record on an odd count, so a
+ *  three-row form reads 2 + 1 top-down rather than leaving a gap in the left column. */
+function splitIntoColumns(children: ReactNode, columns: 1 | 2): ReactNode {
+  if (columns === 1) return children;
+  const items = Children.toArray(children);
+  if (items.length < 2) return children;
+  const half = Math.ceil(items.length / 2);
+  return (
+    <>
+      <div className="settings-group__column">{items.slice(0, half)}</div>
+      <div className="settings-group__column">{items.slice(half)}</div>
+    </>
   );
 }
 
@@ -62,11 +77,14 @@ export function SettingsGroup({ title, description, icon: Icon, actions, tone = 
  *  destructive-mode warning) and stays behind the shared HelpTip, which is what keeps plugin config
  *  calm and compact. Passing a paragraph as `description` would push every neighbouring row off the
  *  screen; passing a five-word gloss as `hint` would hide it for no reason. */
-export function SettingsRow({ label, description, hint, icon: Icon, status, actions, children, className = '' }: {
+export function SettingsRow({ label, description, hint, icon: Icon, iconNode, status, actions, children, className = '' }: {
   label: string;
   description?: string;
   hint?: string;
   icon?: LucideIcon;
+  /** A record whose badge is an image rather than a glyph — a provider's own favicon, say. Wins over
+   *  `icon`, so a caller can hand in something that falls back to a glyph on its own. */
+  iconNode?: ReactNode;
   status?: ReactNode;
   actions?: ReactNode;
   children?: ReactNode;
@@ -75,7 +93,8 @@ export function SettingsRow({ label, description, hint, icon: Icon, status, acti
   return (
     <div className={`settings-row ${className}`}>
       <div className="settings-row__label">
-        {Icon ? <span className="settings-row__icon" aria-hidden><Icon size={15} strokeWidth={1.75} /></span> : null}
+        {iconNode ? <span className="settings-row__icon" aria-hidden>{iconNode}</span>
+          : Icon ? <span className="settings-row__icon" aria-hidden><Icon size={15} strokeWidth={1.75} /></span> : null}
         <div className="min-w-0">
           <span className="settings-row__title">{label}{hint ? <HelpTip align="left">{hint}</HelpTip> : null}</span>
           {description ? <p className="settings-row__description">{description}</p> : null}

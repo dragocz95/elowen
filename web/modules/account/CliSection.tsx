@@ -176,8 +176,9 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         <div className="flex items-center gap-3">
           <Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />
           {autoCompact ? <span className="font-mono text-sm tabular-nums text-text">{autoCompactAt}%</span> : null}
-          {/* Hidden manage trigger — the pod's orb forwards its click here to open the drawer. */}
-          <button type="button" data-selection-manage className="hidden" aria-label={t.cli.compactByModelTitle} onClick={() => setThresholdsOpen(true)} />
+          <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setThresholdsOpen(true)}>
+            <SlidersHorizontal size={14} aria-hidden />{t.cli.compactByModelTitle}
+          </button>
         </div>
       </SpatialRow>
 

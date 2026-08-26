@@ -3,9 +3,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
-import { SpatialMascot, type SpatialMascotState } from './SpatialMascot';
+import { SpatialWorkspaceHero, WorkspaceMetric, type SpatialWorkspaceHeroProps } from './WorkspaceHero';
 import { SpatialSectionRail, type SpatialDeckSection } from './SpatialControlDeck';
 import { useDialogOverlay } from './overlayStack';
+
+// The hero and its metric moved to WorkspaceHero so the control deck can mount them without an import
+// cycle through this module's section rail. Re-exported here because every existing caller — including
+// the plugin UI runtime surface — reaches them by this path.
+export { SpatialWorkspaceHero, WorkspaceMetric };
+export type { SpatialWorkspaceHeroProps };
 
 export function WorkspacePage({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`workspace-page ${className}`}>{children}</div>;
@@ -46,39 +52,6 @@ export function CompactWorkspaceHeader({ eyebrow, title, count, description, sta
 }
 
 
-export interface SpatialWorkspaceHeroProps {
-  eyebrow?: string;
-  title: string;
-  count?: number;
-  description?: string;
-  status?: ReactNode;
-  action?: ReactNode;
-  mascotState?: SpatialMascotState;
-  children: ReactNode;
-}
-
-export function SpatialWorkspaceHero({ eyebrow, title, count, description, status, action, mascotState = 'idle', children }: SpatialWorkspaceHeroProps) {
-  return (
-    <section className="spatial-workspace-hero">
-      <header className="spatial-workspace-hero__header">
-        <div className="min-w-0">
-          {eyebrow ? <div className="workspace-header__eyebrow">{eyebrow}</div> : null}
-          <div className="flex min-w-0 items-baseline gap-3">
-            <h1>{title}</h1>
-            {count !== undefined ? <span className="workspace-header__count">{count}</span> : null}
-          </div>
-          {description ? <p>{description}</p> : null}
-        </div>
-        <div className="workspace-header__actions">{status}{action}</div>
-      </header>
-      <div className="spatial-workspace-hero__body">
-        <div className="spatial-workspace-hero__mascot" data-testid="workspace-hero-mascot"><SpatialMascot state={mascotState} /></div>
-        <div className="spatial-workspace-hero__metrics">{children}</div>
-      </div>
-    </section>
-  );
-}
-
 export interface SpatialWorkspaceLayoutProps {
   hero: Omit<SpatialWorkspaceHeroProps, 'children'> & { metrics: ReactNode };
   navigation?: {
@@ -101,15 +74,6 @@ export function SpatialWorkspaceLayout({ hero, navigation, children, className =
       {navigation ? <SpatialSectionRail {...navigation} /> : null}
       <div className="workspace-content" data-testid="spatial-workspace-layout">{children}</div>
     </WorkspacePage>
-  );
-}
-
-export function WorkspaceMetric({ label, value, icon: Icon }: { label: string; value: ReactNode; icon?: LucideIcon }) {
-  return (
-    <div className="workspace-metric">
-      <span className="workspace-metric__value">{value}</span>
-      <span className="workspace-metric__label">{Icon ? <Icon size={12} aria-hidden /> : null}{label}</span>
-    </div>
   );
 }
 

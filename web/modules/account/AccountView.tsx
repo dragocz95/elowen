@@ -40,7 +40,7 @@ import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
 import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
+import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { MotionReveal } from '../../components/ui/Motion';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
 import { PersonalitySection } from './PersonalitySection';
@@ -308,6 +308,19 @@ export function AccountView() {
     { status: saveModel.isError ? 'error' : saveModel.isPending ? 'saving' : saveModel.isSuccess ? 'saved' : 'idle', retry: () => applyElowen(elowenSel) },
   );
   const activeFeedback = section === 'profile' ? profileFeedback : (sectionFeedback[section] ?? { status: 'idle' as const });
+  // Who this account is and what it may run — the four facts every section below is about. All of it is
+  // already loaded for the sections themselves, so the hero costs no extra request and, unlike the
+  // per-user stats in the Users directory, needs no admin rights to read.
+  const deckHero = {
+    mascotState: (me.isError ? 'error' : activeFeedback.status === 'saving' ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
+    metrics: (
+      <>
+        <WorkspaceMetric label={t.users.role} value={u.is_admin ? t.users.admin : t.users.member} icon={ShieldCheck} />
+        <WorkspaceMetric label={t.users.allowedModels} value={elowenModels.length} icon={Cpu} />
+        <WorkspaceMetric label={t.account.tabCli} value={<span className="block truncate font-mono" title={cli.data?.model || undefined}>{cli.data?.model || '—'}</span>} icon={Brain} />
+      </>
+    ),
+  };
 
   return (
     /* Match the settings workspace width so account controls have the same calm, useful measure. */
@@ -320,6 +333,7 @@ export function AccountView() {
         sections={spatialSections}
         value={section}
         onChange={(v) => setSection(v as typeof section)}
+        hero={deckHero}
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
       >
@@ -501,13 +515,15 @@ export function AccountView() {
             </div>
           </form>
         );
-        // The pod shows a masked hint; the form opens in a side drawer via the pod's orb.
+        // The row shows a masked hint; the form itself opens in a side drawer.
         return (
           <>
             <SpatialGroup>
               <SpatialRow title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
                 <span className="font-mono text-sm tracking-widest text-text-muted" aria-hidden>••••••••</span>
-                <button type="button" data-selection-manage className="hidden" aria-label={t.account.changePassword} onClick={() => setPasswordOpen(true)} />
+                <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setPasswordOpen(true)}>
+                  <KeyRound size={14} aria-hidden />{t.account.changePassword}
+                </button>
               </SpatialRow>
             </SpatialGroup>
             {passwordOpen ? (

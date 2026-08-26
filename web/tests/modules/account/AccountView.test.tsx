@@ -26,7 +26,7 @@ afterAll(() => server.close());
 const meUser = (over: Record<string, unknown> = {}) => ({ id: 2, username: 'bob', name: '', email: '', avatar: '', default_exec: '', is_admin: false, allowed_execs: ['sonnet'], created_at: '2026-01-01', ...over });
 
 describe('AccountView', () => {
-  it('uses the compact control deck with the approved Account section order and no hero mascot', async () => {
+  it('uses the compact control deck with the approved Account section order under a mascot hero', async () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
@@ -41,9 +41,12 @@ describe('AccountView', () => {
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
       'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
-    // PROTOTYPE(constellation): the hero band is gone — the mascot lives inside the cosmos cores
-    // (aria-hidden), so no accessible "Elowen" image renders on the deck itself.
-    expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
+    // The constellation is gone and the deck carries the mascot hero again, with the account's own
+    // facts beside it. Every one of them comes from /auth/me and the model list the sections already
+    // load, so the hero renders for a plain member too — it never touches the admin-only stats route.
+    expect(await screen.findByRole('img', { name: 'Elowen' })).toBeInTheDocument();
+    expect(screen.getByText('Role')).toBeInTheDocument();
+    // The username stays a profile fact and is NOT repeated in the hero.
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('@bob'));
   });
 

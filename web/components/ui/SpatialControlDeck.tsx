@@ -4,6 +4,8 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { AutoSaveStatus } from './AutoSaveStatus';
+import { SpatialWorkspaceHero } from './WorkspaceHero';
+import type { SpatialMascotState } from './SpatialMascot';
 
 export interface SpatialDeckSection {
   id: string;
@@ -83,7 +85,16 @@ function SpatialContentSurface({ children }: { children: ReactNode }) {
   return <section data-testid="spatial-content-surface" className="spatial-content-surface">{children}</section>;
 }
 
-export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLabel, status = 'idle', onRetry, children }: {
+/** Live figures and a primary action for the deck's hero. Supplying it turns the plain title block into
+ *  the same mascot hero the register workspaces wear, so a settings page opens on the state of the thing
+ *  it configures instead of on a heading. Omit it and the deck keeps the compact title block. */
+export interface SpatialDeckHero {
+  metrics: ReactNode;
+  action?: ReactNode;
+  mascotState?: SpatialMascotState;
+}
+
+export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLabel, status = 'idle', onRetry, hero, children }: {
   eyebrow: string;
   sections: SpatialDeckSection[];
   value: string;
@@ -91,6 +102,7 @@ export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLab
   ariaLabel: string;
   status?: SaveStatus;
   onRetry?: () => void;
+  hero?: SpatialDeckHero;
   children: ReactNode;
 }) {
   const active = sections.find((section) => section.id === value) ?? sections[0];
@@ -98,14 +110,29 @@ export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLab
 
   return (
     <div className="spatial-control-deck">
-      <header className="spatial-deck-heading">
-        <div className="min-w-0">
-          <span className="spatial-deck-heading__eyebrow">{eyebrow}</span>
-          <h1>{active.label}</h1>
-          {active.description ? <p>{active.description}</p> : null}
+      {hero ? (
+        <div className="spatial-control-deck__hero">
+          <SpatialWorkspaceHero
+            eyebrow={eyebrow}
+            title={active.label}
+            description={active.description}
+            status={<AutoSaveStatus status={status} onRetry={onRetry} />}
+            action={hero.action}
+            mascotState={hero.mascotState}
+          >
+            {hero.metrics}
+          </SpatialWorkspaceHero>
         </div>
-        <AutoSaveStatus status={status} onRetry={onRetry} />
-      </header>
+      ) : (
+        <header className="spatial-deck-heading">
+          <div className="min-w-0">
+            <span className="spatial-deck-heading__eyebrow">{eyebrow}</span>
+            <h1>{active.label}</h1>
+            {active.description ? <p>{active.description}</p> : null}
+          </div>
+          <AutoSaveStatus status={status} onRetry={onRetry} />
+        </header>
+      )}
       <SpatialSectionRail sections={sections} value={active.id} onChange={onChange} ariaLabel={ariaLabel} />
       <SpatialContentSurface>{children}</SpatialContentSurface>
     </div>

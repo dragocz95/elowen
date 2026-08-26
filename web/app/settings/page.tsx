@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 // Aliased: `dynamic` is already this route's Next segment-config export, two lines up.
 import nextDynamic from 'next/dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
-import { SlidersHorizontal, X, Pencil, Gauge, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Search, Server, CalendarClock, ScrollText, BellRing, MessageSquareText } from 'lucide-react';
+import { SlidersHorizontal, X, Pencil, Gauge, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Search, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
@@ -35,6 +35,7 @@ import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
 import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
+import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
 import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../modules/settings/SettingsSurface';
 import { MotionReveal } from '../../components/ui/Motion';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
@@ -366,6 +367,30 @@ export default function SettingsPage() {
   // navigation and its settings sections are pages of that world.
   const deckSections = SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: id === 'brain' ? agentAiLabel : t.settings[id], description: sectionHints[id] }));
   const diagnostics = system.data?.diagnostics;
+  // The hero answers "is this instance healthy right now" on every settings tab, and carries the one
+  // action an operator reaches for after changing something. Restarting still goes through the same
+  // confirmation as the row in the System section — this is a second door to it, not a second path.
+  const deckHero = {
+    mascotState: (system.isError ? 'error' : systemRestart.isPending ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
+    action: (
+      <>
+        <Button icon={RotateCcw} disabled={systemRestart.isPending} onClick={() => setRestartTarget('daemon')}>
+          {t.settings.restartDaemon}
+        </Button>
+        <Button icon={RotateCcw} disabled={systemRestart.isPending} onClick={() => setRestartTarget('web')}>
+          {t.settings.restartWeb}
+        </Button>
+      </>
+    ),
+    metrics: (
+      <>
+        <WorkspaceMetric label={t.settings.version.replace('{productName}', brand.appName)} value={<span className="font-mono">{system.data?.version ?? '—'}</span>} icon={Sparkles} />
+        <WorkspaceMetric label={t.settings.serviceDaemon} value={system.isError ? t.settings.serviceDown : t.settings.serviceUp} icon={Server} />
+        <WorkspaceMetric label={t.settings.diagnosticMemory} value={diagnostics ? `${Math.round((diagnostics.memoryUsedBytes / diagnostics.memoryTotalBytes) * 100)} %` : '—'} icon={MemoryStick} />
+        <WorkspaceMetric label={t.settings.diagnosticUptime} value={diagnostics ? formatUptime(diagnostics.uptimeSeconds) : '—'} icon={Timer} />
+      </>
+    ),
+  };
 
   return (
     <ModuleShell moduleId="settings">
@@ -380,6 +405,7 @@ export default function SettingsPage() {
         onChange={setCategory}
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
+        hero={deckHero}
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>
           <>
@@ -545,16 +571,17 @@ export default function SettingsPage() {
         <SettingsPanel id="system" active={category} visited={visitedCategories}>
           
             {(() => {
-              // One merged orbit + the classic diagnostics widget below it.
+              // One card of instance records, with the diagnostics widget below it.
               const updateBadge = system.data?.updateAvailable
                 ? <Badge tone="warning">{t.settings.updateAvailable.replace('{v}', system.data?.latest ?? '')}</Badge>
                 : <Badge tone="success">{t.settings.upToDate}</Badge>;
               const rowVersion = (
+                // The version number and the last-updated stamp moved to the deck hero above, so this
+                // row is left with the one thing it still answers: whether an update is waiting.
                 <SettingsRow
                   label={brand.appName}
-                  description={system.data?.lastUpdatedAt ? t.settings.lastUpdated.replace('{date}', new Date(system.data.lastUpdatedAt).toLocaleString()) : undefined}
                   icon={Sparkles}
-                  status={<span className="flex flex-wrap items-center gap-2"><span className="font-mono">{system.data?.version ?? '—'}</span>{updateBadge}</span>}
+                  status={updateBadge}
                   actions={system.data?.updateAvailable ? (
                     <button type="button" className="spatial-inline-action text-accent" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
                       onSuccess: () => toast(t.settings.updateStarted),
@@ -565,16 +592,18 @@ export default function SettingsPage() {
                   )}
                 />
               );
+              {/* Reporting only. Both restarts live in the deck hero, where they are reachable from every
+                  settings section instead of just this one — a second copy here would be two doors to the
+                  same confirmation with no way to tell them apart. */}
               const serviceRows = [
-                { name: t.settings.serviceDaemon, port: ':4400', up: !system.isError, target: 'daemon' as const, restartLabel: t.settings.restartDaemon },
-                { name: t.settings.serviceWeb, port: ':4500', up: true, target: 'web' as const, restartLabel: t.settings.restartWeb },
+                { name: t.settings.serviceDaemon, port: ':4400', up: !system.isError },
+                { name: t.settings.serviceWeb, port: ':4500', up: true },
               ].map((service) => (
                 <SettingsRow
                   key={service.port}
                   label={service.name}
                   status={<span className="font-mono">{service.port}</span>}
                   icon={Server}
-                  actions={<button type="button" className="spatial-inline-action" disabled={systemRestart.isPending} onClick={() => setRestartTarget(service.target)}>{service.restartLabel}<RotateCcw size={13} aria-hidden /></button>}
                 >
                   <span className={`settings-control-row__status ${service.up ? '' : 'settings-control-row__status--down'}`}><i aria-hidden />{service.up ? t.settings.serviceUp : t.settings.serviceDown}</span>
                 </SettingsRow>
@@ -594,14 +623,16 @@ export default function SettingsPage() {
                   <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} aria-label={t.settings.tokenTtl} />
                 </SettingsRow>
               );
-              // The pod stays minimal (toggle + the current threshold); the full composite lives
-              // in the side drawer, opened via the pod's orb.
+              // The row stays minimal (toggle + the current threshold); the full composite lives
+              // in the side drawer behind the manage button.
               const rowRetention = (
                 <SettingsRow label={t.settings.retention.label} description={t.settings.retention.hint} icon={CalendarClock}>
                   <div className="flex items-center gap-3">
                     <Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />
                     {retention.enabled ? <span className="whitespace-nowrap font-mono text-sm tabular-nums text-text">{retention.days} {t.settings.retention.days}</span> : null}
-                    <button type="button" data-selection-manage className="hidden" aria-label={t.settings.retention.label} onClick={() => setRetentionOpen(true)} />
+                    <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setRetentionOpen(true)}>
+                      <CalendarClock size={14} aria-hidden />{t.managePicker.manage}
+                    </button>
                   </div>
                 </SettingsRow>
               );
