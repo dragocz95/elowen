@@ -15,7 +15,11 @@ import type { LucideIcon } from 'lucide-react';
  *  visually identical — a second hand-rolled donut would drift in radius, padding and hover behaviour
  *  within a release or two. */
 
-const RING_HEIGHT = 168;
+/** Recharts sizes a pie by `min(width, height)`. Four across the full page width leaves a ~338px
+ *  column, so height alone decides how big the arc gets and this is the only dial worth turning. It
+ *  stays under the two-column width (~216px) as well, where the column takes over as the limit and
+ *  the ring simply tracks it down. */
+const RING_HEIGHT = 220;
 /** Must match the `w-60` on {@link CardShell}: the flip-to-the-left decision needs the real width, and
  *  measuring the card would mean rendering it first just to find out where to put it. */
 const CARD_WIDTH = 240;
@@ -155,8 +159,8 @@ export function PulseRing<T>({ title, slices, centerValue, centerLabel, renderCa
 
           {/* The headline figure sits in the hole. Pointer-events off so it never steals a hover. */}
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <span className="font-mono text-lg leading-none tabular-nums text-text">{centerValue}</span>
-            <span className="mt-1 text-[9px] uppercase tracking-wider text-text-muted">{centerLabel}</span>
+            <span className="font-mono text-xl leading-none tabular-nums text-text">{centerValue}</span>
+            <span className="mt-1 text-[10px] uppercase tracking-wider text-text-muted">{centerLabel}</span>
           </div>
         </div>
       )}
