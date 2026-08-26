@@ -41,6 +41,7 @@ import { LoadingState, LoadingLine, ErrorState, EmptyState } from '../components
 import { MotionLayoutItem, MotionPresence } from '../components/ui/Motion';
 import { SpatialWorkspaceLayout, WorkspaceMetric, WorkspacePage, CompactWorkspaceHeader } from '../components/ui/WorkspacePrimitives';
 import { SpatialIdentity } from '../components/ui/SpatialPrimitives';
+import { TimeSeriesChart } from '../components/ui/TimeSeriesChart';
 import { ProjectFilterPills } from '../components/ui/ProjectFilterPills';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../components/ui/ControlSurface';
 import { ModelIcon } from '../components/ui/ModelIcon';
@@ -289,7 +290,7 @@ export function ensurePluginUiRuntime(): void {
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       ConfirmDialog, TerminalModal, LiveTail,
-      SettingsDocument, SettingsGroup, SettingsRow, SpatialIdentity, PluginConfigEditor, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
+      SettingsDocument, SettingsGroup, SettingsRow, SpatialIdentity, TimeSeriesChart, PluginConfigEditor, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends). DetailBlock is
       // the caption+hint wrapper the user detail puts above each of these summaries, shared so a plugin

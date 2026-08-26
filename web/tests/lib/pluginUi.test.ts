@@ -22,6 +22,9 @@ describe('plugin UI runtime', () => {
     expect(window.ElowenUiRuntime?.components).toHaveProperty('PluginConfigEditor');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('Avatar');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('SpatialIdentity');
+    // Published so a plugin charts a series with the app's own axes and tooltip instead of hand-rolling
+    // one; asserted here because a plugin bundle compiles elsewhere and would not fail with this repo.
+    expect(window.ElowenUiRuntime?.components).toHaveProperty('TimeSeriesChart');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('usePluginConfigDraft');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('useUsers');
     expect(window.ElowenUiRuntime?.hooks).toEqual(expect.objectContaining({
