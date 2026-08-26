@@ -565,6 +565,7 @@ export interface SessionTask {
   description: string;
   activeForm?: string;
   status: 'pending' | 'in_progress' | 'completed';
+  startedAt?: number;
   owner?: string;
   metadata: Record<string, unknown>;
   blockedBy: string[];

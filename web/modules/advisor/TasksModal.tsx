@@ -13,11 +13,14 @@ import { IconButton } from '../../components/ui/IconButton';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { Modal, ModalBody } from '../../components/ui/Modal';
+import { formatDuration } from '../../lib/format';
+import { useNow } from '../../lib/useNow';
 import type { SessionTask } from '../../lib/types';
 
 export function TasksModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const now = useNow();
   const { activeSessionId, syncSessionTasks } = useBrainChat();
   const tasksQuery = useSessionTasks(activeSessionId);
   const updateTask = useUpdateSessionTask();
@@ -100,6 +103,9 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
                     <div className="flex items-baseline gap-1.5">
                       <span className="text-xs tabular-nums text-text-muted">#{task.id}</span>
                       <span className="text-sm font-medium text-text">{task.subject}</span>
+                      {task.status === 'in_progress' && task.startedAt != null ? (
+                        <span className="text-xs tabular-nums text-text-muted">· {formatDuration(now - task.startedAt)}</span>
+                      ) : null}
                     </div>
                     <span className="whitespace-pre-wrap text-xs text-text-muted">{task.description}</span>
                     {task.blockedBy.length > 0 ? (
