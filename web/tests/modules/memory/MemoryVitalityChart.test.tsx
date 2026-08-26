@@ -10,7 +10,7 @@ vi.mock('../../../lib/queries', async (importOriginal) => ({
   useMemoryVitalityHistory: (id: number | null) => history(id),
 }));
 
-import { MemoryVitalityChart } from '../../../modules/memory/MemoryVitalityChart';
+import { MemoryVitalityChart, buildSeries } from '../../../modules/memory/MemoryVitalityChart';
 
 const NOW = '2026-08-04T12:00:00.000Z';
 
@@ -42,28 +42,45 @@ beforeEach(() => {
 const renderChart = (vitality = 61) =>
   render(<MemoryVitalityChart memoryId={1} vitality={vitality} />, { wrapper: createWrapper().wrapper });
 
+// The series feeding the chart, which is where every decision this component makes actually lives.
+// The drawing itself is Recharts' and cannot be asserted here: jsdom reports a zero-sized box, so the
+// chart renders nothing at all under test.
+describe('buildSeries', () => {
+  it('keeps the past and the forecast on one shared time axis, in order', () => {
+    const rows = buildSeries(curve());
+    expect(rows?.map((row) => row.t)).toEqual([...(rows ?? [])].map((row) => row.t).sort((a, b) => a - b));
+    // Measured points carry `past`, projected ones carry `projected` — that split is what draws one
+    // line solid and the other dashed.
+    expect(rows?.filter((row) => row.past !== undefined)).toHaveLength(3);
+    expect(rows?.filter((row) => row.projected !== undefined)).toHaveLength(2);
+  });
+
+  it('joins the two lines at the seam instead of leaving a gap', () => {
+    // The last measured instant must belong to BOTH series, or the dashed line starts one step to the
+    // right of where the solid one ends and the curve reads as broken.
+    const seam = buildSeries(curve())?.find((row) => row.t === Date.parse(NOW));
+    expect(seam?.past).toBe(61);
+    expect(seam?.projected).toBe(61);
+  });
+
+  it('seams a forecast that does not repeat the last measured point', () => {
+    const rows = buildSeries(curve({
+      forecast: [{ at: '2026-08-20T12:00:00.000Z', vitality: 38 }],
+    }));
+    expect(rows?.find((row) => row.t === Date.parse(NOW))?.projected).toBe(61);
+  });
+
+  it('refuses a series too short to be a line', () => {
+    expect(buildSeries(curve({ points: [{ at: NOW, vitality: 61 }], forecast: [] }))).toBeNull();
+  });
+
+  it('drops timestamps it cannot read rather than plotting them at zero', () => {
+    const rows = buildSeries(curve({ points: [{ at: 'not-a-date', vitality: 90 }] }));
+    expect(rows?.some((row) => Number.isNaN(row.t))).toBe(false);
+  });
+});
+
 describe('MemoryVitalityChart', () => {
-  it('draws the reconstructed past solid and the forecast dashed', async () => {
-    const { container } = renderChart();
-    await waitFor(() => expect(container.querySelector('svg')).toBeInTheDocument());
-
-    const paths = [...container.querySelectorAll('path')];
-    expect(paths).toHaveLength(2);
-    // The past must be readable as fact and the forecast as a guess; the dash is the only thing saying so.
-    expect(paths[0]?.getAttribute('stroke-dasharray')).toBeNull();
-    expect(paths[1]?.getAttribute('stroke-dasharray')).not.toBeNull();
-  });
-
-  it('marks every recall inside the window', async () => {
-    history.mockReturnValue(loaded(curve({
-      recalls: ['2026-07-22T12:00:00.000Z', '2026-07-28T12:00:00.000Z'],
-    })));
-    const { container } = renderChart();
-    await waitFor(() => expect(container.querySelector('svg')).toBeInTheDocument());
-
-    expect(container.querySelectorAll('circle')).toHaveLength(2);
-  });
-
   it('says when the memory would be binned, and carries it into the label for screen readers', async () => {
     renderChart(61);
     await waitFor(() => expect(screen.getByRole('img')).toBeInTheDocument());
@@ -84,11 +101,11 @@ describe('MemoryVitalityChart', () => {
   // the alternative is a chart that looks complete while inventing the part it cannot know.
   it('admits when there is no reconstructable history instead of drawing one', async () => {
     history.mockReturnValue(loaded(curve({ points: [], historyFrom: null })));
-    const { container } = renderChart();
-    await waitFor(() => expect(container.querySelector('svg')).toBeInTheDocument());
+    renderChart();
 
-    expect(container.querySelectorAll('path')).toHaveLength(1);
-    expect(screen.getByText(/only the forecast is shown/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/only the forecast is shown/)).toBeInTheDocument());
+    // With nothing measured there is no seam to draw, so the forecast stands alone.
+    expect(buildSeries(curve({ points: [], historyFrom: null }))?.every((row) => row.past === undefined)).toBe(true);
   });
 
   it('stays out of the way when the curve cannot be loaded', () => {

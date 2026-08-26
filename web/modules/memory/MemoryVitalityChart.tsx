@@ -1,24 +1,27 @@
 'use client';
 import { useMemo } from 'react';
-import type { MemoryVitalityHistory, MemoryVitalityPoint } from '../../lib/types';
+import { Activity, CalendarDays } from 'lucide-react';
+import {
+  CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts';
+import type { MemoryVitalityHistory } from '../../lib/types';
 import { useMemoryVitalityHistory } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { parseTs } from '../../lib/format';
 import { vitalityPct, vitalityTone } from './memoryMeta';
 import { TONE_TEXT } from '../../components/ui/tone';
+import { CardHead, CardRow, CardShell } from '../../components/ui/ChartCard';
 import { LoadingState } from '../../components/ui/states';
 
 /** A memory's vitality over time: the reconstructed past as a solid line, the "if it is never recalled
  *  again" projection as a dashed one, and the threshold at which retention moves it to the trash.
  *
- *  Drawn as inline SVG rather than with a charting library — the web has none, and every other
- *  visualisation here (the vitality bar, the progress ribbon) is hand-rolled from tokens. The curve is
+ *  This is the one chart in the app where the time axis is the point. Vitality decays continuously and
+ *  every recall pushes it back up, so the only question worth asking of the picture is WHEN something
+ *  happened — which a bare curve with no axis and no hover could not answer. The curve itself is
  *  computed daemon-side: the half-life table is server config the browser deliberately never sees. */
 
-const VIEW_W = 300;
-const VIEW_H = 100;
-/** Headroom so a curve pinned at 100 is not clipped by the stroke, and the floor label has air. */
-const PAD_Y = 6;
+const CHART_H = 168;
 
 const TONE_STROKE: Record<ReturnType<typeof vitalityTone>, string> = {
   default: 'var(--color-text-muted)',
@@ -29,49 +32,61 @@ const TONE_STROKE: Record<ReturnType<typeof vitalityTone>, string> = {
   warning: 'var(--color-warning)',
 };
 
-interface Scale {
-  x: (iso: string) => number;
-  y: (vitality: number) => number;
+interface Row {
+  t: number;
+  past?: number;
+  projected?: number;
 }
 
-function buildScale(history: MemoryVitalityHistory): Scale | null {
-  const all = [...history.points, ...history.forecast];
-  const times = all.map((point) => parseTs(point.at)).filter((ms): ms is number => ms != null);
-  const min = Math.min(...times);
-  const max = Math.max(...times);
-  if (times.length < 2 || !Number.isFinite(min) || !Number.isFinite(max) || max === min) return null;
-  return {
-    x: (iso) => {
-      const ms = parseTs(iso);
-      if (ms == null) return 0;
-      return ((ms - min) / (max - min)) * VIEW_W;
-    },
-    y: (vitality) => {
-      const clamped = Math.max(0, Math.min(100, vitality));
-      return VIEW_H - PAD_Y - (clamped / 100) * (VIEW_H - PAD_Y * 2);
-    },
+/** History and forecast share one time axis and one row per instant, because two independent series
+ *  would let Recharts place them on separate scales the moment their ranges differ.
+ *
+ *  Exported for its own test: jsdom computes no layout, so Recharts measures a zero-sized box and
+ *  renders nothing there. All of the reasoning worth protecting lives in this function; the drawing is
+ *  the library's, and it gets checked in a browser. */
+export function buildSeries(history: MemoryVitalityHistory): Row[] | null {
+  const rows = new Map<number, Row>();
+  const put = (iso: string, key: 'past' | 'projected', vitality: number) => {
+    const t = parseTs(iso);
+    if (t == null) return;
+    rows.set(t, { ...rows.get(t), t, [key]: Math.max(0, Math.min(100, vitality)) });
   };
-}
 
-const toPath = (points: MemoryVitalityPoint[], scale: Scale): string =>
-  points.map((point, index) => `${index === 0 ? 'M' : 'L'}${scale.x(point.at).toFixed(2)},${scale.y(point.vitality).toFixed(2)}`).join(' ');
+  for (const point of history.points) put(point.at, 'past', point.vitality);
+  for (const point of history.forecast) put(point.at, 'projected', point.vitality);
+
+  // The seam: the last measured point also seeds the projection, otherwise the dashed line starts one
+  // step to the right of where the solid one ends and the curve reads as broken.
+  const lastPast = history.points.at(-1);
+  if (lastPast) put(lastPast.at, 'projected', lastPast.vitality);
+
+  const series = [...rows.values()].sort((a, b) => a.t - b.t);
+  return series.length < 2 ? null : series;
+}
 
 export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; vitality: number }) {
   const { t, locale } = useTranslation();
   const query = useMemoryVitalityHistory(memoryId);
   const history = query.data;
-  const scale = useMemo(() => (history ? buildScale(history) : null), [history]);
+  const series = useMemo(() => (history ? buildSeries(history) : null), [history]);
+
+  const dayLabel = useMemo(
+    () => (ms: number) => new Date(ms).toLocaleDateString(locale, { day: 'numeric', month: 'short' }),
+    [locale],
+  );
 
   if (query.isLoading) {
     return <LoadingState variant="block" />;
   }
   // The curve elaborates on a number that is already shown next to it, so a failure here is not worth
   // an error state of its own — the drawer simply carries on without it.
-  if (query.isError || !history || !scale) return null;
+  if (query.isError || !history || !series) return null;
 
   const stroke = TONE_STROKE[vitalityTone(vitality)];
-  const nowX = scale.x(history.now);
-  const floorY = scale.y(history.floor);
+  const nowMs = parseTs(history.now);
+  const recalls = history.recalls
+    .map((at) => parseTs(at))
+    .filter((ms): ms is number => ms != null);
 
   const evictLabel = history.evictAt
     ? new Date(history.evictAt).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
@@ -87,39 +102,99 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
         <span className={`text-[11px] ${history.evictAt ? TONE_TEXT.warning : TONE_TEXT.muted}`}>{summary}</span>
       </div>
 
-      <svg
-        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-        preserveAspectRatio="none"
-        className="h-28 w-full rounded-md border border-border/70 bg-elevated/30"
+      <div
+        className="w-full rounded-md border border-border/70 bg-elevated/30 pr-2 pt-2"
+        style={{ height: CHART_H }}
         role="img"
         aria-label={`${t.memory.fieldVitality} ${vitalityPct(vitality)}/100. ${summary}`}
       >
-        {/* Retention floor: below this the daily sweep moves the memory to the trash. */}
-        <line
-          x1={0} y1={floorY} x2={VIEW_W} y2={floorY}
-          stroke="var(--color-danger)" strokeWidth={1} strokeDasharray="2 3" opacity={0.55}
-          vectorEffect="non-scaling-stroke"
-        />
-        {/* Where the reconstructed past ends and the projection begins. */}
-        <line
-          x1={nowX} y1={0} x2={nowX} y2={VIEW_H}
-          stroke="var(--color-border-strong)" strokeWidth={1} vectorEffect="non-scaling-stroke"
-        />
-        {history.points.length > 1 ? (
-          <path d={toPath(history.points, scale)} fill="none" stroke={stroke} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-        ) : null}
-        {history.forecast.length > 1 ? (
-          <path
-            d={toPath(history.forecast, scale)}
-            fill="none" stroke={stroke} strokeWidth={1.5} strokeDasharray="3 3" opacity={0.6}
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : null}
-        {/* One mark per recall — the moments that pushed the curve back up. */}
-        {history.recalls.map((at) => (
-          <circle key={at} cx={scale.x(at)} cy={VIEW_H - 2} r={1.5} fill="var(--color-accent)" vectorEffect="non-scaling-stroke" />
-        ))}
-      </svg>
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={series} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+            <CartesianGrid stroke="var(--color-border)" strokeOpacity={0.35} vertical={false} />
+            <XAxis
+              dataKey="t"
+              type="number"
+              scale="time"
+              domain={['dataMin', 'dataMax']}
+              tickFormatter={dayLabel}
+              tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }}
+              stroke="var(--color-border)"
+              tickLine={false}
+              minTickGap={28}
+            />
+            <YAxis
+              domain={[0, 100]}
+              ticks={[0, 50, 100]}
+              width={28}
+              tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }}
+              stroke="var(--color-border)"
+              tickLine={false}
+            />
+
+            {/* Retention floor: below this the daily sweep moves the memory to the trash. */}
+            <ReferenceLine
+              y={history.floor}
+              stroke="var(--color-danger)"
+              strokeDasharray="2 3"
+              strokeOpacity={0.55}
+            />
+            {/* Where the reconstructed past ends and the projection begins. */}
+            {nowMs == null ? null : <ReferenceLine x={nowMs} stroke="var(--color-border-strong)" />}
+            {/* One mark per recall, sitting on the floor of the plot rather than on the curve — these
+             *  are events in time, not vitality readings. */}
+            {recalls.map((ms) => (
+              <ReferenceDot
+                key={ms}
+                x={ms}
+                y={0}
+                r={2}
+                fill="var(--color-accent)"
+                stroke="none"
+                ifOverflow="hidden"
+              />
+            ))}
+
+            <Line
+              dataKey="past" type="monotone" stroke={stroke} strokeWidth={1.5}
+              dot={false} isAnimationActive={false} connectNulls
+            />
+            <Line
+              dataKey="projected" type="monotone" stroke={stroke} strokeWidth={1.5}
+              strokeDasharray="3 3" strokeOpacity={0.6}
+              dot={false} isAnimationActive={false} connectNulls
+            />
+
+            <Tooltip
+              isAnimationActive={false}
+              cursor={{ stroke: 'var(--color-border-strong)', strokeWidth: 1 }}
+              wrapperStyle={{ zIndex: 20, outline: 'none' }}
+              content={({ active, payload }) => {
+                const row = active ? (payload?.[0]?.payload as Row | undefined) : undefined;
+                if (!row) return null;
+                const projected = row.past === undefined;
+                const value = row.past ?? row.projected;
+                if (value === undefined) return null;
+                return (
+                  <CardShell>
+                    <CardHead
+                      colour={projected ? 'var(--color-border-strong)' : stroke}
+                      title={new Date(row.t).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' })}
+                    />
+                    <div className="mt-2.5 flex flex-col gap-0.5 border-t border-border/60 pt-2">
+                      <CardRow icon={Activity} label={t.memory.fieldVitality}>
+                        {Math.round(value)} / 100
+                      </CardRow>
+                      <CardRow icon={CalendarDays} label={t.memory.vitalitySeriesLabel}>
+                        {projected ? t.memory.vitalitySeriesForecast : t.memory.vitalitySeriesMeasured}
+                      </CardRow>
+                    </div>
+                  </CardShell>
+                );
+              }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
 
       <span className="text-[11px] text-text-muted">
         {history.historyFrom === null ? t.memory.vitalityNoHistory : t.memory.vitalityForecastHint}

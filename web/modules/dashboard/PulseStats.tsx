@@ -1,5 +1,5 @@
 'use client';
-import { Area, AreaChart, ResponsiveContainer } from 'recharts';
+import { Sparkline } from '../../components/ui/Sparkline';
 import { HOURS, deltaPct, toLocalHours } from './pulseSeries';
 import type { LocaleDict } from '../../lib/i18n/types';
 import type { PulseResponse } from '../../lib/types';
@@ -21,7 +21,6 @@ interface CardProps {
 }
 
 function StatCard({ label, value, colour, series, footnote }: CardProps) {
-  const id = `pulse-spark-${label.replace(/\W+/g, '')}`;
   return (
     <div className="min-w-0 rounded-xl border border-border/60 bg-elevated/25 px-3 py-2.5">
       <div className="flex items-center gap-1.5">
@@ -31,22 +30,7 @@ function StatCard({ label, value, colour, series, footnote }: CardProps) {
       <div className="mt-1 flex items-end justify-between gap-2">
         <span className="font-mono text-2xl leading-none tabular-nums text-text">{value}</span>
         {series ? (
-          <div aria-hidden className="h-8 w-16 shrink-0 @lg:w-20">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={series.map((v, hour) => ({ hour, v }))} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
-                <defs>
-                  <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={colour} stopOpacity={0.35} />
-                    <stop offset="100%" stopColor={colour} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <Area
-                  dataKey="v" type="monotone" stroke={colour} strokeWidth={1.25}
-                  fill={`url(#${id})`} isAnimationActive={false} dot={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          <Sparkline values={series} colour={colour} className="h-8 w-16 shrink-0 @lg:w-20" />
         ) : null}
       </div>
       <div className="mt-1 truncate text-[10px] text-text-muted">{footnote}</div>

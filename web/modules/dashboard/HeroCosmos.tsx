@@ -9,6 +9,7 @@ import { appendFilament, lightFilament } from '../../lib/cosmosFilaments';
 import { formatCost } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import { usePulse, useModelUsage, useUsageByDay, useCronJobs, useMe, usePluginPresent } from '../../lib/queries';
+import { Sparkline as SharedSparkline } from '../../components/ui/Sparkline';
 import { ElowenPresence } from './ElowenPresence';
 import type { PresenceState } from './usePresence';
 
@@ -250,18 +251,16 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   );
 }
 
-/** Seven-day token sparkline carried over from the retired attention rail. */
+/** Seven-day token sparkline carried over from the retired attention rail. Today is the accented
+ *  column, because it is the day the figure beside it reports. */
 function Sparkline({ days }: { days: { day: string; tokens: number }[] }) {
-  const max = Math.max(1, ...days.map((day) => day.tokens));
   return (
-    <span className="mt-1.5 flex h-5 items-end gap-0.5" aria-hidden>
-      {days.map((day, index) => (
-        <span
-          key={day.day}
-          className={`flex-1 rounded-t-sm transition-[height] duration-500 ${index === days.length - 1 ? 'bg-accent' : 'bg-border-strong/70'}`}
-          style={{ height: `${Math.max(10, (day.tokens / max) * 100)}%` }}
-        />
-      ))}
-    </span>
+    <SharedSparkline
+      values={days.map((day) => day.tokens)}
+      colour="var(--color-accent)"
+      variant="bar"
+      highlightLast
+      className="mt-1.5 h-5 w-full"
+    />
   );
 }

@@ -4,7 +4,9 @@ import { Avatar } from '../../components/ui/Avatar';
 import { PlatformIcon } from '../../components/ui/PlatformIcon';
 import { formatCost, formatTokens } from '../../lib/format';
 import { colorFor } from './pulseSeries';
-import { CardHead, CardRow, CardShell, PulseRing } from './PulseRing';
+import { CardHead, CardRow, CardShell } from '../../components/ui/ChartCard';
+import { Sparkline } from '../../components/ui/Sparkline';
+import { PulseRing } from './PulseRing';
 import type { RingSlice } from './PulseRing';
 import type { LocaleDict } from '../../lib/i18n/types';
 import type { PulsePerson, PulseResponse } from '../../lib/types';
@@ -34,17 +36,7 @@ const surfaceLabel = (t: LocaleDict, surface: string): string =>
  *  since an arc has no time axis. Left on UTC days deliberately: shifting a whole-day count into local
  *  time would split every day across two slots and blur the shape it exists to show. */
 function DayCurve({ days, colour }: { days: number[]; colour: string }) {
-  const max = Math.max(...days, 0);
-  if (max <= 0 || days.length < 2) return null;
-  const points = days.map((v, i) => `${(i / (days.length - 1)) * 100},${14 - (v / max) * 12}`).join(' ');
-  return (
-    <svg aria-hidden viewBox="0 0 100 14" preserveAspectRatio="none" className="mt-1 h-4 w-full">
-      <polyline
-        points={points} fill="none" stroke={colour} strokeWidth={1.25}
-        strokeLinejoin="round" vectorEffect="non-scaling-stroke"
-      />
-    </svg>
-  );
+  return <Sparkline values={days} colour={colour} variant="line" className="mt-1 h-4 w-full" />;
 }
 
 /** Exported for its own test: jsdom computes no layout, so Recharts never measures a ring and the

@@ -815,6 +815,9 @@ export const cs = {
     usedAt: 'Použito',
     // Vývoj vitality (graf v detailu)
     vitalityChart: 'Vývoj vitality',
+    vitalitySeriesLabel: 'řada',
+    vitalitySeriesMeasured: 'naměřeno',
+    vitalitySeriesForecast: 'předpověď',
     vitalityEvictOn: 'Přesune se do koše {date}',
     vitalityNeverEvicted: 'Nikdy se nesmaže automaticky',
     vitalityForecastHint: 'Čárkovaná čára předpokládá, že se vzpomínka už nikdy nevybaví.',

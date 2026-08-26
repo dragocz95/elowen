@@ -815,6 +815,9 @@ export const en = {
     usedAt: 'Used',
     // Vitality over time (detail drawer chart)
     vitalityChart: 'Vitality over time',
+    vitalitySeriesLabel: 'series',
+    vitalitySeriesMeasured: 'measured',
+    vitalitySeriesForecast: 'forecast',
     vitalityEvictOn: 'Moves to the trash on {date}',
     vitalityNeverEvicted: 'Never deleted automatically',
     vitalityForecastHint: 'The dashed line assumes the memory is never recalled again.',

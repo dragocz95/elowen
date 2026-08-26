@@ -1,7 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
-import type { LucideIcon } from 'lucide-react';
 
 /** The shared ring the pulse tile draws four times.
  *
@@ -30,43 +29,6 @@ export interface RingSlice<T> {
   value: number;
   colour: string;
   datum: T;
-}
-
-/** One labelled line inside a hover card. The icon carries the identity — the same reasoning as the
- *  activity feed's tool marks, where a mark reads faster than the word it replaces. */
-export function CardRow({ icon: Icon, label, children }: {
-  icon: LucideIcon; label: string; children: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-baseline gap-2 text-[11px] leading-5">
-      <Icon size={12} className="shrink-0 translate-y-0.5 text-text-subtle" aria-hidden />
-      <span className="text-text-muted">{label}</span>
-      <span className="ml-auto min-w-0 truncate text-right font-mono tabular-nums text-text">{children}</span>
-    </div>
-  );
-}
-
-/** The frame every hover card sits in, so all four look like one component rather than four. */
-export function CardShell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="w-60 rounded-xl border border-border bg-surface/95 p-3 shadow-xl backdrop-blur">
-      {children}
-    </div>
-  );
-}
-
-/** The card header shared by the three non-person rings: a colour chip, a name, and the share. */
-export function CardHead({ colour, title, share, icon: Icon }: {
-  colour: string; title: string; share: number; icon?: LucideIcon;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colour }} />
-      {Icon ? <Icon size={13} className="shrink-0 text-text-muted" aria-hidden /> : null}
-      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight text-text">{title}</span>
-      <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted">{share.toFixed(1)} %</span>
-    </div>
-  );
 }
 
 interface TooltipPayload<T> {

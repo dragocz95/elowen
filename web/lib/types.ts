@@ -69,7 +69,7 @@ import type {
   ToolOutputView, BrainWorkflowView, BrainMessageView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainStreamControl,
   BrainWorkMode, BrainPendingPlan,
   User, BrainLimits, RuntimeConfig as WireRuntimeConfig, RuntimeLimits, ToolDeferralOverrides, BrainUsage, MemoryRow, MemoryCategoryRow, MemoryEventRow, BrainGoalState,
-  MemoryVitalityHistory, MemoryVitalityPoint,
+  MemoryVitalityHistory,
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
   BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
@@ -92,7 +92,7 @@ export type MemoryCategory = MemoryCategoryRow;
 export type MemoryEvent = MemoryEventRow;
 /** A memory's vitality over time, rebuilt daemon-side from its recall log. The web draws it as-is —
  *  reconstructing it here would mean shipping the half-life table to the browser. */
-export type { MemoryVitalityHistory, MemoryVitalityPoint };
+export type { MemoryVitalityHistory };
 export type BrainGoal = BrainGoalState;
 
 /** Memory auto-retention (`runtime.memoryRetention`), mirrored from `src/brain/memoryVitality.ts` — the

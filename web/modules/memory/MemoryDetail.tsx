@@ -1,4 +1,5 @@
 'use client';
+import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { Brain, Pencil, Trash2, RotateCcw, Check, Hash, Gauge, Clock, Activity, Zap, ShieldCheck } from 'lucide-react';
 import type { Memory } from '../../lib/types';
@@ -11,7 +12,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { IconButton } from '../../components/ui/IconButton';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { EmptyState, LoadingLine } from '../../components/ui/states';
+import { EmptyState, LoadingLine, LoadingState } from '../../components/ui/states';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { useAutoSaveStatus } from '../../lib/useAutoSaveStatus';
 import { useTranslation } from '../../lib/i18n';
@@ -19,7 +20,13 @@ import { formatTaskTime } from '../../lib/format';
 import { useNow } from '../../lib/useNow';
 import { memoryStatusTone, memoryStatusLabel, categorySwatch, vitalityPct } from './memoryMeta';
 import { MemoryAuditFeed } from './MemoryAuditFeed';
-import { MemoryVitalityChart } from './MemoryVitalityChart';
+/** Loaded on demand: the chart pulls in the charting library, and this detail is one drawer on a page
+ *  that otherwise has no chart at all — a static import would put ~376 kB of it into the first load of
+ *  the whole memory list. */
+const MemoryVitalityChart = dynamic(
+  () => import('./MemoryVitalityChart').then((m) => m.MemoryVitalityChart),
+  { ssr: false, loading: () => <LoadingState variant="block" /> },
+);
 import { CategoryIcon } from '../../lib/categoryIcons';
 import { RankSlider, CategorySelect } from './MemoryFields';
 

@@ -809,6 +809,9 @@ export const sk = {
     usedAt: 'Použité',
     // Vývoj vitality (graf v detaile)
     vitalityChart: 'Vývoj vitality',
+    vitalitySeriesLabel: 'rad',
+    vitalitySeriesMeasured: 'namerané',
+    vitalitySeriesForecast: 'predpoveď',
     vitalityEvictOn: 'Presunie sa do koša {date}',
     vitalityNeverEvicted: 'Nikdy sa nezmaže automaticky',
     vitalityForecastHint: 'Čiarkovaná čiara predpokladá, že sa spomienka už nikdy nevybaví.',
