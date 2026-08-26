@@ -225,8 +225,12 @@ export interface ProfilePatch { name?: string; email?: string; default_exec?: st
  *  The platform link fields follow the daemon's identity descriptors (type-only, so nothing of that
  *  module reaches the bundle): a platform added there is a compile error here until Account renders it,
  *  which is precisely how Telegram stayed unlinkable while the daemon supported it. Optional because an
- *  older daemon omits a key the current web knows about. */
-export interface CliSettings extends Partial<Record<PlatformLinkKey, string>> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; serverDefault?: string }
+ *  older daemon omits a key the current web knows about.
+ *
+ *  `availableLinks` is the daemon's answer to WHICH of those platforms is worth showing — the ones whose
+ *  adapter is actually serving turns. An empty array means none are, which is different from the key
+ *  being absent (a daemon too old to have an opinion), so the two must not be collapsed. */
+export interface CliSettings extends Partial<Record<PlatformLinkKey, string>> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; serverDefault?: string; availableLinks?: PlatformLinkKey[] }
 
 /** Per-user granular tool permissions (mirror src/brain/toolPermissions.ts): allow/ask/deny rule maps
  *  (`tools` keyed by tool-name pattern, `bash` by command pattern — insertion order decides precedence,

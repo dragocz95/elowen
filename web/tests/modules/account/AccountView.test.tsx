@@ -106,6 +106,28 @@ describe('AccountView', () => {
     await waitFor(() => expect(patched).toEqual({ telegramUserId: '123456789' }));
   });
 
+  // A link only matches a sender this instance can actually receive, so a field for a platform whose
+  // adapter is not running is a box that can only ever be filled in wrong. The daemon names the platforms
+  // worth offering; the page must not fall back to its own full list once it has that answer.
+  it('offers a link field only for the platforms the daemon reports as live', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({
+        model: '', modelProvider: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '',
+        availableLinks: ['discordUserId'],
+      })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    expect(await screen.findByRole('textbox', { name: 'Discord ID' })).toBeInTheDocument();
+    for (const label of ['Microsoft Teams identity', 'Telegram ID', 'WhatsApp number']) {
+      expect(screen.queryByRole('textbox', { name: label })).toBeNull();
+    }
+  });
+
   it('keeps the retired Default worker control out of Account', async () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ default_exec: 'sonnet' }) })),

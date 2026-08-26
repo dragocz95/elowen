@@ -127,10 +127,19 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     const cfg = d.config.get();
     return cfg.brain.providers[0]?.models[0] || DEFAULT_BRAIN_MODEL;
   };
-  app.get('/auth/me/cli-settings', (c) => {
+  app.get('/auth/me/cli-settings', async (c) => {
     const u = c.get('user');
     const s = d.userSettings?.cliSettings(u.id) ?? { ...cliSettingsDefaults(), autoCompact: false, autoSave: true };
-    return c.json({ ...s, userInstructions: s.personalityBody, serverDefault: serverDefaultModel() });
+    // Which platform links are worth offering at all. A link exists to match an incoming sender against
+    // this account, so it is only useful once that platform's adapter is actually serving turns.
+    //
+    // REGISTERED ADAPTERS, not `plugins.enabled`: a plugin can be enabled and still register nothing when
+    // its configuration is incomplete, and a field for a platform that cannot receive a message is a box
+    // the user can only fill in wrong. An absent registry (minimal wirings) therefore offers nothing
+    // rather than guessing — the same way the browser gates a plugin's affordances on a confirmed listing.
+    const live = new Set(((await d.plugins?.get())?.platforms ?? []).map((platform) => platform.name));
+    const availableLinks = PLATFORM_IDENTITIES.filter((desc) => live.has(desc.platform)).map((desc) => desc.linkSettingKey);
+    return c.json({ ...s, userInstructions: s.personalityBody, serverDefault: serverDefaultModel(), availableLinks });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);

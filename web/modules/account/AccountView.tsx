@@ -425,7 +425,13 @@ export function AccountView() {
           telegramUserId: { title: t.account.telegramId, description: t.help.accountTelegramId },
           whatsappNumber: { title: t.account.whatsappNumber, description: t.help.accountWhatsappNumber },
         };
-        const linkRows = PLATFORM_LINK_ORDER.map((key) => {
+        // Only platforms this instance can actually receive a message from get a field. The daemon
+        // decides (it knows which adapters registered), so a channel plugin that is absent, disabled or
+        // misconfigured contributes nothing here instead of a box that could never match a sender.
+        // While settings load nothing is offered, so the list never flashes wider and then collapses; a
+        // daemon too old to answer keeps every field rather than silently losing one.
+        const visibleLinkKeys = !cli.data ? [] : cli.data.availableLinks ?? PLATFORM_LINK_ORDER;
+        const linkRows = PLATFORM_LINK_ORDER.filter((key) => visibleLinkKeys.includes(key)).map((key) => {
           const { title, description } = linkCopy[key];
           const { placeholder, icon } = PLATFORM_LINK_INPUTS[key];
           return (
