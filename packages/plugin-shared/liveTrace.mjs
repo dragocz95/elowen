@@ -128,16 +128,32 @@ export function makeToolLinesFor({ compactLine, safeTail, style }) {
   };
 }
 
+function cardElapsed(item, now) {
+  if (item?.status !== 'in_progress' || !Number.isFinite(item.startedAt)) return '';
+  const seconds = Math.max(0, Math.floor((now - item.startedAt) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 /** A display card (ctx.emitCard) — title + checklist (emoji per status, since chat surfaces have no
- *  task-list markdown) + freeform body. Capped so a long card can't blow the message limit. */
+ *  task-list markdown) + freeform body. Capped so a long card can't blow the message limit. A platform
+ *  post is static: elapsed is baked only when normal progress already causes a render, never by a timer. */
 export function makeCardLines(style) {
   return (card, max = 15) => {
     const items = Array.isArray(card?.items) ? card.items : [];
     const glyph = (s) => (s === 'completed' ? '✅' : s === 'in_progress' ? '🔸' : '⬜');
     const done = items.filter((t) => t.status === 'completed').length;
     const lines = [];
+    const now = Date.now();
     if (card?.title || items.length) lines.push(`📋 ${style.bold(card?.title ?? 'Card')}${items.length ? ` (${done}/${items.length})` : ''}`);
-    for (const t of items.slice(0, max)) lines.push(`${glyph(t.status)} ${t.status === 'completed' ? style.strike(t.text) : t.text}`);
+    for (const t of items.slice(0, max)) {
+      const text = t.status === 'completed' ? style.strike(t.text) : t.text;
+      const elapsed = cardElapsed(t, now);
+      const suffix = elapsed ? ` ${style.italic?.(`· ${elapsed}`) ?? `· ${elapsed}`}` : '';
+      lines.push(`${glyph(t.status)} ${text}${suffix}`);
+    }
     if (items.length > max) lines.push(`… +${items.length - max}`);
     if (card?.body) lines.push(String(card.body));
     return lines;

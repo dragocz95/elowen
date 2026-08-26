@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { BrainChatSurface } from '../../../modules/advisor/BrainChatSurface';
+import { BrainChatSurface, CardBlock } from '../../../modules/advisor/BrainChatSurface';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 
 // The transcript is meant to read as ONE monospace column: the tool rows, the statusline and the
@@ -74,6 +74,22 @@ function renderSurface() {
 }
 
 describe('transcript reads as one column', () => {
+  it('ticks an in-progress card clock while the turn is live and keeps it visually secondary', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    try {
+      const { wrapper: Wrapper } = createWrapper();
+      render(<Wrapper><CardBlock card={{ id: 'todos', items: [{ text: '#112 Kontroluji vzhled karty', status: 'in_progress', startedAt: 100_000 }] }} live /></Wrapper>);
+      expect(screen.getByTestId('chat-card')).toHaveTextContent('#112 Kontroluji vzhled karty· 0s');
+      await act(async () => { await vi.advanceTimersByTimeAsync(169_000); });
+      const elapsed = screen.getByTestId('chat-card-elapsed');
+      expect(elapsed).toHaveTextContent('· 2m 49s');
+      expect(elapsed).toHaveClass('text-text-muted', 'opacity-70');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('sizes the todo card exactly like the statusline', async () => {
     renderSurface();
     const card = await screen.findByTestId('chat-card');

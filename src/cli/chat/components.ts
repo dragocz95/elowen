@@ -591,11 +591,22 @@ export class StatusBar implements Component {
   }
 }
 
+function cardItemElapsed(item: NonNullable<BrainCard['items']>[number], now: number): string {
+  const startedAt = item.startedAt;
+  if (item.status !== 'in_progress' || typeof startedAt !== 'number' || !Number.isFinite(startedAt)) return '';
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 /** Render one display card (title + checklist items + freeform body) as fixed-panel rows — the item
  *  glyphs use a compact terminal checklist style. `maxRows` bounds the WHOLE card
  *  (items + body) so a big card can't overrun the fixed bottom stack and wreck the TUI. */
 export function cardBlock(card: BrainCard, maxRows = 12, collapsed = false): string[] {
   const items = card.items ?? [];
+  const now = Date.now();
   const done = items.filter((i) => i.status === 'completed').length;
   const counter = items.length ? FAINTC(`  ${done}/${items.length}`) : '';
   const header = `  ${FAINTC(collapsed ? '▸' : '▾')} ${bold(WHITE(inlineText(card.title ?? 'Todos')))}${counter} ${FAINTC('click')}`;
@@ -608,9 +619,12 @@ export function cardBlock(card: BrainCard, maxRows = 12, collapsed = false): str
     : items.slice(0, shownItems);
   for (const it of visibleItems) {
     const text = inlineText(it.text);
+    const elapsed = cardItemElapsed(it, now);
     if (it.status === 'completed') lines.push(`    ${GREENC('[x]')} ${DIM(text)}`);
-    else if (it.status === 'in_progress') lines.push(`    ${color.warning('[•]')} ${color.warning(text)}`);
-    else lines.push(`    ${FAINTC('[ ]')} ${DIM(text)}`);
+    else if (it.status === 'in_progress') {
+      const suffix = elapsed ? FAINTC(` · ${elapsed}`) : '';
+      lines.push(`    ${color.warning('[•]')} ${color.warning(text)}${suffix}`);
+    } else lines.push(`    ${FAINTC('[ ]')} ${DIM(text)}`);
   }
   if (items.length > shownItems) lines.push(`    ${FAINTC(`… +${items.length - shownItems} more`)}`);
   for (const l of bodyLines.slice(0, maxRows)) lines.push(`    ${DIM(l)}`);

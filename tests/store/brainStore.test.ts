@@ -1547,9 +1547,12 @@ describe('BrainStore', () => {
   describe('display cards', () => {
     const card = (id: string, text: string) => ({ id, title: 'Todos', pinned: true, items: [{ text, status: 'pending' as const }] });
 
-    it('stores a card and reads it back whole', () => {
-      store.upsertCard('s1', card('todos', 'Ship it'));
-      expect(store.getCards('s1')).toEqual([card('todos', 'Ship it')]);
+    it('stores a card and reads it back whole, including an optional item clock', () => {
+      const timed = { ...card('todos', 'Ship it'), items: [{ text: 'Ship it', status: 'in_progress' as const, startedAt: 123_456 }] };
+      store.upsertCard('s1', timed);
+      expect(store.getCards('s1')).toEqual([timed]);
+      store.upsertCard('old', card('todos', 'Older card'));
+      expect(store.getCards('old')).toEqual([card('todos', 'Older card')]);
     });
 
     it('re-emitting a card updates it in place instead of appending a second panel', () => {

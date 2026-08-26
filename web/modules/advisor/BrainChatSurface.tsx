@@ -153,11 +153,19 @@ function ToolOutputBlock({ output }: { output: NonNullable<ToolItem['output']> }
  *  accented, pending muted) previewed to its first items, and an optional freeform body. The todo
  *  checklist is the canonical card. A checklist with everything ticked leaves the transcript entirely —
  *  the CLI panel drops it the same way, because a finished list has nothing left to track. */
-function CardBlock({ card }: { card: BrainCard }) {
+export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const items = card.items ?? [];
+  const ticking = live && items.some((item) => item.status === 'in_progress' && Number.isFinite(item.startedAt));
+  useEffect(() => {
+    setNow(Date.now());
+    if (!ticking) return;
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [ticking]);
   const done = items.filter((i) => i.status === 'completed').length;
   if (items.length > 0 && done === items.length) return null;
   const previewable = items.length > TODO_PREVIEW_ITEMS;
@@ -183,7 +191,12 @@ function CardBlock({ card }: { card: BrainCard }) {
               <span className={`shrink-0 ${titem.status === 'completed' ? 'text-success' : titem.status === 'in_progress' ? 'text-accent' : 'text-text-muted'}`}>
                 {titem.status === 'completed' ? '✔' : titem.status === 'in_progress' ? '◐' : '○'}
               </span>
-              <span className={titem.status === 'completed' ? 'text-text-muted line-through' : 'text-text'}>{titem.text}</span>
+              <span className={titem.status === 'completed' ? 'text-text-muted line-through' : 'text-text'}>
+                {titem.text}
+                {titem.status === 'in_progress' && Number.isFinite(titem.startedAt) ? (
+                  <span data-testid="chat-card-elapsed" className="ml-1 tabular-nums text-text-muted opacity-70">· {formatDuration(now - titem.startedAt!)}</span>
+                ) : null}
+              </span>
             </li>
           ))}
         </ul>
@@ -1044,7 +1057,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             Background processes are deliberately NOT here: the telemetry panel is their single home, so
             a long-running command reports in one place instead of also crowding the composer. */}
         <div className={`font-mono ${variant === 'full' ? 'mt-4 flex flex-col gap-3 text-[0.6875rem] empty:hidden' : 'contents text-tiny'}`}>
-        {transcriptExtras ? todoCards.map((card) => <CardBlock key={card.id} card={card} />) : null}
+        {transcriptExtras ? todoCards.map((card) => <CardBlock key={card.id} card={card} live={busy} />) : null}
         {/* Workflow view: a clickable link that opens the table of delegated agents (drill-in / back). The
             table itself stays mounted below whatever the rail does — `agentsOpen` lives in the provider, so
             the rail's own agent row opens THIS instance. Only the chip is redundant beside an open rail. */}
@@ -1094,7 +1107,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               {/* Outside the transcript there is no wrapper to inherit from, so the modal states the
                   same monospace type itself. */}
               <div className="flex flex-col gap-3 font-mono text-tiny">
-                {todoCards.map((card) => <CardBlock key={card.id} card={card} />)}
+                {todoCards.map((card) => <CardBlock key={card.id} card={card} live={busy} />)}
               </div>
             </ModalBody>
           </Modal>

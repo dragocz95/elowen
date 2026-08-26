@@ -21,10 +21,18 @@ export function normalizeCard(raw: unknown): BrainCard | null {
   for (const it of Array.isArray(o.items) ? o.items : []) {
     if (items.length >= MAX_ITEMS) break;
     if (!it || typeof it !== 'object') continue;
-    const text = String((it as Record<string, unknown>).text ?? '').trim().slice(0, MAX_TEXT);
+    const item = it as Record<string, unknown>;
+    const text = String(item.text ?? '').trim().slice(0, MAX_TEXT);
     if (!text) continue;
-    const status = (it as Record<string, unknown>).status;
-    items.push({ text, status: STATUSES.has(status as string) ? (status as BrainCardItem['status']) : 'pending' });
+    const status = item.status;
+    const startedAt = typeof item.startedAt === 'number' && Number.isFinite(item.startedAt) && item.startedAt >= 0
+      ? item.startedAt
+      : undefined;
+    items.push({
+      text,
+      status: STATUSES.has(status as string) ? (status as BrainCardItem['status']) : 'pending',
+      ...(startedAt != null ? { startedAt } : {}),
+    });
   }
   const body = typeof o.body === 'string' && o.body.trim() ? o.body.slice(0, MAX_BODY) : undefined;
   const title = typeof o.title === 'string' && o.title.trim() ? o.title.slice(0, MAX_TITLE) : undefined;

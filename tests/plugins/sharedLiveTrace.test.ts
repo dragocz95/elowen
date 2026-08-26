@@ -9,6 +9,7 @@ const DISCORD = {
   fenceSafe: (s: string) => s.replace(/```/g, "'''"),
   bold: (s: string) => `**${s}**`,
   strike: (s: string) => `~~${s}~~`,
+  italic: (s: string) => `_${s}_`,
   summaryLine: (s: string) => `-# ↳ ${s}`,
 };
 const PLAIN = { mentionSafe: (s: string) => s, fenceSafe: (s: string) => s, bold: (s: string) => s, strike: (s: string) => s, summaryLine: (s: string) => `  ↳ ${s}` };
@@ -119,13 +120,24 @@ describe('shared liveTrace row/card rendering per style', () => {
     expect(head).toBe('💻 `Bash`: "npm test" ×2 — passed');
   });
 
-  it('cardLines applies the surface emphasis (Discord bolds and strikes; plain does neither)', () => {
-    const card = { title: 'Plan', items: [{ status: 'completed', text: 'a' }, { status: 'pending', text: 'b' }] };
-    const dLines = makeCardLines(DISCORD)(card);
-    expect(dLines[0]).toBe('📋 **Plan** (1/2)');
-    expect(dLines[1]).toBe('✅ ~~a~~');
-    const pLines = makeCardLines(PLAIN)(card);
-    expect(pLines[0]).toBe('📋 Plan (1/2)');
-    expect(pLines[1]).toBe('✅ a');
+  it('cardLines applies surface emphasis and bakes elapsed only when the static post renders', () => {
+    const realNow = Date.now;
+    Date.now = () => 269_000;
+    try {
+      const card = { title: 'Plan', items: [
+        { status: 'completed', text: 'a' },
+        { status: 'in_progress', text: '#112 Kontroluji vzhled karty', startedAt: 100_000 },
+      ] };
+      const dLines = makeCardLines(DISCORD)(card);
+      expect(dLines[0]).toBe('📋 **Plan** (1/2)');
+      expect(dLines[1]).toBe('✅ ~~a~~');
+      expect(dLines[2]).toBe('🔸 #112 Kontroluji vzhled karty _· 2m 49s_');
+      const pLines = makeCardLines(PLAIN)(card);
+      expect(pLines[0]).toBe('📋 Plan (1/2)');
+      expect(pLines[1]).toBe('✅ a');
+      expect(pLines[2]).toBe('🔸 #112 Kontroluji vzhled karty · 2m 49s');
+    } finally {
+      Date.now = realNow;
+    }
   });
 });

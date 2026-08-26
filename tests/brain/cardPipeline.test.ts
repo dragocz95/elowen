@@ -12,14 +12,16 @@ describe('normalizeCard — untrusted ctx.emitCard payload', () => {
         { text: '  ', status: 'pending' }, // empty text dropped
         { text: 'B', status: 'bogus' },    // unknown status → pending
         'nope',                            // non-object dropped
-        { text: 'C', status: 'in_progress' },
+        { text: 'C', status: 'in_progress', startedAt: 123_456 },
+        { text: 'D', status: 'in_progress', startedAt: 'yesterday' },
       ],
     });
     expect(c).not.toBeNull();
     expect(c!.items).toEqual([
       { text: 'A', status: 'completed' },
       { text: 'B', status: 'pending' },
-      { text: 'C', status: 'in_progress' },
+      { text: 'C', status: 'in_progress', startedAt: 123_456 },
+      { text: 'D', status: 'in_progress' },
     ]);
   });
 

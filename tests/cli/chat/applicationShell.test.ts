@@ -9,7 +9,7 @@ import { OverlayController } from '../../../src/cli/chat/overlayController.js';
 import { RenderShell } from '../../../src/cli/chat/renderShell.js';
 import { createChatComposition, NOTICE_TTL_MS } from '../../../src/cli/chat/chatComposition.js';
 import type { ChatComposition, ShellInputDeps } from '../../../src/cli/chat/chatComposition.js';
-import { SubagentPanel } from '../../../src/cli/chat/components.js';
+import { CardPanel, SubagentPanel } from '../../../src/cli/chat/components.js';
 import { openPicker } from '../../../src/cli/chat/picker.js';
 import type { TuiDiagnostics } from '../../../src/cli/chat/tuiDiagnostics.js';
 import { startScreenBox, startScreenInputTop, TOP_RULE_ROWS } from '../../../src/cli/chat/startScreen.js';
@@ -109,6 +109,34 @@ describe('chat application shell ownership', () => {
     expect(animation.timerCount).toBe(1);
     animation.stop();
     expect(animation.timerCount).toBe(0);
+  });
+
+  it('the active-turn animation frame visibly advances a Todo item clock', async () => {
+    const panel = new CardPanel();
+    panel.set([{
+      id: 'todos', pinned: true,
+      items: [{ text: '#112 Kontroluji vzhled karty', status: 'in_progress', startedAt: 1_000 }],
+    }]);
+    const visibleRow = (): string => panel.render(80)[1]!.replace(/\x1b\[[0-9;]*m/g, '');
+    const frames = [visibleRow()];
+    let animation!: AnimationController;
+    animation = new AnimationController({
+      canAnimateMascot: () => false,
+      thinkingIntervalMs: 1_000,
+      render: () => {
+        frames.push(visibleRow());
+        animation.updateThinking(true); // prepareFrame re-arms this while the turn remains active
+      },
+    });
+
+    animation.updateThinking(true);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(frames).toEqual([
+      '    [•] #112 Kontroluji vzhled karty · 0s',
+      '    [•] #112 Kontroluji vzhled karty · 1s',
+      '    [•] #112 Kontroluji vzhled karty · 2s',
+    ]);
+    animation.stop();
   });
 
   // The pure decision is covered in keybinds.test.ts. This is the half that broke: a transient notice sat

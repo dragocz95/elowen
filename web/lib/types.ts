@@ -159,7 +159,7 @@ export interface BrainStreamSnapshotFrame {
 export interface AskAnswer { header: string; selected: string[]; other?: string }
 
 /** ctx.emitCard display card (mirror src/brain/events.ts) — a live panel keyed by `id`. */
-interface BrainCardItem { text: string; status?: 'pending' | 'in_progress' | 'completed' }
+interface BrainCardItem { text: string; status?: 'pending' | 'in_progress' | 'completed'; startedAt?: number }
 export interface BrainCard { id: string; title?: string; items?: BrainCardItem[]; body?: string; pinned?: boolean }
 
 /** One background shell process (terminal plugin's `Bash(background:true)`). The transcript panel next to

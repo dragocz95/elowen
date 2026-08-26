@@ -407,6 +407,19 @@ describe('chat components', () => {
     expect(body).toContain('Alpha');
     expect(body).toContain('note line');
   });
+
+  it('cardBlock derives elapsed time at render time instead of freezing it in card text', () => {
+    const realNow = Date.now;
+    const card = { id: 'todos', items: [{ text: '#112 Kontroluji vzhled karty', status: 'in_progress' as const, startedAt: 100_000 }] };
+    try {
+      Date.now = () => 100_000;
+      expect(strip(cardBlock(card))[1]).toContain('#112 Kontroluji vzhled karty · 0s');
+      Date.now = () => 269_000;
+      expect(strip(cardBlock(card))[1]).toContain('#112 Kontroluji vzhled karty · 2m 49s');
+    } finally {
+      Date.now = realNow;
+    }
+  });
 });
 
 describe('SubagentPanel', () => {
