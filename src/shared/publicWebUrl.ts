@@ -5,6 +5,8 @@ export function trustedPublicWebUrl(raw: string | null | undefined): string | nu
   try {
     const url = new URL(raw);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+    if (url.protocol === 'http:' && !loopback) return null;
     if (url.username || url.password || url.search || url.hash) return null;
     const path = url.pathname.replace(/\/+$/g, '');
     url.pathname = path || '/';
