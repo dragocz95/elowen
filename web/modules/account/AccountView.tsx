@@ -40,7 +40,6 @@ import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
 import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { ConstellationScope } from '../../components/ui/Constellation';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { MotionReveal } from '../../components/ui/Motion';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
@@ -330,23 +329,23 @@ export function AccountView() {
         </AccountPanel>
       ))}
       <AccountPanel id="memory" active={section} visited={visitedSections}>
-        <ConstellationScope core={t.account.tabMemory}><AccountMemorySection onSaveState={reportSaveState} /></ConstellationScope>
+        <AccountMemorySection onSaveState={reportSaveState} />
       </AccountPanel>
       <AccountPanel id="personality" active={section} visited={visitedSections}>
-        <ConstellationScope core={t.account.tabPersonality}><PersonalitySection onSaveState={reportSaveState} /></ConstellationScope>
+        <PersonalitySection onSaveState={reportSaveState} />
       </AccountPanel>
       <AccountPanel id="terminal" active={section} visited={visitedSections}>
-        <ConstellationScope core={t.account.tabTerminal}><TerminalSection onSaveState={reportSaveState} /></ConstellationScope>
+        <TerminalSection onSaveState={reportSaveState} />
       </AccountPanel>
 
       {/* Elowen AI runtime controls. Default models live at the top of the profile workspace, where
           users see their most consequential personal preference immediately. */}
       <AccountPanel id="cli" active={section} visited={visitedSections}>
-        <ConstellationScope core={t.account.tabCli}><CliSection onSaveState={reportSaveState} /></ConstellationScope>
+        <CliSection onSaveState={reportSaveState} />
       </AccountPanel>
 
       <AccountPanel id="profile" active={section} visited={visitedSections}>
-      <ConstellationScope core={t.account.tabProfile}>
+      
       {(() => {
         const rowElowen = elowenModels.length > 0 ? (
           <SpatialRow title={t.account.defaultElowenAi} description={t.account.defaultElowenAiHint} icon={Brain}>
@@ -453,11 +452,11 @@ export function AccountView() {
           </div>
         );
       })()}
-      </ConstellationScope>
+      
       </AccountPanel>
 
       <AccountPanel id="security" active={section} visited={visitedSections}>
-      <ConstellationScope core={t.account.tabSecurity}>
+      
       {(() => {
         // Password change — verified server-side against the current password.
         const passwordForm = (
@@ -520,7 +519,7 @@ export function AccountView() {
           </>
         );
       })()}
-      </ConstellationScope>
+      
       </AccountPanel>
 
       <AccountPanel id="notifications" active={section} visited={visitedSections}>
@@ -528,7 +527,7 @@ export function AccountView() {
            Rendered as an inline toggle row (like the other account settings) instead of a detached
            right-aligned button, so the control reads as a setting, not a submit form. */}
         {pushSupported ? (
-          <ConstellationScope core={t.account.tabNotifications}>
+          
           <SpatialGroup>
           <SpatialRow title={t.push.title} icon={Bell} description={t.help.pushEnable}>
             <label className="flex items-center gap-3 text-sm text-text">
@@ -537,7 +536,7 @@ export function AccountView() {
             </label>
           </SpatialRow>
           </SpatialGroup>
-          </ConstellationScope>
+          
         ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>}
       </AccountPanel>
       </SpatialControlDeck>

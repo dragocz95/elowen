@@ -226,7 +226,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
 
   return (
     <div className="@container flex flex-col gap-4">
-      <SettingsGroup>
+      <SettingsGroup columns={2}>
         {rowEmbProvider}{rowEmbModel}{rowEmbCustom}{rowDimensions}{rowReindex}
         {rowCatProvider}{rowCatModel}{rowReclassify}
       </SettingsGroup>

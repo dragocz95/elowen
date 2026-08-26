@@ -46,7 +46,7 @@ export function AccountMemorySection({ onSaveState }: { onSaveState?: (section: 
   if (isLoading || !data) return <LoadingState />;
 
   return (
-    <SpatialGroup>
+    <SpatialGroup columns={2}>
       <SpatialRow title={t.accountMemory.recallTitle} icon={Search} description={t.help.memoryRecall}>
         <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={autoRecall} onChange={setAutoRecall} label={t.accountMemory.recallToggle} />

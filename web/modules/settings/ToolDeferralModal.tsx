@@ -171,7 +171,7 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
   return (
     <Modal title={t.brain.toolLoading.title} description={t.brain.toolLoading.hint} icon={Boxes} size="xl" onClose={onClose} presentation={presentation}>
       <ModalBody gap={4}>
-        <SettingsGroup title={t.brain.toolLoading.globalTitle} description={t.brain.toolLoading.globalHint} icon={Boxes} variant="classic">
+        <SettingsGroup title={t.brain.toolLoading.globalTitle} description={t.brain.toolLoading.globalHint} icon={Boxes}>
           <SettingsRow label={t.brain.toolLoading.enabled} description={t.brain.toolLoading.enabledHint} icon={Boxes}>
             <Toggle checked={draft.enabled} onChange={(enabled) => setDraft((current) => ({ ...current, enabled }))} label={t.brain.toolLoading.enabled} />
           </SettingsRow>
@@ -203,7 +203,6 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
                 key={group.sourceId}
                 title={group.label}
                 description={group.kind === 'builtin' ? t.brain.toolLoading.builtIn : t.brain.toolLoading.plugin}
-                variant="classic"
                 actions={(
                   <div className="flex items-center gap-2">
                     <Segmented options={options} value={groupMode} onChange={(mode) => setSourceMode(group.sourceId, mode as 'default' | ToolLoadingMode)} size="sm" aria-label={t.brain.toolLoading.groupMode.replace('{group}', group.label)} />

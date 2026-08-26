@@ -75,7 +75,6 @@ import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
 import { SettingsDocument, SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
 import { PluginConfigEditor } from '../modules/settings/PluginConfigEditor';
 import { usePluginConfigDraft } from './usePluginConfigDraft';
-import { ConstellationScope } from '../components/ui/Constellation';
 import { MarkdownAssetEditor } from '../modules/settings/MarkdownAssetEditor';
 import { allModels } from './execPresets';
 import { compactElapsed, parseTs } from './format';
@@ -280,6 +279,10 @@ export function ensurePluginUiRuntime(): void {
     // @platform-keep plugin-ui-primitives :: DataTable, DataTableRow, DataTableCell && PatchView && ProgressRibbon && TerminalModal && LiveTail
     // Generic UI platform for future github/sandblox bundles; zero callers for any one primitive is expected.
     // Growing this list is cheap; shrinking it is a breaking change.
+    // `ConstellationScope` left with the orbital settings rendering it existed to switch on. The API
+    // version deliberately did NOT move for it: no bundle in this repo or in the registry ever named it,
+    // so nothing a released plugin can ask for changed. Withdrawing a primitive some bundle DOES
+    // reference has to bump the version instead.
     components: {
       Button, Input, Avatar: PluginAvatar, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
       Toggle, ModuleHeader, Segmented, SelectMenu, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
@@ -291,9 +294,6 @@ export function ensurePluginUiRuntime(): void {
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       ConfirmDialog, TerminalModal, LiveTail,
       SettingsDocument, SettingsGroup, SettingsRow, PluginConfigEditor, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
-      // Which of the two settings renderings a section's groups/rows use. A section that declares
-      // `layout: 'orbital'` in its manifest wraps itself in this, exactly as the core sections do.
-      ConstellationScope,
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends). DetailBlock is
       // the caption+hint wrapper the user detail puts above each of these summaries, shared so a plugin

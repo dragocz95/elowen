@@ -594,7 +594,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key} className="animate-fade-up @lg:col-span-2">{renderField(f)}</div>;
         if ((f.type === 'boolean' || (f.type === 'enum' && (f.options?.length ?? 0) <= 3)) && !f.risk) {
           const description = [...new Set([fieldHint(f), f.help].filter((value): value is string => Boolean(value?.trim())))].join('\n\n');
-          return <SettingsRow key={f.key} label={fieldLabel(f)} description={description || undefined} className="animate-fade-up @lg:col-span-2">{renderField(f)}</SettingsRow>;
+          return <SettingsRow key={f.key} label={fieldLabel(f)} hint={description || undefined} className="animate-fade-up @lg:col-span-2">{renderField(f)}</SettingsRow>;
         }
         return (
           <div key={f.key} className={`animate-fade-up${controlOwnsLayout(f) ? ' @lg:col-span-2' : ''}`}>

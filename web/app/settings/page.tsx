@@ -37,7 +37,6 @@ import { Toggle } from '../../components/ui/Toggle';
 import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
 import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../modules/settings/SettingsSurface';
 import { MotionReveal } from '../../components/ui/Motion';
-import { ConstellationScope } from '../../components/ui/Constellation';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -97,8 +96,6 @@ function SettingsPanel({ id, active, visited, children }: {
     </Activity>
   );
 }
-
-
 
 export default function SettingsPage() {
   const config = useConfig();
@@ -210,7 +207,6 @@ export default function SettingsPage() {
 
   // Pending delete (drives the ConfirmDialog)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-
 
   // Seed the form from the config ONCE. useConfig is stale-while-revalidate, so it refetches on
   // window focus; re-seeding on every refetch would wipe a model the user just added before they
@@ -336,9 +332,6 @@ export default function SettingsPage() {
     persistModels(upsertModel({ allowed, customModels, hiddenPresets, modelNotes }, m, editingExec ?? undefined));
     resetForm();
   };
-
-
-
 
   // 'models' auto-saves; 'data' is a one-off danger action; 'system'
   // auto-saves its toggle + has its own update button; 'plugins' toggles apply instantly — none of
@@ -516,7 +509,6 @@ export default function SettingsPage() {
               <SettingsState>{t.settings.modelNoMatches}</SettingsState>
             ) : null}
 
-
           </>
         </SettingsPanel>
 
@@ -550,10 +542,8 @@ export default function SettingsPage() {
           />
         )}
 
-
-
         <SettingsPanel id="system" active={category} visited={visitedCategories}>
-          <ConstellationScope core={t.settings.system}>
+          
             {(() => {
               // One merged orbit + the classic diagnostics widget below it.
               const updateBadge = system.data?.updateAvailable
@@ -644,7 +634,7 @@ export default function SettingsPage() {
                 </WorkspaceDetailRail>
               ) : null;
               const diagnosticsGroup = (
-                <SettingsGroup title={t.settings.systemDiagnostics} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics" variant="classic">
+                <SettingsGroup title={t.settings.systemDiagnostics} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics">
                   <SystemDiagnostics
                     diagnostics={diagnostics}
                     t={t}
@@ -655,7 +645,7 @@ export default function SettingsPage() {
               );
               return (
                 <div className="flex flex-col gap-4">
-                  <SettingsGroup>
+                  <SettingsGroup columns={2}>
                     {rowVersion}
                     {serviceRows}
                     {rowAutoUpdate}
@@ -668,11 +658,11 @@ export default function SettingsPage() {
                 </div>
               );
             })()}
-          </ConstellationScope>
+          
         </SettingsPanel>
 
         <SettingsPanel id="brain" active={category} visited={visitedCategories}>
-          <ConstellationScope core={t.settings.brain}>
+          
             {/* Cross-link to the model catalog (enable / context-window per model) — the Models section. */}
             <SettingsToolbar>
               <button type="button" onClick={() => setCategory('models')} className="font-medium text-accent hover:underline">
@@ -680,11 +670,11 @@ export default function SettingsPage() {
               </button>
             </SettingsToolbar>
             <BrainSection onSaveState={reportSaveState} />
-          </ConstellationScope>
+          
         </SettingsPanel>
 
         <SettingsPanel id="memory" active={category} visited={visitedCategories}>
-          <ConstellationScope core={t.settings.memory}><MemorySection onSaveState={reportSaveState} /></ConstellationScope>
+          <MemorySection onSaveState={reportSaveState} />
         </SettingsPanel>
 
         <SettingsPanel id="plugins" active={category} visited={visitedCategories}><PluginsSection /></SettingsPanel>
@@ -749,7 +739,6 @@ export default function SettingsPage() {
         }}
         onClose={() => setPendingDelete(null)}
       />
-
 
     </ModuleShell>
   );

@@ -238,7 +238,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
 
   return (
     <div className="flex flex-col gap-4">
-      <SpatialGroup>
+      <SpatialGroup columns={2}>
         {rowColors}{rowFont}{rowCursor}{rowCli}{rowHistory}
       </SpatialGroup>
 

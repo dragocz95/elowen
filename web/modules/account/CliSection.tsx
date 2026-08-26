@@ -146,7 +146,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
 
   return (
     <div className="flex flex-col gap-4">
-      <SpatialGroup>
+      <SpatialGroup columns={2}>
       <SpatialRow title={t.cli.thinkingLabel} icon={Gauge} description={t.help.cliThinking}>
         <ReasoningScale
           ariaLabel={t.cli.thinkingLabel}
@@ -194,7 +194,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         />
       </SpatialRow>
 
-      <SpatialRow title={t.cli.yoloTitle} icon={Zap} description={t.cli.yoloWarning}>
+      <SpatialRow title={t.cli.yoloTitle} icon={Zap} hint={t.cli.yoloWarning}>
         <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={yolo} onChange={(next) => next ? setConfirmYolo(true) : setYolo(false)} label={t.cli.yoloToggle} />
           <span>{t.cli.yoloToggle}</span>

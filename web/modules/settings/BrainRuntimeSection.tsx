@@ -159,7 +159,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
     <>
       {/* Identity + step ceiling on one row: the assistant's name (everywhere it speaks) and the max
           agent steps per run (Discord shows "Step N / MAX"). */}
-      <SettingsGroup icon={BrainCircuit}>
+      <SettingsGroup icon={BrainCircuit} columns={2}>
         <SettingsRow label={t.brain.agentName} icon={BrainCircuit}>
           <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="Elowen" aria-label={t.brain.agentName} />
         </SettingsRow>

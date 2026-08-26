@@ -1,50 +1,128 @@
-/* Settings-specific control-deck composition. Shared deck geometry stays in components.css. */
+/* Settings and Account share ONE section language: a stack of cards, each with an accent-marked
+   header over a panel of label/control records. Shared deck geometry stays in components.css. */
 [data-module="settings"] .spatial-deck-heading h1 { letter-spacing: -0.045em; }
 [data-module="settings"] .spatial-content-surface { padding: 1rem 0.5rem 2rem; }
 [data-module="settings"] [data-settings-panel] { min-width: 0; }
 
-.settings-document { display: flex; flex-direction: column; }
-.settings-group { min-width: 0; border-bottom: var(--hairline); }
-.settings-group:last-child { border-bottom: 0; }
-.settings-group[data-tone="danger"] { background: linear-gradient(90deg, rgb(239 68 68 / 0.055), transparent 62%); }
-.settings-group__header { display: flex; min-height: 4.6rem; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem clamp(1.25rem, 2vw, 2rem); border-bottom: var(--hairline); background: rgb(255 255 255 / 0.012); }
+/* The cards carry the chrome, so the document that holds them draws none: one shell around a stack of
+   shells reads as a box someone forgot to remove, and it is what made every section look welded to the
+   page rather than placed on it. */
+.settings-document { display: flex; min-width: 0; flex-direction: column; gap: 1rem; }
+[data-settings-document].control-surface-document { overflow: visible; border: 0; border-radius: 0; background: none; box-shadow: none; }
+
+.settings-group {
+  min-width: 0;
+  overflow: clip;
+  border: 1px solid rgb(255 255 255 / 0.07);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.02), transparent 42%), var(--color-document);
+  box-shadow: var(--shadow-card);
+}
+.settings-group[data-tone="danger"] { border-color: rgb(239 68 68 / 0.28); background: linear-gradient(180deg, rgb(239 68 68 / 0.05), transparent 46%), var(--color-document); }
+
+.settings-group__header { display: flex; min-height: 3.4rem; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem 1rem; padding: 0.95rem clamp(1rem, 1.6vw, 1.4rem); border-bottom: var(--hairline); }
 /* Grow so the heading keeps the first line to itself; when wide actions (e.g. the tool-loading Segmented
    with three labels) no longer fit beside it, flex-wrap drops them to their own full-width line below
-   instead of overrunning the title on a narrow (mobile) viewport. */
-.settings-group__heading { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 0.8rem; }
-.settings-group__icon, .settings-row__icon { display: grid; width: 2.55rem; height: 2.55rem; flex: none; place-items: center; border: 1px solid rgb(255 255 255 / 0.1); border-radius: 50%; color: var(--color-text-muted); background: rgb(255 255 255 / 0.012); }
-.settings-group__heading h2 { color: var(--color-text); font-size: 1rem; font-weight: 600; letter-spacing: -0.02em; }
-.settings-group__heading p { margin-top: 0.2rem; color: var(--color-text-muted); font-size: 0.7rem; line-height: 1.45; }
-.settings-group__actions, .settings-row__actions { display: flex; flex: none; align-items: center; gap: 0.6rem; }
+   instead of overrunning the title on a narrow viewport. */
+.settings-group__heading { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 0.65rem; }
+.settings-group__icon { display: grid; flex: none; place-items: center; color: var(--color-accent); }
+.settings-group__heading h2 { color: var(--color-text); font-size: 0.95rem; font-weight: 600; letter-spacing: -0.015em; }
+.settings-group__heading p { margin-top: 0.15rem; color: var(--color-text-muted); font-size: 0.72rem; line-height: 1.45; }
+.settings-group__actions, .settings-row__actions { display: flex; flex: none; align-items: center; gap: 0.5rem; }
 .settings-group__body { min-width: 0; }
+
+/* A body made of records becomes an inset panel, so the records read as one instrument inside the card
+   instead of as the card's own edges. `:has` keeps this off bodies holding something else — a register
+   of provider rows, a config field grid, a log tail — which stay full-bleed. */
+.settings-group__body:has(> .settings-row) {
+  margin: 0.8rem clamp(0.8rem, 1.4vw, 1.15rem) clamp(0.9rem, 1.4vw, 1.15rem);
+  border: 1px solid rgb(255 255 255 / 0.055);
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 0.011);
+}
+/* Two independent stacks divided by a rule. Multi-column, not grid: a grid would make a tall record (a
+   slider carrying its scale) stretch whatever sits beside it, and these two stacks flow on their own. */
+.settings-group__body[data-columns="2"]:has(> .settings-row) { columns: 2; column-gap: 0; column-rule: 1px solid rgb(255 255 255 / 0.055); }
+.settings-group__body[data-columns="2"] > .settings-row { break-inside: avoid; }
+/* Half the width means half the room: the label track gives some of it back to the control. */
+.settings-group__body[data-columns="2"] > .settings-row { grid-template-columns: minmax(8rem, 1fr) minmax(0, 0.85fr) auto; }
+@container (max-width: 73.75rem) {
+  .settings-group__body[data-columns="2"]:has(> .settings-row) { columns: 1; column-rule: 0; }
+}
+
 /* A padded body for grouped content that is a free block (pill lists, log tails, config field grids)
-   rather than a stack of .settings-row records — inset matched to the group header. */
-.settings-group__panel { padding: 1.15rem clamp(1.25rem, 2vw, 2rem) 1.45rem; }
+   rather than a stack of records — inset matched to the card header. */
+.settings-group__panel { padding: 1.05rem clamp(1rem, 1.6vw, 1.4rem) 1.3rem; }
 @media (max-width: 800px) { .settings-group__panel { padding-inline: 1rem; } }
-/* A .settings-row nested inside a padded panel (config field grids) must not double its inset — the
-   panel already provides the horizontal padding, so the row only keeps its vertical rhythm. */
+/* A record nested inside a padded panel must not double its inset — the panel already provides the
+   horizontal padding, so the record only keeps its vertical rhythm. */
 .settings-group__panel .settings-row { padding-inline: 0; }
 
-/* Plugin-detail cards read as discrete soft surfaces (rounded, faint fill, full border) separated by
-   whitespace — NOT full-bleed sections divided by a stray floating hairline. Mirrors the account
-   module's .spatial-form-group card token so it stays in the house design system. */
-.settings-group.plugin-card { border: var(--hairline); border-radius: var(--radius-lg); background: rgb(255 255 255 / 0.012); }
-.settings-group.plugin-card:last-child { border-bottom: var(--hairline); }
-.settings-group.plugin-card > .settings-group__header { background: transparent; border-top-left-radius: var(--radius-lg); border-top-right-radius: var(--radius-lg); }
-.settings-row { display: grid; min-height: 5rem; grid-template-columns: minmax(13rem, 0.9fr) minmax(14rem, 1.1fr) auto; align-items: center; gap: 1rem; padding: 0.8rem clamp(1.25rem, 2vw, 2rem); border-bottom: var(--hairline); }
+/* Plugin-detail cards already read as discrete surfaces; the base card provides that now, so the
+   modifier only has to stop the header tint from fighting the rounded corner. */
+.settings-group.plugin-card > .settings-group__header { background: transparent; }
+
+/* Three tracks, because a record may carry BOTH a control and trailing actions (a connected account
+   shows its usage meters and a "Models" button). A two-track grid pushed the actions onto a second
+   line and crushed the meters. The control keeps a share of the row rather than a fixed measure, so a
+   progress bar can stretch and a text input still stops short of the edge. */
+.settings-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 1.05fr) auto;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 0.8rem 0.95rem;
+  border-bottom: 1px solid rgb(255 255 255 / 0.045);
+  transition: background-color var(--motion-base) var(--ease-out);
+}
 .settings-row:last-child { border-bottom: 0; }
-.settings-group[data-density="compact"] .settings-row { min-height: 4.35rem; }
-.settings-row:hover { background: linear-gradient(90deg, rgb(255 82 54 / 0.035), rgb(255 255 255 / 0.01) 72%, transparent); }
-.settings-row__label { display: flex; min-width: 0; align-items: center; gap: 0.8rem; }
-.settings-row__title { display: flex; min-width: 0; align-items: center; gap: 0.4rem; color: var(--color-text); font-size: 0.78rem; font-weight: 570; }
-.settings-row__status { margin-top: 0.25rem; color: var(--color-text-muted); font-size: 0.68rem; line-height: 1.45; }
+.settings-group[data-density="compact"] .settings-row { padding-block: 0.6rem; }
+/* The accent edge is the row's whole hover story: it marks WHICH record has the pointer without
+   repainting the card underneath it. */
+.settings-row::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 2px;
+  background: var(--color-accent);
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+.settings-row:hover { background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.05), rgb(255 255 255 / 0.008) 58%, transparent); }
+.settings-row:hover::before, .settings-row:focus-within::before { opacity: 1; }
+
+.settings-row__label { display: flex; min-width: 0; align-items: flex-start; gap: 0.7rem; }
+.settings-row__icon {
+  display: grid;
+  width: 2.05rem;
+  height: 2.05rem;
+  flex: none;
+  place-items: center;
+  border: 1px solid rgb(var(--accent-rgb) / 0.32);
+  border-radius: 50%;
+  color: var(--color-accent);
+  background: radial-gradient(circle at 50% 38%, rgb(var(--accent-rgb) / 0.15), rgb(var(--accent-rgb) / 0.03) 70%);
+  transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out);
+}
+.settings-row:hover .settings-row__icon, .settings-row:focus-within .settings-row__icon {
+  border-color: rgb(var(--accent-rgb) / 0.62);
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.05), 0 0 14px rgb(var(--accent-rgb) / 0.2);
+}
+/* Quiet modes keep the edge marker and the border change (both carry meaning) and drop the glow. */
+html:is([data-effects='reduced'], [data-effects='off']) .settings-row:hover .settings-row__icon,
+html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-within .settings-row__icon { box-shadow: none; }
+
+.settings-row__title { display: block; color: var(--color-text); font-size: 0.82rem; font-weight: 580; letter-spacing: -0.005em; }
+.settings-row__description { margin-top: 0.16rem; color: var(--color-text-muted); font-size: 0.7rem; line-height: 1.45; }
+.settings-row__status { margin-top: 0.3rem; color: var(--color-text-muted); font-size: 0.68rem; line-height: 1.45; }
 .settings-row__control { min-width: 0; }
-.settings-toolbar { position: sticky; top: 0; z-index: 8; background: linear-gradient(180deg, var(--color-document) 88%, transparent); }
+
+.settings-toolbar { position: sticky; top: 0; z-index: 8; border-radius: var(--radius-lg); background: linear-gradient(180deg, var(--color-document) 88%, transparent); }
 
 @media (max-width: 800px) {
-  .settings-group__header, .settings-row, .settings-toolbar { padding-inline: 1rem; }
-  .settings-row { grid-template-columns: 1fr; gap: 0.75rem; }
-  .settings-row__actions { justify-self: start; }
+  .settings-group__header, .settings-toolbar { padding-inline: 1rem; }
   /* Actions wrap to their own full-width line under the heading (see flex-wrap above), left-aligned so a
      three-option Segmented has the whole row instead of being crushed against the title. */
   .settings-group__actions { flex-basis: 100%; justify-content: flex-start; }
@@ -55,18 +133,17 @@
 .settings-control-row__status { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--color-success); font-size: 0.7rem; font-weight: 620; }
 .settings-control-row__status--down { color: var(--color-danger); }
 
+/* Register rows inside a card (connected accounts, providers, models, agents) share the record's hover
+   treatment, so a list section and a form section behave the same under the pointer. */
 .settings-model-rows { container-type: inline-size; }
-.settings-model-row, .settings-agent-row { min-height: 4.35rem; padding: 0.65rem clamp(1.25rem, 2vw, 2rem); border-bottom: var(--hairline); }
+.settings-model-row, .settings-agent-row { position: relative; min-height: 4.1rem; padding: 0.65rem clamp(1rem, 1.6vw, 1.4rem); border-bottom: var(--hairline); transition: background-color var(--motion-base) var(--ease-out); }
 .settings-model-row:last-child, .settings-agent-row:last-child { border-bottom: 0; }
-.settings-model-row:hover, .settings-agent-row:hover { background: linear-gradient(90deg, rgb(255 82 54 / 0.045), rgb(255 255 255 / 0.012) 70%, transparent); }
-.settings-agent-row { padding-block: 1.1rem; }
-.settings-skill-statuses { display: flex; flex-wrap: wrap; gap: 0.65rem 1.5rem; padding: 1rem clamp(1.25rem, 2vw, 2rem); }
-.settings-document__footer { padding: 1rem clamp(1.25rem, 2vw, 2rem); }
-.settings-status-banner { display: flex; align-items: flex-start; gap: 0.65rem; padding: 1rem clamp(1.25rem, 2vw, 2rem); }
+.settings-model-row:hover, .settings-agent-row:hover { background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.05), rgb(255 255 255 / 0.008) 58%, transparent); }
+.settings-agent-row { padding-block: 1.05rem; }
+.settings-skill-statuses { display: flex; flex-wrap: wrap; gap: 0.65rem 1.5rem; padding: 1rem clamp(1rem, 1.6vw, 1.4rem); }
+.settings-document__footer { padding: 1rem clamp(1rem, 1.6vw, 1.4rem); }
+.settings-status-banner { display: flex; align-items: flex-start; gap: 0.65rem; padding: 1rem clamp(1rem, 1.6vw, 1.4rem); }
 
 @media (max-width: 620px) {
   .settings-model-row, .settings-agent-row { padding-inline: 1rem; }
 }
-
-/* Constellation: orbital categories float on the page background — no document card. */
-[data-module="settings"] [data-constellation] [data-settings-document] { border: 0; border-radius: 0; background: none; box-shadow: none; overflow: visible; }

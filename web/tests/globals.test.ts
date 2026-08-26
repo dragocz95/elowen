@@ -31,7 +31,9 @@ describe('design tokens', () => {
 
   it('uses component width for spatial deck layout changes', () => {
     expect(components).toMatch(/@container \(max-width: 56\.25rem\)[\s\S]*\.spatial-section-rail__track/);
-    expect(components).toMatch(/@container \(max-width: 38\.75rem\)[\s\S]*\.spatial-form-row/);
+    // The deck's label/control record stacks on the DECK's width, not the window's: the same form is
+    // rendered inside a detail rail, where a viewport media query would keep it in three tracks.
+    expect(components).toMatch(/@container \(max-width: 38\.75rem\)[\s\S]*\.settings-row\s*\{[^}]*grid-template-columns:\s*1fr/);
   });
 
   it('hides the telemetry rail scrollbar with a class the unlayered base rules cannot outrank', () => {

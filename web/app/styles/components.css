@@ -95,32 +95,6 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
   to { opacity: 0.82; transform: translateY(-0.38rem) scale(1.08); }
 }
 
-.spatial-form-group { border-bottom: var(--hairline); }
-.spatial-form-group:last-child { border-bottom: 0; }
-.spatial-form-group__header { padding: 1.4rem 0 1.05rem; border-bottom: 1px solid rgb(255 255 255 / 0.05); }
-.spatial-form-group__body { min-width: 0; }
-.spatial-form-row {
-  display: grid;
-  grid-template-columns: minmax(11.5rem, 0.68fr) minmax(18rem, 1.32fr);
-  align-items: center;
-  gap: 1.5rem;
-  min-height: 5.8rem;
-  padding: 1.1rem 0;
-  border-bottom: 1px solid rgb(255 255 255 / 0.055);
-}
-.spatial-form-row:last-child { border-bottom: 0; }
-.spatial-form-row__control { min-width: 0; }
-.spatial-field-icon {
-  display: grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex: none;
-  border: 1px solid rgb(255 255 255 / 0.07);
-  border-radius: 50%;
-  color: var(--color-text-muted);
-  background: rgb(255 255 255 / 0.012);
-}
 .spatial-identity {
   display: flex;
   align-items: center;
@@ -307,8 +281,8 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
   .spatial-section-rail__track::before { top: 2.55rem; }
   .spatial-section-node { min-width: 6.75rem; flex-basis: 6.75rem; gap: 0.55rem; font-size: 0.72rem; }
   .spatial-section-node__icon { width: 3.15rem; height: 3.15rem; }
-  .spatial-form-row { grid-template-columns: 1fr; gap: 0.9rem; min-height: 0; padding: 1.2rem 0; }
-  .spatial-form-row__control { width: 100%; }
+  .settings-row { grid-template-columns: 1fr; gap: 0.6rem; }
+  .settings-row__actions { justify-self: start; }
   .spatial-identity { align-items: flex-start; flex-wrap: wrap; }
 }
 
@@ -330,7 +304,6 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 
 .flow-active { animation: flow-pulse 1.9s ease-in-out infinite; }
 
-/* Orbital navigation nodes stay spatially stable; hover only adds a light trace around the target. */
 .orbit-node { position: relative; isolation: isolate; box-shadow: 0 0 0 6px #000, inset 0 1px rgb(255 255 255 / 0.025); }
 .orbit-node::before {
   content: '';
@@ -381,105 +354,19 @@ html[data-effects='full'] .orbit-node-active::after { animation: spatial-ember-f
 /* Keep the original flat Elowen assets on the single OLED palette. */
 .logo-adaptive { content: url('/elowen-logo.png'); }
 
-/* ══════ Constellation ══════
-   Orbital layout for account sections rendered inside a ConstellationScope: the group is a cosmos
-   with a glowing core, each row a floating pod tied to the core by a filament. Prototype-scoped on
-   purpose — it lives together with Constellation.tsx and the cosmos branches in
-   SpatialPrimitives.tsx to fully remove the experiment. */
-.cosmos { position: relative; }
 /* overflow: clip — the rotating orbit ring's bounding box sweeps past the field's edges and would
    otherwise keep growing the page's scroll area as it turns */
-.cosmos[data-mode='orbit'] { height: clamp(40rem, calc(100dvh - 13rem), 60rem); overflow: clip; }
-.cosmos-filaments { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.cosmos-fil--base { stroke: rgb(var(--accent-rgb) / 0.2); transition: opacity var(--motion-base) var(--ease-out), stroke var(--motion-base) var(--ease-out); }
-.cosmos-fil--flow { stroke: rgb(255 154 98 / 0.5); stroke-dasharray: 3 34; transition: opacity var(--motion-base) var(--ease-out); }
-.cosmos-fil--base.is-dim, .cosmos-fil--flow.is-dim { opacity: 0.22; }
-.cosmos-fil--base.is-lit { stroke: rgb(var(--accent-rgb) / 0.5); }
-.cosmos-fil--flow.is-lit { stroke: rgb(255 154 98 / 0.95); }
-html[data-effects='full'] .cosmos-fil--flow { animation: cosmos-fil-flow 3.2s linear infinite; animation-delay: calc(var(--i) * -0.9s); }
-@keyframes cosmos-fil-flow { to { stroke-dashoffset: -37; } }
-@keyframes cosmos-spin { to { rotate: 360deg; } }
 @keyframes cosmos-breathe { 50% { opacity: 0.78; filter: blur(5px); } }
-
-.cosmos-ring { position: absolute; left: 50%; top: 50%; translate: -50% -50%; border: 1px dashed rgb(var(--accent-rgb) / 0.09); border-radius: 50%; pointer-events: none; }
-html[data-effects='full'] .cosmos-ring { animation: cosmos-spin 90s linear infinite; }
-
-.cosmos-core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.7rem; width: 21rem; height: 21rem; text-align: center; pointer-events: none; }
-.cosmos-core::before { content: ''; position: absolute; inset: 8%; border-radius: 50%; background: radial-gradient(circle at 42% 38%, rgb(255 154 98 / 0.28), rgb(var(--accent-rgb) / 0.14) 45%, rgb(var(--accent-rgb) / 0.03) 72%, transparent); filter: blur(6px); }
-.cosmos-core::after { content: ''; position: absolute; inset: 0; border: 1px solid rgb(var(--accent-rgb) / 0.28); border-radius: 50%; mask: conic-gradient(from 0deg, #000 0 62%, transparent 66% 100%); }
-html[data-effects='full'] .cosmos-core::before { animation: cosmos-breathe 3.4s ease-in-out infinite; }
-html[data-effects='full'] .cosmos-core::after { animation: cosmos-spin 12s linear infinite; }
-.cosmos-core__mascot { position: relative; z-index: 1; width: 13rem; height: auto; filter: drop-shadow(0 0.9rem 2.4rem rgb(255 65 35 / 0.32)); }
-html[data-effects='full'] .cosmos-core__mascot { animation: cosmos-mascot-float 6.5s ease-in-out infinite; }
-@keyframes cosmos-mascot-float { 50% { transform: translateY(-6px); } }
-.cosmos-core__label { position: relative; z-index: 1; max-width: 12rem; font-family: var(--font-mono); font-size: 0.68rem; font-weight: 650; letter-spacing: 0.24em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(var(--accent-rgb) / 0.6); }
-
-.cosmos-pods { position: absolute; inset: 0; }
-.cosmos-pod { position: absolute; translate: -50% -50%; width: 16.5rem; }
-.cosmos-pod__inner { position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.55rem; padding: 0.9rem 0.6rem; text-align: center; border-radius: 1.4rem; transition: transform var(--motion-base) var(--ease-out); }
-.cosmos-pod__inner::before { content: ''; position: absolute; inset: -6% -2%; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 30%, rgb(var(--accent-rgb) / 0.09), rgb(255 255 255 / 0.015) 45%, transparent 75%); opacity: 0; filter: blur(6px); transition: opacity var(--motion-base) var(--ease-out); }
-.cosmos-pod:hover .cosmos-pod__inner, .cosmos-pod:focus-within .cosmos-pod__inner { transform: translateY(-3px); }
-.cosmos-pod:hover .cosmos-pod__inner::before, .cosmos-pod:focus-within .cosmos-pod__inner::before { opacity: 1; }
-/* The pod orb mirrors the section rail's active pill (radial core, glow + inset, blurred aura,
-   flickering ember dots) so the orbital field and the deck's top menu read as one design language.
-   `isolation` keeps the negative-z dots above the orb's own background (the rail pill gets the same
-   stacking context from its active transform). */
-.cosmos-pod__orb { position: relative; isolation: isolate; display: grid; place-items: center; width: 3.4rem; height: 3.4rem; flex: none; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), #050505 68%); color: var(--color-accent); box-shadow: 0 0 0 6px #040404, var(--glow-active), inset 0 0 20px rgb(var(--accent-rgb) / 0.09); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
-.cosmos-pod__orb::before { content: ''; position: absolute; inset: -1.35rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
-.cosmos-pod__orb::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42); opacity: 0.7; }
-html[data-effects='full'] .cosmos-pod__orb::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; animation-delay: calc(var(--i, 0) * -0.45s); }
-.cosmos-pod:hover .cosmos-pod__orb, .cosmos-pod:focus-within .cosmos-pod__orb { box-shadow: 0 0 0 6px #040404, var(--glow-active), 0 0 34px rgb(var(--accent-rgb) / 0.4), inset 0 0 20px rgb(var(--accent-rgb) / 0.14); }
-html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod__inner { animation: cosmos-drift 6s ease-in-out infinite; animation-delay: calc(var(--i) * -1.4s); }
-html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-pod__inner { animation-play-state: paused; }
-@keyframes cosmos-drift { 50% { transform: translateY(-4px); } }
-.cosmos-pod__title { display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; font-size: 0.84rem; font-weight: 550; letter-spacing: -0.01em; color: var(--color-text); }
-.cosmos-pod__control { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.55rem; width: 100%; }
-
-/* entrance — replayed each time the cosmos becomes visible again */
-@media (prefers-reduced-motion: no-preference) {
-  .cosmos--enter[data-mode='orbit'] .cosmos-pod { opacity: 0; animation: cosmos-pod-in 0.75s var(--ease-out) forwards; animation-delay: calc(var(--i) * 90ms + 100ms); }
-  .cosmos--enter[data-mode='orbit'] .cosmos-fil--base { stroke-dashoffset: var(--len); animation: cosmos-fil-in 0.9s var(--ease-out) forwards; animation-delay: calc(var(--i) * 90ms + 250ms); }
-  .cosmos--enter[data-mode='orbit'] .cosmos-fil--flow { opacity: 0; animation: cosmos-fil-appear 0.4s linear forwards; animation-delay: calc(var(--i) * 90ms + 900ms); }
-  html[data-effects='full'] .cosmos--enter[data-mode='orbit'] .cosmos-fil--flow { animation: cosmos-fil-flow 3.2s linear infinite, cosmos-fil-appear 0.4s linear forwards; animation-delay: calc(var(--i) * -0.9s), calc(var(--i) * 90ms + 900ms); }
-  .cosmos--enter[data-mode='stack'] .cosmos-pod { opacity: 0; animation: cosmos-pod-in-stack 0.55s var(--ease-out) forwards; animation-delay: calc(var(--i) * 70ms); }
-}
+/* Driven by .cmd-orbit__pod (command palette) and .wf-dag__edge--live (workflow canvas). */
+@keyframes cosmos-fil-flow { to { stroke-dashoffset: -37; } }
 @keyframes cosmos-pod-in {
   from { opacity: 0; translate: calc(-50% + var(--fx, 0px)) calc(-50% + var(--fy, 0px)); scale: 0.4; filter: blur(8px); }
   to { opacity: 1; translate: -50% -50%; scale: 1; filter: none; }
 }
-@keyframes cosmos-pod-in-stack {
-  from { opacity: 0; transform: translateY(20px) scale(0.9); filter: blur(6px); }
-  to { opacity: 1; transform: none; filter: none; }
-}
-@keyframes cosmos-fil-in { to { stroke-dashoffset: 0; } }
-@keyframes cosmos-fil-appear { to { opacity: 1; } }
 
-/* stack mode — satellites on a left-side energy beam (phones, narrow panes): the beam hugs the
-   left edge, each pod is a full-width row whose shrunken orb docks onto the beam like a station,
-   and the control indents under the title. Dense like a settings list, still constellation. */
-.cosmos[data-mode='stack'] { display: flex; flex-direction: column; align-items: stretch; gap: 0.35rem; padding: 0.9rem 0 1.6rem; }
-.cosmos[data-mode='stack']::before { content: ''; position: absolute; top: 0.4rem; bottom: 0; left: 1.75rem; width: 2px; translate: -50% 0; background: linear-gradient(180deg, transparent, rgb(var(--accent-rgb) / 0.26) 7%, rgb(var(--accent-rgb) / 0.26) 90%, transparent); filter: blur(1px); }
-.cosmos[data-mode='stack'] .cosmos-filaments, .cosmos[data-mode='stack'] .cosmos-ring { display: none; }
 /* The core becomes the head of the line: a small mascot on the beam, the section label beside it. */
-.cosmos[data-mode='stack'] .cosmos-core { position: relative; left: auto; top: auto; translate: none; order: -1; flex-direction: row; justify-content: flex-start; gap: 0.9rem; width: auto; height: auto; margin: 0 0 0.8rem; padding-left: 0.35rem; text-align: left; }
-.cosmos[data-mode='stack'] .cosmos-core::before,
-.cosmos[data-mode='stack'] .cosmos-core::after { inset: auto; left: -0.35rem; top: 50%; width: 4.3rem; height: 4.3rem; translate: 0 -50%; }
-.cosmos[data-mode='stack'] .cosmos-core__mascot { width: 3.6rem; }
-.cosmos[data-mode='stack'] .cosmos-core__label { max-width: none; font-size: 0.62rem; }
-.cosmos[data-mode='stack'] .cosmos-pods { display: contents; }
-.cosmos[data-mode='stack'] .cosmos-pod { position: relative; translate: none; width: 100%; }
 /* Row anatomy: orb + title (+ status pushed right) on the first line, the control wraps below and
    indents past the orb so the beam column stays clear. */
-.cosmos[data-mode='stack'] .cosmos-pod__inner { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 0.45rem 0.8rem; padding: 0.65rem 0.25rem 0.75rem 0.35rem; text-align: left; border-radius: 1rem; }
-.cosmos[data-mode='stack'] .cosmos-pod__inner::before { inset: -2% 0; border-radius: 1rem; }
-.cosmos[data-mode='stack'] .cosmos-pod__orb { width: 2.8rem; height: 2.8rem; box-shadow: 0 0 0 4px #040404, var(--glow-active), inset 0 0 14px rgb(var(--accent-rgb) / 0.08); }
-.cosmos[data-mode='stack'] .cosmos-pod__orb::before { inset: -1rem; }
-.cosmos[data-mode='stack'] .cosmos-pod__orb svg { width: 15px; height: 15px; }
-.cosmos[data-mode='stack'] .cosmos-pod__title { justify-content: flex-start; }
-.cosmos[data-mode='stack'] .cosmos-pod__status { justify-content: flex-start; margin: 0 0 0 auto; }
-.cosmos[data-mode='stack'] .cosmos-pod__control { justify-content: flex-start; padding-left: 3.6rem; }
-.cosmos[data-mode='stack'] .cosmos-pod__inner { background: radial-gradient(ellipse at 50% 25%, rgb(255 255 255 / 0.03), transparent 78%); }
-
 /* ambient ember drizzle behind the navigation rail (rendered only in effects mode 'full') */
 /* Fills its host (the nav rail); no z-index — the rail's own items sit on z-10 above it. The explicit
    100%/100% is load-bearing, NOT redundant with `inset: 0`: a canvas is a REPLACED element, so `width:
@@ -488,55 +375,15 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
    assigns — which is what stops that assignment from feeding back into layout. */
 .ember-fall { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
-/* switches inside pods: bigger, glowing when on, with a warm knob that reads on OLED black.
-   Function descriptions stay out of pods — the control speaks for itself. */
-.cosmos-pod__control label { justify-content: center; }
-.cosmos-pod__control label > span:last-child { display: none; }
-.cosmos-pod [role='switch'] { transform: scale(1.15); transform-origin: center; }
-.cosmos-pod [role='switch'][aria-checked='true'] { border-color: rgb(var(--accent-rgb) / 0.6); box-shadow: 0 0 14px rgb(var(--accent-rgb) / 0.4), inset 0 0 6px rgb(0 0 0 / 0.3); }
-.cosmos-pod [role='switch'][aria-checked='true'] > span { background: #ffe0d0; box-shadow: 0 0 6px rgb(255 154 98 / 0.8); }
-.cosmos-pod [role='switch'][aria-checked='false'] { border-color: rgb(255 255 255 / 0.16); }
-
-/* compact deck heading (constellation prototype): hero band removed — the title row carries the
-   auto-save status on the right and the surface starts right under the rail */
-.cosmos[data-mode='stack'] .cosmos-core { width: 9.5rem; height: 9.5rem; }
-.cosmos[data-mode='stack'] .cosmos-core__mascot { width: 5.5rem; }
-
 /* bare content surface (compact deck): no hairlines, no sheet gradient — pure page background */
 
-/* pods: the orb is the manage trigger — the inline "Spravovat" button hides, model chips sit bare
-   side by side without the summary card chrome */
-.cosmos-pod [data-selection-manage] { display: none; }
-.cosmos-pod [data-selection-summary] { border: 0; background: none; box-shadow: none !important; padding: 0; justify-content: center; }
-.cosmos-pod [data-selection-summary] > div { flex: none; align-items: center; }
-.cosmos-pod__orb:not(:disabled) { pointer-events: auto; }
-.cosmos-pod:has([data-selection-manage]) .cosmos-pod__orb { cursor: pointer; }
-.cosmos-pod:has([data-selection-manage]) .cosmos-pod__orb:hover { transform: scale(1.06); }
-.cosmos-pod__orb:focus-visible { outline: 2px solid var(--color-text); outline-offset: 4px; }
-.cosmos-pod__control input:not([type='range']):not([type='color']) { width: 100%; min-width: 0; }
-
-/* sparse constellations (1–2 pods beside the core) need far less vertical room */
-.cosmos[data-mode='orbit'][data-density='sparse'] { height: clamp(26rem, calc(100dvh - 22rem), 34rem); }
-/* sparse pods may grow with their content (e.g. the four style pills on one line) */
-.cosmos[data-mode='orbit'][data-density='sparse'] .cosmos-pod { width: auto; min-width: 16.5rem; max-width: min(30rem, 38vw); }
-.cosmos-pod__status { display: flex; justify-content: center; margin-top: -0.2rem; }
-
-/* ══════ Hero cosmos (dashboard) ══════
-   The dashboard hero's mini orbital field: the ElowenPresence mascot as the core, four compact
-   signal-link pods on fixed corner angles. Reuses the constellation filament classes and entrance
-   keyframes above (cosmos-fil--*, cosmos-pod-in, cosmos-fil-in, cosmos-fil-appear,
-   cosmos-pod-in-stack); positions come from HeroCosmos.tsx. */
 .hero-cosmos { position: relative; width: 100%; }
 .hero-cosmos[data-mode='orbit'] { flex: 1 1 auto; min-height: 28rem; }
 .hero-cosmos__filaments { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-/* Core capped below the presence's native 25rem so the pods orbit OUTSIDE its aura and rings. */
 .hero-cosmos[data-mode='orbit'] .hero-cosmos__core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(58%, 24rem); pointer-events: none; }
 .hero-cosmos__pods { position: absolute; inset: 0; }
 .hero-cosmos__pod { position: absolute; translate: -50% -50%; display: flex; align-items: flex-start; gap: 0.6rem; width: 11.5rem; padding: 0.55rem 0.6rem; border-radius: 1rem; transition: transform var(--motion-base) var(--ease-out); }
 .hero-cosmos__pod:hover, .hero-cosmos__pod:focus-visible { transform: translateY(-3px); }
-/* The hero orb wears the same ember pill as the section rail and the constellation pods — one design
-   language across every orbital surface. `isolation` keeps the negative-z dots above the orb's own
-   background. */
 .hero-cosmos__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), #050505 68%); color: var(--color-accent); box-shadow: 0 0 0 4px #040404, var(--glow-active), inset 0 0 14px rgb(var(--accent-rgb) / 0.08); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out); }
 .hero-cosmos__orb::before { content: ''; position: absolute; inset: -1rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
 .hero-cosmos__orb::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42); opacity: 0.7; }
@@ -551,9 +398,6 @@ html[data-effects='full'] .hero-cosmos__orb::after { animation: spatial-ember-fl
 .hero-cosmos__pod--alert .hero-cosmos__orb::before { background: radial-gradient(ellipse at 50% 66%, rgb(245 158 11 / 0.26), rgb(245 158 11 / 0.07) 34%, transparent 69%); }
 .hero-cosmos__pod--alert .hero-cosmos__orb::after { background: var(--color-warning); box-shadow: -1.15rem -0.15rem 0 rgb(245 158 11 / 0.55), 1.25rem 0.35rem 0 rgb(252 211 77 / 0.45), -0.45rem -1.22rem 0 rgb(245 158 11 / 0.48), 0.65rem -1.05rem 0 rgb(252 211 77 / 0.4); }
 .hero-cosmos__pod--alert .hero-cosmos__value { color: var(--color-warning); }
-.cosmos-fil--base.hero-fil--alert { stroke: rgb(245 158 11 / 0.5); }
-.cosmos-fil--flow.hero-fil--alert { stroke: rgb(245 158 11 / 0.9); }
-/* stack fallback — the "satellites on the left beam" idiom at hero scale */
 .hero-cosmos[data-mode='stack'] { display: flex; flex-direction: column; gap: 0.75rem; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__filaments { display: none; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__core { margin: 0 auto; width: min(100%, 20rem); }
@@ -563,30 +407,14 @@ html[data-effects='full'] .hero-cosmos__orb::after { animation: spatial-ember-fl
 .hero-cosmos[data-mode='stack'] .hero-cosmos__pod:hover { transform: none; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__orb { width: 2.2rem; height: 2.2rem; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__body { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 0.6rem; }
-/* Dashboard journal typography & spine — the same glowing vocabulary as the cosmos, so the page
-   reads as one atmosphere instead of an admin panel of hairline-ruled boxes. */
 .dash-label { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 650; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(var(--accent-rgb) / 0.5); }
 .dash-beam { background: linear-gradient(180deg, rgb(var(--accent-rgb) / 0.3), rgb(var(--accent-rgb) / 0.12) 70%, transparent); }
 /* The trunk: one continuous filament flowing from the mascot's core down into the journal spine,
    docking every activity event and task on the way (JournalTrunk.tsx draws it). While it is drawn,
    the per-row beam segments hide — the trunk IS the spine. */
 .dashboard-trunk { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-/* The single page-spanning filament earns a touch more presence than the short pod filaments. */
-.dashboard-trunk .cosmos-fil--base { stroke: rgb(var(--accent-rgb) / 0.34); }
-.dashboard-trunk .cosmos-fil--flow { stroke: rgb(255 154 98 / 0.7); }
 .dashboard-field--trunk .dash-beam { display: none; }
 
-/* ══════ Command field (chat telemetry mascot) ══════
-   The owl as the core of an orbital field of slash-command pods, opened as an overlay from the
-   telemetry rail (which is far too narrow to hold an orbit). Same filament classes and entrance
-   keyframes as the hero cosmos above; positions come from CommandOrbit.tsx.
-   Two layouts, chosen by viewport, never by shrinking one into the other:
-     data-layout='orbit' — a ring around a centred owl (desktop / tablet)
-     data-layout='arc'   — two sweeps rising from the bottom edge, in thumb reach (phones) */
-/* The dialog spans the whole viewport so its pods can sit anywhere, which means it also covers the
-   backdrop that carries the click-to-dismiss. Transparent to the pointer, it lets a click on empty space
-   reach that backdrop; each actual control opts back in below. Without this the field could only be
-   closed by Escape or the × — the backdrop was there, just permanently out of reach. */
 .cmd-orbit { position: fixed; inset: 0; display: flex; flex-direction: column; pointer-events: none; padding: 1rem; padding-top: max(1rem, env(safe-area-inset-top)); padding-bottom: max(1rem, env(safe-area-inset-bottom)); padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); }
 .cmd-orbit:focus { outline: none; }
 .cmd-orbit__hint { margin: 0 3rem 0 0; font-size: 0.75rem; color: var(--color-text-muted); }
@@ -603,40 +431,27 @@ html[data-effects='full'] .hero-cosmos__orb::after { animation: spatial-ember-fl
 .cmd-orbit__pod { position: absolute; translate: -50% -50%; display: flex; align-items: center; border-radius: 1rem; border: 1px solid transparent; background: rgb(5 5 5 / 0.72); pointer-events: auto; transition: transform var(--motion-base) var(--ease-out), border-color var(--motion-base) var(--ease-out); }
 .cmd-orbit__pod:hover, .cmd-orbit__pod:focus-visible { transform: translateY(-3px); border-color: var(--color-border-strong); }
 .cmd-orbit__pod:focus-visible { outline: 2px solid var(--color-text); outline-offset: 3px; }
-/* Same ember pill as the hero pods and the constellation orbs — one design language per orbital field. */
 .cmd-orbit__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.6rem; height: 2.6rem; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), #050505 68%); color: var(--color-accent); box-shadow: 0 0 0 4px #040404, var(--glow-active), inset 0 0 14px rgb(var(--accent-rgb) / 0.08); transition: box-shadow var(--motion-base) var(--ease-out); }
 .cmd-orbit__orb::before { content: ''; position: absolute; inset: -1rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
 .cmd-orbit__pod:hover .cmd-orbit__orb, .cmd-orbit__pod:focus-visible .cmd-orbit__orb { box-shadow: 0 0 0 4px #040404, var(--glow-active), 0 0 30px rgb(var(--accent-rgb) / 0.4), inset 0 0 14px rgb(var(--accent-rgb) / 0.12); }
 .cmd-orbit__label { min-width: 0; font-size: 0.8125rem; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* the active work mode: the pod wears the ember ring itself, so the field answers "which mode am I in" */
 .cmd-orbit__pod--active { border-color: var(--color-accent); background: rgb(var(--accent-rgb) / 0.08); }
 .cmd-orbit__pod--active .cmd-orbit__orb { box-shadow: 0 0 0 4px #040404, var(--glow-active), 0 0 34px rgb(var(--accent-rgb) / 0.45), inset 0 0 14px rgb(var(--accent-rgb) / 0.14); }
 .cmd-orbit__pod--active .cmd-orbit__label { color: var(--color-ember); }
 
-/* ring: the mascot centred, pods on an even orbit around it */
 .cmd-orbit[data-layout='orbit'] .cmd-orbit__core { left: 50%; top: 50%; translate: -50% -50%; width: min(30vh, 15rem); }
 .cmd-orbit[data-layout='orbit'] .cmd-orbit__pod { gap: 0.7rem; width: 11.5rem; min-height: 3.25rem; padding: 0.55rem 0.75rem; }
 
-/* arc: the mascot above, the pods within thumb reach of the bottom edge. Compact pods (icon over a short
-   label) — a phone-width row of hero-sized pods would collide long before the sweep closed. */
 .cmd-orbit[data-layout='arc'] .cmd-orbit__field { transform: scale(var(--k, 1)); transform-origin: bottom center; }
 .cmd-orbit[data-layout='arc'] .cmd-orbit__core { left: 50%; top: 0.5rem; translate: -50% 0; width: 9.5rem; }
 .cmd-orbit[data-layout='arc'] .cmd-orbit__pod { flex-direction: column; gap: 0.35rem; width: 6rem; min-height: 2.75rem; padding: 0.5rem 0.35rem; text-align: center; }
 .cmd-orbit[data-layout='arc'] .cmd-orbit__orb { width: 2.4rem; height: 2.4rem; }
 .cmd-orbit[data-layout='arc'] .cmd-orbit__label { max-width: 100%; font-size: 0.75rem; }
 
-/* entrance — same reduced-motion gate as the cosmos blocks above */
 @media (prefers-reduced-motion: no-preference) {
   .cmd-orbit--enter .cmd-orbit__pod { opacity: 0; animation: cosmos-pod-in 0.6s var(--ease-out) forwards; animation-delay: calc(var(--i) * 60ms + 80ms); }
-  .cmd-orbit--enter .cosmos-fil--base { stroke-dashoffset: var(--len); animation: cosmos-fil-in 0.8s var(--ease-out) forwards; animation-delay: calc(var(--i) * 60ms + 180ms); }
-  .cmd-orbit--enter .cosmos-fil--flow { opacity: 0; animation: cosmos-fil-appear 0.4s linear forwards; animation-delay: calc(var(--i) * 60ms + 700ms); }
-  html[data-effects='full'] .cmd-orbit--enter .cosmos-fil--flow { animation: cosmos-fil-flow 3.2s linear infinite, cosmos-fil-appear 0.4s linear forwards; animation-delay: calc(var(--i) * -0.9s), calc(var(--i) * 60ms + 700ms); }
-}
+  }
 
-/* ══════ Workflow DAG modal ══════
-   The dependency graph is drawn by hand (geometry in web/lib/workflowDag.ts): an absolutely positioned
-   node layer over one SVG edge layer, exactly like the cosmos fields' pods over their filaments. Edges
-   borrow the filament stroke vocabulary so the graph reads as the same surface, not a bolted-on chart. */
 .wf-dag__edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .wf-dag__edge { fill: none; stroke: rgb(var(--accent-rgb) / 0.42); stroke-width: 1.5; }
 /* The arrowhead states the direction of a dependency. It inherits nothing from the stroke (a marker is

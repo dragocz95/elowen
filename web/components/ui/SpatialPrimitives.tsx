@@ -1,95 +1,44 @@
 'use client';
-import { useRef, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { HelpTip } from './HelpTip';
-import { CosmosGroup, useConstellation } from './Constellation';
+import { SettingsGroup, SettingsRow } from '../../modules/settings/SettingsSurface';
 
-function SpatialLabel({ title, description, icon: Icon }: { title: string; description?: string; icon?: LucideIcon }) {
-  return (
-    <div className="flex min-w-0 items-start gap-3">
-      {Icon ? (
-        <span className="spatial-field-icon" aria-hidden>
-          <Icon size={15} strokeWidth={1.6} />
-        </span>
-      ) : null}
-      <span className="min-w-0">
-        <span className="flex items-center gap-1.5 text-sm font-medium text-text">
-          {title}
-          {description ? <HelpTip align="left">{description}</HelpTip> : null}
-        </span>
-      </span>
-    </div>
-  );
-}
-
-/** Open document section used by spatial control surfaces. It deliberately has no card shell.
- *  Inside a ConstellationScope the group renders as an orbital cosmos instead; outside a scope it
- *  keeps the classic stacked-row form. */
-export function SpatialGroup({ title, description, icon, children, className = '' }: {
+/** Account sections and Settings sections used to be two parallel implementations of the same
+ *  label/control form — two sets of class names, two paddings, two hover treatments — which is why the
+ *  two pages never quite read as one product. They are ONE now: these keep the account call sites'
+ *  vocabulary (`title` rather than `label`) and delegate the rendering, so a change to the section card
+ *  lands on both pages at once instead of drifting apart again.
+ *
+ *  The import points at the settings module deliberately. That file is already the shared home of this
+ *  surface — the plugin UI runtime hands those very components to plugin bundles — so lifting the markup
+ *  into a third location would recreate the duplication this removed. */
+export function SpatialGroup({ title, description, icon, columns = 1, children, className = '' }: {
   title?: string;
   description?: string;
   icon?: LucideIcon;
+  columns?: 1 | 2;
   children: ReactNode;
   className?: string;
 }) {
-  const cosmos = useConstellation();
-  if (cosmos) {
-    return <CosmosGroup core={title ?? cosmos.core}>{children}</CosmosGroup>;
-  }
   return (
-    <section className={`spatial-form-group ${className}`}>
-      {title ? (
-        <header className="spatial-form-group__header">
-          <SpatialLabel title={title} description={description} icon={icon} />
-        </header>
-      ) : null}
-      <div className="spatial-form-group__body">{children}</div>
-    </section>
+    <SettingsGroup title={title} description={description} icon={icon} columns={columns} className={className}>
+      {children}
+    </SettingsGroup>
   );
 }
 
-/** A responsive label/control row. Controls become horizontal only when the document has room.
- *  Inside a ConstellationScope the row renders as a floating pod. */
-export function SpatialRow({ title, description, icon: Icon, children, className = '' }: {
+export function SpatialRow({ title, description, hint, icon, children, className = '' }: {
   title: string;
   description?: string;
+  hint?: string;
   icon?: LucideIcon;
   children: ReactNode;
   className?: string;
 }) {
-  const cosmos = useConstellation();
-  const podRef = useRef<HTMLDivElement>(null);
-  if (cosmos) {
-    // Inline "manage" buttons and toggle captions stay out of the pod — the orb itself is the
-    // manage trigger (it forwards to the control's hidden [data-selection-manage] button when one
-    // exists). The description keeps its HelpTip "?" next to the title.
-    return (
-      <div className="cosmos-pod" ref={podRef}>
-        <div className="cosmos-pod__inner">
-          {Icon ? (
-            <button
-              type="button"
-              className="cosmos-pod__orb"
-              aria-label={title}
-              onClick={() => podRef.current?.querySelector<HTMLButtonElement>('[data-selection-manage]')?.click()}
-            >
-              <Icon size={17} strokeWidth={1.6} aria-hidden />
-            </button>
-          ) : null}
-          <span className="cosmos-pod__title">
-            {title}
-            {description ? <HelpTip align="left">{description}</HelpTip> : null}
-          </span>
-          <div className="cosmos-pod__control">{children}</div>
-        </div>
-      </div>
-    );
-  }
   return (
-    <div className={`spatial-form-row ${className}`}>
-      <SpatialLabel title={title} description={description} icon={Icon} />
-      <div className="spatial-form-row__control">{children}</div>
-    </div>
+    <SettingsRow label={title} description={description} hint={hint} icon={icon} className={className}>
+      {children}
+    </SettingsRow>
   );
 }
 

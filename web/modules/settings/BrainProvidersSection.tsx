@@ -428,7 +428,6 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
       <SettingsGroup
         title={t.brain.accounts}
         density="compact"
-        variant="classic"
         actions={restorableOauth.length > 0 ? (
           <ActionMenu
             align="right"
@@ -475,7 +474,6 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
       <SettingsGroup
         title={t.brain.providers}
         density="compact"
-        variant="classic"
         actions={(
           <button
             type="button"
