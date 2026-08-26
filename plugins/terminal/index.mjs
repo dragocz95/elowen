@@ -141,6 +141,7 @@ class ForegroundRun {
     this.timeoutMs = timeoutMs;
     this.detached = false;
     this.timedOut = false;
+    this.killed = false;
     this.spawnError = null;
     this.child = null;
     this.workspaceId = prepared.workspace?.workspaceId ?? null;
@@ -164,6 +165,8 @@ class ForegroundRun {
     this._resolveDetached();
   }
   kill() {
+    if (this.killed) return;
+    this.killed = true;
     if (this._timer) { clearTimeout(this._timer); this._timer = null; }
     killProcessGroup(this.child);
   }
@@ -206,7 +209,7 @@ class ForegroundRun {
         this.child.stderr.on('data', onData);
         this.child.once('error', finish);
         this.child.once('close', (code) => {
-          this.exitCode = code ?? -1;
+          this.exitCode = this.killed || this.timedOut ? null : code ?? -1;
           void waitForProcessGroupExit(this.child.pid).then(() => finish(), finish);
         });
       });
@@ -529,15 +532,15 @@ export function register(ctx) {
       return { detached };
     },
     // The stop escalation (a further Esc / repeat Ctrl+C after the graceful interrupt): SIGKILL the
-    // process group of every run still blocking this conversation's turn. kill() rides the same abort
-    // signal PI wired to killProcessTree, so the settled run reads as [killed] (exitCode stays null) and
-    // the awaited Bash tool resolves — which is what lets the already-aborted turn finally unwind.
+    // process group of every run still blocking this conversation's turn. The settled run reads as
+    // [killed] (exitCode stays null) and the awaited Bash tool resolves — which is what lets the
+    // already-aborted turn finally unwind.
     // Detached and background runs are exempt (they no longer block a turn), and an entry whose kill is
     // already in flight is skipped so a double-fire never double-counts.
     killForeground: ({ sessionId, principal }) => {
       let killed = 0;
       for (const entry of foregroundRuns.values()) {
-        if (entry.run.detached || entry.run.controller.signal.aborted) continue;
+        if (entry.run.detached || entry.run.killed) continue;
         if (entry.sessionId !== sessionId || entry.principal !== principal) continue;
         entry.run.kill();
         killed += 1;
