@@ -581,14 +581,27 @@ export default function SettingsPage() {
                 <SettingsRow
                   label={brand.appName}
                   icon={Sparkles}
-                  status={updateBadge}
-                  actions={system.data?.updateAvailable ? (
-                    <button type="button" className="spatial-inline-action text-accent" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
-                      onSuccess: () => toast(t.settings.updateStarted),
-                      onError: (e) => toast(String(e), 'error'),
-                    })}>{systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}<RefreshCw size={13} className={systemUpdate.isPending ? 'animate-spin' : ''} aria-hidden /></button>
-                  ) : (
-                    <button type="button" className="spatial-inline-action" onClick={() => { void system.refetch(); }}>{t.settings.checkUpdates}<RefreshCw size={13} aria-hidden /></button>
+                  actions={(
+                    <>
+                      {/* The badge IS the check button: it already states the answer, so a separate
+                          "check for updates" control next to it said the same thing twice. */}
+                      <button
+                        type="button"
+                        className="rounded-full transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-60"
+                        aria-label={t.settings.checkUpdates}
+                        title={t.settings.checkUpdates}
+                        disabled={system.isFetching}
+                        onClick={() => { void system.refetch(); }}
+                      >
+                        {updateBadge}
+                      </button>
+                      {system.data?.updateAvailable ? (
+                        <button type="button" className="spatial-inline-action text-accent" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
+                          onSuccess: () => toast(t.settings.updateStarted),
+                          onError: (e) => toast(String(e), 'error'),
+                        })}>{systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}<RefreshCw size={13} className={systemUpdate.isPending ? 'animate-spin' : ''} aria-hidden /></button>
+                      ) : null}
+                    </>
                   )}
                 />
               );

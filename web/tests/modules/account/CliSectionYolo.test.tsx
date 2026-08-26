@@ -32,12 +32,12 @@ const renderSection = () => render(<ToastProvider><CliSection /></ToastProvider>
 beforeEach(() => { saveCli.mockClear(); savePermissions.mockClear(); });
 
 describe('CliSection — YOLO default toggle', () => {
-  it('keeps the YOLO warning behind the standard help affordance, seeded off', () => {
+  it('states the YOLO warning inline like every other row, seeded off', () => {
     renderSection();
-    const title = screen.getByText(en.cli.yoloTitle);
-    expect(screen.queryByText(en.cli.yoloWarning)).toBeNull();
-    fireEvent.click(title.parentElement!.querySelector('button')!);
-    expect(screen.getByRole('tooltip')).toHaveTextContent(en.cli.yoloWarning);
+    // The warning is read, not discovered: it sits in the row description the same way the neighbouring
+    // rows explain themselves, so the section carries no lone help button to hunt for.
+    expect(screen.getByText(en.cli.yoloWarning)).toBeInTheDocument();
+    expect(screen.queryByRole('tooltip')).toBeNull();
     const toggle = screen.getByRole('switch', { name: en.cli.yoloToggle });
     expect(toggle.getAttribute('aria-checked')).toBe('false');
   });

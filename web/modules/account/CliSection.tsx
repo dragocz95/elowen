@@ -195,7 +195,9 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         />
       </SpatialRow>
 
-      <SpatialRow title={t.cli.yoloTitle} icon={Zap} hint={t.cli.yoloWarning}>
+      {/* The warning reads as inline text like every other row here — a lone HelpTip button on one row
+          of the section was the only "?" on the page and drew the eye to the wrong place. */}
+      <SpatialRow title={t.cli.yoloTitle} icon={Zap} description={t.cli.yoloWarning}>
         <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={yolo} onChange={(next) => next ? setConfirmYolo(true) : setYolo(false)} label={t.cli.yoloToggle} />
           <span>{t.cli.yoloToggle}</span>
