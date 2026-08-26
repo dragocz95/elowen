@@ -69,8 +69,8 @@
   "web": {
     "entry": "web/index.js",
     "css": "web/index.css",
-    "requiresApiVersion": 4,
-    "account": [
+    "requiresApiVersion": 5,
+    "user": [
       {
         "id": "environment",
         "label": "Development environment",

@@ -48,17 +48,18 @@ async function setup(enabled = ['sandbox'], confineNonOperators = false) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (1, 'amy', 'x', 0)").run();
   db.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (2, 'bob', 'x', 0)").run();
+  db.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (3, 'admin', 'x', 1)").run();
   db.prepare('INSERT INTO projects (id, slug, path, notes) VALUES (1, ?, ?, ?)').run('demo', projectPath, '');
   const project = { id: 1, slug: 'demo', path: projectPath, notes: '', icon: '' };
-  const users = new Set([1, 2]);
+  const users = new Set([1, 2, 3]);
   const reader = new RealGitReader();
   const host = {
     stores: {
       projects: { get: (id: number) => id === 1 ? project : null, list: () => [project] },
       homeProject: () => project,
       usersRead: {
-        list: () => [...users].map((id) => ({ id, username: id === 1 ? 'amy' : 'bob', isAdmin: false })),
-        isAdmin: () => false,
+        list: () => [...users].map((id) => ({ id, username: id === 1 ? 'amy' : id === 2 ? 'bob' : 'admin', isAdmin: id === 3 })),
+        isAdmin: (id: number) => id === 3,
         allowedExecs: () => [],
         mayUsePlugin: () => true,
       },
@@ -100,6 +101,16 @@ async function runAs(registry: Awaited<ReturnType<typeof loadPlugins>>, projectP
   return runWithPolicy(policy(projectPath), () => tool(registry, name).execute('t', input), {
     identity: nonOperator(userId), contributionUserId: userId, sessionId, workDir: projectPath,
   });
+}
+
+function pluginRequest(method: string, query: Record<string, string>, value: unknown = {}) {
+  const raw = Buffer.from(JSON.stringify(value));
+  return {
+    method, path: '', query, headers: {}, params: {},
+    body: async () => raw,
+    json: async <T>() => value as T,
+    auth: { userId: 3, admin: true, tokenScope: 'user' as const, accessibleProjects: null },
+  };
 }
 
 const waitUntil = async (check: () => boolean, timeoutMs = 5_000) => {
@@ -207,6 +218,36 @@ describe('sandbox plugin workspaces', () => {
 });
 
 describe('sandbox execution HOME and leases', () => {
+  it('exposes target-user environment operations only through admin routes', async () => {
+    const { registry, projectPath } = await setup();
+    for (const [path, method] of [['environment', 'GET'], ['environment/author', 'POST'], ['environment/reset-preview', 'POST'], ['environment/reset', 'POST']] as const) {
+      expect(registry.apiRoute('sandbox', path, method)?.access).toBe('admin');
+    }
+    const route = registry.apiRoute('sandbox', 'environment', 'GET');
+    expect(route).toBeTruthy();
+    const response = await runWithPolicy(adminPolicy, () => route!.handler(pluginRequest('GET', { userId: '2' })), {
+      identity: operator(3), contributionUserId: 3, sessionId: 'brain-admin-environment', workDir: projectPath,
+    });
+    expect(response.status ?? 200).toBe(200);
+    expect((response.body as { home: { path: string } }).home.path).toContain('/sandbox/users/2/home');
+
+    const unknown = await runWithPolicy(adminPolicy, () => route!.handler(pluginRequest('GET', { userId: '999' })), {
+      identity: operator(3), contributionUserId: 3, sessionId: 'brain-admin-environment', workDir: projectPath,
+    });
+    expect(unknown.status).toBe(404);
+
+    const previewRoute = registry.apiRoute('sandbox', 'environment/reset-preview', 'POST')!;
+    const resetRoute = registry.apiRoute('sandbox', 'environment/reset', 'POST')!;
+    const preview = await runWithPolicy(adminPolicy, () => previewRoute.handler(pluginRequest('POST', { userId: '1' })), {
+      identity: operator(3), contributionUserId: 3, sessionId: 'brain-admin-environment', workDir: projectPath,
+    });
+    const previewHash = (preview.body as { previewHash: string }).previewHash;
+    const crossUserReset = await runWithPolicy(adminPolicy, () => resetRoute.handler(pluginRequest('POST', { userId: '2' }, { previewHash, phrase: 'RESET HOME' })), {
+      identity: operator(3), contributionUserId: 3, sessionId: 'brain-admin-environment', workDir: projectPath,
+    });
+    expect(crossUserReset.status).toBe(409);
+  });
+
   it('gives operators and non-operators distinct persistent account HOME directories', async () => {
     const { registry, projectPath } = await setup(['sandbox', 'terminal']);
     const amy = await runAs(registry, projectPath, 1, 'brain-home-a', 'Bash', { command: 'printf %s "$HOME"' });

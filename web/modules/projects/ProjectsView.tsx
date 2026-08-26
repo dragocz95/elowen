@@ -1,7 +1,7 @@
 'use client';
 import { useDeferredValue, useMemo, useState } from 'react';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
-import { useProjects, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
+import { useProjects, useProjectSummaries, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
@@ -24,9 +24,47 @@ import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/Data
 import { WorkspaceDetailRail, WorkspaceMetric, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 import { copyText } from '../../lib/clipboard';
+import { Avatar } from '../../components/ui/Avatar';
+import { pluginLucideIcon } from '../../lib/pluginIcons';
+import type { ProjectSummary } from '../../lib/types';
+
+function ProjectSummaryCell({ summary, membersLabel }: { summary?: ProjectSummary; membersLabel: string }) {
+  const members = summary?.members;
+  const indicators = summary?.indicators ?? [];
+  if ((!members || members.total === 0) && indicators.length === 0) return <span className="text-xs text-text-muted">—</span>;
+  return (
+    <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+      {members && members.total > 0 ? (
+        <div className="flex shrink-0 items-center" aria-label={membersLabel.replace('{n}', String(members.total))}>
+          <div className="flex -space-x-1.5">
+            {members.samples.map((user) => <span key={user.id} className="rounded-full ring-2 ring-surface" title={user.name || user.username}><Avatar user={user} size={22} /></span>)}
+          </div>
+          <span className="ml-1.5 text-[11px] font-semibold text-text-muted">{members.total}</span>
+        </div>
+      ) : null}
+      {indicators.length > 0 ? (
+        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+          {indicators.map((indicator, index) => {
+            const Icon = pluginLucideIcon(indicator.icon);
+            return (
+              <span key={`${indicator.plugin}:${indicator.label}:${index}`} title={indicator.value ? `${indicator.label}: ${indicator.value}` : indicator.label}>
+                <Badge tone={indicator.tone ?? 'muted'}>
+                  <Icon size={11} className="mr-1" aria-hidden />
+                  <span className="max-w-28 truncate">{indicator.label}</span>
+                  {indicator.value ? <span className="ml-1 font-semibold">{indicator.value}</span> : null}
+                </Badge>
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function ProjectsView() {
   const projects = useProjects();
+  const projectSummaries = useProjectSummaries();
   const editorEnabled = usePluginPresent('editor');
   // Registering, editing and removing a project is admin-only on the daemon (notAdmin guards POST,
   // PATCH and DELETE /projects). Offering those actions to a member produced a button that could only
@@ -158,7 +196,7 @@ export function ProjectsView() {
   }, [projects.data]);
 
   const selectedProject = projects.data?.find((project) => project.id === selectedId) ?? null;
-
+  const summariesByProject = useMemo(() => new Map((projectSummaries.data ?? []).map((item) => [item.projectId, item])), [projectSummaries.data]);
 
   const navigateProject = (project: Project, direction: 'next' | 'previous' | 'home' | 'end') => {
     const index = filteredProjects.findIndex((item) => item.id === project.id);
@@ -206,11 +244,11 @@ export function ProjectsView() {
                   {filteredProjects.length === 0 ? (
                     <ControlSurfaceState><EmptyState title={t.projects.noMatches} icon={Search} /></ControlSurfaceState>
                   ) : (
-                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(10rem,1fr) 3rem" compactColumns="minmax(0,1fr) 3rem" data-testid="projects-register">
+                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(14rem,1.2fr) 3rem" compactColumns="minmax(0,1fr) 3rem" data-testid="projects-register">
                       <DataTableRow header>
                         <DataTableCell header>{t.projects.columnProject}</DataTableCell>
                         <DataTableCell header priority="wide">{t.projects.columnPath}</DataTableCell>
-                        <DataTableCell header priority="wide">{t.projects.columnNotes}</DataTableCell>
+                        <DataTableCell header priority="wide">{t.projects.columnSummary}</DataTableCell>
                         <DataTableCell header><span className="sr-only">{t.common.actions}</span></DataTableCell>
                       </DataTableRow>
                       {filteredProjects.map((project) => {
@@ -244,7 +282,7 @@ export function ProjectsView() {
                               </span>
                             </DataTableCell>
                             <DataTableCell priority="wide" className="truncate font-mono text-xs text-text-muted"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
-                            <DataTableCell priority="wide" className="truncate text-xs text-text-muted">{project.notes || '—'}</DataTableCell>
+                            <DataTableCell priority="wide"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
                             <DataTableCell onClick={(event) => event.stopPropagation()}>
                               <ActionMenu
                                 label={`${project.slug}: ${t.common.actions}`}

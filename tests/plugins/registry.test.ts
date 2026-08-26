@@ -13,12 +13,15 @@ describe('PluginRegistry', () => {
   it('collects contributions from a register() call', () => {
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('demo', { k: 1 }, noopLog);
+    const indicators = () => [{ projectId: 1, label: 'Connected' }] as const;
     ctx.registerSkill(fakeSkill('s'));
     ctx.registerSystemPromptFragment('extra rules');
     ctx.registerHook({ name: 'h', run: () => {} });
+    ctx.registerProjectIndicators(indicators);
     expect(reg.skills.map((s) => s.name)).toEqual(['s']);
     expect(reg.promptFragments).toEqual(['extra rules']);
     expect(reg.hooks).toHaveLength(1);
+    expect(reg.projectIndicatorProviders).toEqual([{ plugin: 'demo', fn: indicators }]);
     expect(ctx.config).toEqual({ k: 1 });
   });
 

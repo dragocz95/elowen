@@ -58,14 +58,14 @@ export function useCreateUser() {
 }
 export function useDeleteUser() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: number) => elowenClient.deleteUser(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }) });
+  return useMutation({ mutationFn: (id: number) => elowenClient.deleteUser(id), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['users'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
 }
 export function useUpdateUser() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { id: number; patch: UserPatch }) => elowenClient.updateUser(v.id, v.patch),
-    // Refresh the list and the current identity (an admin could change their own role).
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['users'] }); qc.invalidateQueries({ queryKey: ['me'] }); },
+    // Refresh identity plus Project summaries: names and role changes affect member samples/counts.
+    onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['users'] }), qc.invalidateQueries({ queryKey: ['me'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); },
   });
 }
 export function useUpdateMe() {
@@ -301,20 +301,20 @@ export function useBrainOauthDisconnect() {
 }
 export function useCreateProject() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { slug: string; path: string; notes?: string }) => elowenClient.createProject(v), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+  return useMutation({ mutationFn: (v: { slug: string; path: string; notes?: string }) => elowenClient.createProject(v), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
 }
 export function useUpdateProject() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { id: number; path?: string; notes?: string }) => elowenClient.updateProject(v.id, { path: v.path, notes: v.notes }), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+  return useMutation({ mutationFn: (v: { id: number; path?: string; notes?: string }) => elowenClient.updateProject(v.id, { path: v.path, notes: v.notes }), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
 }
 export function useRemoveProject() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: number) => elowenClient.removeProject(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+  return useMutation({ mutationFn: (id: number) => elowenClient.removeProject(id), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
 }
 /** Set (or clear, with icon: '') a project's icon — a project-relative image path chosen from the repo. */
 export function useSetProjectIcon() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { id: number; icon: string }) => elowenClient.updateProject(v.id, { icon: v.icon }), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+  return useMutation({ mutationFn: (v: { id: number; icon: string }) => elowenClient.updateProject(v.id, { icon: v.icon }), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
 }
 /**
  * Toggle a project assignment for a user. `currentlyAssigned` is the present state of the chip:
@@ -330,6 +330,7 @@ export function useAssignProject() {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['user-projects', v.userId] }),
         qc.invalidateQueries({ queryKey: ['project-users', v.projectId] }),
+        qc.invalidateQueries({ queryKey: ['project-summaries'] }),
       ]);
     },
   });

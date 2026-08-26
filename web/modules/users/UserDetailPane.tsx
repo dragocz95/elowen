@@ -22,6 +22,7 @@ import { useTranslation } from '../../lib/i18n';
 import { localDateTime } from '../../lib/format';
 import { ToolPills } from './ToolPills';
 import { UserStatsInline } from './UserStatsInline';
+import { PluginUserPanels } from './PluginUserPanels';
 
 /** Small provider logo for the modal's group headers/filter chips. */
 function ProviderGroupIcon({ provider }: { provider: ProviderId }) {
@@ -328,6 +329,7 @@ export function UserDetailPane({ user, projects, globalExecs, customModels }: {
         <DetailBlock icon={Cpu} title={t.users.allowedModels}><ModelChips user={user} globalExecs={globalExecs} custom={customModels} /></DetailBlock>
         <DetailBlock icon={Puzzle} title={t.users.grantedPlugins} hint={t.users.grantedPluginsHint}><PluginGrantChips user={user} /></DetailBlock>
         <DetailBlock icon={Wrench} title={t.users.tools} hint={t.users.toolsHint}><ToolPills user={user} /></DetailBlock>
+        <PluginUserPanels user={user} />
       </div>
     </div>
   );

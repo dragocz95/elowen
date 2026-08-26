@@ -15,8 +15,8 @@ const C = (name: string) => {
 describe('plugin UI runtime', () => {
   it('publishes the versioned shared editor surface needed by first-class plugin pages', () => {
     ensurePluginUiRuntime();
-    expect(PLUGIN_UI_API_VERSION).toBe(3);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(3);
+    expect(PLUGIN_UI_API_VERSION).toBe(5);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(5);
     expect(window.ElowenUiRuntime?.components).toHaveProperty('PluginConfigEditor');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('Avatar');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('usePluginConfigDraft');

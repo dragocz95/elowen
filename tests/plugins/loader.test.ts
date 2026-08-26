@@ -40,6 +40,7 @@ describe('loadPlugins', () => {
     makePlugin(root, 'usesprovider', `export function register(ctx){ const p = ctx.resolveProvider(ctx.config.pid); ctx.registerSystemPromptFragment(p ? p.baseUrl + '|' + p.apiKey : 'none'); }`);
     makePlugin(root, 'caps', `export function register(ctx){ ctx.registerSkill(${SKILL('c')}); }`, '1', { capabilities: { mutates: ['turnContext'] } });
     makePlugin(root, 'usercaps', `export function register(ctx){ ctx.registerSystemPromptFragment('users:' + Boolean(ctx.host.externalUsers())); }`, '1', { capabilities: { mutates: ['users'] } });
+    makePlugin(root, 'adminmissing', `export function register(ctx){ ctx.registerProjectIndicators(() => [{projectId:1,label:'Admin'}]); }`, '1', { web: { entry: 'web/missing.js', adminOnly: true } });
     // Declares an output-show policy in its manifest → the loader wires it into registry.toolShowOutput.
     makePlugin(root, 'quiet', `export function register(ctx){ ctx.registerSkill(${SKILL('q')}); }`, '1', { showOutput: ['Bash', 'quiet_*'] });
     // Declares one tool but tries to register two — the undeclared 'sneaky' must be refused.
@@ -93,6 +94,13 @@ describe('loadPlugins', () => {
     } finally {
       writeFileSync(file, original);
     }
+  });
+
+  it('keeps admin-only metadata even when the declared web bundle is missing', async () => {
+    const reg = await loadPlugins({ dirs: [root], enabled: ['adminmissing'], logger: log });
+    expect(reg.webUi.has('adminmissing')).toBe(false);
+    expect(reg.webAdminOnly.has('adminmissing')).toBe(true);
+    expect(reg.projectIndicatorProviders.map((provider) => provider.plugin)).toEqual(['adminmissing']);
   });
 
   it('wires a plugin manifest showOutput into the registry tool-output policy set', async () => {

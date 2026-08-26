@@ -25,10 +25,17 @@ function requireUser(req) {
   return req.auth.userId;
 }
 
+function requireTargetUser(req, stores) {
+  const userId = Number(req.query.userId);
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw Object.assign(new Error('a valid target userId is required'), { code: 'invalid_user', status: 400 });
+  if (!stores.usersRead.list().some((user) => user.id === userId)) throw Object.assign(new Error('target user not found'), { code: 'user_not_found', status: 404 });
+  return userId;
+}
+
 export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, migrationState }) {
   const stores = ctx.host.stores();
-  const register = (path, method, handler) => ctx.registerApiRoute({
-    path, method, access: 'user',
+  const register = (path, method, handler, access = 'user') => ctx.registerApiRoute({
+    path, method, access,
     handler: async (req) => {
       try { return await handler(req); }
       catch (error) { return errorResponse(error); }
@@ -126,12 +133,11 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
     return { name: name.code === 0 ? name.output.trim() : '', email: email.code === 0 ? email.output.trim() : '' };
   };
 
-  const environmentState = async (req) => {
-    const userId = requireUser(req);
+  const environmentState = async (userId) => {
     const homeState = ensureUserHome(dataDir, userId);
     const probe = bubblewrapProbe();
-    const owner = ctx.currentIdentity()?.owner === true;
-    const mode = owner || ctx.config.confineNonOperators === false ? 'direct' : probe.available ? 'confined' : 'unavailable';
+    const operator = stores.usersRead.isAdmin(userId);
+    const mode = operator || ctx.config.confineNonOperators === false ? 'direct' : probe.available ? 'confined' : 'unavailable';
     const size = directorySize(homeState.home);
     const author = await readAuthor(userId);
     const leases = activeExecutionLeases(db, { accountUserId: userId, homeGeneration: homeState.generation });
@@ -145,10 +151,10 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
     };
   };
 
-  register('environment', 'GET', async (req) => json(await environmentState(req)));
+  register('environment', 'GET', async (req) => json(await environmentState(requireTargetUser(req, stores))), 'admin');
 
   register('environment/author', 'POST', async (req) => {
-    const userId = requireUser(req);
+    const userId = requireTargetUser(req, stores);
     const input = await body(req);
     const name = String(input.name ?? '').trim();
     const email = String(input.email ?? '').trim();
@@ -157,10 +163,11 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
     await gitConfig(userId, ['user.name', name]);
     await gitConfig(userId, ['user.email', email]);
     return json({ author: { name, email } });
-  });
+  }, 'admin');
 
   register('environment/reset-preview', 'POST', async (req) => {
-    const state = await environmentState(req);
+    const userId = requireTargetUser(req, stores);
+    const state = await environmentState(userId);
     const phrase = 'RESET HOME';
     const payload = {
       generation: state.home.generation,
@@ -169,13 +176,14 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
       activeProcesses: state.home.activeProcesses,
       author: state.author,
     };
-    return json({ ...payload, phrase, previewHash: createHash('sha256').update(JSON.stringify(payload)).digest('hex') });
-  });
+    const previewHash = createHash('sha256').update(JSON.stringify({ userId, ...payload })).digest('hex');
+    return json({ ...payload, phrase, previewHash });
+  }, 'admin');
 
   register('environment/reset', 'POST', async (req) => {
-    const userId = requireUser(req);
+    const userId = requireTargetUser(req, stores);
     const input = await body(req);
-    const state = await environmentState(req);
+    const state = await environmentState(userId);
     const payload = {
       generation: state.home.generation,
       bytes: state.home.bytes,
@@ -183,10 +191,10 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
       activeProcesses: state.home.activeProcesses,
       author: state.author,
     };
-    const currentHash = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    const currentHash = createHash('sha256').update(JSON.stringify({ userId, ...payload })).digest('hex');
     if (String(input.previewHash ?? '') !== currentHash) throw Object.assign(new Error('HOME changed since the reset preview'), { code: 'home_changed', status: 409 });
     if (String(input.phrase ?? '') !== 'RESET HOME') throw Object.assign(new Error('the typed confirmation phrase does not match'), { code: 'confirmation_mismatch', status: 400 });
     const reset = await withRepoLease(db, `home:${userId}`, () => resetUserHome({ db, dataDir, userId, expectedGeneration: state.home.generation }));
     return json(reset);
-  });
+  }, 'admin');
 }

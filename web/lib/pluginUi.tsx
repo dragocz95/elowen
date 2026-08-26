@@ -115,7 +115,7 @@ import { eventIcon } from './eventMeta';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 4;
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 5;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own

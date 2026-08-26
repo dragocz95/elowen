@@ -3,8 +3,8 @@ import { WorkspacesSettings } from './WorkspacesSettings';
 import { EnvironmentSettings } from './EnvironmentSettings';
 
 registerSandboxUi({
-  requiresApiVersion: 4,
-  account: {
+  requiresApiVersion: 5,
+  user: {
     environment: EnvironmentSettings,
   },
   project: {

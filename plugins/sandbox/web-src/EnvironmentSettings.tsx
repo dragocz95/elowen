@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Box, HardDrive, Network, UserRound, ShieldCheck, ShieldX } from 'lucide-react';
-import { jsonBody, localizedError, runtime, type EnvironmentState } from './runtime';
-
-const QUERY_KEY = ['plugin', 'sandbox', 'environment'];
+import { Network, ShieldCheck, ShieldX } from 'lucide-react';
+import { jsonBody, localizedError, runtime, type EnvironmentState, type User } from './runtime';
 type ResetPreview = { generation: number; bytes: number; entries: number; activeProcesses: number; author: { name: string; email: string }; phrase: string; previewHash: string };
 
 function formatBytes(bytes: number): string {
@@ -12,12 +10,14 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
-export function EnvironmentSettings({ surface }: { surface: 'page' | 'deck' }) {
+export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
   const { components: C, hooks, api } = runtime();
   const s = hooks.usePluginStrings('sandbox');
   const { toast } = hooks.useToast();
   const qc = hooks.useQueryClient();
-  const query = hooks.useQuery<EnvironmentState>({ queryKey: QUERY_KEY, queryFn: () => api('/plugins/sandbox/api/environment') });
+  const queryKey = ['plugin', 'sandbox', 'environment', user.id];
+  const endpoint = (path = '') => `/plugins/sandbox/api/environment${path}?userId=${encodeURIComponent(String(user.id))}`;
+  const query = hooks.useQuery<EnvironmentState>({ queryKey, queryFn: () => api(endpoint()) });
   const [author, setAuthor] = useState({ name: '', email: '' });
   const [resetPreview, setResetPreview] = useState<ResetPreview | null>(null);
   const [phrase, setPhrase] = useState('');
@@ -26,19 +26,19 @@ export function EnvironmentSettings({ surface }: { surface: 'page' | 'deck' }) {
     if (query.data) setAuthor(query.data.author);
   }, [query.data]);
 
-  const invalidate = async () => { await qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'environment'] }); };
+  const invalidate = async () => { await qc.invalidateQueries({ queryKey }); };
   const saveAuthor = hooks.useMutation<{ author: { name: string; email: string } }, unknown, { name: string; email: string }>({
-    mutationFn: (value: { name: string; email: string }) => api('/plugins/sandbox/api/environment/author', jsonBody(value)) as Promise<{ author: { name: string; email: string } }>,
+    mutationFn: (value: { name: string; email: string }) => api(endpoint('/author'), jsonBody(value)) as Promise<{ author: { name: string; email: string } }>,
     onSuccess: async () => { await invalidate(); toast(s.authorSaved); },
     onError: (error: unknown) => toast(localizedError(error, s), 'error'),
   });
   const previewReset = hooks.useMutation<ResetPreview, unknown, Record<string, never>>({
-    mutationFn: () => api('/plugins/sandbox/api/environment/reset-preview', jsonBody({})) as Promise<ResetPreview>,
+    mutationFn: () => api(endpoint('/reset-preview'), jsonBody({})) as Promise<ResetPreview>,
     onSuccess: (data: ResetPreview) => { setResetPreview(data); setPhrase(''); },
     onError: (error: unknown) => toast(localizedError(error, s), 'error'),
   });
   const reset = hooks.useMutation<unknown, unknown, { previewHash: string; phrase: string }>({
-    mutationFn: (value: { previewHash: string; phrase: string }) => api('/plugins/sandbox/api/environment/reset', jsonBody(value)),
+    mutationFn: (value: { previewHash: string; phrase: string }) => api(endpoint('/reset'), jsonBody(value)),
     onSuccess: async () => { setResetPreview(null); setPhrase(''); await invalidate(); toast(s.homeReset); },
     onError: (error: unknown) => toast(localizedError(error, s), 'error'),
   });
@@ -80,22 +80,8 @@ export function EnvironmentSettings({ surface }: { surface: 'page' | 'deck' }) {
     </C.SettingsDocument>
   );
 
-  const framed = surface === 'deck' ? document : (
-    <C.SpatialWorkspaceLayout hero={{
-      eyebrow: s.environmentTitle,
-      title: s.environmentTitle,
-      description: s.environmentHint,
-      mascotState: state.mode === 'unavailable' ? 'error' : 'idle',
-      metrics: <>
-        <C.WorkspaceMetric label={s.mode} value={modeLabel} icon={Box} />
-        <C.WorkspaceMetric label={s.homeSize} value={formatBytes(state.home.bytes)} icon={HardDrive} />
-        <C.WorkspaceMetric label={s.gitAuthor} value={state.author.name || '—'} icon={UserRound} />
-      </>,
-    }}>{document}</C.SpatialWorkspaceLayout>
-  );
-
   return <>
-    {framed}
+    {document}
     {resetPreview ? (
       <C.Modal title={s.resetTitle} size="sm" onClose={() => setResetPreview(null)}>
         <C.ModalBody>

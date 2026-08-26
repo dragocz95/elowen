@@ -133,6 +133,9 @@ export const useActivity = (type?: string, limit?: number) =>
 export const useProjects = () =>
   useQuery({ queryKey: ['projects'], queryFn: elowenClient.projects, staleTime: 60_000 });
 
+export const useProjectSummaries = () =>
+  useQuery({ queryKey: ['project-summaries'], queryFn: elowenClient.projectSummaries, staleTime: 30_000 });
+
 export const useProjectGit = (id: number | null) =>
   useQuery({ queryKey: ['project-git', id], queryFn: () => elowenClient.projectGit(id as number), enabled: !!id });
 

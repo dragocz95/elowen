@@ -103,30 +103,19 @@ describe('AccountView', () => {
     await waitFor(() => expect(patched).toEqual({ telegramUserId: '123456789' }));
   });
 
-  it('shows the user identity, and saves a default worker picked in the manage modal', async () => {
-    let patched: Record<string, unknown> | null = null;
+  it('keeps the retired Default worker control out of Account', async () => {
     server.use(
-      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ default_exec: 'sonnet' }) })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
-      http.patch('*/api/auth/me', async ({ request }) => { patched = await request.json() as Record<string, unknown>; return HttpResponse.json(meUser({ default_exec: 'sonnet' })); }),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '' })),
     );
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     expect(await screen.findByText('@bob')).toBeTruthy();
-    // The default model is the first practical profile setting, not hidden in the Elowen AI section.
-    // Open the worker summary and pick the single allowed model.
-    fireEvent.click(screen.getByRole('button', { name: 'Manage: Default worker' }));
-    // The modal groups by engine: a "Claude Code" header carrying the provider logo, and a model row.
-    const heading = await screen.findByRole('heading', { name: 'Claude Code' });
-    expect(heading.querySelector('img')).toBeTruthy(); // group logo renders
-    const row = screen.getByRole('button', { name: /Claude Sonnet/ });
-    expect(row.querySelector('img')).toBeTruthy(); // per-row model icon renders
-    fireEvent.click(row); // single-select: replaces the pick
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-
-    await waitFor(() => expect(patched?.default_exec).toBe('sonnet'));
+    expect(screen.queryByText('Default worker')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Manage: Default worker' })).toBeNull();
   });
 
   it('falls back to the profile section when a removed section id is persisted', async () => {

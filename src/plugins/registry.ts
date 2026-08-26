@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -208,6 +208,8 @@ export class PluginRegistry {
   readonly promptSources = new Map<string, { plugin: string; file: string }>();
   /** Activity-log persistence resolvers (see PluginContext.registerEventRowResolver). */
   readonly eventRowResolvers: { plugin: string; fn: (e: ElowenEvent) => EventPersistenceRow | null | undefined }[] = [];
+  /** Batched Project-register indicators (see PluginContext.registerProjectIndicators). */
+  readonly projectIndicatorProviders: { plugin: string; fn: PluginProjectIndicatorProvider }[] = [];
   /** First-run readiness rows (see PluginContext.registerReadinessCheck). */
   readonly readinessChecks: { plugin: string; fn: () => PluginReadinessCheck | null | Promise<PluginReadinessCheck | null> }[] = [];
   /** Tools contributed to the daemon's OWN /mcp server (see PluginContext.registerMcpTool). The /mcp
@@ -251,6 +253,9 @@ export class PluginRegistry {
    *  plugin per user — the API dispatcher, the UI listing, the brain's tool policy — asks here rather
    *  than re-reading manifests from disk, so the answer is the one this registry generation loaded. */
   readonly userGrantable = new Set<string>();
+  /** Plugins whose manifest marks their browser surface admin-only. Kept independently from `webUi` so
+   * server-side contributions remain hidden even when the declared browser bundle is missing. */
+  readonly webAdminOnly = new Set<string>();
   /** Per-tool display icons declared across all plugin manifests (`icons`), keyed by tool name. Merged
    *  with the core defaults by `makeToolIconResolver` when the daemon stamps a `tool` event's icon. */
   readonly toolIcons = new Map<string, string>();
@@ -335,6 +340,7 @@ export class PluginRegistry {
     this.userRemovedHandlers.push(...other.userRemovedHandlers);
     this.projectRemovedHandlers.push(...other.projectRemovedHandlers);
     this.eventRowResolvers.push(...other.eventRowResolvers);
+    this.projectIndicatorProviders.push(...other.projectIndicatorProviders);
     this.readinessChecks.push(...other.readinessChecks);
     // MCP tool names are a flat namespace on the daemon's /mcp server — first-writer-wins, like tools.
     for (const m of other.mcpTools) {
@@ -344,6 +350,7 @@ export class PluginRegistry {
     }
     this.busSubscriptions.push(...other.busSubscriptions);
     for (const [k, v] of other.webUi) this.webUi.set(k, v);
+    for (const name of other.webAdminOnly) this.webAdminOnly.add(name);
     for (const p of other.promptEntries) {
       const prior = this.promptSources.get(p.entry.name);
       if (prior && prior.plugin !== p.plugin) { warn?.(`prompt "${p.entry.name}" from "${p.plugin}" ignored — already registered by "${prior.plugin}"`); continue; }
@@ -985,6 +992,12 @@ export class PluginRegistry {
       registerEventRowResolver: (fn) => {
         if (!capabilities.mutates?.includes('events')) { scoped.warn(`registerEventRowResolver refused: missing mutates:['events'] capability`); return; }
         this.eventRowResolvers.push({ plugin: name, fn });
+      },
+      // Display-only Project status — no new authority: the provider can use only the plugin seams it
+      // already holds, and core passes an explicitly tenancy-filtered batch rather than ambient Projects.
+      registerProjectIndicators: (fn) => {
+        if (typeof fn !== 'function') { scoped.warn('registerProjectIndicators refused: provider must be a function'); return; }
+        this.projectIndicatorProviders.push({ plugin: name, fn });
       },
       // Display-only onboarding rows — no capability gate; the check runs with only what the plugin
       // already holds through its other (gated) seams.

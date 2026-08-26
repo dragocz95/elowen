@@ -292,6 +292,8 @@ export interface PluginUiListing {
   nav: { label: string; icon?: string; route?: string }[];
   /** Per-account plugin panels. Optional for compatibility with an older daemon listing. */
   account?: { id: string; label: string; icon?: string }[];
+  /** Administrator-only panels contributed to a selected User. Optional for older daemons. */
+  user?: { id: string; label: string; icon?: string }[];
   /** Contextual panels contributed to a selected Project. Optional for older daemons. */
   project?: { id: string; label: string; icon?: string }[];
   /** `layout` picks the section's rendering: 'orbital' uses the constellation layout the core
@@ -698,6 +700,12 @@ export interface ActivityEvent {
   tools?: { name: string; count: number }[];
 }
 export interface Project { id: number; slug: string; path: string; notes: string; icon: string }
+export interface ProjectSummary {
+  projectId: number;
+  /** Present only for administrators; ordinary users never receive other accounts' assignments. */
+  members?: { total: number; samples: Pick<User, 'id' | 'username' | 'name' | 'avatar'>[] };
+  indicators: { plugin: string; label: string; value?: string; icon?: string; tone?: 'muted' | 'accent' | 'success' | 'warning' | 'danger' }[];
+}
 interface GitStatus { branch: string; head: string; upstream: string | null; ahead: number; behind: number; dirty: number; untracked: number; clean: boolean }
 interface GitRemote { name: string; fetchUrl: string; pushUrl: string }
 interface GitBranch { name: string; current: boolean }

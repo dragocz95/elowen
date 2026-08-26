@@ -651,6 +651,27 @@ export interface EventPersistenceRow {
 /** Send-only view of the core PushSender (see PluginHost.push). */
 export interface PluginHostPush { sendToUsers(userIds: number[], payload: PushPayload): Promise<unknown> }
 
+/** One compact plugin-owned status projected into the core Project register. The host bounds and
+ * validates these values before returning them to the browser, and stamps the owning plugin itself. */
+export interface PluginProjectIndicator {
+  projectId: number;
+  label: string;
+  value?: string;
+  icon?: string;
+  tone?: 'muted' | 'accent' | 'success' | 'warning' | 'danger';
+}
+
+/** Batch request for Project indicators. `projects` is already tenancy-filtered by core, so a provider
+ * never receives a Project the caller cannot see. `user` lets integrations resolve account-scoped state
+ * without relying on ambient identity. */
+export interface PluginProjectIndicatorRequest {
+  projects: readonly Project[];
+  user: { id: number; isAdmin: boolean } | null;
+}
+export type PluginProjectIndicatorProvider = (
+  request: PluginProjectIndicatorRequest,
+) => readonly PluginProjectIndicator[] | Promise<readonly PluginProjectIndicator[]>;
+
 /** A plugin's browser UI (manifest `web` block, resolved by the loader): the built bundle on disk, its
  *  content hash (pins the immutable serving URL — a stale hash 404s), and the manifest's menu metadata. */
 export interface PluginWebUi {
@@ -672,13 +693,15 @@ export interface PluginWebUi {
   label?: string;
   nav: { label: string; icon?: string; route?: string }[];
   account: { id: string; label: string; icon?: string }[];
+  /** Administrator-only panels mounted for a selected core User. */
+  user: { id: string; label: string; icon?: string }[];
   project: { id: string; label: string; icon?: string }[];
   settings: { id: string; label: string; icon?: string }[];
   /** Flat English view strings from the manifest `web.strings` block (bundle labels/hints). */
   strings?: Record<string, string>;
   /** Localized menu labels + view strings from `i18n/<lang>.json` `web` blocks: nav keyed by route,
-   *  account/project/settings by id, strings by the manifest's own string keys. */
-  i18n?: Record<string, { label?: string; nav?: Record<string, string>; account?: Record<string, string>; project?: Record<string, string>; settings?: Record<string, string>; strings?: Record<string, string> }>;
+   *  account/user/project/settings by id, strings by the manifest's own string keys. */
+  i18n?: Record<string, { label?: string; nav?: Record<string, string>; account?: Record<string, string>; user?: Record<string, string>; project?: Record<string, string>; settings?: Record<string, string>; strings?: Record<string, string> }>;
 }
 
 /** A long-running background worker a plugin contributes — sweepers, watchers, pollers. The host
@@ -1133,6 +1156,9 @@ export interface PluginContext {
    *  the emitted `type` strings stable: old rows are read back by the same names. Gated by
    *  `mutates:['events']`. */
   registerEventRowResolver(resolve: (event: ElowenEvent) => EventPersistenceRow | null | undefined): void;
+  /** Contribute compact Project-register status in one server-side batch. Core supplies only Projects the
+   * caller may see and bounds the returned labels/values, so plugins never need a browser request per row. */
+  registerProjectIndicators(provider: PluginProjectIndicatorProvider): void;
   /** Contribute a row to GET /system/readiness — the onboarding "does each subsystem actually work"
    *  report. Runs on every readiness request while the plugin is enabled (a disabled plugin's checks
    *  disappear with it, which is itself the honest answer); return null to skip, and a throwing check

@@ -4,15 +4,18 @@ import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginWebUi } from '../../plugins/api.js';
 
 /** Localize one webUi's menu metadata for a UI language: manifest English is the fallback, the plugin's
- *  `i18n/<lang>.json` `web` block overrides per nav route / account/project/settings id. View strings merge
- *  the same way — per key, so a partial locale still falls back to the manifest English string. */
-function localized(w: PluginWebUi, lang: string): { label?: string; nav: PluginWebUi['nav']; account: PluginWebUi['account']; project: PluginWebUi['project']; settings: PluginWebUi['settings']; strings: Record<string, string> } {
+ *  `i18n/<lang>.json` `web` block overrides per nav route / account/user/project/settings id. View strings
+ *  merge the same way — per key, so a partial locale still falls back to the manifest English string. */
+function localized(w: PluginWebUi, lang: string, admin: boolean): { label?: string; nav: PluginWebUi['nav']; account: PluginWebUi['account']; user: PluginWebUi['user']; project: PluginWebUi['project']; settings: PluginWebUi['settings']; strings: Record<string, string> } {
   const over = lang ? w.i18n?.[lang] : undefined;
   const label = over?.label ?? w.label;
   return {
     ...(label ? { label } : {}),
     nav: w.nav.map((n) => ({ ...n, label: over?.nav?.[n.route ?? ''] ?? n.label })),
     account: w.account.map((s) => ({ ...s, label: over?.account?.[s.id] ?? s.label })),
+    // User-detail panels are an administrator surface. Filter the metadata on the server so an ordinary
+    // account never learns or accidentally mounts controls intended to operate on another account.
+    user: admin ? w.user.map((s) => ({ ...s, label: over?.user?.[s.id] ?? s.label })) : [],
     project: w.project.map((s) => ({ ...s, label: over?.project?.[s.id] ?? s.label })),
     settings: w.settings.map((s) => ({ ...s, label: over?.settings?.[s.id] ?? s.label })),
     strings: { ...(w.strings ?? {}), ...(over?.strings ?? {}) },
@@ -44,7 +47,7 @@ export function registerPluginUiRoutes(app: ElowenApp, ctx: RouteContext): void 
       // older plugin (and an older listing consumer) is untouched.
       ...(w.cssHash ? { cssUrl: `/plugins/${w.plugin}/web/${w.cssHash}.css` } : {}),
       apiVersion: w.requiresApiVersion,
-      ...localized(w, lang),
+      ...localized(w, lang, user?.is_admin === true),
     })));
   });
 

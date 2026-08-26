@@ -232,8 +232,8 @@ for (const name of pluginNames) {
     // Inside the `web` block only these keys are read (pluginUi.ts localized()); anything else is a
     // typo that silently translates nothing — the same orphan rule the top-level keys get.
     for (const key of Object.keys(i18n.web ?? {})) {
-      if (!['label', 'nav', 'account', 'project', 'settings', 'strings'].includes(key)) {
-        errors.push(`plugin ${name} (${locale}): unknown web key "${key}" (only label/nav/account/project/settings/strings are read)`);
+      if (!['label', 'nav', 'account', 'user', 'project', 'settings', 'strings'].includes(key)) {
+        errors.push(`plugin ${name} (${locale}): unknown web key "${key}" (only label/nav/account/user/project/settings/strings are read)`);
       }
     }
     // The world's own name in the left menu (manifest `web.label`): coverage BOTH ways, like every other
@@ -246,6 +246,7 @@ for (const name of pluginNames) {
     // settings id, and every declared entry needs a translation — same rule as fields.
     const webNavRoutes = new Set((manifest.web?.nav ?? []).map((n) => n.route ?? ''));
     const webAccountIds = new Set((manifest.web?.account ?? []).map((s) => s.id));
+    const webUserIds = new Set((manifest.web?.user ?? []).map((s) => s.id));
     const webProjectIds = new Set((manifest.web?.project ?? []).map((s) => s.id));
     const webSettingsIds = new Set((manifest.web?.settings ?? []).map((s) => s.id));
     const checkSections = (kind, declared, translated = {}) => {
@@ -263,6 +264,7 @@ for (const name of pluginNames) {
       if (!i18n.web?.nav?.[route]) errors.push(`plugin ${name} (${locale}): missing web.nav["${route}"] translation`);
     }
     checkSections('account', webAccountIds, i18n.web?.account);
+    checkSections('user', webUserIds, i18n.web?.user);
     checkSections('project', webProjectIds, i18n.web?.project);
     checkSections('settings', webSettingsIds, i18n.web?.settings);
     // Bundle view strings (manifest `web.strings`): same coverage rule — every manifest key needs a

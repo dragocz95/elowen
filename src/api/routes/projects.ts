@@ -3,6 +3,32 @@ import { listDirs, isProjectImage } from '../../integrations/projectFiles.js';
 import { parseBody } from '../validation.js';
 import { createProjectSchema, updateProjectSchema } from '../schemas/projects.js';
 import type { ElowenApp, RouteContext } from '../context.js';
+import type { PluginProjectIndicator } from '../../plugins/api.js';
+import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
+
+const MAX_MEMBER_SAMPLES = 3;
+const MAX_INDICATORS_PER_PLUGIN = 3;
+const MAX_INDICATORS_PER_PROJECT = 8;
+const INDICATOR_TONES = new Set(['muted', 'accent', 'success', 'warning', 'danger']);
+
+function boundedText(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  return text ? text.slice(0, max) : undefined;
+}
+
+function sanitizeIndicator(value: PluginProjectIndicator, projectIds: ReadonlySet<number>): Omit<PluginProjectIndicator, 'projectId'> | null {
+  if (!Number.isSafeInteger(value?.projectId) || !projectIds.has(value.projectId)) return null;
+  const label = boundedText(value.label, 80);
+  if (!label) return null;
+  const output: Omit<PluginProjectIndicator, 'projectId'> = { label };
+  const text = boundedText(value.value, 80);
+  const icon = boundedText(value.icon, 40);
+  if (text) output.value = text;
+  if (icon) output.icon = icon;
+  if (value.tone && INDICATOR_TONES.has(value.tone)) output.tone = value.tone;
+  return output;
+}
 
 /** Project registration, tenancy and project metadata. The optional editor plugin owns project-file
  * routes; the core keeps icon validation because the project record persists that metadata. */
@@ -15,6 +41,55 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (u && d.userProjects.isAdmin(u.id)) return c.json(all);
     const allowed = u ? new Set(d.userProjects.forUser(u.id)) : new Set<number>();
     return c.json(all.filter((p) => allowed.has(p.id)));
+  });
+  // One bounded server-side projection for the Project register. Core owns member tenancy; plugins receive
+  // the already-filtered Project batch and contribute display-only capability indicators without browser
+  // bundle loads or one API request per row.
+  app.get('/projects/summary', async (c) => {
+    const all = d.projects ? d.projects.list() : [];
+    const user = c.get('user');
+    const admin = !!(user && d.userProjects?.isAdmin(user.id));
+    const allowed = admin || !d.userProjects || !d.users
+      ? all
+      : all.filter((project) => user && d.userProjects!.canAccess(user.id, project.id));
+    const projectIds = new Set(allowed.map((project) => project.id));
+    const indicatorMap = new Map<number, { plugin: string; label: string; value?: string; icon?: string; tone?: 'muted' | 'accent' | 'success' | 'warning' | 'danger' }[]>();
+    const registry = await d.plugins?.get().catch(() => undefined);
+    const pluginProjectCounts = new Map<string, number>();
+    for (const provider of registry?.projectIndicatorProviders ?? []) {
+      if (registry?.webAdminOnly.has(provider.plugin) && !admin) continue;
+      if (!isPluginAllowedForUser(user, { name: provider.plugin, userGrantable: registry?.userGrantable.has(provider.plugin) })) continue;
+      try {
+        const contributed = await provider.fn({ projects: allowed, user: user ? { id: user.id, isAdmin: admin } : null });
+        for (const raw of Array.isArray(contributed) ? contributed : []) {
+          const clean = sanitizeIndicator(raw, projectIds);
+          if (!clean) continue;
+          const countKey = `${provider.plugin}:${raw.projectId}`;
+          const count = pluginProjectCounts.get(countKey) ?? 0;
+          const current = indicatorMap.get(raw.projectId) ?? [];
+          if (count >= MAX_INDICATORS_PER_PLUGIN || current.length >= MAX_INDICATORS_PER_PROJECT) continue;
+          current.push({ plugin: provider.plugin, ...clean });
+          indicatorMap.set(raw.projectId, current);
+          pluginProjectCounts.set(countKey, count + 1);
+        }
+      } catch (error) {
+        ctx.log.warn(`plugin ${provider.plugin} failed to project Project indicators: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    const users = admin && d.users ? new Map(d.users.list().filter((item) => !item.is_admin).map((item) => [item.id, item])) : null;
+    return c.json(allowed.map((project) => {
+      const assigned = users && d.userProjects
+        ? d.userProjects.forProject(project.id).flatMap((id) => users.get(id) ? [users.get(id)!] : [])
+        : [];
+      return {
+        projectId: project.id,
+        ...(admin ? { members: {
+          total: assigned.length,
+          samples: assigned.slice(0, MAX_MEMBER_SAMPLES).map(({ id, username, name, avatar }) => ({ id, username, name, avatar })),
+        } } : {}),
+        indicators: indicatorMap.get(project.id) ?? [],
+      };
+    }));
   });
   // Project-centric access projection for the administrator's Project detail. Assignment writes keep
   // using the canonical /users/:id/projects routes so there is still only one mutation contract.

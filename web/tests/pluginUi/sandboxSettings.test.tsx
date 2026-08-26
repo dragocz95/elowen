@@ -13,7 +13,11 @@ import { onUnhandledRequest } from '../msw';
 
 ensurePluginUiRuntime();
 const strings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
-const listing = [{ name: 'sandbox', url: '/plugins/sandbox/web/index.js', apiVersion: 4, nav: [], account: manifest.web.account, project: manifest.web.project, settings: [], strings }];
+const listing = [{ name: 'sandbox', url: '/plugins/sandbox/web/index.js', apiVersion: 5, nav: [], user: manifest.web.user, project: manifest.web.project, settings: [], strings }];
+const targetUser = {
+  id: 2, username: 'bob', created_at: '', is_admin: false, allowed_execs: [], disabled_tools: [], allowed_tools: [], granted_plugins: [],
+  name: 'Bob', email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false,
+};
 
 const overview = {
   projects: [{ id: 1, slug: 'demo', path: '/repo' }],
@@ -82,19 +86,24 @@ describe('sandbox Project workspaces', () => {
 });
 
 describe('sandbox Environment settings', () => {
-  it('requires the exact server-issued phrase before resetting HOME', async () => {
+  it('targets the selected User and requires the exact server-issued phrase before resetting HOME', async () => {
     let resetBody: unknown;
+    const targetIds: string[] = [];
     server.use(
-      http.post('*/api/plugins/sandbox/api/environment/reset-preview', () => HttpResponse.json({
-        generation: 2, bytes: 2048, entries: 4, activeProcesses: 0, author: environment.author,
-        phrase: 'RESET HOME', previewHash: 'preview-1',
-      })),
+      http.post('*/api/plugins/sandbox/api/environment/reset-preview', ({ request }) => {
+        targetIds.push(new URL(request.url).searchParams.get('userId') ?? '');
+        return HttpResponse.json({
+          generation: 2, bytes: 2048, entries: 4, activeProcesses: 0, author: environment.author,
+          phrase: 'RESET HOME', previewHash: 'preview-1',
+        });
+      }),
       http.post('*/api/plugins/sandbox/api/environment/reset', async ({ request }) => {
+        targetIds.push(new URL(request.url).searchParams.get('userId') ?? '');
         resetBody = await request.json();
         return HttpResponse.json({ generation: 3 });
       }),
     );
-    mount(<EnvironmentSettings surface="deck" />);
+    mount(<EnvironmentSettings surface="user" user={targetUser} />);
     fireEvent.click(await screen.findByRole('button', { name: strings.resetHome }));
     const dialog = within(await screen.findByRole('dialog', { name: strings.resetTitle }));
     const confirm = dialog.getByRole('button', { name: strings.reset });
@@ -103,5 +112,6 @@ describe('sandbox Environment settings', () => {
     expect(confirm).toBeEnabled();
     fireEvent.click(confirm);
     await waitFor(() => expect(resetBody).toEqual({ previewHash: 'preview-1', phrase: 'RESET HOME' }));
+    expect(targetIds).toEqual(['2', '2']);
   });
 });

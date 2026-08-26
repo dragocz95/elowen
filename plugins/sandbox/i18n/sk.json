@@ -11,7 +11,7 @@
     }
   },
   "web": {
-    "account": {
+    "user": {
       "environment": "Vývojové prostredie"
     },
     "project": {

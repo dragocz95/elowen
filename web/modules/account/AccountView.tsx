@@ -19,18 +19,12 @@ const PLATFORM_LINK_INPUTS: Record<PlatformLinkKey, { placeholder: string; icon:
 };
 /** Render and save order — the declaration order above, never a second list to keep in step. */
 const PLATFORM_LINK_ORDER = Object.keys(PLATFORM_LINK_INPUTS) as PlatformLinkKey[];
-import { useMe, useConfig, useMyCliSettings, useBrainModels, usePluginUi } from '../../lib/queries';
+import { useMe, useMyCliSettings, useBrainModels, usePluginUi } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
-import { allModels } from '../../lib/execPresets';
-import { brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
-import { providerMeta } from '../settings/providers';
 import { Avatar } from '../../components/ui/Avatar';
-import { ModelIcon } from '../../components/ui/ModelIcon';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
-import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
@@ -81,69 +75,8 @@ function AccountPanel({ id, active, visited, children }: {
   );
 }
 
-/** Small provider engine logo for the worker modal's group headers/chips. */
-function ProviderGroupIcon({ provider }: { provider: ProviderId }) {
-  const meta = providerMeta(provider);
-  if (!meta) return null;
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={meta.icon} alt="" width={14} height={14} style={{ objectFit: 'contain' }} aria-hidden />
-  );
-}
-
-/** Single-select default worker exec: a compact summary chip + a manage modal grouping the pickable
- *  worker engines by provider (engine logo on each header, model brand icon on each row). A pinned row
- *  (id '') clears the personal default so new tasks fall back to the global default. */
-function WorkerField({ value, onChange, execs, labelOf, summaryLabelOf, defaultLabel, title }: {
-  value: string;
-  onChange: (v: string) => void;
-  execs: string[];
-  /** Row label inside the picker, which is grouped by provider — so the provider is NOT repeated here. */
-  labelOf: (exec: string) => string;
-  /** Label for the summary chip, which stands alone: there the provider is what disambiguates. */
-  summaryLabelOf: (exec: string) => string;
-  defaultLabel: string;
-  title: string;
-}) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const items: ManageSelectionItem[] = [
-    { id: '', label: defaultLabel, group: '' },
-    ...execs.map((exec) => {
-      const prov = execProvider(exec);
-      return { id: exec, label: labelOf(exec), group: prov, groupLabel: providerMeta(prov)?.label ?? prov, icon: <ModelIcon name={exec} size={14} /> };
-    }),
-  ];
-  const groupIcons = Object.fromEntries(
-    [...new Set(execs.map(execProvider))].map((prov) => [prov, <ProviderGroupIcon key={prov} provider={prov} />]),
-  );
-  return (
-    <>
-      <SelectionSummary
-        countText=""
-        samples={[value ? { label: summaryLabelOf(value), icon: <ModelIcon name={value} size={13} /> } : { label: defaultLabel }]}
-        moreCount={0}
-        onManage={() => setOpen(true)}
-        manageLabel={t.managePicker.manage}
-        manageAriaLabel={`${t.managePicker.manage}: ${title}`}
-      />
-      <ManageSelectionModal
-        title={title}
-        open={open}
-        onClose={() => setOpen(false)}
-        items={items}
-        selected={new Set([value])}
-        single
-        groupIcons={groupIcons}
-        onSave={(next) => onChange([...next][0] ?? '')}
-      />
-    </>
-  );
-}
-
 export function AccountView() {
   const me = useMe();
-  const { data: config } = useConfig();
   const cli = useMyCliSettings();
   const brainModels = useBrainModels();
   const updateMe = useUpdateMe();
@@ -184,7 +117,6 @@ export function AccountView() {
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [defaultExec, setDefaultExec] = useState('');
   // The user's default Elowen AI chat model, kept as `provider::model` ('' = server default). Lives in
   // cliSettings (not on the User) — seeded once, then this local state drives the picker highlight.
   const [elowenSel, setElowenSel] = useState('');
@@ -210,7 +142,7 @@ export function AccountView() {
   // never type over an edit in progress. Tracking it per field, not per form, is what keeps a value
   // changed elsewhere (another window, another device) from being written back from this form's stale
   // copy when the user saves an unrelated field. The id resets the whole form when the identity changes.
-  const [profileBase, setProfileBase] = useState<{ id: number; name: string; email: string; default_exec: string } | null>(null);
+  const [profileBase, setProfileBase] = useState<{ id: number; name: string; email: string } | null>(null);
   // What this form last wrote for each field. A value the user changed no longer equals its baseline, so
   // without this it reads as an edit in progress forever — even once it has been saved and acknowledged.
   // The baseline then adopts whatever the refetch reports (another window's newer value) while the input
@@ -219,19 +151,17 @@ export function AccountView() {
   useEffect(() => {
     const user = me.data?.user;
     if (!user) return;
-    const server = { id: user.id, name: user.name, email: user.email, default_exec: user.default_exec };
+    const server = { id: user.id, name: user.name, email: user.email };
     if (profileBase && profileBase.id === server.id) {
-      if (profileBase.name === server.name && profileBase.email === server.email && profileBase.default_exec === server.default_exec) return;
+      if (profileBase.name === server.name && profileBase.email === server.email) return;
       // Follow the server whenever the field holds nothing but a settled value: its baseline, or this
       // form's own last write coming back as an echo. Anything else is the user's unsaved text.
       const sent = profileSent.current;
       setName((cur) => (cur === profileBase.name || cur.trim() === sent.name ? server.name : cur));
       setEmail((cur) => (cur === profileBase.email || cur.trim() === sent.email ? server.email : cur));
-      setDefaultExec((cur) => (cur === profileBase.default_exec || cur === sent.default_exec ? server.default_exec : cur));
     } else {
       setName(server.name);
       setEmail(server.email);
-      setDefaultExec(server.default_exec);
     }
     setProfileBase(server);
   }, [me.data, profileBase]);
@@ -243,9 +173,8 @@ export function AccountView() {
   if (profileBase) {
     if (name.trim() !== profileBase.name) profilePatch.name = name.trim();
     if (email.trim() !== profileBase.email) profilePatch.email = email.trim();
-    if (defaultExec !== profileBase.default_exec) profilePatch.default_exec = defaultExec;
   }
-  const profileSave = useAutoSaveStatus([name, email, defaultExec], async () => {
+  const profileSave = useAutoSaveStatus([name, email], async () => {
     try {
       await updateMe.mutateAsync(profilePatch);
       profileSent.current = { ...profileSent.current, ...profilePatch };
@@ -337,25 +266,9 @@ export function AccountView() {
   }
 
   const u = me.data.user;
-  const custom = config?.customModels ?? [];
-  // Models the user may pick a default from: their admin allow-list, or all globally-allowed when
-  // they have no per-user restriction.
   const restricted = u.allowed_execs.length > 0;
-  const pickable = restricted ? u.allowed_execs : (config?.allowedExecs ?? []);
-  // Worker presets name themselves; a brain exec takes its clean model name from the catalog (shared
-  // helper — the exec must not be split on a slash, the model id may contain one).
-  const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
-    ?? brainModelLabel(exec, brainModels.data);
-  // Standing alone in the summary, a brain model carries its provider — no group header does it there.
-  const qualifiedLabelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
-    ?? brainModelQualifiedLabel(exec, brainModels.data);
-
-  // Every pickable exec is a selectable Default worker (writes default_exec) — INCLUDING Elowen AI models
-  // enabled in Settings→Models, which the daemon runs as embedded brain workers. The separate Elowen AI
-  // picker below sets a different thing entirely: the user's brain CHAT model (cli-settings), not a worker.
-  const workerExecs = pickable;
-  // Elowen AI chat models: honour a user's personal allow-list even as admin (mirrors the worker rail +
-  // the Discord /model fix) — brainModels is already per-user-scoped server-side for non-admins.
+  // Elowen AI chat models honour the user's personal allow-list even for an administrator viewing their
+  // own Account; brainModels is already per-user-scoped server-side for non-admins.
   const elowenModels = (brainModels.data ?? []).filter((m) => !restricted || u.allowed_execs.includes(m.exec));
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -435,19 +348,6 @@ export function AccountView() {
       <AccountPanel id="profile" active={section} visited={visitedSections}>
       <ConstellationScope core={t.account.tabProfile}>
       {(() => {
-        const rowWorker = workerExecs.length > 0 ? (
-          <SpatialRow title={t.account.defaultWorker} description={t.account.defaultWorkerHint} icon={Cpu}>
-            <WorkerField
-              value={defaultExec}
-              onChange={setDefaultExec}
-              execs={workerExecs}
-              labelOf={labelOf}
-              summaryLabelOf={qualifiedLabelOf}
-              defaultLabel={t.account.defaultWorkerNone}
-              title={t.account.defaultWorker}
-            />
-          </SpatialRow>
-        ) : null;
         const rowElowen = elowenModels.length > 0 ? (
           <SpatialRow title={t.account.defaultElowenAi} description={t.account.defaultElowenAiHint} icon={Brain}>
             <BrainModelField
@@ -548,7 +448,7 @@ export function AccountView() {
             </SpatialIdentity>
 
             <SpatialGroup>
-              {rowWorker}{rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{linkRows}
+              {rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{linkRows}
             </SpatialGroup>
           </div>
         );

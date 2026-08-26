@@ -21,8 +21,8 @@ interface PluginI18n {
   description?: string;
   fields?: Record<string, { label?: string; hint?: string; options?: Record<string, string> }>;
   /** Localized browser-UI labels + view strings: nav keyed by route (`''` = the root page),
-   *  account/project/settings by id, strings by the manifest `web.strings` keys. */
-  web?: { nav?: Record<string, string>; account?: Record<string, string>; project?: Record<string, string>; settings?: Record<string, string>; strings?: Record<string, string> };
+   *  account/user/project/settings by id, strings by the manifest `web.strings` keys. */
+  web?: { nav?: Record<string, string>; account?: Record<string, string>; user?: Record<string, string>; project?: Record<string, string>; settings?: Record<string, string>; strings?: Record<string, string> };
 }
 
 /** A plugin found on disk (manifest parsed, code NOT imported). What the admin UI lists. */
@@ -309,6 +309,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // entry), content-hash it now so the serving route can pin an immutable URL, and carry the
         // manifest's nav/settings metadata — menus must render before (and without) the bundle's JS.
         if (manifest.web) {
+          if (manifest.web.adminOnly) registry.webAdminOnly.add(name);
           const webPath = resolve(pluginDir, manifest.web.entry);
           if (webPath !== pluginDir && !webPath.startsWith(pluginDir + sep)) throw new Error(`web entry "${manifest.web.entry}" escapes plugin dir`);
           if (!existsSync(webPath)) {
@@ -340,7 +341,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
               ...(css ?? {}),
               requiresApiVersion: manifest.web.requiresApiVersion ?? 1,
               ...(manifest.web.adminOnly ? { adminOnly: true } : {}),
-              nav: manifest.web.nav ?? [], account: manifest.web.account ?? [], project: manifest.web.project ?? [], settings: manifest.web.settings ?? [],
+              nav: manifest.web.nav ?? [], account: manifest.web.account ?? [], user: manifest.web.user ?? [], project: manifest.web.project ?? [], settings: manifest.web.settings ?? [],
               ...(manifest.web.label ? { label: manifest.web.label } : {}),
               ...(manifest.web.strings ? { strings: manifest.web.strings } : {}),
               ...(Object.keys(webI18n).length > 0 ? { i18n: webI18n } : {}),

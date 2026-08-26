@@ -1,8 +1,16 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
+
+const { loadPluginUi } = vi.hoisted(() => ({ loadPluginUi: vi.fn() }));
+vi.mock('../../../lib/pluginUi', async (loadOriginal) => ({
+  ...(await loadOriginal<typeof import('../../../lib/pluginUi')>()),
+  loadPluginUi,
+}));
+
 import { UserDetailPane } from '../../../modules/users/UserDetailPane';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
@@ -12,8 +20,12 @@ const server = setupServer(
   http.get('*/api/users/:id/stats', () => HttpResponse.json({ memoryCount: 0, sessionCount: 0, topModel: null })),
   http.get('*/api/users/:id/tools', () => HttpResponse.json([])),
   http.get('*/api/plugins', () => HttpResponse.json([])),
+  http.get('*/api/plugins/ui', () => HttpResponse.json([])),
 );
-beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
+beforeAll(() => server.listen({ onUnhandledRequest }));
+beforeEach(() => { loadPluginUi.mockReset(); });
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
 
 const user = (over: Partial<User> = {}): User => ({
   id: 2, username: 'bob', name: '', email: '', avatar: '', created_at: '2026-01-02', is_admin: false,
@@ -21,6 +33,11 @@ const user = (over: Partial<User> = {}): User => ({
 });
 
 const project = (id: number, slug: string): Project => ({ id, slug, path: `/p/${slug}`, notes: '', icon: '' });
+
+function StatefulUserPanel({ user: selected }: { user: User }) {
+  const [mountedFor] = useState(selected.id);
+  return <div>Environment for {selected.username} mounted #{mountedFor}</div>;
+}
 
 function mount(u: User, projects: Project[] = [], globalExecs: string[] = []) {
   const { wrapper: Wrapper } = createWrapper();
@@ -117,6 +134,29 @@ describe('UserDetailPane', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(patched.id).toBe('2'));
     expect((patched.body as { allowed_execs: string[] }).allowed_execs).toEqual(['sonnet']);
+  });
+
+  it('mounts a generic plugin panel with the selected User DTO', async () => {
+    server.use(
+      http.get('*/api/users/:id/projects', () => HttpResponse.json([])),
+      http.get('*/api/plugins/ui', () => HttpResponse.json([{
+        name: 'sandbox', url: '/plugins/sandbox/web/hash.js', apiVersion: 5, nav: [], account: [],
+        user: [{ id: 'environment', label: 'Development environment', icon: 'Box' }], project: [], settings: [], strings: {},
+      }])),
+    );
+    loadPluginUi.mockResolvedValue({
+      requiresApiVersion: 5,
+      user: { environment: StatefulUserPanel },
+    });
+
+    const { wrapper: Wrapper } = createWrapper();
+    const view = render(<Wrapper><ToastProvider><UserDetailPane user={user({ name: 'Bob' })} projects={[]} globalExecs={[]} customModels={[]} /></ToastProvider></Wrapper>);
+    expect(await screen.findByText('Development environment')).toBeInTheDocument();
+    expect(await screen.findByText('Environment for bob mounted #2')).toBeInTheDocument();
+    expect(loadPluginUi).toHaveBeenCalledWith('sandbox', '/plugins/sandbox/web/hash.js', undefined);
+
+    view.rerender(<Wrapper><ToastProvider><UserDetailPane user={user({ id: 3, username: 'amy', name: 'Amy' })} projects={[]} globalExecs={[]} customModels={[]} /></ToastProvider></Wrapper>);
+    expect(await screen.findByText('Environment for amy mounted #3')).toBeInTheDocument();
   });
 
   it('summarizes project assignments and saves the diff as individual assign/unassign calls', async () => {

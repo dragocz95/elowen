@@ -3,6 +3,11 @@ import type { ComponentType } from 'react';
 type AnyComponent = ComponentType<any>;
 
 export interface Project { id: number; slug: string; path: string }
+export interface User {
+  id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[];
+  disabled_tools: string[]; allowed_tools: string[]; granted_plugins: string[]; name: string; email: string;
+  avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean;
+}
 export interface Session { id: string; title: string; updatedAt: string }
 export interface WorkspaceFile { path: string; code: string; untracked: boolean }
 export interface WorkspaceStatus {
@@ -59,11 +64,11 @@ interface SandboxRuntime {
   api(path: string, init?: RequestInit): Promise<unknown>;
 }
 
-type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[]; surface: 'page' | 'deck' }>;
+type PluginUserComponent = ComponentType<{ plugin: string; panelId: string; user: User; surface: 'user' }>;
 type PluginProjectComponent = ComponentType<{ plugin: string; panelId: string; project: Project; surface: 'project' }>;
 interface Registration {
   requiresApiVersion: number;
-  account?: Record<string, PluginPageComponent>;
+  user?: Record<string, PluginUserComponent>;
   project?: Record<string, PluginProjectComponent>;
 }
 interface HostWindow {

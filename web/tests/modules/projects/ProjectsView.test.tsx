@@ -8,6 +8,11 @@ import { createWrapper } from '../../test-utils';
 
 const server = setupServer(
   http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '' }])),
+  http.get('*/api/projects/summary', () => HttpResponse.json([{
+    projectId: 1,
+    members: { total: 1, samples: [{ id: 2, username: 'bob', name: 'Bob', avatar: '' }] },
+    indicators: [{ plugin: 'demo', label: 'Connected', value: 'main', icon: 'GitBranch', tone: 'success' }],
+  }])),
   http.get('*/api/projects/1/git', () => HttpResponse.json({ isRepo: true, status: { branch: 'master', ahead: 0, behind: 0, dirty: 3, clean: false }, branches: [{ name: 'master', current: true }], commits: [{ hash: 'deadbee', subject: 'feat: x', author: 'me', relative: '2 hours ago' }] })),
   http.get('*/api/projects/1/files', () => HttpResponse.json([])),
   http.get('*/api/projects/1/commit/deadbee', () => HttpResponse.json({ diff: '', files: [] })),
@@ -27,6 +32,10 @@ describe('ProjectsView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
     const row = await screen.findByText('elowen');
+    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Summary' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Pilot info' })).toBeNull();
+    expect(screen.getByLabelText('1 assigned users')).toBeInTheDocument();
     fireEvent.click(row);
     expect(await screen.findByText('master')).toBeTruthy();
     expect(await screen.findByText('feat: x')).toBeTruthy();
