@@ -170,7 +170,6 @@ Why each location matters:
 | `ELOWEN_LOG_DIR` | `~/.config/elowen/logs` | File-based log directory |
 | `ELOWEN_WEB_PORT` | `4500` | Web UI port |
 | `ELOWEN_DAEMON_URL` | `http://localhost:4400` | Web UI to daemon URL |
-| `ELOWEN_RELAY_URL` / `KEY` / `MODEL` | *(empty)* | Autopilot relay config |
 | `ELOWEN_URL` | `http://localhost:4400` | Daemon URL used by CLI clients |
 | `ELOWEN_TOKEN` | *(empty)* | Auth token for non-interactive CLI/API calls |
 | `ELOWEN_AUTOSTART` | `1` | Set `0` to stop CLI commands from auto-starting a daemon |
@@ -190,8 +189,7 @@ npm prefix from its own binary path and handles root-owned installs via sudo.
 `elowen install` adds the `elowen-update.timer`, which fires an `elowen update
 --auto` check hourly (and once ~15 minutes after boot). It's **off by default** —
 the timer runs but the update no-ops until you turn auto-update on in **Settings →
-System**. Once enabled, updates are mission-aware: the agent won't restart itself
-while a mission is running, so work in flight is never interrupted.
+System**. Once enabled, updates use the daemon's guarded drain/restart path, so admitted work is allowed to settle before the service exits.
 
 So the timer can go live unattended, the installer also writes a **sudoers
 drop-in** (`/etc/sudoers.d/elowen`, validated with `visudo`) granting the service

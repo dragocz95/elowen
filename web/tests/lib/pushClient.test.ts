@@ -4,29 +4,11 @@ import { http, HttpResponse } from 'msw';
 import { actionToRequest, isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 
 describe('actionToRequest', () => {
-  it('approve posts to approve-gate', () => {
-    expect(actionToRequest('approve', { taskId: 't1' })).toEqual({
-      kind: 'fetch', steps: [{ method: 'POST', path: '/api/tasks/t1/approve-gate' }],
-    });
-  });
-  it('rerun re-opens the task then resumes the mission (two steps)', () => {
-    const plan = actionToRequest('rerun', { taskId: 't1', missionId: 'm-e1' });
-    expect(plan).toEqual({ kind: 'fetch', steps: [
-      { method: 'PATCH', path: '/api/tasks/t1', body: { status: 'open' } },
-      { method: 'PATCH', path: '/api/missions/m-e1', body: { action: 'resume' } },
-    ] });
-  });
-  it('allow / reject send Enter / Escape keys to the session', () => {
-    expect(actionToRequest('allow', { session: 'elowen-zoe' })).toEqual({
-      kind: 'fetch', steps: [{ method: 'POST', path: '/api/sessions/elowen-zoe/keys', body: { keys: ['Enter'] } }],
-    });
-    expect(actionToRequest('reject', { session: 'elowen-zoe' })).toEqual({
-      kind: 'fetch', steps: [{ method: 'POST', path: '/api/sessions/elowen-zoe/keys', body: { keys: ['Escape'] } }],
-    });
-  });
-  it('an unknown action (or open) opens the url', () => {
-    expect(actionToRequest('open', { url: '/escalations' })).toEqual({ kind: 'open', url: '/escalations' });
-    expect(actionToRequest('', {})).toEqual({ kind: 'open', url: '/' });
+  it('opens the authenticated deep-link for every action without calling a retired API', () => {
+    expect(actionToRequest('approve', { url: '/chat' })).toEqual({ kind: 'open', url: '/chat' });
+    expect(actionToRequest('rerun', {})).toEqual({ kind: 'open', url: '/' });
+    expect(actionToRequest('open', { url: 'https://github.com/example/repo/pull/1' }))
+      .toEqual({ kind: 'open', url: 'https://github.com/example/repo/pull/1' });
   });
 });
 

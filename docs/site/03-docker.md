@@ -40,16 +40,11 @@ docker run -d \
   elowen
 ```
 
-> tmux is required inside the image, not optional — agent sessions run in tmux
-> inside the container. The `apk add` line above is what makes the Sessions
-> module work.
+> tmux is required inside the image for interactive terminal sessions. The `apk add` line above provides that runtime dependency.
 
 ## Volumes and environment
 
-Mount a volume for `ELOWEN_DB` so your data survives container restarts and
-rebuilds — without it, a recreated container starts with an empty database. One
-file is the entire persistent state: tasks, missions, memory, users, and
-settings.
+Mount the whole Elowen config directory so the SQLite database, `plugin-secrets.key`, plugin data, plans, and attachments survive container recreation. Mounting only the database is insufficient once encrypted plugin credentials exist.
 
 | Variable | Value | Purpose |
 |----------|-------|---------|

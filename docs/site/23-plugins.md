@@ -18,7 +18,7 @@ Open **Settings → Plugins** to inspect installed plugins, enable or disable a 
 
 Bundled capabilities include file and terminal tools, MCP, skills, sub-agent delegation, ask-user questions, scheduled jobs, codebase indexing, runtime context, Discord, Telegram, Microsoft Teams, WhatsApp, and supporting presentation tools. The exact installed set can differ by deployment, so Settings is the source of truth for a running instance.
 
-A **new install enables only the assistant's own toolkit**: files, terminal, ask-user, runtime context, sub-agents, the Elowen manual, statusline, and MCP. Anything that brings its own pages and its own data — tasks and Kanban (`work`), missions and autopilot (`agents`), the code editor (`editor`) — is installed deliberately from **Settings → Plugins**, as are the chat platforms, which each need a credential.
+A **new install enables only the assistant's own toolkit**: files, terminal, ask-user, runtime context, sub-agents, the Elowen manual, statusline, and MCP. Product verticals with their own pages and data are installed deliberately from **Settings → Plugins**, as are chat platforms and repository integrations that need credentials.
 
 **DocsSearch** searches Elowen's shipped user manual. With a configured embedding model it finds sections by meaning; otherwise it uses keyword matching and says so. Results identify the source page and heading. Use it for product behaviour or settings before guessing; use **CodebaseSearch** for the user's own repositories instead.
 
@@ -68,9 +68,9 @@ This gives the host one auditable place to decide what a plugin may affect:
 
 ## Config schema and localization
 
-Plugin config fields drive the Settings UI. Supported field types include strings, secrets, booleans, numbers, text areas, structured role policies, model/provider selectors, sections, enums, multi-selects, code, prompts, JSON, embedding models, and MCP server editors.
+Plugin config fields drive the Settings UI. Supported field types include strings, booleans, numbers, text areas, model/provider selectors, sections, enums, multi-selects, code, prompts, JSON, embedding models, and specialized editors.
 
-Secrets are write-only: the UI can show whether a secret exists but never receives its stored value. Put the English fallback labels in the manifest. Add locale overrides under `plugins/<name>/i18n/<language>.json`, including option labels where relevant.
+New integration credentials use the encrypted core vault through `ctx.instanceSecrets()` or `ctx.userSecrets()`, not ordinary config JSON. The UI receives only non-secret metadata or whether a credential is connected. Put English fallback labels in the manifest and locale overrides under `plugins/<name>/i18n/<language>.json`.
 
 ## Platforms and automation
 
@@ -86,22 +86,11 @@ A type's `tools` spec is either a preset — `read-only`, `all`, or `inherit` �
 
 The sub-agent plugin's detail card in **Settings → Plugins** lists the built-in and user agents and lets an admin create, edit, and delete their own (built-ins are read-only). Each write is validated with the real agent parser before it lands and hot-reloads, so the catalog refreshes live.
 
-## The agents plugin
+## Lifecycle ownership
 
-The tmux-agent and missions subsystem — spawning coding agents into tmux
-sessions, the autopilot mission engine, the overseer, escalations, and the
-Sessions/Escalations web pages — ships as the bundled `agents` plugin. A fresh
-install does **not** enable it: a new instance is a bare assistant, and
-missions are turned on in **Settings → Plugins** when they are wanted. An
-install that already had the subsystem keeps it — it is enabled automatically
-on upgrade so running missions continue uninterrupted.
+A plugin that stores account-owned data registers `registerUserRemoved()`. A plugin that binds rows or files to core Projects registers `registerProjectRemoved()` and also reconciles at boot, because a disabled plugin cannot receive a deletion callback. Core Project and user ids are monotonic, so stale disabled-plugin rows cannot attach to a newly created owner.
 
-Disabling it turns that whole layer off: no missions, no agent sessions, the
-`/missions` and `/sessions` API paths answer 404, the web app hides the
-Sessions and Escalations pages, and its Settings section disappears. Chat,
-tasks, projects, memory, and every other core surface keep working. Its
-settings (overseer model, PR base branch, auto-open, verify command) live in
-**Settings → Agents & Autopilot**, stored under the plugin's own config slice.
+Each plugin owns its vertical slice: tables, routes, tools, pages, configuration, and cleanup. Core does not know a vertical by plugin name or fabricate empty results while its owner is disabled.
 
 ## Reload behavior
 

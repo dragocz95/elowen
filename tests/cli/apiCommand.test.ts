@@ -8,18 +8,18 @@ describe('runApiCommand', () => {
   it('GET forwards env url+token and prints JSON', async () => {
     const lines: string[] = [];
     let seen: { method: string; path: string; url: string; token: string } | undefined;
-    const code = await runApiCommand(['GET', '/tasks'], { ELOWEN_URL: 'http://d:4400', ELOWEN_TOKEN: 'tk' } as NodeJS.ProcessEnv, {
+    const code = await runApiCommand(['GET', '/projects'], { ELOWEN_URL: 'http://d:4400', ELOWEN_TOKEN: 'tk' } as NodeJS.ProcessEnv, {
       call: async (method, path, _body, opts) => { seen = { method, path, url: opts.url, token: opts.token }; return okData([{ id: 't1' }]); },
       out: (s) => lines.push(s), err: () => {},
     });
     expect(code).toBe(0);
-    expect(seen).toEqual({ method: 'GET', path: '/tasks', url: 'http://d:4400', token: 'tk' });
+    expect(seen).toEqual({ method: 'GET', path: '/projects', url: 'http://d:4400', token: 'tk' });
     expect(JSON.parse(lines.join('\n'))).toEqual([{ id: 't1' }]);
   });
 
   it('POST parses the JSON body argument', async () => {
     let seen: unknown;
-    const code = await runApiCommand(['POST', '/tasks', '{"title":"x"}'], { ELOWEN_URL: 'http://d', ELOWEN_TOKEN: 't' } as NodeJS.ProcessEnv, {
+    const code = await runApiCommand(['POST', '/projects', '{"title":"x"}'], { ELOWEN_URL: 'http://d', ELOWEN_TOKEN: 't' } as NodeJS.ProcessEnv, {
       call: async (_m, _p, body) => { seen = body; return { status: 201, ok: true, data: {}, text: '' }; },
       out: () => {}, err: () => {},
     });
@@ -51,7 +51,7 @@ describe('runApiCommand', () => {
 
   it('invalid JSON body exits 2 without calling the API', async () => {
     let called = false;
-    const code = await runApiCommand(['POST', '/tasks', '{bad'], {} as NodeJS.ProcessEnv, {
+    const code = await runApiCommand(['POST', '/projects', '{bad'], {} as NodeJS.ProcessEnv, {
       call: async () => { called = true; return okData({}); }, out: () => {}, err: () => {},
     });
     expect(code).toBe(2);

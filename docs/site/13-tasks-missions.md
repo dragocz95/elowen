@@ -1,75 +1,37 @@
 ---
-title: Tasks & Missions
+title: Todos, Goals & Workflows
 slug: tasks-missions
 order: 13
 eyebrow: Automation
 group: Automation
 ---
 
-# Tasks & Missions
+# Todos, Goals & Workflows
 
-Tasks turn an agent request into work you can observe and steer. A task has a project, status, priority, optional schedule, dependencies, and an executor. It can be created in the [Web UI](web-ui), through the API, or by the agent itself.
+Elowen no longer ships the former core Tasks, Missions, Autopilot, coding-agent session, or pull-request workflow. Those route families and settings are not part of core Projects.
 
-A mission is the execution layer for work that needs several steps. It groups an epic and its phase tasks, then coordinates planning, dispatch, review, pause, and completion. You can still use Elowen entirely through ordinary chat; tasks and missions make the longer-running work legible instead of invisible.
+Current long-running work uses three independent mechanisms:
 
-![The task workspace, with an in-context detail drawer](images/web-ui-tasks.png)
+## Conversation todos
 
-## Tasks
+The bundled todo plugin keeps a lightweight checklist attached to one conversation. Todos have a subject, description, status, and optional dependencies. They help the assistant and user track the current request; they do not launch workers, own Git state, or grant authority.
 
-Every task moves through a small state model:
+Use `/tasks` in chat to inspect and update the conversation's checklist.
 
-```text
-open → in_progress → closed
-                  ├→ blocked
-                  └→ cancelled
-```
+## Persistent goals
 
-| Status | Meaning |
-| --- | --- |
-| `open` | Ready to run once its dependencies are satisfied. |
-| `in_progress` | A worker is actively handling it. |
-| `blocked` | Needs an answer, review, or another human decision. |
-| `closed` | Finished; an outcome and summary can be recorded. |
-| `cancelled` | Stopped intentionally. |
+`/goal <outcome>` lets the current conversation continue toward a durable outcome across turns, with subgoals, a configurable turn budget, and a hard safety ceiling. The goal always uses the conversation's current account, Project, permission, and plugin boundaries.
 
-Use task types such as `task`, `feature`, `bug`, `chore`, and `epic` to make a list readable. An epic is a normal task used as the parent of mission phases; it is not a second workflow with separate data.
+Useful commands include `/goal draft`, `/goal status`, `/goal pause`, `/goal resume`, `/goal clear`, and `/subgoal <text>`.
 
-### Dependencies and scheduling
+## Delegation and workflow DAGs
 
-Dependencies are stored between tasks. A dependent task does not become ready until its prerequisites are closed, and cycles are rejected. You can also set `scheduled_at` and opt into `autostart`. A scheduled task without `autostart` is only a due-date marker; Elowen will not launch it on your behalf.
+`Delegate` starts a focused child conversation under a captured authorization boundary. A workflow decomposes one request into a directed graph of those children: independent nodes may run in parallel, while dependent nodes wait for prior results. Each node can use an appropriate model without sharing mutable context with siblings.
 
-The scheduler protects shared project checkouts from concurrent writers. If several scheduled tasks target the same project, they wait for a safe slot. Missions configured for a pull-request workflow can instead run in their own worktree.
+Delegated children cannot widen the caller's access. Their status, tool activity, transcript, and result remain attached to the parent conversation and survive daemon restarts.
 
-## Missions
+## Optional domain plugins
 
-Create a mission from a goal in the Tasks workspace. Elowen can accept a manual phase list or ask a planner to propose one. The result is an epic plus ordered phase tasks; the mission engine then engages the ready phases according to the selected autonomy and concurrency settings.
-
-1. **Plan** — create or review phases for the goal.
-2. **Engage** — choose autonomy, concurrency, optional PR workflow, and per-mission roles.
-3. **Run** — dispatch ready work while honoring dependencies and project safety.
-4. **Review or escalate** — capture questions and decisions instead of silently guessing.
-5. **Finish** — summarize the mission and clean up its active orchestration state.
-
-### Pilot and overseer
-
-An optional **pilot** plans work. An optional **overseer** can stay available during the mission to judge routine decisions, review completion, or escalate uncertain cases. Each mission can select its own pilot and overseer executors, independently from the workspace defaults. If no dedicated executor is configured, Elowen uses the configured fallback behavior rather than inventing a hidden agent.
-
-Autonomy levels control how far the mission can proceed before it asks for help. They do not bypass permission or destructive-action safeguards; use the [Autonomy & Safety](autonomy-safety) guide to choose the appropriate level.
-
-### TDD and pull requests
-
-Autopilot can require a test-first loop for mission workers. When enabled, it guides workers to establish a failing test, implement the smallest change, and verify the result. The rule applies to both embedded Elowen workers and supported external coding CLIs.
-
-The optional PR workflow uses a mission worktree and can create a branch, run a verification command, and open a pull request according to your GitHub settings. Treat it as an explicit workflow choice, not a replacement for your repository's review policy.
-
-## Watch and intervene
-
-- **Tasks** is the primary list and detail workspace.
-- **Kanban** groups task state visually and supports direct organization.
-- **Sessions** shows live worker terminals when an executor uses tmux.
-- **Timeline** records related activity and commits.
-- **Escalations** gathers situations that require a person.
-
-You can pause or resume a mission, answer a worker, change a task's schedule, or open the associated project without losing the surrounding context. For repository setup and PR behavior, continue to [Projects & Workflow](projects-workflow).
+A separately installed plugin may add its own task tracker, repository integration, or other product vertical. Such a plugin owns its tables, routes, tools, pages, configuration, and lifecycle. Disabling it must not change generic Project registration, conversation todos, persistent goals, or sub-agent workflows.
 
 [Next: Agents & Providers](agents-providers)

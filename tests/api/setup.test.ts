@@ -42,7 +42,7 @@ describe('setup mode (no users)', () => {
     expect((await res.json()).is_admin).toBe(true);
     // Auth now re-engages: a protected route without a token is rejected.
     expect((await app.request('/setup')).status).toBe(200);          // public, still reachable
-    expect((await app.request('/tasks')).status).toBe(401);          // protected, now enforced
+    expect((await app.request('/projects')).status).toBe(401);       // protected, now enforced
     expect((await app.request('/config', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ allowedExecs: [] }) })).status).toBe(401);
   });
 });

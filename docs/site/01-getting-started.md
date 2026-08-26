@@ -77,9 +77,7 @@ the full server provisioning — a dedicated system user, the `elowen-daemon` an
 the auto-update timer — then runs the same onboarding wizard at the end. See
 [Install](install).
 
-Run `elowen doctor` any time afterwards to see a checklist of what's working
-(chat, tasks, missions, memory, platforms, plugins) and a hint for fixing
-anything that isn't.
+Run `elowen doctor` any time afterwards to see a checklist of what's working (chat, memory, platforms, plugins, and deployment prerequisites) and a hint for fixing anything that isn't.
 
 ## Start it up
 
@@ -100,8 +98,8 @@ offers a short first-run onboarding wizard instead of the login form.)
 Start with a conversation — that's the whole point of Elowen.
 
 - In the web UI, open the **chat dock** and just type. Ask it something concrete:
-  "list the files in this repo", "what changed in the last commit", "summarize
-  the open tasks".
+  "list the files in this repo", "what changed in the last commit", or "summarize
+  this Project".
 - Or from your terminal:
 
   ```bash
@@ -115,40 +113,16 @@ conversations (facts worth keeping resurface on their own) and a **personality**
 you can shape — tone and style — from your Account settings. Learn more in
 [Brain & Chat](brain-chat).
 
-## Give it a task to run
+## Run longer work
 
-A **task** is Elowen's atomic unit of work. When you create one, the daemon spawns
-a coding agent in its own isolated tmux session and puts it to work.
+For work that needs more than one answer, use the mechanisms built into the conversation:
 
-From the web UI:
+- `/tasks` opens the conversation's lightweight todo checklist;
+- `/goal <outcome>` runs a persistent, budgeted goal across turns;
+- `Delegate` hands one focused part to an isolated sub-agent;
+- `Workflow` builds a dependency graph of sub-agents and can run independent nodes in parallel.
 
-1. Open **Tasks** → **New task**
-2. Give it a title like "Hello Elowen"
-3. Pick an executor (e.g. Claude Sonnet)
-4. Hit **Create**
-
-Or from the CLI:
-
-```bash
-elowen api POST /tasks '{"title":"Hello Elowen"}'
-elowen ls                 # see your task
-```
-
-A task created this way runs on Elowen's **built-in engine** using whatever brain
-provider `elowen setup` connected — no separate agent CLI needed. To hand it to a
-specific coding-agent CLI (Claude Code, OpenCode, Codex, Kilo Code) for that
-agent's own tools and context handling, pick an executor in the web UI's **New
-task** dialog.
-
-Then watch it work live in the **Sessions** page — where you can pop open a real
-terminal and intervene with one click — or from the CLI:
-
-```bash
-elowen sessions
-```
-
-Tasks group into **missions**, and missions into **epics**. See
-[Tasks & Missions](tasks-missions) for how work is organized.
+All four use the current account's Project access, tool grants, and permission rules. They do not create a separate mission, coding-agent session, or pull-request workflow. See [Todos, Goals & Workflows](tasks-missions) and [Autonomy & Safety](autonomy-safety).
 
 ## Who can do what (RBAC)
 

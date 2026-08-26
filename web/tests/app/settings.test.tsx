@@ -87,7 +87,7 @@ describe('SettingsPage', () => {
   });
 
   it('falls back to System for a stale moved-section deep-link', async () => {
-    localStorage.setItem('elowen.settings.category', 'autopilot');
+    localStorage.setItem('elowen.settings.category', 'retired-section');
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();

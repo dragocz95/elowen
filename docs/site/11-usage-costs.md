@@ -71,6 +71,6 @@ Elowen keeps the stable parts stable for exactly this reason. Recalled memories 
 
 **Prefer subscriptions for heavy interactive use.** If you have a ChatGPT, Claude, or Kimi subscription, connecting it via OAuth moves interactive chat off per-token billing entirely — you are bounded by the rate-limit windows instead, which the rail shows you live.
 
-**Watch the Models section after automation.** Workflows, missions, and cron jobs run while you are away. The per-model totals in `/stats` and the web Stats page are how you notice a scheduled job that is chattier than you intended; [Scheduling](scheduling) explains how to bound them.
+**Watch model usage after automation.** Workflows and scheduled jobs can run while you are away. The per-model totals in `/stats` show when an automation is chattier than intended; [Scheduling](scheduling) explains how to bound recurring work.
 
 [Next: Your Account & Preferences](account-preferences)

@@ -67,8 +67,7 @@ sessions where speed matters more than caution. See
 ## Unattended asks
 
 Also in **Account → Elowen AI**: the **unattended asks** switch decides what
-happens when the agent needs input while you're away — during a cron run or a
-background mission, where nobody is there to answer.
+happens when the agent needs input while you're away — during a cron run, delegated turn, or other unattended execution where nobody is there to answer.
 
 - **Allow** (default) — the agent proceeds with the default answer and keeps
   going.
@@ -195,27 +194,12 @@ Elowen supports **PWA push notifications** over the VAPID protocol.
 
 ![Account settings — notifications and per-device subscriptions](images/account-settings.png)
 
-1. **Subscribe** — Account → Notifications → enable on this device. Subscription
-   is per device, so each phone or laptop opts in on its own.
-2. **Events** — mission escalations, `needs_input` signals, stalls, and
-   completions.
-3. **Actions** — inline buttons let you respond straight from the notification.
-4. **Service worker** — a bundled service worker handles incoming push events
-   and clicks.
+1. **Subscribe** — Account → Notifications → enable on this device. Subscription is per device, so each phone or laptop opts in on its own.
+2. **Events** — turn completion and plugin-owned notifications selected by the sender.
+3. **Clicks** — every notification action opens its authenticated app or HTTPS deep-link.
+4. **Service worker** — a bundled service worker handles incoming push events and safe navigation.
 
-### Inline action buttons
-
-| Action | Effect |
-|--------|--------|
-| **Allow** | Sends an Enter keystroke to the waiting agent |
-| **Reject** | Sends an Escape keystroke |
-| **Approve** | Releases the review gate on a blocked phase |
-| **Rerun** | Re-opens the task and resumes the mission |
-
-This is the human-in-the-loop gate at your fingertips — approve an
-[escalation](web-ui) or steer an agent without opening the app. See
-[Autonomy & Safety](autonomy-safety) for how autonomy levels L0–L3 decide when
-the agent stops to ask.
+The service worker does not call retired task, mission, review, or coding-session APIs. Authorization and mutations stay inside the normal authenticated application flow.
 
 ## Memory
 
@@ -234,4 +218,4 @@ and they cover web chat, `elowen chat` and your own verified Discord messages.
 For the deep dive on what gets remembered, embeddings, and searching your store,
 see [Memory & Embeddings](memory).
 
-[Next: Tasks & Missions](tasks-missions)
+[Next: Todos, Goals & Workflows](tasks-missions)

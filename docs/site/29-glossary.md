@@ -15,7 +15,7 @@ The words Elowen uses across the CLI, the Web UI, and these docs, in plain langu
 | Term | Meaning |
 | --- | --- |
 | **brain** | The conversational agent you chat with — the part that reads your messages, reasons, decides which tools to call, and writes answers. See [Brain & Chat](brain-chat). |
-| **worker / executor** | A non-conversational agent process that runs an assigned task in the background and reports an outcome, instead of chatting with you. See [Agents & Providers](agents-providers). |
+| **model / executor** | The configured provider and model used by a conversation or delegated sub-agent. See [Agents & Providers](agents-providers). |
 | **session** | One running instance of the brain, bound to a conversation and a set of permissions. The CLI, the web chat, and channels each hold their own sessions. See [Brain & Chat](brain-chat). |
 | **conversation** | The durable message history a session works through. Conversations survive restarts and can be resumed from any surface. See [Brain & Chat](brain-chat). |
 | **project** | A directory tree the agent is allowed to work in. Projects scope file access, shell commands, and search to known roots. See [Projects & Workflow](projects-workflow). |
@@ -25,15 +25,12 @@ The words Elowen uses across the CLI, the Web UI, and these docs, in plain langu
 
 | Term | Meaning |
 | --- | --- |
-| **task** | A unit of tracked work on the control plane, with a state, an assignee, and an outcome. Tasks are what workers and missions pick up. See [Tasks & Missions](tasks-missions). |
-| **mission** | A standing objective the autopilot works toward by creating and supervising tasks over time, rather than answering a single request. See [Tasks & Missions](tasks-missions). |
-| **autopilot** | The mode in which Elowen pursues missions on its own: planning work, assigning it to workers, and checking results without you prompting each step. See [Tasks & Missions](tasks-missions). |
-| **workflow** | A directed graph of sub-agents the brain assembles for one request — independent nodes run in parallel, dependents wait for their inputs. See [CLI](cli). |
-| **sub-agent** | A fresh agent with its own clean context, delegated one self-contained task by the brain. It cannot see the parent conversation and can only ever narrow the caller's permissions. See [Agents & Providers](agents-providers). |
+| **todo** | A lightweight checklist item attached to one conversation. Todos track the current request; they do not launch workers or grant authority. See [Todos, Goals & Workflows](tasks-missions). |
+| **goal** | A durable outcome one conversation works toward across multiple turns, bounded by a turn budget and hard ceiling. See [Autonomy & Safety](autonomy-safety). |
+| **workflow** | A directed graph of delegated sub-agents — independent nodes run in parallel, dependents wait for their inputs. See [Autonomy & Safety](autonomy-safety). |
+| **sub-agent** | An isolated child conversation delegated one focused task. It receives a captured authorization boundary and can only narrow the caller's permissions. See [Agents & Providers](agents-providers). |
 | **cron job** | A prompt Elowen runs on a recurring schedule — daily summaries, periodic checks. See [Scheduling](scheduling). |
-| **wake-up** | A one-shot scheduled prompt that fires once at a set time or after a delay, then removes itself — used to check back on something that changes over time. See [Scheduling](scheduling). |
-| **autonomy level** | How much the agent may do without asking first — from read-only up to acting on your behalf — set per account. See [Autonomy & Safety](autonomy-safety). |
-| **overseer** | The supervisory role that reviews missions and workers: approving plans, checking outcomes, and stepping in when a run goes off track. See [Autonomy & Safety](autonomy-safety). |
+| **wake-up** | A one-shot scheduled prompt that fires once at a set time or after a delay, then removes itself. See [Scheduling](scheduling). |
 
 ## Extending
 

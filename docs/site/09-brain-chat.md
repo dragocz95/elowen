@@ -78,7 +78,7 @@ If none of the presets fits, you can write your own custom personality text, whi
 
 ## Models and reasoning
 
-Elowen supports configured OpenAI-compatible and Anthropic providers, plus OAuth-backed **Claude**, **ChatGPT**, **GitHub Copilot**, and **Kimi** accounts. A provider's model catalog is used by the chat pickers and can also feed tasks and plugins that request a model field. OpenRouter's zero-cost `:free` catalog variants are filtered out at the source, so every listed model has metered, reported pricing.
+Elowen supports configured OpenAI-compatible and Anthropic providers, plus OAuth-backed **Claude**, **ChatGPT**, **GitHub Copilot**, and **Kimi** accounts. A provider's model catalog is used by chat, delegated sub-agents, and plugins that request a model field. OpenRouter's zero-cost `:free` catalog variants are filtered out at the source, so every listed model has metered, reported pricing.
 
 Select a model for the current conversation where your surface provides a picker. Reasoning options are shown only when the chosen model exposes them. ChatGPT OAuth models can additionally use priority processing through `/fast` when the selected model supports it. The daemon preserves provider credentials and returns only safe configuration metadata to the Web UI.
 
@@ -110,6 +110,6 @@ Configure embeddings and categorization in **Settings → Memory**. An API-key o
 
 Tools come from the core and enabled plugins. Per-user policy narrows the visible and executable tool set, and execution-time checks remain authoritative. A tool's successful output is hidden unless its built-in or plugin declaration explicitly opts into transcript display; failures and important annotations remain visible.
 
-Approval questions are part of the conversation lifecycle. Depending on your account and the operation, the agent can wait for a decision, an overseer can handle a routine mission decision, or the work is escalated to a human. See [Autonomy & Safety](autonomy-safety) for the autonomy model.
+Approval questions are part of the conversation lifecycle. Interactive turns can wait for a decision; unattended work follows its captured non-interactive permission boundary and fails closed when it cannot obtain authority. See [Autonomy & Safety](autonomy-safety).
 
 [Next: Memory & Embeddings](memory)

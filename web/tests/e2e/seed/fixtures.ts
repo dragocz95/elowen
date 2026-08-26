@@ -10,9 +10,6 @@ import type {
   BrainModelOption,
   SlashCommandDef,
   BrainMessage,
-  SessionInfo,
-  Task,
-  Mission,
   Project,
 } from '../../../lib/types.ts';
 
@@ -129,7 +126,4 @@ export const brainMessages: BrainMessage[] = [
 ];
 
 // The ambient shell polls these too; empty lists are valid and keep the sidebars quiet.
-export const sessions: SessionInfo[] = [];
-export const tasks: Task[] = [];
-export const missions: Mission[] = [];
 export const projects: Project[] = [];

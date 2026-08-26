@@ -98,9 +98,7 @@ skippable and resumable:
 2. **Project** — register a repository for agents to work in
 3. **AI provider** — connect an OpenAI-compatible or Anthropic provider, a
    preset, a custom endpoint, or a supported OAuth account (Claude, ChatGPT,
-   GitHub Copilot, Kimi); pick a model, then run a **chat smoke-test** to
-   confirm it answers. The built-in task engine is wired to that model, so basic
-   tasks run with no external agent CLI installed.
+   GitHub Copilot, Kimi); pick a model, then run a **chat smoke-test** to confirm it answers.
 4. **Memory** — optional embeddings for recall (reuse the provider's key or an
    OpenRouter key)
 5. **Code intelligence** — optionally install the TypeScript language server so
@@ -108,8 +106,7 @@ skippable and resumable:
 
 The run ends with a readiness report ("What works now") and a **done screen**
 with your next steps. Run `elowen doctor` any time for the same report on
-demand: chat, tasks, missions, memory, platforms, and plugins, each with a
-plain-language hint for whatever isn't configured yet.
+demand: chat, memory, platforms, plugins, and deployment prerequisites, each with a plain-language hint for whatever isn't configured yet.
 
 ## The CLI-first flow
 
@@ -131,8 +128,7 @@ Everything else hangs off a small set of verbs:
   [Production & Updates](production-updates))
 
 Prefer a browser? Open `http://localhost:4500`, sign in, and you land on the
-Dashboard. See [Getting Started](getting-started) for your first chat and first
-task.
+Dashboard. See [Getting Started](getting-started) for your first chat and longer-running goal or workflow.
 
 ## Manual start (without systemd)
 
@@ -185,10 +181,7 @@ routing for a server install: [Production & Updates](production-updates).
 
 ## Data directory
 
-The daemon keeps everything in a single SQLite database at
-`~/.config/elowen/elowen.db` by default (override with `ELOWEN_DB`), created
-automatically on first run. One small file is the entire persistent state —
-tasks, missions, memory, users, and settings all live here.
+The daemon keeps structured state in SQLite at `~/.config/elowen/elowen.db` by default (override with `ELOWEN_DB`), created automatically on first run. Encrypted plugin credentials additionally require `~/.config/elowen/plugin-secrets.key`; back up the database and key together. Plugin data, plans, logs, and attachments live beside them in the config directory.
 
 ## First-run setup
 

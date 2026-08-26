@@ -21,26 +21,16 @@ is intentionally chromeless while retaining the providers and auth gate.
 
 | Route | Primary view | Notes |
 | --- | --- | --- |
-| `/dash` | `DashboardView` | Dashboard retains its dedicated overview composition |
-| `/stats` | `StatsView` | Usage, activity, and operational statistics |
-| `/tasks` | `TasksView` | Mission/task workspace, filters, and detail drawer |
-| `/kanban` | Kanban + calendar | Board/calendar switch in one route |
-| `/sessions` | `SessionsView` | Live agents and terminal access |
-| `/timeline` | `TimelineView` | Activity and commit context |
-| `/memory` | `MemoryView` | Memory list, retrieval, and graph-oriented views |
-| `/escalations` | `EscalationsView` | Pending reviews and parked questions |
-| `/projects` | `ProjectsView` | Projects, repository context, and detail drawer |
-| `/editor` | `EditorView` | Dedicated editor workspace |
-| `/terminal/[name]` | terminal pop-out | Chromeless terminal route |
-| `/settings` | settings control surface | Administrator-only configuration sections |
+| `/dash` | `DashboardView` | Dashboard and recent activity |
+| `/chat` | advisor chat | Shared conversation UI |
+| `/memory` | `MemoryView` | Memory list, retrieval, and categories |
+| `/projects` | `ProjectsView` | Project registration and read-only Git context |
+| `/settings` | settings control surface | Administrator-only core and plugin configuration |
 | `/users` | `UsersView` | Administrator user and access management |
 | `/account` | `AccountView` | Per-user profile and preferences |
 | `/onboarding` | first-run wizard | Setup and readiness flow |
 
-`/tasks`, `/kanban`, `/timeline`, `/stats`, `/sessions`, `/escalations` and
-`/editor` are kept as redirects (query string included): their views ship in a
-plugin bundle and are served under `/p/<plugin>/…`. The routes stay because the
-URLs are bookmarked and linked.
+Plugin pages render under `/p/<plugin>/<route>` and appear only while their owner is installed, enabled, and accessible to the current account. Core does not retain fake task, mission, agent-session, or editor routes for absent plugins.
 
 Feature metadata lives in `web/modules/<feature>/meta.ts` and is registered in
 `web/modules/registry.ts`; a plugin's pages come from its manifest instead.
@@ -53,9 +43,8 @@ The product uses a small number of shared patterns rather than page-specific
 card stacks:
 
 - `SpatialWorkspaceLayout` combines the section hero, mascot/metrics, optional
-  section rail, responsive content, and a contextual detail drawer. Tasks,
-  projects, timeline, memory, users, Kanban, and escalations use it where a
-  data workspace benefits from the pattern.
+  section rail, responsive content, and a contextual detail drawer. Core and plugin
+  workspaces reuse it where a data register benefits from the pattern.
 - Settings and Account use their dedicated spatial control decks. Their section
   content is wide and scrollable; it is not rendered inside the orbit itself.
 - `ControlSurfaceDocument`, `ControlSurfaceToolbar`, and

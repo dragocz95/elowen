@@ -3,7 +3,7 @@
 // quiet state.
 import type { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { config, sessions, tasks, missions, projects } from '../../seed/fixtures.ts';
+import { config, projects } from '../../seed/fixtures.ts';
 import { getResponse } from '../overrides.ts';
 
 export function registerCoreRoutes(app: Hono): void {
@@ -26,10 +26,6 @@ export function registerCoreRoutes(app: Hono): void {
   );
 
   app.get('/config', (c) => c.json(getResponse('config', config)));
-  app.get('/sessions', (c) => c.json(getResponse('sessions', sessions)));
-  app.get('/tasks', (c) => c.json(getResponse('tasks', tasks)));
-  app.get('/tasks/ready', (c) => c.json(getResponse('tasks/ready', tasks)));
-  app.get('/missions', (c) => c.json(getResponse('missions', missions)));
   app.get('/projects', (c) => c.json(getResponse('projects', projects)));
   // The shell reads this before it can render its nav at all, and `applyNavLayout` indexes both arrays
   // unguarded — the catch-all's `[]` crashes the whole layout, so the empty layout is modeled explicitly.

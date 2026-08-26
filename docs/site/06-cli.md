@@ -177,17 +177,14 @@ elowen run --goal "finish the documented cleanup" --max-turns 12
 
 `--json` emits JSONL events for a machine consumer. `--timeout` bounds the client wait. A slash prompt is passed through to the server command system, for example `elowen -p "/compact"`.
 
-## Task and operator helpers
+## API helper
+
+`elowen api METHOD /path [json]` sends an authenticated request to the daemon. Use current core or enabled-plugin routes; for example:
 
 ```bash
-elowen ls
-elowen ready
-elowen sessions
-elowen send <session> "please show the failing command"
-elowen close <task-id> --outcome ok --summary "verified"
+elowen api GET /projects
+elowen api GET /brain/status
 ```
-
-Running workers also receive a narrow, authenticated control surface through environment variables. `elowen help`, `elowen ask`, `elowen note`, `elowen plan submit`, and `elowen overseer` are intended for those workers and mission roles; they are not a replacement for the normal user workflow. They require the agents plugin — on an instance without it these commands (and `elowen sessions`) answer with "agents plugin is disabled".
 
 ## Service lifecycle
 
