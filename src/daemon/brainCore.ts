@@ -520,6 +520,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           homeProject: () => projects.get(homeProject.id) ?? {
             id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '',
           },
+          userProjects: { canAccess: (userId, projectId) => userProjects.canAccess(userId, projectId) },
           usersRead: {
             list: () => users.list().map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
             isAdmin: (id) => users.isAdmin(id),

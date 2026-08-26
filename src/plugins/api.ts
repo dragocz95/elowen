@@ -508,6 +508,12 @@ export interface PluginHostExternalUsers {
  *  decisions rather than query shared tables directly. */
 export interface PluginHostStores {
   projects: { get(id: number): Project | null; list(): Project[] };
+  /** The CORE-owned answer to "may this account see this project", resolved live and including the
+   *  administrator rule. Exposed because a plugin doing durable per-account work has to re-check tenancy
+   *  outside a request — a background worker has no ambient policy to consult — and re-deriving it from
+   *  the `user_projects` table would put a copy of an access decision inside the very component that
+   *  decision governs. Callers get the predicate, never the rows. */
+  userProjects: { canAccess(userId: number, projectId: number): boolean };
   /** The daemon's home project row (its own checkout). */
   homeProject(): Project;
   usersRead: {
