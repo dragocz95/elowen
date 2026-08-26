@@ -188,8 +188,12 @@ describe('elowen-docs — search', () => {
     expect(res.details.matches).toBeGreaterThan(0);
     // Every hit names the page and the heading it came from — that IS the "where is this" answer.
     expect(res.content[0]!.text).toMatch(/docs\/site\/\d{2}-[a-z0-9-]+\.md/);
-    // A URL would be a guess: this repo does not define the published link scheme.
-    expect(res.content[0]!.text).not.toContain('http');
+    // A URL would be a guess: this repo does not define the published link scheme. Only the citation lines
+    // are the tool's own words, and renderMatches indents the body beneath them — so the manual itself stays
+    // free to quote a URL, an ```http fence or the word httpOnly without that reading as a fabricated link.
+    const citations = res.content[0]!.text.split('\n').filter((l) => /^\S.*\(\d\.\d{3}\)$/.test(l));
+    expect(citations).toHaveLength(res.details.matches as number);
+    for (const line of citations) expect(line).not.toMatch(/https?:\/\//);
   });
 
   it('embeds the corpus once and reuses the index on later calls', async () => {
