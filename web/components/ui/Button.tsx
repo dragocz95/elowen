@@ -15,7 +15,7 @@ const VARIANTS: Record<Variant, string> = {
 
 export function buttonClassName(variant: Variant = 'default', className = ''): string {
   const extra = className.trim();
-  return `inline-flex h-9 items-center justify-center gap-2 border px-3.5 text-sm font-medium rounded-md transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 ${VARIANTS[variant]}${extra ? ` ${extra}` : ''}`;
+  return `inline-flex h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap border px-3.5 text-sm font-medium rounded-md transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 ${VARIANTS[variant]}${extra ? ` ${extra}` : ''}`;
 }
 
 export function Button({ variant = 'default', icon: Icon, className = '', children, ...rest }: { variant?: Variant; icon?: LucideIcon } & ButtonHTMLAttributes<HTMLButtonElement>) {

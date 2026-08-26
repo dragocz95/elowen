@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity, Boxes, HardDrive, Network, ShieldCheck, ShieldX } from 'lucide-react';
+import { Activity, Boxes, HardDrive, ShieldCheck, ShieldX } from 'lucide-react';
 import { jsonBody, localizedError, runtime, type EnvironmentState, type User } from './runtime';
 type ResetPreview = { generation: number; bytes: number; entries: number; activeProcesses: number; author: { name: string; email: string }; phrase: string; previewHash: string };
 
@@ -72,12 +72,9 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
         <C.Badge tone={state.probe.available ? 'success' : 'danger'}>{state.probe.available ? s.probeReady : s.probeFailed}</C.Badge>
       </div>
 
+      {/* Only a FAILED probe has something to say. The confined-mode caveat is normal operation, so it
+          belongs on the plugin's own page, not in front of someone editing a Git author. */}
       {state.probe.reason ? <p className="text-xs leading-relaxed text-text-muted">{state.probe.reason}</p> : null}
-      {state.mode === 'confined' ? (
-        <p className="flex items-start gap-2 text-xs leading-relaxed text-text-muted">
-          <Network size={13} className="mt-0.5 shrink-0" aria-hidden />{s.networkCaveat}
-        </p>
-      ) : null}
 
       <C.Field label={s.home}>
         <div className="grid grid-cols-3 gap-2">
@@ -127,7 +124,6 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
             {s.resetHome}
           </C.Button>
         )}>
-          <C.Button variant="ghost" onClick={() => setSettingsOpen(false)}>{s.cancel}</C.Button>
           <C.Button
             variant="accent"
             disabled={saveAuthor.isPending || !author.name.trim() || !author.email.trim()}
