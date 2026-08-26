@@ -553,7 +553,7 @@ export const sk = {
     empty: 'Žiadne projekty',
     fieldSlug: 'Slug',
     fieldPath: 'Cesta',
-    fieldNotes: 'Info pre Pilota',
+    fieldNotes: 'Poznámky k projektu',
     create: 'Vytvoriť',
     editProject: 'Upraviť projekt',
     updated: 'Projekt upravený',

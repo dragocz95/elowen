@@ -104,7 +104,8 @@
       "error_home_in_use": "Tento HOME používá aktivní proces.",
       "error_home_changed": "HOME se po vytvoření náhledu změnil. Obnov ho a znovu zkontroluj.",
       "error_confirmation_mismatch": "Potvrzovací fráze nesouhlasí.",
-      "errorFallback": "Operace Sandboxu selhala."
+      "errorFallback": "Operace Sandboxu selhala.",
+      "manageEnvironment": "Otevřít prostředí"
     }
   }
 }

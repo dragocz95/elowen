@@ -171,7 +171,8 @@
       "error_home_in_use": "An active process is using this HOME.",
       "error_home_changed": "HOME changed after the preview. Refresh and review it again.",
       "error_confirmation_mismatch": "The confirmation phrase does not match.",
-      "errorFallback": "The sandbox operation failed."
+      "errorFallback": "The sandbox operation failed.",
+      "manageEnvironment": "Open environment"
     }
   }
 }

@@ -104,6 +104,9 @@ describe('sandbox Environment settings', () => {
       }),
     );
     mount(<EnvironmentSettings surface="user" user={targetUser} />);
+    // The account drawer shows a preview row and keeps the settings one click deeper, so this panel
+    // reads like the tool and project summaries beside it instead of a page pasted into the rail.
+    fireEvent.click(await screen.findByRole('button', { name: strings.manageEnvironment }));
     fireEvent.click(await screen.findByRole('button', { name: strings.resetHome }));
     const dialog = within(await screen.findByRole('dialog', { name: strings.resetTitle }));
     const confirm = dialog.getByRole('button', { name: strings.reset });

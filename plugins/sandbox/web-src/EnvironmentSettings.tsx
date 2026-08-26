@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Network, ShieldCheck, ShieldX } from 'lucide-react';
+import { Activity, Boxes, HardDrive, Network, ShieldCheck, ShieldX } from 'lucide-react';
 import { jsonBody, localizedError, runtime, type EnvironmentState, type User } from './runtime';
 type ResetPreview = { generation: number; bytes: number; entries: number; activeProcesses: number; author: { name: string; email: string }; phrase: string; previewHash: string };
 
@@ -21,6 +21,7 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
   const [author, setAuthor] = useState({ name: '', email: '' });
   const [resetPreview, setResetPreview] = useState<ResetPreview | null>(null);
   const [phrase, setPhrase] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (query.data) setAuthor(query.data.author);
@@ -51,7 +52,6 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
 
   const document = (
     <C.SettingsDocument>
-      {state.migrationCollision ? <div role="alert" className="rounded-lg border border-danger/50 bg-danger/5 p-4 text-sm text-danger">{s.migrationCollision}</div> : null}
       <C.SettingsGroup title={s.mode} description={s.environmentHint}>
         <C.SettingsRow label={s.mode} hint={state.mode === 'confined' ? s.networkCaveat : undefined}>
           <C.Badge tone={state.mode === 'unavailable' ? 'danger' : state.mode === 'confined' ? 'success' : 'accent'}><ModeIcon size={12} className="mr-1" aria-hidden />{modeLabel}</C.Badge>
@@ -80,8 +80,25 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
     </C.SettingsDocument>
   );
 
+  // In the user drawer this is ONE row among the account's other summaries, not a page: it reads as the
+  // same kind of preview the tool and project pickers use, and the settings themselves open on top of it.
   return <>
-    {document}
+    {state.migrationCollision ? <div role="alert" className="rounded-lg border border-danger/50 bg-danger/5 p-4 text-sm text-danger">{s.migrationCollision}</div> : null}
+    <C.SelectionSummary
+      countText={modeLabel}
+      samples={[
+        { label: `${s.homeSize}: ${formatBytes(state.home.bytes)}${state.home.truncated ? '+' : ''}`, icon: <HardDrive size={13} aria-hidden /> },
+        { label: `${s.processes}: ${state.home.activeProcesses}`, icon: <Activity size={13} aria-hidden /> },
+        { label: state.probe.available ? s.probeReady : s.probeFailed, icon: <ModeIcon size={13} aria-hidden /> },
+      ]}
+      onManage={() => setSettingsOpen(true)}
+      manageLabel={s.manageEnvironment}
+    />
+    {settingsOpen ? (
+      <C.Modal title={s.environmentTitle} description={s.environmentHint} icon={Boxes} size="md" onClose={() => setSettingsOpen(false)}>
+        <C.ModalBody>{document}</C.ModalBody>
+      </C.Modal>
+    ) : null}
     {resetPreview ? (
       <C.Modal title={s.resetTitle} size="sm" onClose={() => setResetPreview(null)}>
         <C.ModalBody>

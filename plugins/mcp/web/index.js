@@ -28,9 +28,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/plugin-ui-kit/shims/react.cjs
+// ../elowen/packages/plugin-ui-kit/shims/react.cjs
 var require_react = __commonJS({
-  "packages/plugin-ui-kit/shims/react.cjs"(exports, module) {
+  "../elowen/packages/plugin-ui-kit/shims/react.cjs"(exports, module) {
     "use strict";
     var runtime2 = typeof window !== "undefined" ? window.ElowenUiRuntime : void 0;
     if (!runtime2) throw new Error("elowen-plugin-ui-kit: window.ElowenUiRuntime is missing \u2014 plugin bundles only run inside the Elowen web app");
@@ -38,9 +38,9 @@ var require_react = __commonJS({
   }
 });
 
-// packages/plugin-ui-kit/shims/jsx-runtime.cjs
+// ../elowen/packages/plugin-ui-kit/shims/jsx-runtime.cjs
 var require_jsx_runtime = __commonJS({
-  "packages/plugin-ui-kit/shims/jsx-runtime.cjs"(exports, module) {
+  "../elowen/packages/plugin-ui-kit/shims/jsx-runtime.cjs"(exports, module) {
     "use strict";
     var runtime2 = typeof window !== "undefined" ? window.ElowenUiRuntime : void 0;
     if (!runtime2) throw new Error("elowen-plugin-ui-kit: window.ElowenUiRuntime is missing \u2014 plugin bundles only run inside the Elowen web app");

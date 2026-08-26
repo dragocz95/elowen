@@ -559,7 +559,7 @@ export const en = {
     empty: 'No projects',
     fieldSlug: 'Slug',
     fieldPath: 'Path',
-    fieldNotes: 'Pilot info',
+    fieldNotes: 'Project notes',
     create: 'Create',
     editProject: 'Edit project',
     updated: 'Project updated',

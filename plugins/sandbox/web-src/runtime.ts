@@ -52,6 +52,8 @@ interface RuntimeComponents {
   DataTable: AnyComponent; DataTableRow: AnyComponent; DataTableCell: AnyComponent;
   PatchView: AnyComponent; ConfirmDialog: AnyComponent; PluginSection: AnyComponent;
   SettingsDocument: AnyComponent; SettingsGroup: AnyComponent; SettingsRow: AnyComponent;
+  // The host's own preview-plus-manage row, so the account drawer reads the same as its neighbours.
+  SelectionSummary: AnyComponent;
 }
 interface RuntimeUtils {
   apiErrorMessage(error: unknown): string;
