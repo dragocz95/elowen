@@ -250,6 +250,14 @@ export function useDeleteSessionTask() {
   });
 }
 
+export function useClearSessionTasks() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { sessionId: string; scope: 'completed' | 'all' }) => elowenClient.clearSessionTasks(v.sessionId, v.scope),
+    onSuccess: (_data, value) => qc.invalidateQueries({ queryKey: ['session-tasks', value.sessionId] }),
+  });
+}
+
 export function useDeletePluginSkill() {
   const qc = useQueryClient();
   return useMutation({

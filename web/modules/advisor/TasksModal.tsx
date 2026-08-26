@@ -1,13 +1,14 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ListChecks, Trash2 } from 'lucide-react';
+import { ListChecks, ListX, Trash2 } from 'lucide-react';
 import { useBrainChat } from './BrainChatProvider';
 import { useSessionTasks } from '../../lib/queries';
-import { useDeleteSessionTask, useUpdateSessionTask } from '../../lib/mutations';
+import { useClearSessionTasks, useDeleteSessionTask, useUpdateSessionTask } from '../../lib/mutations';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { Input } from '../../components/ui/Input';
+import { Button } from '../../components/ui/Button';
 import { IconButton } from '../../components/ui/IconButton';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -21,8 +22,10 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
   const tasksQuery = useSessionTasks(activeSessionId);
   const updateTask = useUpdateSessionTask();
   const deleteTask = useDeleteSessionTask();
+  const clearTasks = useClearSessionTasks();
   const [filter, setFilter] = useState('');
   const [pendingDelete, setPendingDelete] = useState<SessionTask | null>(null);
+  const [pendingClear, setPendingClear] = useState<'completed' | 'all' | null>(null);
 
   const rows = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -48,6 +51,19 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
     );
   };
 
+  const runClear = (scope: 'completed' | 'all'): void => {
+    setPendingClear(null);
+    if (!activeSessionId) return;
+    clearTasks.mutate(
+      { sessionId: activeSessionId, scope },
+      { onSuccess: (result) => syncSessionTasks(result.tasks), onError: (error: Error) => toast(error.message, 'error') },
+    );
+  };
+
+  const allTasks = tasksQuery.data?.tasks ?? [];
+  const hasCompleted = allTasks.some((task) => task.status === 'completed');
+  const mutationPending = updateTask.isPending || deleteTask.isPending || clearTasks.isPending;
+
   return (
     <>
       <Modal title={t.tasksModal.modalTitle} onClose={onClose} size="md" icon={ListChecks}>
@@ -58,6 +74,17 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
             placeholder={t.tasksModal.filterPlaceholder}
             aria-label={t.tasksModal.filterPlaceholder}
           />
+
+          {allTasks.length > 0 ? (
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" icon={ListX} disabled={!hasCompleted || mutationPending} onClick={() => setPendingClear('completed')}>
+                {t.tasksModal.clearCompleted}
+              </Button>
+              <Button variant="ghost-danger" icon={Trash2} disabled={mutationPending} onClick={() => setPendingClear('all')}>
+                {t.tasksModal.clearAll}
+              </Button>
+            </div>
+          ) : null}
 
           {tasksQuery.isLoading ? (
             <LoadingState variant="list" />
@@ -82,7 +109,7 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
                   <select
                     aria-label={`${t.tasksModal.status}: ${task.subject}`}
                     value={task.status}
-                    disabled={updateTask.isPending || deleteTask.isPending}
+                    disabled={mutationPending}
                     onChange={(event) => setStatus(task, event.target.value as SessionTask['status'])}
                     className="h-8 rounded-md border border-border bg-elevated px-2 text-xs text-text"
                   >
@@ -94,7 +121,7 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
                     icon={Trash2}
                     label={t.common.delete}
                     variant="danger"
-                    disabled={updateTask.isPending || deleteTask.isPending}
+                    disabled={mutationPending}
                     onClick={() => setPendingDelete(task)}
                   />
                 </div>
@@ -110,6 +137,14 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
         description={pendingDelete?.subject}
         onConfirm={() => { if (pendingDelete) runDelete(pendingDelete); }}
         onClose={() => setPendingDelete(null)}
+      />
+      <ConfirmDialog
+        open={pendingClear !== null}
+        title={pendingClear === 'completed' ? t.tasksModal.clearCompletedTitle : t.tasksModal.clearAllTitle}
+        description={pendingClear === 'completed' ? t.tasksModal.clearCompletedDescription : t.tasksModal.clearAllDescription}
+        confirmLabel={pendingClear === 'completed' ? t.tasksModal.clearCompleted : t.tasksModal.clearAll}
+        onConfirm={() => { if (pendingClear) runClear(pendingClear); }}
+        onClose={() => setPendingClear(null)}
       />
     </>
   );

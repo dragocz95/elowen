@@ -192,6 +192,8 @@ export const elowenClient = {
     req<{ task: SessionTask; tasks: SessionTask[] }>(`/plugins/todo/api/task?session=${encodeURIComponent(session)}`, json({ taskId, status }, 'PATCH')),
   deleteSessionTask: (session: string, taskId: string) =>
     req<{ success: true; taskId: string; tasks: SessionTask[] }>(`/plugins/todo/api/task?session=${encodeURIComponent(session)}&taskId=${encodeURIComponent(taskId)}`, { method: 'DELETE' }),
+  clearSessionTasks: (session: string, scope: 'completed' | 'all') =>
+    req<{ success: true; removed: number; tasks: SessionTask[] }>(`/plugins/todo/api/tasks?session=${encodeURIComponent(session)}&scope=${scope}`, { method: 'DELETE' }),
   /** The skills plugin's markdown skills (bundled + user); user skills are created/deleted per file. */
   pluginSkills: () => req<PluginSkill[]>('/plugins/skills/list'),
   createPluginSkill: ({ owner, ...skill }: { name: string; description: string; content: string; disableModelInvocation?: boolean; owner?: SkillOwner }) =>
