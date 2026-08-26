@@ -5,6 +5,10 @@ import type { TimeSeriesChartProps, TimeSeriesSeries } from './TimeSeriesChart';
 /** The Recharts half of `TimeSeriesChart`, split out so the library only ever arrives in its own async
  *  chunk. The wrapper is what everything imports; nothing should import this module directly. */
 
+/** Wide enough for a formatted currency tick, which is the longest label either axis can carry —
+ *  Czech renders 2400 as "2 400,00 US$", and a narrower axis silently clips the currency off. */
+const AXIS_WIDTH = 78;
+
 interface TooltipEntry { dataKey?: string | number; value?: number | string | null }
 
 function ChartTooltip({ active, label, payload, series }: {
@@ -65,7 +69,7 @@ export function TimeSeriesChartImpl({ data, series, height = 220, ariaLabel }: T
             />
             <YAxis
               yAxisId="left"
-              width={52}
+              width={AXIS_WIDTH}
               tick={{ fill: 'var(--color-text-muted)', fontSize: 10 }}
               tickLine={false}
               axisLine={false}
@@ -75,7 +79,7 @@ export function TimeSeriesChartImpl({ data, series, height = 220, ariaLabel }: T
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                width={52}
+                width={AXIS_WIDTH}
                 tick={{ fill: 'var(--color-text-muted)', fontSize: 10 }}
                 tickLine={false}
                 axisLine={false}
