@@ -671,12 +671,13 @@ export interface PluginWebUi {
   /** Name of the plugin's world in the main navigation; absent = the world borrows its first page's. */
   label?: string;
   nav: { label: string; icon?: string; route?: string }[];
+  account: { id: string; label: string; icon?: string }[];
   settings: { id: string; label: string; icon?: string }[];
   /** Flat English view strings from the manifest `web.strings` block (bundle labels/hints). */
   strings?: Record<string, string>;
   /** Localized menu labels + view strings from `i18n/<lang>.json` `web` blocks: nav keyed by route,
    *  settings by id, strings by the manifest's own string keys. */
-  i18n?: Record<string, { label?: string; nav?: Record<string, string>; settings?: Record<string, string>; strings?: Record<string, string> }>;
+  i18n?: Record<string, { label?: string; nav?: Record<string, string>; account?: Record<string, string>; settings?: Record<string, string>; strings?: Record<string, string> }>;
 }
 
 /** A long-running background worker a plugin contributes — sweepers, watchers, pollers. The host

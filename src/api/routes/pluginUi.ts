@@ -4,14 +4,15 @@ import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginWebUi } from '../../plugins/api.js';
 
 /** Localize one webUi's menu metadata for a UI language: manifest English is the fallback, the plugin's
- *  `i18n/<lang>.json` `web` block overrides per nav route / settings id. View strings merge the same
+ *  `i18n/<lang>.json` `web` block overrides per nav route / account/settings id. View strings merge the same
  *  way — per key, so a partially translated locale still falls back to the manifest English string. */
-function localized(w: PluginWebUi, lang: string): { label?: string; nav: PluginWebUi['nav']; settings: PluginWebUi['settings']; strings: Record<string, string> } {
+function localized(w: PluginWebUi, lang: string): { label?: string; nav: PluginWebUi['nav']; account: PluginWebUi['account']; settings: PluginWebUi['settings']; strings: Record<string, string> } {
   const over = lang ? w.i18n?.[lang] : undefined;
   const label = over?.label ?? w.label;
   return {
     ...(label ? { label } : {}),
     nav: w.nav.map((n) => ({ ...n, label: over?.nav?.[n.route ?? ''] ?? n.label })),
+    account: w.account.map((s) => ({ ...s, label: over?.account?.[s.id] ?? s.label })),
     settings: w.settings.map((s) => ({ ...s, label: over?.settings?.[s.id] ?? s.label })),
     strings: { ...(w.strings ?? {}), ...(over?.strings ?? {}) },
   };

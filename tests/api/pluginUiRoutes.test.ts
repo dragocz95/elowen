@@ -33,6 +33,7 @@ function uiPluginProvider(adminOnly = false): PluginRegistryProvider {
             adminOnly,
             label: 'Demo',
             nav: [{ label: 'Demo world', icon: 'Bot', route: '' }],
+            account: [{ id: 'demo-account', label: 'Demo account', icon: 'Github' }],
             settings: [{ id: 'demo-settings', label: 'Demo settings', icon: 'Puzzle' }],
             strings: { greeting: 'Hello', untranslated: 'Stays English' },
           },
@@ -46,7 +47,7 @@ function uiPluginProvider(adminOnly = false): PluginRegistryProvider {
       writeFileSync(join(dir, 'web', 'index.js'), BUNDLE);
       writeFileSync(join(dir, 'web', 'index.css'), CSS);
       writeFileSync(join(dir, 'i18n', 'cs.json'), JSON.stringify({
-        web: { label: 'Demo česky', nav: { '': 'Demo svět' }, settings: { 'demo-settings': 'Nastavení dema' }, strings: { greeting: 'Ahoj' } },
+        web: { label: 'Demo česky', nav: { '': 'Demo svět' }, account: { 'demo-account': 'Účet dema' }, settings: { 'demo-settings': 'Nastavení dema' }, strings: { greeting: 'Ahoj' } },
       }));
     }
   }
@@ -65,11 +66,12 @@ describe('plugin browser UI routes', () => {
     const amy = deps.users.create('amy', 'pw');
     const res = await app.request('/plugins/ui', auth(deps.users.issueToken(amy.id)));
     expect(res.status).toBe(200);
-    const list = await res.json() as { name: string; url: string; apiVersion: number; nav: { label: string; icon?: string; route?: string }[]; settings: { id: string; label: string }[] }[];
+    const list = await res.json() as { name: string; url: string; apiVersion: number; nav: { label: string; icon?: string; route?: string }[]; account: { id: string; label: string; icon?: string }[]; settings: { id: string; label: string }[] }[];
     expect(list.map((p) => p.name)).toEqual(['demo']);
     expect(list[0]!.url).toBe(`/plugins/demo/web/${HASH}.js`);
     expect(list[0]!.apiVersion).toBe(1);
     expect(list[0]!.nav).toEqual([{ label: 'Demo world', icon: 'Bot', route: '' }]);
+    expect(list[0]!.account).toEqual([{ id: 'demo-account', label: 'Demo account', icon: 'Github' }]);
     // admin sees the same listing
     const adminRes = await app.request('/plugins/ui', auth(token));
     expect(((await adminRes.json()) as unknown[]).length).toBe(1);
@@ -92,11 +94,12 @@ describe('plugin browser UI routes', () => {
   it('?lang=cs localizes nav/settings labels and view strings from the plugin i18n web block', async () => {
     const { app, token } = await makeApp();
     const res = await app.request('/plugins/ui?lang=cs', auth(token));
-    const list = await res.json() as { label?: string; nav: { label: string }[]; settings: { label: string }[]; strings: Record<string, string> }[];
+    const list = await res.json() as { label?: string; nav: { label: string }[]; account: { label: string }[]; settings: { label: string }[]; strings: Record<string, string> }[];
     // The world's own name localizes like every other menu label — the sidebar groups a multi-page
     // plugin under it, so leaving it English would show one untranslated word in a translated menu.
     expect(list[0]!.label).toBe('Demo česky');
     expect(list[0]!.nav[0]!.label).toBe('Demo svět');
+    expect(list[0]!.account[0]!.label).toBe('Účet dema');
     expect(list[0]!.settings[0]!.label).toBe('Nastavení dema');
     // View strings merge PER KEY: a translated key overrides, an untranslated one keeps English.
     expect(list[0]!.strings).toEqual({ greeting: 'Ahoj', untranslated: 'Stays English' });

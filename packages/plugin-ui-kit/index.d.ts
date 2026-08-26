@@ -34,11 +34,12 @@ export interface PluginPageProps {
 }
 
 /** What a bundle hands to window.__elowenRegisterPluginUi. Routes are `/`-joined segment patterns
- *  (`''` = the root page, `detail/:id` captures params). `settings` components are keyed by the
- *  manifest's `web.settings[].id` and render inside the Settings page's control deck. */
+ *  (`''` = the root page, `detail/:id` captures params). `account` and `settings` components are keyed by
+ *  their matching manifest section ids and mount in the host's Account or plugin settings surface. */
 export interface PluginUiRegistration {
   requiresApiVersion: number;
   pages?: Record<string, ComponentType<PluginPageProps>>;
+  account?: Record<string, ComponentType<PluginPageProps>>;
   settings?: Record<string, ComponentType<PluginPageProps>>;
 }
 

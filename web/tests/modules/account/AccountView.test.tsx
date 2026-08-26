@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -18,7 +18,10 @@ import { EffectsProvider } from '../../../lib/useEffects';
 import { createWrapper } from '../../test-utils';
 
 const server = setupServer();
-beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => { server.resetHandlers(); localStorage.clear(); }); afterAll(() => server.close());
+beforeAll(() => server.listen({ onUnhandledRequest }));
+beforeEach(() => server.use(http.get('*/api/plugins/ui', () => HttpResponse.json([]))));
+afterEach(() => { server.resetHandlers(); localStorage.clear(); });
+afterAll(() => server.close());
 
 const meUser = (over: Record<string, unknown> = {}) => ({ id: 2, username: 'bob', name: '', email: '', avatar: '', default_exec: '', is_admin: false, allowed_execs: ['sonnet'], created_at: '2026-01-01', ...over });
 
@@ -42,6 +45,23 @@ describe('AccountView', () => {
     // (aria-hidden), so no accessible "Elowen" image renders on the deck itself.
     expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('@bob'));
+  });
+
+  it('adds grant-filtered plugin account sections beside the profile', async () => {
+    server.use(
+      http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'github', url: '/plugins/github/web/hash.js', apiVersion: 3, nav: [], account: [{ id: 'connection', label: 'GitHub', icon: 'Github' }], settings: [], strings: { accountHint: 'Your GitHub identity.' } }])),
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '' })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    const rail = await screen.findByRole('radiogroup', { name: 'Account sections' });
+    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
+      'Account', 'GitHub', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
+    ]);
   });
 
   it('saves only the platform link edited in this form, preserving a concurrent Teams TOFU link', async () => {

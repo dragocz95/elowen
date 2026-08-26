@@ -183,6 +183,9 @@ export interface PluginManifest {
      *  ships. Fresh-install policy may allow the latter without opening the door to default domain apps. */
     navKind?: 'domain' | 'infrastructure';
     nav?: { label: string; icon?: string; route?: string }[];
+    /** Per-account integration panels mounted in Account. The listing is grant-filtered server-side with
+     *  the rest of the plugin UI, so a user never sees a connector they cannot open. */
+    account?: { id: string; label: string; icon?: string }[];
     /** `layout` picks which of the app's two settings renderings the section's groups/rows use:
      *  'classic' (default) stacks rows, 'orbital' renders them as the constellation of pods the core
      *  Settings sections use. A section moved out of core keeps the look it had; a new one that just
@@ -273,6 +276,11 @@ const ManifestSchema = Type.Object({
       label: Type.String({ minLength: 1 }),
       icon: Type.Optional(Type.String()),
       route: Type.Optional(Type.String()),
+    }))),
+    account: Type.Optional(Type.Array(Type.Object({
+      id: Type.String({ minLength: 1 }),
+      label: Type.String({ minLength: 1 }),
+      icon: Type.Optional(Type.String()),
     }))),
     settings: Type.Optional(Type.Array(Type.Object({
       id: Type.String({ minLength: 1 }),

@@ -1,5 +1,5 @@
 'use client';
-import { Activity, useCallback, useState, useEffect, useRef, type ReactNode } from 'react';
+import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal, MessageSquareText, Send } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
@@ -19,7 +19,7 @@ const PLATFORM_LINK_INPUTS: Record<PlatformLinkKey, { placeholder: string; icon:
 };
 /** Render and save order — the declaration order above, never a second list to keep in step. */
 const PLATFORM_LINK_ORDER = Object.keys(PLATFORM_LINK_INPUTS) as PlatformLinkKey[];
-import { useMe, useConfig, useMyCliSettings, useBrainModels } from '../../lib/queries';
+import { useMe, useConfig, useMyCliSettings, useBrainModels, usePluginUi } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
@@ -54,8 +54,15 @@ import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
+import { PluginAccountSection } from './PluginAccountSection';
+import { parsePluginAccountSectionId, pluginAccountSectionId } from './pluginSections';
+import { pluginLucideIcon } from '../../lib/pluginIcons';
 
-type AccountSection = 'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory';
+const CORE_ACCOUNT_SECTIONS = ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'] as const;
+type CoreAccountSection = typeof CORE_ACCOUNT_SECTIONS[number];
+type AccountSection = CoreAccountSection | `plugin-account:${string}`;
+const isAccountSection = (value: string): value is AccountSection =>
+  (CORE_ACCOUNT_SECTIONS as readonly string[]).includes(value) || parsePluginAccountSectionId(value) !== null;
 
 /** Mount a section only after its first visit, then let React Activity retain its local form state.
  *  This avoids eagerly starting every section's queries while making sidebar switches lossless. */
@@ -145,23 +152,35 @@ export function AccountView() {
   const uploadAvatar = useUploadAvatar();
   const changePassword = useChangePassword();
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
+  const pluginUi = usePluginUi(locale);
   const { scale, preference, setPreference } = useUiScale();
   const effects = useEffects();
   const fileRef = useRef<HTMLInputElement>(null);
   const prefPct = Math.round(preference * 100);
   const appliedPct = Math.round(scale * 100);
-  const [section, setSection] = usePersistentState<AccountSection>(
-    'elowen.account.section', 'profile', ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory']);
+  const [section, setSection] = usePersistentState<AccountSection>('elowen.account.section', 'profile', isAccountSection);
   const [visitedSections, setVisitedSections] = useState<Set<AccountSection>>(() => new Set([section]));
   const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<AccountSection, SaveFeedback>>>({});
   const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
-    if (!['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'].includes(id)) return;
-    setSectionFeedback((current) => ({ ...current, [id as AccountSection]: { status, retry } }));
+    if (!isAccountSection(id)) return;
+    setSectionFeedback((current) => ({ ...current, [id]: { status, retry } }));
   }, []);
   useEffect(() => {
     setVisitedSections((current) => current.has(section) ? current : new Set(current).add(section));
   }, [section]);
+  const pluginAccountSections = useMemo(() => (pluginUi.data ?? []).flatMap((entry) => (entry.account ?? []).map((account) => ({
+    id: pluginAccountSectionId(entry.name, account.id),
+    plugin: entry,
+    sectionId: account.id,
+    icon: pluginLucideIcon(account.icon),
+    label: account.label,
+    description: entry.strings?.accountHint ?? entry.label ?? account.label,
+  }))), [pluginUi.data]);
+  useEffect(() => {
+    if (!pluginUi.data || !parsePluginAccountSectionId(section)) return;
+    if (!pluginAccountSections.some((item) => item.id === section)) setSection('profile');
+  }, [pluginAccountSections, pluginUi.data, section, setSection]);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -361,25 +380,16 @@ export function AccountView() {
 
   // Ordered by settings importance: account basics first, then the Elowen AI runtime and what shapes it
   // (memory, personality), then operational (notifications, security), with the cosmetic terminal last.
-  const sections: { id: AccountSection; icon: LucideIcon; label: string }[] = [
-    { id: 'profile', icon: UserCog, label: t.account.tabProfile },
-    { id: 'cli', icon: Cpu, label: t.account.tabCli },
-    { id: 'memory', icon: Brain, label: t.account.tabMemory },
-    { id: 'personality', icon: Sparkles, label: t.account.tabPersonality },
-    { id: 'notifications', icon: Bell, label: t.account.tabNotifications },
-    { id: 'security', icon: KeyRound, label: t.account.tabSecurity },
-    { id: 'terminal', icon: SquareTerminal, label: t.account.tabTerminal },
+  const spatialSections: { id: AccountSection; icon: LucideIcon; label: string; description: string }[] = [
+    { id: 'profile', icon: UserCog, label: t.account.tabProfile, description: t.account.profileHint },
+    ...pluginAccountSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
+    { id: 'cli', icon: Cpu, label: t.account.tabCli, description: t.account.defaultElowenAiHint },
+    { id: 'memory', icon: Brain, label: t.account.tabMemory, description: t.help.memoryRecall },
+    { id: 'personality', icon: Sparkles, label: t.account.tabPersonality, description: t.personality.intro },
+    { id: 'notifications', icon: Bell, label: t.account.tabNotifications, description: t.help.pushEnable },
+    { id: 'security', icon: KeyRound, label: t.account.tabSecurity, description: t.account.passwordHint },
+    { id: 'terminal', icon: SquareTerminal, label: t.account.tabTerminal, description: t.terminal.colorsHelp },
   ];
-  const spatialSections = sections.map((item) => ({
-    ...item,
-    description: item.id === 'profile' ? t.account.profileHint
-      : item.id === 'security' ? t.account.passwordHint
-      : item.id === 'notifications' ? t.help.pushEnable
-      : item.id === 'cli' ? t.account.defaultElowenAiHint
-      : item.id === 'terminal' ? t.terminal.colorsHelp
-      : item.id === 'memory' ? t.help.memoryRecall
-      : t.personality.intro,
-  }));
   const profileFeedback = combineSaveFeedback(
     { status: profileSave.status, retry: profileSave.retry },
     { status: linksSave.status, retry: linksSave.retry },
@@ -401,6 +411,11 @@ export function AccountView() {
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
       >
+      {pluginAccountSections.map((item) => (
+        <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
+          <PluginAccountSection entry={item.plugin} sectionId={item.sectionId} onSaveState={reportSaveState} />
+        </AccountPanel>
+      ))}
       <AccountPanel id="memory" active={section} visited={visitedSections}>
         <ConstellationScope core={t.account.tabMemory}><AccountMemorySection onSaveState={reportSaveState} /></ConstellationScope>
       </AccountPanel>
