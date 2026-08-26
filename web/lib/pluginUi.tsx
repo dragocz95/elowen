@@ -161,9 +161,11 @@ function PluginPageFrame({ surface, title, description, icon, action, plugin, se
   );
 }
 
-/** The common shape: one settings group. In the deck the group carries the section's own title block;
- *  on a page that block becomes the page header instead, because a page that repeats its own name
- *  inside the first card reads like a fragment someone pasted onto an empty screen. */
+/** The common shape: one settings group. The section's own name never appears INSIDE the card. On a page
+ *  it is the page header; in the account deck the section rail already carries both the label and the
+ *  description, from the very same manifest entry. A native account section renders no card title
+ *  either, so a plugin that repeated its own name was the one panel on the page wearing a second
+ *  heading. */
 function PluginSection({ surface, title, description, icon, action, actions, className, density, children }: {
   surface: 'page' | 'deck';
   title: string;
@@ -175,17 +177,9 @@ function PluginSection({ surface, title, description, icon, action, actions, cla
   density?: 'comfortable' | 'compact';
   children: ReactNode;
 }) {
-  const deck = surface === 'deck';
   return (
     <PluginPageFrame surface={surface} title={title} description={description} icon={icon} action={action}>
-      <SettingsGroup
-        className={className}
-        icon={deck ? icon : undefined}
-        title={deck ? title : undefined}
-        description={deck ? description : undefined}
-        actions={actions}
-        density={density}
-      >
+      <SettingsGroup className={className} actions={actions} density={density}>
         {children}
       </SettingsGroup>
     </PluginPageFrame>
