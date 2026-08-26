@@ -945,6 +945,43 @@ export class ConfigStore {
     return !!this.db.prepare('SELECT 1 FROM settings WHERE id = 1').get();
   }
 
+  /** One-shot cleanup of retired PR/agents/work settings. It mutates the raw object so unrelated unknown
+   * installation keys survive, but it never copies the unowned GitHub token into another namespace. */
+  migrateRetiredPluginConfig(): void {
+    const row = this.db.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string } | undefined;
+    if (!row) return;
+    let root: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(row.data) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      root = parsed as Record<string, unknown>;
+    } catch { return; }
+
+    let changed = false;
+    for (const key of Object.keys(root)) {
+      if (key === 'ghToken' || key === 'autopilot' || /^(agents|work).*Migrated\d*$/.test(key)) {
+        delete root[key];
+        changed = true;
+      }
+    }
+    const plugins = root.plugins;
+    if (plugins && typeof plugins === 'object' && !Array.isArray(plugins)) {
+      const block = plugins as { enabled?: unknown; removed?: unknown; config?: unknown };
+      for (const listKey of ['enabled', 'removed'] as const) {
+        if (!Array.isArray(block[listKey])) continue;
+        const next = block[listKey].filter((name) => name !== 'agents' && name !== 'work');
+        if (next.length !== block[listKey].length) { block[listKey] = next; changed = true; }
+      }
+      if (block.config && typeof block.config === 'object' && !Array.isArray(block.config)) {
+        const slices = block.config as Record<string, unknown>;
+        for (const name of ['agents', 'work']) {
+          if (Object.hasOwn(slices, name)) { delete slices[name]; changed = true; }
+        }
+      }
+    }
+    if (changed) this.db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(root));
+  }
+
   /** One-shot upgrade for the LSP extraction: enable the `lsp` plugin for EXISTING installs and COPY
    *  (never move — `lspEnabled` keeps its value so a rollback finds this choice) the live-diagnostics toggle
    *  into plugins.config.lsp.diagnosticsEnabled, where the plugin reads it.

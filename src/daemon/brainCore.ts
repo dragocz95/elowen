@@ -16,6 +16,7 @@ import { UserPromptStore } from '../store/userPromptStore.js';
 import { PlatformLinkConflictError, UserSettingStore } from '../store/userSettingStore.js';
 import { platformIdentity } from '../shared/platformIdentity.js';
 import { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
+import { PluginSecretVault } from '../store/pluginSecretVault.js';
 import { isPluginAllowedForUser } from '../shared/pluginAccess.js';
 import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
@@ -50,7 +51,7 @@ import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js'
 import { isSubagentSession } from '../brain/sessionId.js';
 import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
-import { setSpillNamespaceResolver } from '../shared/paths.js';
+import { dataDir, dbPath as configuredDbPath, setSpillNamespaceResolver } from '../shared/paths.js';
 import { setCompactionFailureLimit } from '../brain/session/compactionCircuitBreaker.js';
 import { makeToolOutputPolicy } from '../brain/toolOutput.js';
 import { BUILTIN_TOOL_OUTPUT_SHOWN } from '../brain/tools/index.js';
@@ -67,7 +68,10 @@ import { resolvePolicy } from '../plugins/policy.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { isExecAllowedForUser, isModelVisibleForUser, elowenExec } from '../shared/execs.js';
+import { webBaseUrl } from '../cli/installInfo.js';
+import { trustedPublicWebUrl } from '../shared/publicWebUrl.js';
 import { WORKFLOW_ADD_NODES_RPC, type WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
 const log = logger('daemon');
@@ -150,7 +154,15 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const db: Db = openDb(opts.dbPath, opts.migrate === false ? { migrate: false } : {});
   db.prepare('INSERT OR IGNORE INTO projects (id,slug,path) VALUES (?,?,?)').run(opts.project.id, opts.project.slug, opts.project.path);
   const tmux = opts.tmux;
+  const pluginSecrets = opts.dbPath === ':memory:'
+    ? new PluginSecretVault(db, { key: randomBytes(32), allowKeyInitialization: true })
+    : new PluginSecretVault(db, {
+        keyPath: join(opts.dbPath === configuredDbPath(process.env) ? dataDir(process.env) : dirname(opts.dbPath), 'plugin-secrets.key'),
+        allowKeyInitialization: opts.migrate !== false,
+      });
+  const canonicalPublicWebUrl = trustedPublicWebUrl(webBaseUrl());
   const config = new ConfigStore(db);
+  if (opts.migrate !== false) config.migrateRetiredPluginConfig();
   // One-shot copy of the core `lspEnabled` toggle into plugins.config.lsp + auto-enable of the
   // extracted `lsp` plugin for pre-existing installs (lossless — lspEnabled keeps its value for
   // rollback). The plugin's own service seeds its manager from that slice at start.
@@ -544,7 +556,14 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           userOverride: (userId, name) => userPrompts.get(userId, name),
         },
         relayClient: (cfg) => new RelayClient(cfg),
-        git: { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff },
+        git: {
+          projectSnapshot: (root) => git.snapshot(root),
+          projectHead,
+          projectRangeDiff,
+          projectRangeLog,
+          projectRangeFileDiff,
+          projectCommitFileDiff,
+        },
         push: () => hostPush,
         // The typed sub-agent catalog editor used by delegation plugins.
         // Tool names resolve through the provider so a save validates against the LIVE merged
@@ -556,6 +575,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         }),
         projectFiles: { safe: safeProjectPath },
         userPluginConfig: (userId, plugin) => userPluginConfig.get(userId, plugin),
+        pluginSecrets,
+        publicWebUrl: () => canonicalPublicWebUrl,
       },
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,
@@ -689,7 +710,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
-    embeddings, embeddingConfig, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig,
+    embeddings, embeddingConfig, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets,
     memoryService, embedQueue, memoryModelInference, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand,
     // Sync view of the last loaded registry (undefined before the first load) — for wiring that must

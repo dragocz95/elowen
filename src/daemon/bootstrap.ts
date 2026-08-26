@@ -120,7 +120,7 @@ export async function buildApp(opts: BuildOpts) {
     cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainCreds, brainOauth, embeddings,
-    brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, embedQueue, memoryCategorizer,
+    brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets, embedQueue, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand, setPluginHostPush,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
@@ -273,7 +273,7 @@ export async function buildApp(opts: BuildOpts) {
     project: homeProject, clock: new SystemClock(), config, users, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth,
     brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal,
-    restartDaemon, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig,
+    restartDaemon, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets,
     memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes,
     ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });

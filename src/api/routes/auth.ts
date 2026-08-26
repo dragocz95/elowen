@@ -546,11 +546,10 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       const { projectId } = await parseBody(c, projectAssignSchema);
       const userId = Number(c.req.param('id'));
       const pid = Number(projectId);
-      // Both sides must exist BEFORE the grant is written. `user_projects` has no foreign keys and
-      // `projects.id` is a plain rowid (no AUTOINCREMENT, unlike `users`), so a row pointing at an id
-      // that does not exist yet is not inert: whichever project is created next can receive that id and
-      // silently inherit the grant. Home-project tolerance mirrors resolveTarget — a legacy
-      // single-project daemon may have no `projects` row for it.
+      // Both sides must exist BEFORE the grant is written. `user_projects` has no foreign keys, so a
+      // dangling assignment is invalid even though monotonic Project ids prevent later reattachment.
+      // Home-project tolerance mirrors resolveTarget — a legacy single-project daemon may have no
+      // `projects` row for it.
       if (!users.get(userId)) return c.json({ error: 'user not found' }, 404);
       if (pid !== d.project.id && !d.projects?.get(pid)) return c.json({ error: 'project not found' }, 404);
       up.assign(userId, pid);

@@ -115,24 +115,6 @@ export function writeAdopterPlugin(dataDir) {
   writeFileSync(join(dir, 'index.mjs'), `export function register(ctx){\n${ADOPTER_PLUGIN.register}\n}\n`);
 }
 
-/** Seed the marketplace's registry CACHE with the manifest of a plugin that is not installed here.
- *
- *  This reproduces the state a real upgraded host lands in: the config migration switches `agents` on,
- *  the code for it lives in the plugin registry, and the boot reconciler could not fetch it. The daemon
- *  answers such a path with an explicit 503 ("enabled but not installed") instead of a bare 404 — and it
- *  learns WHICH paths belong to the absent plugin from exactly this cache
- *  (MarketplaceService.declaredRootRoutes reads `<dbdir>/marketplace/plugins/<name>/elowen-plugin.json`).
- *  Without a cache there is no claim and the 404 stands, so the seed is what makes the 503 reachable. */
-export function seedRegistryCache(dataDir, name, apiRoutes) {
-  const dir = join(dataDir, 'marketplace', 'plugins', name);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
-    name, version: '0.1.0', apiVersion: '1',
-    description: `registry-cache stub for ${name}`, entry: 'index.mjs',
-    provides: { apiRoutes },
-  }, null, 2));
-}
-
 /**
  * Create the old-schema fixture at `dbPath`. Returns the values the migration is expected to produce, so
  * the runner asserts against a single source of truth.
@@ -217,12 +199,9 @@ export function buildOldFixture(dbPath) {
       PRIMARY KEY (user_id, platform)
     );
 
-    -- OLD agents-subsystem tables from the pre-extraction (core) era, holding a RUNNING mission. The
-    -- core migration must leave every one of them exactly as it found them — these tables belong to a
-    -- vertical the daemon no longer owns, and an upgrade that "tidied" them would be data loss. The
-    -- fixture ADOPTER_PLUGIN then grandfathers the missions table the way the extracted plugin does,
-    -- and the auto-enable migration must switch agents on for this pre-existing install (run.mjs
-    -- asserts all three).
+    -- OLD domain tables from the pre-extraction core era. The core migration must leave every one exactly
+    -- as found: automatically deleting a non-empty third-party/retired table would be data loss. The
+    -- fixture ADOPTER_PLUGIN explicitly grandfathers the missions table; no retired owner is auto-enabled.
     -- projects/tasks at their OLD shape: the columns addColumn later adds (notes/icon; description/
     -- scheduled_at/autostart/result_summary/outcome/closed_at/changed_files/*_sha/resume_note) are
     -- absent so the additive block has real work to do.
@@ -273,27 +252,27 @@ export function buildOldFixture(dbPath) {
   db.prepare('INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)')
     .run(1, 'permissions', permissions);
 
-  // A platform role's tool allow-list inside the global settings blob (v1 rewrites tools[]). The
-  // autopilot block carries pre-extraction values for the keys the agents plugin now owns: the
-  // one-shot config migration must COPY them into plugins.config.agents (autopilot.* keeps its
-  // values — lossless rollback), and the deliberately ABSENT plugins.enabled list is what the agents
-  // auto-enable migration must fix (an upgrade with running missions must not lose the subsystem).
+  // A platform role's tool allow-list inside the global settings blob (v1 rewrites tools[]). Retired
+  // PR/autopilot values, plugin slices and migration markers are deliberately present so boot must scrub
+  // them without touching the unrelated fixture/plugin config.
   const settingsData = JSON.stringify({
     plugins: {
-      // One plugin this install had already switched on: the fixture adopter, which stands in for the
-      // extracted vertical. It must be enabled HERE and not through the API, because the whole point is
-      // that its schema migration runs at BOOT, on the database the core migration has just upgraded.
-      // `agents` is deliberately absent — adding it is the auto-enable migration's job.
-      enabled: [ADOPTER_PLUGIN.name],
-      config: { someplatform: { rolePolicies: [{ name: 'member', tools: ['read_file', 'list_dir', '*'] }] } },
+      enabled: [ADOPTER_PLUGIN.name, 'agents', 'work'],
+      removed: ['agents'],
+      config: {
+        someplatform: { keep: true },
+        agents: { ghToken: 'nested-legacy-token', prEnabled: true },
+        work: { legacy: true },
+      },
     },
-    // Wave 1 keys (overseerModel + the PR lifecycle) AND wave 2 keys (pilot/overseer execs,
-    // reviewOnDone, tddMode, prEnabled + the top-level ghToken) — both one-shot copies must run.
     autopilot: {
       overseerModel: 'legacy-overseer-model', prBaseBranch: 'develop', prAutoOpen: true, prVerifyCommand: 'npm run verify',
       pilotExec: 'claude:opus', overseerExec: 'claude:sonnet', reviewOnDone: true, tddMode: true, prEnabled: true,
     },
     ghToken: 'legacy-gh-token',
+    agentsConfigMigrated: true,
+    agentsPluginConfigMigrated: true,
+    agentsPluginConfigMigrated2: true,
   });
   db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(settingsData);
 
@@ -337,7 +316,6 @@ export function buildOldFixture(dbPath) {
     expectedDisabledTools: 'Read,Bash',
     expectedPromptNames: ['elowen', 'elowen-platform'],
     expectedPermTools: { Read: 'deny', Bash: 'allow', Edit: 'ask' },
-    expectedRolePolicyTools: ['Read', 'ListDir', '*'],
     droppedTables: ['personality_profiles', 'personality_active_profiles'],
   };
 }

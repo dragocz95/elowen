@@ -56,9 +56,18 @@ describe('ctx.userConfig()', () => {
     expect(calls).toEqual([[7, 'demo']]);
   });
 
-  // A delegated child carries no account at all (`IdentityResolver.forDelegatedTurn`), so it lands on null
-  // here without a conversation-kind special case — the reason that identity must never name an account.
-  it('returns null for a delegated child, which carries no account', () => {
+  it('uses the inherited contribution account for a delegated child', () => {
+    const calls: [number, string][] = [];
+    const ctx = wire(undefined, reads(calls));
+    const seen = runWithPolicy(null, () => ctx.userConfig(), {
+      identity: { platform: 'subagent', userId: 'subagent', admin: true, owner: true, conversation: 'delegated' },
+      contributionUserId: 7,
+    });
+    expect(seen).toEqual({ apiKey: 'k' });
+    expect(calls).toEqual([[7, 'demo']]);
+  });
+
+  it('returns null for accountless delegated or instance work', () => {
     const calls: [number, string][] = [];
     const ctx = wire(undefined, reads(calls));
     const seen = runWithPolicy(null, () => ctx.userConfig(), {
@@ -66,6 +75,46 @@ describe('ctx.userConfig()', () => {
     });
     expect(seen).toBeNull();
     expect(calls).toEqual([]);
+  });
+});
+
+describe('ctx secret and deployment scopes', () => {
+  const bag = (label: string) => ({
+    get: (key: string) => ({ value: `${label}:${key}`, version: 1 }),
+    has: () => true,
+    set: (_key: string, _value: string) => 1,
+    delete: () => true,
+  });
+
+  it('binds instance secrets to the calling plugin and user secrets to the contribution account', () => {
+    const calls: string[] = [];
+    const ctx = wire(undefined, {
+      pluginSecrets: {
+        instance: (plugin) => { calls.push(`instance:${plugin}`); return bag('instance'); },
+        user: (userId, plugin) => { calls.push(`user:${userId}:${plugin}`); return bag(`user-${userId}`); },
+      },
+    });
+    expect(ctx.instanceSecrets().get('client')?.value).toBe('instance:client');
+    const value = runWithPolicy(null, () => ctx.userSecrets()?.get('oauth')?.value, {
+      identity: { platform: 'subagent', userId: 'subagent', admin: false, owner: false, conversation: 'delegated' },
+      contributionUserId: 9,
+    });
+    expect(value).toBe('user-9:oauth');
+    expect(calls).toEqual(['instance:demo', 'user:9:demo']);
+  });
+
+  it('falls back to authenticated API identity and returns null without an account', () => {
+    const ctx = wire(undefined, { pluginSecrets: { instance: () => bag('i'), user: (id) => bag(`u${id}`) } });
+    const api = runWithPolicy(null, () => ctx.userSecrets()?.get('x')?.value, {
+      identity: { platform: 'http', userId: '4', elowenUserId: 4, admin: false, owner: false, conversation: 'own' },
+    });
+    expect(api).toBe('u4:x');
+    expect(ctx.userSecrets()).toBeNull();
+  });
+
+  it('returns only the trusted host deployment URL', () => {
+    expect(wire(undefined, { publicWebUrl: () => 'https://elowen.example' }).publicWebUrl()).toBe('https://elowen.example');
+    expect(wire(undefined, {}).publicWebUrl()).toBeNull();
   });
 });
 
@@ -134,6 +183,7 @@ describe('ctx.host capability gates', () => {
       prompts: { render: (n) => `P:${n}`, rawTemplate: (n) => `T:${n}`, userOverride: (id, n) => (id === 1 ? `O:${n}` : null) },
       relayClient: (cfg) => ({ model: cfg.model, decide: async () => ({ text: 'ok' }) }),
       git: {
+        projectSnapshot: async () => ({ isRepo: true, status: null, remotes: [] }),
         projectHead: async () => 'sha', projectRangeDiff: async () => [],
         projectRangeLog: async () => [], projectRangeFileDiff: async () => 'range-diff', projectCommitFileDiff: async () => 'commit-diff',
       },

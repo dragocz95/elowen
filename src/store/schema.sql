@@ -1,15 +1,8 @@
-CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '');
--- The agents/missions/mission_pr/notes tables are AGENTS-PLUGIN-owned now: their DDL lives in
--- plugins/agents/src/store/migrations.ts and is applied only when that plugin is enabled. The same is
--- true of the task domain — tasks/task_deps/task_usage and their indexes live in
--- plugins/work/src/store/migrations.ts. A fresh install with either plugin disabled simply does not
--- have those tables, so core code that still has to sweep them (delete cascades, the user-sequence
--- seed) goes through tolerateMissingPluginTables (see db.ts).
+CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
--- `id` is AUTOINCREMENT, not a bare rowid: ownership columns (tasks.created_by, missions.created_by)
--- reference it, and a plain rowid is REUSED after the highest-numbered user is deleted — the next
--- account created would silently inherit the deleted user's attribution. AUTOINCREMENT keeps the
--- counter monotonic in sqlite_sequence so an id is never handed out twice. See db.ts v7.
+-- `id` is AUTOINCREMENT, not a bare rowid: durable account-owned rows reference it, and a plain rowid
+-- is reused after the highest-numbered user is deleted. AUTOINCREMENT keeps the counter monotonic in
+-- sqlite_sequence so an id is never handed out twice. See db.ts v7.
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -76,17 +69,45 @@ CREATE TABLE IF NOT EXISTS user_settings (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, key)
 );
--- Per-user, per-plugin settings: each person's own values for a plugin that declares a
--- `userConfigSchema` (their API key, their identifier in an external system). Stored as ONE JSON blob per
--- (user, plugin) rather than a key/value row per field, so a write is atomic against the whole form and a
--- plugin's schema can change without a migration. Secrets live here in plaintext, exactly like the
--- instance-wide plugin config in `settings` — encryption at rest is a separate, instance-wide decision.
+-- Per-user, per-plugin non-secret settings. Stored as one JSON blob per (user, plugin), so a write is
+-- atomic against the whole form and a plugin's schema can change without a migration. Legacy secret
+-- fields are not moved automatically; new integrations use the encrypted plugin_secrets vault below.
 CREATE TABLE IF NOT EXISTS user_plugin_config (
   user_id INTEGER NOT NULL,
   plugin TEXT NOT NULL,
   data TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, plugin)
+);
+
+-- Core-owned encrypted plugin secrets. Ciphertext is bound by AES-GCM AAD to every ownership key, so a
+-- row copied to another scope/account/plugin/key fails authentication. Instance rows alone have NULL
+-- owner_id; the expression index makes that nullable tuple unique.
+CREATE TABLE IF NOT EXISTS plugin_secrets (
+  scope TEXT NOT NULL CHECK (scope IN ('instance', 'user')),
+  owner_id INTEGER,
+  plugin TEXT NOT NULL,
+  key TEXT NOT NULL,
+  ciphertext BLOB NOT NULL,
+  nonce BLOB NOT NULL,
+  auth_tag BLOB NOT NULL,
+  format_version INTEGER NOT NULL,
+  cas_version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK ((scope = 'instance' AND owner_id IS NULL) OR (scope = 'user' AND owner_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_secrets_owner
+  ON plugin_secrets(scope, ifnull(owner_id, 0), plugin, key);
+CREATE INDEX IF NOT EXISTS idx_plugin_secrets_user ON plugin_secrets(owner_id) WHERE scope = 'user';
+CREATE TABLE IF NOT EXISTS plugin_secret_vault_metadata (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  format_version INTEGER NOT NULL,
+  key_fingerprint TEXT NOT NULL,
+  canary_ciphertext BLOB NOT NULL,
+  canary_nonce BLOB NOT NULL,
+  canary_auth_tag BLOB NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- A linked Discord snowflake is an identity key: at most ONE Elowen user may claim a given id, else a

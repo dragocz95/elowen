@@ -9,6 +9,7 @@ import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { ElowenEvent } from '../api/sse.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
+import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
@@ -153,6 +154,12 @@ export interface PluginHostWiring {
    *  plugin reading its OWN per-account slice for the account already acting is the same authority as its
    *  instance-wide `ctx.config`. The identity is resolved by the context, never passed in by the plugin. */
   userPluginConfig?: (userId: number, plugin: string) => Record<string, unknown>;
+  pluginSecrets?: {
+    instance(plugin: string): PluginSecretBag;
+    user(userId: number, plugin: string): PluginSecretBag;
+  };
+  /** Trusted canonical browser URL from deployment metadata; null means this install has none configured. */
+  publicWebUrl?: () => string | null;
 }
 
 export class PluginRegistry {
@@ -192,6 +199,7 @@ export class PluginRegistry {
    *  account is gone, and nothing else reaps it: the leftovers keep that person's files and schedules on
    *  disk indefinitely. Run by the delete route before the user row disappears. */
   readonly userRemovedHandlers: { plugin: string; fn: (userId: number) => void | Promise<void> }[] = [];
+  readonly projectRemovedHandlers: { plugin: string; fn: (projectId: number) => void | Promise<void> }[] = [];
   /** Plugin-contributed editable prompt templates: catalog entries (merged into the account UI catalog)
    *  and template sources keyed by BARE template name — bare so existing per-user overrides in
    *  `user_prompts` keep matching when a template migrates from core into a plugin. */
@@ -324,6 +332,7 @@ export class PluginRegistry {
     this.services.push(...other.services);
     this.bootReconciles.push(...other.bootReconciles);
     this.userRemovedHandlers.push(...other.userRemovedHandlers);
+    this.projectRemovedHandlers.push(...other.projectRemovedHandlers);
     this.eventRowResolvers.push(...other.eventRowResolvers);
     this.readinessChecks.push(...other.readinessChecks);
     // MCP tool names are a flat namespace on the daemon's /mcp server — first-writer-wins, like tools.
@@ -956,6 +965,7 @@ export class PluginRegistry {
       },
       registerBootReconcile: (fn) => { this.bootReconciles.push({ plugin: name, fn }); },
       registerUserRemoved: (fn) => { this.userRemovedHandlers.push({ plugin: name, fn }); },
+      registerProjectRemoved: (fn) => { this.projectRemovedHandlers.push({ plugin: name, fn }); },
       // Event-bus reach decides what tenants SEE, so both verbs ride one explicit mutates:['events']
       // grant. Publishing throws (like db()): a plugin built around events cannot degrade meaningfully.
       publishEvent: (event) => {
@@ -1209,21 +1219,26 @@ export class PluginRegistry {
         return dir;
       },
       config,
-      // Per-account values resolve at CALL time, from the identity of whoever is acting right now — the
-      // same AsyncLocalStorage `currentIdentity()` reads. Capturing them at register time would freeze one
-      // account's credentials into a plugin shared by everyone.
-      //
-      // A SHARED room resolves them too, deliberately: the credential belongs to the verified sender of
-      // THIS turn, so a colleague asking in a channel reaches their own integration and never anybody
-      // else's. The linked account's normal project/tool policy follows them into that room; capabilities
-      // that belong only to the instance operator must gate on `currentIdentity().owner` at execution time.
-      // A delegated child has no `elowenUserId` at all, so it lands on null here without a special case.
+      // Resolve account-owned state at CALL time. A delegated child deliberately carries no person identity
+      // but inherits its delegator's contribution account, so contribution ownership is authoritative when
+      // present. Authenticated plugin API routes have identity but no turn contribution and use the fallback.
       userConfig: () => {
-        const userId = currentIdentity()?.elowenUserId;
+        const userId = currentContributionUserId() ?? currentIdentity()?.elowenUserId ?? null;
         const read = host?.userPluginConfig;
-        if (userId === undefined || !read) return null;
+        if (userId === null || !read) return null;
         return read(userId, name);
       },
+      instanceSecrets: () => {
+        if (!host?.pluginSecrets) throw new Error('plugin secret vault is not wired in this process');
+        return host.pluginSecrets.instance(name);
+      },
+      userSecrets: () => {
+        const userId = currentContributionUserId() ?? currentIdentity()?.elowenUserId ?? null;
+        if (userId === null) return null;
+        if (!host?.pluginSecrets) throw new Error('plugin secret vault is not wired in this process');
+        return host.pluginSecrets.user(userId, name);
+      },
+      publicWebUrl: () => host?.publicWebUrl?.() ?? null,
       logger: scoped,
     };
   }

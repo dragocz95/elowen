@@ -16,8 +16,10 @@ import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { CommitFileChange, CommitLogEntry } from '../integrations/projectFiles.js';
 import type { PushPayload } from '../push/messages.js';
 import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagent/hostRpc.js';
+import type { PluginSecretBag } from '../shared/pluginSecrets.js';
+import type { ProjectGitSnapshot } from '../git/gitReader.js';
 
-export type { DelegatedChildSummary };
+export type { DelegatedChildSummary, PluginSecretBag };
 
 /** The host's bridge to the DURABLE side of delegation: which sub-agents a conversation already ran,
  *  reading their stored final replies, and continuing one of them. Every operation is keyed on the parent
@@ -554,6 +556,8 @@ export interface PluginHost {
   relayClient(cfg: RelayConfig): InferenceClient;
   /** Read-only git helpers over a project checkout. Gated by `reads:['git']`. */
   git(): {
+    /** Generic live checkout snapshot: sanitized remotes plus branch/head/upstream and worktree counts. */
+    projectSnapshot(root: string): Promise<ProjectGitSnapshot>;
     projectHead(root: string): Promise<string>;
     projectRangeDiff(root: string, base: string, head: string): Promise<CommitFileChange[]>;
     /** The commits of `base..head` in that checkout. */
@@ -1095,6 +1099,9 @@ export interface PluginContext {
    *  or row is unreachable rather than misattributed — it simply keeps that person's files, secrets and
    *  schedules on the operator's machine forever, and a schedule keeps costing model calls. */
   registerUserRemoved(fn: (userId: number) => void | Promise<void>): void;
+  /** React to removal of a core Project while its id is still known. Plugin-owned boot reconciliation is
+   * still required because a plugin that was disabled when the deletion happened cannot receive this. */
+  registerProjectRemoved(fn: (projectId: number) => void | Promise<void>): void;
   /** Sugar over {@link registerService} for the common periodic-tick shape: the host owns a real timer
    *  (unref'd — a plugin tick must not keep the process alive), starts it with the services and clears
    *  it on stop/reload. A tick that throws is logged and the interval keeps running. */
@@ -1306,10 +1313,15 @@ export interface PluginContext {
    *  deliberately no fallback to the instance-wide config, because a per-account credential that silently
    *  becomes the operator's would act on the wrong person's behalf. */
   userConfig(): Record<string, unknown> | null;
-  /* Read it AT THE TOP of the work that needs it. The account is carried on the async context of the
-   * turn or HTTP request, so anything the handler starts and does not await (a lazily created poller, a
-   * subscription) keeps whichever account happened to trigger it — and would keep answering with that
-   * person's values, secrets included, long after their request ended. */
+  /** This plugin's encrypted instance secret namespace. The plugin name is bound by the context. */
+  instanceSecrets(): PluginSecretBag;
+  /** This plugin's encrypted secret namespace for the current contribution account. Delegated turns use
+   * their delegator's contribution account; authenticated API calls fall back to currentIdentity(). */
+  userSecrets(): PluginSecretBag | null;
+  /** Canonical deployment URL from trusted install metadata. Never derived from request headers. */
+  publicWebUrl(): string | null;
+  /* Read account-scoped state AT THE TOP of the work that needs it. The account is carried on async
+   * context, so un-awaited background work would retain whichever account triggered it. */
   readonly logger: PluginLogger;
 }
 

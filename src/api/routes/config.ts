@@ -336,6 +336,19 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     checks.push({ id: 'chat', label: 'Chat', ok: model != null, detail: model ?? 'no provider',
       ...(model ? {} : { hint: 'Run `elowen setup` to connect an AI provider.' }) });
 
+    const vault = d.pluginSecrets?.readiness();
+    if (vault) {
+      checks.push({
+        id: 'plugin-secrets',
+        label: 'Plugin secrets',
+        ok: vault.ready,
+        detail: vault.ready
+          ? (vault.corrupt.length > 0 ? `ready; ${vault.corrupt.length} secret(s) require reconnect` : 'ready')
+          : (vault.error ?? 'unavailable'),
+        ...(!vault.ready ? { hint: 'Restore the database and plugin-secrets.key from the same backup.' } : {}),
+      });
+    }
+
     // Plugin-contributed readiness rows disappear when their plugin is disabled. A throwing check is
     // dropped rather than taking down the whole report.
     const registry = await d.plugins?.get();
