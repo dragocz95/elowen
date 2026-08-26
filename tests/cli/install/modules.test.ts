@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { AGENT_CLIS, detectAgentClis, installCommand } from '../../../src/cli/install/agentClis.js';
 import { preflight, preflightBlockers } from '../../../src/cli/install/preflight.js';
 import { currentUser, userHome, ensureServiceUser } from '../../../src/cli/install/serviceUser.js';
-import { ensureTerminalStreaming, planFromArgs } from '../../../src/cli/install/index.js';
+import { ensureSandboxSupport, ensureTerminalStreaming, planFromArgs } from '../../../src/cli/install/index.js';
 import { isIpAddress } from '../../../src/cli/provision/deployment.js';
 import type { Runner, ExecResult } from '../../../src/cli/install/runner.js';
 
@@ -98,6 +98,26 @@ describe('install/preflight', () => {
     });
     expect(preflightBlockers(await preflight(base(false), 'darwin')).join(' ')).toMatch(/Homebrew/);
     expect(preflightBlockers(await preflight(base(true), 'darwin'))).toEqual([]);
+  });
+});
+
+describe('install/ensureSandboxSupport', () => {
+  it('installs bubblewrap on Linux when the launcher is missing', async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const r = runner({
+      which: async () => null,
+      exec: async (cmd, args) => { calls.push({ cmd, args }); return { code: 0, stdout: '', stderr: '' }; },
+    });
+    await ensureSandboxSupport(r, 'linux');
+    expect(calls.map((call) => `${call.cmd} ${call.args.join(' ')}`).some((line) => line.includes('apt-get install -y bubblewrap'))).toBe(true);
+  });
+
+  it('does nothing when bubblewrap exists or the platform is macOS', async () => {
+    const calls: string[] = [];
+    const present = runner({ which: async (cmd) => cmd === 'bwrap' ? '/usr/bin/bwrap' : null, exec: async (cmd) => { calls.push(cmd); return { code: 0, stdout: '', stderr: '' }; } });
+    await ensureSandboxSupport(present, 'linux');
+    await ensureSandboxSupport(present, 'darwin');
+    expect(calls).toEqual([]);
   });
 });
 

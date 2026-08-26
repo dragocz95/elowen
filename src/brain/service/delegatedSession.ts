@@ -548,7 +548,7 @@ export class DelegatedSessionService {
     }
     const policy = scope.admin
       ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
-      : this.d.policyForProjects?.(scope.projectIds)
+      : this.d.policyForProjects?.(scope.projectIds, scope.contributionUserId)
         ?? { allowedProjectIds: new Set(scope.projectIds), allowedPaths: () => [] };
     const authority = toolAuthorityForUser(this.d, userId);
     const deniedTools = [...(authority?.deny ?? []), ...(opts?.extraDeny ?? [])];

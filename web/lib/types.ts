@@ -683,10 +683,11 @@ export interface ActivityEvent {
   tools?: { name: string; count: number }[];
 }
 export interface Project { id: number; slug: string; path: string; notes: string; icon: string }
-interface GitStatus { branch: string; ahead: number; behind: number; dirty: number; clean: boolean }
+interface GitStatus { branch: string; head: string; upstream: string | null; ahead: number; behind: number; dirty: number; untracked: number; clean: boolean }
+interface GitRemote { name: string; fetchUrl: string; pushUrl: string }
 interface GitBranch { name: string; current: boolean }
 interface GitCommit { hash: string; subject: string; author: string; relative: string }
-export interface ProjectGit { isRepo: boolean; status: GitStatus | null; branches: GitBranch[]; commits: GitCommit[] }
+export interface ProjectGit { isRepo: boolean; status: GitStatus | null; remotes: GitRemote[]; branches: GitBranch[]; commits: GitCommit[] }
 
 /** One entry in a project's file tree. */
 export interface FileNode { path: string; type: 'file' | 'dir' }

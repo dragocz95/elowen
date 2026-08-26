@@ -29,6 +29,27 @@ describe('resolvePolicy', () => {
     const p = resolvePolicy(deps({ userProjects: { forUser: () => [], isAdmin: () => false } }), 5);
     expect(p.allowedPaths()).toEqual([]);
   });
+
+  it('adds only live supplemental roots and drops them immediately when Project access is revoked', () => {
+    let assigned = [1, 2];
+    const p = resolvePolicy(deps({
+      userProjects: { forUser: () => assigned, isAdmin: () => false },
+      supplementalPaths: (_userId: number, ids: readonly number[]) => [
+        { projectId: 1, path: '/workspace/a' },
+        { projectId: 2, path: '/workspace/b' },
+        { projectId: 9, path: '/workspace/foreign' },
+      ].filter((root) => ids.includes(root.projectId) || root.projectId === 9),
+    }), 5);
+
+    expect(p.allowedPaths().sort()).toEqual(['/repo/a', '/repo/b', '/workspace/a', '/workspace/b']);
+    assigned = [2];
+    expect(p.allowedPaths().sort()).toEqual(['/repo/b', '/workspace/b']);
+  });
+
+  it('fails closed to registered Project roots when the supplemental resolver throws', () => {
+    const p = resolvePolicy(deps({ supplementalPaths: () => { throw new Error('sandbox unavailable'); } }), 5);
+    expect(p.allowedPaths().sort()).toEqual(['/repo/a', '/repo/b']);
+  });
 });
 
 describe('policy context', () => {

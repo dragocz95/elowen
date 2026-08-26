@@ -275,24 +275,15 @@ subsystem) runs on; any plugin may use them.
 ctx.registerApiRoute({
   path: 'jobs',            // mounted at /plugins/<plugin-name>/api/jobs
   method: 'GET',
-  access: 'user',          // 'user' | 'admin' | 'agent'
+  access: 'user',          // 'user' | 'admin'
   handler: async (req) => ({ status: 200, body: { jobs: [] } }),
 });
 ```
 
 The daemon's bearer auth runs BEFORE the handler and the verified caller
-identity arrives on the request; `access` narrows further (`admin` requires an
-admin token; `agent` also admits agent-scoped task tokens — re-narrow inside
-the handler when a sub-path needs less than the mount grants). Declare the
-paths in the manifest's `provides.apiRoutes`.
+identity arrives on the request; `access` narrows further (`admin` requires an administrator account). Declare the paths in the manifest's `provides.apiRoutes`.
 
-An admin-installed plugin may additionally set `rootMount` to claim a
-top-level path (e.g. the agents plugin keeps the pre-extraction `/missions`
-and `/sessions` paths so existing clients never re-learn URLs). Core routes
-always win: a root mount that collides with a core path logs a warning and is
-skipped, literal segments beat `:param` patterns, and a plugin reload cleanly
-unregisters the previous generation. A disabled plugin's root mounts answer
-404.
+An admin-installed plugin may additionally set `rootMount` to claim an explicitly declared top-level path. Core routes always win: a root mount that collides with a core path logs a warning and is skipped, literal segments beat `:param` patterns, and a plugin reload cleanly unregisters the previous generation. A declared but disabled or missing owner answers 503; undeclared paths remain 404.
 
 ### Services, intervals, and boot reconciles
 
@@ -309,6 +300,23 @@ Boot reconciles run once per boot and again on plugin reload; keep them
 idempotent. A sub-agent runner loads enabled plugins for their tools but never
 starts services, so build heavyweight runtime state lazily (on first use, not
 in `register()`).
+
+Plugins that keep account or Project state also register lifecycle callbacks:
+
+```javascript
+ctx.registerUserRemoved((userId) => removeAccountRows(userId));
+ctx.registerProjectRemoved((projectId) => markProjectRowsOrphaned(projectId));
+```
+
+A disabled plugin cannot receive a live callback, so Project/account cleanup that must survive disable/enable also needs an idempotent boot reconcile against current core rows.
+
+### Encrypted plugin secrets
+
+`ctx.instanceSecrets()` returns this plugin's instance namespace. `ctx.userSecrets()` returns the current contribution account's namespace, or `null` for accountless work. Delegated children inherit the delegator's contribution account; plugins cannot name another user or plugin.
+
+Each bag provides `get`, `has`, `set(key, value, expectedVersion?)`, and `delete`. `get` returns `{ value, version }`; pass the version back to `set` for compare-and-swap updates. New credentials belong here, not in `ctx.config` or `ctx.userConfig()`. Backups must keep the database and `plugin-secrets.key` together.
+
+`ctx.publicWebUrl()` returns the canonical deployment URL from trusted install metadata (or `null`), never a request `Host`, `Origin`, or forwarded header. Use it for fixed OAuth callback construction.
 
 ### Plugin database migrations (`ctx.db()`)
 
@@ -336,10 +344,7 @@ template had before an extraction keeps existing user overrides working.
 
 ### Controls (`registerControl`)
 
-A control is a typed, live runtime surface other daemon code resolves from the
-registry (e.g. `registry.control('missions')` hands the task routes the mission
-engine). A key names the DOMAIN, never the plugin that happens to own it today —
-that is what lets another plugin take the domain over without a caller changing.
+A control is a typed, live runtime surface other daemon code or another plugin resolves from the registry. A key names the DOMAIN, never the plugin that happens to own it today — that is what lets another plugin take the domain over without a caller changing.
 Declare the shape in `KnownControls` (`src/plugins/api.ts`); the
 registry narrows to function-valued members, so accessor methods are the
 idiomatic shape — the first call can lazily build the runtime.
@@ -349,14 +354,14 @@ A control is also how ONE PLUGIN DEPENDS ON ANOTHER. With
 `ctx.control('<key>')`:
 
 ```javascript
-const tasks = ctx.control('tasks');            // never keep this in a variable
-if (!tasks) return c.json({ error: 'the tasks domain is unavailable' }, 503);
-const task = tasks.store().get(id);
+const mcp = ctx.control('mcp'); // resolve on every use; never cache a registry generation
+if (!mcp) return { error: 'the MCP domain is unavailable' };
+const servers = mcp.listServers();
 ```
 
 Three rules make that dependency safe:
 
-- **Key the control by the DOMAIN, not by the plugin** (`tasks`, not the name
+- **Key the control by the DOMAIN, not by the plugin** (`mcp`, not the name
   of the plugin that happens to own it). Core and the consumer then ask for a
   capability, and the owner can be replaced or renamed without anyone knowing
   who implements it.
@@ -379,8 +384,8 @@ web app as ONE built ESM bundle:
   "entry": "web/index.js",
   "css": "web/index.css",
   "requiresApiVersion": 1,
-  "nav": [{ "label": "Sessions", "icon": "SquareTerminal", "route": "sessions" }],
-  "settings": [{ "id": "agents", "label": "Agents & Autopilot", "icon": "Bot" }]
+  "nav": [{ "label": "Repositories", "icon": "GitBranch", "route": "repositories" }],
+  "settings": [{ "id": "connection", "label": "Connection", "icon": "Settings" }]
 }
 ```
 

@@ -10,13 +10,15 @@ group: Administration
 
 Elowen keeps startup configuration separate from runtime settings. Environment variables establish the local process boundary; the Settings workspace persists operational choices and saves normal changes as you make them. Secrets are never returned to the browser after storage.
 
+Plugin credentials use the core encrypted vault. Back up the SQLite database and `plugin-secrets.key` together: neither half can recover encrypted rows without the other. A missing or mismatched key is reported as unavailable and is never silently replaced while encrypted rows exist.
+
 ![Settings workspace](images/settings-overview.png)
 
 ## Startup environment
 
 Set environment variables before starting the relevant process; the defaults are intentionally local-first. The full variable table — daemon port and bind address, database path, bootstrap credentials, logging, and the CLI client variables — lives in [Production & Updates](production-updates).
 
-`elowen setup` is the preferred way to configure a local installation. Use `elowen doctor` to check the resulting daemon, provider, memory, and task readiness.
+`elowen setup` is the preferred way to configure a local installation. Use `elowen doctor` to check the resulting daemon, provider, memory, and plugin readiness.
 
 ## Settings sections
 
@@ -26,11 +28,8 @@ The Settings surface follows one stable order. It is administrator-controlled; u
 | --- | --- |
 | **System** | Version/readiness, service controls, automatic updates, and login-token lifetime. |
 | **Elowen AI** | Agent name, provider accounts, model context windows, max steps, runtime limits, memory retention, and stale-conversation auto-cleanup. |
-| **Models** | Enabled executor presets, custom entries, and model notes for planning. |
-| **CLI Agents** | External coding CLI binary, arguments, permission behavior, and resume behavior. |
+| **Models** | Enabled model presets, custom entries, and descriptive notes. |
 | **Data** | Explicit administrative maintenance and destructive cleanup. |
-| **GitHub** | Write-only credentials and PR-workflow defaults. |
-| **Autopilot** | Mission defaults, planning/review roles, TDD mode, and PR defaults. |
 | **Plugins** | Installed capabilities, marketplace, and plugin-owned configuration. |
 | **Memory** | Embedding and categorization models. |
 
@@ -80,19 +79,11 @@ The half-life is set per importance level, 1 through 4. A zero half-life means t
 
 The sweep runs once a day and only ever soft-deletes, so a false positive can be restored from the trash.
 
-## Models and CLI agents
+## Models
 
-**Models** is the workspace catalog for task executors. It controls which known presets are visible, custom model entries, and notes that help planning select a suitable executor. Per-user allowed executors only narrow this workspace-wide ceiling.
+**Models** is the workspace model catalog. It controls which known presets are visible, custom model entries, and descriptive notes. Per-user allowed models only narrow this workspace-wide ceiling.
 
 ![Model catalog](images/settings-models.png)
-
-**CLI Agents** configures the external programs Elowen can spawn. For each configured program, adjust the executable, arguments, permission behavior, and whether a restarted task should resume the prior external session. The embedded Elowen brain is configured in **Elowen AI**, not as an external binary.
-
-## Autopilot and GitHub
-
-Autopilot holds mission-wide defaults: worker executor, autonomy, maximum concurrent sessions, planner/overseer choices, optional completion review, TDD mode, and PR behavior. A new mission can override its pilot and overseer without changing the global setting.
-
-GitHub settings keep credentials write-only and define the PR workflow defaults: enabled state, base branch, auto-open behavior, and an optional verification command. Project and mission settings can override the PR enabled state. See [Projects & Workflow](projects-workflow).
 
 ## Plugins and Memory
 

@@ -39,6 +39,37 @@ jobs:
       # cs/en dictionary parity + plugin i18n coverage (also runs as part of every build via prebuild).
       - run: npm run languages-check
 
+  sandbox-confinement:
+    name: Sandbox confinement
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo tee /etc/apparmor.d/bwrap >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/bwrap>
+          }
+          PROFILE
+          sudo sed -i 's/^          //' /etc/apparmor.d/bwrap
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+      - run: npx vitest run tests/plugins/sandboxPlugin.test.ts -t "keeps the own root writable"
+        env:
+          ELOWEN_REQUIRE_BWRAP: '1'
+
   daemon:
     name: Daemon (build + test)
     runs-on: ubuntu-latest

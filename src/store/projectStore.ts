@@ -33,8 +33,8 @@ export class ProjectStore {
     return this.get(id);
   }
 
-  /** Remove a project from the core registry and its core-owned access/category rows. Retired plugin
-   *  tables are intentionally left untouched until their separately-authorized physical drop. */
+  /** Remove a project from the core registry and its core-owned access/category rows. Plugin-owned state
+   * is handled by registerProjectRemoved plus each plugin's boot reconciliation contract. */
   remove(id: number): boolean {
     if (!this.get(id)) return false;
     this.db.transaction(() => {

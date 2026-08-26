@@ -24,6 +24,7 @@ const access = (over: Partial<DelegatingTurnAccess> = {}): DelegatingTurnAccess 
   toolPolicy: { allow: ['Read', 'Write', 'Bash', 'Delegate'] },
   permissionBoundary: PARENT_BOUNDARY,
   principal: SPAWNER,
+  contributionUserId: 7,
   ...over,
 });
 
@@ -38,6 +39,7 @@ const readOnlyChild = (over: Partial<DelegatedExecutionScope> = {}): DelegatedEx
   promptAppend: ['You are a focused sub-agent.'],
   readOnlyOrigin: 'requested',
   spawnedBy: SPAWNER,
+  contributionUserId: 7,
   ...over,
 });
 
@@ -68,6 +70,7 @@ describe('promoteDelegatedScope', () => {
     // The role prompt is what makes the continuation the SAME sub-agent; it is not authority.
     expect(promoted.promptAppend).toEqual(['You are a focused sub-agent.']);
     expect(promoted.spawnedBy).toBe(SPAWNER);
+    expect(promoted.contributionUserId).toBe(7);
     // Nothing from the old scope's access half survives: every field matches the caller, not the child.
     expect(promoted.permissionBoundary).not.toEqual(readOnlyChild().permissionBoundary);
   });
@@ -123,6 +126,11 @@ describe('promoteDelegatedScope', () => {
     it('a child scoped to a project the caller no longer holds', () => {
       expect(errorOf(promoteDelegatedScope(readOnlyChild({ projectIds: [1, 9] }), access({ projectIds: [1] }))))
         .toMatch(/project/i);
+    });
+
+    it('a child belonging to another contribution account', () => {
+      expect(errorOf(promoteDelegatedScope(readOnlyChild({ contributionUserId: 8 }), access())))
+        .toMatch(/different account contributor/);
     });
 
     it('a child carrying owner authority the caller does not have', () => {

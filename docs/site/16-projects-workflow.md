@@ -1,68 +1,40 @@
 ---
-title: Projects & Workflow
+title: Projects & Git
 slug: projects-workflow
 order: 16
-eyebrow: Automation
-group: Automation
+eyebrow: Workspace
+group: Workspace
 ---
 
-# Projects & Workflow
+# Projects & Git
 
-A project is Elowen's explicit boundary around a repository. It gives tasks a working directory, supplies planner context, scopes user access, and connects the Web UI's Projects and Editor workspaces to a real Git checkout. Adding a project does not make every path on the machine available to the agent.
+A Project is Elowen's explicit boundary around a repository or working directory. It supplies a stable path, project-specific context, user access scope, and the read-only Git information shown in the Projects workspace. Registering a Project does not make other paths on the machine available to an account.
 
 ![Projects workspace](images/projects-list.png)
 
-## Register a project
+## Register a Project
 
-An administrator adds a project with a stable slug and repository path. A project can also have:
+An administrator adds a Project with a stable slug and filesystem path. A Project can also have:
 
 | Field | Purpose |
 | --- | --- |
-| **Notes** | Durable, project-specific guidance for planning and mission work. |
+| **Notes** | Durable context available to the assistant while working in this Project. |
 | **Icon** | An optional project-relative image used in the UI. |
-| **PR workflow** | A per-project override: inherit, enable, or disable the global default. |
 
-The slug remains stable after creation. Removing a project detaches its Elowen records—tasks, mission data, active-agent references, and access grants—but never deletes the repository files themselves.
+The slug remains stable after creation. Removing a Project deletes its core access assignments and project-bound memory categories, but never deletes repository files. Enabled plugins receive the Project-removal lifecycle event; plugins also reconcile their own state when enabled after an offline deletion.
 
-Assign projects to users in **Users**. The daemon applies that project scope alongside the user's model and tool policy, so a conversation cannot reach a repository simply because it is visible in another person's workspace.
+Assign Projects to users in **Users**. The daemon applies that scope alongside each account's model, plugin, and tool policy, so a conversation cannot reach a repository simply because another account can see it.
 
 ## Inspect Git state
 
-The Projects workspace exposes the information needed to make a safe decision before or after agent work: branch, dirty state, changed files, recent commits, commit patches, and working-tree diffs. The current project's icon is used where the UI represents that project; generic fallback art is only used when no icon has been configured.
+The Projects workspace provides a read-only checkout snapshot: current branch and HEAD, upstream and ahead/behind counts, dirty and untracked counts, sanitized remotes, local branches, and recent commits. Embedded credentials are removed from remote URLs before data reaches an API or plugin.
 
-Open a file, diff, or commit in the Editor. Detail views use a bounded modal or drawer so you can return to the exact project list or timeline context you came from.
+Core Projects does not own pull requests, repository mappings, publication, worktrees, or Git credentials. Those workflows belong to dedicated plugins and remain separate from Project registration and tenancy.
 
-![Built-in project editor](images/projects-editor.png)
+## Files and editor
 
-## Shared checkout work
+Project file operations and the browser editor are plugin-owned surfaces. They use the core Project path guard and current account access rather than introducing a second filesystem policy. Disabling an editor or file plugin removes that surface without removing the Project itself.
 
-Normal tasks use the project's checkout. Elowen coordinates task dispatch and Git-sensitive operations so simultaneous work does not casually overwrite the same repository state. A task records the associated worker and can expose changed files, commits, and usage in its detail view.
-
-This is the right mode for a focused task you are actively watching. For a larger change that should remain isolated until review, use a mission with the PR workflow.
-
-## PR workflow
-
-The optional PR workflow creates an isolated worktree for a mission. It is controlled by the mission's explicit setting, then its project override, then the workspace default.
-
-1. Create or engage a mission with PR workflow enabled.
-2. Elowen creates a branch and separate worktree for that mission.
-3. Its phases work in that isolated checkout.
-4. The configured GitHub/PR settings determine verification, base branch, and whether a PR opens automatically.
-5. The mission keeps its worktree lifecycle tied to the mission rather than modifying your shared checkout by surprise.
-
-Configure GitHub credentials and defaults in **Settings → GitHub**. Credentials are write-only in the Web UI. A configured verification command is a quality gate you own; it is not a claim that every repository has been fully tested.
-
-## Handoff notes and worker control
-
-Mission workers can leave short notes for later phases:
-
-```bash
-elowen note add <mission-id> "Explain the remaining follow-up"
-elowen note ls <mission-id>
-```
-
-Workers also receive a scoped `elowen help` and `elowen ask` interface so they can read their task context or ask the autopilot/human a question. Those controls inherit the mission's authenticated scope.
-
-For task state and mission execution, see [Tasks & Missions](tasks-missions). For the editor and project UI, see [Web UI](web-ui).
+For access rules, see [Users & Access](users-access). For plugin capabilities, see [Plugins](plugins).
 
 [Next: Scheduling](scheduling)

@@ -11,9 +11,9 @@ import type { Policy } from '../../src/plugins/policy.js';
 
 const users = { get: (id: number) => ({ username: `u${id}`, is_admin: id === 1 }) };
 const identity = new IdentityResolver({ platformOwner: () => 1, resolvePlatformUser: () => null, users });
-const policyForProjects = (ids: number[]): Policy => ({
+const policyForProjects = (ids: number[], contributionUserId?: number): Policy => ({
   allowedProjectIds: new Set(ids),
-  allowedPaths: () => ids.map((id) => `/repo/${id}`),
+  allowedPaths: () => [...ids.map((id) => `/repo/${id}`), ...(contributionUserId ? [`/workspace/u${contributionUserId}`] : [])],
 });
 const deps = { policyForProjects, identity };
 
@@ -29,6 +29,7 @@ const request = (): DelegatedTurnRequest => ({
     toolPolicy: { allow: ['Grep', 'Read'], deny: ['Bash'] },
     permissionBoundary: { rules: [{ scope: 'tools', pattern: 'Write', action: 'deny' }], unattendedAsks: 'deny' },
     promptAppend: ['You are a focused sub-agent.', 'context block'],
+    contributionUserId: 2,
   },
   scheduled: false,
   model: { provider: 'e2e', model: 'mock-model' },
@@ -96,6 +97,7 @@ describe('the delegated-turn wire payload', () => {
     expect(opts.writerUserId).toBeUndefined(); // no private-memory identity crosses the boundary
     expect(opts.parentSessionId).toBe('brain-1');
     expect(opts.clientCwd).toBe('/repo/3');
+    expect(opts.policy.allowedPaths()).toContain('/workspace/u2');
   });
 
   it('gives an admin scope the all-project policy without consulting the resolver', () => {

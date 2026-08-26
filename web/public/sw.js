@@ -1,7 +1,6 @@
-// Elowen service worker: renders web-push notifications and runs their inline actions. The daemon
-// (src/push/) builds every payload, so there is no i18n here — text is rendered verbatim. The
-// action→request mapping mirrors web/lib/pushClient.ts `actionToRequest`; keep the two in sync.
-const SW_VERSION = '2';
+// Elowen service worker: renders web-push notifications and opens authenticated app deep-links.
+// The daemon (src/push/) builds every payload, so there is no i18n here — text is rendered verbatim.
+const SW_VERSION = '3';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
@@ -16,9 +15,8 @@ function parsePayload(data) {
 
 // --- instance branding -------------------------------------------------------
 // The artwork on a phone notification is resolved HERE rather than carried in the payload, because
-// payloads come from several builders — the daemon's own turn notification and the mission
-// notifications built inside the agents plugin — and a payload field would brand only whichever of
-// them remembered to set it.
+// payloads come from several builders, and a payload field would brand only whichever one remembered
+// to set it.
 const THEME_URL = '/api/public/theme';
 const THEME_CACHE = 'elowen-theme';
 const FALLBACK_ICON = '/elowen-logo.png';
@@ -75,7 +73,7 @@ async function showPush(p) {
   }
   return self.registration.showNotification(p.title, {
     body: p.body,
-    tag: p.missionId || undefined, // collapse repeat notifications about the same mission
+    tag: p.tag || undefined, // collapse repeat notifications when the payload names a stable topic
     data: p,
     actions: Array.isArray(p.actions) ? p.actions : [],
     badge: brand.icon,
@@ -87,35 +85,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(showPush(parsePayload(event.data)));
 });
 
-// Same-origin path mirror of pushClient.ts actionToRequest (plain JS — public/ is not bundled).
-function actionToRequest(action, data) {
-  switch (action) {
-    case 'approve':
-      return { kind: 'fetch', steps: [{ method: 'POST', path: '/api/tasks/' + data.taskId + '/approve-gate' }] };
-    case 'rerun':
-      return { kind: 'fetch', steps: [
-        { method: 'PATCH', path: '/api/tasks/' + data.taskId, body: { status: 'open' } },
-        { method: 'PATCH', path: '/api/missions/' + data.missionId, body: { action: 'resume' } },
-      ] };
-    case 'allow':
-      return { kind: 'fetch', steps: [{ method: 'POST', path: '/api/sessions/' + encodeURIComponent(data.session || '') + '/keys', body: { keys: ['Enter'] } }] };
-    case 'reject':
-      return { kind: 'fetch', steps: [{ method: 'POST', path: '/api/sessions/' + encodeURIComponent(data.session || '') + '/keys', body: { keys: ['Escape'] } }] };
-    default:
-      return { kind: 'open', url: data.url || '/' };
-  }
-}
-
-async function runSteps(steps) {
-  for (const step of steps) {
-    const res = await fetch(step.path, {
-      method: step.method,
-      credentials: 'same-origin',
-      headers: step.body ? { 'content-type': 'application/json' } : undefined,
-      body: step.body ? JSON.stringify(step.body) : undefined,
-    });
-    if (!res.ok) throw new Error('step failed: ' + res.status);
-  }
+function actionToRequest(_action, data) {
+  return { kind: 'open', url: data.url || '/' };
 }
 
 // Only open a same-origin app path or an https URL (e.g. a GitHub PR). Reject anything else
@@ -132,13 +103,5 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const plan = actionToRequest(event.action, data);
-  if (plan.kind === 'open') {
-    event.waitUntil(self.clients.openWindow(safeOpenUrl(plan.url)));
-    return;
-  }
-  event.waitUntil(
-    runSteps(plan.steps).catch(() =>
-      self.registration.showNotification('Akce se nezdařila', { body: 'Otevřete aplikaci a zkuste to znovu.', data }),
-    ),
-  );
+  event.waitUntil(self.clients.openWindow(safeOpenUrl(plan.url)));
 });

@@ -33,7 +33,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     try { return c.json(d.projects.create({ slug, path, notes }), 201); }
     catch { return c.json({ error: 'slug taken' }, 409); }
   });
-  // Edit a project's path / Pilot notes (slug stays immutable). Admin-only, like registration.
+  // Edit a project's path / notes (slug stays immutable). Admin-only, like registration.
   app.patch('/projects/:id', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
@@ -53,14 +53,21 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(d.projects.update(id, patch));
   });
   // Remove a project from Elowen's core registry and access grants, but never touch files on disk.
-  // Retired agents/work rows remain until their separately-authorized physical drop. Admin-only; the home project
-  // can't be removed (it's where the daemon itself lives).
+  // Loaded plugins receive the lifecycle callback before the row disappears; plugins disabled at deletion
+  // time must detect the missing Project in their own boot reconciliation when next enabled.
   app.delete('/projects/:id', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const id = Number(c.req.param('id'));
     if (id === d.project.id) return c.json({ error: 'cannot remove the home project' }, 400);
     if (!d.projects.get(id)) return c.json({ error: 'project not found' }, 404);
+    const registry = await d.plugins?.get().catch(() => undefined);
+    for (const handler of registry?.projectRemovedHandlers ?? []) {
+      try { await handler.fn(id); }
+      catch (error) {
+        ctx.log.warn(`plugin ${handler.plugin} failed to handle removed project ${id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     d.projects.remove(id);
     return c.json({ ok: true });
   });

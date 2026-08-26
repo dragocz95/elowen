@@ -18,7 +18,7 @@ The fastest diagnostic. Run it any time:
 elowen doctor
 ```
 
-It checks daemon health, chat provider, tasks, missions, memory, platforms, and plugins — printing `[ok]` or `[fail]` with a hint for each. In a TTY it prompts for admin credentials; set `ELOWEN_TOKEN` for non-interactive use.
+It checks daemon health, chat provider, memory, platforms, plugins, and deployment prerequisites — printing `[ok]` or `[fail]` with a hint for each. In a TTY it prompts for admin credentials; set `ELOWEN_TOKEN` for non-interactive use.
 
 The same readiness data powers the setup wizard's finish screen and `GET /system/readiness`.
 
@@ -32,7 +32,7 @@ The same readiness data powers the setup wizard's finish screen and `GET /system
    - **Port conflict** — another process on `:4400`. Kill it or change `ELOWEN_PORT`.
    - **Corrupt database** — the SQLite file in the data directory is locked or damaged. Stop the daemon, back up `elowen.db`, and restart. If it still fails, restore from backup.
    - **Node version** — Elowen needs Node ≥22. Check with `node -v`.
-   - **Missing tmux** — agents need tmux ≥3.x. Install it: `apt install tmux`.
+   - **Missing tmux** — interactive terminal sessions need tmux ≥3.x. Install it: `apt install tmux`.
 
 ## Stopping takes longer than expected
 
@@ -128,10 +128,10 @@ If you can't wait:
 
 **Symptom:** the agent repeats the same tool call or retries endlessly.
 
-1. Open the **Sessions** page and attach to the terminal — you can interrupt with Ctrl+C.
-2. Check if a permission denial is causing the retry (the agent retries a blocked command). Adjust the tool permissions or approve the action.
-3. The **stuck detector** (see [Autonomy & Safety](autonomy-safety)) should catch this automatically and escalate. If it doesn't fire, check that liveness checks are enabled.
-4. Cancel the task/mission and rephrase the goal more concretely.
+1. Stop or steer the current conversation from chat; inspect any background process in the process panel.
+2. Check whether a permission denial is causing the retry. Adjust the tool rule only if the command is genuinely authorized.
+3. For a persistent goal, use `/goal pause`, refine the outcome or subgoals, then resume.
+4. For a delegated child, stop that child rather than killing unrelated work in the parent conversation.
 
 ## Logs
 

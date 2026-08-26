@@ -1,13 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPlugins } from '../../src/plugins/loader.js';
-// The same predicate the plugin gates on: a host with the binary but no profile CANNOT sandbox, and
-// asking a different question here is how the suite came to pass locally and fail in CI.
-import { sandboxAvailable } from '../../plugins/terminal/sandbox.mjs';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import type { TurnIdentity } from '../../src/plugins/policyContext.js';
@@ -635,134 +632,4 @@ describe('terminal plugin — ProcessOutput(block)', () => {
     await read;
     expect(Date.now() - started).toBeLessThan(10_000); // released on the kill, not after 120s
   }, 20_000);
-});
-
-// The shell used to honour the project boundary only for the directory a command STARTED in: once running,
-// it read and wrote any absolute path, so a non-admin granted `terminal` could read the daemon's own config
-// database (provider keys live there in plaintext) or another account's project. These run the sandbox for
-// real rather than asserting on the argv, because the argv being right is not the property that matters.
-//
-// Skipped where bubblewrap is absent: the sandbox is refused rather than bypassed there (the plugin fails
-// closed), so there is nothing to observe.
-describe.skipIf(!sandboxAvailable())('terminal plugin — sandboxing a non-admin shell', () => {
-  let reg: PluginRegistry;
-  let dir: string;
-  let outside: string;
-  beforeAll(async () => {
-    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
-    dir = tmpDir('term-sbx');
-    outside = tmpDir('term-sbx-other');
-    await writeFile(join(outside, 'secret.txt'), 'another-accounts-data');
-  });
-
-  it('cannot read a path outside its own projects, including the daemon checkout', async () => {
-    const res = await runWithPolicy(
-      userPolicy([dir]),
-      () => runTool(reg, 'Bash', { command: `echo SANDBOX_RAN; cat ${join(outside, 'secret.txt')}; ls ${repoRoot}` }),
-      { identity: owner },
-    );
-    const text = res.content[0].text;
-    // Without this the assertions below would also pass if bwrap, cat or the command transport failed
-    // outright — i.e. exactly how a BROKEN sandbox looks.
-    expect(text).toContain('SANDBOX_RAN');
-    expect(text).not.toContain('another-accounts-data');
-    expect(text).not.toContain('package.json');
-  });
-
-  it('works normally inside its own project', async () => {
-    const res = await runWithPolicy(
-      userPolicy([dir]),
-      () => runTool(reg, 'Bash', { command: 'echo written > f.txt && node -e "console.log(1+1)"' }),
-      { identity: owner },
-    );
-    expect(res.content[0].text).toContain('2');
-    expect(res.content[0].text).toContain('[exit 0]');
-    // Read it back from the HOST: the write must have landed in the real project directory, not in some
-    // copy inside the namespace that disappears with the command.
-    expect(await readFile(join(dir, 'f.txt'), 'utf8')).toBe('written\n');
-  });
-
-  // /etc/resolv.conf is a symlink into /run on a systemd-resolved host. Binding only /etc leaves it
-  // dangling and every DNS lookup fails, which silently breaks npm install, git fetch and curl — the
-  // things the shell is granted FOR. This asserts the resolver config, not the network, so it does not
-  // depend on the runner having outbound DNS.
-  it('keeps name resolution working inside the sandbox', async () => {
-    const res = await runWithPolicy(
-      userPolicy([dir]),
-      () => runTool(reg, 'Bash', { command: 'head -c 0 /etc/resolv.conf && echo RESOLVER_READABLE' }),
-      { identity: owner },
-    );
-    expect(res.content[0].text).toContain('RESOLVER_READABLE');
-    expect(res.content[0].text).toContain('[exit 0]');
-  });
-
-  it('closes privilege escalation regardless of the host sudoers file', async () => {
-    const res = await runWithPolicy(
-      userPolicy([dir]),
-      () => runTool(reg, 'Bash', { command: 'grep NoNewPrivs /proc/self/status' }),
-      { identity: owner },
-    );
-    expect(res.content[0].text).toContain('NoNewPrivs:\t1');
-  });
-
-  // The counterpart that proves the tests above measure the sandbox and not some unrelated failure: the
-  // same command, same file, unconfined.
-  it('leaves an admin shell unconfined', async () => {
-    const res = await runWithPolicy(
-      adminPolicy,
-      () => runTool(reg, 'Bash', { command: `cat ${join(outside, 'secret.txt')}` }),
-      { identity: owner },
-    );
-    expect(res.content[0].text).toContain('another-accounts-data');
-  });
-
-  it('honours the administrator turning the sandbox off', async () => {
-    const off = await loadPlugins({
-      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
-      config: { terminal: { sandboxNonAdmins: false } },
-    });
-    const res = await runWithPolicy(
-      userPolicy([dir]),
-      () => runTool(off, 'Bash', { command: `cat ${join(outside, 'secret.txt')}` }),
-      { identity: owner },
-    );
-    expect(res.content[0].text).toContain('another-accounts-data');
-  });
-});
-
-// The sandbox home is per-CALLER state, and getting the key wrong is a silent cross-account leak rather
-// than a visible failure: a shared directory would let one account's sub-agent hand .gitconfig, npm
-// credentials or scripts to another's. A delegated child carries no elowenUserId by design, so it must
-// fall back to its own session and never to a common bucket.
-describe('terminal sandbox — home directories are per caller', () => {
-  let mod: typeof import('../../plugins/terminal/sandbox.mjs');
-  let root: string;
-  let data: string;
-  beforeAll(async () => {
-    mod = await import('../../plugins/terminal/sandbox.mjs');
-    root = tmpDir('sbx-home-root');
-    data = tmpDir('sbx-home-data');
-  });
-
-  const homeOf = (userId: number | null, sessionId?: string): string => {
-    const { command } = mod.sandboxRun({ command: 'true', cwd: root, roots: [root], dataDir: data, userId, sessionId });
-    const match = /--setenv HOME (\S+)/.exec(command);
-    if (!match) throw new Error(`no HOME in: ${command}`);
-    return match[1];
-  };
-
-  it('keys the home by account, and by session when there is no account', () => {
-    expect(homeOf(1)).not.toBe(homeOf(2));
-    expect(homeOf(null, 'brain-a')).not.toBe(homeOf(null, 'brain-b'));
-    expect(homeOf(null, 'brain-a')).toBe(homeOf(null, 'brain-a'));
-    expect(homeOf(1)).not.toBe(homeOf(null, 'brain-a'));
-  });
-
-  // A cron wake-up or task worker has neither. It must still get a usable home, but a PRIVATE one: the
-  // per-command tmpfs, never a shared directory on disk that another caller could read afterwards.
-  it('gives a caller with neither an ephemeral home, not a shared one', () => {
-    const anonymous = homeOf(null, undefined);
-    expect(anonymous.startsWith('/tmp/')).toBe(true);
-    expect(anonymous).not.toContain('sandbox-home');
-  });
 });

@@ -3510,6 +3510,39 @@ describe('BrainService', () => {
     expect(hist?.text).toContain('1× image');
   });
 
+  it('uses the owner account\'s active workspace per turn without changing the spawned cwd', async () => {
+    const d = fakeDeps();
+    const project = tmpDir('owner-project');
+    const workspace = tmpDir('owner-workspace');
+    d.db.prepare('INSERT INTO projects (id, slug, path) VALUES (7, ?, ?)').run('owner-project', project);
+    (d as unknown as { projects: ProjectStore }).projects = new ProjectStore(d.db);
+    (d as unknown as { policy: () => unknown }).policy = () => ({
+      allowedProjectIds: new Set([7]),
+      allowedPaths: () => [project, workspace],
+    });
+    const reg = new PluginRegistry();
+    reg.contextFor('sandbox', {}, { info() {}, warn() {}, error() {} }).registerControl('sandbox', {
+      workspaceRoots: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace }],
+      activeWorkspace: () => ({ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
+      prepareExecution: async () => ({}),
+    } as never);
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    let scopedCwd: string | undefined;
+    d.session.prompt.mockImplementationOnce(async (text: string, options?: { preflightResult?: (success: boolean) => void }) => {
+      scopedCwd = currentWorkDir();
+      options?.preflightResult?.(true);
+      d.session.messages.push({ role: 'user', content: text }, { role: 'assistant', content: 'ok' });
+    });
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1, { cwd: project });
+    await svc.send({ userId: 1, text: 'work here', clientCwd: project, session: sessionId });
+
+    expect(scopedCwd).toBe(workspace);
+    const prompt = d.session.prompt.mock.calls.at(-1)![0] as string;
+    expect(prompt).toContain(`effective working directory for this turn is ${workspace}`);
+    expect(d.store.getSession(sessionId)?.work_dir).toBe(project);
+  });
+
   it('places volatile turn-context around the owner text, resolves each provider once, and keeps history clean', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
@@ -6686,6 +6719,27 @@ describe('BrainService — background processes', () => {
     expect((fg as unknown as { killed: boolean }).killed).toBe(false);
     expect(svc.killProcess(1, 'job')).toBe(true);
     expect((job as unknown as { killed: boolean }).killed).toBe(true);
+  });
+
+  it('prefers explicit contribution ownership over the shared room session owner', () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const room = 'brain-ch-shared-processes';
+    d.store.createSession({ id: room, userId: 1, model: 'm' });
+    const amy = fakeHandle('amy', room, 1);
+    amy.accountUserId = 2;
+    const bob = fakeHandle('bob', room, 1);
+    bob.accountUserId = 3;
+    processRegistry.register(amy);
+    processRegistry.register(bob);
+
+    expect(svc.processes(1)).toEqual([]);
+    expect(svc.processes(2).map((p) => p.id)).toEqual(['amy']);
+    expect(svc.processOutput(2, 'bob')).toBeNull();
+    expect(svc.killProcess(2, 'bob')).toBe(false);
+    expect(bob.killed).toBe(false);
+    expect(svc.killProcess(2, 'amy')).toBe(true);
+    expect(amy.killed).toBe(true);
   });
 
   it('sessionless output/kill enforce ownership per process', async () => {

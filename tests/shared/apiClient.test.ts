@@ -11,11 +11,11 @@ function fakeFetch(captured: { url?: string; init?: RequestInit }, res: () => Re
 describe('callElowenApi', () => {
   it('forwards method, path, bearer token and JSON body', async () => {
     const cap: { url?: string; init?: RequestInit } = {};
-    const res = await callElowenApi('POST', '/tasks', { title: 'x' }, {
+    const res = await callElowenApi('POST', '/projects', { title: 'x' }, {
       url: 'http://d:4400', token: 'tok',
       fetchImpl: fakeFetch(cap, () => new Response(JSON.stringify({ ok: true, items: [1] }), { status: 200, headers: { 'content-type': 'application/json' } })),
     });
-    expect(cap.url).toBe('http://d:4400/tasks');
+    expect(cap.url).toBe('http://d:4400/projects');
     expect(cap.init?.method).toBe('POST');
     expect((cap.init?.headers as Record<string, string>).authorization).toBe('Bearer tok');
     expect((cap.init?.headers as Record<string, string>)['content-type']).toBe('application/json');
@@ -27,7 +27,7 @@ describe('callElowenApi', () => {
 
   it('omits body and content-type on GET', async () => {
     const cap: { url?: string; init?: RequestInit } = {};
-    await callElowenApi('GET', '/tasks', undefined, {
+    await callElowenApi('GET', '/projects', undefined, {
       url: 'http://d:4400', token: 't',
       fetchImpl: fakeFetch(cap, () => new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } })),
     });

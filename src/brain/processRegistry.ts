@@ -14,8 +14,16 @@ export interface ProcessHandle {
   command: string;
   cwd: string;
   startedAt: string;
-  /** The Elowen user (operator) who started it — used to wake the right conversation on exit. */
+  /** Account whose turn started it. This explicit contribution owner wins over every session-row fallback,
+   * which is load-bearing in a shared room whose durable owner may be a different writer. */
+  accountUserId?: number | null;
+  /** Legacy owner field retained for handles registered by an older plugin generation. New callers write
+   * `accountUserId`; session ownership is only the final fallback when neither explicit field exists. */
   userId?: number | null;
+  /** Sandbox workspace and account-HOME generation captured at launch. Cleanup/reset consult the durable
+   * lease carrying the same tuple; the in-memory handle keeps process UI/caps aligned with it. */
+  workspaceId?: string | null;
+  homeGeneration?: number | null;
   /** The brain session it was started in (e.g. `brain-<uid>`) — the wake is bound to THIS conversation. */
   sessionId?: string | null;
   /** `foreground` is the transient mode of a still-in-flight `Bash` tool call that the CLI's Ctrl+B can
@@ -45,6 +53,8 @@ export interface ProcessInfo {
   running: boolean;
   exitCode: number | null;
   completionMode?: 'job' | 'service' | 'foreground';
+  workspaceId?: string | null;
+  homeGeneration?: number | null;
 }
 
 const toInfo = (h: ProcessHandle): ProcessInfo => ({
@@ -52,7 +62,18 @@ const toInfo = (h: ProcessHandle): ProcessInfo => ({
   sessionId: h.sessionId ?? null,
   running: h.running(), exitCode: h.exitCode(),
   completionMode: h.completionMode,
+  workspaceId: h.workspaceId ?? null,
+  homeGeneration: h.homeGeneration ?? null,
 });
+
+/** Explicit contribution ownership is authoritative. `userId` is the pre-contract compatibility field;
+ * session-row ownership is resolved by the higher-level service only when both are absent. */
+export const processHandleAccount = (handle: ProcessHandle): number | null | undefined =>
+  handle.accountUserId !== undefined
+    ? handle.accountUserId
+    : typeof handle.userId === 'number'
+      ? handle.userId
+      : undefined;
 
 /** One pending waiter on a session's background JOBS becoming idle. `settle` fires exactly once — either
  *  from notifySession when the last running job exits ('idle') or from an optional timeout timer
@@ -70,7 +91,7 @@ interface ProcessExitWaiter {
 
 export class ProcessRegistry {
   private handles = new Map<string, ProcessHandle>();
-  private onChange?: (sessionId: string | null) => void;
+  private onChange?: (sessionId: string | null, accountUserId: number | null) => void;
   private onExitFn?: (info: ProcessInfo, userId: number | null, sessionId: string | null) => void;
   private exited = new Set<string>();
   private jobIdleWaiters = new Map<string, Set<JobIdleWaiter>>();
@@ -84,8 +105,8 @@ export class ProcessRegistry {
     if (waiters) for (const waiter of [...waiters]) waiter.settle('exited');
   }
 
-  private notifySession(sessionId: string | null | undefined): void {
-    this.onChange?.(sessionId ?? null);
+  private notifySession(sessionId: string | null | undefined, accountUserId?: number | null): void {
+    this.onChange?.(sessionId ?? null, accountUserId ?? null);
     if (!sessionId) return;
     if (this.runningJobCountForSession(sessionId) === 0) {
       // settle() removes each waiter from the set (and an emptied set from the map); iterate a snapshot.
@@ -97,7 +118,7 @@ export class ProcessRegistry {
   /** Register a callback fired whenever the set of processes changes (spawn/exit/kill/remove). Optional —
    *  the web ProcessPanel polls the list, so out-of-turn updates surface there regardless; a consumer that
    *  wants push (e.g. a future CLI card refresh outside a turn) can wire this. */
-  setChangeListener(fn: (sessionId: string | null) => void): void { this.onChange = fn; }
+  setChangeListener(fn: (sessionId: string | null, accountUserId: number | null) => void): void { this.onChange = fn; }
 
   /** Register a callback fired once when a background process EXITS on its own (not via kill/remove — a
    *  killed process is dropped from the registry before its close fires, so it never notifies). The daemon
@@ -116,9 +137,13 @@ export class ProcessRegistry {
     }
     this.handles.set(handle.id, handle);
     this.exited.delete(handle.id);
-    // The evicted handle may belong to another session, whose job count just dropped.
-    if (previous && previous !== handle && previous.sessionId !== handle.sessionId) this.notifySession(previous.sessionId);
-    this.notifySession(handle.sessionId);
+    // The evicted handle may belong to another session OR another account in the same shared room. Both
+    // scopes need a refresh because the old process disappeared from one and appeared in the other.
+    if (previous && previous !== handle
+      && (previous.sessionId !== handle.sessionId || processHandleAccount(previous) !== processHandleAccount(handle))) {
+      this.notifySession(previous.sessionId, processHandleAccount(previous));
+    }
+    this.notifySession(handle.sessionId, processHandleAccount(handle));
   }
 
   /** The terminal plugin calls this from a child's close handler. Fires the exit listener exactly once for
@@ -129,8 +154,9 @@ export class ProcessRegistry {
     if (!h || this.exited.has(id)) return;
     this.exited.add(id);
     this.settleExitWaiters(id);
-    this.notifySession(h.sessionId);
-    this.onExitFn?.(toInfo(h), h.userId ?? null, h.sessionId ?? null);
+    const accountUserId = processHandleAccount(h) ?? null;
+    this.notifySession(h.sessionId, accountUserId);
+    this.onExitFn?.(toInfo(h), accountUserId, h.sessionId ?? null);
   }
 
   /** Processes matching a predicate (running first, newest first). The predicate sees the HANDLE, so a
@@ -152,6 +178,13 @@ export class ProcessRegistry {
     return this.listWhere((handle) => handle.sessionId === sessionId);
   }
 
+  /** Processes visible to one contribution account inside one conversation. Explicit account ownership is
+   * required for shared-room isolation; legacy handles fall back to their old `userId` field. */
+  listForSessionAccount(sessionId: string, accountUserId: number | null): ProcessInfo[] {
+    return this.listWhere((handle) =>
+      handle.sessionId === sessionId && processHandleAccount(handle) === accountUserId);
+  }
+
   get(id: string): ProcessHandle | undefined { return this.handles.get(id); }
 
   /** Full output buffer of a process, or null when unknown. */
@@ -159,6 +192,12 @@ export class ProcessRegistry {
   outputForSession(sessionId: string, id: string): string | null {
     const handle = this.handles.get(id);
     return handle?.sessionId === sessionId ? handle.readAll() : null;
+  }
+  outputForSessionAccount(sessionId: string, accountUserId: number | null, id: string): string | null {
+    const handle = this.handles.get(id);
+    return handle?.sessionId === sessionId && processHandleAccount(handle) === accountUserId
+      ? handle.readAll()
+      : null;
   }
 
   /** Kill a process and drop it from the registry. Returns false when the id is unknown. */
@@ -169,13 +208,20 @@ export class ProcessRegistry {
     this.handles.delete(id);
     this.exited.delete(id);
     this.settleExitWaiters(id);
-    this.notifySession(h.sessionId);
+    this.notifySession(h.sessionId, processHandleAccount(h));
     return true;
   }
 
   killForSession(sessionId: string, id: string): boolean {
     const handle = this.handles.get(id);
     return handle?.sessionId === sessionId ? this.kill(id) : false;
+  }
+
+  killForSessionAccount(sessionId: string, accountUserId: number | null, id: string): boolean {
+    const handle = this.handles.get(id);
+    return handle?.sessionId === sessionId && processHandleAccount(handle) === accountUserId
+      ? this.kill(id)
+      : false;
   }
 
   killSession(sessionId: string): number {
@@ -187,14 +233,24 @@ export class ProcessRegistry {
     return handles.length;
   }
 
+  killAccount(accountUserId: number): number {
+    const handles = [...this.handles.values()].filter((handle) => processHandleAccount(handle) === accountUserId);
+    for (const handle of handles) {
+      if (handle.running()) this.kill(handle.id);
+      else this.remove(handle.id);
+    }
+    return handles.length;
+  }
+
   /** Drop an entry without killing (e.g. an already-exited process cleared from the panel). */
   remove(id: string): boolean {
-    const sessionId = this.handles.get(id)?.sessionId ?? null;
+    const handle = this.handles.get(id);
+    const sessionId = handle?.sessionId ?? null;
     const existed = this.handles.delete(id);
     this.exited.delete(id);
     if (existed) {
       this.settleExitWaiters(id);
-      this.notifySession(sessionId);
+      this.notifySession(sessionId, handle ? processHandleAccount(handle) : null);
     }
     return existed;
   }

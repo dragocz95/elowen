@@ -115,8 +115,9 @@ export interface BrainDeps {
    *  restriction (open mode / tests). Enforced on explicit picks; a saved-but-revoked default
    *  silently falls back to the server default instead of erroring. */
   execAllowed?: (userId: number, exec: string) => boolean;
-  /** Build a Policy from an explicit project-id set captured in delegated execution scopes. */
-  policyForProjects?: (projectIds: number[]) => Policy;
+  /** Build a Policy from an explicit project-id set captured in delegated execution scopes. The optional
+   * contribution account adds only that account's live Sandbox roots. */
+  policyForProjects?: (projectIds: number[], contributionUserId?: number) => Policy;
   /** The Elowen user that anchors platform channel sessions (their token drives the tools) — the admin. */
   platformOwner?: () => number | undefined;
   /** The forked sub-agent runner, when this process owns one. DAEMON-ONLY by construction: the runner

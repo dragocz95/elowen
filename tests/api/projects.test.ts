@@ -9,17 +9,24 @@ import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { openDb } from '../../src/store/db.js';
+import { PluginRegistry } from '../../src/plugins/registry.js';
+import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 
-function makeApp(extra: { engine?: unknown; missionGit?: unknown; tmux?: unknown } = {}) {
+function makeApp(extra: { engine?: unknown; missionGit?: unknown; tmux?: unknown; projectRemoved?: (id: number) => void | Promise<void> } = {}) {
   const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const projects = new ProjectStore(db);
-  const git = new FakeGitReader({ isRepo: true, status: { branch: 'main', ahead: 0, behind: 0, dirty: 2, clean: false }, branches: [{ name: 'main', current: true }], commits: [{ hash: 'abc123', subject: 'init', author: 'me', relative: '1 hour ago' }] });
+  const git = new FakeGitReader({ isRepo: true, status: { branch: 'main', head: 'abc123', upstream: null, ahead: 0, behind: 0, dirty: 2, untracked: 0, clean: false }, remotes: [], branches: [{ name: 'main', current: true }], commits: [{ hash: 'abc123', subject: 'init', author: 'me', relative: '1 hour ago' }] });
+  const plugins = extra.projectRemoved ? (() => {
+    const registry = new PluginRegistry();
+    registry.contextFor('demo', {}, { info() {}, warn() {}, error() {} }).registerProjectRemoved(extra.projectRemoved!);
+    return new PluginRegistryProvider(async () => registry);
+  })() : undefined;
   const app = createServer({
 
     bus: new EventBus(), engine: (extra.engine ?? null) as any, spawn: null as any, tmux: (extra.tmux ?? null) as any,
     missionGit: extra.missionGit as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db), projects, git,
+    clock: new FakeClock(0), config: new ConfigStore(db), projects, git, plugins,
   });
   return { app, db };
 }
@@ -76,6 +83,21 @@ describe('projects api', () => {
     expect(home.status).toBe(400);
     expect((await (await app.request('/projects')).json()).some((p: { id: number }) => p.id === 1)).toBe(true);
   });
+  it('notifies loaded plugins before a Project row is removed', async () => {
+    let db!: ReturnType<typeof openDb>;
+    const seen: number[] = [];
+    const built = makeApp({ projectRemoved: (id) => {
+      seen.push(id);
+      expect(db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id)).toBeTruthy();
+    } });
+    db = built.db;
+    const created = await (await built.app.request('/projects', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'plugin-owned', path: '/p' }),
+    })).json() as { id: number };
+    expect((await built.app.request(`/projects/${created.id}`, { method: 'DELETE' })).status).toBe(200);
+    expect(seen).toEqual([created.id]);
+  });
+
   it('GET /fs/dirs lists sub-directories of a server path and 400s on a bad path', async () => {
     const { app } = makeApp();
     const root = mkdtempSync(join(tmpdir(), 'elowen-fsdirs-'));

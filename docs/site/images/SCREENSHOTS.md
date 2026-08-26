@@ -13,15 +13,10 @@ All assets are captured at **2560×1440**, with the UI language set to English.
 | Asset | Surface and state | Alt text |
 | --- | --- | --- |
 | `web-ui-dashboard.png` | Dashboard (Home) | Dashboard with the hero mini-cosmos, the trunk filament and the activity journal |
-| `web-ui-tasks.png` | Tasks with a task selected | Task workspace with a right-side task detail drawer |
-| `web-ui-kanban.png` | Kanban board | Kanban board with tasks across open, in progress, blocked and closed |
-| `web-ui-timeline.png` | Timeline | Timeline with commits over time and the most active files |
-| `web-ui-escalations.png` | Escalations inbox | Decision inbox with a rejected review awaiting a human reply |
-| `web-ui-sessions.png` | Sessions → Conversations | Session runtime with the brain conversation history |
 | `brain-memory.png` | Memory with a record selected | Memory workspace with a right-side memory detail drawer |
 | `brain-chat.png` | Chat with a technical conversation | Elowen answering a question about a rounding bug in the web chat |
 | `getting-started-chat.png` | Chat with the introduction conversation | Elowen introducing its capabilities in the web chat |
-| `projects-list.png` | Projects registry | Project registry with paths, Pilot notes and PR workflow |
+| `projects-list.png` | Projects registry | Project registry with paths, notes and read-only Git context |
 | `projects-editor.png` | Editor with an open file | Built-in code editor with the project file tree and an open source file |
 | `users-rbac.png` | Users directory | User directory with roles, project boundaries and model permissions |
 | `settings-overview.png` | Settings → System | Elowen System settings with the section rail and service diagnostics |

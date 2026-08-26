@@ -42,4 +42,5 @@ web-dist/
 # one rather than a blanket plugins/*/web/, so a plugin that ships a hand-written (build-free) bundle
 # stays tracked instead of being silently ignored.
 plugins/subagent/web/
+plugins/sandbox/web/
 plugins/msteams/web/

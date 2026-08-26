@@ -13,8 +13,6 @@ import type {
   BrainModelOption,
   SlashCommandDef,
   ElowenConfig,
-  SessionInfo,
-  Task,
 } from '../../../lib/types.ts';
 import type { OverrideKey } from '../fake-daemon/overrides.ts';
 import {
@@ -75,16 +73,6 @@ export class Seed {
   /** Patch the app `GET /config`. */
   config(patch: Partial<ElowenConfig>): Promise<void> {
     return this.response('config', { ...defaultConfig, ...patch });
-  }
-
-  /** Replace the agent-sessions sidebar list `GET /sessions`. */
-  sessions(list: SessionInfo[]): Promise<void> {
-    return this.response('sessions', list);
-  }
-
-  /** Replace the tasks lists `GET /tasks` + `GET /tasks/ready`. */
-  tasks(list: Task[]): Promise<void> {
-    return this.post({ responses: { tasks: list, 'tasks/ready': list } });
   }
 
   /** Arm (or disarm) the fresh-install lane BEFORE navigating: `GET /setup` then reports needsSetup, so

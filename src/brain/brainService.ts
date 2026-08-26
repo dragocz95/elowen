@@ -296,6 +296,7 @@ export class BrainService {
       get memoryService() { return d.memoryService; },
       get memoryCategoryStore() { return d.memoryCategoryStore; },
       get projects() { return d.projects; },
+      sandbox: () => d.plugins?.peek()?.control('sandbox'),
       plugins: () => this.resolvePlugins(),
       toolAuthorityFor: (userId) => toolAuthorityForUser(d, userId),
       get hookAudit() { return d.hookAudit; },
@@ -351,6 +352,9 @@ export class BrainService {
         get users() { return d.users; },
         get projectPath() { return d.projectPath; },
       },
+      get projects() { return d.projects; },
+      get projectPath() { return d.projectPath; },
+      sandbox: () => d.plugins?.peek()?.control('sandbox'),
       maxChannels: () => this.limits().channelSessionCap,
       spawn: (o) => this.spawner.spawn(o), // composition stays in the spawner — single source
       // Verified channel senders get memory too, keyed on their linked account and their own toggles.
@@ -1501,8 +1505,8 @@ export class BrainService {
 
   /** Push a background-process snapshot to the OWNER's live client streams — see
    *  SessionProcessService.broadcastProcesses. */
-  broadcastProcesses(sessionId: string, processes: ProcessInfo[]): void {
-    this.processSvc.broadcastProcesses(sessionId, processes);
+  broadcastProcesses(sessionId: string, accountUserId: number | null, processes: ProcessInfo[]): void {
+    this.processSvc.broadcastProcesses(sessionId, accountUserId, processes);
   }
 
   /** The user's background processes — sessionless spans their whole tree, session-scoped is one

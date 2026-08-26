@@ -42,21 +42,6 @@ function ensureUniqueUserEmailIndex(db: Db): void {
   }
 }
 
-/** Run a statement that touches a PLUGIN-OWNED table from core cleanup code, tolerating the table's
- *  absence. A fresh install with the owning plugin disabled never creates it (its DDL lives in that
- *  plugin's migrations), yet core's destructive paths — epic/project/user delete, admin cleanup — must
- *  still run there AND must still purge the plugin's rows when the tables DO exist (cleanup routed
- *  through the plugin control would silently skip while it is off, stranding orphans that resurface on
- *  re-enable). Only "no such table/column" is treated as the not-installed shape; any other failure
- *  propagates. Today's callers cover the agents tables (missions/mission_pr/agents/notes); the task
- *  tables join them as their domain moves out of core. */
-export function tolerateMissingPluginTables<T>(fn: () => T, fallback: T): T {
-  try { return fn(); } catch (e) {
-    if (e instanceof Error && /no such (table|column)/i.test(e.message)) return fallback;
-    throw e;
-  }
-}
-
 export interface OpenDbOptions {
   /** Create the schema and run migrations (default true). A process that is NOT the migrator — a pooled
    *  sub-agent runner, forked only after the daemon's own openDb returned — passes false: it then opens a
@@ -111,10 +96,11 @@ function migrate(db: Db): void {
   migrateExecIdentity(db);
   migrateExecIdentityDropPrefix(db);
   migrateDocsToolName(db);
+  backfillActivityBuckets(db);
   // LAST, and it must stay last: these run in call order but share ONE `user_version` counter, so a
   // migration with the highest number placed earlier would raise the counter past every migration
   // below it and skip them all in silence.
-  backfillActivityBuckets(db);
+  makeProjectIdsMonotonic(db);
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
@@ -173,8 +159,8 @@ function applyAdditiveMigrations(db: Db): void {
   addColumn(db, 'users', 'advisor_exec', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'advisor_autostart', 'INTEGER NOT NULL DEFAULT 1');
   addColumn(db, 'auth_tokens', 'scope', "TEXT NOT NULL DEFAULT 'full'");
-  // Timeline drill-down: events carry the project they belong to (derived from the task at write
-  // time) so the UI can scope/link an event to its repo. Nullable — mission/signal events have none.
+  // Activity drill-down: events may carry the Project they belong to so the UI can scope and link
+  // historical core or plugin rows. Nullable for project-agnostic events.
   // The index is created here (not in schema.sql) so it runs *after* the column exists on migrated DBs.
   addColumn(db, 'events', 'project_id', 'INTEGER');
   db.exec('CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id)');
@@ -375,14 +361,59 @@ function backfillActivityBuckets(db: Db): void {
   });
 }
 
+/** v16 — rebuild `projects` with a monotonic AUTOINCREMENT id and remove the retired `pr_enabled`
+ * column where an old installation still carries it. Existing ids are copied explicitly. The sequence
+ * is then raised above every extant `project_id` column in the database, without naming plugin tables:
+ * a disabled plugin's orphan row must never attach to a newly-created Project after an old deletion. */
+function makeProjectIdsMonotonic(db: Db): void {
+  runOnce(db, 16, () => {
+    const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'").get() as { sql: string } | undefined;
+    const columns = db.prepare('PRAGMA table_info(projects)').all() as { name: string }[];
+    const names = new Set(columns.map((column) => column.name));
+    const alreadyModern = table?.sql.includes('AUTOINCREMENT') === true && !names.has('pr_enabled');
+    if (!alreadyModern) {
+      db.exec(`
+        CREATE TABLE projects_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          slug TEXT UNIQUE NOT NULL,
+          path TEXT NOT NULL,
+          notes TEXT NOT NULL DEFAULT '',
+          icon TEXT NOT NULL DEFAULT ''
+        );
+        INSERT INTO projects_new (id, slug, path, notes, icon)
+          SELECT id, slug, path, notes, icon FROM projects;
+        DROP TABLE projects;
+        ALTER TABLE projects_new RENAME TO projects;
+      `);
+    }
+    seedProjectSequenceAboveEveryReference(db);
+  });
+}
+
+function seedProjectSequenceAboveEveryReference(db: Db): void {
+  let highest = (db.prepare('SELECT COALESCE(MAX(id), 0) AS value FROM projects').get() as { value: number }).value;
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
+  for (const { name } of tables) {
+    const columns = db.prepare(`PRAGMA table_info(${quoteSqlIdentifier(name)})`).all() as { name: string }[];
+    if (!columns.some((column) => column.name === 'project_id')) continue;
+    const row = db.prepare(`SELECT COALESCE(MAX(project_id), 0) AS value FROM ${quoteSqlIdentifier(name)}`).get() as { value: number };
+    if (row.value > highest) highest = row.value;
+  }
+  if (highest <= 0) return;
+  db.prepare("INSERT INTO sqlite_sequence (name, seq) SELECT 'projects', ? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'projects')").run(highest);
+  db.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'projects' AND seq < ?").run(highest, highest);
+}
+
+function quoteSqlIdentifier(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
 /** v7 — rebuild `users` with `id INTEGER PRIMARY KEY AUTOINCREMENT`.
  *
  *  Without AUTOINCREMENT the id is a bare rowid, which SQLite assigns as max(id)+1 — so deleting the
  *  HIGHEST-numbered user frees that id and hands it to the next account created. Ownership columns
- *  (`tasks.created_by`, `missions.created_by`) reference users by id, so the new account would inherit
- *  the deleted user's task attribution and mission notifications. UserStore.delete now nulls those
- *  columns, which fixes the data already written; this fixes the id reuse itself, so nothing added
- *  later can walk into the same trap.
+ *  Durable account-owned rows reference users by id, so a new account could otherwise inherit deleted
+ *  ownership. This fixes id reuse itself so no present or future store can walk into that trap.
  *
  *  A table rebuild, because AUTOINCREMENT is part of the PRIMARY KEY declaration and SQLite cannot add
  *  it with ALTER TABLE — the same reason v5 had to rebuild brain_session_events.
@@ -443,14 +474,11 @@ function makeUserIdsMonotonic(db: Db): void {
  *  by a deletion, and it is exactly what a recycled id would silently inherit — someone else's
  *  conversations, memories, devices or settings. */
 const USER_REFERENCE_COLUMNS: readonly (readonly [table: string, column: string])[] = [
-  // Temporary physical-table ownership: keep retired work/agents references in the anti-reuse ceiling
-  // until a separately-authorized migration drops those tables. This reads ids only and deletes no rows.
-  ['tasks', 'created_by'], ['missions', 'created_by'],
   ['user_settings', 'user_id'], ['user_push_subscriptions', 'user_id'],
   ['brain_sessions', 'user_id'], ['brain_goals', 'user_id'],
   ['memories', 'user_id'], ['memory_events', 'user_id'], ['memory_categories', 'user_id'],
   ['user_projects', 'user_id'], ['user_prompts', 'user_id'], ['auth_tokens', 'user_id'],
-  ['brain_terminals', 'user_id'], ['user_plugin_config', 'user_id'],
+  ['brain_terminals', 'user_id'], ['user_plugin_config', 'user_id'], ['plugin_secrets', 'owner_id'],
   ['user_external_identities', 'user_id'],
   ['usage_by_origin', 'user_id'], ['brain_session_origins', 'user_id'],
 ];
@@ -469,10 +497,7 @@ function seedUserSequenceAboveEveryReference(db: Db): void {
   let highest = (db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM users').get() as { m: number }).m;
   for (const [table, column] of USER_REFERENCE_COLUMNS) {
     if (!tableExists.get(table)) continue; // a database predating this table simply has nothing to contribute
-    // A retired plugin table may exist at an older physical schema version without this column; then no
-    // row ever referenced a user through it, so the tolerant read correctly contributes zero.
-    const m = tolerateMissingPluginTables(
-      () => (db.prepare(`SELECT COALESCE(MAX(${column}), 0) AS m FROM ${table}`).get() as { m: number }).m, 0);
+    const m = (db.prepare(`SELECT COALESCE(MAX(${column}), 0) AS m FROM ${table}`).get() as { m: number }).m;
     if (m > highest) highest = m;
   }
   if (highest <= 0) return; // nothing has ever referenced a user — the counter may start from scratch

@@ -239,30 +239,33 @@ describe('ConfigStore element-level sanitisation on corrupt stored JSON (finding
   });
 
 
-  it('retires agents/work config and discards their legacy tokens on the next settings write', () => {
+  it('scrubs retired agents/work config, migration markers and unowned GitHub tokens without copying them', () => {
     const db2 = openDb(':memory:');
     db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({
       ghToken: 'top-level-secret',
+      autopilot: { prEnabled: true },
+      agentsConfigMigrated: true,
+      agentsPluginConfigMigrated2: true,
+      unrelatedInstallationKey: { keep: true },
       plugins: {
         enabled: ['files', 'agents', 'work'], removed: ['agents'],
-        config: { agents: { ghToken: 'plugin-secret' }, files: { maxBytes: 10 } },
+        config: { agents: { ghToken: 'plugin-secret' }, work: { legacy: true }, files: { maxBytes: 10 } },
       },
     }));
     const cs = new ConfigStore(db2);
-    expect(cs.get().plugins.enabled).toEqual(['files']);
-    expect(cs.pluginConfig('agents')).toEqual({});
-    expect((db2.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string }).data).toContain('top-level-secret');
-
-    cs.update({ autoUpdate: true });
+    cs.migrateRetiredPluginConfig();
     const stored = (db2.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string }).data;
-    const parsed = JSON.parse(stored) as { plugins: { enabled: string[]; removed: string[]; config: Record<string, unknown> } };
+    const parsed = JSON.parse(stored) as Record<string, any>;
     expect(stored).not.toContain('top-level-secret');
     expect(stored).not.toContain('plugin-secret');
-    expect(parsed.plugins.enabled).not.toContain('agents');
-    expect(parsed.plugins.enabled).not.toContain('work');
-    expect(parsed.plugins.removed).not.toContain('agents');
-    expect(parsed.plugins.config).not.toHaveProperty('agents');
-    expect(parsed.plugins.config).not.toHaveProperty('work');
+    expect(parsed).not.toHaveProperty('ghToken');
+    expect(parsed).not.toHaveProperty('autopilot');
+    expect(parsed).not.toHaveProperty('agentsConfigMigrated');
+    expect(parsed).not.toHaveProperty('agentsPluginConfigMigrated2');
+    expect(parsed.unrelatedInstallationKey).toEqual({ keep: true });
+    expect(parsed.plugins.enabled).toEqual(['files']);
+    expect(parsed.plugins.removed).toEqual([]);
+    expect(parsed.plugins.config).toEqual({ files: { maxBytes: 10 } });
   });
 
   it('drops non-string hiddenPresets elements on read', () => {

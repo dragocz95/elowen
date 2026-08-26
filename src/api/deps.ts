@@ -24,6 +24,8 @@ export interface ServerDeps {
   /** The sub-agent pool's live state, for `/health`. Absent in a process with no pool (the in-memory test
    *  database, and the runner itself), which is reported as an absent block rather than a fake empty one. */
   subagentPool?: () => SubagentPoolStats;
+  /** Stop daemon- and runner-owned terminal processes for an account before deletion. */
+  killAccountProcesses?: (userId: number) => Promise<number>;
   bus: EventBus;
   project: { id: number; path: string };
   clock: Clock;
@@ -82,6 +84,8 @@ export interface ServerDeps {
   /** Each account's own values for plugins that declare a `userConfigSchema`. Reachable by the account
    *  itself only — the settings routes never take a user id from the request. */
   userPluginConfig?: import('../store/userPluginConfigStore.js').UserPluginConfigStore;
+  /** Core encrypted plugin credential vault and its authenticated-key readiness. */
+  pluginSecrets?: import('../store/pluginSecretVault.js').PluginSecretVault;
   /** Assigns memories to one of the owner's categories via a cheap model (owner-scoped). Absent → the
    *  manual reclassify route 400s and the curator never auto-categorizes new memories. */
   memoryCategorizer?: import('../brain/memoryCategorizer.js').MemoryCategorizer;

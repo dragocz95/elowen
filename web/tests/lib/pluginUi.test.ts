@@ -15,12 +15,19 @@ const C = (name: string) => {
 describe('plugin UI runtime', () => {
   it('publishes the versioned shared editor surface needed by first-class plugin pages', () => {
     ensurePluginUiRuntime();
-    expect(PLUGIN_UI_API_VERSION).toBe(2);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(2);
+    expect(PLUGIN_UI_API_VERSION).toBe(3);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(3);
     expect(window.ElowenUiRuntime?.components).toHaveProperty('PluginConfigEditor');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('Avatar');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('usePluginConfigDraft');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('useUsers');
+    expect(window.ElowenUiRuntime?.hooks).toEqual(expect.objectContaining({
+      useQuery: expect.any(Function),
+      useMutation: expect.any(Function),
+      useInfiniteQuery: expect.any(Function),
+      useQueries: expect.any(Function),
+      useQueryClient: expect.any(Function),
+    }));
   });
 });
 

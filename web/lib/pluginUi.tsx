@@ -16,7 +16,7 @@
 import * as React from 'react';
 import * as ReactDom from 'react-dom';
 import * as JsxRuntime from 'react/jsx-runtime';
-import { useQueries } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ComponentType, ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 // The contract (runtime surface, registration shape, Window globals) lives in elowen-plugin-ui-kit —
@@ -115,7 +115,7 @@ import { eventIcon } from './eventMeta';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 2;
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 3;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -319,9 +319,10 @@ export function ensurePluginUiRuntime(): void {
       useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
       useMobile, useProjectFilter, useFillHeight,
       useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin, useResetUsage,
-      // Batched queries against the host's react-query client: a bundle that imported the library
-      // itself would get a second QueryClient context and read an empty cache.
-      useQueries,
+      // Raw React Query hooks against the host's one QueryClient. A bundle importing the library itself
+      // would get a second context and an empty cache, so every query/mutation/infinite-query path crosses
+      // this runtime surface instead.
+      useQuery, useMutation, useInfiniteQuery, useQueries, useQueryClient,
     },
     // Pure helpers shared with plugin bundles (formatting, navigation and error shaping).
     utils: {

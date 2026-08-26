@@ -11,6 +11,9 @@ export interface Policy {
 export interface PolicyDeps {
   userProjects: { forUser(userId: number): number[]; isAdmin(userId: number): boolean };
   projects: { get(id: number): { path: string } | null | undefined };
+  /** Live supplemental roots owned by another domain (Sandbox workspaces). Each row names its Project so
+   * core can intersect it with the account's CURRENT assignment instead of trusting a path-only widening. */
+  supplementalPaths?: (userId: number, projectIds: readonly number[]) => { projectId: number; path: string }[];
 }
 
 /** Resolve the repo-access policy for a user from Elowen's existing project assignments. */
@@ -21,6 +24,22 @@ export function resolvePolicy(deps: PolicyDeps, userId: number): Policy {
   const ids = new Set(deps.userProjects.forUser(userId));
   return {
     allowedProjectIds: ids,
-    allowedPaths: () => [...ids].map((id) => deps.projects.get(id)?.path).filter((p): p is string => !!p),
+    allowedPaths: () => {
+      // A session keeps the project set it was minted with, but removals apply immediately: re-read the
+      // assignment and intersect it with that frozen set. A later grant waits for a respawn rather than
+      // silently widening a live session; a revocation never does.
+      const assigned = new Set(deps.userProjects.forUser(userId));
+      const currentIds = [...ids].filter((id) => assigned.has(id));
+      const roots = currentIds.map((id) => deps.projects.get(id)?.path).filter((p): p is string => !!p);
+      if (!deps.supplementalPaths || currentIds.length === 0) return roots;
+      const allowed = new Set(currentIds);
+      let supplemental: { projectId: number; path: string }[] = [];
+      try { supplemental = deps.supplementalPaths(userId, currentIds); }
+      catch { return roots; }
+      for (const root of supplemental) {
+        if (allowed.has(root.projectId) && root.path && !roots.includes(root.path)) roots.push(root.path);
+      }
+      return roots;
+    },
   };
 }

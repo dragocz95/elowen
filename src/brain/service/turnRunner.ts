@@ -1,4 +1,5 @@
 import { sendLockKey } from '../session/liveRegistry.js';
+import type { KnownControls } from '../../plugins/api.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import type { ToolPolicy } from '../../plugins/policyContext.js';
 import type { HookAuditBuffer } from '../../shared/hookAudit.js';
@@ -90,6 +91,7 @@ interface TurnRunnerDeps {
   memoryService?: MemoryService;
   memoryCategoryStore?: BrainDeps['memoryCategoryStore'];
   projects?: BrainDeps['projects'];
+  sandbox?(): KnownControls['sandbox'] | undefined;
   /** The daemon-wide plugin registry (undefined when plugins aren't wired at all). */
   plugins(): Promise<PluginRegistry | undefined>;
   /** What a user may reach: the grant an admin gave that account, minus their `disabled_tools` and the

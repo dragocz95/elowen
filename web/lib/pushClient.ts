@@ -1,33 +1,13 @@
 import { BASE } from './elowenClient';
 
-// Client-side web-push helpers. The service worker (web/public/sw.js) mirrors `actionToRequest` in
-// plain JS — keep the two in sync (the mapping is unit-tested here).
+// Client-side web-push helpers. Notification actions are presentation only: every click opens the
+// authenticated app/deep-link and no service worker action calls a retired domain API.
 
-/** A single same-origin request the service worker performs for an inline notification action. */
-interface PushActionStep { method: 'POST' | 'PATCH'; path: string; body?: unknown }
-/** Either open the app at a url, or run a sequence of requests (each must succeed before the next). */
-export type PushActionPlan = { kind: 'open'; url: string } | { kind: 'fetch'; steps: PushActionStep[] };
+export type PushActionPlan = { kind: 'open'; url: string };
+interface PushActionData { url?: string }
 
-interface PushActionData { taskId?: string; missionId?: string; session?: string; url?: string }
-
-/** Map a notification action id + payload data to what the service worker should do. Unknown actions
- *  (and the explicit `open`) just open the app. */
-export function actionToRequest(action: string, data: PushActionData): PushActionPlan {
-  switch (action) {
-    case 'approve':
-      return { kind: 'fetch', steps: [{ method: 'POST', path: `${BASE}/tasks/${data.taskId}/approve-gate` }] };
-    case 'rerun':
-      return { kind: 'fetch', steps: [
-        { method: 'PATCH', path: `${BASE}/tasks/${data.taskId}`, body: { status: 'open' } },
-        { method: 'PATCH', path: `${BASE}/missions/${data.missionId}`, body: { action: 'resume' } },
-      ] };
-    case 'allow':
-      return { kind: 'fetch', steps: [{ method: 'POST', path: `${BASE}/sessions/${encodeURIComponent(data.session ?? '')}/keys`, body: { keys: ['Enter'] } }] };
-    case 'reject':
-      return { kind: 'fetch', steps: [{ method: 'POST', path: `${BASE}/sessions/${encodeURIComponent(data.session ?? '')}/keys`, body: { keys: ['Escape'] } }] };
-    default:
-      return { kind: 'open', url: data.url ?? '/' };
-  }
+export function actionToRequest(_action: string, data: PushActionData): PushActionPlan {
+  return { kind: 'open', url: data.url ?? '/' };
 }
 
 export function isPushSupported(): boolean {

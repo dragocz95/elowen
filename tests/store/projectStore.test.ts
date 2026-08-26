@@ -47,6 +47,12 @@ describe('ProjectStore', () => {
   it('returns false when removing a missing project', () => {
     expect(store.remove(999)).toBe(false);
   });
+  it('never reuses a deleted Project id', () => {
+    const first = store.create({ slug: 'first', path: '/first' });
+    expect(store.remove(first.id)).toBe(true);
+    const second = store.create({ slug: 'second', path: '/second' });
+    expect(second.id).toBeGreaterThan(first.id);
+  });
 });
 
 describe('ProjectStore.remove (cascade)', () => {

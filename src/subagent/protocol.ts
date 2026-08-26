@@ -75,6 +75,8 @@ export type DaemonToRunner =
   | { type: 'release'; releaseId: string; channelId: string }
   /** Query work owned by runner-local plugin closures before replacing them on hot reload. */
   | { type: 'activity'; activityId: string }
+  /** Stop every terminal process owned by one account before core deletes that account. */
+  | { type: 'killAccountProcesses'; requestId: string; userId: number }
   /** The daemon began its shutdown drain: park every turn here at its next step boundary too. One-way,
    *  no reply — the poll below observes convergence. */
   | { type: 'drain' }
@@ -105,6 +107,7 @@ export type RunnerToDaemon =
   | { type: 'error'; turnId: string; message: string }
   | { type: 'released'; releaseId: string; busy: boolean }
   | { type: 'activity'; activityId: string; activeCount: number }
+  | { type: 'accountProcessesKilled'; requestId: string; killed: number }
   /** The answer to a `drainStatus` poll: this runner's own mid-step turn count. */
   | { type: 'drainStatus'; drainId: string; midStep: number }
   /** The answer to a `steer` frame. `delivered` only once the message is confirmed in the child's
@@ -199,6 +202,12 @@ export function parseDaemonMessage(raw: unknown): DaemonToRunner | undefined {
     const activityId = str(v.activityId);
     return activityId ? { type: 'activity', activityId } : undefined;
   }
+  if (v.type === 'killAccountProcesses') {
+    const requestId = str(v.requestId);
+    return requestId && Number.isSafeInteger(v.userId) && (v.userId as number) > 0
+      ? { type: 'killAccountProcesses', requestId, userId: v.userId as number }
+      : undefined;
+  }
   if (v.type === 'drain') return { type: 'drain' };
   if (v.type === 'drainStatus') {
     const drainId = str(v.drainId);
@@ -256,6 +265,12 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
       const activeCount = v.activeCount;
       return activityId && Number.isSafeInteger(activeCount) && (activeCount as number) >= 0
         ? { type: 'activity', activityId, activeCount: activeCount as number }
+        : undefined;
+    }
+    case 'accountProcessesKilled': {
+      const requestId = str(v.requestId);
+      return requestId && Number.isSafeInteger(v.killed) && (v.killed as number) >= 0
+        ? { type: 'accountProcessesKilled', requestId, killed: v.killed as number }
         : undefined;
     }
     case 'drainStatus': {

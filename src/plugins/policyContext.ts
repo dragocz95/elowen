@@ -179,6 +179,13 @@ export function runWithIdentity<T>(identity: TurnIdentity, fn: () => T): T {
   return store.run({ identity }, fn);
 }
 
+/** Core-only bridge for account-owned infrastructure that must run just before a turn scope exists. It
+ * preserves every ambient field and replaces only contribution ownership, so plugin controls can resolve
+ * the account themselves instead of accepting an arbitrary user id from another plugin. */
+export function runWithContributionUser<T>(userId: number, fn: () => T): T {
+  return store.run({ ...store.getStore(), contributionUserId: userId }, fn);
+}
+
 /** The Policy in effect for the current prompt turn, or undefined outside a `runWithPolicy` scope. */
 export function currentPolicy(): Policy | undefined {
   return store.getStore()?.policy;

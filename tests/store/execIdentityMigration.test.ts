@@ -103,7 +103,7 @@ describe('exec identity persistence migration', () => {
     // half-migrated database — the one state that could not be told apart — never exists.
     db = openDb(path);
     expect(snapshot()).toEqual(before);
-    expect(db.pragma('user_version', { simple: true })).toBe(15);
+    expect(db.pragma('user_version', { simple: true })).toBe(16);
     db.close();
   });
 
@@ -122,7 +122,7 @@ describe('exec identity persistence migration', () => {
     ancient.close();
 
     const db = openDb(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(15);
+    expect(db.pragma('user_version', { simple: true })).toBe(16);
     // The row survives untouched: an exec value cannot need rewriting in a column that does not exist.
     expect(db.prepare('SELECT id FROM missions').all()).toEqual([{ id: 'm1' }]);
     db.close();

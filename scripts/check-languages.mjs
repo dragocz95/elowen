@@ -132,27 +132,6 @@ const REGISTRY_PLUGIN_KEYS = [
   'managePicker.groupThreads',  // cronjob JobsSettings: the same picker's thread group
 ];
 
-// Whole namespaces owned by a registry plugin's UI. When `work` and `agents` left the package they took
-// four worlds with them (Tasks, Kanban, Timeline, Stats) and the ~200 dictionary keys those screens read.
-// The keys stay HERE because the plugin reads them from the host dictionary at runtime — deleting them
-// would render `undefined` across an installed plugin's UI, which is exactly the trap the editor's move
-// nearly walked into.
-//
-// Listed by namespace rather than key because the whole namespace belongs to one plugin now: a name is
-// added or dropped in that repository, and this repo has no way to see it. The cost is honest and worth
-// stating — a genuinely dead key inside these namespaces no longer gets caught here, and that hygiene
-// moves to the plugin that owns them. The durable fix is the one the editor took: move the strings into
-// the plugin's own manifest (`web.strings` + i18n/) so the host dictionary stops carrying them at all.
-const REGISTRY_PLUGIN_NAMESPACES = [
-  'tasks',     // work: TasksView, TaskCard, TaskModal, TaskDetailPane, TaskConversation, EpicGroup…
-  'calendar',  // work: the timeline world's date axis and range picker
-  'stats',     // work: StatsView — usage, cost and pulse panels
-  'missions',  // agents: mission list, detail and flow
-  'sessions',  // agents: the live session surface
-  'help',      // work/agents: the HelpTip copy for task, phase and mission fields (help.task*, addPhaseGoal)
-  'projects.noChanges', // work: TaskConversation's empty diff state, the one project key its UI reads
-];
-
 function collectLeaves(dict, path = '', out = []) {
   for (const [key, value] of Object.entries(dict)) {
     const keyPath = path ? `${path}.${key}` : key;
@@ -187,7 +166,6 @@ const sourceIdentifiers = new Set(sourceBlob.match(/[A-Za-z0-9_]+/g));
 for (const leaf of collectLeaves(dictionaries.en)) {
   if (DYNAMIC_NAMESPACES.some((ns) => leaf.path.startsWith(`${ns}.`))) continue;
   if (REGISTRY_PLUGIN_KEYS.includes(leaf.path)) continue;
-  if (REGISTRY_PLUGIN_NAMESPACES.some((ns) => leaf.path === ns || leaf.path.startsWith(`${ns}.`))) continue;
   if (!sourceIdentifiers.has(leaf.name)) {
     errors.push(`web: ${leaf.path} is never referenced by any web source (dead key — delete it from every locale, or add its namespace to DYNAMIC_NAMESPACES if it is accessed with a computed key)`);
   }

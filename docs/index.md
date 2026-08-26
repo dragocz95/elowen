@@ -11,18 +11,17 @@ Start here if you're new to Elowen:
 
 | # | Section | Description |
 |---|---------|-------------|
-| 1 | [Getting Started](site/01-getting-started.md) | Quick start, prerequisites, first task |
+| 1 | [Getting Started](site/01-getting-started.md) | Quick start, prerequisites, first conversation |
 | 2 | [Install](site/02-install.md) | npm global, Docker, source, provisioning |
-| 3 | [Tasks & Missions](site/03-tasks-missions.md) | Lifecycle, dependencies, scheduling, autopilot |
-| 4 | [Agents & Autonomy](site/04-agents-autonomy.md) | Providers, L0–L3, overseer, deriver, safety |
-| 5 | [Web UI](site/05-web-ui.md) | Dashboard tour — every page explained |
-| 6 | [CLI](site/06-cli.md) | Command reference, chat, environment |
-| 7 | [Brain & Chat](site/07-brain-chat.md) | AI assistant, conversations, memory, personality |
-| 8 | [Plugins](site/08-plugins.md) | Discord, cron, skills, files, terminal, and more |
-| 9 | [Projects & Workflow](site/09-projects-workflow.md) | Git integration, PR workflow, editor |
-| 10 | [Configuration](site/10-configuration.md) | Environment, settings, providers |
-| 11 | [Account & Security](site/11-account-security.md) | Auth, RBAC, push notifications |
-| 12 | [Architecture](site/12-architecture.md) | Module overview, timer loops, data flow |
+| 3 | [Agents & Autonomy](site/15-autonomy-safety.md) | Goals, delegation, workflows, permissions |
+| 4 | [Web UI](site/05-web-ui.md) | Core and plugin-owned pages |
+| 5 | [CLI](site/06-cli.md) | Command reference, chat, environment |
+| 6 | [Brain & Chat](site/09-brain-chat.md) | AI assistant, conversations, memory, personality |
+| 7 | [Plugins](site/23-plugins.md) | Discord, cron, skills, files, terminal, and more |
+| 8 | [Projects & Git](site/16-projects-workflow.md) | Project tenancy and read-only checkout state |
+| 9 | [Configuration](site/26-configuration.md) | Environment, settings, providers |
+| 10 | [Account & Security](site/27-users-access.md) | Auth, RBAC, push notifications |
+| 11 | [Architecture](ARCHITECTURE.md) | Module overview, timer loops, data flow |
 
 ## Dev docs
 

@@ -15,27 +15,12 @@
 // no-op, or data-dropping migration fails the run loudly. Flip any expected value to its pre-migration
 // form and the run goes red.
 //
-// It also carries the plugin-extraction upgrade scenario (plan risk 2): the fixture holds a RUNNING
-// mission from the pre-plugin core era, in tables the daemon no longer owns. After the upgrade the
-// `agents` plugin must be auto-enabled and the plugin-owned autopilot keys COPIED into
-// plugins.config.agents with autopilot.* left intact (lossless rollback); the legacy rows must survive
-// untouched; a plugin that GRANDFATHERS one of those tables must adopt it (rows included) through
-// ctx.db().migrate() at boot and serve it; and /missions — a path whose owner is switched on but not
-// installed on this host — must answer an explicit 503 rather than a 404 that reads as data loss.
+// It also carries the retired-domain upgrade boundary: non-empty legacy tables survive untouched and a
+// fixture plugin can explicitly adopt one through ctx.db().migrate(), while top-level PR/autopilot config,
+// unowned GitHub tokens, retired plugin slices and their migration markers are scrubbed rather than copied.
 //
-// WHAT IS NOT HERE. `agents` and `work` left this package for the plugin registry, so nothing on this
-// host can serve /missions or /tasks and no amount of fixture-building changes that. The daemon-side
-// half of every assertion is re-anchored above; the plugin-side half — the agents boot reconcile that
-// re-opens a zombie in_progress phase — moved to the registry repo, which owns that code
-// (elowen-plugins → tests/agents-registration.test.ts, "reconcileZombies re-opens a task whose agent
-// session died").
-//
-// NO NETWORK. The config migration switches four extracted plugins on, and a daemon that finds an
-// enabled plugin missing from disk asks the marketplace to restore it (bootstrap.ts →
-// marketplace.reconcileEnabled). Left alone that clones github.com/dragocz95/elowen-plugins from a CI
-// runner: slow, flaky, and it would decide the outcome of the assertions below. ELOWEN_PLUGIN_REGISTRY
-// therefore points at a local path that does not exist, so the reconcile fails immediately and offline,
-// which is exactly the state the 503 is the answer to.
+// NO NETWORK. ELOWEN_PLUGIN_REGISTRY points at a local path that does not exist, so marketplace reconcile
+// stays deterministic and offline.
 
 import Database from 'better-sqlite3';
 import { spawn } from 'node:child_process';
@@ -44,7 +29,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildOldFixture, writeAdopterPlugin, seedRegistryCache, ADOPTER_PLUGIN, OLD_ADMIN, BOOTSTRAP } from './build-fixture.mjs';
+import { buildOldFixture, writeAdopterPlugin, ADOPTER_PLUGIN, OLD_ADMIN, BOOTSTRAP } from './build-fixture.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const daemonEntry = join(repoRoot, 'dist', 'daemon', 'index.js');
@@ -112,11 +97,9 @@ async function main() {
     // 1) Build the OLD-schema fixture (user_version = 0, old tool names, retired tables).
     console.log('Building old-schema fixture at', dbPath);
     const expected = buildOldFixture(dbPath);
-    // The extracted-vertical stand-in, installed the way the marketplace installs a plugin, and the
-    // registry-cache manifest that lets the daemon name /missions' absent owner. Both must exist before
-    // the first boot — the boot scan is what discovers them.
+    // The extracted-vertical stand-in must exist before the first boot so its migration adopts the
+    // non-empty legacy table without core taking ownership of it.
     writeAdopterPlugin(dataDir);
-    seedRegistryCache(dataDir, 'agents', ['/missions']);
 
     // Sanity: confirm the fixture really starts un-migrated, else the test would pass vacuously.
     {
@@ -182,19 +165,9 @@ async function main() {
     });
     assert(bootstrapLogin.status === 401, `bootstrap creds rejected — setup not re-triggered (HTTP ${bootstrapLogin.status})`);
 
-    // 3d) The extracted vertical survived the upgrade, in the two halves this host can observe.
+    // 3d) A plugin that explicitly grandfathers the legacy table adopts it at boot; core neither enables
+    // a retired owner nor rewrites the rows.
     const auth = { authorization: `Bearer ${login.token}` };
-
-    // The auto-enable reached the RUNNING daemon, not just the settings row: /missions is a path the
-    // daemon now attributes to an enabled owner. The code for that owner is in the plugin registry and
-    // not on this host, so the honest answer is 503 "enabled but not installed" — 404 would claim the
-    // endpoint never existed, which for a mission list reads as data loss. Had the migration failed to
-    // enable `agents`, nothing would claim the path and this WOULD be a 404.
-    const missionsRes = await fetch(`${baseUrl}/missions`, { headers: auth });
-    const missionsBody = await missionsRes.json().catch(() => null);
-    assert(missionsRes.status === 503, `/missions answers 503 for the auto-enabled but uninstalled owner (HTTP ${missionsRes.status})`);
-    eq(missionsBody, { error: 'agents plugin is enabled but not installed' },
-      '/missions names the absent owner rather than 404-ing the path away');
 
     // The rows themselves: a plugin that grandfathers `missions` adopts the legacy table at boot and
     // serves the pre-upgrade mission. `missionsSeenAtMigration` is recorded INSIDE that migration, so it
@@ -240,11 +213,6 @@ async function main() {
       eq(perm.tools, expected.expectedPermTools, 'v1 renamed permission tool keys to TitleCase');
       eq(perm.bash, { 'git status*': 'allow' }, 'v1 left the bash permission pattern untouched');
 
-      // v1 teeth: rolePolicies tool allow-list inside the settings blob renamed ('*' preserved).
-      const settingsData = JSON.parse(db.prepare('SELECT data FROM settings WHERE id = 1').get().data);
-      const roleTools = settingsData.plugins.config.someplatform.rolePolicies[0].tools;
-      eq(roleTools, expected.expectedRolePolicyTools, 'v1 renamed rolePolicies tools (wildcard preserved)');
-
       // Data intact: brain session + messages survive with content and get the new columns.
       const sess = db.prepare('SELECT * FROM brain_sessions WHERE id = ?').get('sess-old-1');
       assert(sess && sess.title === 'Legacy chat' && sess.model === 'old-model', 'brain_session survived intact');
@@ -269,31 +237,18 @@ async function main() {
         eq(present, 0, `v6 dropped the retired table ${t}`);
       }
 
-      // Agents-plugin one-shot migrations (extraction F2): the plugin was auto-enabled for this
-      // pre-existing install, and the plugin-owned autopilot keys were COPIED into
-      // plugins.config.agents while autopilot.* kept its values (lossless rollback).
+      // Retired configuration is scrubbed, never copied into a new owner. The fixture leaves an unrelated
+      // plugin enabled to prove the cleanup is scoped rather than replacing the whole plugin block.
       const migrated = JSON.parse(db.prepare('SELECT data FROM settings WHERE id = 1').get().data);
-      assert(migrated.plugins.enabled.includes('agents'), 'agents plugin auto-enabled in plugins.enabled');
-      eq(migrated.agentsConfigMigrated, true, 'agents auto-enable marker persisted (one-shot)');
-      eq(migrated.agentsPluginConfigMigrated, true, 'agents config-copy marker persisted (one-shot)');
-      const agentsSlice = migrated.plugins.config.agents;
-      eq(agentsSlice.overseerModel, 'legacy-overseer-model', 'overseerModel copied into plugins.config.agents');
-      eq(agentsSlice.prBaseBranch, 'develop', 'prBaseBranch copied into plugins.config.agents');
-      eq(agentsSlice.prAutoOpen, true, 'prAutoOpen copied into plugins.config.agents');
-      eq(agentsSlice.prVerifyCommand, 'npm run verify', 'prVerifyCommand copied into plugins.config.agents');
-      eq(migrated.autopilot.overseerModel, 'legacy-overseer-model', 'autopilot.overseerModel untouched (copy, not move)');
-
-      // Config wave 2 (batch 3a): the remaining agents-only keys + the top-level ghToken were COPIED
-      // into the slice by their own one-shot migration, with the originals kept for rollback.
-      eq(migrated.agentsPluginConfigMigrated2, true, 'agents wave-2 config-copy marker persisted (one-shot)');
-      eq(agentsSlice.pilotExec, 'claude:opus', 'pilotExec copied into plugins.config.agents');
-      eq(agentsSlice.overseerExec, 'claude:sonnet', 'overseerExec copied into plugins.config.agents');
-      eq(agentsSlice.reviewOnDone, true, 'reviewOnDone copied into plugins.config.agents');
-      eq(agentsSlice.tddMode, true, 'tddMode copied into plugins.config.agents');
-      eq(agentsSlice.prEnabled, true, 'prEnabled copied into plugins.config.agents');
-      eq(agentsSlice.ghToken, 'legacy-gh-token', 'ghToken copied into plugins.config.agents');
-      eq(migrated.autopilot.pilotExec, 'claude:opus', 'autopilot.pilotExec untouched (copy, not move)');
-      eq(migrated.ghToken, 'legacy-gh-token', 'top-level ghToken untouched (copy, not move)');
+      assert(!migrated.plugins.enabled.includes('agents'), 'agents plugin is not auto-enabled');
+      assert(!migrated.plugins.enabled.includes('work'), 'work plugin is not auto-enabled');
+      assert(!Object.hasOwn(migrated, 'autopilot'), 'legacy autopilot block removed');
+      assert(!Object.hasOwn(migrated, 'ghToken'), 'legacy top-level GitHub token removed');
+      assert(!Object.hasOwn(migrated, 'agentsConfigMigrated'), 'legacy agents migration marker removed');
+      assert(!Object.hasOwn(migrated, 'agentsPluginConfigMigrated'), 'legacy agents config marker removed');
+      assert(!Object.hasOwn(migrated, 'agentsPluginConfigMigrated2'), 'legacy agents wave-2 marker removed');
+      assert(!Object.hasOwn(migrated.plugins.config, 'agents'), 'legacy agents plugin slice removed');
+      assert(!Object.hasOwn(migrated.plugins.config, 'work'), 'legacy work plugin slice removed');
 
       // The grandfathered plugin schema adopted the OLD tables without touching the rows: each step
       // bookkept exactly once in plugin_migrations, and the legacy rows still there afterwards.

@@ -2,6 +2,7 @@ import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import type { PluginHostPush } from '../plugins/api.js';
+import { runWithContributionUser } from '../plugins/policyContext.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -16,6 +17,7 @@ import { UserPromptStore } from '../store/userPromptStore.js';
 import { PlatformLinkConflictError, UserSettingStore } from '../store/userSettingStore.js';
 import { platformIdentity } from '../shared/platformIdentity.js';
 import { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
+import { PluginSecretVault } from '../store/pluginSecretVault.js';
 import { isPluginAllowedForUser } from '../shared/pluginAccess.js';
 import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
@@ -50,7 +52,7 @@ import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js'
 import { isSubagentSession } from '../brain/sessionId.js';
 import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
-import { setSpillNamespaceResolver } from '../shared/paths.js';
+import { dataDir, dbPath as configuredDbPath, setSpillNamespaceResolver } from '../shared/paths.js';
 import { setCompactionFailureLimit } from '../brain/session/compactionCircuitBreaker.js';
 import { makeToolOutputPolicy } from '../brain/toolOutput.js';
 import { BUILTIN_TOOL_OUTPUT_SHOWN } from '../brain/tools/index.js';
@@ -67,7 +69,10 @@ import { resolvePolicy } from '../plugins/policy.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { isExecAllowedForUser, isModelVisibleForUser, elowenExec } from '../shared/execs.js';
+import { webBaseUrl } from '../cli/installInfo.js';
+import { trustedPublicWebUrl } from '../shared/publicWebUrl.js';
 import { WORKFLOW_ADD_NODES_RPC, type WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
 const log = logger('daemon');
@@ -150,7 +155,18 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const db: Db = openDb(opts.dbPath, opts.migrate === false ? { migrate: false } : {});
   db.prepare('INSERT OR IGNORE INTO projects (id,slug,path) VALUES (?,?,?)').run(opts.project.id, opts.project.slug, opts.project.path);
   const tmux = opts.tmux;
+  const pluginSecrets = opts.dbPath === ':memory:'
+    ? new PluginSecretVault(db, { key: randomBytes(32), allowKeyInitialization: true })
+    : new PluginSecretVault(db, {
+        keyPath: join(opts.dbPath === configuredDbPath(process.env) ? dataDir(process.env) : dirname(opts.dbPath), 'plugin-secrets.key'),
+        allowKeyInitialization: opts.migrate !== false,
+      });
+  const canonicalPublicWebUrl = trustedPublicWebUrl(webBaseUrl());
   const config = new ConfigStore(db);
+  if (opts.migrate !== false) config.migrateRetiredPluginConfig();
+  // Sandbox now owns Terminal's account HOME and confinement setting. Existing installs that had Terminal
+  // enabled receive the bundled owner first, while the legacy key remains stored for rollback only.
+  if (opts.migrate !== false) config.migrateSandboxPlugin();
   // One-shot copy of the core `lspEnabled` toggle into plugins.config.lsp + auto-enable of the
   // extracted `lsp` plugin for pre-existing installs (lossless — lspEnabled keeps its value for
   // rollback). The plugin's own service seeds its manager from that slice at start.
@@ -232,9 +248,16 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // one resolver. Named (rather than inlined into the brain deps below) because the sub-agent runner has
   // to re-derive a delegated child's Policy from the same expression the daemon used — two copies of it
   // would be two ways for a child to end up scoped differently in the two processes.
-  const policyForProjects = (ids: number[]): Policy => ({
+  const policyForProjects = (ids: number[], accountUserId?: number): Policy => ({
     allowedProjectIds: new Set(ids),
-    allowedPaths: () => ids.map((id) => projects.get(id)?.path).filter((p): p is string => !!p),
+    allowedPaths: () => {
+      const roots = ids.map((id) => projects.get(id)?.path).filter((p): p is string => !!p);
+      if (accountUserId === undefined) return roots;
+      for (const workspace of sandboxWorkspaceRoots(accountUserId, ids)) {
+        if (!roots.includes(workspace.path)) roots.push(workspace.path);
+      }
+      return roots;
+    },
   });
   // WHO a platform sender is. Driven entirely by the identity descriptors (src/shared/platformIdentity.ts)
   // — a platform literal here is precisely the duplication that left Telegram unlinkable while core
@@ -342,6 +365,14 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // The provider's own memo is a Promise, which a synchronous status read cannot await; refreshed by the
   // same `.then` that refreshes the output-show snapshot, so it can never lag behind a reload.
   let loadedPluginRegistry: PluginRegistry | undefined;
+  /** Resolve Sandbox roots from the LIVE merged registry. A missing/invalid control contributes nothing;
+   * callers retain the registered Project roots and never widen from a stale plugin generation. */
+  function sandboxWorkspaceRoots(accountUserId: number, projectIds: readonly number[]): { projectId: number; path: string }[] {
+    const control = loadedPluginRegistry?.control('sandbox');
+    if (!control) return [];
+    try { return runWithContributionUser(accountUserId, () => control.workspaceRoots({ projectIds })); }
+    catch { return []; }
+  }
   // Same late binding for the push transport: the PushSender is a bootstrap construct (it needs the
   // subscriptions store + web-push keys wired there).
   let hostPush: PluginHostPush | undefined;
@@ -544,7 +575,14 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           userOverride: (userId, name) => userPrompts.get(userId, name),
         },
         relayClient: (cfg) => new RelayClient(cfg),
-        git: { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff },
+        git: {
+          projectSnapshot: (root) => git.snapshot(root),
+          projectHead,
+          projectRangeDiff,
+          projectRangeLog,
+          projectRangeFileDiff,
+          projectCommitFileDiff,
+        },
         push: () => hostPush,
         // The typed sub-agent catalog editor used by delegation plugins.
         // Tool names resolve through the provider so a save validates against the LIVE merged
@@ -556,6 +594,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         }),
         projectFiles: { safe: safeProjectPath },
         userPluginConfig: (userId, plugin) => userPluginConfig.get(userId, plugin),
+        pluginSecrets,
+        publicWebUrl: () => canonicalPublicWebUrl,
       },
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,
@@ -627,7 +667,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         }),
         plugins: pluginProvider,
         hookAudit,
-        policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
+        policy: (userId) => resolvePolicy({ userProjects, projects, supplementalPaths: sandboxWorkspaceRoots }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
         projectModelPreference: (userId, projectRoot) => userSettings.projectModelPreference(userId, projectRoot),
         setProjectModelPreference: (userId, projectRoot, selection) => { userSettings.setProjectModelPreference(userId, projectRoot, selection); },
@@ -689,7 +729,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
-    embeddings, embeddingConfig, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig,
+    embeddings, embeddingConfig, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets,
     memoryService, embedQueue, memoryModelInference, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand,
     // Sync view of the last loaded registry (undefined before the first load) — for wiring that must

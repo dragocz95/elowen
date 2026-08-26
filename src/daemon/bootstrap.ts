@@ -120,7 +120,7 @@ export async function buildApp(opts: BuildOpts) {
     cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainCreds, brainOauth, embeddings,
-    brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, embedQueue, memoryCategorizer,
+    brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets, embedQueue, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand, setPluginHostPush,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
@@ -179,8 +179,12 @@ export async function buildApp(opts: BuildOpts) {
   // Keep the owner's live process panels (CLI + web) in step out of turn: every spawn/exit/kill pushes
   // the fresh snapshot to the owner's client streams, so a killed/finished process leaves the panel
   // without the client polling (single source of truth — no local delete on the click path).
-  processRegistry.setChangeListener((sessionId) => {
-    if (sessionId) brain?.broadcastProcesses(sessionId, processRegistry.listForSession(sessionId));
+  processRegistry.setChangeListener((sessionId, accountUserId) => {
+    if (sessionId) brain?.broadcastProcesses(
+      sessionId,
+      accountUserId,
+      processRegistry.listForSessionAccount(sessionId, accountUserId),
+    );
   });
   processRegistry.setExitListener((info, userId, sessionId) => {
     if (!brain || userId == null) return;
@@ -273,8 +277,9 @@ export async function buildApp(opts: BuildOpts) {
     project: homeProject, clock: new SystemClock(), config, users, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth,
     brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal,
-    restartDaemon, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig,
+    restartDaemon, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets,
     memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes,
+    killAccountProcesses: async (userId) => processRegistry.killAccount(userId) + (subagentRunner ? await subagentRunner.killAccountProcesses(userId) : 0),
     ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
 

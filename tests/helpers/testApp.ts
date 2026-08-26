@@ -69,7 +69,10 @@ export function pluginTestHost(w: { db: Db; config?: ConfigStore; projects?: Pro
       userOverride: () => null,
     },
     relayClient: () => new FakeInference('[]'),
-    git: { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff },
+    git: {
+      projectSnapshot: async () => ({ isRepo: false, status: null, remotes: [] }),
+      projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff,
+    },
     push: () => ({ sendToUsers: async () => {} }),
     subagentCatalog: { list: () => [], save: async () => ({ ok: true as const }), remove: () => ({ ok: true as const }) },
     projectFiles: { safe: safeProjectPath },

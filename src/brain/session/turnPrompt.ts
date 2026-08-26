@@ -33,6 +33,8 @@ export interface TurnPromptParts {
   text: string;
   /** Plugin context providers placed after the user message. */
   afterUser?: string;
+  /** One-turn cwd correction when Sandbox selected a workspace different from PI's static spawn cwd. */
+  workDirReorientation?: string;
   /** One-shot notice of session state that changed since the last reply (model, mode, rename…). */
   sessionChanges?: string;
   /** One-shot re-orientation after a compaction destroyed the context it describes. */
@@ -54,6 +56,7 @@ export function composeTurnPrompt(parts: TurnPromptParts): string {
     .join('');
   const trail = [
     parts.afterUser,
+    parts.workDirReorientation,
     parts.sessionChanges,
     parts.postCompaction,
     parts.modeReminder,

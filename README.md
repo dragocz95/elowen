@@ -95,10 +95,8 @@ elowen up | down                    # manage local services
 | **Persistent goals** | Give a conversation a concrete outcome, subgoals, a turn budget, and a hard safety ceiling. It pauses when it needs you and resumes with its bearings intact. |
 | **Delegation** | Hand focused work to a sub-agent — on your model, or on a different model from a different provider entirely. Its live status, tool activity, and result stay attached to the parent conversation — never a black box. |
 | **Workflows** | Let the agent decompose a job into a DAG of sub-agents and run it: independent steps in parallel, dependents waiting for what they need, and every node free to run on its own model — a cheap fast model for mechanical steps, a frontier model for the hard ones, mixed providers in one graph. The dependency tree, each node's progress and its transcript stay in the conversation — during the run and long after it. |
-| **Missions** | Turn one outcome into ordered phases, with an optional dedicated pilot to plan and an overseer to judge progress and reviews. |
 | **Permissions** | Per-user model ceilings and granular tool rules decide what may run, what must ask, and what is denied. Approval is a real pause in the work, not a best-effort ping. |
 | **Durable memory** | Memory that carries across surfaces and is scoped to the project you are working in, so one client's context never bleeds into another's. Each memory carries a vitality score that rises with use and decays with time, so the store tidies itself instead of growing forever — and nothing is ever hard-deleted. Recall runs again mid-turn, not only when a turn starts. A durable queue holds your mid-turn follow-up instead of dropping it. |
-| **Worktrees & PRs** | A mission can run in an isolated Git worktree with a pull-request workflow, keeping concurrent work off a shared checkout and gating publication behind verification. |
 | **Plugins** | Files, terminal, MCP, skills, scheduling, codebase search, chat platforms, and more — declared by manifest, scoped by a registry API, deny-by-default. |
 | **Scheduling** | Recurring jobs and one-shot wake-ups (`daily 07:30`, `every 15m`, standard cron), read on **your** clock. |
 | **Self-hosted** | A Node.js daemon, SQLite, and a Next.js Web UI. Your accounts and data stay yours. |
@@ -108,7 +106,7 @@ elowen up | down                    # manage local services
 | Surface | What it gives you |
 |---|---|
 | **Terminal** | A full agent interface, not a thin command wrapper: streamed replies, tool calls, diffs, approvals, todos, sub-agent activity, and a telemetry rail for model, project, branch, context, and usage. `@` attaches files, `!command` feeds a local command's output into the next turn, slash commands drive the session. |
-| **Web UI** | A calm operational view — Tasks, Kanban, Sessions, Timeline, Projects, Editor, Memory, Stats, Settings, Users — sharing the same server-side conversation model as the terminal. |
+| **Web UI** | A calm operational view for chat, Projects, Memory, Settings, Users, and the pages contributed by enabled plugins — sharing the same server-side conversation model as the terminal. |
 | **Discord & WhatsApp** | Reach the same agent from your phone. Same projects, memory, permissions, and conversation state — changing surfaces never means starting your agent over. |
 
 ## A look at Elowen
@@ -116,7 +114,7 @@ elowen up | down                    # manage local services
 <table>
 <tr>
 <td width="50%"><img src="docs/site/images/web-ui-dashboard.png" alt="Web UI dashboard"><br><sub><b>Web UI — dashboard</b></sub></td>
-<td width="50%"><img src="docs/site/images/web-ui-tasks.png" alt="Task workspace"><br><sub><b>Tasks &amp; missions</b></sub></td>
+<td width="50%"><img src="docs/site/images/projects-list.png" alt="Projects workspace"><br><sub><b>Projects &amp; Git context</b></sub></td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/site/images/settings-overview.png" alt="Settings constellation"><br><sub><b>Settings — every section orbits the agent</b></sub></td>
@@ -152,9 +150,9 @@ elowen up | down                    # manage local services
 
 Elowen does more than answer the next message. A **persistent goal** gives a conversation a concrete outcome, subgoals, a turn budget, and a hard safety ceiling; it can pause when it needs you and resume with its bearings intact. While one turn is working, a **durable message queue** keeps your follow-up instead of losing it, and context compaction preserves the useful thread rather than resetting the conversation.
 
-When one agent is not the right shape for the job, Elowen can **delegate focused work to sub-agents on a different model — or a different provider entirely**, and a workflow can mix them per node: a cheap fast model for the mechanical steps, a frontier model where the thinking happens. Their live status, tool activity, model, and result stay attached to the parent conversation, so delegation never becomes a black box. For larger work, **missions turn one outcome into ordered phases** and can assign a dedicated pilot to plan it and an overseer to judge progress, reviews, and uncertain decisions — each with its own executor, selected per mission rather than forced globally.
+When one agent is not the right shape for the job, Elowen can **delegate focused work to sub-agents on a different model — or a different provider entirely**, and a workflow can mix them per node: a cheap fast model for mechanical steps, a frontier model where the thinking happens. Their live status, tool activity, model, and result stay attached to the parent conversation, so delegation never becomes a black box.
 
-That autonomy stays deliberate. **Per-user model ceilings and granular tool rules** decide what may run, what must ask, and what is denied; approval is a real pause in the work, not a best-effort notification. A mission can also use an **isolated Git worktree and pull-request workflow**, keeping concurrent work away from a shared checkout and holding publication behind its verification gate.
+That autonomy stays deliberate. **Per-user model ceilings and granular tool rules** decide what may run, what must ask, and what is denied; approval is a real pause in the work, not a best-effort notification.
 
 ### A brain that has context without becoming opaque
 
@@ -180,15 +178,14 @@ The full user guide lives at **[elowen.run](https://elowen.run)** and in [`docs/
 |---|---|
 | [Getting started](./docs/site/01-getting-started.md) | First run, setup wizard, your first conversation |
 | [Installation](./docs/site/02-install.md) | Requirements, providers, non-interactive setup |
-| [Tasks & missions](./docs/site/13-tasks-missions.md) | Units of work, epics, phases, autonomy |
-| [Agents & autonomy](./docs/site/15-autonomy-safety.md) | Goals, delegation, pilots and overseers, permissions |
+| [Agents & autonomy](./docs/site/15-autonomy-safety.md) | Goals, delegation, workflows, and permissions |
 | [Web UI](./docs/site/05-web-ui.md) | The operational surfaces and how they fit together |
 | [CLI](./docs/site/06-cli.md) | Terminal chat, commands, session control |
 | [Brain & chat](./docs/site/09-brain-chat.md) | The embedded agent, models, context assembly |
 | [Memory](./docs/site/10-memory.md) | Durable memory, project scope, vitality and retention |
 | [Channels](./docs/site/18-channels.md) | Discord, Telegram, Teams and WhatsApp surfaces |
 | [Plugins](./docs/site/23-plugins.md) | Bundled plugins, manifests, the registry API |
-| [Projects & workflow](./docs/site/16-projects-workflow.md) | Projects, editor, Git worktrees, pull requests |
+| [Projects & Git](./docs/site/16-projects-workflow.md) | Project tenancy and read-only checkout state |
 | [Configuration](./docs/site/26-configuration.md) | Settings, providers, limits, embeddings |
 | [Account & security](./docs/site/27-users-access.md) | Users, roles, permissions, isolation |
 | [Architecture](./docs/ARCHITECTURE.md) | Daemon, BFF proxy, boundaries |

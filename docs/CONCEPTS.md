@@ -2,14 +2,13 @@
 
 > This document has moved.
 
-The Concepts documentation is now split into two dedicated guides:
+Elowen's current autonomy model is documented in focused guides:
 
-- **[Tasks & Missions](site/03-tasks-missions.md)** — task lifecycle, dependencies,
-  scheduling, autopilot missions
-- **[Agents & Autonomy](site/04-agents-autonomy.md)** — providers, L0–L3,
-  overseer gate, deriver, safety
+- **[Agents & Autonomy](site/15-autonomy-safety.md)** — persistent goals, delegation, workflow DAGs, approvals, and safety boundaries
+- **[Projects & Git](site/16-projects-workflow.md)** — Project tenancy and read-only checkout state
+- **[Plugins](site/23-plugins.md)** — optional verticals and their owned routes, data, tools, and pages
 
-For deeper reference see the other documents in `docs/`:
+For deeper reference see:
 
 - [Guides](GUIDES.md) — advanced patterns and internal mechanisms
-- [API Reference](API.md) — REST API documentation
+- [API Reference](API.md) — core REST API and plugin routing

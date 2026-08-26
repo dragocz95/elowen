@@ -39,18 +39,9 @@ by an XSS payload or a browser extension.
 
 ## Token scopes
 
-Not every token is equal. Elowen resolves two effective scopes so a spawned
-agent can never act with your full rights.
+Not every token is equal. Login, advisor, and terminal credentials are issued for their specific authenticated surfaces. Delegated sub-agents do not receive a broad user token: the host carries their captured Project, tool, and permission boundary directly into the child session.
 
-| Scope | Purpose |
-|-------|---------|
-| `full` | Interactive user sessions (web UI, CLI) — full access |
-| `agent` | Spawned workers, overseers, and pilots — a restricted allow-list, confined to their project |
-
-Agent-scoped tokens are confined to their project: a worker can only close its
-own tasks and cannot reach across to another project. Advisor credentials are
-stored separately from login tokens but resolve to the owner's `full` access, so
-rotating an advisor never invalidates the user's login session.
+Plugin API requests run as the authenticated account through the normal user scope. A plugin cannot turn that identity into another account's config or encrypted secret namespace.
 
 ## Session token lifetime
 

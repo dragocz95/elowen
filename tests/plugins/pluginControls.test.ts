@@ -8,6 +8,11 @@ import type { KnownControls, PluginCapabilities, PluginControl } from '../../src
 
 const noopLog = { info() {}, warn() {}, error() {} };
 const fakeLsp = (): KnownControls['lsp'] => ({ diagnosticsEnabled: () => true });
+const fakeSandbox = (): KnownControls['sandbox'] => ({
+  workspaceRoots: () => [],
+  activeWorkspace: () => null,
+  prepareExecution: async () => ({}) as never,
+});
 const fakeWorkflow = (): KnownControls['workflow'] => ({
   cancelForSession: () => ({ cancelled: 0 }),
   detachForeground: () => ({ detached: 0 }),
@@ -56,7 +61,23 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
   it('refuses an incomplete known control', () => {
     const merged = new PluginRegistry();
     ownerMerges(merged, 'workflow', 'workflow', { activeCount: () => 0 } as unknown as PluginControl);
+    ownerMerges(merged, 'sandbox', 'sandbox', { workspaceRoots: () => [] } as unknown as PluginControl);
     expect(contextOver(merged, { reads: ['controls'] }).control('workflow')).toBeUndefined();
+    expect(contextOver(merged, { reads: ['controls'] }).control('sandbox')).toBeUndefined();
+  });
+
+  it('resolves the complete Sandbox contract live', () => {
+    const merged = new PluginRegistry();
+    const ctx = contextOver(merged, { reads: ['controls'] });
+    const first = fakeSandbox();
+    ownerMerges(merged, 'sandbox-a', 'sandbox', first);
+    expect(ctx.control('sandbox')).toBe(first);
+    merged.controls.delete('sandbox');
+    merged.controlOwner.delete('sandbox');
+    expect(ctx.control('sandbox')).toBeUndefined();
+    const next = fakeSandbox();
+    ownerMerges(merged, 'sandbox-b', 'sandbox', next);
+    expect(ctx.control('sandbox')).toBe(next);
   });
 
   it('resolves a dependent control only while its complete dependency exists', () => {

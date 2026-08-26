@@ -8,7 +8,10 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
-function setup(onUserRemoved?: (userId: number) => void | Promise<void>) {
+function setup(
+  onUserRemoved?: (userId: number) => void | Promise<void>,
+  killAccountProcesses?: (userId: number) => Promise<number>,
+) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
@@ -29,6 +32,7 @@ function setup(onUserRemoved?: (userId: number) => void | Promise<void>) {
     plugins: onUserRemoved ? {
       get: async () => ({ userRemovedHandlers: [{ plugin: 'fixture', fn: onUserRemoved }] }),
     } as never : undefined,
+    killAccountProcesses,
   });
   return { app, db, users, carol, adminTok: users.issueToken(admin.id), bindings: () => bindingsAtTeardown };
 }
@@ -58,12 +62,38 @@ describe('DELETE /users/:id tears down what is running before it deletes what is
     expect(db.prepare("SELECT COUNT(*) c FROM tasks WHERE id = 'owned'").get()).toEqual({ c: 0 });
   });
 
-  it('keeps retired plugin rows but scrubs their deleted-user attribution without a handler', async () => {
+  it('signals daemon and runner process owners before plugin cleanup', async () => {
+    const order: string[] = [];
+    const { app, carol, adminTok } = setup(
+      () => { order.push('plugin'); },
+      async () => { order.push('processes'); return 2; },
+    );
+
+    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
+    expect(order).toEqual(['processes', 'plugin']);
+  });
+
+  it('returns 409 and preserves the user when process teardown cannot be verified', async () => {
+    const { app, users, carol, adminTok } = setup(undefined, async () => { throw new Error('runner timeout'); });
+
+    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(409);
+    expect(users.get(carol.id)).not.toBeNull();
+  });
+
+  it('returns 409 and preserves the user while a plugin reports an active durable lease', async () => {
+    const active = Object.assign(new Error('active lease'), { status: 409, code: 'account_in_use' });
+    const { app, users, carol, adminTok } = setup(() => { throw active; }, async () => 1);
+
+    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(409);
+    expect(users.get(carol.id)).not.toBeNull();
+  });
+
+  it('leaves retired plugin rows untouched without a loaded cleanup handler', async () => {
     const { app, db, carol, adminTok } = setup();
     db.prepare("INSERT INTO tasks (id, project_id, title, type, created_by) VALUES ('orphan', 1, 'Orphan', 'task', ?)").run(carol.id);
 
     expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
-    expect(db.prepare("SELECT created_by FROM tasks WHERE id = 'orphan'").get()).toEqual({ created_by: null });
+    expect(db.prepare("SELECT created_by FROM tasks WHERE id = 'orphan'").get()).toEqual({ created_by: carol.id });
   });
 
   it('still removes the user and their assignments', async () => {

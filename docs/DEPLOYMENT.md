@@ -44,11 +44,6 @@ ELOWEN_URL=http://localhost:4400
 ELOWEN_TOKEN=
 ELOWEN_AUTOSTART=1
 
-# Autopilot relay
-ELOWEN_RELAY_URL=
-ELOWEN_RELAY_KEY=
-ELOWEN_RELAY_MODEL=gpt-4o-mini
-
 # Logging
 ELOWEN_LOG_LEVEL=                   # debug | info | warn | error
 ELOWEN_LOG_DIR=~/.config/elowen/logs # the default — state lives outside the package
@@ -243,9 +238,7 @@ root-owned prefixes transparently via sudo.
 
 ### Auto-update timer
 
-Provisioned by `elowen install`. Checks hourly, respects running missions
-(won't restart while a mission is active; missions require the agents
-plugin). Toggle in Settings → System.
+Provisioned by `elowen install`. Checks hourly and uses the daemon's guarded drain/restart path so active work is not interrupted. Toggle in Settings → System.
 
 ## Database
 
@@ -253,22 +246,24 @@ SQLite with WAL mode. Default: `~/.config/elowen/elowen.db`.
 
 ### Backup
 
+Back up the database and `plugin-secrets.key` together. The key is stable, but an encrypted database backup without its matching key cannot recover plugin credentials.
+
 ```bash
 sqlite3 /path/to/elowen.db ".backup /backup/elowen-$(date +%Y%m%d).db"
+install -m 600 /path/to/plugin-secrets.key /backup/plugin-secrets-$(date +%Y%m%d).key
 ```
 
 ### Migration
 
-New tables/columns use `CREATE TABLE IF NOT EXISTS`. No migration framework.
+Core schema changes use additive migrations and shape-guarded one-shot rebuilds. Plugin-owned tables use the plugin migration API.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---------|-------|
-| Daemon won't start | Node ≥22? tmux installed? Port 4400 free? DB path writable? |
-| Sessions stuck | `elowen sessions` → kill with `DELETE /sessions/:name` |
+| Daemon won't start | Node ≥22? Port 4400 free? DB path and config directory writable? |
 | CLI can't reach daemon | `curl http://localhost:4400/health` |
 | Web shows "unreachable" | Daemon running? `ELOWEN_DAEMON_URL` correct? |
 | Login returns 429 | Wait 5 min or restart daemon. Ensure nginx sets `x-real-ip`. |
-| Overseer died | Watchdog re-parks within 60s. Check `elowen sessions` for `elowen-overseer-*`. |
-| Assistant won't start | Exec in `allowedExecs`? Non-admin user's `allowed_execs`? |
+| Plugin secrets unavailable | Restore `elowen.db` and `plugin-secrets.key` from the same backup. |
+| Assistant won't start | Is a configured AI provider/model available to this account? |

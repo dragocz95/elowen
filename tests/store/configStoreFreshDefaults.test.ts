@@ -5,7 +5,7 @@ import { openDb } from '../../src/store/db.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 
 /** The fresh-install default plugin set — a BARE ASSISTANT: tools that need no configuration to be
- *  useful (files, terminal, askuser, runtime-context, subagent, elowen-docs, statusline, mcp, lsp). Every entry is checked against its own manifest below, so this list can never
+ *  useful (files, sandbox, terminal, askuser, runtime-context, subagent, elowen-docs, statusline, mcp, lsp). Every entry is checked against its own manifest below, so this list can never
  *  silently drift from what actually ships on.
  *
  *  elowen-docs qualifies despite reading embeddings: the manual it searches ships with the install, and
@@ -15,7 +15,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *
  *  Extensions that carry no daemon dependency are not here at all — they ship from the plugin registry,
  *  so a fresh install does not have them on disk to enable. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs', 'statusline', 'mcp'];
+const SAFE_DEFAULT_PLUGINS = ['files', 'sandbox', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs', 'statusline', 'mcp'];
 
 interface Manifest {
   configSchema?: { key: string; required?: boolean }[];
@@ -135,6 +135,34 @@ describe('a fresh install enables no plugin that owns a domain vertical', () => 
 
     // …and a plugin the rule catches is one the fresh set would then have to exclude.
     expect(enabled.filter((name) => ownsVertical(manifest(name)))).toEqual([]);
+  });
+});
+
+describe('existing installs transfer Terminal isolation to Sandbox', () => {
+  it('enables Sandbox before Terminal and copies the legacy setting without deleting it', () => {
+    const db = openDb(':memory:');
+    db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({
+      allowedExecs: ['sonnet'],
+      plugins: { enabled: ['files', 'terminal'], removed: ['sandbox'], config: { terminal: { sandboxNonAdmins: false, outputCap: 10000 } } },
+    }));
+    const upgraded = new ConfigStore(db);
+    upgraded.migrateSandboxPlugin();
+    expect(upgraded.get().plugins.enabled).toEqual(['files', 'sandbox', 'terminal']);
+    expect(upgraded.get().plugins.removed).toEqual([]);
+    expect(upgraded.pluginConfig('sandbox')).toEqual({ confineNonOperators: false });
+    expect(upgraded.pluginConfig('terminal')).toEqual({ sandboxNonAdmins: false, outputCap: 10000 });
+    upgraded.migrateSandboxPlugin();
+    expect(upgraded.get().plugins.enabled).toEqual(['files', 'sandbox', 'terminal']);
+  });
+
+  it('does not grant a shell dependency to an install that had Terminal disabled', () => {
+    const db = openDb(':memory:');
+    db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({
+      allowedExecs: ['sonnet'], plugins: { enabled: ['files'], removed: [], config: {} },
+    }));
+    const upgraded = new ConfigStore(db);
+    upgraded.migrateSandboxPlugin();
+    expect(upgraded.get().plugins.enabled).toEqual(['files']);
   });
 });
 

@@ -370,20 +370,33 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // their brain data and push devices. Without this a deleted user's private transcripts and browser
     // subscriptions survive.
     d.brain?.deleteAllManagedSessions(id);
+    try { await d.killAccountProcesses?.(id); }
+    catch (e) {
+      log.warn(`account ${id} process teardown could not be verified: ${e instanceof Error ? e.message : String(e)}`);
+      return c.json({ error: 'account processes are still active' }, 409);
+    }
+    // Per-user state a PLUGIN owns sits outside this store (its data-dir folders, its JSON schedules),
+    // so the core cascade cannot reach it. Run every handler while the user row still exists, but do not
+    // delete the account when any owner cannot prove its data is idle and cleaned up.
+    const pluginRegistry = await d.plugins?.get().catch(() => undefined);
+    let pluginFailure: unknown;
+    for (const h of pluginRegistry?.userRemovedHandlers ?? []) {
+      try { await h.fn(id); }
+      catch (e) {
+        pluginFailure ??= e;
+        log.warn(`plugin ${h.plugin} failed to drop data for user ${id}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    if (pluginFailure) {
+      const value = pluginFailure as { status?: unknown; code?: unknown };
+      const active = value.status === 409 || value.code === 'account_in_use';
+      return c.json({ error: active ? 'account processes are still active' : 'account plugin cleanup failed' }, active ? 409 : 500);
+    }
     d.userSettings?.removeForUser(id); // drop the user's CLI/brain settings (incl. personalityBody) so no orphan rows linger
     d.memoryStore?.removeForUser(id); // hard-delete the user's memories (+cascade embeddings) and audit events
     d.memoryCategoryStore?.removeForUser(id); // drop the user's memory categories so no orphan rows linger
     d.brainStore?.removeForUser(id);
     d.pushSubscriptions?.removeAllForUser(id);
-    // Per-user state a PLUGIN owns sits outside this store (its data-dir folders, its JSON schedules),
-    // so the core cascade above cannot reach it — each plugin drops its own through the seam. Runs while
-    // the user row still exists (a handler may need to read it), and one failing plugin must not strand
-    // the rest of the teardown: the delete stays retryable either way.
-    const pluginRegistry = await d.plugins?.get().catch(() => undefined);
-    for (const h of pluginRegistry?.userRemovedHandlers ?? []) {
-      try { await h.fn(id); }
-      catch (e) { log.warn(`plugin ${h.plugin} failed to drop data for user ${id}: ${e instanceof Error ? e.message : String(e)}`); }
-    }
     users.delete(id);
     return c.json({ ok: true });
   });
@@ -546,11 +559,10 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       const { projectId } = await parseBody(c, projectAssignSchema);
       const userId = Number(c.req.param('id'));
       const pid = Number(projectId);
-      // Both sides must exist BEFORE the grant is written. `user_projects` has no foreign keys and
-      // `projects.id` is a plain rowid (no AUTOINCREMENT, unlike `users`), so a row pointing at an id
-      // that does not exist yet is not inert: whichever project is created next can receive that id and
-      // silently inherit the grant. Home-project tolerance mirrors resolveTarget — a legacy
-      // single-project daemon may have no `projects` row for it.
+      // Both sides must exist BEFORE the grant is written. `user_projects` has no foreign keys, so a
+      // dangling assignment is invalid even though monotonic Project ids prevent later reattachment.
+      // Home-project tolerance mirrors resolveTarget — a legacy single-project daemon may have no
+      // `projects` row for it.
       if (!users.get(userId)) return c.json({ error: 'user not found' }, 404);
       if (pid !== d.project.id && !d.projects?.get(pid)) return c.json({ error: 'project not found' }, 404);
       up.assign(userId, pid);

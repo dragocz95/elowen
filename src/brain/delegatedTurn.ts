@@ -47,8 +47,9 @@ export interface DelegatedTurnRequest {
 }
 
 export interface DelegatedTurnDeps {
-  /** Build a Policy from an explicit project-id set. Same resolver the daemon's platform turns use. */
-  policyForProjects?: (projectIds: number[]) => Policy;
+  /** Build a Policy from an explicit project-id set. The captured contribution account is required for
+   * Sandbox workspace roots, especially in a forked runner where the parent live session does not exist. */
+  policyForProjects?: (projectIds: number[], contributionUserId?: number) => Policy;
   identity: { forDelegatedTurn(scope: DelegatedExecutionScope, ownerUserId: number): TurnIdentity };
 }
 
@@ -69,7 +70,7 @@ export function delegatedChannelSendOpts(
   const scope = req.delegatedAccess;
   const policy: Policy = scope.admin
     ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
-    : deps.policyForProjects?.(scope.projectIds)
+    : deps.policyForProjects?.(scope.projectIds, scope.contributionUserId)
       ?? { allowedProjectIds: new Set(scope.projectIds), allowedPaths: () => [] };
   return {
     channelId: req.channelId,

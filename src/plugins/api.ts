@@ -16,8 +16,10 @@ import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { CommitFileChange, CommitLogEntry } from '../integrations/projectFiles.js';
 import type { PushPayload } from '../push/messages.js';
 import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagent/hostRpc.js';
+import type { PluginSecretBag } from '../shared/pluginSecrets.js';
+import type { ProjectGitSnapshot } from '../git/gitReader.js';
 
-export type { DelegatedChildSummary };
+export type { DelegatedChildSummary, PluginSecretBag };
 
 /** The host's bridge to the DURABLE side of delegation: which sub-agents a conversation already ran,
  *  reading their stored final replies, and continuing one of them. Every operation is keyed on the parent
@@ -273,6 +275,9 @@ export interface SessionSource {
     /** The principal running the delegating turn (see turnPrincipal), recorded on the child's durable scope
      *  so only that same identity can ever promote it out of read-only. */
     principal?: string;
+    /** Account whose personal contributions, HOME and Sandbox workspaces the delegated child inherits. It is
+     * host-resolved from the current turn, not guessed from the durable room owner. */
+    contributionUserId?: number | null;
     /** Idle cutoff (ms) for THIS surface's channel session — forwarded to ChannelSessionService.send as
      *  `idleRolloverMs`. Set by cron (shorter than the default 30 min) so a frequent job whose gap between
      *  ticks exceeds the prompt-cache window starts a fresh session instead of re-sending a growing context
@@ -554,6 +559,8 @@ export interface PluginHost {
   relayClient(cfg: RelayConfig): InferenceClient;
   /** Read-only git helpers over a project checkout. Gated by `reads:['git']`. */
   git(): {
+    /** Generic live checkout snapshot: sanitized remotes plus branch/head/upstream and worktree counts. */
+    projectSnapshot(root: string): Promise<ProjectGitSnapshot>;
     projectHead(root: string): Promise<string>;
     projectRangeDiff(root: string, base: string, head: string): Promise<CommitFileChange[]>;
     /** The commits of `base..head` in that checkout. */
@@ -889,6 +896,64 @@ export interface LspStateControl {
   diagnosticsEnabled(): boolean;
 }
 
+/** One account-owned Sandbox worktree root. Core consumes only the ownership tuple needed to extend the
+ * canonical path policy; richer Git state stays live in the owning plugin. */
+export interface SandboxWorkspaceRoot {
+  workspaceId: string;
+  projectId: number;
+  path: string;
+}
+
+/** The active workspace metadata another domain (notably GitHub) needs without reading Sandbox tables. */
+export interface SandboxWorkspace extends SandboxWorkspaceRoot {
+  label: string;
+  branch: string;
+  baseRef: string;
+}
+
+/** A durable execution lease minted before a child is spawned. The caller owns its actual process lifecycle:
+ * heartbeat while the child is alive, transfer the same handle when foreground work detaches, and release it
+ * only on spawn failure or real exit/error/kill. Implementations persist the row in shared SQLite so daemon
+ * and forked runners observe the same blockers. */
+export interface SandboxExecutionLease {
+  id: string;
+  accountUserId: number | null;
+  workspaceId: string | null;
+  homeGeneration: number | null;
+  heartbeat(): void | Promise<void>;
+  release(): void | Promise<void>;
+}
+
+export type SandboxExecutionCommand =
+  | { type: 'shell'; command: string }
+  | { type: 'argv'; file: string; args: string[] };
+
+/** Fully prepared launch. `launch` is the only process shape a consumer spawns; HOME, roots and confinement
+ * policy have already been applied by Sandbox. */
+export interface SandboxPreparedExecution {
+  mode: 'confined' | 'direct';
+  cwd: string;
+  home: string;
+  roots: string[];
+  launch:
+    | { type: 'shell'; command: string; env: Record<string, string> }
+    | { type: 'argv'; file: string; args: string[]; env: Record<string, string> };
+  workspace: SandboxWorkspace | null;
+  lease: SandboxExecutionLease;
+}
+
+/** Live Sandbox domain seam. Consumers resolve it on every use; retaining a value across plugin reloads is
+ * invalid because its DB/runtime generation may already have been replaced. */
+export interface SandboxControl {
+  workspaceRoots(input: { projectIds: readonly number[] }): SandboxWorkspaceRoot[];
+  activeWorkspace(input: { sessionId: string; projectId: number }): SandboxWorkspace | null;
+  prepareExecution(input: {
+    command: SandboxExecutionCommand;
+    cwd: string;
+    leaseKind: 'terminal' | 'github';
+  }): SandboxPreparedExecution | Promise<SandboxPreparedExecution>;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -899,6 +964,7 @@ export interface KnownControls {
   workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl & WorkflowRecoveryControl;
   mcp: McpListControl;
   lsp: LspStateControl;
+  sandbox: SandboxControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`
@@ -1095,6 +1161,9 @@ export interface PluginContext {
    *  or row is unreachable rather than misattributed — it simply keeps that person's files, secrets and
    *  schedules on the operator's machine forever, and a schedule keeps costing model calls. */
   registerUserRemoved(fn: (userId: number) => void | Promise<void>): void;
+  /** React to removal of a core Project while its id is still known. Plugin-owned boot reconciliation is
+   * still required because a plugin that was disabled when the deletion happened cannot receive this. */
+  registerProjectRemoved(fn: (projectId: number) => void | Promise<void>): void;
   /** Sugar over {@link registerService} for the common periodic-tick shape: the host owns a real timer
    *  (unref'd — a plugin tick must not keep the process alive), starts it with the services and clears
    *  it on stop/reload. A tick that throws is logged and the interval keeps running. */
@@ -1149,7 +1218,7 @@ export interface PluginContext {
    *  toolPolicy carries exact allow+deny sets, and permissionBoundary carries the effective unattended
    *  granular-rule context so a child inherits exactly the caller's scope. `readOnly` is stamped by the
    *  host when the caller's turn is PLANNING — forward it untouched; never clear it. */
-  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; readOnly?: boolean };
+  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; contributionUserId?: number | null; readOnly?: boolean };
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;
@@ -1306,10 +1375,15 @@ export interface PluginContext {
    *  deliberately no fallback to the instance-wide config, because a per-account credential that silently
    *  becomes the operator's would act on the wrong person's behalf. */
   userConfig(): Record<string, unknown> | null;
-  /* Read it AT THE TOP of the work that needs it. The account is carried on the async context of the
-   * turn or HTTP request, so anything the handler starts and does not await (a lazily created poller, a
-   * subscription) keeps whichever account happened to trigger it — and would keep answering with that
-   * person's values, secrets included, long after their request ended. */
+  /** This plugin's encrypted instance secret namespace. The plugin name is bound by the context. */
+  instanceSecrets(): PluginSecretBag;
+  /** This plugin's encrypted secret namespace for the current contribution account. Delegated turns use
+   * their delegator's contribution account; authenticated API calls fall back to currentIdentity(). */
+  userSecrets(): PluginSecretBag | null;
+  /** Canonical deployment URL from trusted install metadata. Never derived from request headers. */
+  publicWebUrl(): string | null;
+  /* Read account-scoped state AT THE TOP of the work that needs it. The account is carried on async
+   * context, so un-awaited background work would retain whichever account triggered it. */
   readonly logger: PluginLogger;
 }
 

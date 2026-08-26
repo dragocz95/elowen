@@ -1,5 +1,4 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
 import type { User } from '../shared/wireContract.js';
 import { execRefSpec, parseExecRef } from '../shared/execs.js';
@@ -427,26 +426,15 @@ export class UserStore {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
   }
   delete(id: number): void {
-    // One transaction so a mid-way failure can't leave orphan tokens/assignments (consistent with
-    // ProjectStore.remove and TaskStore.delete). The schema has no FK cascade, so order is explicit.
-    //
-    // `created_by` is nulled rather than left behind because a reference to a user row that no longer
-    // exists is a dangling one: prompt attribution (prompts/owner.ts) and mission replan/notification
-    // ownership both resolve it, and both would then answer "nobody" in some places and throw in others.
-    // Ids themselves are never handed out twice — `seedUserSequenceAboveEveryReference` (store/db.ts)
-    // keeps the counter above every reference — so this is about dangling references, not impersonation.
+    // One transaction so a mid-way failure cannot leave core-owned tokens, grants or encrypted plugin
+    // credentials behind. Plugin-owned rows and files are handled through registerUserRemoved before this.
     this.db.transaction(() => {
-      // `tasks` is a WORK-PLUGIN table (as `missions` is an agents one) — null the attribution when
-      // present, tolerate a fresh install where the plugin never created it.
-      tolerateMissingPluginTables(() => { this.db.prepare('UPDATE tasks SET created_by = NULL WHERE created_by = ?').run(id); }, undefined);
-      // `missions` is an AGENTS-PLUGIN table (created_by arrives with its migration v2) — null the
-      // attribution when present, tolerate a fresh/ancient install without the table or column.
-      tolerateMissingPluginTables(() => { this.db.prepare('UPDATE missions SET created_by = NULL WHERE created_by = ?').run(id); }, undefined);
       this.db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_terminals WHERE user_id = ?').run(id); // no orphan terminal bindings (their tokens went with auth_tokens above)
       this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments
       this.db.prepare('DELETE FROM user_prompts WHERE user_id = ?').run(id); // no orphan prompt overrides
-      this.db.prepare('DELETE FROM user_plugin_config WHERE user_id = ?').run(id); // no orphan per-plugin values (incl. their secrets)
+      this.db.prepare('DELETE FROM user_plugin_config WHERE user_id = ?').run(id);
+      this.db.prepare("DELETE FROM plugin_secrets WHERE scope = 'user' AND owner_id = ?").run(id);
       // Origin accounting holds IP addresses — personal data. Deleting the account must take them with
       // it in the SAME transaction, not on the next retention sweep.
       this.db.prepare('DELETE FROM usage_by_origin WHERE user_id = ?').run(id);

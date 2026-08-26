@@ -60,9 +60,7 @@ failures use 401 and 403 respectively.
 | `GET` | `/push/vapid-public-key` | Public push key |
 | `POST` | `/push/subscribe`, `/push/unsubscribe` | Manage the caller's push devices |
 
-`GET /events` is an SSE stream. It emits state-change events such as `task`,
-`mission`, `signal`, `plan`, `review`, `decision`, and `ask`; the subscriber's
-project access filters its event set.
+`GET /events` is an SSE stream. Core and enabled plugins publish state-change events; project-scoped rows are filtered through the subscriber's current Project access.
 
 ### Authentication and users
 
@@ -83,55 +81,14 @@ project access filters its event set.
 | `GET`, `POST` | `/users/:id/projects` | Read or add project assignments |
 | `DELETE` | `/users/:id/projects/:pid` | Remove a project assignment |
 
-### Tasks, plans, usage, and asks
+### Usage
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET`, `POST` | `/tasks` | List or create tasks; `project_id` can narrow a list |
-| `GET` | `/tasks/ready`, `/tasks/deps` | Ready tasks and dependency edges |
-| `GET`, `PATCH`, `DELETE` | `/tasks/:id` | Read/update/delete task state |
-| `GET` | `/tasks/:id/usage`, `/tasks/:id/conversation` | Usage and embedded-brain transcript |
-| `GET` | `/tasks/:id/changed/diff`, `/tasks/:id/commits` | Settled-task changes and commits |
-| `GET` | `/tasks/:id/commit/:hash/diff` | File diff from a task commit |
-| `POST` | `/tasks/:id/approve-gate` | Approve a review gate |
-| `POST` | `/tasks/:id/ask` | Park a question for a human or overseer |
-| `GET` | `/tasks/:id/ask/:askId`, `/tasks/:id/guide`, `/tasks/:id/deps` | Ask status, worker guide, and dependencies |
-| `POST` | `/tasks/:id/ask/:askId/reply` | Answer a parked question |
-| `GET` | `/asks/pending` | Pending human questions |
-| `POST` | `/tasks/plan` | Start asynchronous mission planning |
-| `GET`, `POST` | `/plan/:jobId`, `/plan/:jobId/submit` | Read or submit a plan job |
-| `POST` | `/tasks/:epicId/phases` | Add planned phases to an epic |
-| `GET` | `/usage/by-model`, `/usage/by-day` | Aggregated task and caller chat usage |
+| `GET` | `/usage/by-model`, `/usage/by-day`, `/usage/by-origin` | Aggregated account usage |
 | `POST` | `/usage/reset` | Administrator usage reset |
-| `POST` | `/admin/cleanup` | Administrator cleanup of operational task state |
 
-Task creation and updates use the schemas in `src/api/schemas/tasks.ts`.
-Agent-scoped tokens can only perform their restricted worker workflow, even
-inside an otherwise accessible project.
-
-### Missions
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET`, `POST` | `/missions` | List live or pending-PR missions; engage a mission |
-| `GET`, `PATCH`, `DELETE` | `/missions/:id` | Read, pause/resume, or disengage a mission |
-| `GET` | `/missions/:id/changed-files` | Aggregate phase change summary |
-| `POST` | `/missions/:id/pr`, `/missions/:id/merge-pr` | Open or merge a PR-native mission |
-| `GET`, `POST` | `/missions/:id/overseer/next`, `/missions/:id/overseer/decide` | Overseer decision protocol |
-
-### Sessions and terminal transport
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET`, `POST` | `/sessions` | List or create a session |
-| `GET`, `DELETE` | `/sessions/:name` | Session state or termination |
-| `POST` | `/sessions/:name/keys`, `/sessions/:name/input`, `/sessions/:name/resize` | Send terminal input or resize |
-| `GET` | `/sessions/:name/pane`, `/sessions/:name/stream` | Snapshot or SSE terminal stream |
-| `POST` | `/sessions/:name/ws-ticket` | Mint a single-use PTY WebSocket ticket |
-
-The ticket is consumed by `GET /ws/terminal?ticket=…`; clients should prefer
-the supported terminal components rather than treating that transport as a
-general-purpose public API.
+Task tracking, missions, coding-agent sessions, and their route families are not core APIs. When installed, a domain plugin serves its own authenticated routes under `/plugins/<name>/api/*` or an explicitly declared root mount.
 
 ### Projects and repository files
 
@@ -140,14 +97,9 @@ general-purpose public API.
 | `GET`, `POST` | `/projects` | List or register projects |
 | `PATCH`, `DELETE` | `/projects/:id` | Edit or remove a project |
 | `GET` | `/fs/dirs` | Discover permitted directories |
-| `GET` | `/projects/:id/git`, `/projects/:id/files`, `/projects/:id/file` | Git, tree, or file content |
-| `PUT` | `/projects/:id/file` | Save a file |
-| `GET` | `/projects/:id/raw`, `/projects/:id/head` | Raw or HEAD file content |
-| `POST` | `/projects/:id/new-file`, `/projects/:id/dir`, `/projects/:id/rename`, `/projects/:id/copy` | File-system operations |
-| `DELETE` | `/projects/:id/entry` | Remove a file-system entry |
-| `GET` | `/projects/:id/diff`, `/projects/:id/changed`, `/projects/:id/changes` | Current change information |
-| `GET` | `/projects/:id/commits`, `/projects/:id/commit/:hash` | Commit history and detail |
-| `GET` | `/projects/:id/commit/:hash/diff` | Commit file diff |
+| `GET` | `/projects/:id/git` | Read-only Git snapshot, branches, and recent commits |
+
+File browsing and editing routes are plugin-owned and use the same core Project tenancy and path guards.
 
 ### Brain and advisor
 
@@ -175,13 +127,10 @@ general-purpose public API.
 | --- | --- | --- |
 | Plugins | `/plugins` | Discovery, install/update, configuration, runtime contributions, plugin data, logs, hooks, cron, skills, Discord, WhatsApp, and MCP server controls |
 | Memory | `/memory` | Entries, categories, events, merge/trash/purge, retrieval, categorization, and embedding configuration/test |
-| Activity | `/activity`, `/notes` | Event history and project/mission notes |
-| Integrations | `/integrations/cli-status`, `/integrations/github-status` | Local integration readiness (served by the `agents` plugin; 503 while it is disabled) |
+| Activity | `/activity` | Core and plugin event history, scoped by Project access |
 | OAuth models | `/brain/oauth` | Status, catalog, interactive flow, and disconnect for supported providers |
 
-For exact method/path pairs in these broader families, see the matching route
-modules: `plugins.ts`, `memory.ts` and `activity.ts` in `src/api/routes/`, and
-`api/integrations.ts` in `plugins/agents/src/`.
+For exact method/path pairs in these broader families, see the matching route modules in `src/api/routes/` and each installed plugin's manifest.
 
 There is no separate personality route family: Elowen stores one global set of
 agent instructions per account and appends it to the system prompt on every
