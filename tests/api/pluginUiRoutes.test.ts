@@ -61,6 +61,31 @@ function uiPluginProvider(adminOnly = false): PluginRegistryProvider {
 const makeApp = async (adminOnly = false) => makeTestApp({ extra: { plugins: uiPluginProvider(adminOnly) } });
 const auth = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
 
+/** A UI plugin declaring one account panel and one project panel, whose `register()` body is supplied by
+ *  the test — the only way to exercise `ctx.registerUiVisibility`, which is a runtime registration rather
+ *  than manifest metadata. */
+function probePluginProvider(registerBody: string): PluginRegistryProvider {
+  const root = mkdtempSync(join(tmpdir(), 'plugin-ui-probe-'));
+  pluginRoots.push(root);
+  const dir = join(root, 'probe');
+  mkdirSync(join(dir, 'web'), { recursive: true });
+  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
+    name: 'probe', version: '1.0.0', apiVersion: '1', description: 'probe', entry: 'index.mjs',
+    web: {
+      entry: 'web/index.js',
+      account: [{ id: 'probe-account', label: 'Probe account' }],
+      project: [{ id: 'probe-project', label: 'Probe project' }],
+    },
+  }));
+  writeFileSync(join(dir, 'index.mjs'), `export function register(ctx){${registerBody}}`);
+  writeFileSync(join(dir, 'web', 'index.js'), BUNDLE);
+  return new PluginRegistryProvider(() => loadPlugins({
+    dirs: [root], enabled: ['probe'], delegatedTurnsOutOfProcess: false, logger: { info() {}, warn() {}, error() {} },
+  }));
+}
+
+type ProbeListing = { name: string; account: { id: string }[]; project: { id: string }[] }[];
+
 describe('plugin browser UI routes', () => {
   it('GET /plugins/ui lists only plugins WITH a bundle, for any authenticated user', async () => {
     const { app, token, deps } = await makeApp();
@@ -117,6 +142,40 @@ describe('plugin browser UI routes', () => {
     expect(enList[0]!.label).toBe('Demo');
     expect(enList[0]!.nav[0]!.label).toBe('Demo world');
     expect(enList[0]!.strings).toEqual({ greeting: 'Hello', untranslated: 'Stays English' });
+  });
+
+  it('lets a plugin hide its own panels per account, leaving an unnamed surface untouched', async () => {
+    // The probe returns null for an admin (no opinion → everything visible) and hides only the PROJECT
+    // surface for anyone else. The account surface is never named, which must mean "leave it alone"
+    // rather than "hide it" — otherwise every plugin filtering one surface would silently lose the other.
+    const { app, token, deps } = await makeTestApp({ extra: { plugins: probePluginProvider(
+      'ctx.registerUiVisibility((req) => (req.isAdmin ? null : { project: [] }));',
+    ) } });
+    const amy = deps.users.create('amy', 'pw');
+
+    const mine = await (await app.request('/plugins/ui', auth(token))).json() as ProbeListing;
+    expect(mine[0]!.project.map((p) => p.id)).toEqual(['probe-project']);
+    expect(mine[0]!.account.map((p) => p.id)).toEqual(['probe-account']);
+
+    const hers = await (await app.request('/plugins/ui', auth(deps.users.issueToken(amy.id)))).json() as ProbeListing;
+    // The plugin itself is still hers — only the panel is gone, and its id never reached the browser.
+    expect(hers.map((p) => p.name)).toEqual(['probe']);
+    expect(hers[0]!.project).toEqual([]);
+    expect(hers[0]!.account.map((p) => p.id)).toEqual(['probe-account']);
+  });
+
+  it('hides the panels of a plugin whose visibility probe throws, without breaking the listing', async () => {
+    // One plugin answering badly must not empty everybody's menu, and a panel whose owner just failed is
+    // the wrong thing to show: fail closed for that plugin, keep serving everyone else.
+    const { app, token } = await makeTestApp({ extra: { plugins: probePluginProvider(
+      "ctx.registerUiVisibility(() => { throw new Error('probe exploded'); });",
+    ) } });
+    const res = await app.request('/plugins/ui', auth(token));
+    expect(res.status).toBe(200);
+    const list = await res.json() as ProbeListing;
+    expect(list.map((p) => p.name)).toEqual(['probe']);
+    expect(list[0]!.project).toEqual([]);
+    expect(list[0]!.account).toEqual([]);
   });
 
   it('serves the bundle immutably on the content-hash URL and 404s a stale hash', async () => {

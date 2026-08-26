@@ -136,6 +136,16 @@ describe('sandbox plugin workspaces', () => {
     expect(asAccount(1, () => control.workspaceRoots({ projectIds: [1] }))).toEqual([{ workspaceId: workspace.id, projectId: 1, path: workspace.path }]);
     expect(asAccount(1, () => control.workspaceRoots({ projectIds: [] }))).toEqual([]);
     expect(asAccount(2, () => control.workspaceRoots({ projectIds: [1] }))).toEqual([]);
+    // The explicit-account form answers with NO ambient scope at all — deliberately called outside
+    // `asAccount`, because that is the only condition a background service ever runs in. If this needed a
+    // policy/identity scope it would be useless to the callers it exists for.
+    expect(control.workspacesFor({ userId: 1 }).map((w) => w.path)).toEqual([workspace.path]);
+    expect(control.workspacesFor({ userId: 1, projectIds: [1] })).toEqual([{
+      workspaceId: workspace.id, projectId: 1, path: workspace.path,
+      label: workspace.label, branch: workspace.branch, baseRef: workspace.baseRef,
+    }]);
+    expect(control.workspacesFor({ userId: 1, projectIds: [2] })).toEqual([]);
+    expect(control.workspacesFor({ userId: 2 })).toEqual([]);
   });
 
   it('commits only explicit paths and leaves unrelated changes in place', async () => {

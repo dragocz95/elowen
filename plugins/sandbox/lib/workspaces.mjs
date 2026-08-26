@@ -110,6 +110,25 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
       .map((workspace) => ({ workspaceId: workspace.id, projectId: workspace.projectId, path: workspace.path }));
   };
 
+  // The same lookup for a caller that NAMES the account instead of standing inside its scope. Background
+  // services run with no identity at all, so the ambient form above cannot answer for them. Returns the
+  // full workspace shape because a consumer mirroring a worktree needs its label to name the destination,
+  // not just the path. `projectIds` omitted means every project the account owns a workspace in.
+  const workspacesFor = ({ userId, projectIds }) => {
+    if (!Number.isSafeInteger(userId)) return [];
+    const allowed = Array.isArray(projectIds) ? new Set(projectIds.map(Number)) : null;
+    return listWorkspaces({ userId, lifecycle: 'active' })
+      .filter((workspace) => (allowed === null || allowed.has(workspace.projectId)) && existsSync(workspace.path))
+      .map((workspace) => ({
+        workspaceId: workspace.id,
+        projectId: workspace.projectId,
+        path: workspace.path,
+        label: workspace.label,
+        branch: workspace.branch,
+        baseRef: workspace.baseRef,
+      }));
+  };
+
   const statusFor = async (workspace, options = {}) => {
     if (!existsSync(workspace.path)) return { isRepo: false, status: null, files: [], diff: '', uniqueCommits: 0 };
     const snapshot = await ctx.host.git().projectSnapshot(workspace.path);
@@ -317,7 +336,7 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
   };
 
   return {
-    listWorkspaces, workspaceById, workspaceRoots, activeWorkspace, statusFor,
+    listWorkspaces, workspaceById, workspaceRoots, workspacesFor, activeWorkspace, statusFor,
     createWorkspace, useWorkspace, commitWorkspace, removalPreview, removeWorkspace,
     markProjectOrphaned, reconcile, removeAccount, sessionListForUser, verifySessionOwner,
   };

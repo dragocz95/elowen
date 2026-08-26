@@ -55,6 +55,12 @@ export async function register(ctx) {
       const accountUserId = accountId();
       return accountUserId === null ? [] : workspaces.workspaceRoots({ accountUserId, projectIds });
     },
+    // Explicit account, for consumers with no ambient scope to read (background services have neither an
+    // identity nor a session). Deliberately does NOT re-check project access: the caller names the account
+    // and must apply its own tenancy rule, exactly as it must for the project paths it already resolves.
+    workspacesFor: ({ userId, projectIds }) => (
+      Number.isSafeInteger(userId) ? workspaces.workspacesFor({ userId, projectIds }) : []
+    ),
     activeWorkspace: (input) => {
       const accountUserId = accountId();
       if (accountUserId === null) return null;

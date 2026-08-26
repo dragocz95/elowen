@@ -10,6 +10,7 @@ const noopLog = { info() {}, warn() {}, error() {} };
 const fakeLsp = (): KnownControls['lsp'] => ({ diagnosticsEnabled: () => true });
 const fakeSandbox = (): KnownControls['sandbox'] => ({
   workspaceRoots: () => [],
+  workspacesFor: () => [],
   activeWorkspace: () => null,
   prepareExecution: async () => ({}) as never,
 });

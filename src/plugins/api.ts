@@ -704,6 +704,17 @@ export interface PluginWebUi {
   i18n?: Record<string, { label?: string; nav?: Record<string, string>; account?: Record<string, string>; user?: Record<string, string>; project?: Record<string, string>; settings?: Record<string, string>; strings?: Record<string, string> }>;
 }
 
+/** Which of a plugin's OWN declared panels an account may see. An omitted key means "that surface is
+ *  untouched" (every declared panel stays visible); an empty array hides all of them. Returning `null` from
+ *  the probe means the same as registering none: everything visible.
+ *
+ *  Deliberately SYNCHRONOUS. The probe runs on every listing request, i.e. on every page load, so it must
+ *  answer from state the plugin already holds — its own table, its config — and must never reach the
+ *  network. An async signature would invite exactly the call that makes the whole menu wait on a third
+ *  party. */
+export type PluginUiVisibility = (req: { userId: number | null; isAdmin: boolean }) =>
+  { account?: readonly string[]; project?: readonly string[] } | null;
+
 /** A long-running background worker a plugin contributes — sweepers, watchers, pollers. The host
  *  owns the lifecycle: started after boot reconcile on a full daemon start (never in a sub-agent
  *  runner), stopped and restarted around a plugin reload, and abandoned at process exit (the daemon
@@ -971,12 +982,61 @@ export interface SandboxPreparedExecution {
  * invalid because its DB/runtime generation may already have been replaced. */
 export interface SandboxControl {
   workspaceRoots(input: { projectIds: readonly number[] }): SandboxWorkspaceRoot[];
+  /** The same lookup for an EXPLICITLY named account, for callers that have no ambient identity to read.
+   *  `workspaceRoots` resolves the account from the current contribution/identity scope, which is exactly
+   *  what a background service does not have: `registerInterval` and `registerService` run with
+   *  `currentIdentity()` and `currentContributionUserId()` both null. A worker that must act on behalf of
+   *  many accounts therefore cannot use the ambient form at all, and passing the account explicitly is the
+   *  only honest way to say whose workspaces are meant. Omitting `projectIds` means every project. */
+  workspacesFor(input: { userId: number; projectIds?: readonly number[] }): SandboxWorkspace[];
   activeWorkspace(input: { sessionId: string; projectId: number }): SandboxWorkspace | null;
   prepareExecution(input: {
     command: SandboxExecutionCommand;
     cwd: string;
     leaseKind: 'terminal' | 'github';
   }): SandboxPreparedExecution | Promise<SandboxPreparedExecution>;
+}
+
+/** Options a Microsoft Graph call accepts, mirroring the delegated client the Teams plugin already owns. */
+export interface MicrosoftGraphRequestOptions {
+  body?: unknown;
+  contentType?: string;
+  accept?: string;
+  ifMatch?: string;
+  headers?: Record<string, string>;
+  maxBytes?: number;
+}
+
+/** A delegated Graph client already NARROWED to the signed-in person's drive namespace. Paths are relative
+ *  to the Graph version root (`/me/drive/...`, `/drives/...`); anything outside that namespace is refused by
+ *  the implementation, so holding this object cannot become a way to read someone's mail, calendar or
+ *  directory. The identity owner decides the blast radius — a consumer never sees the access token. */
+export interface MicrosoftDriveGraph {
+  json(method: string, path: string, options?: MicrosoftGraphRequestOptions): Promise<unknown>;
+  binary(path: string, options?: MicrosoftGraphRequestOptions): Promise<{ body: Uint8Array; contentType: string }>;
+  request(method: string, path: string, options?: MicrosoftGraphRequestOptions): Promise<Response>;
+}
+
+/** Whether an Elowen account is bound to a verified Microsoft identity, and who that is. */
+export interface MicrosoftIdentity {
+  linked: boolean;
+  upn?: string;
+  displayName?: string;
+}
+
+/** Live Microsoft identity seam, owned by whichever plugin holds the tenant's delegated connection.
+ *
+ *  Both methods take the account EXPLICITLY rather than reading an ambient scope, because the callers that
+ *  need them are background workers and HTTP routes, neither of which carries a turn identity. That makes
+ *  this a different authorization model from the chat tools, which stay bound to the person actually
+ *  talking: reaching it requires plugin code inside the daemon's trust domain, and what it hands back is
+ *  already narrowed to drive paths. */
+export interface MicrosoftIdentityControl {
+  /** Cheap and LOCAL — no network. Safe to call on a request path that renders a page. */
+  identityFor(elowenUserId: number): MicrosoftIdentity;
+  /** A fresh delegated client, or null when the account is unlinked, the connection is not configured, or
+   *  the person must sign in again. Never throws for the ordinary "not connected" case. */
+  driveGraphFor(elowenUserId: number): Promise<MicrosoftDriveGraph | null>;
 }
 
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
@@ -990,6 +1050,7 @@ export interface KnownControls {
   mcp: McpListControl;
   lsp: LspStateControl;
   sandbox: SandboxControl;
+  microsoftIdentity: MicrosoftIdentityControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`
@@ -1069,6 +1130,18 @@ export interface PluginContext {
    *  a dependent subsystem stays reachable and answers with half a runtime instead of reporting that its
    *  required capability is unavailable. */
   registerControl(name: string, control: PluginControl, opts?: { requires?: string }): void;
+  /** Hide some of THIS plugin's own `web.account` / `web.project` panels from an account that has no use
+   *  for them. The manifest still declares every panel the plugin can ever show; this decides, per account,
+   *  which of them are real right now — a panel whose whole purpose depends on a connection that account
+   *  does not have should not advertise itself as an empty tab.
+   *
+   *  Filtering happens SERVER-side in the listing the web builds its menus from, so a hidden panel is not
+   *  merely unpainted: its id never reaches the browser. It is presentation, not authorization — a hidden
+   *  panel's API routes keep their own `access` checks, because a client can still call them directly.
+   *
+   *  A probe that throws is treated as "hide this plugin's panels" and warned, never as a reason to fail
+   *  the listing: one plugin's bad probe must not empty everybody's menu. */
+  registerUiVisibility(fn: PluginUiVisibility): void;
   /** Resolve ANOTHER plugin's registered control — the one supported way one plugin reaches a capability
    *  a sibling owns. Gated by `reads:['controls']`.
    *
