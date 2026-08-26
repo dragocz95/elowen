@@ -27,6 +27,7 @@ import { HEARTBEAT_INTERVAL_MS, LAG_WINDOW_MS } from './sizing.js';
 import { buildBrainCore } from '../daemon/brainCore.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { BrainService } from '../brain/brainService.js';
+import { processRegistry } from '../brain/processRegistry.js';
 import { parseDelegatedTurnRequest, toDelegatedProgress } from '../brain/delegatedTurn.js';
 import { SUBAGENT_PLATFORM, channelSessionId } from '../brain/sessionId.js';
 import { parseDaemonMessage, subagentBuildId, type RunnerToDaemon } from './protocol.js';
@@ -338,6 +339,9 @@ process.on('message', (raw: unknown) => {
       });
       return;
     }
+    case 'killAccountProcesses':
+      send({ type: 'accountProcessesKilled', requestId: msg.requestId, killed: processRegistry.killAccount(msg.userId) });
+      return;
     case 'hostResult':
       hostRpc.settle(msg.callId, msg.result);
       return;

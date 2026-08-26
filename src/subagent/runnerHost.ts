@@ -35,6 +35,7 @@ const BOOT_RETRY_COOLDOWN_MS = 60_000;
 /** An activity query is a reload safety check, not an excuse to hang reload forever on a wedged IPC peer.
  *  Timeout fails closed as active; the outer bounded reload drain decides when to give up safely. */
 const ACTIVITY_TIMEOUT_MS = 1_000;
+const ACCOUNT_PROCESS_KILL_TIMEOUT_MS = 2_000;
 
 export interface SubagentRunnerHostDeps {
   dbPath: string;
@@ -260,6 +261,33 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
       child.on('message', onMessage);
       child.once('exit', onExit);
       if (!this.post(child, { type: 'activity', activityId })) finish(1);
+    });
+  }
+
+  async killAccountProcesses(userId: number): Promise<number> {
+    const child = this.child;
+    if (!child || !this.ready) return 0;
+    const requestId = randomUUID();
+    return new Promise<number>((resolve, reject) => {
+      let settled = false;
+      const finish = (error: Error | null, killed = 0): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.off('message', onMessage);
+        child.off('exit', onExit);
+        if (error) reject(error); else resolve(killed);
+      };
+      const onMessage = (raw: unknown): void => {
+        const msg = parseRunnerMessage(raw);
+        if (msg?.type === 'accountProcessesKilled' && msg.requestId === requestId) finish(null, msg.killed);
+      };
+      const onExit = (): void => finish(null, 0);
+      const timer = setTimeout(() => finish(new Error('sub-agent runner did not acknowledge account process teardown')), ACCOUNT_PROCESS_KILL_TIMEOUT_MS);
+      timer.unref();
+      child.on('message', onMessage);
+      child.once('exit', onExit);
+      if (!this.post(child, { type: 'killAccountProcesses', requestId, userId })) finish(new Error('sub-agent runner channel closed during account process teardown'));
     });
   }
 

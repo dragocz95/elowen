@@ -233,6 +233,15 @@ export class ProcessRegistry {
     return handles.length;
   }
 
+  killAccount(accountUserId: number): number {
+    const handles = [...this.handles.values()].filter((handle) => processHandleAccount(handle) === accountUserId);
+    for (const handle of handles) {
+      if (handle.running()) this.kill(handle.id);
+      else this.remove(handle.id);
+    }
+    return handles.length;
+  }
+
   /** Drop an entry without killing (e.g. an already-exited process cleared from the panel). */
   remove(id: string): boolean {
     const handle = this.handles.get(id);

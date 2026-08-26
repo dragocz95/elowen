@@ -105,6 +105,17 @@ describe('runner activity — daemon → runner and back', () => {
   });
 });
 
+describe('account process teardown — daemon → runner and back', () => {
+  it('parses correlated account process frames and rejects invalid users or counts', () => {
+    expect(parseDaemonMessage({ type: 'killAccountProcesses', requestId: 'k-1', userId: 7 }))
+      .toEqual({ type: 'killAccountProcesses', requestId: 'k-1', userId: 7 });
+    expect(parseRunnerMessage({ type: 'accountProcessesKilled', requestId: 'k-1', killed: 2 }))
+      .toEqual({ type: 'accountProcessesKilled', requestId: 'k-1', killed: 2 });
+    expect(parseDaemonMessage({ type: 'killAccountProcesses', requestId: 'k-1', userId: 0 })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'accountProcessesKilled', requestId: 'k-1', killed: -1 })).toBeUndefined();
+  });
+});
+
 describe('steer verb — daemon → runner and back', () => {
   it('parses a steer frame', () => {
     expect(parseDaemonMessage({ type: 'steer', steerId: 's-1', channelId: 'subagent-sub-dlg-1', text: 'also check docs' }))

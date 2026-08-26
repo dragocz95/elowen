@@ -500,6 +500,11 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
     return this.queue.depth + remote.reduce((sum, count) => sum + count, 0);
   }
 
+  async killAccountProcesses(userId: number): Promise<number> {
+    const killed = await Promise.all(this.runners.map((entry) => entry.host.killAccountProcesses(userId)));
+    return killed.reduce((sum, count) => sum + count, 0);
+  }
+
   /** Broadcast the shutdown drain latch to every live runner (see SubagentRunnerHost.beginDrain). */
   beginDrain(): void {
     for (const entry of this.runners) entry.host.beginDrain();

@@ -24,6 +24,8 @@ export interface ServerDeps {
   /** The sub-agent pool's live state, for `/health`. Absent in a process with no pool (the in-memory test
    *  database, and the runner itself), which is reported as an absent block rather than a fake empty one. */
   subagentPool?: () => SubagentPoolStats;
+  /** Stop daemon- and runner-owned terminal processes for an account before deletion. */
+  killAccountProcesses?: (userId: number) => Promise<number>;
   bus: EventBus;
   project: { id: number; path: string };
   clock: Clock;
