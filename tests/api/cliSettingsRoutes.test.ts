@@ -37,7 +37,11 @@ describe('cli-settings routes', () => {
     const { app, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', auth(amyTok));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
+    // `availableLinks` is EMPTY here on purpose: this fixture registers no platform adapter, and the
+    // account page offers a platform link only where a sender could actually arrive. An empty array is
+    // therefore the honest answer and must not be confused with the field being absent, which is how an
+    // older daemon reads and which means "offer all of them".
+    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8', availableLinks: [] });
   });
 
   it('PATCH saves the override and restarts a running brain', async () => {
