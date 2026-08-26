@@ -418,10 +418,15 @@ describe('brain providers', () => {
     });
 
     it("leaves Kimi's User-Agent to PI, which stamps its own", async () => {
-      // Kimi's endpoint rejects requests without a User-Agent, and until PI 0.84.2 the header was a
-      // per-model `KimiCLI/x` that registration moved into a side store. That release made the Anthropic
-      // transport stamp PI's runtime agent instead, DISCARDING whatever the caller set — so a per-model
-      // header here would be dead weight that reads as if it still mattered.
+      // Kimi's endpoint rejects requests without a User-Agent, and the header used to be a per-model
+      // `KimiCLI/x` that registration moved into a side store. PI 0.84.2 made the Anthropic transport
+      // stamp its own runtime agent for Kimi specifically, so a per-model header here became dead weight
+      // that read as if it still mattered.
+      //
+      // 0.84.3 widened that: the agent is now the BASE for every Anthropic request rather than a
+      // Kimi-only override, and caller headers win over it instead of being discarded. Nothing we send
+      // changes — we set no agent anywhere — but the assertion has to describe the mechanism that is
+      // actually there, or the next upgrade fails on a claim nobody can check.
       //
       // Pinned on both halves, because either one alone passes for the wrong reason: the resolved headers
       // must carry no agent of ours, and the transport Kimi actually rides must still set one.
@@ -439,7 +444,7 @@ describe('brain providers', () => {
         fileURLToPath(new URL('../../node_modules/@earendil-works/pi-ai/dist/api/anthropic-messages.js', import.meta.url)),
         'utf8',
       );
-      expect(transport).toContain('merged["User-Agent"] = getPiUserAgent()');
+      expect(transport).toContain('mergeHeaders({ "User-Agent": getPiUserAgent() }');
     });
 
     it('reads k3 as a reasoning model', () => {
