@@ -13,7 +13,7 @@ const markedProvider = (src: string, path: string): string => `NULLIF(CASE WHEN 
 END, '')`;
 
 const columns = `source_message_id, bucket_index, session_id, user_id, provider, model, ts,
-  input, output, cache_read, cache_write, total, reasoning, duration_ms, measured_output, cost`;
+  input, output, cache_read, cache_write, total, reasoning, calls, duration_ms, measured_output, cost`;
 
 const liveSelect = (message: string, recoverProvider = 'NULL'): string => `
 SELECT ${message}.id, -1, ${message}.session_id, s.user_id,
@@ -27,6 +27,7 @@ SELECT ${message}.id, -1, ${message}.session_id, s.user_id,
        ${numeric(`${message}.content`, '$.usage.cacheWrite')},
        ${numeric(`${message}.content`, '$.usage.totalTokens')},
        ${numeric(`${message}.content`, '$.usage.reasoning')},
+       1,
        ${numeric(`${message}.content`, '$.durationMs')},
        CASE WHEN ${numeric(`${message}.content`, '$.durationMs')} > 0
                   AND ${numeric(`${message}.content`, '$.usage.output')} > 0
@@ -45,6 +46,7 @@ SELECT ${message}.id, CAST(je.key AS INTEGER), ${message}.session_id, s.user_id,
        ${numeric('je.value', '$.input')}, ${numeric('je.value', '$.output')},
        ${numeric('je.value', '$.cacheRead')}, ${numeric('je.value', '$.cacheWrite')},
        ${numeric('je.value', '$.totalTokens')}, ${numeric('je.value', '$.reasoning')},
+       ${numeric('je.value', '$.calls')},
        ${numeric('je.value', '$.durationMs')}, ${numeric('je.value', '$.measuredOutput')},
        ${numeric('je.value', '$.cost.total', 'NULL')}
   FROM brain_sessions s,
@@ -84,6 +86,7 @@ export function installBrainUsageRollup(db: Db): void {
       cache_write REAL NOT NULL DEFAULT 0,
       total REAL NOT NULL DEFAULT 0,
       reasoning REAL NOT NULL DEFAULT 0,
+      calls INTEGER NOT NULL DEFAULT 0,
       duration_ms REAL NOT NULL DEFAULT 0,
       measured_output REAL NOT NULL DEFAULT 0,
       cost REAL,
@@ -92,15 +95,27 @@ export function installBrainUsageRollup(db: Db): void {
     CREATE INDEX IF NOT EXISTS idx_brain_usage_rows_user_ts ON brain_usage_rows(user_id, ts);
     CREATE INDEX IF NOT EXISTS idx_brain_usage_rows_user_model_ts ON brain_usage_rows(user_id, provider, model, ts);
     CREATE INDEX IF NOT EXISTS idx_brain_usage_rows_session ON brain_usage_rows(session_id);
-
-    CREATE TRIGGER IF NOT EXISTS brain_usage_rows_insert AFTER INSERT ON brain_messages BEGIN
+  `);
+  const columns = db.prepare('PRAGMA table_info(brain_usage_rows)').all() as { name: string }[];
+  if (!columns.some((column) => column.name === 'calls')) {
+    // The projection is derived and rebuildable, but historical compaction buckets did not preserve their
+    // generation count. Existing rows therefore stay honestly unknown (0); only new writes are exact.
+    db.exec('ALTER TABLE brain_usage_rows ADD COLUMN calls INTEGER NOT NULL DEFAULT 0');
+  }
+  // Trigger SQL is versioned with the projection shape. Recreate it on every boot so an additive column is
+  // populated immediately without rewriting the historical projection or scanning brain_messages.
+  db.exec(`
+    DROP TRIGGER IF EXISTS brain_usage_rows_insert;
+    DROP TRIGGER IF EXISTS brain_usage_rows_delete;
+    DROP TRIGGER IF EXISTS brain_usage_rows_update;
+    CREATE TRIGGER brain_usage_rows_insert AFTER INSERT ON brain_messages BEGIN
       ${insertTriggerBody('NEW')}
     END;
-    CREATE TRIGGER IF NOT EXISTS brain_usage_rows_delete AFTER DELETE ON brain_messages BEGIN
+    CREATE TRIGGER brain_usage_rows_delete AFTER DELETE ON brain_messages BEGIN
       DELETE FROM brain_usage_rows WHERE source_message_id = OLD.id;
       UPDATE brain_usage_rollup_state SET generation = generation + 1 WHERE id = 1;
     END;
-    CREATE TRIGGER IF NOT EXISTS brain_usage_rows_update AFTER UPDATE OF content, role, session_id ON brain_messages BEGIN
+    CREATE TRIGGER brain_usage_rows_update AFTER UPDATE OF content, role, session_id ON brain_messages BEGIN
       DELETE FROM brain_usage_rows WHERE source_message_id = OLD.id;
       ${insertTriggerBody('NEW')}
     END;

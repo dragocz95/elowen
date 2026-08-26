@@ -1276,6 +1276,32 @@ describe('BrainStore', () => {
         expect(days.find((d) => d.day === '2026-06-20')?.tokens).toBe(5);
       });
 
+      it('keeps separate day buckets and call counts when one compaction drops several days', () => {
+        const dayOne = Date.parse('2026-08-24T23:59:00Z');
+        const dayTwo = Date.parse('2026-08-25T00:01:00Z');
+        store.createSession({ id: 'brain-a', userId: 1, provider: 'anthropic', model: 'claude-opus-5' });
+        usageMsg('brain-a', 'old1', { totalTokens: 100, cost: 0.1 }, dayOne, 'claude-opus-5');
+        usageMsg('brain-a', 'old2', { totalTokens: 200, cost: 0.2 }, dayTwo, 'claude-opus-5');
+        store.appendMessage({ id: 'keep', sessionId: 'brain-a', parentId: null, role: 'user', content: { role: 'user', content: 'keep' } });
+
+        store.compactSessionMessages('brain-a', { id: 'sum', role: 'compaction', content: { role: 'compactionSummary' } }, 1);
+
+        const divider = JSON.parse(store.getMessages('brain-a')[0]!.content) as {
+          usageRollup: Array<{ at: number; calls: number; totalTokens: number }>;
+        };
+        expect(divider.usageRollup).toHaveLength(2);
+        expect(divider.usageRollup.map((bucket) => ({
+          day: new Date(bucket.at).toISOString().slice(0, 10), calls: bucket.calls, total: bucket.totalTokens,
+        }))).toEqual([
+          { day: '2026-08-24', calls: 1, total: 100 },
+          { day: '2026-08-25', calls: 1, total: 200 },
+        ]);
+        expect(store.usageByDay(1, 3650)).toEqual(expect.arrayContaining([
+          expect.objectContaining({ day: '2026-08-24', tokens: 100 }),
+          expect.objectContaining({ day: '2026-08-25', tokens: 200 }),
+        ]));
+      });
+
       it('leaves an UNDATED dropped row undated, so compaction cannot conjure spend onto a new day', () => {
         const compactMs = Date.parse('2026-06-20T00:00:00Z');
         store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });

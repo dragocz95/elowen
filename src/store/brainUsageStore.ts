@@ -160,9 +160,9 @@ export interface BrainDescendantUsage {
   totalTokens: number; reasoning: number; cost: number;
 }
 
-/** One per-model bucket of usage rolled up from the assistant rows a compaction DROPS, folded onto the
- *  `compaction` divider so historical spend survives (compaction deletes those rows). Stored as an ARRAY
- *  under `$.usageRollup` — one bucket per model that produced dropped spend — under a key that is NEVER
+/** One per-provider/model/UTC-day bucket of usage rolled up from the assistant rows a compaction DROPS,
+ *  folded onto the `compaction` divider so historical spend survives (compaction deletes those rows).
+ *  Stored as an ARRAY under `$.usageRollup` — one bucket per producing identity and day — under a key that is NEVER
  *  `usage`, so PI's live session and `usageOf` (statusline) never double-count it after rehydrate.
  *  `model` preserves per-model attribution across compaction; `at` is the ms-epoch of the newest dropped
  *  row of that model (the day/window attribution basis, standing in for a live row's `$.timestamp`) and
@@ -178,35 +178,42 @@ export interface UsageRollupBucket {
   model: string;
   input: number; output: number; cacheRead: number; cacheWrite: number;
   totalTokens: number; reasoning: number; at?: number;
+  /** Number of provider generations represented by this day bucket. Legacy buckets predate this field and
+   *  remain unknown (0) rather than being presented as one call when they may contain thousands. */
+  calls?: number;
   durationMs?: number; measuredOutput?: number; cost?: { total: number };
 }
 
-/** Fold the usage of the rows a compaction is about to delete into PER-MODEL rollup buckets: assistant
- *  rows via `$.usage`, attributed to their own `$.model`; and any earlier compaction dividers via their
+/** Fold the usage of the rows a compaction is about to delete into per-identity, per-UTC-day rollup
+ *  buckets: assistant rows via `$.usage`, attributed to their own provider/model/day; and any earlier compaction dividers via their
  *  own `$.usageRollup` buckets, so multiple compactions chain without losing spend OR its per-model
  *  breakdown. Each bucket's `at` is the ms-epoch of the newest dropped row of THAT model, so rolled-up
  *  spend keeps its ORIGINAL date instead of jumping to the compaction moment. Returns null when nothing
  *  dropped carried usage (keeps the divider clean). */
 export function rollupDroppedUsage(dropped: readonly { content: string }[]): UsageRollupBucket[] | null {
-  const byIdentity = new Map<string, UsageRollupBucket>();
+  const byIdentityAndDay = new Map<string, UsageRollupBucket>();
   const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  const bucketFor = (provider: string, model: string, providerIdentity = false): UsageRollupBucket => {
-    const key = JSON.stringify([provider, model, providerIdentity]);
-    let b = byIdentity.get(key);
+  const bucketFor = (provider: string, model: string, providerIdentity: boolean, at: number): UsageRollupBucket => {
+    // UTC matches usageByDay's SQLite date(ts/1000, 'unixepoch') grouping exactly. Undated history stays
+    // in one explicit undated bucket and remains invisible to date-filtered views, as it was before.
+    const day = at > 0 ? Math.floor(at / 86_400_000) : null;
+    const key = JSON.stringify([provider, model, providerIdentity, day]);
+    let b = byIdentityAndDay.get(key);
     if (!b) {
       b = {
         ...(provider ? { provider } : {}), ...(providerIdentity ? { providerIdentity: 'config' as const } : {}), model,
         input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, reasoning: 0,
-        at: 0, durationMs: 0, measuredOutput: 0,
+        at: 0, calls: 0, durationMs: 0, measuredOutput: 0,
       };
-      byIdentity.set(key, b);
+      byIdentityAndDay.set(key, b);
     }
     return b;
   };
-  const fold = (b: UsageRollupBucket, u: Record<string, unknown>, at: number, measured: { durationMs: number; output: number }): void => {
+  const fold = (b: UsageRollupBucket, u: Record<string, unknown>, at: number, calls: number, measured: { durationMs: number; output: number }): void => {
     b.input += num(u.input); b.output += num(u.output);
     b.cacheRead += num(u.cacheRead); b.cacheWrite += num(u.cacheWrite);
     b.reasoning += num(u.reasoning); b.totalTokens += num(u.totalTokens);
+    b.calls = (b.calls ?? 0) + calls;
     // Only a generation with BOTH wall time and output tokens carries a speed, so both sides of the
     // tok/s fraction move together — an untimed legacy row would otherwise inflate it and an abort
     // (duration, empty `usage`) would deflate it, permanently, since compaction drops the per-row
@@ -231,29 +238,37 @@ export function rollupDroppedUsage(dropped: readonly { content: string }[]): Usa
       for (const raw of c.usageRollup) {
         if (!raw || typeof raw !== 'object') continue;
         const pb = raw as Record<string, unknown>;
+        const at = num(pb.at);
         fold(bucketFor(
           typeof pb.provider === 'string' ? pb.provider : '',
           typeof pb.model === 'string' ? pb.model : '',
-          pb.providerIdentity === 'config',
-        ), pb, num(pb.at), { durationMs: num(pb.durationMs), output: num(pb.measuredOutput) });
+          pb.providerIdentity === 'config', at,
+        ), pb, at, num(pb.calls), { durationMs: num(pb.durationMs), output: num(pb.measuredOutput) });
       }
     } else if (c.usage && typeof c.usage === 'object') {
       // An assistant message — attribute to the identity it recorded. Empty fields are resolved from the
       // session only by the SQL reader, which still has that session row; the persisted rollup never guesses.
+      const at = typeof c.timestamp === 'number' ? c.timestamp : 0;
       fold(bucketFor(
         typeof c.provider === 'string' ? c.provider : '',
         typeof c.model === 'string' ? c.model : '',
-        c.providerIdentity === 'config',
-      ), c.usage, typeof c.timestamp === 'number' ? c.timestamp : 0, { durationMs: num(c.durationMs), output: num(c.usage.output) });
+        c.providerIdentity === 'config', at,
+      ), c.usage, at, 1, { durationMs: num(c.durationMs), output: num(c.usage.output) });
     }
   }
-  const buckets = [...byIdentity.values()].filter((b) => b.totalTokens !== 0 || b.cost != null);
+  const buckets = [...byIdentityAndDay.values()]
+    .filter((b) => b.totalTokens !== 0 || b.cost != null)
+    .sort((a, b) => (a.at ?? 0) - (b.at ?? 0)
+      || (a.provider ?? '').localeCompare(b.provider ?? '') || a.model.localeCompare(b.model));
   if (buckets.length === 0) return null;
   // A legacy row with no numeric `$.timestamp` is already invisible to the day/model views (`ts IS NOT
   // NULL`), so its bucket must stay undated too: dating it — to the compaction moment or anything else —
   // would make compaction ADD spend to a day the session never spent it on. Undated stays undated, on
   // both sides of a compaction; the tokens still count wherever no date is required (descendantUsage).
-  for (const b of buckets) if (b.at === 0) delete b.at;
+  for (const b of buckets) {
+    if (b.at === 0) delete b.at;
+    if (b.calls === 0) delete b.calls;
+  }
   return buckets;
 }
 
