@@ -330,6 +330,23 @@ export class MemoryStore {
     return { byUser, byHour };
   }
 
+  /** The same per-person recall volume as {@link recallActivityToday}, over a window of whole days —
+   *  what the pulse tile's ring reports, which is a month rather than a day.
+   *
+   *  No hourly breakdown here on purpose: a month of hours is a shape nothing draws, and computing it
+   *  would scan the same rows for an answer nobody reads. `days` is clamped and interpolated rather than
+   *  bound because SQLite's datetime() modifier takes a literal — the clamp is what makes that safe,
+   *  the same shape as {@link purgeUsageEventsOlderThan}. */
+  recallCountsSince(days: number): { userId: number; count: number }[] {
+    const d = Number.isFinite(days) && days >= 1 ? Math.min(365, Math.floor(days)) : 30;
+    return this.db.prepare(
+      `SELECT user_id AS userId, COUNT(*) AS count
+         FROM memory_usage_events
+        WHERE used_at >= datetime('now', '-${d} days')
+        GROUP BY user_id`
+    ).all() as { userId: number; count: number }[];
+  }
+
   /** Drop usage events older than `days`. Called by the daily retention sweep — this table grows with
    *  every recall (hundreds of rows a day), so it is the one memory table that needs age pruning.
    *  `days` is clamped here rather than bound as a parameter because SQLite's datetime() modifier takes

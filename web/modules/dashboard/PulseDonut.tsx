@@ -4,23 +4,35 @@ import { Activity, Brain, Coins, DollarSign, Radio, Zap } from 'lucide-react';
 import { Avatar } from '../../components/ui/Avatar';
 import { PlatformIcon } from '../../components/ui/PlatformIcon';
 import { formatCost, formatTokens } from '../../lib/format';
-import { HOURS, colorFor, toLocalHours } from './pulseSeries';
+import { colorFor } from './pulseSeries';
 import type { LocaleDict } from '../../lib/i18n/types';
 import type { PulsePerson } from '../../lib/types';
 
-/** Who spent today's budget, as one ring.
+/** Who spent the month's budget, as one ring.
  *
- *  The ring answers the question the tile exists for — how the day divided between people — in a single
+ *  The ring answers the question the tile exists for — how the work divided between people — in a single
  *  glance, and everything that used to need a seven-column table moves into the hover card. That trade
  *  is deliberate: a table makes the reader scan columns to compare two people, while an arc makes the
- *  comparison the picture itself. The cost of it is that a ring has no time axis, so the card carries a
- *  small day curve to keep "when did they work" available.
+ *  comparison the picture itself.
+ *
+ *  The window is a month rather than the day above it, because a single day divides too thinly to have a
+ *  shape. Every figure in this file therefore reads `person.month`; the one exception is "what they are
+ *  doing", which is live process state and has no window at all.
  *
  *  Slices are sized by tokens rather than cost: cost is null for any turn nobody priced, and a ring with
  *  missing slices would misstate the split. Cost is reported inside the card, where a missing value can
  *  say so honestly. */
 
 const RING_HEIGHT = 208;
+
+/** A newer bundle can reach an older daemon that has no month block at all — the browser caches the
+ *  JS while the daemon restarts on its own schedule. Reading it defensively costs one function and
+ *  makes that pairing draw an empty ring instead of throwing through the whole dashboard. */
+const NO_MONTH: PulsePerson['month'] = {
+  turns: 0, tokens: 0, cost: null, cacheHitPct: null, memoryHits: 0, surfaces: [], days: [],
+};
+const monthOf = (person: PulsePerson): PulsePerson['month'] =>
+  (person as { month?: PulsePerson['month'] }).month ?? NO_MONTH;
 
 /** One row of the hover card. The icon is what makes the card readable at a glance rather than a list
  *  of labels — the same reasoning as the feed's tool marks. */
@@ -36,12 +48,13 @@ function Row({ icon: Icon, label, children }: {
   );
 }
 
-/** A person's day at card scale, normalised to their own peak — the one thing the ring cannot show. */
-function DayCurve({ hours, colour }: { hours: number[]; colour: string }) {
-  const local = toLocalHours(hours);
-  const max = Math.max(...local, 0);
-  if (max <= 0) return null;
-  const points = local.map((v, i) => `${(i / (HOURS - 1)) * 100},${14 - (v / max) * 12}`).join(' ');
+/** A person's month at card scale, normalised to their own peak — the one thing the ring cannot show,
+ *  since an arc has no time axis. Left in UTC days deliberately: shifting a whole-day count into local
+ *  time would split every day across two slots and blur the shape it exists to show. */
+function DayCurve({ days, colour }: { days: number[]; colour: string }) {
+  const max = Math.max(...days, 0);
+  if (max <= 0 || days.length < 2) return null;
+  const points = days.map((v, i) => `${(i / (days.length - 1)) * 100},${14 - (v / max) * 12}`).join(' ');
   return (
     <svg aria-hidden viewBox="0 0 100 14" preserveAspectRatio="none" className="mt-1 h-4 w-full">
       <polyline
@@ -67,6 +80,7 @@ export function PersonCard({ active, payload, t }: TooltipShape) {
   if (!active || !datum || !t) return null;
   const { person, index, share } = datum;
   const colour = colorFor(index);
+  const month = monthOf(person);
   const surfaces = t.dashboard.surfaces as Record<string, string>;
 
   return (
@@ -96,33 +110,35 @@ export function PersonCard({ active, payload, t }: TooltipShape) {
 
       <div className="mt-2.5 flex flex-col gap-0.5 border-t border-border/60 pt-2">
         <Row icon={Radio} label={t.dashboard.pulseColChannel}>
-          {person.surfaces.length === 0 ? '—' : (
+          {month.surfaces.length === 0 ? '—' : (
             <span
               className="flex items-center justify-end gap-1"
-              title={person.surfaces.map((s) => surfaces[s] ?? surfaces.unknown).join(' · ')}
+              title={month.surfaces.map((s) => surfaces[s] ?? surfaces.unknown).join(' · ')}
             >
-              {person.surfaces.slice(0, 5).map((s) => (
+              {month.surfaces.slice(0, 5).map((s) => (
                 <PlatformIcon key={s} platform={s} size={13} />
               ))}
             </span>
           )}
         </Row>
+        {/* Live process state, so this row alone is not a month figure — there is no such thing as
+            "what they were doing over thirty days". */}
         <Row icon={Activity} label={t.dashboard.pulseColDoing}>
           {person.working && person.title
             ? <span className="text-success">{person.title}</span>
             : person.lastTs ? t.dashboard.pulseSeen : '—'}
         </Row>
         <Row icon={DollarSign} label={t.dashboard.pulseColCost}>
-          {person.cost === null ? t.dashboard.pulseUnpriced : formatCost(person.cost, 2)}
+          {month.cost === null ? t.dashboard.pulseUnpriced : formatCost(month.cost, 2)}
         </Row>
-        <Row icon={Coins} label={t.dashboard.pulseColTokens}>{formatTokens(person.tokens)}</Row>
+        <Row icon={Coins} label={t.dashboard.pulseColTokens}>{formatTokens(month.tokens)}</Row>
         <Row icon={Zap} label={t.dashboard.pulseColCache}>
-          {person.cacheHitPct === null ? '—' : `${Math.round(person.cacheHitPct)} %`}
+          {month.cacheHitPct === null ? '—' : `${Math.round(month.cacheHitPct)} %`}
         </Row>
-        <Row icon={Brain} label={t.dashboard.pulseColHits}>{person.memoryHits.toLocaleString()}</Row>
+        <Row icon={Brain} label={t.dashboard.pulseColHits}>{month.memoryHits.toLocaleString()}</Row>
       </div>
 
-      <DayCurve hours={person.hoursToday} colour={colour} />
+      <DayCurve days={month.days} colour={colour} />
     </div>
   );
 }
@@ -130,11 +146,13 @@ export function PersonCard({ active, payload, t }: TooltipShape) {
 export function PulseDonut({ people, totalTokens, t }: {
   people: PulsePerson[]; totalTokens: number; t: LocaleDict;
 }) {
-  // A person with no tokens today would be an invisible slice with a hoverable label; drop them from the
-  // ring and let the headline counts speak for them instead.
+  // A person with no tokens this month would be an invisible slice that still swallows a hover; drop them
+  // from the ring and let the gauges above speak for them instead.
   const slices: SliceDatum[] = people
-    .map((person, index) => ({ person, index, share: totalTokens > 0 ? (person.tokens / totalTokens) * 100 : 0 }))
-    .filter((s) => s.person.tokens > 0);
+    .map((person, index) => ({
+      person, index, share: totalTokens > 0 ? (monthOf(person).tokens / totalTokens) * 100 : 0,
+    }))
+    .filter((s) => monthOf(s.person).tokens > 0);
 
   if (slices.length === 0) return null;
 
@@ -144,7 +162,7 @@ export function PulseDonut({ people, totalTokens, t }: {
         <PieChart>
           <Pie
             data={slices}
-            dataKey={(d: SliceDatum) => d.person.tokens}
+            dataKey={(d: SliceDatum) => monthOf(d.person).tokens}
             nameKey={(d: SliceDatum) => d.person.label}
             innerRadius="62%"
             outerRadius="92%"
@@ -163,11 +181,11 @@ export function PulseDonut({ people, totalTokens, t }: {
         </PieChart>
       </ResponsiveContainer>
 
-      {/* The day's total, in the hole. Pointer-events off so it never steals a hover from the ring. */}
+      {/* The month's total, in the hole. Pointer-events off so it never steals a hover from the ring. */}
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
         <span className="font-mono text-xl leading-none tabular-nums text-text">{formatTokens(totalTokens)}</span>
         <span className="mt-1 text-[10px] uppercase tracking-wider text-text-muted">
-          {t.dashboard.pulseTodayLabel}
+          {t.dashboard.pulseMonthLabel}
         </span>
       </div>
     </div>

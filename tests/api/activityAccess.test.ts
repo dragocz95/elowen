@@ -154,11 +154,17 @@ describe('GET /activity/pulse', () => {
       people: {
         userId: number; tokens: number; cost: number | null; surfaces: string[]; turns: number;
         cacheHitPct: number | null; memoryHits: number; title: string; hoursToday: number[];
+        activeToday: boolean;
+        month: {
+          turns: number; tokens: number; cost: number | null; cacheHitPct: number | null;
+          memoryHits: number; surfaces: string[]; days: number[];
+        };
       }[];
       totals: {
-        turns: number; tokens: number; cost: number | null;
+        turns: number; tokens: number; cost: number | null; activePeople: number;
         runningAgents: number; memoryHits: number; cacheHitPct: number | null;
       };
+      month: { from: string; days: number; tokens: number; cost: number | null };
       spendAvailable: boolean;
     };
 
@@ -223,6 +229,26 @@ describe('GET /activity/pulse', () => {
     const body = await pulse(app, tok);
     expect(body.people.find((p) => p.userId === idle.id)?.cacheHitPct ?? null).toBeNull();
     expect(body.totals.cacheHitPct).toBeNull();
+  });
+
+  it('keeps somebody who worked earlier in the month without counting them as here today', async () => {
+    const { app, usageOrigins, tok, adminId, users } = setupPulse();
+    const earlier = users.create('earlier', 'pw');
+    usageOrigins.addTurn(adminId, { value: 'local', kind: 'local', trusted: true },
+      usage({ total: 100 }), Date.now());
+    usageOrigins.addTurn(earlier.id, { value: 'local', kind: 'local', trusted: true },
+      usage({ total: 900 }), Date.now() - 5 * 86_400_000);
+
+    const body = await pulse(app, tok);
+    const them = body.people.find((p) => p.userId === earlier.id)!;
+    // They belong on the ring, which divides a month...
+    expect(them.month.tokens).toBe(900);
+    expect(body.month.tokens).toBe(1000);
+    // ...but they did nothing today, and the gauge above the ring means exactly that. Deriving it from
+    // the length of `people` — as it did while the tile was a single window — would overstate it.
+    expect(them.tokens).toBe(0);
+    expect(them.activeToday).toBe(false);
+    expect(body.totals.activePeople).toBe(1);
   });
 
   it('counts a delegated session as a running agent, not as a person at a keyboard', async () => {

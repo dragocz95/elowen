@@ -25,6 +25,11 @@ const server = setupServer(
       lastTs: '2026-06-30 12:00:00', turns: 2, tokens: 1500, cost: 3.5,
       cacheHitPct: 88, memoryHits: 12, surfaces: ['web'],
       hoursToday: Array.from({ length: 24 }, (_, h) => (h === 12 ? 2 : 0)),
+      activeToday: true,
+      month: {
+        turns: 60, tokens: 400_000, cost: 12, cacheHitPct: 90, memoryHits: 300,
+        surfaces: ['web'], days: Array.from({ length: 30 }, () => 2),
+      },
     }],
     totals: { turns: 2, tokens: 1500, cost: 3.5, activePeople: 1, runningAgents: 0, memoryHits: 12, cacheHitPct: 88 },
     yesterday: { people: 1, turns: 1, tokens: 800 },

@@ -4,6 +4,48 @@ import { isSubagentSession } from '../../brain/sessionId.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 
 const HOURS_IN_DAY = 24;
+/** The window the pulse ring reports on. Rolling whole days rather than the calendar month so the
+ *  comparison between two people is always over the same length of time — on the 1st of a month a
+ *  calendar window would divide a few hours of work and read as noise. */
+const MONTH_DAYS = 30;
+
+/** Per-person usage summed over a window, from the origin rollup alone.
+ *
+ *  A row without a cost is a turn nobody priced, not a free one, so null stays distinct from 0 — a
+ *  confident $0.00 would understate a real bill. `cacheRead` (context served warm) and `input` (context
+ *  paid for fresh) are both kept so the ratio can be weighted by context rather than averaged across
+ *  rows, which is what the money actually did. */
+interface UsageAcc {
+  turns: number; tokens: number; cost: number | null;
+  input: number; cacheRead: number; surfaces: string[];
+}
+function sumUsage(rows: {
+  userId: number | null; turns: number; tokens: number; cost: number | null;
+  input: number; cacheRead: number; origin: string | null; originKind: string | null;
+}[]): Map<number, UsageAcc> {
+  const out = new Map<number, UsageAcc>();
+  for (const row of rows) {
+    if (row.userId === null) continue;
+    const acc = out.get(row.userId)
+      ?? { turns: 0, tokens: 0, cost: null, input: 0, cacheRead: 0, surfaces: [] };
+    acc.turns += row.turns;
+    acc.tokens += row.tokens;
+    acc.input += row.input;
+    acc.cacheRead += row.cacheRead;
+    if (row.cost !== null) acc.cost = (acc.cost ?? 0) + row.cost;
+    const surface = surfaceOf(row.origin, row.originKind);
+    if (surface && !acc.surfaces.includes(surface)) acc.surfaces.push(surface);
+    out.set(row.userId, acc);
+  }
+  return out;
+}
+
+/** Warm-context share of everything that was read. Null when nothing ran: a person with no turns has
+ *  no cache ratio, and "0 %" reads as a catastrophically cold cache instead of an absent measurement. */
+function cachePct(acc: UsageAcc | undefined): number | null {
+  const context = (acc?.cacheRead ?? 0) + (acc?.input ?? 0);
+  return context > 0 ? ((acc?.cacheRead ?? 0) / context) * 100 : null;
+}
 
 /** Where a turn came from, as the pulse tile labels it. The rollup stores platform turns as
  *  'platform:<name>', local CLI turns as 'local', daemon-internal work as 'internal', and web turns
@@ -134,34 +176,32 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     // would silently drop the evening's turns for anyone east of UTC.
     const today = new Date().toISOString().slice(0, 10);
     const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-    const usage = d.usageOrigins?.topOrigins({ group: 'pair', fromIso: today, limit: 500 }) ?? [];
-    const spend = new Map<number, {
-      turns: number; tokens: number; cost: number | null;
-      input: number; cacheRead: number; surfaces: string[];
-    }>();
-    for (const row of usage) {
-      if (row.userId === null) continue;
-      const acc = spend.get(row.userId)
-        ?? { turns: 0, tokens: 0, cost: null, input: 0, cacheRead: 0, surfaces: [] };
-      acc.turns += row.turns;
-      acc.tokens += row.tokens;
-      // Cache economics come from the same rollup row rather than a second pass: `cacheRead` is context
-      // served from a warm prefix, `input` is context paid for fresh, and their ratio is what the tile
-      // reports. Keeping both sums lets the instance figure be weighted rather than an average of averages.
-      acc.input += row.input;
-      acc.cacheRead += row.cacheRead;
-      // A rollup row without a cost is a turn nobody priced, not a free one: keep null distinct from 0
-      // so the tile can say "not priced" instead of quietly reporting zero dollars.
-      if (row.cost !== null) acc.cost = (acc.cost ?? 0) + row.cost;
-      const surface = surfaceOf(row.origin, row.originKind);
-      if (surface && !acc.surfaces.includes(surface)) acc.surfaces.push(surface);
-      spend.set(row.userId, acc);
-    }
+    // The ring reports a month, the gauges above it report today. Both come from the same rollup, read
+    // once each — the wider read is the cheap one, since the rollup holds a handful of rows per day.
+    const monthFrom = new Date(Date.now() - (MONTH_DAYS - 1) * 86_400_000).toISOString().slice(0, 10);
+    const spend = sumUsage(d.usageOrigins?.topOrigins({ group: 'pair', fromIso: today, limit: 500 }) ?? []);
+    const monthSpend = sumUsage(
+      d.usageOrigins?.topOrigins({ group: 'pair', fromIso: monthFrom, limit: 500 }) ?? [],
+    );
 
-    // Two days of buckets: today fills the curves, yesterday is the baseline the headline compares against.
+    // Which slot of the month a day falls in, oldest first, so the ring's hover curve is indexable
+    // without the client parsing dates.
+    const monthStartMs = Date.parse(`${monthFrom}T00:00:00Z`);
+    const dayIndex = (day: string): number =>
+      Math.round((Date.parse(`${day}T00:00:00Z`) - monthStartMs) / 86_400_000);
+
+    // One read covers all three shapes: today's hours fill nothing else now, yesterday is the headline's
+    // baseline, and the per-day counts are the ring's hover curve.
     const hours = new Map<number, number[]>();
+    const monthDays = new Map<number, number[]>();
     let turnsYesterday = 0;
-    for (const b of d.events?.heatmapByUser(1) ?? []) {
+    for (const b of d.events?.heatmapByUser(MONTH_DAYS) ?? []) {
+      const slot = dayIndex(b.day);
+      if (slot >= 0 && slot < MONTH_DAYS) {
+        const days = monthDays.get(b.userId) ?? Array<number>(MONTH_DAYS).fill(0);
+        days[slot] = (days[slot] ?? 0) + b.count;
+        monthDays.set(b.userId, days);
+      }
       if (b.day === today) {
         const row = hours.get(b.userId) ?? Array<number>(HOURS_IN_DAY).fill(0);
         if (b.hour >= 0 && b.hour < HOURS_IN_DAY) row[b.hour] = (row[b.hour] ?? 0) + b.count;
@@ -173,45 +213,62 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
 
     const recall = d.memoryStore?.recallActivityToday() ?? { byUser: [], byHour: [] };
     const recallByUser = new Map(recall.byUser.map((r) => [r.userId, r.count]));
+    const monthRecall = new Map(
+      (d.memoryStore?.recallCountsSince(MONTH_DAYS) ?? []).map((r) => [r.userId, r.count]),
+    );
     const memoryByHour = Array<number>(HOURS_IN_DAY).fill(0);
     for (const r of recall.byHour) {
       if (r.hour >= 0 && r.hour < HOURS_IN_DAY) memoryByHour[r.hour] = r.count;
     }
 
-    // Every trace of somebody today counts as being on the tile. Recalls are included because the usage
+    // Every trace of somebody today counts as being here today. Recalls are included because the usage
     // rollup is written when a turn SETTLES: mid-turn, a person can already have pulled memories while
     // having no spend row yet, and leaving them out would drop the very person who is working.
-    const ids = new Set([
+    const todayIds = new Set([
       ...live.keys(), ...seen.keys(), ...spend.keys(), ...hours.keys(), ...recallByUser.keys(),
     ]);
+    // The ring covers a month, so somebody who worked this month but not today still belongs on the tile.
+    // They must NOT count as active today, which is why each row carries that separately rather than the
+    // headline deriving it from the length of this list.
+    const ids = new Set([...todayIds, ...monthSpend.keys(), ...monthDays.keys(), ...monthRecall.keys()]);
     const people = [...ids].flatMap((id) => {
       const u = d.users?.get(id);
       if (!u) return [];
       const s = spend.get(id);
-      const context = (s?.cacheRead ?? 0) + (s?.input ?? 0);
+      const m = monthSpend.get(id);
       return [{
         userId: id,
         label: u.name || u.username,
         username: u.username,
         ...(u.avatar ? { avatar: u.avatar } : {}),
         working: live.has(id),
+        activeToday: todayIds.has(id),
         title: live.get(id)?.[0] ?? '',
         lastTs: seen.get(id) ?? '',
         turns: s?.turns ?? 0,
         tokens: s?.tokens ?? 0,
         cost: s?.cost ?? null,
-        // Null rather than 0 when nothing ran today: a person with no turns has no cache ratio, and a
-        // confident "0 %" would read as a catastrophically cold cache instead of an absent measurement.
-        cacheHitPct: context > 0 ? ((s?.cacheRead ?? 0) / context) * 100 : null,
+        cacheHitPct: cachePct(s),
         memoryHits: recallByUser.get(id) ?? 0,
         surfaces: s?.surfaces ?? [],
         hoursToday: hours.get(id) ?? Array<number>(HOURS_IN_DAY).fill(0),
+        month: {
+          turns: m?.turns ?? 0,
+          tokens: m?.tokens ?? 0,
+          cost: m?.cost ?? null,
+          cacheHitPct: cachePct(m),
+          memoryHits: monthRecall.get(id) ?? 0,
+          surfaces: m?.surfaces ?? [],
+          days: monthDays.get(id) ?? Array<number>(MONTH_DAYS).fill(0),
+        },
       }];
     });
-    // Whoever is working, then whoever burned the most today, then most recently seen. Sorting by spend
-    // rather than name keeps the busiest curves at the top, where the eye starts.
+    // Biggest share of the month first, so the ring is drawn largest-slice-first and the colours follow
+    // the same order the eye does. Whoever is working breaks a tie, then most recently seen.
     people.sort((a, b) =>
-      Number(b.working) - Number(a.working) || b.tokens - a.tokens || b.lastTs.localeCompare(a.lastTs));
+      b.month.tokens - a.month.tokens
+      || Number(b.working) - Number(a.working)
+      || b.lastTs.localeCompare(a.lastTs));
 
     const totals = people.reduce(
       (acc, p) => ({
@@ -223,6 +280,13 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     );
     const contextTotal = [...spend.values()].reduce((n, s) => n + s.cacheRead + s.input, 0);
     const cacheReadTotal = [...spend.values()].reduce((n, s) => n + s.cacheRead, 0);
+    const monthTotals = [...monthSpend.values()].reduce(
+      (acc, s) => ({
+        tokens: acc.tokens + s.tokens,
+        cost: s.cost === null ? acc.cost : (acc.cost ?? 0) + s.cost,
+      }),
+      { tokens: 0, cost: null as number | null },
+    );
 
     // Yesterday's totals, read the same way, so the tile can say "+3 vs. yesterday" without the browser
     // asking a second time. Grouped by user because only the sums are needed, not the origin breakdown.
@@ -239,9 +303,12 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     return c.json({
       today,
       people,
+      month: { from: monthFrom, days: MONTH_DAYS, tokens: monthTotals.tokens, cost: monthTotals.cost },
       totals: {
         ...totals,
-        activePeople: people.length,
+        // Counted off the flag, not off `people.length`: the list now also carries people who worked
+        // earlier in the month, and this gauge means "here today".
+        activePeople: people.filter((p) => p.activeToday).length,
         runningAgents,
         memoryHits: recall.byUser.reduce((n, r) => n + r.count, 0),
         cacheHitPct: contextTotal > 0 ? (cacheReadTotal / contextTotal) * 100 : null,

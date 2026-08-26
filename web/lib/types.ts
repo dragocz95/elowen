@@ -604,6 +604,9 @@ export interface PulsePerson {
   avatar?: string;
   /** The daemon's LIVE view of a running turn, never inferred from history. */
   working: boolean;
+  /** Whether this person left any trace TODAY. The list also carries people who only worked earlier in
+   *  the ring's month, so "active today" cannot be read from the list's length. */
+  activeToday: boolean;
   /** The open conversation's title while they are working, else ''. */
   title: string;
   lastTs: string;
@@ -621,11 +624,26 @@ export interface PulsePerson {
   /** Turns per hour, exactly 24 entries, indexed by UTC hour — the same basis `memoryByHour` uses, so
    *  the chart shifts both series into local time with one offset. */
   hoursToday: number[];
+  /** The same person over the trailing month — what the ring divides and what its hover card reports.
+   *  Kept beside the daily figures rather than replacing them: the gauges above the ring still mean
+   *  today, and one shape carrying two windows would make every reader check which one they are seeing. */
+  month: {
+    turns: number;
+    tokens: number;
+    cost: number | null;
+    cacheHitPct: number | null;
+    memoryHits: number;
+    surfaces: string[];
+    /** Turns per day, oldest first, one entry per day of the window. */
+    days: number[];
+  };
 }
 
 /** The whole team pulse tile in one response. */
 export interface PulseResponse {
   today: string;
+  /** The ring's window: `from` is its first day (inclusive, UTC), `days` its length. */
+  month: { from: string; days: number; tokens: number; cost: number | null };
   people: PulsePerson[];
   totals: {
     turns: number;

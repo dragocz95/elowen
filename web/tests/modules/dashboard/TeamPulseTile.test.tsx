@@ -14,6 +14,7 @@ import type { PulsePerson, PulseResponse } from '../../../lib/types';
  *  card rendered directly, which is where every number the old table used to show now lives. */
 
 const HOURS = 24;
+const MONTH_DAYS = 30;
 const today = new Date().toISOString().slice(0, 10);
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
@@ -21,10 +22,16 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.r
 const hours = (hour: number, count: number): number[] =>
   Array.from({ length: HOURS }, (_, h) => (h === hour ? count : 0));
 
+const month = (over: Partial<PulsePerson['month']> = {}): PulsePerson['month'] => ({
+  turns: 300, tokens: 900_000, cost: 40, cacheHitPct: 90, memoryHits: 1200,
+  surfaces: ['web'], days: Array<number>(MONTH_DAYS).fill(10), ...over,
+});
+
 const person = (over: Partial<PulsePerson> = {}): PulsePerson => ({
-  userId: 1, label: 'Filip Džudža', username: 'filip', working: false, title: '',
+  userId: 1, label: 'Filip Džudža', username: 'filip', working: false, activeToday: true, title: '',
   lastTs: '2026-08-23 06:00:00', turns: 10, tokens: 5000, cost: 1.5,
-  cacheHitPct: 92, memoryHits: 40, surfaces: ['web'], hoursToday: hours(9, 5), ...over,
+  cacheHitPct: 92, memoryHits: 40, surfaces: ['web'], hoursToday: hours(9, 5),
+  month: month(), ...over,
 });
 
 function mount(people: PulsePerson[], over: Partial<PulseResponse> = {}) {
@@ -34,8 +41,16 @@ function mount(people: PulsePerson[], over: Partial<PulseResponse> = {}) {
   );
   const body: PulseResponse = {
     today,
+    month: {
+      from: '2026-07-28', days: MONTH_DAYS,
+      tokens: people.reduce((n, p) => n + p.month.tokens, 0),
+      cost: 40,
+    },
     people,
-    totals: { ...sums, activePeople: people.length, runningAgents: 0, memoryHits: 40, cacheHitPct: 92 },
+    totals: {
+      ...sums, activePeople: people.filter((p) => p.activeToday).length,
+      runningAgents: 0, memoryHits: 40, cacheHitPct: 92,
+    },
     yesterday: { people: 1, turns: 5, tokens: 2500 },
     memoryByHour: Array<number>(HOURS).fill(0),
     spendAvailable: true,
@@ -51,29 +66,35 @@ function showCard(p: PulsePerson, share = 50, index = 0) {
   render(<PersonCard active payload={[{ payload: { person: p, index, share } }]} t={en} />);
 }
 
-describe('TeamPulseTile — legend', () => {
-  it('names each person and their share of the day', async () => {
-    mount([
-      person({ tokens: 7500 }),
-      person({ userId: 2, label: 'Patricie', username: 'patricie', tokens: 2500 }),
-    ]);
-
-    expect(await screen.findByText('Filip Džudža')).toBeInTheDocument();
-    expect(screen.getByText('Patricie')).toBeInTheDocument();
-    // 7500 of 10000 and 2500 of 10000 — the legend is what makes the ring readable without a hover.
-    expect(screen.getByText('75 %')).toBeInTheDocument();
-    expect(screen.getByText('25 %')).toBeInTheDocument();
-  });
-
+describe('TeamPulseTile — ring', () => {
   it('says so plainly when nobody has been around', async () => {
     mount([]);
     expect(await screen.findByText(en.dashboard.pulseNobody)).toBeInTheDocument();
+  });
+
+  it('labels the ring as the month, not today', async () => {
+    // The gauges above it report today; without this label the two windows are indistinguishable.
+    mount([person()]);
+    expect(await screen.findByText(en.dashboard.pulseMonthLabel)).toBeInTheDocument();
+  });
+
+  it('does not repeat the names underneath the ring', async () => {
+    // Identity lives in the hover card alone. A legend would be a second copy saying nothing more.
+    mount([person(), person({ userId: 2, label: 'Patricie', username: 'patricie' })]);
+
+    await screen.findByText(en.dashboard.pulseMonthLabel);
+    expect(screen.queryByText('Filip Džudža')).not.toBeInTheDocument();
+    expect(screen.queryByText('Patricie')).not.toBeInTheDocument();
   });
 });
 
 describe('TeamPulseTile — hover card', () => {
   it('carries what the table used to: channel, activity, cost, tokens, cache and memories', () => {
-    showCard(person({ tokens: 1_200_000, cost: 12.5, cacheHitPct: 88, memoryHits: 1377, surfaces: ['web', 'discord'] }));
+    showCard(person({
+      month: month({
+        tokens: 1_200_000, cost: 12.5, cacheHitPct: 88, memoryHits: 1377, surfaces: ['web', 'discord'],
+      }),
+    }));
 
     expect(screen.getByText('$12.50')).toBeInTheDocument();
     expect(screen.getByText('1.2M')).toBeInTheDocument();
@@ -83,7 +104,24 @@ describe('TeamPulseTile — hover card', () => {
     expect(screen.getByTitle(/Web app/)).toBeInTheDocument();
   });
 
+  it('reports the month rather than the day for every figure it can', () => {
+    // The ring divides a month, so a card showing today's numbers beside a month's slice would be
+    // reporting two different windows in one shape.
+    showCard(person({
+      tokens: 5_000, cost: 1.5, memoryHits: 40,
+      month: month({ tokens: 900_000, cost: 40, memoryHits: 1200 }),
+    }));
+
+    expect(screen.getByText('900k')).toBeInTheDocument();
+    expect(screen.getByText('$40.00')).toBeInTheDocument();
+    expect(screen.getByText('1,200')).toBeInTheDocument();
+    expect(screen.queryByText('5.0k')).not.toBeInTheDocument();
+    expect(screen.queryByText('$1.50')).not.toBeInTheDocument();
+  });
+
   it('shows what someone is working on while they are mid-turn', () => {
+    // The one row that is deliberately live rather than monthly — there is no "what they did over
+    // thirty days", so this reads process state.
     showCard(person({ working: true, title: 'Tabulky na platformách' }));
     expect(screen.getByText('Tabulky na platformách')).toBeInTheDocument();
   });
@@ -98,15 +136,15 @@ describe('TeamPulseTile — hover card', () => {
 
   it('says a turn was never priced instead of reporting it as free', () => {
     // null cost means nobody priced the turn; showing $0.00 would understate a real bill.
-    showCard(person({ cost: null }));
+    showCard(person({ month: month({ cost: null }) }));
 
     expect(screen.getByText(en.dashboard.pulseUnpriced)).toBeInTheDocument();
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
   });
 
   it('leaves the cache ratio blank rather than claiming a cold zero', () => {
-    // Nobody ran a turn today, so there is no ratio. "0 %" would read as a catastrophic cache miss.
-    showCard(person({ cacheHitPct: null }));
+    // Nobody ran a turn, so there is no ratio. "0 %" would read as a catastrophic cache miss.
+    showCard(person({ month: month({ cacheHitPct: null }) }));
     expect(screen.queryByText('0 %')).not.toBeInTheDocument();
   });
 

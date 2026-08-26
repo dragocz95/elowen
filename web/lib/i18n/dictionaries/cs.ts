@@ -362,6 +362,7 @@ export const cs = {
     pulseUnpriced: 'bez ceny',
     pulseSpendOff: 'spotřeba nedostupná',
     pulseTodayLabel: 'dnes',
+    pulseMonthLabel: 'za 30 dní',
     pulseActivePeople: 'Aktivní uživatelé',
     pulseRunningAgents: 'Běžící agenti',
     pulseMemoryHits: 'Vybavené paměti',

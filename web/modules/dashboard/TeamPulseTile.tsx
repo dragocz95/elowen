@@ -2,53 +2,21 @@
 import { usePulse } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { LoadingState } from '../../components/ui/states';
-import { Avatar } from '../../components/ui/Avatar';
 import { formatCost, formatTokens } from '../../lib/format';
 import { PulseDonut } from './PulseDonut';
 import { PulseStats } from './PulseStats';
-import { colorFor } from './pulseSeries';
-import type { LocaleDict } from '../../lib/i18n/types';
-import type { PulsePerson } from '../../lib/types';
 
-/** Who is who, so the ring can be read without hovering it. Everything else about a person lives in
- *  the hover card — this line exists only to attach a name to a colour. */
-function PulseLegend({ people, totalTokens, t }: {
-  people: PulsePerson[]; totalTokens: number; t: LocaleDict;
-}) {
-  return (
-    <ul className="flex flex-wrap items-center gap-x-4 gap-y-2">
-      {people.map((person, index) => (
-        <li key={person.userId} className="flex min-w-0 items-center gap-1.5">
-          <span className="relative shrink-0">
-            <Avatar
-              user={{
-                id: person.userId, username: person.username, name: person.label,
-                ...(person.avatar ? { avatar: person.avatar } : {}),
-              }}
-              size={20}
-            />
-            <span
-              aria-hidden
-              className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-surface"
-              style={{ background: colorFor(index) }}
-            />
-          </span>
-          <span className="truncate text-[12px] text-text">{person.label}</span>
-          {person.working ? (
-            <span aria-hidden className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-success" title={t.dashboard.workingNow} />
-          ) : null}
-          <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted">
-            {totalTokens > 0 ? `${((person.tokens / totalTokens) * 100).toFixed(0)} %` : '—'}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** The dashboard's people tile: what the instance did today, who did it, and what it cost.
+/** The dashboard's people tile: what the instance is doing today, who has been carrying the month, and
+ *  what it cost.
  *
- *  Everything here is today on the daemon's UTC day basis, which is how the rollups behind it are keyed.
+ *  Two windows on purpose: the gauges and the headline report TODAY, the ring below them reports the
+ *  trailing month, because a single day divides too thinly between people to have a shape. Both sit on
+ *  the daemon's UTC day basis, which is how the rollups behind them are keyed.
+ *
+ *  The ring carries no legend. Identity lives in its hover card, which already has to exist for the
+ *  numbers — a second copy of the same names underneath would say nothing the card does not, and it read
+ *  as clutter next to the ring itself.
+ *
  *  The tile is fed by one request and refreshed by the same SSE 'activity' event as the feed, so a turn
  *  starting lights it up without a poll — there is no refresh interval to state. */
 export function TeamPulseTile() {
@@ -87,8 +55,7 @@ export function TeamPulseTile() {
       ) : (
         <div className="flex flex-col gap-4">
           <PulseStats data={data} t={t} />
-          <PulseDonut people={people} totalTokens={data.totals.tokens} t={t} />
-          <PulseLegend people={people} totalTokens={data.totals.tokens} t={t} />
+          <PulseDonut people={people} totalTokens={data.month?.tokens ?? 0} t={t} />
         </div>
       )}
     </section>
