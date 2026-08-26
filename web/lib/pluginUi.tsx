@@ -108,6 +108,7 @@ import { fileIcon } from './fileIcon';
 import { dirName } from './filePath';
 import { openTerminalWindow } from './openTerminalWindow';
 import { buildUsageSummary } from './usageBars';
+import { DEFAULT_RANGE, isStoredRange, parseRange, rangeBounds, serializeRange } from './dateRange';
 import { eventIcon } from './eventMeta';
 
 // @platform-keep plugin-ui-runtime :: window.ElowenUiRuntime && PLUGIN_UI_API_VERSION
@@ -327,6 +328,10 @@ export function ensurePluginUiRuntime(): void {
       defineEditorThemes, editorTheme,
       formatCost, formatDuration, fileIcon, dirName, openTerminalWindow,
       buildUsageSummary, eventIcon, elowenClient, ElowenApiError,
+      // The date-range helpers a usage page needs to persist and read back its own filter. They were
+      // added here for the retired `work` views and removed with them, but `stats` reads the same five
+      // — so its page threw "serializeRange is not a function" on mount from then on.
+      DEFAULT_RANGE, isStoredRange, parseRange, rangeBounds, serializeRange,
     },
     api,
     navigate: (href) => navigateImpl(href),

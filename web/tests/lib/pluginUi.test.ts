@@ -32,6 +32,22 @@ describe('plugin UI runtime', () => {
       useQueryClient: expect.any(Function),
     }));
   });
+
+  it('keeps the date-range helpers a usage page filters with', () => {
+    ensurePluginUiRuntime();
+    // Regression: these were added for the retired `work` views and dropped along with them, but the
+    // `stats` bundle destructures the same five off `runtime().utils`. Losing them is silent here and
+    // fatal there — /p/stats threw "serializeRange is not a function" on mount until this was restored.
+    // A plugin bundle is compiled in another repository, so nothing else fails when this shrinks.
+    expect(window.ElowenUiRuntime?.utils).toEqual(expect.objectContaining({
+      buildUsageSummary: expect.any(Function),
+      isStoredRange: expect.any(Function),
+      parseRange: expect.any(Function),
+      rangeBounds: expect.any(Function),
+      serializeRange: expect.any(Function),
+    }));
+    expect(window.ElowenUiRuntime?.utils.DEFAULT_RANGE).toEqual(expect.objectContaining({ preset: expect.any(String) }));
+  });
 });
 
 describe('matchPluginPage', () => {
