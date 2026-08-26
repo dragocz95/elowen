@@ -80,14 +80,14 @@ describe('TeamPulseTile — ring', () => {
   it('labels the ring as the month, not today', async () => {
     // The gauges above it report today; without this label the two windows are indistinguishable.
     mount([person()]);
-    expect(await screen.findByText(en.dashboard.pulseMonthLabel)).toBeInTheDocument();
+    expect(await screen.findByText(en.dashboard.pulseRingCostUnit)).toBeInTheDocument();
   });
 
   it('does not repeat the names underneath the ring', async () => {
     // Identity lives in the hover card alone. A legend would be a second copy saying nothing more.
     mount([person(), person({ userId: 2, label: 'Patricie', username: 'patricie' })]);
 
-    await screen.findByText(en.dashboard.pulseMonthLabel);
+    await screen.findByText(en.dashboard.pulseRingPeople);
     expect(screen.queryByText('Filip Džudža')).not.toBeInTheDocument();
     expect(screen.queryByText('Patricie')).not.toBeInTheDocument();
   });

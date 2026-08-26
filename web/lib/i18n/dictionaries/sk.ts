@@ -326,7 +326,6 @@ export const sk = {
     pulseUnpriced: 'bez ceny',
     pulseSpendOff: 'spotreba nedostupná',
     pulseTodayLabel: 'dnes',
-    pulseMonthLabel: 'za 30 dní',
     pulseActivePeople: 'Aktívni používatelia',
     pulseRunningAgents: 'Bežiace agenty',
     pulseMemoryHits: 'Vybavené pamäte',

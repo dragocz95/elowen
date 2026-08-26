@@ -326,7 +326,6 @@ export const en = {
     pulseUnpriced: 'unpriced',
     pulseSpendOff: 'spend unavailable',
     pulseTodayLabel: 'today',
-    pulseMonthLabel: 'last 30 days',
     pulseActivePeople: 'Active users',
     pulseRunningAgents: 'Running agents',
     pulseMemoryHits: 'Memories recalled',
