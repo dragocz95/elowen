@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs';
 import { resolve, sep, dirname, basename, join } from 'node:path';
-import { currentIdentity, currentPolicy, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
+import { currentContributionUserId, currentIdentity, currentPolicy, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
 import { noninteractivePermissionBoundary, type NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import { planFilePath, sessionToolResultSpillDir } from '../shared/paths.js';
 
@@ -39,7 +39,7 @@ export function isAllAccess(): boolean {
  *  choice. Only the second one is a permanent lock (see DelegatedExecutionScope.readOnlyOrigin).
  *  `principal` identifies whose turn this is, so a child records who spawned it and only that same
  *  identity can later widen it. */
-export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; readOnly?: boolean; planMode?: boolean; principal?: string } {
+export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; contributionUserId: number | null; readOnly?: boolean; planMode?: boolean; principal?: string } {
   const p = currentPolicy();
   const principal = turnPrincipal(currentIdentity());
   const tools = currentToolPolicy();
@@ -52,6 +52,7 @@ export function currentAccess(): { projectIds: number[]; admin: boolean; owner: 
     admin: p?.allowedProjectIds === 'all',
     owner: currentIdentity()?.owner === true,
     permissionBoundary: noninteractivePermissionBoundary(currentTurnPermissions()),
+    contributionUserId: currentContributionUserId(),
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(currentTurnMode() === 'plan' ? { readOnly: true, planMode: true } : {}),
     ...(principal ? { principal } : {}),

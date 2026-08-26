@@ -113,6 +113,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession', 'resumeInterrupted'],
   mcp: ['listServers', 'bridgeSnapshot'],
   lsp: ['diagnosticsEnabled'],
+  sandbox: ['workspaceRoots', 'activeWorkspace', 'prepareExecution'],
 };
 
 /** A missing account is not plugin-access open mode: shared channels and unlinked callers

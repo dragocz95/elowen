@@ -1,5 +1,6 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import type { KnownControls, SandboxWorkspace } from '../../plugins/api.js';
 import type { Policy } from '../../plugins/policy.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
 
@@ -41,4 +42,57 @@ export function gitProjectRoot(policy: Policy, clientCwd?: string): string | und
  *  own `defaultCwd()` chain). */
 export function turnWorkDir(policy: Policy, clientCwd: string | undefined, projectPath?: () => string | undefined): string | undefined {
   return clientDir(policy, clientCwd) ?? policy.allowedPaths()[0] ?? projectPath?.();
+}
+
+interface ProjectView { id: number; path: string }
+
+export interface EffectiveTurnWorkDir {
+  /** Registered Project/default directory before Sandbox selection. */
+  baseWorkDir?: string;
+  /** Directory installed into the turn scope and inherited by delegation. */
+  workDir?: string;
+  workspace: SandboxWorkspace | null;
+}
+
+/** Resolve one turn's active Sandbox workspace without mutating the live PI session. The static session cwd
+ * remains the cache-friendly spawn value; tools and delegation read this per-turn result from ALS, while the
+ * prompt gets a volatile reminder when the two differ. Every returned workspace path is re-validated through
+ * the canonical Policy, so a stale plugin row or revoked Project can only fall back to the registered path. */
+export function effectiveTurnWorkDir(input: {
+  policy: Policy;
+  baseWorkDir?: string;
+  accountUserId: number | null;
+  sessionId: string;
+  projects?: { list(): ProjectView[] };
+  sandbox?: KnownControls['sandbox'];
+}): EffectiveTurnWorkDir {
+  const fallback: EffectiveTurnWorkDir = { baseWorkDir: input.baseWorkDir, workDir: input.baseWorkDir, workspace: null };
+  if (!input.baseWorkDir || input.accountUserId === null || !input.projects || !input.sandbox) return fallback;
+
+  const projectIds = input.policy.allowedProjectIds === 'all'
+    ? input.projects.list().map((project) => project.id)
+    : [...input.policy.allowedProjectIds];
+  if (projectIds.length === 0) return fallback;
+
+  let roots: ReturnType<KnownControls['sandbox']['workspaceRoots']> = [];
+  try { roots = input.sandbox.workspaceRoots({ accountUserId: input.accountUserId, projectIds }); }
+  catch { return fallback; }
+
+  const projects = input.projects.list().filter((project) => projectIds.includes(project.id));
+  const registered = projects.find((project) => realPathWithin(input.baseWorkDir!, [project.path]) !== null);
+  const supplemental = roots.find((root) => realPathWithin(input.baseWorkDir!, [root.path]) !== null);
+  const projectId = registered?.id ?? supplemental?.projectId ?? (projectIds.length === 1 ? projectIds[0] : undefined);
+  if (projectId === undefined) return fallback;
+
+  let workspace: SandboxWorkspace | null;
+  try {
+    workspace = input.sandbox.activeWorkspace({
+      accountUserId: input.accountUserId,
+      sessionId: input.sessionId,
+      projectId,
+    });
+  } catch { return fallback; }
+  if (!workspace || workspace.projectId !== projectId) return fallback;
+  const allowed = clientDir(input.policy, workspace.path);
+  return allowed ? { baseWorkDir: input.baseWorkDir, workDir: allowed, workspace } : fallback;
 }

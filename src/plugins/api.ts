@@ -275,6 +275,9 @@ export interface SessionSource {
     /** The principal running the delegating turn (see turnPrincipal), recorded on the child's durable scope
      *  so only that same identity can ever promote it out of read-only. */
     principal?: string;
+    /** Account whose personal contributions, HOME and Sandbox workspaces the delegated child inherits. It is
+     * host-resolved from the current turn, not guessed from the durable room owner. */
+    contributionUserId?: number | null;
     /** Idle cutoff (ms) for THIS surface's channel session — forwarded to ChannelSessionService.send as
      *  `idleRolloverMs`. Set by cron (shorter than the default 30 min) so a frequent job whose gap between
      *  ticks exceeds the prompt-cache window starts a fresh session instead of re-sending a growing context
@@ -893,6 +896,64 @@ export interface LspStateControl {
   diagnosticsEnabled(): boolean;
 }
 
+/** One account-owned Sandbox worktree root. Core consumes only the ownership tuple needed to extend the
+ * canonical path policy; richer Git state stays live in the owning plugin. */
+export interface SandboxWorkspaceRoot {
+  workspaceId: string;
+  projectId: number;
+  path: string;
+}
+
+/** The active workspace metadata another domain (notably GitHub) needs without reading Sandbox tables. */
+export interface SandboxWorkspace extends SandboxWorkspaceRoot {
+  label: string;
+  branch: string;
+  baseRef: string;
+}
+
+/** A durable execution lease minted before a child is spawned. The caller owns its actual process lifecycle:
+ * heartbeat while the child is alive, transfer the same handle when foreground work detaches, and release it
+ * only on spawn failure or real exit/error/kill. Implementations persist the row in shared SQLite so daemon
+ * and forked runners observe the same blockers. */
+export interface SandboxExecutionLease {
+  id: string;
+  accountUserId: number | null;
+  workspaceId: string | null;
+  homeGeneration: number | null;
+  heartbeat(): void | Promise<void>;
+  release(): void | Promise<void>;
+}
+
+export type SandboxExecutionCommand =
+  | { type: 'shell'; command: string }
+  | { type: 'argv'; file: string; args: string[] };
+
+/** Fully prepared launch. `launch` is the only process shape a consumer spawns; HOME, roots and confinement
+ * policy have already been applied by Sandbox. */
+export interface SandboxPreparedExecution {
+  mode: 'confined' | 'direct';
+  cwd: string;
+  home: string;
+  roots: string[];
+  launch:
+    | { type: 'shell'; command: string; env: Record<string, string> }
+    | { type: 'argv'; file: string; args: string[]; env: Record<string, string> };
+  workspace: SandboxWorkspace | null;
+  lease: SandboxExecutionLease;
+}
+
+/** Live Sandbox domain seam. Consumers resolve it on every use; retaining a value across plugin reloads is
+ * invalid because its DB/runtime generation may already have been replaced. */
+export interface SandboxControl {
+  workspaceRoots(input: { accountUserId: number; projectIds: readonly number[] }): SandboxWorkspaceRoot[];
+  activeWorkspace(input: { accountUserId: number; sessionId: string; projectId: number }): SandboxWorkspace | null;
+  prepareExecution(input: {
+    command: SandboxExecutionCommand;
+    cwd: string;
+    leaseKind: 'terminal' | 'github';
+  }): SandboxPreparedExecution | Promise<SandboxPreparedExecution>;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -903,6 +964,7 @@ export interface KnownControls {
   workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl & WorkflowRecoveryControl;
   mcp: McpListControl;
   lsp: LspStateControl;
+  sandbox: SandboxControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`
@@ -1156,7 +1218,7 @@ export interface PluginContext {
    *  toolPolicy carries exact allow+deny sets, and permissionBoundary carries the effective unattended
    *  granular-rule context so a child inherits exactly the caller's scope. `readOnly` is stamped by the
    *  host when the caller's turn is PLANNING — forward it untouched; never clear it. */
-  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; readOnly?: boolean };
+  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; contributionUserId?: number | null; readOnly?: boolean };
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;

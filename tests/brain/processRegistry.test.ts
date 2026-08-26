@@ -50,6 +50,27 @@ describe('ProcessRegistry', () => {
     expect(child.state.killed).toBe(true);
   });
 
+  it('isolates two contribution accounts inside the same shared-room session', () => {
+    const reg = new ProcessRegistry();
+    const amy = fakeHandle('amy');
+    amy.handle.sessionId = 'brain-ch-room';
+    amy.handle.accountUserId = 2;
+    amy.handle.workspaceId = 'ws-amy';
+    amy.handle.homeGeneration = 4;
+    const bob = fakeHandle('bob');
+    bob.handle.sessionId = 'brain-ch-room';
+    bob.handle.accountUserId = 3;
+    reg.register(amy.handle);
+    reg.register(bob.handle);
+
+    expect(reg.listForSessionAccount('brain-ch-room', 2).map((p) => p.id)).toEqual(['amy']);
+    expect(reg.listForSessionAccount('brain-ch-room', 3).map((p) => p.id)).toEqual(['bob']);
+    expect(reg.outputForSessionAccount('brain-ch-room', 2, 'bob')).toBeNull();
+    expect(reg.killForSessionAccount('brain-ch-room', 2, 'bob')).toBe(false);
+    expect(bob.state.killed).toBe(false);
+    expect(reg.listForSessionAccount('brain-ch-room', 2)[0]).toMatchObject({ workspaceId: 'ws-amy', homeGeneration: 4 });
+  });
+
   it('carries the originating session in the snapshot (null when it has none) — the UI origin badge', () => {
     const reg = new ProcessRegistry();
     const child = fakeHandle('child'); child.handle.sessionId = 'brain-ch-subagent-sub-dlg-7';
@@ -141,6 +162,18 @@ describe('ProcessRegistry', () => {
       const fresh = fakeHandle('dup'); fresh.handle.sessionId = 'b'; fresh.handle.completionMode = 'job';
       reg.register(fresh.handle);
       await expect(idle).resolves.toBe('idle');
+    });
+
+    it('refreshes both account scopes when a colliding id changes owner inside one room', () => {
+      const reg = new ProcessRegistry();
+      const scopes: Array<[string | null, number | null]> = [];
+      reg.setChangeListener((sessionId, accountUserId) => scopes.push([sessionId, accountUserId]));
+      const first = fakeHandle('dup'); first.handle.sessionId = 'room'; first.handle.accountUserId = 2;
+      reg.register(first.handle);
+      scopes.length = 0;
+      const second = fakeHandle('dup'); second.handle.sessionId = 'room'; second.handle.accountUserId = 3;
+      reg.register(second.handle);
+      expect(scopes).toEqual([['room', 2], ['room', 3]]);
     });
 
     it('treats re-registering the SAME handle (foreground detach) as an update, not a collision', () => {

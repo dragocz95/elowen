@@ -13,7 +13,7 @@ const log = { info() {}, warn() {}, error() {} };
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const pluginsDir = join(repoRoot, 'plugins');
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
-const owner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true };
+const owner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, elowenUserId: 1 };
 
 let dirs: string[] = [];
 const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
@@ -140,7 +140,7 @@ describe('terminal — maxBackgroundProcesses', () => {
   const occupySlot = (id: string, sessionId: string, cwd: string): void => {
     processRegistry.register({
       id, command: 'placeholder', cwd, startedAt: new Date().toISOString(),
-      sessionId, completionMode: 'job',
+      sessionId, accountUserId: 1, completionMode: 'job',
       running: () => true, exitCode: () => null, readAll: () => '', kill: () => {},
     });
   };

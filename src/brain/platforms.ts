@@ -237,6 +237,8 @@ export class PlatformOrchestrator {
               // Host-stamped on the delegating turn (pathGuard.currentAccess), so the child records the
               // identity that actually spawned it. Absent leaves the child unpromotable, never wider.
               ...(typeof src.access.principal === 'string' ? { spawnedBy: src.access.principal } : {}),
+              ...(Number.isSafeInteger(src.access.contributionUserId) && src.access.contributionUserId! > 0
+                ? { contributionUserId: src.access.contributionUserId } : {}),
             });
             if (!rawScope) throw new Error('invalid delegated access');
             // The account running the child can only make the captured scope narrower. Persist this union

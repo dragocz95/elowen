@@ -206,6 +206,7 @@ function formatRunResult(command, cwd, out, exitCode, note, outputCap) {
 
 export function register(ctx) {
   const currentSessionId = () => ctx.currentSessionId?.() ?? null;
+  const currentAccountUserId = () => ctx.currentContributionUserId?.() ?? ctx.currentIdentity?.()?.elowenUserId ?? null;
   // The daemon-level registry (ctx.processes) is the SINGLE source of truth for background children: it is
   // what the CLI + web panel list/read/kill, and what deleteSession/killSession prunes. The plugin used to
   // keep a parallel Map, which nothing else could reach — so a registry-side kill (session deleted, panel ✕)
@@ -214,15 +215,19 @@ export function register(ctx) {
   // the registry.
   const scopedHandle = (id) => {
     const handle = ctx.processes.get(id);
-    return handle && handle.sessionId === currentSessionId() ? handle : undefined;
+    const accountUserId = currentAccountUserId();
+    return handle && handle.sessionId === currentSessionId()
+      && (handle.accountUserId ?? handle.userId ?? null) === accountUserId
+      ? handle
+      : undefined;
   };
 
   // The thin handle the registry gets: metadata + callbacks into the BgProcess this closure owns.
   // `readNew` is the agent's incremental read (advances the buffer cursor); the daemon's panel reads
   // `readAll`, which never moves it.
-  const handleFor = (id, bg, userId, sessionId, completionMode) => ({
-    id, command: bg.command, cwd: bg.cwd, startedAt: bg.startedAt, userId, sessionId,
-    completionMode,
+  const handleFor = (id, bg, accountUserId, sessionId, completionMode, workspaceId = null, homeGeneration = null) => ({
+    id, command: bg.command, cwd: bg.cwd, startedAt: bg.startedAt,
+    accountUserId, sessionId, workspaceId, homeGeneration, completionMode,
     running: () => bg.running, exitCode: () => bg.exitCode,
     readAll: () => bg.output,
     readNew: (all) => {
@@ -235,14 +240,20 @@ export function register(ctx) {
   // Re-emit the pinned "Background processes" card listing what's still running (empty card → removed).
   // No-op outside an interactive turn (emitCard wires no emitter for worker/cron), which is fine — the
   // web panel reads the live list from GET /brain/processes.
-  const emitProcCard = (sessionId = currentSessionId()) => {
+  const emitProcCard = (sessionId = currentSessionId(), accountUserId = currentAccountUserId()) => {
     if (!sessionId) return;
+    // A shared room is readable by several people, while process command lines belong to one verified
+    // writer. Its tools remain available, but the conversation-wide card is omitted rather than leaking
+    // one account's commands to everyone else in the room.
+    if (ctx.currentIdentity?.()?.conversation === 'shared') return;
     // An in-flight foreground command is not a background process — exclude it so another process exiting
     // mid-run can't redraw this card with the caller's own live command listed in it.
-    const running = ctx.processes.listForSession(sessionId).filter((p) => p.running && p.completionMode !== 'foreground');
+    const running = ctx.processes.listForSessionAccount(sessionId, accountUserId)
+      .filter((p) => p.running && p.completionMode !== 'foreground');
+    const cardId = `bg-processes-${accountUserId ?? 'accountless'}`;
     ctx.emitCard(running.length
-      ? { id: 'bg-processes', title: `Background processes (${running.length})`, items: running.map((p) => ({ text: p.command, status: 'in_progress' })), pinned: true }
-      : { id: 'bg-processes' });
+      ? { id: cardId, title: `Background processes (${running.length})`, items: running.map((p) => ({ text: p.command, status: 'in_progress' })), pinned: true }
+      : { id: cardId });
   };
 
   // In-flight FOREGROUND runs, keyed by process id, that Ctrl+B can detach. An entry lives only while its
@@ -280,7 +291,7 @@ export function register(ctx) {
       cwd,
       roots: ctx.allowedRoots(),
       dataDir: ctx.dataDir(),
-      userId: ctx.currentIdentity?.()?.elowenUserId ?? null,
+      userId: currentAccountUserId(),
       sessionId: currentSessionId(),
     });
   };
@@ -337,14 +348,14 @@ export function register(ctx) {
           // with no further special-casing. A sessionless (worker/cron) run stays plain and non-detachable:
           // it has no conversation to background into.
           const fgSession = currentSessionId();
+          const foregroundAccountUserId = currentAccountUserId();
           let handle = null;
           if (fgSession) {
-            const userId = ctx.currentIdentity?.()?.elowenUserId ?? null;
-            handle = handleFor(id, run, userId, fgSession, 'foreground');
+            handle = handleFor(id, run, foregroundAccountUserId, fgSession, 'foreground');
             ctx.processes.register(handle);
-            // The principal is the account actually running the turn — match what BrainService sends
-            // on the detach control (`elowen:<userId>`).
-            foregroundRuns.set(id, { run, sessionId: fgSession, principal: userId !== null ? `elowen:${userId}` : null });
+            // The principal is the contribution account actually running the turn — a delegated child has
+            // no account identity of its own but still belongs to its delegator.
+            foregroundRuns.set(id, { run, sessionId: fgSession, principal: foregroundAccountUserId !== null ? `elowen:${foregroundAccountUserId}` : null });
           }
           const execPromise = run.run(onProgress);
           // A DETACHED run that later exits wakes the conversation to read its output — the exact lifecycle
@@ -352,14 +363,14 @@ export function register(ctx) {
           // remove() below instead, which never notifies.
           void execPromise.then(() => {
             if (!run.detached) return;
-            emitProcCard(fgSession);
+            emitProcCard(fgSession, foregroundAccountUserId);
             ctx.processes.markExited(id);
           });
           await Promise.race([execPromise, run.detachedPromise]);
           if (run.detached) {
             foregroundRuns.delete(id);
             if (handle) { handle.completionMode = 'job'; ctx.processes.register(handle); }
-            emitProcCard(fgSession);
+            emitProcCard(fgSession, foregroundAccountUserId);
             return ok(`Moved to background as process ${id}: ${p.command}\n(cwd: ${cwd})\nStill running with no time limit; use ProcessOutput("${id}") to check on it.`);
           }
           // Foreground completion: drop the registry entry WITHOUT a nudge, exactly as a non-backgrounded
@@ -382,17 +393,20 @@ export function register(ctx) {
         // prune finished processes before the cap check so dead entries don't block new work (the cap is
         // per session, so both the prune and the count stay session-scoped)
         const sessionId = currentSessionId();
+        const accountUserId = currentAccountUserId();
         if (!sessionId) return ok('Error: background processes require an authenticated conversation.');
-        for (const proc of ctx.processes.listForSession(sessionId)) { if (!proc.running) ctx.processes.remove(proc.id); }
-        // Exclude an in-flight foreground command from the cap: it is not a background slot holder.
-        if (ctx.processes.listForSession(sessionId).filter((proc) => proc.completionMode !== 'foreground').length >= maxBackgroundProcesses) return ok(`Error: too many background processes (${maxBackgroundProcesses}); kill one first.`);
+        for (const proc of ctx.processes.listForSessionAccount(sessionId, accountUserId)) {
+          if (!proc.running) ctx.processes.remove(proc.id);
+        }
+        // Exclude an in-flight foreground command from the cap: it is not a background slot holder. The
+        // cap is `(session, account)`, so alternating writers in one room never consume each other's slots.
+        if (ctx.processes.listForSessionAccount(sessionId, accountUserId).filter((proc) => proc.completionMode !== 'foreground').length >= maxBackgroundProcesses) return ok(`Error: too many background processes (${maxBackgroundProcesses}); kill one first.`);
         const id = newProcessId();
         // The operator who started it (+ the session they started it in) → wake THAT conversation when it
         // exits (markExited on close). Field is `elowenUserId` (was mis-typed as the pre-rebrand `orcaUserId`,
         // which is undefined → the wake never fired).
-        const userId = ctx.currentIdentity?.()?.elowenUserId ?? null;
-        const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId); ctx.processes.markExited(id); }, prepareLaunch(p.command, cwd));
-        ctx.processes.register(handleFor(id, bg, userId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job'));
+        const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId, accountUserId); ctx.processes.markExited(id); }, prepareLaunch(p.command, cwd));
+        ctx.processes.register(handleFor(id, bg, accountUserId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job'));
         emitProcCard();
         return ok(`Started background process ${id}: ${p.command}\n(cwd: ${cwd})\nUse ProcessOutput("${id}") to check on it.`);
       } catch (e) { return fail(e); }
@@ -411,7 +425,9 @@ export function register(ctx) {
       const sessionId = currentSessionId();
       // Exclude any of the caller's own in-flight foreground commands: this tool's contract is background
       // processes, and a parallel tool call could otherwise surface the command running alongside it.
-      const own = sessionId ? ctx.processes.listForSession(sessionId).filter((proc) => proc.completionMode !== 'foreground') : [];
+      const own = sessionId
+        ? ctx.processes.listForSessionAccount(sessionId, currentAccountUserId()).filter((proc) => proc.completionMode !== 'foreground')
+        : [];
       if (own.length === 0) return ok('No background processes.');
       return ok(own.map((proc) =>
         `- ${proc.id} ${proc.running ? 'RUNNING' : `exited(${proc.exitCode})`} since ${proc.startedAt}\n  $ ${proc.command}`

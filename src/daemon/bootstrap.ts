@@ -179,8 +179,12 @@ export async function buildApp(opts: BuildOpts) {
   // Keep the owner's live process panels (CLI + web) in step out of turn: every spawn/exit/kill pushes
   // the fresh snapshot to the owner's client streams, so a killed/finished process leaves the panel
   // without the client polling (single source of truth — no local delete on the click path).
-  processRegistry.setChangeListener((sessionId) => {
-    if (sessionId) brain?.broadcastProcesses(sessionId, processRegistry.listForSession(sessionId));
+  processRegistry.setChangeListener((sessionId, accountUserId) => {
+    if (sessionId) brain?.broadcastProcesses(
+      sessionId,
+      accountUserId,
+      processRegistry.listForSessionAccount(sessionId, accountUserId),
+    );
   });
   processRegistry.setExitListener((info, userId, sessionId) => {
     if (!brain || userId == null) return;

@@ -36,6 +36,10 @@ export interface DelegatedExecutionScope {
    *  it later: a shared channel gives every member the same parent session, so the session guard alone
    *  would let one member promote another member's sub-agent. Absent = unknown ⇒ unpromotable. */
   spawnedBy?: string;
+  /** Account whose owner-scoped contributions, HOME and Sandbox workspaces the child inherits. Optional for
+   * legacy rows; absence fails closed to instance contributions/base Project roots rather than guessing the
+   * durable session owner. */
+  contributionUserId?: number;
 }
 
 const MAX_PROJECT_IDS = 10_000;
@@ -139,6 +143,11 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     spawnedBy = value.spawnedBy.trim();
     if (!spawnedBy || spawnedBy.length > MAX_PRINCIPAL_CHARS) return undefined;
   }
+  let contributionUserId: number | undefined;
+  if (own(value, 'contributionUserId')) {
+    if (!Number.isSafeInteger(value.contributionUserId) || (value.contributionUserId as number) <= 0) return undefined;
+    contributionUserId = value.contributionUserId as number;
+  }
 
   return {
     admin: value.admin,
@@ -149,6 +158,7 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     ...(promptAppend ? { promptAppend } : {}),
     ...(readOnlyOrigin ? { readOnlyOrigin } : {}),
     ...(spawnedBy ? { spawnedBy } : {}),
+    ...(contributionUserId !== undefined ? { contributionUserId } : {}),
   };
 }
 
@@ -198,6 +208,8 @@ export interface DelegatingTurnAccess {
   planMode?: boolean;
   /** Who is running this turn (see turnPrincipal). Absent when the turn carries no identity. */
   principal?: string;
+  /** Account whose owner-scoped contributions and Sandbox state this turn carries. */
+  contributionUserId?: number | null;
 }
 
 /** Whether a PERSISTED child scope grants more than the delegating turn holds right now — returns the
@@ -227,6 +239,9 @@ export function scopeExceedsCurrentAccess(
     if (lost.length) return `it is scoped to project(s) ${lost.join(', ')}, which this conversation no longer has`;
   }
   if (scope.owner && !access.owner) return 'it carries owner authority and this conversation does not';
+  if (scope.contributionUserId !== undefined && scope.contributionUserId !== access.contributionUserId) {
+    return 'it belongs to a different account contributor than the current turn';
+  }
   const callerAllow = access.toolPolicy?.allow;
   if (callerAllow) {
     const childAllow = scope.toolPolicy?.allow;
@@ -295,6 +310,7 @@ export function promoteDelegatedScope(
     ...(access.toolPolicy ? { toolPolicy: access.toolPolicy } : {}),
     ...(scope.promptAppend ? { promptAppend: scope.promptAppend } : {}),
     spawnedBy: scope.spawnedBy,
+    ...(scope.contributionUserId !== undefined ? { contributionUserId: scope.contributionUserId } : {}),
   });
   if (!promoted) return { error: 'the resulting access could not be validated' };
   return { scope: promoted };

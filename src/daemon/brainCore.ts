@@ -244,9 +244,16 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // one resolver. Named (rather than inlined into the brain deps below) because the sub-agent runner has
   // to re-derive a delegated child's Policy from the same expression the daemon used — two copies of it
   // would be two ways for a child to end up scoped differently in the two processes.
-  const policyForProjects = (ids: number[]): Policy => ({
+  const policyForProjects = (ids: number[], accountUserId?: number): Policy => ({
     allowedProjectIds: new Set(ids),
-    allowedPaths: () => ids.map((id) => projects.get(id)?.path).filter((p): p is string => !!p),
+    allowedPaths: () => {
+      const roots = ids.map((id) => projects.get(id)?.path).filter((p): p is string => !!p);
+      if (accountUserId === undefined) return roots;
+      for (const workspace of sandboxWorkspaceRoots(accountUserId, ids)) {
+        if (!roots.includes(workspace.path)) roots.push(workspace.path);
+      }
+      return roots;
+    },
   });
   // WHO a platform sender is. Driven entirely by the identity descriptors (src/shared/platformIdentity.ts)
   // — a platform literal here is precisely the duplication that left Telegram unlinkable while core
@@ -354,6 +361,14 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // The provider's own memo is a Promise, which a synchronous status read cannot await; refreshed by the
   // same `.then` that refreshes the output-show snapshot, so it can never lag behind a reload.
   let loadedPluginRegistry: PluginRegistry | undefined;
+  /** Resolve Sandbox roots from the LIVE merged registry. A missing/invalid control contributes nothing;
+   * callers retain the registered Project roots and never widen from a stale plugin generation. */
+  function sandboxWorkspaceRoots(accountUserId: number, projectIds: readonly number[]): { projectId: number; path: string }[] {
+    const control = loadedPluginRegistry?.control('sandbox');
+    if (!control) return [];
+    try { return control.workspaceRoots({ accountUserId, projectIds }); }
+    catch { return []; }
+  }
   // Same late binding for the push transport: the PushSender is a bootstrap construct (it needs the
   // subscriptions store + web-push keys wired there).
   let hostPush: PluginHostPush | undefined;
@@ -648,7 +663,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         }),
         plugins: pluginProvider,
         hookAudit,
-        policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
+        policy: (userId) => resolvePolicy({ userProjects, projects, supplementalPaths: sandboxWorkspaceRoots }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
         projectModelPreference: (userId, projectRoot) => userSettings.projectModelPreference(userId, projectRoot),
         setProjectModelPreference: (userId, projectRoot, selection) => { userSettings.setProjectModelPreference(userId, projectRoot, selection); },

@@ -1,7 +1,8 @@
+import type { KnownControls } from '../../plugins/api.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
 import type { ToolPolicy } from '../../plugins/policyContext.js';
-import { drainSessionNotices, recordSubagentFinishMarker, recordWorkflowFinishMarker, visibleSubagentUpdate } from './sessionEvents.js';
+import { drainSessionNotices, recordSubagentFinishMarker, recordWorkflowFinishMarker, visibleSubagentUpdate, workDirReorientation } from './sessionEvents.js';
 import type { HookAuditBuffer } from '../../shared/hookAudit.js';
 import type { BrainStore } from '../../store/brainStore.js';
 import type { BrainDeps } from '../brainDeps.js';
@@ -21,7 +22,7 @@ import { isPromptCommand } from '../slashCommands.js';
 import { summarizePermissions, dedupeRulesKeepingLast, NON_DESTRUCTIVE_BASH_RULES } from '../toolPermissions.js';
 import type { PermissionApprovalService } from './permissionApproval.js';
 import type { TurnMode, TurnRequest } from './turnRequest.js';
-import { clientDir, turnWorkDir } from './workDir.js';
+import { clientDir, effectiveTurnWorkDir, turnWorkDir } from './workDir.js';
 import { drainPostCompactionContext } from '../continuity/postCompactionContext.js';
 import { recallMemoryBlock } from '../session/memoryBlock.js';
 import { pluginContextBlock } from '../session/pluginContextBlock.js';
@@ -44,6 +45,7 @@ interface TurnContextBuilderDeps {
   memoryService?: MemoryService;
   memoryCategoryStore?: MemoryCategoryStore;
   projects?: ProjectStore;
+  sandbox?(): KnownControls['sandbox'] | undefined;
   plugins(): Promise<PluginRegistry | undefined>;
   toolAuthorityFor?(userId: number): ToolPolicy | undefined;
   hookAudit?: HookAuditBuffer;
@@ -114,7 +116,8 @@ export class TurnContextBuilder {
     // admission rolls a rejected turn's user row back, so its mode must roll back with it.
     const previousMode = live.lastTurnMode;
     const memSettings = this.d.userSettings?.(request.userId);
-    const scope = this.scopeOptions(request.userId, live, mode, request.clientCwd);
+    const scoped = this.scopeOptions(request.userId, live, mode, request.clientCwd);
+    const scope = scoped.scope;
     const memoryBlock = await recallMemoryBlock({
       service: this.d.memoryService,
       // In an owner chat the writer IS the owner, so the same rule ("the memories belong to whoever is
@@ -193,6 +196,7 @@ export class TurnContextBuilder {
             beforeUser: turnContext.beforeUser,
             text: request.text,
             afterUser: turnContext.afterUser,
+            workDirReorientation: scoped.workDirReorientation,
             sessionChanges,
             postCompaction,
             modeReminder,
@@ -300,7 +304,15 @@ export class TurnContextBuilder {
     const recallScope = this.d.memoryCategoryStore && this.d.projects
       ? memoryRecallScope(userId, recallCwd, this.d.memoryCategoryStore, this.d.projects)
       : { projectId: null, categoryIds: new Set<number>() };
-    const workDir = turnWorkDir(live.policy, clientCwd ?? live.workDir, this.d.projectPath);
+    const baseWorkDir = turnWorkDir(live.policy, clientCwd ?? live.workDir, this.d.projectPath);
+    const effective = effectiveTurnWorkDir({
+      policy: live.policy,
+      baseWorkDir,
+      accountUserId: live.contributionUserId,
+      sessionId: live.sessionId,
+      projects: this.d.projects,
+      sandbox: this.d.sandbox?.(),
+    });
     const base = this.d.permissions.turnPermissions(userId, live, true);
     // The other half of admitting Bash in plan mode: narrow the turn's shell rules to the shared
     // non-destructive clamp. Appended LAST so last-match-wins puts it over the user's own rules — a
@@ -330,26 +342,29 @@ export class TurnContextBuilder {
         yolo: base?.yolo ?? false,
       };
     return {
-      identity,
-      elicit,
-      emitCard,
-      emitSubagent,
-      emitSubagentCompletion,
-      emitWorkflow,
-      emitWorkflowCompletion,
-      toolPolicy,
-      permissions,
-      workDir,
-      memoryRecallScope: recallScope,
-      // Read off the live rather than re-derived: it is the exact id this session's skill set and its
-      // system-prompt announcement were composed from, so a tool resolving the caller through it can only
-      // ever offer what the model was already told about.
-      contributionUserId: live.contributionUserId,
-      // Carried into the turn's AsyncLocalStorage so the delegation path can see it: a turn spent
-      // planning may only ever spawn a read-only child (see pathGuard.currentAccess).
-      mode,
-      sessionId: live.sessionId,
-      model: { provider: live.providerId, model: live.model, thinkingLevel: live.thinkingLevel },
+      scope: {
+        identity,
+        elicit,
+        emitCard,
+        emitSubagent,
+        emitSubagentCompletion,
+        emitWorkflow,
+        emitWorkflowCompletion,
+        toolPolicy,
+        permissions,
+        workDir: effective.workDir,
+        memoryRecallScope: recallScope,
+        // Read off the live rather than re-derived: it is the exact id this session's skill set and its
+        // system-prompt announcement were composed from, so a tool resolving the caller through it can only
+        // ever offer what the model was already told about.
+        contributionUserId: live.contributionUserId,
+        // Carried into the turn's AsyncLocalStorage so the delegation path can see it: a turn spent
+        // planning may only ever spawn a read-only child (see pathGuard.currentAccess).
+        mode,
+        sessionId: live.sessionId,
+        model: { provider: live.providerId, model: live.model, thinkingLevel: live.thinkingLevel },
+      },
+      workDirReorientation: workDirReorientation(live.workDir, effective.workDir),
     };
   }
 
@@ -363,7 +378,7 @@ export class TurnContextBuilder {
     // while planning delivers its result through here — and hard-coding 'build' rebuilt that follow-up turn
     // without the shell clamp and re-advertised the withheld tools, so the model could run destructive
     // commands mid-plan. The mode a delivery inherits must be the one the user is actually in.
-    const scope = this.scopeOptions(userId, live, live.lastTurnMode ?? 'build');
+    const { scope } = this.scopeOptions(userId, live, live.lastTurnMode ?? 'build');
     return {
       autoSaveMemory: false,
       run: <T>(operation: (prompt: string) => Promise<T>): Promise<T> => runWithPolicy(live.policy, () => operation(''), scope),

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainStore } from '../store/brainStore.js';
-import type { PlatformHistory, PlatformHistoryMessage } from '../plugins/api.js';
+import type { ProjectStore } from '../store/projectStore.js';
+import type { KnownControls, PlatformHistory, PlatformHistoryMessage } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity, ToolPolicy } from '../plugins/policyContext.js';
 import type { PlatformSenderAttribution } from './identity.js';
@@ -11,7 +12,7 @@ import {
   type DelegatedExecutionScope,
 } from './delegatedScope.js';
 import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentCompletion, SubagentUpdate, WorkflowCompletion, WorkflowUpdate } from './events.js';
-import { recordSubagentFinishMarker, recordWorkflowFinishMarker, visibleSubagentUpdate } from './service/sessionEvents.js';
+import { recordSubagentFinishMarker, recordWorkflowFinishMarker, visibleSubagentUpdate, workDirReorientation } from './service/sessionEvents.js';
 import { runCompaction, withDescendantUsage, sessionUsageSnapshot } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import type { CardRegistry } from './cards.js';
@@ -40,6 +41,7 @@ import type { PermissionSettings, TurnPermissions } from './toolPermissions.js';
 import type { MemoryService } from './memoryService.js';
 import type { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
 import { globalMemoryRecallScope } from './memoryRecallScope.js';
+import { effectiveTurnWorkDir, turnWorkDir } from './service/workDir.js';
 import type { MemoryCurator } from './memoryCurator.js';
 import type { ConversationTitler } from './conversationTitler.js';
 import type { LiveSessionRegistry } from './session/liveRegistry.js';
@@ -448,6 +450,10 @@ export interface ChannelServiceDeps {
    *  channelAttachments.ts). Absent ⇒ no candidate project exists and an attachment is refused with the
    *  same message the web route gives, rather than silently discarded. */
   uploads?: ChannelUploadDeps;
+  /** Registered Projects plus the live Sandbox control resolve the current writer's effective workspace. */
+  projects?: ProjectStore;
+  projectPath?: () => string | undefined;
+  sandbox?(): KnownControls['sandbox'] | undefined;
   /** Session composition stays in BrainService.spawnLive — this service only orchestrates. */
   spawn: (opts: SpawnOpts) => Promise<LiveBrain>;
   /** Live channel sessions cap: past this the least-recently-used one is disposed (its history stays
@@ -809,7 +815,10 @@ export class ChannelSessionService {
           // everyone who writes afterwards.
           ...(parentSessionId
             ? (() => {
-                const inherited = this.parentContributionUserId(parentSessionId);
+                // The durable delegated scope is the cross-process source of truth. The parent live record
+                // remains a legacy in-process fallback for rows minted before contribution ownership was
+                // captured explicitly.
+                const inherited = delegated?.scope.contributionUserId ?? this.parentContributionUserId(parentSessionId);
                 return inherited != null ? { contributionUserId: inherited } : {};
               })()
             : {}),
@@ -959,6 +968,19 @@ export class ChannelSessionService {
           : undefined;
         const assistantBefore = [...(ch.session.messages as { role?: string }[])].reverse()
           .find((message) => message.role === 'assistant');
+        // Resolve from THIS writer and THIS turn. `ch.workDir` is only the static spawn cwd (often the room
+        // opener's Project); validating it through the current Policy first makes another writer fall back to
+        // their own Project, then Sandbox may select that account's active workspace.
+        const baseWorkDir = turnWorkDir(opts.policy, opts.clientCwd ?? ch.workDir, this.d.projectPath);
+        const effectiveWorkDir = effectiveTurnWorkDir({
+          policy: opts.policy,
+          baseWorkDir,
+          accountUserId: turnContributionUserId,
+          sessionId,
+          projects: this.d.projects,
+          sandbox: this.d.sandbox?.(),
+        });
+        const workspaceReminder = workDirReorientation(ch.workDir, effectiveWorkDir.workDir);
         try {
           // …and, in a room, narrowed to the tools this writer OWNS as well as the ones they were granted.
           // The two are different questions and both have to be asked: the grant says what an admin gave
@@ -1016,6 +1038,7 @@ export class ChannelSessionService {
                 beforeUser: turnContext.beforeUser,
                 text: turnText,
                 afterUser: turnContext.afterUser,
+                workDirReorientation: workspaceReminder,
                 postCompaction,
                 // A room's turns are minutes apart with other people's messages in between, so an agent
                 // that delegated here needs the reminder more than the owner chat does, not less.
@@ -1046,7 +1069,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: ch.workDir, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',
