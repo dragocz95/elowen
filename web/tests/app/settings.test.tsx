@@ -46,7 +46,9 @@ describe('SettingsPage', () => {
       'System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Data',
     ]);
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
-    expect(screen.getByText('12%')).toBeInTheDocument();
+    // The dials are a lazy chunk, so the reading lands a tick after the section itself. Spaced before
+    // the percent sign like every other figure in the app.
+    expect(await screen.findByText('12 %')).toBeInTheDocument();
   });
 
   it('offers conversation diagnostics without capture controls in Data', async () => {

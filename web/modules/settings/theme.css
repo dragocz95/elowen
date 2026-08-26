@@ -55,16 +55,6 @@
 .settings-control-row__status { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--color-success); font-size: 0.7rem; font-weight: 620; }
 .settings-control-row__status--down { color: var(--color-danger); }
 
-.settings-diagnostics__metrics { display: grid; grid-template-columns: repeat(3, minmax(10rem, 1fr)); min-height: 6rem; align-items: center; }
-.settings-diagnostic-metric { display: grid; min-height: 4rem; grid-template-columns: auto 1fr; align-content: center; gap: 0.35rem 0.8rem; padding: 0 1.7rem; border-left: var(--hairline); }
-.settings-diagnostic-metric:first-child { border-left: 0; }
-.settings-diagnostic-metric span { color: var(--color-text-muted); font-size: 0.66rem; }
-.settings-diagnostic-metric strong { overflow: hidden; color: var(--color-text); font-family: var(--font-mono); font-size: 0.8rem; font-weight: 480; text-overflow: ellipsis; white-space: nowrap; }
-.settings-diagnostic-metric > i { grid-column: 2; display: block; width: 100%; height: 0.22rem; overflow: hidden; background: rgb(255 255 255 / 0.08); }
-.settings-diagnostic-metric > i > b { display: block; height: 100%; background: linear-gradient(90deg, var(--color-accent), var(--color-ember)); box-shadow: 0 0 10px rgb(255 82 54 / 0.36); }
-.settings-diagnostic-metric--loading > i > b { animation: diagnostic-loading 1.5s ease-in-out infinite alternate; opacity: 0.38; }
-@keyframes diagnostic-loading { from { transform: translateX(-35%); } to { transform: translateX(260%); } }
-
 .settings-model-rows { container-type: inline-size; }
 .settings-model-row, .settings-agent-row { min-height: 4.35rem; padding: 0.65rem clamp(1.25rem, 2vw, 2rem); border-bottom: var(--hairline); }
 .settings-model-row:last-child, .settings-agent-row:last-child { border-bottom: 0; }
@@ -73,15 +63,6 @@
 .settings-skill-statuses { display: flex; flex-wrap: wrap; gap: 0.65rem 1.5rem; padding: 1rem clamp(1.25rem, 2vw, 2rem); }
 .settings-document__footer { padding: 1rem clamp(1.25rem, 2vw, 2rem); }
 .settings-status-banner { display: flex; align-items: flex-start; gap: 0.65rem; padding: 1rem clamp(1.25rem, 2vw, 2rem); }
-
-@media (max-width: 1180px) {
-  .settings-diagnostics__metrics { grid-template-columns: 1fr 1fr; }
-}
-
-@media (max-width: 800px) {
-  .settings-diagnostics__metrics { grid-template-columns: 1fr; }
-  .settings-diagnostic-metric { border-top: var(--hairline); border-left: 0; }
-}
 
 @media (max-width: 620px) {
   .settings-model-row, .settings-agent-row { padding-inline: 1rem; }

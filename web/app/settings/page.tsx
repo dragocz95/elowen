@@ -1,5 +1,7 @@
 'use client';
 export const dynamic = 'force-dynamic';
+// Aliased: `dynamic` is already this route's Next segment-config export, two lines up.
+import nextDynamic from 'next/dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
 import { SlidersHorizontal, X, Pencil, Gauge, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Search, Server, CalendarClock, ScrollText, BellRing, MessageSquareText } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
@@ -42,6 +44,14 @@ import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { ModuleShell } from '../../components/shell/ModuleShell';
 import { interpolate, useTranslation } from '../../lib/i18n';
+
+/** Loaded on demand: the dials pull in the charting library, and Settings is a heavy page where most
+ *  visits never scroll to the System section. `ssr: false` because the dials measure their own box,
+ *  which is zero on the server. The placeholder reserves the drawn height so the page does not jump. */
+const SystemDiagnostics = nextDynamic(
+  () => import('../../modules/settings/SystemDiagnostics').then((m) => m.SystemDiagnostics),
+  { ssr: false, loading: () => <LoadingState variant="block" height="h-[150px]" /> },
+);
 
 const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
 
@@ -635,18 +645,12 @@ export default function SettingsPage() {
               ) : null;
               const diagnosticsGroup = (
                 <SettingsGroup title={t.settings.systemDiagnostics} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics" variant="classic">
-                  <div className="settings-diagnostics__metrics" aria-busy={!diagnostics}>
-                  {[
-                    { label: t.settings.diagnosticCpu, value: diagnostics ? `${diagnostics.cpuPercent}%` : '—', level: diagnostics?.cpuPercent ?? 0 },
-                    { label: t.settings.diagnosticMemory, value: diagnostics ? formatMemory(diagnostics.memoryUsedBytes, diagnostics.memoryTotalBytes) : '—', level: diagnostics?.memoryTotalBytes ? (diagnostics.memoryUsedBytes / diagnostics.memoryTotalBytes) * 100 : 0 },
-                    { label: t.settings.diagnosticUptime, value: diagnostics ? formatUptime(diagnostics.uptimeSeconds) : '—', level: diagnostics ? 72 : 0 },
-                  ].map((metric) => (
-                    <div key={metric.label} className={`settings-diagnostic-metric ${diagnostics ? '' : 'settings-diagnostic-metric--loading'}`}>
-                      <span>{metric.label}</span><strong>{metric.value}</strong>
-                      <i aria-hidden><b style={{ width: `${diagnostics ? Math.min(100, Math.max(4, metric.level)) : 28}%` }} /></i>
-                    </div>
-                  ))}
-                  </div>
+                  <SystemDiagnostics
+                    diagnostics={diagnostics}
+                    t={t}
+                    formatMemory={formatMemory}
+                    formatUptime={formatUptime}
+                  />
                 </SettingsGroup>
               );
               return (
