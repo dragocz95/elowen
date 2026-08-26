@@ -79,6 +79,7 @@ describe('AccountView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Linked accounts' }));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Discord ID' }), { target: { value: '123456789012345678' } });
     await waitFor(() => expect(patched).toEqual({ discordUserId: '123456789012345678' }));
   });
@@ -98,6 +99,8 @@ describe('AccountView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
+    // The links are one row that opens a drawer, so the fields live one click in.
+    fireEvent.click(await screen.findByRole('button', { name: 'Linked accounts' }));
     for (const label of ['Discord ID', 'Microsoft Teams identity', 'Telegram ID', 'WhatsApp number']) {
       expect(await screen.findByRole('textbox', { name: label })).toBeInTheDocument();
     }
@@ -122,10 +125,32 @@ describe('AccountView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Linked accounts' }));
     expect(await screen.findByRole('textbox', { name: 'Discord ID' })).toBeInTheDocument();
     for (const label of ['Microsoft Teams identity', 'Telegram ID', 'WhatsApp number']) {
       expect(screen.queryByRole('textbox', { name: label })).toBeNull();
     }
+  });
+
+  // Disconnecting is the same edit as clearing the box by hand, so it must travel the same autosave path
+  // and send the cleared link rather than merely emptying the input on screen.
+  it('disconnects a linked platform by clearing the stored id', async () => {
+    let patched: Record<string, unknown> | null = null;
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({
+        model: '', modelProvider: '', discordUserId: '123456789012345678', availableLinks: ['discordUserId'],
+      })),
+      http.patch('*/api/auth/me/cli-settings', async ({ request }) => { patched = await request.json() as Record<string, unknown>; return HttpResponse.json({}); }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Linked accounts' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+    await waitFor(() => expect(patched).toEqual({ discordUserId: '' }));
   });
 
   it('keeps the retired Default worker control out of Account', async () => {

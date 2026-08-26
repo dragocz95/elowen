@@ -1,24 +1,15 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal, MessageSquareText, Send } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, SquareTerminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
 import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
 
 /** The platform links this form edits, keyed exactly like the daemon's `CliSettings`. */
 type PlatformLinks = Partial<Record<PlatformLinkKey, string>>;
-/** The input shape of each link field. A `Record` over the daemon's link keys, so it is EXHAUSTIVE by
- *  type: a platform added to the identity descriptors fails this build until it has a field here. The
- *  keys are spelled out rather than imported because the descriptor module is daemon runtime code and
- *  this app takes TYPES only from `src/` — the type is what enforces the set, not the spelling. */
-const PLATFORM_LINK_INPUTS: Record<PlatformLinkKey, { placeholder: string; icon: LucideIcon }> = {
-  discordUserId: { placeholder: '123456789012345678', icon: AtSign },
-  msteamsUserId: { placeholder: '00000000-0000-0000-0000-000000000000', icon: MessageSquareText },
-  telegramUserId: { placeholder: '123456789', icon: Send },
-  whatsappNumber: { placeholder: '420778433908', icon: MessageCircle },
-};
-/** Render and save order — the declaration order above, never a second list to keep in step. */
-const PLATFORM_LINK_ORDER = Object.keys(PLATFORM_LINK_INPUTS) as PlatformLinkKey[];
+// Presentation and render order live with the card that owns them; this form keeps only the state and
+// the autosave, so the order it seeds and saves cannot drift from the order the user sees.
+import { PlatformLinksCard, PLATFORM_LINK_ORDER } from './PlatformLinksCard';
 import { useMe, useMyCliSettings, useBrainModels, usePluginUi } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
 import { Avatar } from '../../components/ui/Avatar';
@@ -416,36 +407,19 @@ export function AccountView() {
             />
           </SpatialRow>
         );
-        // Platform account links map authenticated sender identities to this Elowen account. Presentation
-        // is a Record over the daemon's link keys, so it is EXHAUSTIVE by type: a platform added to the
-        // identity descriptors fails this build until it has a label, a help text and a field here.
-        const linkCopy: Record<PlatformLinkKey, { title: string; description: string }> = {
-          discordUserId: { title: t.account.discordId, description: t.help.accountDiscordId },
-          msteamsUserId: { title: t.account.msteamsIdentity, description: t.help.accountMsteamsIdentity },
-          telegramUserId: { title: t.account.telegramId, description: t.help.accountTelegramId },
-          whatsappNumber: { title: t.account.whatsappNumber, description: t.help.accountWhatsappNumber },
-        };
-        // Only platforms this instance can actually receive a message from get a field. The daemon
+        // Only platforms this instance can actually receive a message from are offered. The daemon
         // decides (it knows which adapters registered), so a channel plugin that is absent, disabled or
-        // misconfigured contributes nothing here instead of a box that could never match a sender.
+        // misconfigured contributes nothing here instead of a field that could never match a sender.
         // While settings load nothing is offered, so the list never flashes wider and then collapses; a
-        // daemon too old to answer keeps every field rather than silently losing one.
+        // daemon too old to answer keeps every platform rather than silently losing one.
         const visibleLinkKeys = !cli.data ? [] : cli.data.availableLinks ?? PLATFORM_LINK_ORDER;
-        const linkRows = PLATFORM_LINK_ORDER.filter((key) => visibleLinkKeys.includes(key)).map((key) => {
-          const { title, description } = linkCopy[key];
-          const { placeholder, icon } = PLATFORM_LINK_INPUTS[key];
-          return (
-            <SpatialRow key={key} title={title} icon={icon} description={description}>
-              <Input
-                value={links[key] ?? ''}
-                onChange={(e) => setLinks((current) => ({ ...current, [key]: e.target.value }))}
-                placeholder={placeholder}
-                className="font-mono sm:w-72"
-                aria-label={title}
-              />
-            </SpatialRow>
-          );
-        });
+        const linkRows = (
+          <PlatformLinksCard
+            available={visibleLinkKeys}
+            values={links}
+            onChange={(key, value) => setLinks((current) => ({ ...current, [key]: value }))}
+          />
+        );
         return (
           <div className="flex min-w-0 flex-col gap-6">
             <SpatialIdentity actions={(
