@@ -683,14 +683,14 @@ export class BrainSessionFactory {
     // REAL retained tail for the trigger currently in force, not the minimal seed. The summary allowance
     // doubles as the break-even's expected summary OUTPUT size — the same "a few thousand tokens in
     // practice" estimate the floor already budgets for the summary's presence in context.
-    const assessCold: AssessColdCompaction = () => assessColdCompaction({
+    const assessCold: AssessColdCompaction = (lastRequestCacheTtlMs) => assessColdCompaction({
       proactive: () => proactiveCompaction,
       breakerBlocks: () => compactionBreaker.blocks('threshold'),
       contextTokens: () => estimatedContextTokens(session.messages, latestCompaction(sessionManager)?.timestamp),
       floorTokens: () => fixedCostTokens + COMPACTION_SUMMARY_ALLOWANCE
         + compactionKeepRecentTokens(thresholdBudget.trigger ?? spec.model.contextWindow, fixedCostTokens),
       summaryOutputTokens: () => COMPACTION_SUMMARY_ALLOWANCE,
-    });
+    }, lastRequestCacheTtlMs);
     // Last, so observers see the finished session — and before the caller can run a turn on it.
     await spec.onSpawned?.({ sessionId: spec.sessionId, messages: session.messages });
     return { session, applyCompaction, assessColdCompaction: assessCold };

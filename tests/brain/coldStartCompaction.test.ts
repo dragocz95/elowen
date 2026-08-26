@@ -10,30 +10,23 @@ import {
 const SUMMARY = 8_000;
 
 describe('coldCompactionWorthwhile', () => {
-  // Anthropic ratios: cacheWrite 1.25×, output 5× input. Break-even: C ≥ 5·F + 20·S.
-  // With S = 8k the summary output alone costs 160k tokens' worth of the 0.25·C margin.
-
-  it('accepts a context past the real break-even (500k → 50k floor saves money)', () => {
-    // 5·50k + 20·8k = 410k; at 500k the compaction nets ≈ $0.11 on Opus for one cold return.
-    expect(coldCompactionWorthwhile(500_000, 50_000, SUMMARY)).toBe(true);
+  it('uses the 5-minute write price at the exact C = 5·F + 20·S boundary', () => {
+    expect(coldCompactionWorthwhile(410_000, 50_000, SUMMARY, 5 * 60_000)).toBe(true);
+    expect(coldCompactionWorthwhile(409_999, 50_000, SUMMARY, 5 * 60_000)).toBe(false);
   });
 
-  it('refuses a four-fold reduction that still loses money (400k → 100k floor)', () => {
-    // The retired 2×-floor rule accepted this; per one cold return it LOSES $0.125 + the summary output.
-    expect(coldCompactionWorthwhile(400_000, 100_000, SUMMARY)).toBe(false);
+  it('uses the 1-hour write price at the exact C = 2·F + 5·S boundary', () => {
+    expect(coldCompactionWorthwhile(140_000, 50_000, SUMMARY, 60 * 60_000)).toBe(true);
+    expect(coldCompactionWorthwhile(139_999, 50_000, SUMMARY, 60 * 60_000)).toBe(false);
   });
 
-  it('refuses the five-fold point once the summary output is charged (200k → 40k floor)', () => {
-    // 5F exactly covers the cache-write side; the summary output alone tips it into a loss.
+  it('prices the same context differently under short and long retention', () => {
+    expect(coldCompactionWorthwhile(200_000, 40_000, SUMMARY, 5 * 60_000)).toBe(false);
+    expect(coldCompactionWorthwhile(200_000, 40_000, SUMMARY, 60 * 60_000)).toBe(true);
+  });
+
+  it('falls back to the conservative short-TTL price when the previous request TTL is unknown', () => {
     expect(coldCompactionWorthwhile(200_000, 40_000, SUMMARY)).toBe(false);
-    // With a free summary the same point is exact break-even — allowed, not demanded.
-    expect(coldCompactionWorthwhile(200_000, 40_000, 0)).toBe(true);
-    expect(coldCompactionWorthwhile(199_999, 40_000, 0)).toBe(false);
-  });
-
-  it('sits exactly at C = 5·F + 20·S', () => {
-    expect(coldCompactionWorthwhile(410_000, 50_000, SUMMARY)).toBe(true);
-    expect(coldCompactionWorthwhile(409_999, 50_000, SUMMARY)).toBe(false);
   });
 });
 
@@ -74,9 +67,14 @@ describe('assessColdCompaction', () => {
       .toEqual({ eligible: false, reason: 'breaker' });
   });
 
-  it('refuses a conversation below the break-even', () => {
-    expect(assessColdCompaction(inputs({ contextTokens: () => 200_000 })))
+  it('refuses a conversation below the short-cache break-even', () => {
+    expect(assessColdCompaction(inputs({ contextTokens: () => 200_000 }), 5 * 60_000))
       .toEqual({ eligible: false, reason: 'not-worthwhile' });
+  });
+
+  it('accepts the same conversation after a long-cache request', () => {
+    expect(assessColdCompaction(inputs({ contextTokens: () => 200_000 }), 60 * 60_000))
+      .toEqual({ eligible: true, contextTokens: 200_000, floorTokens: 40_000 });
   });
 });
 

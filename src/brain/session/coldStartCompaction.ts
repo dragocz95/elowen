@@ -28,32 +28,34 @@ import { LONG_CACHE_TTL_MS } from './cacheTiming.js';
  *  retried within the turn either — the turn just runs on the full context, and the circuit breaker
  *  counts the failure through its own session subscription. */
 
-/** Anthropic prices every model in fixed ratios of its plain input price: a cache WRITE costs 1.25×
- *  input and OUTPUT costs 5× input (Opus: $5 / $6.25 / $25 per Mtok input/cacheWrite/output; Sonnet:
- *  $3 / $3.75 / $15). The break-even below is expressed purely in these ratios, so it holds across the
- *  family without per-model price tables. */
-const CACHE_WRITE_PER_INPUT = 1.25;
+/** Anthropic's cache-write multiplier depends on the TTL the previous request actually used: 5-minute
+ *  entries cost 1.25× plain input, while 1-hour entries cost 2×. An unknown stamp is priced as short — the
+ *  stricter break-even — so a conversation predating this process is never compacted on an optimistic guess. */
+function cacheWritePerInput(lastRequestCacheTtlMs: number | undefined): number {
+  return lastRequestCacheTtlMs !== undefined && lastRequestCacheTtlMs >= LONG_CACHE_TTL_MS ? 2 : 1.25;
+}
+
 const OUTPUT_PER_INPUT = 5;
 
 /** Whether compacting BEFORE the turn's first provider request beats running the turn on the full
- *  history. With context C, post-compaction floor F, summary output S (all tokens), in input-price units:
+ *  history. With context C, post-compaction floor F, summary output S and cache-write multiplier W:
  *
- *  - skip:    the turn's first request re-caches the full cold history       → 1.25·C
- *  - compact: the summarization reads the history at FULL input price (see the module doc — it never
- *             reads the conversation's cache), emits the summary as output, and the turn then re-caches
- *             only the floor                                                 → 1·C + 5·S + 1.25·F
+ *  - skip:    the turn's first request re-caches the full cold history       → W·C
+ *  - compact: summarization reads the history at full input price, emits the summary as output, and the
+ *             turn then re-caches only the floor                              → C + 5·S + W·F
  *
- *  Compact iff 1.25·C ≥ C + 5·S + 1.25·F  ⇔  0.25·C ≥ 1.25·F + 5·S  ⇔  C ≥ 5·F + 20·S.
+ *  Compact iff (W−1)·C ≥ W·F + 5·S. For short retention this is C ≥ 5·F + 20·S;
+ *  for Elowen's default 1-hour retention it is C ≥ 2·F + 5·S.
  *
  *  This counts a single cold return only. Every later turn favors the compacted side further (cache
- *  reads at 0.1× over a smaller prefix), so the bound is conservative — the right direction for an
- *  irreversible rewrite that also loses conversational detail. The predecessor of this check used
- *  C ≥ 2·F, which loses money on every context smaller than five times its floor. */
+ *  reads at 0.1× over a smaller prefix), so the bound remains conservative. */
 export function coldCompactionWorthwhile(
   contextTokens: number, floorTokens: number, summaryOutputTokens: number,
+  lastRequestCacheTtlMs?: number,
 ): boolean {
-  return (CACHE_WRITE_PER_INPUT - 1) * contextTokens
-    >= CACHE_WRITE_PER_INPUT * floorTokens + OUTPUT_PER_INPUT * summaryOutputTokens;
+  const cacheWrite = cacheWritePerInput(lastRequestCacheTtlMs);
+  return (cacheWrite - 1) * contextTokens
+    >= cacheWrite * floorTokens + OUTPUT_PER_INPUT * summaryOutputTokens;
 }
 
 /** How long a conversation must have been quiet before its prompt cache is DEFINITELY cold — the TTL of
@@ -94,15 +96,18 @@ export interface ColdCompactionInputs {
   summaryOutputTokens(): number;
 }
 
-export type AssessColdCompaction = () => ColdCompactionAssessment;
+export type AssessColdCompaction = (lastRequestCacheTtlMs?: number) => ColdCompactionAssessment;
 
-export function assessColdCompaction(inputs: ColdCompactionInputs): ColdCompactionAssessment {
+export function assessColdCompaction(
+  inputs: ColdCompactionInputs,
+  lastRequestCacheTtlMs?: number,
+): ColdCompactionAssessment {
   if (!inputs.proactive()) return { eligible: false, reason: 'auto-compact-off' };
   if (inputs.breakerBlocks()) return { eligible: false, reason: 'breaker' };
 
   const contextTokens = inputs.contextTokens();
   const floorTokens = inputs.floorTokens();
-  if (!coldCompactionWorthwhile(contextTokens, floorTokens, inputs.summaryOutputTokens())) {
+  if (!coldCompactionWorthwhile(contextTokens, floorTokens, inputs.summaryOutputTokens(), lastRequestCacheTtlMs)) {
     return { eligible: false, reason: 'not-worthwhile' };
   }
   return { eligible: true, contextTokens, floorTokens };
@@ -162,7 +167,7 @@ export async function maybeColdStartCompaction(d: ColdStartCompactionDeps, live:
   // The shared fail-closed predicate (also the teardown's): a queued message, parked question,
   // running child/background job or armed goal means the context is not this turn's to rewrite.
   if (sessionHasWorkInFlight(d, live.sessionId)) return;
-  const verdict = assess();
+  const verdict = assess(live.lastRequestCacheTtlMs);
   if (!verdict.eligible) {
     coldLog.info(`cold-start compaction skipped on ${live.sessionId}: ${verdict.reason}`);
     return;
