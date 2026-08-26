@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ListChecks, EyeOff, ShieldCheck } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ListChecks, EyeOff, Server, ShieldCheck } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -9,7 +9,7 @@ import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
-import { Modal, ModalBody } from '../../components/ui/Modal';
+import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
@@ -75,7 +75,6 @@ function OAuthConnectDialog({ flow: initial, onDone }: { flow: OAuthFlowState; o
   const { t } = useTranslation();
   const [flow, setFlow] = useState(initial);
   const [code, setCode] = useState('');
-  const titleId = useId();
   // The dialog owns the poll; `onDone` is only how it reports the outcome. Reading it through a ref keeps
   // it out of the effect's dependencies, because the parent re-renders on its own (a 20s rate-limit
   // refetch) and a fresh inline callback would otherwise retire the poll — dropping the answer in flight
@@ -109,9 +108,8 @@ function OAuthConnectDialog({ flow: initial, onDone }: { flow: OAuthFlowState; o
   }, [flow.id]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      <div className="flex w-full max-w-md flex-col gap-4 rounded-lg border border-border bg-surface p-5">
-        <span id={titleId} className="flex items-center gap-2 text-sm font-semibold text-text"><Link2 size={15} aria-hidden />{t.brain.connectTitle}</span>
+    <Modal title={t.brain.connectTitle} icon={Link2} size="md" onClose={() => onDone('cancelled')}>
+      <ModalBody gap={4}>
         {flow.authUrl ? (
           <a href={flow.authUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 break-all rounded-md border border-accent/40 bg-accent/10 p-3 text-xs text-accent hover:bg-accent/20">
             <ExternalLink size={14} className="shrink-0" aria-hidden />{flow.authUrl}
@@ -120,18 +118,18 @@ function OAuthConnectDialog({ flow: initial, onDone }: { flow: OAuthFlowState; o
         {flow.userCode ? (
           <p className="text-sm text-text">{t.brain.connectUserCode}: <span className="font-mono text-lg font-semibold tracking-widest text-accent">{flow.userCode}</span></p>
         ) : null}
-        {flow.instructions ? <p className="text-xs text-text-muted">{flow.instructions}</p> : null}
+        {flow.instructions ? <p className="text-xs leading-relaxed text-text-muted">{flow.instructions}</p> : null}
         {flow.needsInput ? (
           <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (code.trim()) { void elowenClient.brainOauthInput(flow.id, code.trim()); setCode(''); } }}>
             <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder={t.brain.connectCodePlaceholder} className="font-mono" />
             <Button type="submit" variant="accent" disabled={!code.trim()}>{t.brain.connectSubmitCode}</Button>
           </form>
         ) : flow.status === 'action-required' ? <p className="text-xs italic text-text-muted">{t.brain.connectWaiting}</p> : null}
-        <div className="flex justify-end">
-          <Button variant="ghost" onClick={() => onDone('cancelled')}>{t.common.cancel}</Button>
-        </div>
-      </div>
-    </div>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => onDone('cancelled')}>{t.common.cancel}</Button>
+      </ModalFooter>
+    </Modal>
   );
 }
 
@@ -188,7 +186,6 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
 }) {
   const { t } = useTranslation();
   const [d, setD] = useState(initial);
-  const titleId = useId();
   const isNew = !initial.id;
   const id = isNew ? slug(d.label) : d.id;
   const idTaken = isNew && existingIds.includes(id);
@@ -218,9 +215,8 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
   const [modelsOpen, setModelsOpen] = useState(false);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      <div className="flex w-full max-w-lg flex-col gap-4 rounded-lg border border-border bg-surface p-5">
-        <span id={titleId} className="text-sm font-semibold text-text">{isNew ? t.brain.addProvider : t.brain.editProvider}</span>
+    <Modal title={isNew ? t.brain.addProvider : t.brain.editProvider} icon={Server} size="md" onClose={onClose}>
+      <ModalBody gap={4}>
         <Field label={t.brain.providerLabel}>
           <Input value={d.label} onChange={(e) => setD({ ...d, label: e.target.value })} placeholder="CoreSynth Proxy" />
           {isNew && id ? <p className="mt-1 font-mono text-tiny text-text-muted">id: {id}{idTaken ? ` — ${t.brain.idTaken}` : ''}</p> : null}
@@ -299,12 +295,12 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
             />
           )}
         </Field>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
-          <Button variant="accent" icon={Check} disabled={!valid} onClick={() => onSave({ ...d, id })}>{t.common.save}</Button>
-        </div>
-      </div>
-    </div>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
+        <Button variant="accent" icon={Check} disabled={!valid} onClick={() => onSave({ ...d, id })}>{t.common.save}</Button>
+      </ModalFooter>
+    </Modal>
   );
 }
 
