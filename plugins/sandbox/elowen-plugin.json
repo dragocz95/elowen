@@ -141,7 +141,7 @@
       "committed": "Changes committed.",
       "removed": "Workspace removed.",
       "environmentTitle": "Environment",
-      "environmentHint": "Execution mode, account HOME and Git identity used by shell commands and workspace operations.",
+      "environmentHint": "HOME, execution mode and Git identity for this account.",
       "mode": "Execution mode",
       "modeConfined": "Confined",
       "modeDirect": "Direct host",

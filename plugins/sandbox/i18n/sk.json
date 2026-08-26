@@ -74,7 +74,7 @@
       "committed": "Zmeny boli commitnuté.",
       "removed": "Pracovný priestor bol odstránený.",
       "environmentTitle": "Prostredie",
-      "environmentHint": "Režim spúšťania, účtový HOME a identita Gitu používaná shellovými príkazmi a operáciami pracovných priestorov.",
+      "environmentHint": "HOME, režim spúšťania a Git identita tohto účtu.",
       "mode": "Režim spúšťania",
       "modeConfined": "Izolovaný",
       "modeDirect": "Priamy hostiteľ",
