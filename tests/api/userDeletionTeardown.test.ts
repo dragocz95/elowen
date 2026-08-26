@@ -58,12 +58,12 @@ describe('DELETE /users/:id tears down what is running before it deletes what is
     expect(db.prepare("SELECT COUNT(*) c FROM tasks WHERE id = 'owned'").get()).toEqual({ c: 0 });
   });
 
-  it('keeps retired plugin rows but scrubs their deleted-user attribution without a handler', async () => {
+  it('leaves retired plugin rows untouched without a loaded cleanup handler', async () => {
     const { app, db, carol, adminTok } = setup();
     db.prepare("INSERT INTO tasks (id, project_id, title, type, created_by) VALUES ('orphan', 1, 'Orphan', 'task', ?)").run(carol.id);
 
     expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
-    expect(db.prepare("SELECT created_by FROM tasks WHERE id = 'orphan'").get()).toEqual({ created_by: null });
+    expect(db.prepare("SELECT created_by FROM tasks WHERE id = 'orphan'").get()).toEqual({ created_by: carol.id });
   });
 
   it('still removes the user and their assignments', async () => {

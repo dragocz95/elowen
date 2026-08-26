@@ -29,7 +29,7 @@ export function WorkspacesSettings({ surface }: { surface: 'page' | 'deck' }) {
   const [removePreview, setRemovePreview] = useState<RemovePreview | null>(null);
   const [removePhrase, setRemovePhrase] = useState('');
 
-  const invalidate = async () => { await qc.invalidateQueries({ queryKey: QUERY_KEY }); };
+  const invalidate = async () => { await qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'overview'] }); };
   const useSandboxMutation = <TVars, TData = unknown>(path: string, success: string) => hooks.useMutation<TData, unknown, TVars>({
     mutationFn: (value: TVars) => api(path, jsonBody(value)),
     onSuccess: async () => { await invalidate(); toast(success); },

@@ -26,7 +26,7 @@ export function EnvironmentSettings({ surface }: { surface: 'page' | 'deck' }) {
     if (query.data) setAuthor(query.data.author);
   }, [query.data]);
 
-  const invalidate = async () => { await qc.invalidateQueries({ queryKey: QUERY_KEY }); };
+  const invalidate = async () => { await qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'environment'] }); };
   const saveAuthor = hooks.useMutation<{ author: { name: string; email: string } }, unknown, { name: string; email: string }>({
     mutationFn: (value: { name: string; email: string }) => api('/plugins/sandbox/api/environment/author', jsonBody(value)) as Promise<{ author: { name: string; email: string } }>,
     onSuccess: async () => { await invalidate(); toast(s.authorSaved); },

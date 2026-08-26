@@ -31,7 +31,7 @@ interface MutationResult<TVars, TData = unknown> {
   mutateAsync(vars: TVars): Promise<TData>;
   isPending: boolean;
 }
-interface QueryClient { invalidateQueries(input: { queryKey: unknown[] }): Promise<void> }
+interface QueryClient { invalidateQueries: (input: { queryKey: unknown[] }) => Promise<void> }
 interface RuntimeHooks {
   usePluginStrings(plugin: string): Record<string, string>;
   useToast(): { toast(message: string, tone?: 'ok' | 'error'): void };
