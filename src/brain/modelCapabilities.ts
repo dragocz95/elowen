@@ -239,7 +239,13 @@ function costWithin(model: string): CatalogCost | undefined {
   }
   if (!best) return undefined;
   const rows = costByName().get(best)!;
-  return rows.every((row) => sameCost(row, rows[0]!)) ? rows[0] : undefined;
+  // An all-zero row is the catalog's way of recording a flat-rate subscription, not a rival per-token
+  // price, so it must not veto a figure the metered endpoints agree on: NVIDIA listing kimi-k3 at zero
+  // would otherwise unprice a model three paid endpoints publish identically — leaving exactly the $0
+  // this function exists to avoid. Zero rows only decide the answer when every endpoint is flat-rate.
+  const metered = rows.filter((row) => row.some((rate) => rate > 0));
+  const agreed = metered.length > 0 ? metered : rows;
+  return agreed.every((row) => sameCost(row, agreed[0]!)) ? agreed[0] : undefined;
 }
 
 /** The estimated per-token cost for a (provider, model) from the models.dev catalog, or undefined when it
@@ -392,8 +398,16 @@ export function descriptorCapabilities(provider: string, model: string): Descrip
   // (qwen3.8-max-preview) is recognised by generation — every 3.5+ release reasons. A catalogued
   // non-reasoning Qwen (a coder/instruct sibling, `catalog === false`) was already refused above, and an
   // endpoint that publishes an explicit ladder keeps its own answer.
+  //
+  // `catalog` may have been matched by NAME against a different endpoint (`nameWithin`), and a ladder
+  // is not portable that way: OpenRouter publishes minimal/xhigh for qwen3.8-max because its own
+  // `reasoning` object accepts them, while the same efforts on DashScope have no `thinking_budget` to
+  // map onto and would ride out as a raw `reasoning_effort` the endpoint never documented. Only a
+  // ladder on THIS endpoint's own row may override the family one.
+  const ownRow = catalogRow(catalogName(provider.startsWith('elowen-') ? provider.slice('elowen-'.length) : provider), model);
   const qwen = QWEN_GENERATION.exec(model);
-  if (qwen && (catalog === true || (catalog === undefined && Number(qwen[1]) >= 3.5))) {
+  const qwenReasons = catalog === true || Array.isArray(catalog) || (catalog === undefined && Number(qwen?.[1]) >= 3.5);
+  if (qwen && !Array.isArray(ownRow) && qwenReasons) {
     return {
       reasoning: true,
       thinkingLevelMap: { off: null, minimal: null, low: 'low', medium: 'medium', high: 'high', xhigh: null, max: null },

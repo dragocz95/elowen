@@ -45,6 +45,16 @@ describe('descriptorCapabilities — models.dev catalog', () => {
     expect(descriptorCapabilities('elowen-relay', 'qwen2-unknown-variant').reasoning).toBe(false);
   });
 
+  it('keeps a ladder an endpoint publishes itself, but never carries one to another endpoint by name', () => {
+    // OpenRouter's own row for qwen3.8-max lists minimal and xhigh, and its `reasoning` object really does
+    // accept them, so that endpoint keeps its full ladder instead of being flattened to the family's.
+    expect(levels('openrouter', 'qwen/qwen3.8-max')).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    // That same ladder must NOT reach DashScope, which has no row of its own and is matched only by name.
+    // There the effort becomes a `thinking_budget`, defined for low/medium/high alone, so an offered
+    // `minimal` would ride out as a raw reasoning_effort the endpoint never documented.
+    expect(levels('alibaba', 'qwen3.8-max-preview')).toEqual(['low', 'medium', 'high']);
+  });
+
   it('lets the catalog veto a name pattern that recognises a non-reasoning sibling', () => {
     // The chat, vision and speech variants carry their reasoning sibling's family name, so the OpenAI and
     // Gemini patterns claim them — and sending `reasoning_effort` to one is a 400. A model the catalog
