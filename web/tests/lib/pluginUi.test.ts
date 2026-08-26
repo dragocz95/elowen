@@ -15,10 +15,13 @@ const C = (name: string) => {
 describe('plugin UI runtime', () => {
   it('publishes the versioned shared editor surface needed by first-class plugin pages', () => {
     ensurePluginUiRuntime();
-    expect(PLUGIN_UI_API_VERSION).toBe(5);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(5);
+    // 6 adds SpatialIdentity, so a plugin section can lead with the same identity block a native
+    // account section does instead of rebuilding it from raw markup.
+    expect(PLUGIN_UI_API_VERSION).toBe(6);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(6);
     expect(window.ElowenUiRuntime?.components).toHaveProperty('PluginConfigEditor');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('Avatar');
+    expect(window.ElowenUiRuntime?.components).toHaveProperty('SpatialIdentity');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('usePluginConfigDraft');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('useUsers');
     expect(window.ElowenUiRuntime?.hooks).toEqual(expect.objectContaining({

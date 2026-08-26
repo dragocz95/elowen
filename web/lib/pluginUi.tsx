@@ -40,6 +40,7 @@ import { EntityList, EntityRow } from '../components/ui/EntityList';
 import { LoadingState, LoadingLine, ErrorState, EmptyState } from '../components/ui/states';
 import { MotionLayoutItem, MotionPresence } from '../components/ui/Motion';
 import { SpatialWorkspaceLayout, WorkspaceMetric, WorkspacePage, CompactWorkspaceHeader } from '../components/ui/WorkspacePrimitives';
+import { SpatialIdentity } from '../components/ui/SpatialPrimitives';
 import { ProjectFilterPills } from '../components/ui/ProjectFilterPills';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../components/ui/ControlSurface';
 import { ModelIcon } from '../components/ui/ModelIcon';
@@ -114,7 +115,7 @@ import { eventIcon } from './eventMeta';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 5;
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 6;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -287,7 +288,7 @@ export function ensurePluginUiRuntime(): void {
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       ConfirmDialog, TerminalModal, LiveTail,
-      SettingsDocument, SettingsGroup, SettingsRow, PluginConfigEditor, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
+      SettingsDocument, SettingsGroup, SettingsRow, SpatialIdentity, PluginConfigEditor, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends). DetailBlock is
       // the caption+hint wrapper the user detail puts above each of these summaries, shared so a plugin
