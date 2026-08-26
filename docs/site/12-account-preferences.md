@@ -8,214 +8,207 @@ group: Everyday use
 
 # Your Account & Preferences
 
-Elowen remembers you — not just facts about your work, but how you like the
-assistant to sound, which model should run your conversations, and how the app
-should look on your screen. Everything on the **Account** page is personal to
-you: it travels with your login no matter where you sign in, and none of it
-affects anyone else's account. This page walks through what you can tune.
+Open **Account** from the sidebar, or go directly to `/account`. These settings
+belong to your Elowen account unless noted otherwise. Most changes save
+automatically; the page shows the save state for the active section.
 
-## Your models and default worker
+The Account page can also contain sections contributed by installed and granted
+plugins. Those sections are managed by their owning plugin.
 
-**Account → Elowen AI** holds two independent model choices:
+## Account
 
-- **The chat model** — which model your brain conversations run on.
-- **The Default worker** — the executor that runs your tasks when a task does
-  not name one. Any executor you may run is selectable here, including an
-  **Elowen AI** model enabled in [Settings → Models](configuration): the daemon
-  then runs the task in-process as an embedded brain worker, with no external
-  coding CLI installed. The two pickers never overwrite each other — the worker
-  choice sets the task engine, not your chat model.
+The **Account** section contains your profile, connected platform identities,
+and local display preferences.
 
-## Thinking level
+### Profile
 
-**Account → Elowen AI** also lets you set the **reasoning effort** your chat
-model spends before answering. The options are model-specific — each model
-offers the levels it actually supports, and leaving the picker empty means the
-model's own default applies. If you switch to a model that doesn't support the
-level you picked, the setting clears itself automatically.
+- **Name** and **Email** update your account profile.
+- **Upload avatar** accepts PNG, JPEG, WebP, and GIF images.
+- **Interface scale** changes the size of the Web UI from **80% to 150%** in
+  5% steps. The default is **100%**.
+- **Visual effects** offers **Auto**, **Full**, **Reduced**, and **Off**. Auto
+  follows your operating system's reduced-motion preference.
 
-Turn it up for harder problems where depth is worth waiting for; turn it down
-for quick everyday questions where you'd rather have a fast, cheap answer.
-Higher levels mean more latency and more tokens billed — see
-[Usage & Costs](usage-costs) for how that shows up.
+Interface scale, visual effects, and the Web UI language are stored in your
+browser. They can therefore differ between devices. The language switcher is in
+the sidebar footer and supports **English**, **Čeština**, and **Slovenčina**.
 
-## Vision model
+On desktop-sized windows, Elowen also applies an automatic density adjustment
+when the window is narrower than 1900 pixels. The Account slider is your personal
+factor on top of that adjustment; the page shows the actual applied scale when
+it differs from the slider value.
 
-Right next to the chat model in **Account → Elowen AI** you can pick a separate
-**vision model** — the one that reads images and screenshots you paste into
-chat. Leave it empty and the server default is used.
+### Connected platform identities
 
-Set this when you want a different price/quality point than your chat model:
-a cheap vision model if you mostly share simple screenshots, or a stronger one
-if the agent regularly has to read dense diagrams, error dialogs or scanned
-documents.
+These fields connect messages from a platform to your Elowen account:
 
-## YOLO mode
+- **Discord ID** — your numeric Discord user ID. In Discord, right-click your
+  profile and choose **Copy User ID**.
+- **Microsoft Teams identity** — your Entra object ID or `29:...` sender ID.
+  Teams normally fills this from your verified platform email; edit it only to
+  correct the resolved identity.
+- **Telegram ID** — your numeric Telegram user ID. You can obtain it by sending
+  `/start` to `@userinfobot`.
+- **WhatsApp number** — your number in international format, digits only, for
+  example `420778433908`.
 
-The **YOLO mode** toggle in **Account → Elowen AI** tells the agent to stop
-asking for permission and just run everything. Turning it on requires an
-explicit confirmation of the risk, because from that moment the agent executes
-commands, edits files and calls tools without pausing to check with you. Deny
-rules still apply — YOLO only skips the prompts, it doesn't override what
-you've forbidden.
+Elowen uses a linked identity to resolve the sender to your account, so your
+account's access and settings are used for that conversation. A platform
+identity can belong to only one Elowen account. These fields autosave after you
+edit them.
 
-For daily use, granular permission rules (below) are the safer way to cut down
-on prompts: allow the commands you trust, keep asking for the rest. YOLO is for
-sessions where speed matters more than caution. See
-[Autonomy & Safety](autonomy-safety) for the full picture.
+## Elowen AI
 
-## Unattended asks
+The **Elowen AI** section controls the embedded assistant used by Web chat and
+`elowen chat` in the terminal. The section label uses the configured assistant
+name if an administrator has changed it.
 
-Also in **Account → Elowen AI**: the **unattended asks** switch decides what
-happens when the agent needs input while you're away — during a cron run, delegated turn, or other unattended execution where nobody is there to answer.
+### Default model
 
-- **Allow** (default) — the agent proceeds with the default answer and keeps
-  going.
-- **Deny** — the ask is refused and the agent works around it or stops and
-  waits for you.
+**Default Elowen AI model** selects the model used by Web chat and `elowen chat`.
+Choose **Server default** to follow the instance-wide default. Changing this
+preference affects new and running assistant work according to the daemon's
+normal model-switch behavior.
 
-Allow is the historical default, so background work gets finished rather than
-stalled. Switch to Deny if an unattended default could do something you'd want
-to veto.
+### Reasoning effort
 
-## Permission rules
+**Thinking level** controls how much effort the selected model spends before it
+answers. The available values depend on the selected model. **Default** leaves
+the choice to the model. If you change to a model that does not support the
+saved level, Elowen clears that override.
 
-**Account → Elowen AI** hosts your personal **permission rules** — allow, ask
-and deny patterns for bash commands and tool names, edited in a side drawer.
-Rules are evaluated in order and the **last match wins**, so put broad allows
-first and specific denies after them.
+Higher effort can improve difficult answers, but usually increases latency and
+usage.
 
-You don't have to write rules by hand: when an approval prompt offers
-**Always allow**, accepting it saves a rule that lands in this list, where you
-can later edit or remove it. [Autonomy & Safety](autonomy-safety) explains how
-rules interact with autonomy levels and YOLO mode.
+### Vision fallback
 
-## Compaction
+**Vision model** is an optional fallback for image-bearing turns when your
+selected chat model cannot process images. Leave it empty to use no separate
+fallback.
 
-Long conversations are automatically compacted — summarized so they keep
-fitting the model's context window. **Account → Elowen AI** exposes the knobs:
+### Automatic compaction
 
-- **Auto-compact** toggle — turn automatic compaction on or off.
-- **Threshold** — how full the context gets before compaction kicks in.
-- **Per-model overrides** — a different threshold for specific models.
-- **Compaction model** — which model writes the summary, so you can use a
-  cheaper one than your chat model.
+When a conversation approaches its context limit, Elowen can summarize older
+context to make room for the next turn.
 
-[Brain & Chat](brain-chat) explains what compaction does to a conversation and
-how to trigger it by hand.
+- **Auto-compact** is enabled by default.
+- **Threshold** controls the context-window percentage at which compaction
+  starts. The default is **80%**; accepted values are **30–95%**.
+- **Per-model thresholds** let you override the percentage for selected models.
+  Models without an override use the global threshold.
+- **Compaction model** chooses the model that writes summaries, including for
+  the manual `/compact` command. Leave it empty to let the conversation's own
+  model summarize.
 
-## Agent instructions & communication style
+See [Brain & Chat](brain-chat) for the user-facing effects of compaction.
 
-Each account controls how Elowen communicates and works with that user, without
-affecting anyone else's account.
+### Execution safety
 
-**Communication style** is the always-on layer, set in **Account → Personality**
-as a single pick: **Professional** (default), **Friendly**, **Concise** or
-**Detailed**. It adjusts the assistant's register everywhere your brain runs.
+**YOLO** is an explicit confirmation-based setting that skips interactive
+approval prompts. It does not override denied commands or tools. Leave it off
+unless you deliberately want fewer prompts for a trusted workflow.
 
-**Agent instructions** are a free-form Markdown field in **Account →
-Personality**. Use it for any standing direction about how Elowen should behave
-and collaborate with you — tone, priorities, workflows, constraints or things
-to avoid. It is empty by default and autosaves as you type.
+**Unattended asks** controls rules that would normally ask for approval when no
+one is present to answer, such as during a scheduled job, channel conversation,
+or delegated sub-agent run:
 
-There is no per-platform split and no named or activatable profile. The same
-instructions apply in web chat, `elowen chat`, Discord, Telegram, Microsoft
-Teams, WhatsApp and scheduled cron turns. Runtime knobs stay in the Elowen AI
-section, so instructions and mechanics remain separate.
+- **Allow** is the default. An `ask` rule proceeds automatically.
+- **Deny** blocks an `ask` rule in unattended work.
 
-## Your profile & identity links
+Explicit `allow` and `deny` rules still apply in either mode.
 
-**Account → Profile** is the personal side of the page: your display name, email
-and avatar.
+### Command permissions
 
-Two fields here are more than cosmetic — they **link an external identity to
-your Elowen account**, which is what lets the owner persona and per-user memory
-work off-web:
+The **Command permissions** editor manages personal rules for:
 
-- **Discord user ID** — maps your Discord user to this account, so your Discord
-  messages resolve to you (and, for the channel owner, drive the Discord
-  persona).
-- **WhatsApp number** — the same mapping for WhatsApp.
+- shell command patterns (**Bash** rules), and
+- tool-name patterns (**Tool rules**).
 
-Both live in your personal settings and autosave as you type.
+Each rule has one action: **Allow**, **Ask**, or **Deny**. `*` matches any text.
+For example:
 
-## Language
+```text
+git status*   Allow
+rm *          Deny
+```
 
-The language switcher in the **sidebar footer** flips the whole Web UI between
-**English**, **Čeština** and **Slovenčina**. It's a per-device setting stored in
-your browser, so each device keeps its own choice. It changes the interface
-text only — the assistant's conversation language follows whatever language you
-write in.
+Rules are evaluated in order and the **last matching rule wins**. A new rule is
+added at the end; re-adding an existing pattern moves it to the end. Commands
+approved with **Always allow** in an interactive chat also appear here.
 
-## Visual effects
+## Personality
 
-**Account → Profile** has a **motion** control with four levels:
+**Account → Personality** controls how Elowen communicates with you:
 
-| Level | Behaviour |
-|-------|-----------|
-| **Auto** | Follows your operating system's reduced-motion setting |
-| **Full** | All animations and effects on |
-| **Reduced** | Motion toned down |
-| **Off** | Animations disabled entirely |
+- **Communication style**: **Professional**, **Friendly**, **Concise**, or
+  **Detailed**. The default is **Concise**.
+- **Agent instructions**: optional Markdown instructions describing how Elowen
+  should behave and work with you. They are empty by default and apply wherever
+  Elowen handles your account's conversations.
 
-The setting is per device. Lower it if animations distract you, make the app
-feel heavy on older hardware, or trigger motion sensitivity; Auto is the right
-default for most people since it respects the OS preference you already set.
-
-## UI scale
-
-The **UI scale** slider in **Account → Profile** zooms the whole app from
-**80 % to 150 %** in 5 % steps — per device, like the language.
-
-The zoom you actually get has two factors: an **automatic base** that shrinks
-the interface proportionally once the window is narrower than 1900 px (never
-below 70 %), multiplied by your slider value. When the two differ, the control
-shows both numbers so you can see why the result isn't exactly what you dragged
-to. Push the slider up on a small laptop screen to claw the zoom back, or down
-on a large monitor to fit more on screen.
-
-## Terminal appearance
-
-Every web terminal — the advisor dock, session cards, the pop-out — honours a
-per-user look set in **Account → Terminal**, with a live preview and autosave:
-
-- **Font** — size and family (System, Menlo, IBM Plex, Courier).
-- **Cursor** — block / bar / underline, with optional blink.
-- **Theme** — `auto` follows the app theme, or `custom` unlocks a full
-  21-colour palette (with ready-made presets).
-- **Scrollback** — how much history each terminal keeps.
-- **Show thinking in CLI** — whether the agent's reasoning is streamed in the
-  terminal.
-
-## Push notifications
-
-Because the agent runs autonomously, you want to know the moment it needs you.
-Elowen supports **PWA push notifications** over the VAPID protocol.
-
-![Account settings — notifications and per-device subscriptions](images/account-settings.png)
-
-1. **Subscribe** — Account → Notifications → enable on this device. Subscription is per device, so each phone or laptop opts in on its own.
-2. **Events** — turn completion and plugin-owned notifications selected by the sender.
-3. **Clicks** — every notification action opens its authenticated app or HTTPS deep-link.
-4. **Service worker** — a bundled service worker handles incoming push events and safe navigation.
-
-The service worker does not call retired task, mission, review, or coding-session APIs. Authorization and mutations stay inside the normal authenticated application flow.
+Open **Edit instructions** to edit the Markdown. Both fields autosave.
 
 ## Memory
 
-The embedded brain can remember across conversations, and **Account → Memory**
-puts both halves of that under your control as per-user toggles (both on by
-default):
+**Account → Memory** controls the memory automation for your account:
 
-- **Auto-recall** — before each reply, your most relevant durable memories are
-  injected under your message, so the assistant already knows your standing
-  context.
-- **Auto-save** — after a turn, a curator persists genuinely new, reusable facts
-  to *your* account.
+- **Auto-recall** — search your durable memories after each message and add
+  relevant results to the reply context. Enabled by default.
+- **Recall while working** — search memory again while the assistant is preparing
+  an answer, using the files, tools, and errors encountered during the work.
+  Enabled by default.
+- **Auto-save** — allow the background curator to save durable new facts after a
+  reply. **Disabled by default**; enable it if you want Elowen to save new
+  memories automatically.
 
-They're read fresh each turn, so flipping one applies to your very next message,
-and they cover web chat, `elowen chat` and your own verified Discord messages.
-For the deep dive on what gets remembered, embeddings, and searching your store,
-see [Memory & Embeddings](memory).
+The toggles are read for each turn, so a change applies to subsequent work
+without restarting the daemon. Manage individual memories and categories on
+the [Memory](memory) page.
 
-[Next: Todos, Goals & Workflows](tasks-missions)
+## Terminal
+
+**Account → Terminal** controls the appearance and behavior of the Web terminal
+and the terminal chat. Changes autosave and the section includes a live preview.
+
+- **Colors**: follow the application theme with **Auto**, or choose **Custom**
+  and edit the 21-color palette. Presets include **Elowen Dark**, **Elowen
+  Light**, **Solarized Dark**, **Dracula**, and **Gruvbox Dark**.
+- **Font**: choose **System**, **Menlo**, **IBM Plex**, or **Courier**; font size
+  ranges from **10–20 px**.
+- **Cursor**: choose **Block**, **Bar**, or **Underline**, with optional blink.
+- **Show thinking in CLI**: show or hide streamed thinking in the terminal chat.
+- **Prompt history depth**: controls how many previous lines the CLI can recall;
+  range **20–1000**, default **100**.
+- **Interrupt confirmation**: controls the confirmation window after an interrupt
+  request; range **0.5–5 seconds**, default **1.8 seconds**.
+- **Scrollback**: controls retained terminal history; range **500–50,000** lines,
+  default **1,000**.
+
+## Notifications
+
+**Account → Notifications** enables phone notifications for the current browser
+or device. The subscription is per device, so enable it separately on each
+phone or computer where you want alerts.
+
+Your browser must support Web Push and allow notifications. If notifications
+are blocked, change the permission in the browser settings and enable the
+switch again in Elowen.
+
+## Security
+
+**Account → Security** lets you change your sign-in password. Enter the current
+password and a new password twice. The new password must contain at least **8
+characters**.
+
+## Saving and account scope
+
+Profile fields, connected identities, AI settings, personality, memory toggles,
+and terminal settings autosave. Password changes require the explicit **Change
+password** action, and enabling device notifications requires browser consent.
+
+Account settings do not change other users' preferences. Instance-wide options,
+user administration, enabled models, and plugin management are available to
+administrators under [Settings](configuration) and [Users & Access](users-access).
+
+For terminal usage, see the [CLI guide](cli). For the current command surface,
+see [Slash Commands](slash-commands).

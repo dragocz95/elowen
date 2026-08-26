@@ -1,156 +1,139 @@
 # Web UI
 
-The web application is a Next.js 16 App Router app in `web/`, built with React
-19, Tailwind CSS 4, TanStack React Query, Motion, Xterm.js, Monaco, and an
-optional React Three Fiber mascot scene.
+The Web UI is a Next.js 16 App Router application in `web/`. It is a client-rendered operational interface for the same daemon, conversations, Projects, accounts, permissions, memory, and plugins used by the CLI and channel adapters.
+
+## Development and build
+
+Install the root and web dependencies separately:
+
+```bash
+npm ci
+npm ci --prefix web
+```
+
+Run the daemon and web development server in separate terminals:
+
+```bash
+npm run serve
+npm --prefix web run dev
+```
+
+The daemon listens on `127.0.0.1:4400` by default. The Next.js development server uses port `3000` unless `PORT` is set. The server-side web proxy connects to `ELOWEN_DAEMON_URL`, defaulting to `http://localhost:4400`.
+
+Build the deployable web artifact from the repository root:
+
+```bash
+npm run build:web
+```
+
+For a direct Next.js production build, use `npm --prefix web run build`. The root `npm run build` compiles the daemon and bundled plugins but does not build `web/`.
+
+## Route map
+
+| Route | Owner | Purpose |
+| --- | --- | --- |
+| `/` | host | Redirects to `/dash`. |
+| `/dash` | core | Dashboard with setup posture, current activity, presence, and recent activity. |
+| `/chat` | core | Full-page advisor chat. |
+| `/memory` | core | Account memory, categories, retrieval, and memory administration. |
+| `/projects` | core | Project registration, access, read-only Git state, and plugin project panels. |
+| `/settings` | core | Administrator-only system, brain, model, plugin, memory, and data settings. |
+| `/users` | core | Administrator-only account and access management. |
+| `/account` | core | The signed-in account's profile, security, notifications, defaults, and personal settings. |
+| `/p/<plugin>/<...rest>` | plugin host | A page contributed by an enabled plugin. |
+| `/editor` | compatibility route | Redirects to the plugin-owned editor page at `/p/editor`. |
+| `/terminal/<name>` | terminal plugin host | An authenticated, chromeless terminal window. |
+
+Core navigation presents Home (`/dash`), Chat, Projects, and Memory. Settings and Users are system destinations. Plugin pages become additional navigation worlds only while their plugin is installed, enabled, compatible, and visible to the current account.
 
 ## Application structure
 
-`web/app/` owns Next route shells, the same-origin API proxy, and global CSS.
-`web/modules/` owns feature views; `web/components/` owns the app shell and
-shared controls; `web/lib/` owns the API client, query/mutation hooks, i18n,
-and UI state.
+- `web/app/` contains route shells, the root layout, and the same-origin `/api/[...path]` backend-for-frontend (BFF) proxy.
+- `web/components/` contains the shell, navigation, overlays, state components, terminal controls, and shared UI primitives.
+- `web/modules/` contains core feature views such as Dashboard, Chat, Projects, Memory, Settings, Users, and Account.
+- `web/lib/` contains the daemon client, React Query hooks and mutations, transcript folding, authentication helpers, localization, plugin loading, and UI state.
+- `web/tests/` contains Vitest, React Testing Library, user-event, and MSW tests.
+- `packages/plugin-ui-kit/` is the shared contract and component package for plugin browser UIs.
 
-Most page routes are client components with `dynamic = 'force-dynamic'` and
-render their feature inside `ModuleShell`. The global `Shell` provides auth,
-React Query, localization, effects preferences, navigation, route transitions,
-toast feedback, command palette, and the optional advisor dock. `/terminal/*`
-is intentionally chromeless while retaining the providers and auth gate.
+Every route is dynamic (`dynamic = 'force-dynamic'`) because branding, plugin navigation, locale, and authentication state are read at request time. The root `Shell` supplies providers for authentication, React Query, localization, branding, effects, navigation, route transitions, toasts, the command palette, and the advisor dock. `/terminal/*` keeps those providers and the authentication gate but intentionally omits the normal shell chrome.
 
-## Routes
+## Core page behavior
 
-| Route | Primary view | Notes |
-| --- | --- | --- |
-| `/dash` | `DashboardView` | Dashboard and recent activity |
-| `/chat` | advisor chat | Shared conversation UI |
-| `/memory` | `MemoryView` | Memory list, retrieval, and categories |
-| `/projects` | `ProjectsView` | Project registration and read-only Git context |
-| `/settings` | settings control surface | Administrator-only core and plugin configuration |
-| `/users` | `UsersView` | Administrator user and access management |
-| `/account` | `AccountView` | Per-user profile and preferences |
-| `/onboarding` | first-run wizard | Setup and readiness flow |
+- **Dashboard** uses `DashboardView` to show the finish-setup prompt when needed, the current activity tile, team presence, and the recent activity feed.
+- **Chat** uses `BrainChatProvider` as the single controller for transcript state, draft text, attachments, queues, questions, plans, model selection, and the SSE stream. The dock and full-page chat share that controller, so opening or closing the dock does not create a second stream.
+- **Projects** displays registered filesystem roots and the daemon's read-only Git snapshot. Administrators can create, edit, remove, and assign Projects; members can only use Projects granted to them. Enabled plugins can add project panels, such as Sandbox workspaces or a GitHub repository mapping.
+- **Memory** operates on the signed-in account's memory. Categories, retrieval, embeddings, and categorization are separate server capabilities; a missing embedding model does not make the browser invent local memory state.
+- **Settings** has the core sections `system`, `brain`, `models`, `plugins`, `memory`, and `data`. Plugin-owned settings are pages in the plugin's own world rather than duplicate sections in core Settings.
+- **Account** has `profile`, `security`, `notifications`, `personality`, `cli`, `terminal`, and `memory` sections, plus account sections contributed by enabled plugins.
+- **Users** is an administrator surface for accounts, Project assignments, and per-account tool access. Members do not receive this route's management authority.
 
-Plugin pages render under `/p/<plugin>/<route>` and appear only while their owner is installed, enabled, and accessible to the current account. Core does not retain fake task, mission, agent-session, or editor routes for absent plugins.
+## Authentication and the BFF proxy
 
-Feature metadata lives in `web/modules/<feature>/meta.ts` and is registered in
-`web/modules/registry.ts`; a plugin's pages come from its manifest instead.
-`ModuleHeader` publishes a route's title/count to the shell state and browser
-title; it does not impose an additional fixed page header.
+The browser never stores or sends a daemon bearer token. `web/lib/elowenClient.ts` uses the same-origin base `/api` with `credentials: 'same-origin'`. The catch-all route `web/app/api/[...path]/route.ts` reads the `elowen_session` httpOnly cookie, adds `Authorization: Bearer <token>` server-side, and streams the daemon response back to the browser, including SSE responses.
 
-## Shared layout patterns
+Requests without a cookie are forwarded without authorization so first-run setup can remain reachable. After an account exists, the daemon's global authentication guard returns `401` for protected routes. A daemon `401` clears the session cookie only when a cookie was actually sent; a tokenless onboarding request is not turned into a logout.
 
-The product uses a small number of shared patterns rather than page-specific
-card stacks:
+The proxy also:
 
-- `SpatialWorkspaceLayout` combines the section hero, mascot/metrics, optional
-  section rail, responsive content, and a contextual detail drawer. Core and plugin
-  workspaces reuse it where a data register benefits from the pattern.
-- Settings and Account use their dedicated spatial control decks. Their section
-  content is wide and scrollable; it is not rendered inside the orbit itself.
-- `ControlSurfaceDocument`, `ControlSurfaceToolbar`, and
-  `ControlSurfaceRegister` provide the common document/toolbar/register rhythm
-  for dense editable content.
-- `WorkspaceDetailRail` is portaled to the document body and becomes a focus-
-  managed drawer. It preserves context on desktop and mobile instead of
-  navigating away from the source list.
-- Dashboard, Editor, and Terminal keep their specialist compositions instead
-  of being forced into the workspace pattern.
+- forwards only the allow-listed content and range headers, never a browser-supplied `Authorization` header;
+- rejects unsafe path segments before forwarding them to the daemon;
+- checks `Origin` on mutating requests as CSRF defense-in-depth;
+- removes upstream `Set-Cookie` headers because the proxy owns the browser session cookie.
 
-The shared `overlayStack` handles modal/drawer layering, body scroll lock,
-focus restoration, Escape behavior, and keyboard focus trapping. Menus share
-the same keyboard semantics through `MenuSurface`; new overlay code should
-reuse these primitives.
+The daemon remains the authorization authority. The browser must render the server's result rather than duplicate account, Project, plugin, or tool-policy decisions in client code.
 
-## Data and real-time behavior
+## Data and real-time flow
 
-`web/lib/elowenClient.ts` is the single browser client. It calls `/api`, uses
-`credentials: 'same-origin'`, and turns a daemon 401 into an auth-clear event.
-The catch-all `app/api/[...path]/route.ts` BFF reads the httpOnly session cookie
-and injects the daemon bearer server-side. Never add a browser-visible daemon
-token or a `NEXT_PUBLIC_*` secret.
+`elowenClient` is the single browser API client. React Query hooks in `web/lib/queries.ts` own query keys and reads; `web/lib/mutations.ts` owns writes, invalidation, and optimistic rollback behavior. Core and enabled plugins publish state changes on the global daemon event stream, allowing affected queries to invalidate without turning every page into a polling loop.
 
-The proxy holds no authorization logic of its own: a tokenless request is
-forwarded without an `Authorization` header and the daemon's global guard
-decides — first-run setup routes stay open while no admin user exists, and
-every protected route returns 401 thereafter. The cookie-clear on a daemon 401
-applies only when a token was actually sent, so the pre-cookie onboarding window
-is not flipped to a logout. Do not reintroduce a proxy-side gate; the daemon is
-the sole authority (`src/api/auth.ts`).
+The chat controller uses `/api/brain/start`, `/api/brain/messages`, `/api/brain/status`, `/api/brain/send`, and the `/api/brain/stream` SSE endpoint. It binds a stable browser client identity and conversation generation to sends so a stale tab cannot write into a newer selection. History is loaded newest-first and older pages are fetched only when the user scrolls upward. SQLite-backed daemon state is authoritative; the browser transcript is a projection that can be rebuilt after reconnect.
 
-## Daemon↔web wire contract
+The browser may also use bounded polling for slow-moving data such as health, usage, model catalogs, and background processes. Prefer an existing query and event invalidation path before adding a new interval.
 
-The display-transcript shapes served by `GET /brain/messages` are defined once
-in `src/shared/wireContract.ts` and imported type-only by both toolchains: the
-daemon re-exports them from `src/brain/messageView.ts`, the web imports them in
-`web/lib/types.ts`. A type-only import erases at build time, so no daemon
-runtime code reaches the Next bundle; a dependency-cruiser exception allows
-`web → src/shared/` and keeps the "web never imports the backend" rule for
-everything else. Extend the contract there rather than hand-mirroring shapes.
+## Web terminal transport
 
-The transcript fold engine (`web/lib/transcript.ts`) is an exception that stays
-a hand-synced copy, because a Turbopack bundle cannot import the daemon's
-NodeNext runtime source. `tests/contract/transcriptFoldParity.test.ts` folds the
-same battery through both the daemon and web engines and asserts identical
-output, so the copy cannot drift silently.
+A terminal window is opened at `/terminal/<name>`. The browser first requests a single-use ticket from `/api/sessions/<name>/ws-ticket`; the WebSocket then sends that ticket to `/ws/terminal`. The daemon bearer token is not placed in the WebSocket URL.
 
-React Query hooks in `web/lib/queries.ts` own server reads and cache keys;
-`web/lib/mutations.ts` owns writes, narrow invalidation, and safe optimistic
-rollbacks. Prefer SSE invalidation to unnecessary polling. The global event
-stream keeps task, mission, session, signal, review, decision, and related
-views current; individual terminal panes also use their own stream.
+`StreamTerminal` uses the ticketed real-PTY WebSocket when available. `Terminal` remains the SSE snapshot/input fallback. Preserve both transports when changing terminal behavior. The browser can request a direct daemon port from `/api/ws-config` for proxy-less deployments; otherwise the WebSocket is same-origin.
 
-## Auth and authorization
+## Plugin browser UIs
 
-`LoginGate` probes `/api/auth/me` before rendering the authenticated app.
-Administrators can access configuration and user management; non-admin users
-only see data for their assigned projects and their permitted models/tools.
-Components should render the server's actual authorization result, not attempt
-to duplicate permission decisions in the browser.
+The authenticated `/api/plugins/ui` listing describes enabled plugin navigation, account sections, Project panels, settings sections, bundle URLs, and API versions. `web/lib/pluginUi.ts` loads a plugin bundle only after the listing says it is available and compatible.
 
-## UI conventions
+The host route resolves pages under `/p/<plugin>/...`, renders plugin settings sections when addressed as `/p/<plugin>/settings/<id>`, and wraps plugin output in `PluginErrorBoundary`. A plugin that is disabled, not granted to the account, incompatible, or failed to load gets an explicit unavailable state instead of a fabricated empty page.
 
-- The UI is OLED dark by design. Tokens and shared styles are imported from
-  `app/globals.css` via `app/styles/`; do not create feature-local color systems.
-- Use semantic tokens, compact hairline separation, and the red-orange accent
-  for active/primary states. Green indicates success; warning colors retain
-  their operational meaning.
-- Keep normal settings on auto-save with visible saving/saved/error feedback.
-  Explicit confirmation remains for destructive, OAuth, permission, and other
-  risky operations.
-- Reuse `HelpTip`, `ManageSelectionModal`, `SelectionSummary`, the shared model
-  picker, form fields, states, and menu/overlay primitives. Do not replace them
-  with pill-only selectors or bespoke modal stacks.
-- Use CSS Grid/Flexbox, CSS variables, and container queries. The shell adapts
-  its navigation using measured available width; content should adapt to its
-  own container rather than a global viewport guess.
-- Respect keyboard operation, visible focus, reduced motion, and the effects
-  preference. Motion should use transform/opacity and never capture pointer
-  input from content.
+Plugin pages share the host's authentication, React Query runtime, localization, navigation, and UI kit. Plugin code owns its domain behavior and calls its authenticated plugin API; core does not mirror plugin tables or silently create replacement routes.
 
-## Mascot and effects
+The bundled `sandbox` plugin contributes a Project panel at `Sandbox` and an Account panel at `Development environment`. It provides account-owned Git worktrees, persistent account HOME, process leases, explicit-path commits, and cleanup previews. The optional GitHub plugin contributes account and Project panels for an account's GitHub connection, Project repository mappings, pull requests, checks, reviews, branch publication, and explicitly confirmed merges. GitHub publication requires both a verified repository mapping and an active Sandbox workspace.
 
-`SpatialMascot` is lazy-rendered and has a static fallback. It belongs in the
-spatial decks, workspace heroes, meaningful empty states, and long-operation
-status—not as decoration on every surface. The Three scene caps pixel density,
-pauses offscreen/when hidden, ignores pointer events, and honors reduced-motion
-preferences. Keep new visual effects within the existing motion/token system.
+## Shared UI and responsive rules
 
-## Terminals and editor
+The shell is OLED dark and uses the tokens in `web/app/globals.css` and `web/app/styles/`. Navigation responds to measured available space rather than only the viewport:
 
-`StreamTerminal` uses a ticketed real-PTY WebSocket when available; `Terminal`
-uses the SSE snapshot fallback. Preserve both paths when changing terminal
-features. Monaco assets are copied into the standalone package artifact by the
-web build, so test the packaged build after changes to editor or asset wiring.
+- wide regions can use a full navigation column or a compact icon rail;
+- narrower regions use a drawer;
+- a left, right, top, or bottom advisor dock changes the available region and causes the shell to mirror or stack navigation as needed;
+- `/chat` uses an application layout rather than the capped document measure and suppresses the global top bar on narrow screens.
 
-## Testing web changes
+Reuse shared primitives such as `ModuleShell`, `WorkspacePage`, `SpatialWorkspaceLayout`, `ControlSurface*`, `WorkspaceDetailRail`, `Modal`, `MenuSurface`, `HelpTip`, and the shared state components. Use semantic theme tokens rather than feature-local colors. Preserve visible focus, keyboard operation, reduced-motion handling, and safe-area behavior on small screens.
 
-Use Vitest, React Testing Library, user-event, and MSW from `web/tests/`.
-Cover asynchronous loading/error states, auto-save, keyboard/focus behavior,
-selection dialogs, and i18n as relevant. Run:
+`SpatialMascot` is lazy-loaded with a static fallback. It honors the effects preference and reduced-motion media query, pauses when offscreen, and ignores pointer input so it cannot block the actual controls.
+
+## Type and dependency boundaries
+
+The daemon and web application share wire types from `src/shared/wireContract.ts` through type-only imports. The daemon re-exports transcript types from `src/brain/messageView.ts`; the web consumes them through `web/lib/types.ts`. Do not import daemon runtime modules into the Next.js bundle.
+
+`web/lib/transcript.ts` is intentionally a hand-synchronised browser implementation because the Next.js bundle cannot import the daemon's NodeNext runtime source. `tests/contract/transcriptFoldParity.test.ts` exercises both fold engines against the same cases. Extend the shared wire contract first, and update the parity cases when changing transcript behavior.
+
+## Verification
+
+Run the focused web suite and production build:
 
 ```bash
 npm --prefix web test
 npm run build:web
 ```
 
-See [Testing](TESTING.md) for the full verification matrix.
+For UI changes, cover loading, error, empty, keyboard/focus, autosave, responsive, and localization states that the changed component can reach. For terminal, chat-stream, plugin, or authentication changes, exercise the real browser path in addition to component tests; the relevant Playwright commands are `npm --prefix web run e2e:smoke` and `npm --prefix web run e2e`.
+
+See [`TESTING.md`](TESTING.md) for the repository-wide verification matrix and [`PLUGIN_DEV.md`](PLUGIN_DEV.md) for plugin UI contracts.

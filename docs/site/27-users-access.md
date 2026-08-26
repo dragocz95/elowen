@@ -8,178 +8,244 @@ group: Administration
 
 # Users & Access
 
-Elowen is a personal AI agent that reasons, edits files, runs commands and works
-across chat platforms on behalf of your users. An agent with that much reach has
-to be locked down properly: every request is authenticated, every user gets
-exactly the tools and models you grant them, and every action is scoped to a
-project. This page is for the admin managing who can do what.
-
-You always know who can do what — the [Users](web-ui) page shows each person's
-effective tools at a glance — and the defaults are safe, so you can hand access
-to a teammate without wiring anything up by hand.
+Elowen uses account-level access control. An administrator manages users, roles,
+project assignments, model access, plugin grants, and individual tool access from
+the **Users** page (`/users`). Each account also has its own permission rules for
+approvals and unattended runs.
 
 ## Authentication
 
-Elowen uses **Bearer token** authentication on every API request except the
-health check and login endpoints. The daemon exposes its REST API on `:4400`;
-send the token on every call and it resolves to a user and a scope before
-anything runs.
+After the first account is created, protected API routes require a bearer token:
 
 ```http
 Authorization: Bearer <token>
 ```
 
-## Web UI auth (BFF proxy)
+The daemon returns a token from `POST /auth/login`. The web UI does not expose that
+token to browser JavaScript. The UI uses an httpOnly session cookie with a same-origin
+backend-for-frontend proxy, which adds the bearer token on the server side.
 
-The web UI on `:4500` never sees the daemon token. It talks to a same-origin
-`/api` BFF (backend-for-frontend) proxy backed by an **httpOnly session
-cookie**, and the proxy injects the daemon bearer from the cookie server-side —
-the powerful daemon token never reaches client JavaScript, so it can't be read
-by an XSS payload or a browser extension.
+The following entry points are public or have their own authentication mechanism:
 
-## Token scopes
+- `GET /health` and the first-run `GET /setup` check.
+- `POST /auth/login` and the Microsoft SSO discovery/start/callback routes.
+- Theme assets, the Web Push public key, and signed avatar URLs.
+- Plugin webhook mounts under `/hooks/`.
+- The terminal WebSocket upgrade, which requires a short-lived single-use ticket
+  minted by an authenticated session.
 
-Not every token is equal. Login, advisor, and terminal credentials are issued for their specific authenticated surfaces. Delegated sub-agents do not receive a broad user token: the host carries their captured Project, tool, and permission boundary directly into the child session.
+Public does not mean unrestricted: each route still validates its own input or
+credential. Before the first user exists, setup mode is open so onboarding can create
+the first administrator. Authentication is enforced again as soon as that account
+exists.
 
-Plugin API requests run as the authenticated account through the normal user scope. A plugin cannot turn that identity into another account's config or encrypted secret namespace.
+### Token lifetime and CLI credentials
 
-## Session token lifetime
+Login tokens expire after **30 days by default**. An administrator can change the
+minimum-one-day setting under **Settings → Security** (`security.tokenTtlDays`).
 
-Login tokens are not eternal. Every token carries a **time-to-live** — **30
-days** by default, set globally under [Settings](configuration) → Security
-(`security.tokenTtlDays`, minimum 1 day) — and the daemon rejects it once it
-expires. On login the daemon returns the TTL alongside the token, so the web BFF
-pins its httpOnly session cookie to exactly that window: cookie and token expire
-together, no drift.
+The CLI stores its token in `~/.config/elowen/cli.json`. Use these environment
+variables when needed:
 
-## Login & password policy
+- `ELOWEN_TOKEN` overrides the cached token.
+- `ELOWEN_URL` overrides the daemon URL.
 
-A successful login returns a bearer token. Login is **rate-limited to 10
-attempts per 5 minutes per IP** (Elowen prefers the `x-real-ip` header over
-`x-forwarded-for`), which blunts brute-force attempts.
+```bash
+elowen login
+elowen chat
+elowen run "Summarize the current project"
+```
 
-Password policy:
+Login attempts are limited to **10 attempts per five minutes per IP**. Passwords must
+be at least **8 characters**, and changing a password requires the current password.
+For unattended first-boot setup, provide `ELOWEN_BOOTSTRAP_USER` and
+`ELOWEN_BOOTSTRAP_PASS` before starting the daemon.
 
-- Minimum **8 characters**.
-- Changing it requires the **current password** — a hijacked session can't
-  silently rotate the password without knowing it.
+## Roles
 
-You can set an initial admin at first boot with the `ELOWEN_BOOTSTRAP_USER` and
-`ELOWEN_BOOTSTRAP_PASS` environment variables (see [Configuration](configuration)).
+Elowen has two account roles:
 
-## RBAC: roles
+- **Admin** — can manage users and access settings, and can access all projects.
+- **Member** — can work only in projects explicitly assigned to that account.
 
-Elowen ships **full role-based access control**. There are two roles:
+The Users page is administrator-only. A member who opens it directly receives an
+access-denied view, and the API returns `403`.
 
-| Role | Access |
-|------|--------|
-| **Admin** | Everything — all projects, all users, all settings |
-| **Member** | Only assigned projects — tasks, sessions, activity, editor |
+## Create and manage accounts
 
-Roles are the coarse layer. The powerful part is what sits underneath them:
-**each user can have a completely different set of tools and permissions.**
+Open **Users** in the sidebar and select **New user**. Enter a username and password;
+the password must satisfy the eight-character minimum.
 
-![RBAC — the Users page with per-user tools, models and project assignment](images/users-rbac.png)
+Select a user to open the detail pane. Administrators can:
 
-## Per-user tools & models
+- edit the user's display name and username;
+- promote or demote the account between Admin and Member;
+- assign projects;
+- restrict available models;
+- grant user-grantable plugins;
+- enable or disable individual toggleable tools;
+- impersonate the account for support or debugging.
 
-Beyond the admin/member role, an admin controls two allow-lists **per user** on
-the [Users](web-ui) page:
+The live tool list distinguishes inherited built-in tools, enabled tools, explicitly
+disabled tools, and tools unavailable because their plugin has not been granted.
 
-- **Plugin grants (`granted_plugins`)** — a plugin marked `userGrantable` reaches
-  nobody until an admin grants it to that account (admins have them all). This is
-  how a shell is handed out: `terminal` is grant-gated, so an account without the
-  grant has no `Bash` at all. Granting it means granting the host — a shell reads
-  and writes any absolute path, so projects do not contain it.
-- **Per-user tools (`disabled_tools`)** — turn individual brain tools off for a
-  specific person. This SUBTRACTS from what the account already has; it cannot add
-  a tool from a plugin that was never granted, and such a tool shows as
-  *unavailable* in the modal rather than as something to switch on.
-- **Per-user models (`allowed_execs`)** — restrict which executors that user may
-  run, narrower than the global `allowedExecs` in [Settings](configuration). An
-  empty list means "unrestricted within the global list" — adding entries
-  NARROWS the user to just those, it does not widen anything.
+### Deleting an account
 
-The Users detail pane renders each user's live tool access as pills, so you see
-the real, computed result of role + plugin grants + disabled tools without
-reasoning it out.
-Give one teammate a full engineering toolkit, another a chat-only account, all
-from one pane, all auto-saved.
+Delete an account from its action menu. Deletion is destructive: Elowen tears down
+managed sessions and processes, removes the account's settings, memories, brain data,
+push subscriptions, project assignments, and plugin-owned account data.
 
-## Project assignment & visibility
+Elowen will not delete an administrator. Demote the account first; the last remaining
+administrator cannot be demoted. The last account in the installation cannot be
+deleted.
 
-Members don't see anything until you say so. Assignment is admin-only, done on
-the [Users](web-ui) page.
+## Project assignment
 
-- A member must be **explicitly assigned** to a project to work in it. An
-  unassigned member sees a blank dashboard — safe by default.
-- Assignment also **scopes visibility**: a member sees only the projects, tasks,
-  sessions and activity for the projects they're on — work stays isolated
-  between people who shouldn't see each other's repos.
+Project assignment is the main visibility boundary for members:
 
-Assignments are removed cleanly when a user is deleted, so you never leave
-orphan grants behind.
+1. Open **Users** and select the member.
+2. In **Projects**, select **Manage**.
+3. Select the projects the member may access and save.
 
-## Granular tool permissions
+An unassigned member sees no project data. Project-scoped routes and views are filtered
+to the member's assigned project set; one member cannot use assignment to inspect
+another member's projects.
 
-Disabling a tool outright is the blunt instrument. The sharp one lives in
-**Account → Elowen AI → Permission rules**: for the tools a user *does* have,
-you decide per pattern whether a call **runs, asks, or is refused**:
+Administrators do not need individual project assignments. Assignments are removed
+when the account is deleted.
 
-| Action | Effect |
-|--------|--------|
-| **allow** | Runs immediately, no prompt |
-| **ask** | Pauses for a human approval prompt where one is attached (owner chat); otherwise follows your unattended-asks setting |
-| **deny** | Returns an error to the model — the call never runs |
+## Models, plugins, and tools
 
-Rules live in two pattern spaces. **`tools`** rules match a tool by **name**
-(e.g. `Write`); **`bash`** rules match the **command string** of the shell tool
-— so `git *` can be allowed while `rm *` is denied, even though both run through
-the same `Bash` tool.
+Access is layered. A user must pass every applicable layer before a tool or model can
+run.
 
-The built-in defaults are conservative but frictionless: read-only tools are
-allowed, file edits (`Write`, `Edit`) **ask**, and shell commands **ask** except
-for a small read-only allow-list (`git status`, `git diff`, `git log`, `ls`,
-`cat`, `grep`, `pwd`, `which`). Your rules append **after** those defaults and
-resolution is **last-match-wins** — any rule you add overrides a built-in. Put a
-catch-all like `*` first, then narrow.
+### Models
 
-- **Self-service editor** — the Permission rules card lists your rules with an
-  add row (pattern + allow/ask/deny); changes persist immediately.
-- **"Always allow" writes a rule** — picking *Always allow* on an approval
-  prompt appends the matching pattern (e.g. `git status --porcelain` →
-  `git status*`), so grants you make in chat show up here.
-- **Chaining can't be smuggled** — a shell line is split into simple commands
-  and each is gated on its own, taking the most restrictive decision. An allow
-  for the first program can't wave through `cat x && rm -rf ~`.
+Use the user's **Allowed models** control to restrict which configured models that
+account may use. An empty selection means no additional per-user restriction: the
+account remains limited by the installation's globally allowed executors and by the
+models actually configured for the daemon.
+
+Adding selections narrows the account to those models. It never adds a model that the
+installation cannot run.
+
+### Plugins
+
+Some plugins are marked as user-grantable. A user-grantable plugin is unavailable to a
+member until an administrator grants it in the user's **Granted plugins** section.
+Administrators are not restricted by those per-user plugin grants.
+
+Granting a plugin makes its tools eligible for the account; it does not bypass project,
+filesystem, or tool-permission checks.
+
+### Individual tools
+
+The user's **Tools** section controls individual toggleable plugin tools. Built-in
+inherited tools are shown for visibility but cannot be switched off there. A tool shown
+as unavailable must be enabled through its plugin grant first.
+
+A terminal grant is not the same as unrestricted host access. For non-administrators,
+Sandbox still confines filesystem operations to accessible project roots and the
+account's home directory; if the required confinement cannot be established, access
+fails closed.
+
+## Permission rules
+
+Permission rules decide what happens when a user's already-available tool is called.
+Open **Account → Elowen AI → Permission rules** to edit the current account's rules.
+Rules are saved immediately.
+
+Each rule uses one of three actions:
+
+- **allow** — run without approval;
+- **ask** — request approval when a human approval surface is available;
+- **deny** — refuse the call and return an error to the model.
+
+There are two pattern spaces:
+
+- `tools` matches a tool name, such as `Write`.
+- `bash` matches the shell command string, so `git *` and `rm *` can have different
+  decisions even though both use the `Bash` tool.
+
+Rules are evaluated in order and the **last matching rule wins**. User rules are
+appended after the built-in defaults, so a user rule can override a default. The
+built-in behavior allows read-only tools, asks before `Write` and `Edit`, and asks for
+shell commands except for the non-destructive inspection allow-list.
+
+A shell line containing multiple simple commands is checked command by command. An
+allow for one command does not automatically allow a later destructive command in the
+same line.
 
 ### YOLO mode
 
-**YOLO** flips every `ask` to `allow` without prompting (a `deny` rule still
-denies). Set your **persisted default** with the YOLO toggle in Account → Elowen
-AI — it applies to new sessions. Inside a running `elowen chat` session the
-**`/yolo`** command overrides it just for that session. Auto-approving tool runs
-is a real security trade-off — hence the standing warning on the toggle.
+The **YOLO** setting in **Account → Elowen AI** changes `ask` decisions to `allow`
+without prompting. An explicit `deny` rule still denies. The setting is the default for
+new sessions; `/yolo` in `elowen chat` changes it for the current session only.
 
-### Unattended-asks (strict mode)
+YOLO is not a substitute for grants or deny rules: it cannot make an unavailable tool
+available and it cannot override `deny`.
 
-An `ask` only pauses when a human is parked on the approval prompt — the owner's
-CLI or web chat. On an **unattended** turn (a chat platform, a cron run, a
-spawned subagent) there's nobody to ask, so what happens is your call:
+### Unattended asks
 
-- **allow** (default) — an `ask` resolves to allow, keeping autonomous work
-  moving.
-- **deny** (strict mode) — an `ask` is refused outright: a hard safety opt-in
-  that **YOLO never overrides.**
+Chat platforms, scheduled runs, and delegated sub-agents do not have a human waiting
+on an approval prompt. **Account → Elowen AI → Unattended asks** controls what happens
+to an `ask` rule there:
 
-## Web push security
+- **allow** (default) — treat `ask` as allowed so autonomous work can continue;
+- **deny** — refuse `ask` calls in unattended turns.
 
-The push channel that powers [notifications](account-preferences) is scoped and
-self-maintaining: **VAPID keys** are auto-generated on first boot and persisted
-in the config store; the **private key never leaves the daemon** (the browser
-only holds the public key); **dead subscriptions** (endpoints returning 404/410)
-are pruned automatically; and subscription endpoints are **per-user and scoped
-to the authenticated session** — a user only ever receives notifications for
-their own work.
+Strict unattended denial is independent of YOLO and is not overridden by it.
+
+## Delegated sub-agents
+
+A delegated sub-agent receives a captured access scope from its parent, including the
+admin status, project set, tool policy, permission boundary, and read-only state. It
+does not receive a separate broad `agent` API token or the parent's personal memory
+identity.
+
+Delegation can only narrow access:
+
+- `tools` can remove tools from the caller's own set, never add them.
+- `read_only` removes write tools and applies a non-destructive shell boundary.
+- Read-only mode is a guardrail, not a filesystem sandbox: shell redirection can still
+  write wherever the surrounding path permissions allow.
+- Continuing a child is refused if its stored scope is broader than the caller's
+  current authority.
+- `write_access: true` can promote only a read-only child explicitly requested by the
+  same principal, and only when it fits within the caller's current access. It cannot
+  override read-only mode imposed by the agent definition or plan mode.
+
+## API operations
+
+The web UI is the recommended administration surface. Administrators can also use the
+generic authenticated CLI passthrough:
+
+```bash
+elowen api GET /users
+elowen api GET /users/12/projects
+elowen api POST /users/12/projects '{"projectId":3}'
+```
+
+Relevant administrator routes include:
+
+- `GET /users` and `POST /users`
+- `PATCH /users/:id` and `DELETE /users/:id`
+- `GET /users/:id/tools` and `GET /users/:id/stats`
+- `GET /users/:id/projects`, `POST /users/:id/projects`, and
+  `DELETE /users/:id/projects/:pid`
+- `POST /users/:id/impersonate`
+
+The generic API command uses the same bearer token as `elowen chat`; it does not create
+a second permission model.
+
+## External identities and SSO
+
+External identities are uniquely bound by provider, tenant, and subject. One external
+identity can belong to only one Elowen account.
+
+Microsoft SSO is tenant-scoped. When configured, linking by matching email is enabled
+by default, while automatic account provisioning remains disabled unless tenant
+provisioning is explicitly enabled. External provisioning cannot create the first
+administrator; create that account through first-run setup first.
 
 [Next: Troubleshooting](troubleshooting)

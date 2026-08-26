@@ -8,146 +8,130 @@ group: Start here
 
 # Getting Started
 
-**Elowen is a personal AI agent you talk to.** You chat with it and it acts: it
-reasons, calls tools, edits files, runs shell commands, manages your tasks, and
-reaches you wherever you are — the web dock, the `elowen` CLI, Discord, Telegram,
-Microsoft Teams, or WhatsApp. It sits in the same category as coding agents like Claude Code or
-OpenCode, but it's self-hosted and it's yours.
+Elowen is a self-hosted assistant you use from a browser, the `elowen` CLI, or an installed chat-channel plugin. It can read and edit files, run commands, use configured integrations, and delegate focused work to scoped sub-agents.
 
-Because Elowen can run real work for you, it also gives you rich surfaces to
-*watch and steer* what it's doing — a live dashboard, a kanban board, a timeline
-of activity, and real terminal sessions you can jump into. Those surfaces are
-how you observe and control the agent. They are not the product; the agent is.
+A deployment has two processes:
 
-This guide takes you from zero to your first conversation and your first task in
-a couple of minutes.
+- **The daemon** listens on `127.0.0.1:4400` by default. It owns the brain, accounts, projects, plugins, API, and persistent state.
+- **The web UI** listens on `localhost:4500` by default and talks to the daemon. It does not access the database directly.
+
+The default configuration is deliberately local. Put a reverse proxy in front of the web UI when other people or machines need access; do not expose the daemon casually because its authenticated API can perform powerful operations.
 
 ![Talking to your Elowen agent in the web chat dock](images/getting-started-chat.png)
 
-## What Elowen is
+## Install and run the first setup
 
-- An **agent you chat with** that does the work — plans, calls tools, edits
-  code, runs commands, and follows up with you.
-- **Self-hosted**: a daemon (REST API on `:4400`) plus a Next.js web UI
-  (`:4500`), driven by the `elowen` CLI.
-- **Extensible to the core**: every capability — chat platforms, tools, memory,
-  automation, security — is a plugin you add or remove.
-
-## The four things that make it Elowen
-
-1. **Clarity** — a clean, uncluttered UI where you always see what the agent is
-   doing.
-2. **Simplicity** — easy to run, easy to control, sensible defaults, low
-   friction.
-3. **Fully extensible** — every capability is an add/remove-able plugin. Elowen is
-   modular to the core.
-4. **Lightweight, professional-grade** — self-hosted, small footprint, clean
-   codebase.
-
-## Prerequisites
-
-- **Node.js** ≥22 (ESM)
-- **tmux** ≥3.x (agents run in isolated tmux sessions)
-- **npm**
-- A C toolchain (`python3`, `make`, `g++`) — optional, only needed when
-  `node-pty` has no prebuilt binary for your platform. Terminals still work
-  without it.
-
-## Quick install
+On a machine with Node.js 22 or newer:
 
 ```bash
 npm install -g elowen
 elowen setup
 ```
 
-The package is `elowen`; it installs the `elowen` command. `elowen setup` brings
-the daemon and web UI up, then walks you through a ~2-minute onboarding wizard:
+The setup wizard starts the local services and guides you through:
 
-1. **Account** — create your first admin user
-2. **Project** — point Elowen at a working directory (a git repo it can act in)
-3. **AI provider** — connect a model and run a live **chat smoke-test** (a real,
-   tiny completion) so you know it actually answers before you rely on it
-4. **Memory** — optionally enable long-term memory so the agent remembers things
-   across conversations
-5. **Code intelligence** — optionally install the TypeScript language server
+1. Creating the first administrator account.
+2. Registering a Project, which is a repository or working directory Elowen may access.
+3. Connecting an AI provider and selecting a model.
+4. Optionally configuring embeddings for long-term memory.
+5. Optionally installing the TypeScript language server.
 
-Standing Elowen up as a shared service instead? `elowen install` (run as root) does
-the full server provisioning — a dedicated system user, the `elowen-daemon` and
-`elowen-web` systemd units, a reverse proxy with optional Let's Encrypt HTTPS, and
-the auto-update timer — then runs the same onboarding wizard at the end. See
-[Install](install).
-
-Run `elowen doctor` any time afterwards to see a checklist of what's working (chat, memory, platforms, plugins, and deployment prerequisites) and a hint for fixing anything that isn't.
-
-## Start it up
-
-`elowen setup` already brought Elowen up. To control the services yourself:
+When setup finishes, open <http://localhost:4500> and sign in, or start the terminal chat:
 
 ```bash
-elowen up       # start the daemon (:4400) + web UI (:4500) in the background
-elowen down     # stop them
-elowen status   # check they're running and healthy
+elowen chat
 ```
 
-Open `http://localhost:4500` in your browser and log in with the admin account
-you just created. (On a completely fresh install with no admin yet, the browser
-offers a short first-run onboarding wizard instead of the login form.)
+Run the readiness check later with:
 
-## Talk to your agent
+```bash
+elowen doctor
+```
 
-Start with a conversation — that's the whole point of Elowen.
+## Prerequisites
 
-- In the web UI, open the **chat dock** and just type. Ask it something concrete:
-  "list the files in this repo", "what changed in the last commit", or "summarize
-  this Project".
-- Or from your terminal:
+- Node.js 22 or newer.
+- npm.
+- Git for Git Projects and Sandbox workspaces.
+- `tmux` for interactive terminal sessions and integrations that launch external command-line tools. The embedded chat can still be configured before `tmux` is installed; `elowen setup` prints an installation hint when it is missing.
+- On Linux, `bubblewrap` is used by the Sandbox for confined non-operator commands. `elowen install` can install it on Debian/Ubuntu.
 
-  ```bash
-  elowen chat
-  ```
+## Make your first request
 
-Watch it reason, call tools, and stream a reply back. The brain — Elowen's
-embedded agent core — is what you're talking to, and it has access to whatever
-tools and projects your account is allowed to use. It carries **memory** across
-conversations (facts worth keeping resurface on their own) and a **personality**
-you can shape — tone and style — from your Account settings. Learn more in
-[Brain & Chat](brain-chat).
+In the web chat or terminal chat, start with a request whose result is easy to inspect:
 
-## Run longer work
+```text
+List the files in my current Project and summarize its README.
+```
 
-For work that needs more than one answer, use the mechanisms built into the conversation:
+Other useful first requests include:
 
-- `/tasks` opens the conversation's lightweight todo checklist;
-- `/goal <outcome>` runs a persistent, budgeted goal across turns;
-- `Delegate` hands one focused part to an isolated sub-agent;
-- `Workflow` builds a dependency graph of sub-agents and can run independent nodes in parallel.
+- “Show me the current Git branch and recent commits.”
+- “Explain the entry points in this project.”
+- “Create a plan for fixing the failing tests, but do not edit files.”
 
-All four use the current account's Project access, tool grants, and permission rules. They do not create a separate mission, coding-agent session, or pull-request workflow. See [Todos, Goals & Workflows](tasks-missions) and [Autonomy & Safety](autonomy-safety).
+The tools available to a turn depend on the account, the selected Project, plugin access, and the account's tool grants. Elowen does not give every account unrestricted host access by default.
 
-## Who can do what (RBAC)
+## Projects, Sandbox, and GitHub
 
-Elowen has full **role-based access control**. There are two roles — **admin** and
-**member** — and, crucially, **each user can have a different set of tools and
-permissions**. An admin can grant one user the terminal and files tools, give
-another only chat, choose which models each person may run, and scope each user
-to specific projects.
+A **Project** is the access boundary for a repository or directory. Administrators register Projects and assign them to accounts. Registering a Project does not create a worktree or change files on disk.
 
-This per-user tools-and-rights model is a headline feature, not an afterthought.
-The full depth lives in [Users & Access](users-access).
+The optional **Sandbox** gives each account a persistent `HOME` and real Git worktrees. A workspace can be bound to one conversation and Project, so file operations and shell commands use that worktree instead of changing the source checkout. Non-operator commands are confined by default on supported Linux hosts; if the live isolation probe fails, Elowen refuses confined execution rather than silently running it unconfined.
 
-## I want to…
+The optional **GitHub** integration is account-scoped. It can map a Project to a base and push repository, publish a committed Sandbox branch, and handle pull-request review actions subject to confirmation and repository checks.
 
-| Goal | Go to |
-|------|-------|
-| Install on a server | [Install](install) |
-| Run in Docker | [Docker](docker) |
-| Connect a chat channel | [Channels](channels) |
-| Change the model | [Brain & Chat](brain-chat) |
-| Automate a recurring task | [Scheduling](scheduling) |
-| Let it work unattended safely | [Autonomy & Safety](autonomy-safety) |
-| See token usage | [Usage & Costs](usage-costs) |
-| Add a teammate | [Users & Access](users-access) |
-| Teach it my preferences | [Account & Preferences](account-preferences) |
-| Fix a problem | [Troubleshooting](troubleshooting) |
+See [Projects, Sandbox & GitHub](projects-workflow) for the complete workflow.
+
+## Accounts and permissions
+
+Elowen has two roles: **admin** and **member**. Administrators can assign Projects, grant plugin access, and control each account's tool allow-list. A member's turn, delegated work, scheduled work, and channel activity inherit that account's effective access; a child cannot widen its parent's scope.
+
+For setup and ongoing administration, see [Users & Access](users-access) and [Account & Preferences](account-preferences).
+
+## Longer-running work
+
+Use the mechanisms that are currently part of the chat and delegation system:
+
+- **Plan mode** helps prepare changes while enforcing a narrower write boundary.
+- **Delegate** sends one focused task to a scoped sub-agent.
+- **Workflow** runs a dependency graph of sub-agents; independent nodes can run in parallel.
+- **Goals** continue toward a stated outcome across multiple turns when the goal loop is available on the installation.
+
+These are conversation and delegation features, not a separate mission or pull-request executor. See [Autonomy & Safety](autonomy-safety) and [Sub-agents & Workflows](tasks-missions).
+
+## Service controls
+
+For a local installation:
+
+```bash
+elowen up       # start the daemon and web UI
+elowen down     # stop them
+elowen status   # show service state and health
+elowen menu     # interactive launcher
+```
+
+`elowen down` waits for running work by default. Use `elowen down --force` only when you explicitly need to stop immediately.
+
+## First-run authentication
+
+When the database contains no users, the web UI exposes the onboarding flow so the first administrator can be created. You can also seed that account before starting the daemon:
+
+```bash
+ELOWEN_BOOTSTRAP_USER=admin \
+ELOWEN_BOOTSTRAP_PASS="$ADMIN_PASSWORD" \
+node dist/daemon/index.js
+```
+
+After the first user exists, normal daemon requests require a bearer token. The web UI keeps that token in an HTTP-only session cookie and the CLI sends it in the `Authorization` header. Do not put tokens in URLs.
+
+## Where to go next
+
+- [Install](install) — local, server, source, and unattended installation.
+- [Docker](docker) — build and run the daemon and web UI as containers.
+- [Production & Updates](production-updates) — systemd, launchd, reverse proxies, backups, and updates.
+- [Brain & Chat](brain-chat) — models, conversations, and chat behavior.
+- [Channels](channels) — connect supported chat platforms.
+- [Scheduling](scheduling) — recurring jobs.
+- [Troubleshooting](troubleshooting) — diagnostics and common failures.
 
 [Next: Install](install)

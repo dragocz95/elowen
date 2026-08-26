@@ -1,43 +1,66 @@
 # Plugin Development Guide
 
-Elowen plugins are self-contained ESM folders. An enabled plugin contributes
-tools, skills, prompt fragments, commands, turn context, hooks, controls, or
-chat platforms through the shared registry. The manifest is declarative; the
-module's `register(ctx)` call is the runtime contribution source.
+Elowen plugins are trusted ESM packages loaded through the plugin registry. A plugin normally consists of an `elowen-plugin.json` manifest and a built entry module exporting `register(ctx)`. It can add tools, skills, commands, prompt context, hooks, API routes, webhooks, services, browser UI, platform adapters, or domain controls.
 
-The loader discovers `elowen-plugin.json` files, validates them, imports only
-enabled plugins, stages each registration, and merges it only when registration
-completes. A malformed or failing plugin is skipped without taking down its
-siblings.
+The manifest describes the plugin's contract. `register(ctx)` is the runtime source of its contributions.
 
-## Minimal plugin
+## Plugin locations and loading
 
-Create a folder such as `plugins/my-plugin/` with this layout:
+The daemon scans two plugin roots, in this order:
 
-```
+1. The bundled plugin directory shipped with Elowen (`dist/plugins/` in a built installation).
+2. The instance data directory's `plugins/` folder, next to the database.
+
+Bundled folders win when both roots contain the same plugin name. Only names in the enabled-plugin configuration are loaded. Folders are scanned and loaded in deterministic name order. Each plugin is registered into an isolated staging registry and merged only after `register(ctx)` completes; a malformed or failing plugin is skipped without leaving partial tools or routes behind.
+
+The source checkout currently bundles `askuser`, `elowen-docs`, `files`, `mcp`, `runtime-context`, `sandbox`, `statusline`, `subagent`, `terminal`, and `web`. Optional integrations and extracted domain plugins are installed from the curated plugin registry. Marketplace installation is limited to that registry; it does not accept arbitrary URLs or local folders. An installed marketplace plugin is placed disabled first, then enabled separately with any required capability acknowledgement.
+
+A plugin reload replaces the whole registry generation. Do not retain a plugin control, configuration object, or other live registry value across reloads. Resolve live controls when they are used.
+
+## Plugin layout
+
+A minimal plugin can look like this:
+
+```text
 my-plugin/
 ├── elowen-plugin.json
 ├── index.mjs
-├── icon.svg                 # optional settings icon
-└── i18n/
-    └── cs.json              # optional localized manifest strings
+├── icon.svg                  # optional
+├── i18n/
+│   └── cs.json               # optional manifest/UI translations
+├── prompt/                   # optional platform prompt fragments
+├── web-src/                  # optional browser UI sources
+└── web/                      # built browser bundle and stylesheet
 ```
 
-### Manifest (`elowen-plugin.json`)
+Bundled plugins are built as part of the main repository. An external plugin should import the stable host contract from `elowen/plugin-api`, not from `src/` or `web/`:
+
+```ts
+import type { PluginContext } from 'elowen/plugin-api';
+```
+
+Do not import arbitrary Elowen internals. Use the methods and host capabilities exposed by `PluginContext`.
+
+## Manifest
+
+The file must be named `elowen-plugin.json`:
 
 ```json
 {
   "name": "my-plugin",
   "version": "1.0.0",
   "apiVersion": "1",
+  "requiresCore": "0.28.13",
   "description": "Adds a small example tool.",
   "entry": "index.mjs",
   "provides": {
-    "tools": ["MyTool"]
+    "tools": ["MyTool"],
+    "apiRoutes": ["status"]
   },
   "icons": {
-    "MyTool": "✨"
+    "MyTool": "🔧"
   },
+  "planSafe": ["MyTool"],
   "configSchema": [
     {
       "key": "enabled",
@@ -50,37 +73,96 @@ my-plugin/
 }
 ```
 
-The filename is **`elowen-plugin.json`**, not `orca-plugin.json`. `name`,
-`version`, `apiVersion`, `description`, and `entry` are required. The plugin
-folder name must match `name`, and `entry` must remain inside that folder.
-`apiVersion` is currently `"1"`.
+Required fields are `name`, `version`, `apiVersion`, `description`, and `entry`.
 
-Two optional fields say what the plugin needs from its host, and both are checked
-before anything of the plugin's runs:
+- The directory name must equal `name`.
+- `entry` is relative to the plugin directory and must stay inside it.
+- `apiVersion` is currently `"1"`.
+- `requiresCore` is an optional minimum Elowen version for additive host APIs.
+- `requiresSharedApi` is an optional **exact** integer contract version for `elowen-plugin-shared`. Declare it when the plugin imports that package. The value must match the version shipped by the daemon.
 
-- `requiresCore` — the **minimum** daemon version, e.g. `"0.29.0"`. For additive
-  changes: a plugin built against a newer core would otherwise install cleanly and
-  then throw inside `register(ctx)` on the first missing API.
-- `requiresSharedApi` — the **exact** `elowen-plugin-shared` contract major, e.g.
-  `2`. Declare it if you import that package at all; omit it if you do not. It is
-  a separate axis from `requiresCore` because the shared helpers ship *inside* the
-  daemon and your plugin links against the host's copy — so removing an export from
-  them breaks installed plugins without the daemon's own version moving. Exact, not
-  minimum: the number is bumped when an export disappears or changes shape, which
-  makes major N+1 no safer for you than N-1. The daemon refuses to install or load a
-  plugin whose declared major differs from the one it ships, and names both.
+### `provides`
 
-`provides` can declare `tools`, `skills`, `hooks`, and `platforms`. When a
-tool or platform list is present, the registry refuses contributions not named
-there, so keep it synchronized with `register(ctx)`.
+Declare the public surfaces the plugin contributes:
 
-### Entry point (`index.mjs`)
+```json
+"provides": {
+  "tools": ["MyTool"],
+  "skills": ["my-skill"],
+  "platforms": ["my-platform"],
+  "destinations": ["my-platform"],
+  "httpRoutes": ["callback"],
+  "apiRoutes": ["status", "/legacy/items/:id"],
+  "mcpTools": ["my_tool"]
+}
+```
+
+`registerHttpRoute`, `registerApiRoute`, `registerNotificationDestinationProvider`, and `registerMcpTool` are deny-by-default: their paths or names must be declared in the corresponding manifest list. Tools and platforms should also be declared so the manifest remains an accurate audit surface.
+
+There is no `provides.hooks` field. Hooks are registered with `registerHook`; their mutations are governed by `capabilities.mutates`.
+
+### Tool metadata
+
+- `icons`: per-tool display icons. Keys may be exact tool names.
+- `showOutput`: exact names or `prefix*` patterns whose successful output should appear in chat. Successful output is otherwise hidden; failures remain visible.
+- `planSafe`: exact tool names that may be used in plan mode. Patterns are not accepted.
+- `deferLoading`: exact names or `prefix*` patterns that should be deferred into `ToolSearch`. Patterns expand only to tools registered by the same plugin.
+- `icon`: optional SVG path relative to the plugin directory. If omitted, `icon.svg` is used when present.
+
+Tool names are durable data. They appear in events and saved permission rules and deny-lists. Choose a stable name before publishing; a rename requires a coordinated migration of stored tool names.
+
+### Configuration schemas
+
+`configSchema` describes instance-wide plugin settings. `userConfigSchema` describes per-account settings. Both use the same field format and are rendered by the plugin settings UI.
+
+Supported field types are:
+
+```text
+string, secret, boolean, number, textarea, rolePolicies, model, provider,
+section, enum, multiSelect, code, prompt, json, embeddingModel, mcpServers,
+destination, projects, plugins, tools, models
+```
+
+Common field properties include `key`, `label`, `type`, `hint`, `help`, `required`, `default`, `min`, `max`, `step`, `placeholder`, `options`, `language`, `risk`, `advanced`, `fullWidth`, and `visibleWhen`.
+
+Keep English text in the manifest as the fallback. Add translations under `i18n/<lang>.json`; manifest fields use `description` and `fields`, while browser UI metadata uses `web`.
+
+Use `userConfigSchema` for ordinary account settings such as a selected option or external identifier. Read the current account's values with `ctx.userConfig()`. It returns `null` when the turn is not acting as an account; never fall back to instance configuration in that case. The host routes per-account configuration through `GET /plugins/user-config` and `PATCH /plugins/:name/user-config` and never returns secret values.
+
+### Per-account access
+
+Set `userGrantable: true` only when the plugin must be granted separately to each non-admin account. Such a plugin is deny-by-default for non-admins until an administrator grants it through the account's plugin access settings. The grant filters its routes, tools, skills, and browser UI.
+
+A grant does not currently filter prompt fragments, slash commands, or hooks. Do not put account-sensitive behavior in those surfaces of a grantable plugin.
+
+### Capabilities
+
+Capabilities are deny-by-default:
+
+```json
+"capabilities": {
+  "reads": ["db", "stores", "git", "project-files"],
+  "mutates": ["events"],
+  "network": true
+}
+```
+
+`mutates` values currently include `prompt`, `turnContext`, `tools`, `memory`, `events`, `workflow-dag`, and `users`. The host requires explicit acknowledgement when enabling a plugin that declares `tools`, `memory`, `events`, `workflow-dag`, or `users` mutation authority.
+
+`reads` gates host capabilities such as `db`, `controls`, `embeddings`, `providers`, `prompts`, `stores`, `git`, and `project-files`. Declare only the scopes the implementation needs. `network` records network intent; it is not a replacement for validating remote data.
+
+## Entry point and tools
+
+The entry module exports `register(ctx)`:
 
 ```javascript
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 
-const text = (value) => ({ content: [{ type: 'text', text: value }], details: {} });
+const result = (text) => ({
+  content: [{ type: 'text', text }],
+  details: {},
+});
 
 export function register(ctx) {
   ctx.registerTool(defineTool({
@@ -90,492 +172,384 @@ export function register(ctx) {
     parameters: Type.Object({
       value: Type.String({ description: 'Text to return.' }),
     }),
-    execute: async (_callId, params) => text(params.value),
+    execute: async (_callId, params) => result(params.value),
   }));
 
   ctx.logger.info('example tool registered');
 }
 ```
 
-Use the PI `defineTool` and TypeBox `parameters` pattern used by bundled
-plugins. Return a normal PI tool result rather than inventing a separate
-transport format.
+Use PI's `defineTool` and TypeBox parameter schemas. Return a normal PI tool result. Validate external input inside the handler and keep side effects explicit.
 
-Name tools in **TitleCase** (`MyTool`, `ReadFile`), matching the bundled
-plugins. Prefix a family that belongs to one service (`GithubListIssues`,
-`GithubCreatePr`) so a manifest can give the whole family one icon with a
-`Github*` pattern — icon and output-visibility patterns are matched
-case-sensitively from the start of the name.
+Tools can be scoped to one account by passing `ownerUserId` to `registerTool`. Omit it for an instance-wide contribution:
 
-A tool name is not a private identifier: it is durable in a user's saved
-permission rules and tool deny-list, and it is emitted on the event stream.
-Renaming one silently voids the rules a user already saved for it, so pick the
-name before the first release rather than after.
-
-### Plan mode (`planSafe`)
-
-Plan mode lets the agent work out an approach before it touches anything, so it
-withholds every tool that is not declared plan-safe:
-
-```json
-"provides": { "tools": ["GithubListIssues", "GithubCloseIssue"] },
-"planSafe": ["GithubListIssues"]
+```javascript
+ctx.registerTool(tool, { ownerUserId });
 ```
 
-The bar is: **it must not change anything outside the conversation.** No writes
-to the user's files or services, no messages sent, nothing deleted, no
-sub-agents spawned. Reading, listing and reporting qualify; so does a tool that
-only writes the agent's own scratch state, such as a todo checklist. Undeclared
-is the safe default — the tool is simply not offered while the agent plans.
-
-Two rules the registry enforces. `planSafe` takes **exact names only, never a
-`prefix*`** — plan-safety does not run in families (`GithubListIssues` is safe,
-`GithubCloseIssue` is not), and a pattern here is how you would hand Plan mode a
-destructive tool by accident. And a name is ignored unless it also appears in
-your `provides.tools`, so a manifest can only vouch for its own tools.
-
-## Manifest fields
-
-| Field | Meaning |
-| --- | --- |
-| `requires.env`, `requires.config` | Declared runtime prerequisites |
-| `provides` | Tools, skills, hooks, platforms, and HTTP routes the plugin may register |
-| `icons` | Per-tool display icons |
-| `icon` | Optional relative SVG path; defaults to `icon.svg` when present |
-| `showOutput` | Exact tool names or `prefix*` patterns whose successful output appears in chat |
-| `planSafe` | Exact tool names Plan mode may offer — they change nothing outside the conversation |
-| `configSchema` | Array of settings fields rendered in the plugin UI |
-| `capabilities` | Explicit runtime permissions for hooks and shared reads |
-
-Successful tool output is hidden by default to keep transcripts compact.
-`showOutput` opts in selected tools; failures and host notes remain visible.
-
-### Config fields
-
-`configSchema` is an array, not generic JSON Schema. Each field has `key`,
-`label`, and `type`; optional presentation/validation fields include `hint`,
-`required`, `min`, `max`, `step`, `placeholder`, `default`, `options`,
-`visibleWhen`, `advanced`, and `risk`.
-
-Supported field types are `string`, `secret`, `boolean`, `number`,
-`textarea`, `rolePolicies`, `model`, `provider`, `section`, `enum`,
-`multiSelect`, `code`, `prompt`, `json`, `embeddingModel`, and `mcpServers`.
-Plugin settings update `ctx.config` on reload. Keep the manifest English as the
-fallback; add locale overrides under `i18n/<lang>.json` for translated
-description, field labels/hints, and enum option labels.
+The active turn's `ctx.currentIdentity()`, `ctx.currentAccess()`, `ctx.currentModel()`, `ctx.currentWorkDir()`, and related accessors are evaluated from the current async context. Read them at execution time and do not cache them between turns.
 
 ## Plugin context
 
-`register(ctx)` receives the following common capabilities:
+The main registration methods are:
 
-| API | Use |
+| Method | Purpose |
 | --- | --- |
-| `registerTool`, `registerSkill`, `registerPlatform` | Register declared runtime contributions |
-| `registerHttpRoute` | Mount a declared inbound webhook under `/hooks/<plugin>/<path>` |
-| `registerCommand` | Add a validated prompt-macro slash command to selected surfaces |
-| `registerSystemPromptFragment` | Append stable plugin instructions to the system prompt |
-| `registerTurnContext` | Add ephemeral per-turn context before or after the user message |
-| `registerHook` | Observe a declared lifecycle point |
-| `registerControl` | Expose a live plugin-specific runtime control |
-| `dataDir()` | Get the plugin's writable, instance-local data directory |
-| `assertPathAllowed`, `allowedRoots`, `defaultCwd` | Respect per-turn project filesystem scope |
-| `currentIdentity`, `currentAccess`, `currentSessionId`, `currentWorkDir`, `currentModel` | Read the active turn scope |
-| `isAdminSession()` | Gate shared administrative operations |
-| `askUser`, `answerQuestion`, `emitCard` | Interactive questions and structured conversation cards |
-| `notify` | Send a configured proactive platform notification |
-| `listModels`, `resolveProvider` | Read the permitted shared model/provider configuration |
-| `embeddings` | Use the shared memory embedder when permitted |
-| `processes`, `subagentEmitter` | Integrate long-running commands and child progress |
-| `config`, `logger` | Read this plugin's configuration and write scoped logs |
+| `registerTool` | Add a PI tool. |
+| `registerSkill` | Add a markdown-backed skill; `ownerUserId` can scope it to one account. |
+| `registerCommand` | Add a kebab-case prompt macro such as `/review`. |
+| `registerSystemPromptFragment` | Add stable plugin instructions to the system prompt. |
+| `registerTurnContext` | Add ephemeral per-turn context without changing stored history. |
+| `registerHook` | Observe a typed lifecycle point and, for supported hooks, return a gated patch. |
+| `registerPlatform` | Register a chat transport adapter. |
+| `registerHttpRoute` | Add a public webhook under `/hooks/<plugin>/...`. |
+| `registerApiRoute` | Add an authenticated route under `/plugins/<plugin>/api/...`. |
+| `registerService` / `registerInterval` | Register host-managed background work. |
+| `registerControl` / `control` | Publish or resolve a live domain control. |
+| `registerMcpTool` | Add a tool to Elowen's own authenticated `/mcp` server. |
+| `registerPrompts` | Register editable markdown prompt templates. |
+| `registerBootReconcile` | Reconcile durable plugin state on boot and reload. |
+| `registerUserRemoved` | Delete account-owned rows, files, secrets, and schedules. |
+| `registerProjectRemoved` | Clean up plugin state when a core Project is removed. |
+| `requestReload` | Ask the host to apply files written by the plugin after the current turn. |
 
-Turn-bound helpers may return `null`/`undefined` outside an interactive prompt.
-Do not cache an identity, access policy, working directory, or model between
-turns.
+Other context surfaces include `ctx.dataDir()`, `ctx.config`, `ctx.userConfig()`, `ctx.instanceSecrets()`, `ctx.userSecrets()`, `ctx.host`, `ctx.embeddings`, `ctx.processes`, `ctx.askUser()`, `ctx.emitCard()`, `ctx.notify()`, and the current-turn identity and access accessors. Every host capability is either scoped to the active turn or gated by the manifest.
 
-### File and data safety
+### Filesystem access
 
-Always guard a user-provided path before filesystem access:
+Use the plugin data directory for plugin-owned instance state:
 
 ```javascript
-const path = ctx.assertPathAllowed(requestedPath);
+const statePath = `${ctx.dataDir()}/state.json`;
 ```
 
-Use `ctx.dataDir()` for plugin-owned state. Do not store plugin data in core
-SQLite tables or infer another plugin's data directory.
+For user or Project files, always guard the path immediately before access:
 
-### Turn context and commands
+```javascript
+const safePath = ctx.assertPathAllowed(requestedPath);
+```
 
-`registerTurnContext(() => text, { placement })` supplies ephemeral context for
-the current turn. The default placement is `before-user`; use `after-user` for
-a reminder that must sit directly after the request. This context is not a
-durable system-prompt mutation.
+`assertPathAllowed` applies the current project and symlink policy. Do not reproduce path checks or infer another plugin's data directory. `ctx.defaultCwd()` is the safe default working directory for the current turn; `ctx.workDir()` reports whether the turn is actually bound to a Project.
 
-`registerCommand({ name, description, prompt, surfaces? })` adds a reusable
-prompt macro. Names must be unique kebab-case and cannot shadow a name declared
-in the canonical slash-command catalog (`src/brain/slashCommands.ts`) — that
-includes the commands a chat adapter dispatches itself, such as `/voice` and
-`/display`. The prompt supports PI argument substitutions such as `$ARGUMENTS`,
-`$1`, and `$@`.
+### Secrets
 
-`ctx.chatCommands(surface)` is the other side of the same catalog: the ordered
-menu for that surface, each entry carrying `kind` (how to render it) and
-`execution` (which mechanism runs it), plus `adminOnly` and a portable
-`argument` where one is declared. Those two fields are the whole answer to "do I
-accept this command, and how?", so an adapter needs no command list of its own:
+Use encrypted secret bags for credentials:
 
-| `execution` | what it means for an adapter |
-| --- | --- |
-| `session-control` (and `kind` is not `picker`) | hand it to `runControlCommand` from `_shared/chatCommands.mjs` |
-| `session-control` with `kind: 'picker'` | your own chooser, driven by the dedicated `ctx.control` methods (`/context`) |
-| `surface-local` | your own chooser or renderer (`/model`, `/reasoning`, `/help`) |
-| `plugin-prompt` (`kind: 'prompt'`) | forward the raw `/name …` text to the brain and let PI expand it |
-| `adapter-state` | your own per-channel state. Not published by `chatCommands()` today — you still register these yourself |
+- `ctx.instanceSecrets()` stores the plugin's instance namespace.
+- `ctx.userSecrets()` stores the current account's namespace and returns `null` for accountless work.
 
-### Inbound HTTP routes (webhooks)
+Each bag supports `get`, `has`, `set(key, value, expectedVersion?)`, and `delete`. Use the returned version for compare-and-swap updates. Do not put new credentials in `ctx.config` or `ctx.userConfig()`.
 
-A plugin that needs to RECEIVE HTTP callbacks (e.g. a chat platform that
-delivers messages by webhook, like the `msteams` plugin in the registry) declares the
-route path in the manifest and registers a handler:
+`ctx.publicWebUrl()` returns the canonical URL from trusted installation metadata, or `null`. Do not construct OAuth callbacks from request `Host`, `Origin`, or forwarded headers.
+
+## Authenticated routes and webhooks
+
+### Public webhooks
+
+A webhook is declared and registered like this:
 
 ```json
-{ "provides": { "httpRoutes": ["messages"] } }
+{
+  "provides": { "httpRoutes": ["callback"] }
+}
 ```
 
 ```javascript
 ctx.registerHttpRoute({
-  path: 'messages', // mounted at /hooks/<plugin-name>/messages
+  path: 'callback',
   handler: async (req) => {
-    // req: { method, path, query, headers (lower-cased), body(): Promise<Buffer>, json() }
     const payload = await req.json();
-    return { status: 200, body: { ok: true } }; // body: object | string | Uint8Array
+    return { status: 200, body: { ok: true } };
   },
 });
 ```
 
-Routes mount under `/hooks/<plugin-name>/<path>` on the daemon. The path must
-match the manifest declaration (deny-by-default, like platforms), use only
-lowercase letters, digits, `-` and `/`, and requests are capped at 1 MiB. The
-daemon's bearer auth is SKIPPED for `/hooks/*` — the handler must authenticate
-the caller itself (the msteams plugin validates Microsoft's JWT signature).
-When deploying behind nginx, proxy `/hooks/` to the daemon port (see
-DEPLOYMENT.md).
+It is served at `/hooks/<plugin>/callback`. Paths use lowercase letters, digits, `-`, and `/`; request bodies are capped at 1 MiB. Daemon bearer authentication is intentionally skipped for `/hooks/*`, so the handler must verify the provider's signature or token before accepting the request. `req.body()` provides the raw bytes needed for signature validation; `req.headers` are lower-cased.
 
-## Daemon platform surfaces
+### Authenticated plugin API
 
-Beyond tools and webhooks, a plugin can own whole daemon subsystems. These are
-the surfaces the bundled `agents` plugin (the extracted tmux-agent + missions
-subsystem) runs on; any plugin may use them.
-
-### Authenticated API routes (`registerApiRoute`)
-
-`registerHttpRoute` is for unauthenticated inbound webhooks under `/hooks/`.
-`registerApiRoute` mounts routes on the daemon's AUTHENTICATED API instead:
+```json
+{
+  "provides": { "apiRoutes": ["status"] }
+}
+```
 
 ```javascript
 ctx.registerApiRoute({
-  path: 'jobs',            // mounted at /plugins/<plugin-name>/api/jobs
+  path: 'status',
   method: 'GET',
-  access: 'user',          // 'user' | 'admin'
-  handler: async (req) => ({ status: 200, body: { jobs: [] } }),
+  access: 'user',
+  handler: async (req) => ({
+    status: 200,
+    body: { userId: req.auth.userId },
+  }),
 });
 ```
 
-The daemon's bearer auth runs BEFORE the handler and the verified caller
-identity arrives on the request; `access` narrows further (`admin` requires an administrator account). Declare the paths in the manifest's `provides.apiRoutes`.
+The route is served at `/plugins/<plugin>/api/status`. The daemon authenticates the request before the handler and supplies `req.auth` with the verified user, administrator flag, token scope, and accessible Project IDs. `access` is either `user` or `admin`; there is no `agent` access level.
 
-An admin-installed plugin may additionally set `rootMount` to claim an explicitly declared top-level path. Core routes always win: a root mount that collides with a core path logs a warning and is skipped, literal segments beat `:param` patterns, and a plugin reload cleanly unregisters the previous generation. A declared but disabled or missing owner answers 503; undeclared paths remain 404.
+A `rootMount` can preserve an existing top-level API path, but the full root path must be declared in `provides.apiRoutes` with its leading slash. Root mounts are still authenticated, core routes win conflicts, and `:param` segments are supported. Use the namespaced route unless compatibility with an existing client requires a root mount.
 
-### Services, intervals, and boot reconciles
+An API handler may return a buffered body or an SSE callback through `response.sse`. Validate every route parameter and enforce the caller's Project ownership using `req.auth.accessibleProjects`; a `null` list is a list-scoping result for admin/open/setup contexts, not permission to access an arbitrary Project.
 
-```javascript
-ctx.registerService({ name: 'poller', start: () => {…}, stop: () => {…} });
-ctx.registerInterval('sweep', () => {…}, 60_000);
-ctx.registerBootReconcile(() => {…});
-```
+## Persistence and lifecycle
 
-Services start after boot reconcile on a full daemon start and stop on
-shutdown or plugin reload (newest registered stops first — register a teardown
-service FIRST so it runs LAST). Intervals are services with a fixed period.
-Boot reconciles run once per boot and again on plugin reload; keep them
-idempotent. A sub-agent runner loads enabled plugins for their tools but never
-starts services, so build heavyweight runtime state lazily (on first use, not
-in `register()`).
+### Plugin database tables
 
-Plugins that keep account or Project state also register lifecycle callbacks:
+`ctx.db()` provides the main SQLite database only when the manifest declares `reads: ["db"]`:
 
 ```javascript
-ctx.registerUserRemoved((userId) => removeAccountRows(userId));
-ctx.registerProjectRemoved((projectId) => markProjectRowsOrphaned(projectId));
+const db = ctx.db();
+
+db.migrate([
+  {
+    version: 1,
+    up: (database) => database.exec(`
+      CREATE TABLE IF NOT EXISTS p_my_plugin_items (
+        id INTEGER PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `),
+  },
+]);
 ```
 
-A disabled plugin cannot receive a live callback, so Project/account cleanup that must survive disable/enable also needs an idempotent boot reconcile against current core rows.
+Plugin migrations are bookkept per plugin and run once. Name plugin tables with a `p_<plugin>_` prefix. Use `db.transaction(() => { ... })` when several statements must succeed atomically. In a read-only sub-agent runner, `migrate()` is a logged no-op.
 
-### Encrypted plugin secrets
+Prefer a plugin-owned table or `ctx.dataDir()` over adding plugin-specific columns to core tables. Core migrations belong in `src/store/db.ts` and `src/store/schema.sql`; plugin-owned schema belongs in the plugin.
 
-`ctx.instanceSecrets()` returns this plugin's instance namespace. `ctx.userSecrets()` returns the current contribution account's namespace, or `null` for accountless work. Delegated children inherit the delegator's contribution account; plugins cannot name another user or plugin.
+### Cleanup callbacks
 
-Each bag provides `get`, `has`, `set(key, value, expectedVersion?)`, and `delete`. `get` returns `{ value, version }`; pass the version back to `set` for compare-and-swap updates. New credentials belong here, not in `ctx.config` or `ctx.userConfig()`. Backups must keep the database and `plugin-secrets.key` together.
-
-`ctx.publicWebUrl()` returns the canonical deployment URL from trusted install metadata (or `null`), never a request `Host`, `Origin`, or forwarded header. Use it for fixed OAuth callback construction.
-
-### Plugin database migrations (`ctx.db()`)
+Any plugin that stores account-owned state must register cleanup:
 
 ```javascript
-ctx.db().migrate([{ version: 1, up: (db) => db.exec('CREATE TABLE IF NOT EXISTS …') }]);
+ctx.registerUserRemoved(async (userId) => {
+  // Delete this account's rows, files, and other durable state.
+});
+
+ctx.registerProjectRemoved(async (projectId) => {
+  // Remove or mark this plugin's Project-owned state.
+});
 ```
 
-`ctx.db()` requires the `reads: ["db"]` capability. Schema steps are bookkept
-per plugin (`plugin_migrations`) and applied exactly once in the daemon; in a
-read-only sub-agent runner `migrate()` is a logged no-op. Use `IF NOT EXISTS`
-forms when adopting tables that predate the plugin (grandfathering), and never
-rename or move existing rows on upgrade.
+The account row still exists when `registerUserRemoved` runs. A disabled plugin cannot receive a live callback, so cleanup must also be covered by an idempotent `registerBootReconcile` when necessary.
 
-### Prompt templates (`registerPrompts`)
+### Services and reconciliation
 
 ```javascript
-ctx.registerPrompts({ dir: myPromptsDir, entries: ['worker', 'reviewer'] });
+ctx.registerService({
+  name: 'poller',
+  start: async () => {},
+  stop: async () => {},
+});
+
+ctx.registerInterval('sweep', () => sweep(), 60_000);
+ctx.registerBootReconcile(() => reconcile());
 ```
 
-Registers markdown templates (`<name>.md` under `dir`) that the core prompt
-renderer resolves by bare name and the account UI catalogs as editable. Gated
-by `mutates: ["prompt"]`. Resolution order: a user's saved override wins, then
-the plugin file, then a core file. Registering under the same bare names a
-template had before an extraction keeps existing user overrides working.
+Services start after boot reconciliation on a full daemon start and stop around plugin reloads. `stop()` must return promptly. Intervals are unref'd host timers and are cleared on stop/reload. Reconciliation runs on boot and reload and must be idempotent. A sub-agent runner loads plugin tools but does not start plugin services, so initialize heavyweight runtime state lazily.
 
-### Controls (`registerControl`)
+## Prompt context, commands, and hooks
 
-A control is a typed, live runtime surface other daemon code or another plugin resolves from the registry. A key names the DOMAIN, never the plugin that happens to own it today — that is what lets another plugin take the domain over without a caller changing.
-Declare the shape in `KnownControls` (`src/plugins/api.ts`); the
-registry narrows to function-valued members, so accessor methods are the
-idiomatic shape — the first call can lazily build the runtime.
-
-A control is also how ONE PLUGIN DEPENDS ON ANOTHER. With
-`reads: ["controls"]`, a plugin resolves a sibling's control through
-`ctx.control('<key>')`:
+### Ephemeral turn context
 
 ```javascript
-const mcp = ctx.control('mcp'); // resolve on every use; never cache a registry generation
-if (!mcp) return { error: 'the MCP domain is unavailable' };
-const servers = mcp.listServers();
+ctx.registerTurnContext(
+  () => `Live status: ${readStatus()}`,
+  { placement: 'after-user' },
+);
 ```
 
-Three rules make that dependency safe:
+The default placement is `before-user`; `after-user` puts the context directly after the user's request. Turn context is ephemeral and is not persisted into conversation history or the stable system prompt.
 
-- **Key the control by the DOMAIN, not by the plugin** (`mcp`, not the name
-  of the plugin that happens to own it). Core and the consumer then ask for a
-  capability, and the owner can be replaced or renamed without anyone knowing
-  who implements it.
-- **Resolve at call time, never inside `register()`.** Plugins load
-  name-sorted, so a consumer usually registers before the owner exists;
-  resolution walks the merged registry, which also means a plugin reload swaps
-  the owner underneath you. A control kept in a variable is a dead generation.
-- **Handle `undefined` honestly.** It means "the owner is switched off", which
-  is a legitimate configuration — refuse the operation with a clear error, or
-  report the subsystem as unavailable. Never substitute an empty result: after
-  that, nobody can tell "nothing there" from "nobody answered".
+### Prompt macros
 
-### Browser UI bundles (manifest `web` block)
+```javascript
+ctx.registerCommand({
+  name: 'summarize-files',
+  description: 'Summarize the files in the current Project.',
+  prompt: 'Summarize the files requested by the user.\n$ARGUMENTS',
+  surfaces: ['cli', 'web'],
+});
+```
 
-A plugin can ship pages, sidebar navigation, and a Settings section for the
-web app as ONE built ESM bundle:
+Command names must be 1–32 characters of lowercase letters, digits, and dashes. They must not shadow a built-in or reserved command and must be unique across plugins. Supported substitutions include `$ARGUMENTS`, `$@`, `$1`–`$9`, `${N:-default}`, and `${@:N}`. Plugin commands are prompt macros, not new control-plane endpoints.
+
+Adapters should obtain their complete command metadata with `ctx.chatCommands(surface)`. Do not maintain a second hard-coded command list. The returned `execution` field distinguishes session controls, surface-local pickers, and plugin prompt commands.
+
+### Editable prompt templates
+
+`registerPrompts` requires `mutates: ["prompt"]` and takes structured entries:
+
+```javascript
+ctx.registerPrompts({
+  dir: new URL('./prompts', import.meta.url).pathname,
+  entries: [
+    {
+      name: 'review',
+      group: 'Development',
+      vars: ['$FILES'],
+      jsonContract: false,
+    },
+  ],
+});
+```
+
+The file is `<dir>/<name>.md`. Names are bare, lowercase template names; a user's saved override wins over the plugin file. Use stable bare names when moving a template between core and a plugin so existing overrides continue to resolve.
+
+### Hooks
+
+Register a hook with a name from the typed union in `src/plugins/api.ts`. Current hook families cover platform ingress, brain session/turn lifecycle, tool registry and calls, memory I/O, and plugin reloads.
+
+Two hook mutations are runtime-wired:
+
+- `appendContext` from a turn-context hook, gated by `mutates: ["turnContext"]`.
+- `denyToolCall` from `tools.call.before`, gated by `mutates: ["tools"]`.
+
+A hook may also be a pure observer. Hook failures do not grant permission or block a call; implement critical enforcement in the tool or route's own authorization path.
+
+## Controls and plugin dependencies
+
+A control is a live domain interface, not a plugin-name lookup. Declare the control shape in `KnownControls` when core needs to call it, then register it under a domain key:
+
+```javascript
+ctx.registerControl('my-domain', {
+  status: () => ({ ready: true }),
+});
+```
+
+A plugin that consumes another plugin's control declares `reads: ["controls"]` and resolves it at call time:
+
+```javascript
+const sandbox = ctx.control('sandbox');
+if (!sandbox) {
+  throw new Error('Sandbox is unavailable');
+}
+
+const roots = sandbox.workspaceRoots({ projectIds: [projectId] });
+```
+
+Never cache the result across calls: a plugin reload replaces the live generation. Treat `undefined` as a legitimate disabled or unavailable dependency. Do not return fabricated empty domain state.
+
+Use domain keys such as `sandbox`, `mcp`, or `workflow`, not the current plugin name. `registerControl(name, control, { requires })` can make one control unavailable until another domain control resolves.
+
+## Browser UI
+
+A plugin browser bundle is declared in the manifest:
 
 ```json
 "web": {
   "entry": "web/index.js",
   "css": "web/index.css",
   "requiresApiVersion": 1,
-  "nav": [{ "label": "Repositories", "icon": "GitBranch", "route": "repositories" }],
-  "settings": [{ "id": "connection", "label": "Connection", "icon": "Settings" }]
+  "label": "My plugin",
+  "account": [
+    { "id": "connection", "label": "Connection", "icon": "Settings" }
+  ],
+  "project": [
+    { "id": "overview", "label": "Overview", "icon": "Folder" }
+  ],
+  "settings": [
+    { "id": "settings", "label": "Settings", "icon": "Settings" }
+  ]
 }
 ```
 
-The daemon serves the bundle on an immutable content-hash URL and lists it via
-`GET /plugins/ui`; the web app builds its menus from that listing (labels
-localized per the `web` block in `i18n/<lang>.json`) and loads the bundle only
-when a page is visited. Pages render under `/p/<plugin>/<route>` inside the
-app shell; a disabled plugin's pages show an unavailable placeholder.
+The `web` block may also declare `nav`, `user`, `strings`, `adminOnly`, and `navKind`. Panels can mount in the main navigation, Account, a selected User, a selected Project, or Settings.
 
-**Ship your own CSS.** Elowen is distributed as a PREBUILT web app, so on a
-user's machine there is no Tailwind and no Next build: the host stylesheet is
-frozen at publish time and carries only the utilities the HOST itself uses. Any
-other one your markup asks for does not exist there, and your page renders
-unstyled with nothing the operator can do about it. So declare `web.css` and
-build it with the kit's `buildPluginUiCss({ bundle, outfile })` — it compiles
-Tailwind over the FINISHED bundle (class names survive minification as string
-literals) and the daemon serves the result on its own content-hash URL, linked
-before your page paints. `web.css` is optional; without it a plugin keeps the
-old behaviour and is limited to whatever utilities the host happens to carry.
+For bundled plugins, put browser sources under `web-src/index.tsx` (or `.ts`, `.jsx`, `.js`) and run:
 
-The compiled sheet is deliberately scoped: utilities only, inside
-`@layer utilities` (so it cannot outrank the host globally), no preflight (it
-must never reset the host's elements) and no class prefix (you share class
-names with the shared components you render from `window.ElowenUiRuntime`). The
-host design tokens are `@reference`d, not imported, so every rule comes out as
-`var(--color-surface, #070707)` — your page reads the host's live variables and
-follows the active skin instead of freezing on the palette you built against.
-`tests/contract/pluginUiKitTheme.test.ts` fails if the kit's token mirror ever
-drifts from `web/app/styles/tokens.css`.
+```bash
+npm run build:plugins-web
+```
 
-The bundle registers itself on load:
+The script emits `web/index.js` and, when the bundle uses utility classes, `web/index.css`. `npm run build` runs this step before copying plugins into `dist/`.
+
+Register the bundle through the browser runtime:
 
 ```javascript
 window.__elowenRegisterPluginUi?.('my-plugin', {
   requiresApiVersion: 1,
-  pages: { '': RootPage, 'sessions': SessionsPage },
-  settings: { 'my-plugin': SettingsSection },
+  pages: { '': RootPage },
+  account: { connection: ConnectionPanel },
+  project: { overview: ProjectPanel },
+  settings: { settings: SettingsPanel },
 });
 ```
 
-Everything the bundle needs comes from `window.ElowenUiRuntime`: the HOST's
-React instance (never bundle your own — the build aliases `react` to it), a
-curated `components`/`hooks`/`utils` surface, an authenticated same-origin
-`api(path, init)` fetch, and SPA `navigate(href)`. Build with
-`elowen-plugin-ui-kit` (`packages/plugin-ui-kit`): write sources under
-`<plugin>/web-src/` and let `npm run build:plugins-web` emit
-`<plugin>/web/index.js` (part of `npm run build`). The runtime contract's
-types live in the kit's `index.d.ts`; narrow the untyped records locally in
-the bundle instead of importing from `web/` sources.
+Use the host-provided `window.ElowenUiRuntime` for React, components, hooks, utilities, authenticated API calls, and navigation. Build with `elowen-plugin-ui-kit`. Never import from the host `web/` application; dependency-cruiser enforces this boundary so the bundle cannot ship a second React or query client.
 
-That last point is a hard boundary, enforced by dependency-cruiser
-(`plugin-bundle-not-to-web-app`): a bundle must not import from `web/` at all.
-It is compiled separately, so an import that looks harmless ships a second copy
-of the app — a second react-query client, a second component tree — inside a
-file the daemon serves next to the real one. When a page needs something the
-runtime does not expose, EXTEND the contract in `web/lib/pluginUi.tsx` and
-narrow it in the bundle's own `runtime.tsx`; do not simplify the page. A bundle
-that owns a domain (the `work` plugin owns tasks) still uses the host's data
-hooks on purpose: one react-query cache and one SSE invalidation path for the
-whole app, plugin pages included.
+The host serves the bundle and stylesheet at content-hashed same-origin URLs and lists available plugin UI through `GET /plugins/ui`. Browser pages mount under `/p/<plugin>/...`. A plugin with `web.adminOnly` has both navigation and assets hidden from non-admin accounts.
 
-If the plugin owns a domain other core surfaces read, gate those surfaces on
-its presence — `usePluginPresent('<name>')` in `web/lib/queries.ts`. Hide the
-affordance; never let it report a zero it cannot compute (see
-`web/tests/components/workGateDegradation.test.tsx`). Reads are the exception:
-keep them enabled until the `/plugins/ui` listing actually says the owner is
-gone, so a listing still in flight does not blank the page.
+The host web application is prebuilt. If the plugin needs Tailwind utility classes not already present in the host CSS, ship the plugin stylesheet. The generated sheet contains utilities inside `@layer utilities`, has no preflight, and uses host design tokens. Do not rely on a development-only host build to generate plugin classes.
 
-## Capabilities and hooks
+## Platform adapters
 
-Capabilities are deny-by-default. Declare only what the plugin needs:
+A platform plugin bridges a transport to the brain:
 
 ```json
-{
-  "capabilities": {
-    "hooks": ["tools.call.after"],
-    "mutates": ["turnContext"],
-    "reads": ["embeddings"],
-    "network": true
-  }
-}
+"provides": { "platforms": ["my-platform"] }
 ```
-
-`reads: ["controls"]` permits `ctx.control(...)` — depending on a domain another
-plugin owns (see Controls above). `reads: ["embeddings"]` permits
-`ctx.embeddings` only when the operator has also configured the shared embedding
-model. `reads: ["providers"]` permits provider resolution beyond IDs explicitly
-present in the plugin's own config.
-Hook patches are checked against the declaring plugin's `mutates` list; an
-undeclared capability does not become active merely because code calls it.
-
-Useful hook names include platform ingress, brain session/turn lifecycle, tool
-registry/calls, memory I/O, and plugin reload. Consult
-`src/plugins/api.ts` for the current typed union before adding a hook; only
-runtime-wired patches should be relied on for behavior changes.
-
-## Shared embeddings
-
-Plugins reuse the one operator-configured memory embedder; they must not add a
-second provider client for the same purpose:
 
 ```javascript
-if (!ctx.embeddings.isConfigured()) return;
-const descriptor = ctx.embeddings.descriptor();
-const vector = await ctx.embeddings.embed('text to index');
+ctx.registerPlatform({
+  name: 'my-platform',
+  async connect() {},
+  listen(onMessage) {},
+  async send(channelId, text) {},
+});
 ```
 
-Persist the descriptor with stored vectors so a model or dimensionality change
-can trigger re-indexing. `embed` and `embedBatch` reject when the capability or
-embedding configuration is absent.
+The adapter owns transport authentication, inbound message normalization, outbound formatting, and platform-specific state. `PlatformAdapter` supports `connect`, `disconnect`, `listen`, `send`, optional proactive `notify`, and optional channel `control` wiring.
 
-## Building a platform adapter
+For Discord, Telegram, Teams, WhatsApp, and similar adapters, reuse the published `elowen-plugin-shared` package instead of copying transport-neutral behavior. Its modules include `stateStore`, `display`, `format`, `images`, `messages`, `help`, `chatCommands`, `liveTrace`, `liveMessage`, `turnRunner`, and `access`. Declare the exact `requiresSharedApi` integer in the manifest when importing it.
 
-A *platform* plugin bridges a chat transport (Discord, Telegram, WhatsApp, …) to
-the brain: it receives inbound messages, forwards them as brain turns, and
-streams the reply back in that transport's shape. Declare `platforms` in
-`provides` and register with `ctx.registerPlatform(...)`. Each platform lives in
-`plugins/<name>/` with its entry `index.mjs` and a `lib/` folder; the daemon
-never talks to the transport directly, so an adapter is the whole integration.
+The shared command catalog is authoritative. Use `ctx.chatCommands(surface)` and the helpers from `elowen-plugin-shared/chatCommands`; do not accept commands merely because a local name list contains them. Keep only transport-specific chunk sizes, markup, reply shapes, and SDK integration in the adapter.
 
-### Reuse the shared core, don't re-implement it
+Platform-specific prompt fragments can be placed in `prompt/*.md`. The loader applies them only to platforms declared in `provides.platforms` and actually registered by the plugin. It reads at most 16 files, 8,000 characters per file, and 32,000 characters in total.
 
-The transport-neutral logic every adapter needs lives in `plugins/_shared/` —
-reuse it so a fix or a new field lands once, not three times:
+## Daemon MCP tools
 
-| Module | Exports | Use for |
-| --- | --- | --- |
-| `_shared/stateStore.mjs` | `StateStore` | Per-conversation JSON state (chosen model, reasoning/voice/display overrides, the `/new` generation counter), keyed by your transport's own conversation id. |
-| `_shared/display.mjs` | `resolveDisplaySettings`, `updateDisplayOverrides` | The `/display` presentation policy (tool activity, answer mode, tool output, per-tool messages) resolved from global config + per-conversation overrides. |
-| `_shared/format.mjs` | `splitContent(text, chunk)`, `extractImageRefs`, `imageRefName`, `stripThinking`, `parseModelExec`, `stripForSpeech` | Splitting a reply into fenced-code-safe chunks, pulling image links out of a reply (`extractImageRefs`) or validating an `image` event's `ref` (`imageRefName`), stripping leaked `<think>` reasoning, parsing a model exec, and flattening markdown for text-to-speech. Every helper guards a null/undefined body — an empty daemon reply must never crash a send. |
-| `_shared/images.mjs` | `platformImageDirs(dataDir)`, `resolveImageFiles`, `imageMimeType` | Turning image names into upload-ready buffers: the directories an outgoing image may come from (the image plugins' data dirs plus the daemon's `chat-images` dir beside the database), reading them off disk, and the content type to declare. Hand it only names that passed `extractImageRefs` / `imageRefName` — they are joined onto a path. |
-| `_shared/messages.mjs` | `SHARED_MESSAGES` | The service-message keys that are identical on every surface (`noModels`, `restarting`, `compacted`, …). Spread these into your `MESSAGES[lang]` and layer your surface-specific texts (channel-vs-chat wording, your emphasis markers, picker prompts) on top. |
-| `_shared/help.mjs` | `HELP_DESCRIPTIONS`, `renderHelpLines` | The per-command `/help` wording, localized once. Give `renderHelpLines` the ordered command names your surface exposes, your `mono` inline-code wrapper and the container noun (`{place}`/`{placeLoc}`); it returns the command lines so a command can never be listed on one surface/language and dropped on another. |
-| `_shared/chatCommands.mjs` | `controlCommandsFrom`, `localCommandsFrom`, `botControlCommandsFrom`, `runControlCommand` | Who runs which `/command` — answered from the catalog the daemon published for your surface (`ctx.chatCommands(surface)`), never from a name list of your own. `controlCommandsFrom(commands)` gives the names to hand `runControlCommand` with a small binding (reply, admin gate, state, ctl/ref, active-model lookup). `localCommandsFrom(commands, myAdapterStateNames)` gives the ones you dispatch yourself — the pickers and `/help` — and your own switch must be gated on it. Both return an EMPTY set for an empty or malformed catalog, so an adapter that has not heard from the daemon accepts nothing rather than falling back to what it happens to implement. `botControlCommandsFrom` is their union, for keeping what was said to the bot out of a transcript. |
-| `_shared/liveTrace.mjs` | `makeTextHelpers`, `makeFoldedCalls`, `makeToolLinesFor`, `makeCardLines`, `makeOutputSummary`, `outputFailed`, `diffSummary`, `sanitizeControl` | The live-tool-trace render/fold rule: how a settled tool result is summarized, how consecutive calls fold into one counted row (mirroring the CLI transcript), and how a row/card becomes text. Build these from a per-surface `style` (mention/fence hardening, bold/strike, the output-line prefix). |
+`registerMcpTool` contributes to Elowen's own authenticated `/mcp` server. It is different from the `mcp` plugin, which manages external MCP servers.
 
-A plugin's own `lib/state.mjs` / `lib/display.mjs` are one-line re-exports of the
-shared modules. Its `lib/format.mjs` re-exports the shared helpers and adds only
-the genuinely per-surface pieces (see below); its `lib/messages.mjs` spreads
-`SHARED_MESSAGES` and renders `/help` through `renderHelpLines`; its `lib/adapter.mjs`
-delegates `controlCommandsFrom(…)` to `runControlCommand`; its `lib/stream.mjs` builds
-the render helpers from a `style`.
+MCP tool names use lowercase `snake_case` and must be declared in `provides.mcpTools`:
 
-### What stays per-platform
+```javascript
+ctx.registerMcpTool({
+  name: 'my_tool',
+  description: 'Reads the current plugin status.',
+  inputSchema: {},
+  async run(args, request) {
+    return request('GET', '/plugins/my-plugin/api/status');
+  },
+});
+```
 
-Keep in the plugin only what is truly transport-specific, and pass it into the
-shared helpers rather than forking them:
+The request function is bound to the calling MCP client's token. A plugin MCP tool cannot act with broader rights than that client. The live `/mcp` tool list changes with plugin reloads.
 
-- **Chunk size** — Discord splits at 1990 chars, Telegram/WhatsApp at 4000. The
-  plugin owns its `CHUNK` and wraps the shared splitter:
-  `export const splitContent = (text) => splitAtChunk(text, CHUNK);`
-- **Footer + emphasis markup** — Discord uses `-# …` subtext, Telegram an em-dash
-  line, WhatsApp `_…_` italics. Keep `footerLine` local.
-- **Reply-quote shape** — the `buildReplyContext` signature differs per API
-  (Discord takes the referenced-message object; Telegram/WhatsApp take name +
-  body), so it stays local.
-- **Transport-only helpers** — e.g. Discord's mention/role/name resolution.
+## Testing and build checks
 
-### Steps to add a new platform
+Start with the narrowest check for the surface you changed:
 
-1. Scaffold `plugins/<name>/` with a manifest declaring `provides.platforms` and
-   any config fields (token, allow-list, display defaults).
-2. `lib/state.mjs` → `export { StateStore } from '../../_shared/stateStore.mjs';`
-   and `lib/display.mjs` → re-export the two display helpers.
-3. `lib/format.mjs` → re-export the shared format helpers, then add your `CHUNK`,
-   the `splitContent` wrapper, `footerLine`, and `buildReplyContext`.
-4. `lib/messages.mjs` → spread `SHARED_MESSAGES` into `MESSAGES.en`/`MESSAGES.cs`,
-   add your surface-specific texts, and render `help` via `renderHelpLines` with
-   the command names your surface exposes.
-5. `lib/adapter.mjs` → in your command handler, send `controlCommandsFrom(ctx.chatCommands(surface))`
-   to `runControlCommand` first (passing the reply, admin gate, state, ctl/ref and
-   active-model binding). Keep only the pickers and `/help` in your own switch, and
-   gate that switch on `localCommandsFrom(…)` so a command the daemon did not publish
-   cannot be run by typing it.
-6. `lib/stream.mjs` → build the render helpers from a `style` object
-   (`makeTextHelpers`, `makeFoldedCalls`, `makeToolLinesFor`, `makeCardLines`,
-   `makeOutputSummary`); keep the throttled editable-message transport and the
-   event→state reducer local, since those genuinely differ per transport.
-7. In `index.mjs`, open the transport connection, map inbound messages to brain
-   turns through `ctx`, and render the streamed reply using the shared helpers +
-   your local footer/chunking.
+```bash
+# Build bundled browser bundles
+npm run build:plugins-web
 
-## Loading and testing
+# Build TypeScript, plugin bundles, and the distributable tree
+npm run build
 
-Bundled plugins live under `plugins/<name>/` and are copied into the daemon
-artifact during `npm run build`. Instance/plugin-marketplace discovery uses the
-configured plugin directories; do not hard-code a private installation path.
-Plugin reload stages contributions afresh, so a failed registration cannot leave
-a partially registered tool set.
+# Contract and marketplace coverage
+npx vitest run \
+  tests/contract/pluginApiSubpath.test.ts \
+  tests/contract/pluginSharedPackage.test.ts \
+  tests/contract/registryPluginDependencies.test.ts \
+  tests/api/pluginUiRoutes.test.ts \
+  tests/plugins/marketplace.test.ts
 
-Add focused loader/registry/plugin tests alongside the behavior you change, then
-run the relevant daemon checks from [Testing](TESTING.md). A new manifest or
-entry must be present in the built `dist/plugins/` output after `npm run build`.
+# Repository-wide static checks
+npm run check
+```
+
+For route or access changes, also run the focused API and plugin-grant tests. For hooks, run the hooks end-to-end test. For changes to an extracted registry plugin, build and test that plugin in `/var/www/elowen-plugins`, then run the corresponding host contract tests here.
+
+A new or changed manifest must parse successfully and the entry must be present in the built plugin tree. A browser plugin must produce the files named by its manifest `web.entry` and optional `web.css` fields. Inspect the daemon log after a reload if a plugin is skipped; the loader reports the plugin name and the validation or registration error.

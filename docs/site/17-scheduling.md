@@ -8,127 +8,179 @@ group: Automation
 
 # Scheduling
 
-Elowen can run prompts on a schedule — recurring jobs that fire like clockwork and one-shot wake-ups that check back on something later. Both execute as the brain's own conversations with full owner powers, so a scheduled prompt can read files, call tools, and deliver results to any channel.
+Elowen can start brain turns automatically in two ways:
 
-## Access
+- **Recurring jobs** run on an interval or wall-clock schedule.
+- **One-shot wake-ups** run once after a delay or at a specified time.
 
-Scheduling is admin-only. Only admin sessions can create, list, or remove jobs. Regular channel users cannot manage schedules.
+A scheduled turn can use the tools available to its scope. It is unattended automation, not just a notification, so write prompts and shell checks with the same care as any other automation.
+
+## Where to manage schedules
+
+- **Web:** open **Settings → Automation**. The page lists jobs, their owner, schedule, status, last run, and destination where applicable. Select a job to edit it. Changes are picked up within 30 seconds by default.
+- **Chat:** use `CronAdd`, `ScheduleWakeup`, `CronList`, and `CronRemove`.
+
+The cronjob plugin must be enabled, and an account needs access to that plugin before it can create personal schedules.
+
+## Personal and instance schedules
+
+`CronAdd` requires an explicit `scope`:
+
+| Scope | Use it for | Execution and delivery |
+|---|---|---|
+| `personal` | Automation for the person asking | Runs with that account's project policy, tool restrictions, and plugin grants. Results return to the owner's conversation. |
+| `instance` | Automation belonging to the whole Elowen instance | Only the instance owner can create it. It runs with owner powers and reports through the notification channel unless a destination is selected. |
+
+A broad administrator session does not by itself authorize an `instance` job. Use `personal` when the schedule is for one person.
+
+For non-owner accounts, personal scheduling has two default resource limits:
+
+- At most **20 personal jobs** per account.
+- The shortest recurring interval is **15 minutes**.
+
+The operator can change these limits in the cronjob plugin settings. Instance jobs are not subject to those per-account limits. Non-owner personal jobs also cannot use a shell `check`, a destination channel, or a five-field cron expression; use an instance job for those capabilities.
 
 ## Recurring jobs
 
-Create a recurring job with `CronAdd`. Each job needs three things:
+Create a recurring job with `CronAdd`. Required fields are:
 
-| Parameter | Purpose |
-|-----------|---------|
-| `name` | Short human label shown in schedules and telemetry |
-| `schedule` | When it fires (see formats below) |
-| `prompt` | The instruction the brain runs each tick |
+| Field | Description |
+|---|---|
+| `name` | Human-readable name shown in the Automation page and schedule output. |
+| `scope` | `personal` or `instance`. |
+| `schedule` | A supported recurring schedule. |
+| `prompt` | What Elowen should do on each run. |
+
+A new job is armed from the time it is created. It waits for the next natural occurrence instead of firing immediately. Set `enabled: false` to create it paused; the web page can also pause an existing job without deleting it.
 
 ### Schedule formats
 
-Two forms are accepted and detected automatically:
+The format is detected automatically.
 
-**Plain form** — readable intervals:
+**Intervals**
 
-```
+```text
 every 15m
 every 2h
+```
+
+Recurring intervals use minutes or hours. Intervals shorter than one minute are invalid; non-owner personal jobs use the 15-minute minimum by default.
+
+**Daily and weekly wall-clock times**
+
+```text
 daily 07:30
 weekly sun 20:00
 ```
 
-**Cron expression** — standard 5-field syntax for anything the plain form cannot express:
+Weekdays are `sun`, `mon`, `tue`, `wed`, `thu`, `fri`, and `sat`.
 
-```
+**Five-field cron expressions**
+
+```text
 0 9 * * 1-5      # weekdays at 09:00
-*/5 * * * *      # every 5 minutes
-0 0 1 * *        # first of each month at midnight
+*/5 * * * *      # every five minutes
+0 0 1 * *        # first day of each month at midnight
 ```
 
-Reach for cron only when the plain form genuinely falls short.
+Five-field expressions use the standard order: minute, hour, day of month, month, and day of week. They are available to the instance owner; non-owner personal jobs must use an interval, daily, or weekly form.
 
-### Options
+### Time zone and missed runs
 
-| Option | Effect |
-|--------|--------|
-| `hours` | Active-hours window `"H-H"` (e.g. `"5-21"`). Outside it the job stays quiet. |
+Daily, weekly, five-field cron schedules, `at HH:MM` wake-ups, and active-hours windows use the assistant's configured IANA time zone. Set it under **Settings → Plugins → runtime-context**. An empty setting uses the server's time zone.
+
+The scheduler checks for due work every 30 seconds by default. A five-field cron job can catch up the most recent missed occurrence after downtime; the default catch-up window is 24 hours, and it never replays a backlog of occurrences. Clock changes follow wall-clock behavior: a repeated autumn hour runs a matching slot once, while a spring-forward time that does not exist is skipped.
+
+### Optional recurring-job fields
+
+| Field | Description |
+|---|---|
+| `hours` | Active-hours window such as `5-21`. The job stays quiet outside the window. Overnight windows such as `22-5` are supported. |
+| `model` | A model in `provider/model` form. If omitted, the server default model is used. |
+| `plain` | Set `true` to omit the `⏰ **job name**` header from delivered results. |
 | `enabled` | Set `false` to create the job paused. |
-| `model` | Run on a specific brain model (`"provider/model"`). Empty = server default. |
-| `notifyChannelId` | Deliver results to a specific channel instead of the default notification channel. |
-| `plain` | `true` strips the "job name" header — useful for persona messages in a dedicated channel. |
-| `check` | A cheap shell command run before the prompt (see below). |
+| `check` | An optional shell guard, available only to instance jobs. |
+| `notifyChannelId` | An optional channel or thread destination, available only to instance jobs. Without it, the notification channel is used. |
 
-### The check guard
+### The `check` guard
 
-The `check` option is a shell command that runs before every scheduled tick. If it prints nothing or fails, the brain turn is skipped entirely — no model call, no cost. If it prints output, the brain runs and receives that output as context.
+A `check` command runs on the daemon host before the brain turn. If it exits unsuccessfully or prints no output, the scheduled turn is skipped and no model call is made. If it prints output, that output is passed to the prompt as fresh context.
 
-This is how you poll for new work cheaply:
+Use it for inexpensive polling, for example a collector that prints only when new work exists:
 
-```
+```text
 check: "new-emails --since-last-run"
 ```
 
-The collector script prints only when there is something new. Most ticks cost nothing; the brain fires only when there is actual work.
+The default check timeout is 60 seconds. Because the command runs on the daemon host, use only commands you trust and keep their output bounded.
 
 ## One-shot wake-ups
 
-`ScheduleWakeup` fires once and removes itself. It accepts a delay or an absolute time:
+Use `ScheduleWakeup` when something should be checked exactly once. It accepts a delay or a wall-clock time:
 
-```
+```text
 in 30s
 in 20m
 in 2h
 at 18:30
 ```
 
-When scheduled from a user conversation, the wake-up resumes that same conversation with its full context — so the follow-up lands where it was promised.
+Delays must be at least five seconds. `at HH:MM` uses the configured time zone and normally means the next occurrence of that time; if the requested minute has just passed, the scheduler fires it shortly after instead of waiting a full day. A wake-up is consumed after it fires and is not recurring.
 
-Use wake-ups to check back on things that change over time but do not notify you: a CI run, a deploy, an external queue. Pick the delay from how fast the watched thing actually changes.
+When created from a one-person conversation, the wake-up resumes that same conversation with its existing context and replies there. Use this for a deploy, CI run, or external queue that needs checking later. Do not add a wake-up merely to poll a background sub-agent or background shell command; those already report when they finish. For a safety fallback, schedule one longer wake-up rather than many short polls.
 
-> Do not stack a wake-up on top of background work that already notifies you (a background sub-agent or command). Both would fire, and the wake-up would be redundant. If you want a safety net for work that might hang, set a long fallback like "in 30m" rather than a short poll.
+A wake-up scheduled by a user conversation is personal; `ScheduleWakeup` does not ask for a scope. A schedule created by accountless automation is instance-scoped and requires the instance owner.
 
-## Managing jobs
+## List and remove jobs
 
-| Tool | Purpose |
-|------|---------|
-| `CronList` | List all jobs with id, name, schedule, last run, and last result |
-| `CronRemove` | Cancel a job by id — it stops firing immediately |
+`CronList` shows each visible job's id, name, schedule, last run, and last result. One-shot wake-ups appear as one-shot entries while they are pending. After firing, they are removed.
 
-## Delivery
+Visibility depends on the caller:
 
-Results go to the default notification channel unless you override with `notifyChannelId`. Use `plain: true` when the channel is dedicated to that job and the header line would be noise.
+- In chat, you see your personal jobs and, in an admin session, instance jobs. Other accounts' personal jobs remain private.
+- In the web Automation page, an administrator can review all jobs; other accounts see their own jobs.
+
+Use the exact id from `CronList` or the creation result with `CronRemove`:
+
+```text
+CronRemove({ id: "<job-id>" })
+```
+
+Removal is permanent and deletes the prompt and schedule. Pause a recurring job with `enabled: false` when you may need it again. If delivery temporarily fails, Elowen keeps the produced result and retries delivery on a later scheduler tick without running the model turn again.
 
 ## Examples
 
-**Daily summary at 07:30:**
+**Personal daily summary:**
 
-```
+```js
 CronAdd({
   name: "morning-summary",
+  scope: "personal",
   schedule: "daily 07:30",
-  prompt: "Summarize yesterday's completed tasks and today's calendar."
+  prompt: "Summarize yesterday's completed work and today's calendar."
 })
 ```
 
-**Periodic inbox check with a guard:**
+**Instance-wide polling job with a guard:**
 
-```
+```js
 CronAdd({
   name: "inbox-watch",
-  schedule: "every 10m",
+  scope: "instance",
+  schedule: "every 15m",
   hours: "7-22",
   check: "himalaya envelope list --page-size 1 --folder INBOX --unread",
-  prompt: "New unread emails arrived. Summarize them and flag anything urgent."
+  prompt: "Summarize any new unread email and identify urgent items."
 })
 ```
 
-**One-shot deploy verification:**
+**One-shot deployment check:**
 
-```
+```js
 ScheduleWakeup({
   name: "verify-deploy",
   when: "in 5m",
-  prompt: "Check that deploy #142 finished successfully; report the outcome."
+  prompt: "Check whether deploy #142 finished successfully and report the outcome."
 })
 ```
 

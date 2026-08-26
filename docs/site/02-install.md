@@ -8,238 +8,205 @@ group: Start here
 
 # Install
 
-Elowen is a personal AI agent you run on your own machine. Under the hood it is
-deliberately small: a single **daemon** (a REST API on `:4400`) plus a **Next.js
-web UI** (`:4500`). That is the whole footprint — no external services, no heavy
-runtime. This page covers the local install paths: the one-line bootstrap, npm
-global, a manual start, and building from source. Running a server or a
-container instead? See [Docker](docker) and
-[Production & Updates](production-updates).
+This page covers installing Elowen locally, provisioning a server, and building from source. Elowen requires Node.js 22 or newer.
 
-## What you're installing
+For a container deployment, see [Docker](docker). For an always-on server with service supervision and a reverse proxy, see [Production & Updates](production-updates).
 
-Two long-running pieces work together:
+## Supported installation platforms
 
-- **The daemon** — the agent core. It runs the brain you chat with, spawns
-  coding agents in isolated tmux sessions, serves the REST API, streams events
-  over SSE, and hosts the WebSocket terminal. This is where the agent actually
-  *acts*.
-- **The web UI** — a Next.js app that gives you the surfaces to **observe and
-  steer** the agent: Dashboard, Tasks, Kanban, Timeline, Sessions, Settings, and
-  Users. It talks to the daemon; it holds no state of its own.
+The bootstrap scripts support:
 
-A single `elowen` CLI binary drives both — bare `elowen` in a terminal opens the
-chat, the same way `claude` or `opencode` do.
+- **Debian or Ubuntu Linux** — uses `apt`, and provisions systemd services when you run `elowen install`.
+- **macOS** — uses Homebrew where needed and provisions per-user `launchd` agents. Run it as your normal user, not with `sudo`.
+- **Windows through WSL2** — native Windows is not supported. The PowerShell bootstrap installs or uses Ubuntu in WSL2 and runs the Linux installer there.
+
+`elowen install` currently requires `apt` on Linux. On another Linux distribution, install Node.js, npm, and the required runtime tools yourself and use the local or source workflow instead of assuming the server provisioner supports that distribution.
 
 ## Requirements
 
-- **Node.js** ≥22 (Elowen is ESM-only) — the launcher checks the version first
-  and exits with a short message on anything older
-- **tmux** ≥3.x — agents run inside tmux sessions
-- **npm**
-- A C toolchain for `node-pty` (**optional**: `python3`, `make`, `g++`) — powers
-  the live PTY terminals; without it terminals degrade gracefully, everything
-  else keeps working
+- Node.js 22 or newer.
+- npm.
+- `tmux` for interactive terminal sessions and integrations that launch external command-line tools. Local `setup` warns when it is missing; server `install` can install it.
+- Git for Git Projects and Sandbox workspaces.
+- On Linux, `bubblewrap` for the Sandbox's confined non-operator execution. Server installation can install it.
+- A C compiler and Python 3 are useful when the optional `node-pty` dependency must compile locally. If live PTY streaming cannot be installed, Elowen keeps the terminal snapshot fallback.
 
-## One-line install
+## Bootstrap installation
 
-The shortest path from a bare machine to a running Elowen. A small bootstrap
-script installs whatever the machine is missing — a modern Node.js and the
-global **`elowen`** package — then hands over to `elowen install`, the tested
-provisioner that sets up tmux, the services, an optional reverse proxy (Linux)
-and the first admin. You end up with a running daemon and Web UI.
+On Debian/Ubuntu or macOS, the bootstrap installs Node.js when necessary, installs the global npm package, and then hands off to `elowen install`:
 
 ```bash
-# Linux (Debian/Ubuntu) — run with sudo access
-# macOS — run as yourself (no sudo; needs Homebrew)
 curl -fsSL https://raw.githubusercontent.com/dragocz95/elowen/main/install.sh | bash
 ```
 
+The script is network code executed by your shell. Inspect it first if required by your operational policy. You can pass installer flags directly, or use `ELOWEN_INSTALL_ARGS`:
+
+```bash
+ELOWEN_INSTALL_ARGS='--unattended --localhost --admin-user admin --admin-pass CHANGE_ME' \
+bash install.sh
+```
+
+To pin a package version:
+
+```bash
+ELOWEN_VERSION=0.28.13 bash install.sh
+```
+
+On Windows, run PowerShell as Administrator:
+
 ```powershell
-# Windows — installs into WSL2 (run in an elevated PowerShell)
 irm https://raw.githubusercontent.com/dragocz95/elowen/main/install.ps1 | iex
 ```
 
-- **Linux** — the provisioner runs as root: a dedicated service user, systemd
-  units, and optionally a reverse proxy with HTTPS for a public domain.
-- **macOS** — everything runs as *you*, no sudo: per-user launchd agents in
-  `~/Library/LaunchAgents`, bound to localhost, starting at login. Logs live in
-  `~/.config/elowen/logs/`.
-- **Windows** — the bootstrap enables **WSL2**, installs Ubuntu if missing, and
-  runs the same Linux install inside it (tmux and systemd are Linux-only). A
-  first-time WSL setup needs one reboot — re-run the command afterwards. The Web
-  UI is then at `http://localhost:4500`.
+The first WSL installation may require a Windows reboot. Re-run the command after the reboot.
 
-Two optional environment variables tune the run: `ELOWEN_VERSION` pins a
-specific npm version (`ELOWEN_VERSION=0.27.3`), and `ELOWEN_INSTALL_ARGS`
-forwards flags to `elowen install` — pass `--unattended` with the deployment and
-admin flags for a fully non-interactive install.
+## Global npm installation
 
-> Piping a script into a shell runs code from the network — inspect it first if
-> you prefer: `curl -fsSL .../install.sh | less`.
-
-The services, reverse proxy, and update timer the provisioner sets up are
-covered in [Production & Updates](production-updates).
-
-## npm global (recommended)
-
-The fastest path when Node.js 22+ is already present:
+If Node.js 22 or newer is already installed, install the package directly:
 
 ```bash
 npm install -g elowen
-elowen setup          # guided onboarding wizard
+elowen setup
 ```
 
-`elowen setup` brings the daemon up and walks you through five quick steps, each
-skippable and resumable:
+`elowen setup` starts or adopts the local daemon and runs the onboarding wizard. It configures the first account, an optional Project, an AI provider and model, optional embeddings, and optional TypeScript language-server support.
 
-1. **Account** — create the first admin, or an escapable, bounded sign-in on a
-   re-run (a wrong password never traps you in a loop)
-2. **Project** — register a repository for agents to work in
-3. **AI provider** — connect an OpenAI-compatible or Anthropic provider, a
-   preset, a custom endpoint, or a supported OAuth account (Claude, ChatGPT,
-   GitHub Copilot, Kimi); pick a model, then run a **chat smoke-test** to confirm it answers.
-4. **Memory** — optional embeddings for recall (reuse the provider's key or an
-   OpenRouter key)
-5. **Code intelligence** — optionally install the TypeScript language server so
-   agents can type-check their own edits
+The setup wizard can be re-run. In a non-interactive terminal it does not prompt; use `--non-interactive` with the required flags instead.
 
-The run ends with a readiness report ("What works now") and a **done screen**
-with your next steps. Run `elowen doctor` any time for the same report on
-demand: chat, memory, platforms, plugins, and deployment prerequisites, each with a plain-language hint for whatever isn't configured yet.
-
-## The CLI-first flow
-
-Elowen is agent-first, so the agent is one command away:
+## CLI lifecycle
 
 ```bash
-elowen                # opens the chat TUI
+elowen             # open the interactive terminal chat
+elowen chat        # open a new conversation
+elowen run "..."   # run one non-interactive turn and exit
+elowen -p "..."   # alias for run
+elowen menu        # interactive service launcher
+elowen up          # start local daemon and web UI
+elowen down        # stop them; waits for running work
+elowen down --force # stop immediately
+elowen status      # show service state and health
+elowen doctor      # readiness checks and remediation hints
+elowen update      # install the latest release and restart
 ```
 
-Everything else hangs off a small set of verbs:
+Use `elowen login` when a CLI session needs an explicitly cached login token. A normal authenticated request uses a bearer token; do not put the token in a query string.
 
-- `elowen menu` — the interactive launcher: start/stop, status, logs, update, or
-  jump straight into chat
-- `elowen run "<prompt>"` (alias `elowen -p`) — non-interactive: run one turn,
-  slash command, or autonomous goal, stream it, and exit
-- the lifecycle verbs `elowen up` / `elowen down` / `elowen status` (see [Manual
-  start](#manual-start-without-systemd) below)
-- `elowen update` — pull the latest release and restart in place (see
-  [Production & Updates](production-updates))
+## Unattended setup
 
-Prefer a browser? Open `http://localhost:4500`, sign in, and you land on the
-Dashboard. See [Getting Started](getting-started) for your first chat and longer-running goal or workflow.
-
-## Manual start (without systemd)
-
-If you don't want systemd units, start both processes yourself:
+Use secrets from environment variables rather than putting them in shell history where possible:
 
 ```bash
-elowen up
+ELOWEN_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+ELOWEN_API_KEY="$OPENAI_API_KEY" \
+elowen setup --non-interactive \
+  --admin-user admin \
+  --project "$PWD" \
+  --provider openai \
+  --model gpt-4o-mini \
+  --memory skip
 ```
 
-This launches the daemon on `:4400` and the web UI on `:4500`. Override the
-ports with `ELOWEN_PORT` and `ELOWEN_WEB_PORT`. Stop them again with
-`elowen down`. Or run the daemon directly — handy for a second instance, a
-container, or a smoke test:
+Useful flags include:
+
+- `--admin-user` and `--admin-password` (or `ELOWEN_ADMIN_USER` and `ELOWEN_ADMIN_PASSWORD`).
+- `--project PATH`, `--project-slug SLUG`, or `--no-project`.
+- `--provider PRESET|custom`, `--api-key`, `--base-url`, and `--model`.
+- `--memory reuse|openrouter|skip`, `--memory-key`, and `--embedding-model`.
+- `--lsp` to install the TypeScript language server.
+- `--skip-test` to skip the provider chat smoke-test.
+
+`custom` providers require `--base-url`. If an existing installation already has an administrator, pass the administrator password to authenticate before changing configuration. Run `elowen doctor` after scripted setup to inspect the resulting readiness matrix.
+
+## Server provisioning with `elowen install`
+
+Use the provisioner for an always-on machine:
 
 ```bash
-ELOWEN_PORT=4400 \
-ELOWEN_DB=$HOME/.config/elowen/elowen.db \
-ELOWEN_ALLOW_OPEN=1 \
-node dist/daemon/index.js
+sudo elowen install
 ```
 
-`ELOWEN_ALLOW_OPEN=1` disables auth for local, single-user use. Leave it off for
-anything reachable by others (see [First-run setup](#first-run-setup)).
+On Linux it can create or reuse a service user, install `tmux` and Sandbox support, configure systemd units, configure nginx or Apache for a domain, and optionally request a Let’s Encrypt certificate. It also creates the web and daemon services and an hourly update timer. On macOS, run `elowen install` without `sudo`; it creates per-user launchd agents and stays localhost-only.
+
+The interactive installer shows a plan before making system changes. For a non-interactive Linux install, the main deployment choices are:
+
+```bash
+sudo elowen install --unattended \
+  --localhost \
+  --admin-user admin \
+  --admin-pass "$ADMIN_PASSWORD"
+```
+
+For a domain, use `--domain example.com`; for direct IP access use `--ip ADDRESS` or `--host ADDRESS`. See `elowen install --help` for all options, including `--proxy nginx|apache`, `--email`, `--user`, and `--no-tmux`.
 
 ## Build from source
+
+The daemon and web application have separate build steps. From a checkout:
 
 ```bash
 git clone https://github.com/dragocz95/elowen.git
 cd elowen
 npm install
 npm run build
-node dist/daemon/index.js    # the daemon on :4400
+npm install --prefix web
+npm run build:web
 ```
 
-Then the web UI in a separate terminal:
+Start the daemon in one terminal:
 
 ```bash
-cd web
-npm install
-npm run build
-npm start                    # serves on :4500, proxies to the daemon
-```
-
-## Ports & services
-
-The daemon listens on `4400`, the web UI on `4500` — override with
-`ELOWEN_PORT` and `ELOWEN_WEB_PORT`. The web UI never talks to the database
-directly; it always goes through the daemon API. Port, proxy, and webhook
-routing for a server install: [Production & Updates](production-updates).
-
-## Data directory
-
-The daemon keeps structured state in SQLite at `~/.config/elowen/elowen.db` by default (override with `ELOWEN_DB`), created automatically on first run. Encrypted plugin credentials additionally require `~/.config/elowen/plugin-secrets.key`; back up the database and key together. Plugin data, plans, logs, and attachments live beside them in the config directory.
-
-## First-run setup
-
-How you start the daemon the first time decides its auth mode:
-
-- **Local, no auth** — start with `ELOWEN_ALLOW_OPEN=1`. Good for a single-user
-  machine where nothing else can reach the port.
-- **Browser onboarding** — while no user exists, the web UI lands on a first-run
-  wizard instead of the login form: it creates the first admin and walks through
-  the initial configuration, no CLI needed.
-- **Production** — seed an admin account once via bootstrap variables:
-
-```bash
-ELOWEN_BOOTSTRAP_USER=admin \
-ELOWEN_BOOTSTRAP_PASS=secure-pass \
+ELOWEN_DB="$HOME/.config/elowen/elowen.db" \
 node dist/daemon/index.js
 ```
 
-The admin user is seeded only once. If no users exist and you skip both the
-browser wizard and the bootstrap variables, the daemon logs a warning and login
-stays impossible until a user is created through the wizard, `elowen setup`, or
-the API.
-
-That first admin unlocks Elowen's **RBAC**. Roles are **admin** and **member**,
-and each user can carry a **different set of tools and permissions**: which
-executors they may run, which brain tools are enabled for them, and which
-projects they can see. Set it all up later in [Configuration](configuration) and
-the Users module.
-
-## Non-interactive setup
-
-For agents, CI, or scripted provisioning, `elowen setup` has a flag-driven mode
-that runs the same onboarding without prompts — it creates the admin, connects a
-project and an AI provider, runs the chat smoke-test, and prints a readiness
-matrix. It exits non-zero on a missing required input, so a caller can branch on
-it.
+Start the standalone web server in another:
 
 ```bash
-elowen setup --non-interactive \
-  --admin-user admin --admin-password "$ADMIN_PW" \
-  --project /path/to/repo \
-  --provider openai --api-key "$OPENAI_API_KEY" --model gpt-5.5 \
-  --memory reuse
+PORT=4500 \
+HOSTNAME=127.0.0.1 \
+ELOWEN_DAEMON_URL=http://127.0.0.1:4400 \
+node web-dist/server.js
 ```
 
-| Flag | Purpose | Env fallback |
-|------|---------|--------------|
-| `--admin-user` / `--admin-password` | first admin (or sign-in on re-run) | `ELOWEN_ADMIN_USER` / `ELOWEN_ADMIN_PASSWORD` |
-| `--project <path>` / `--no-project` | register a project (opt-in — only when `--project` is passed) | — |
-| `--project-slug <slug>` | override the auto-derived project slug | — |
-| `--embedding-model <id>` | embedding model (defaults to a small recommended one) | — |
-| `--provider <key\|custom>` | a preset (see [Brain & Chat](brain-chat)) or `custom` | — |
-| `--api-key` / `--base-url` / `--model` | provider credentials & model (`--base-url` for `custom`; `--model` optional when the key lets `/models` be probed) | `ELOWEN_API_KEY` |
-| `--memory <reuse\|openrouter\|skip>` | embeddings — reuse the provider's key or OpenRouter | — |
-| `--memory-key` | OpenRouter key for `--memory openrouter` | `ELOWEN_OPENROUTER_KEY` |
-| `--lsp` | install the TypeScript language server | — |
-| `--skip-test` | skip the chat smoke-test | — |
+`npm run build` builds the TypeScript daemon and bundled plugin assets; it does not build the web UI. `npm run build:web` creates `web-dist/server.js` and copies the standalone server's static and public assets.
 
-Run `elowen doctor` afterwards for the same readiness report on demand.
+## Ports and environment
+
+The daemon defaults to `127.0.0.1:4400`. The web server defaults to port `4500` only when launched by Elowen's installer or launcher; a standalone Next server uses the standard `PORT` and `HOSTNAME` variables.
+
+Common variables are:
+
+```text
+ELOWEN_PORT=4400
+ELOWEN_HOST=127.0.0.1
+ELOWEN_DB=~/.config/elowen/elowen.db
+ELOWEN_LOG_DIR=~/.config/elowen/logs
+ELOWEN_PROJECT=elowen
+ELOWEN_PROJECT_PATH=$PWD
+ELOWEN_BOOTSTRAP_USER=
+ELOWEN_BOOTSTRAP_PASS=
+ELOWEN_DAEMON_URL=http://localhost:4400
+ELOWEN_URL=http://localhost:4400
+ELOWEN_TOKEN=
+ELOWEN_AUTOSTART=1
+```
+
+`ELOWEN_WEB_PORT` is an installer/launcher setting. When starting `web-dist/server.js` yourself, set `PORT` explicitly.
+
+## Persistent state
+
+By default, Elowen stores its state under `~/.config/elowen/`:
+
+- `elowen.db` — SQLite database.
+- `plugin-secrets.key` — required to decrypt encrypted plugin credentials.
+- `logs/` — daemon and web logs.
+- `plans/`, `tool-results/`, `chat-images/`, plugin data, and other runtime directories.
+
+Override the database with `ELOWEN_DB` and logs with `ELOWEN_LOG_DIR`. Back up the whole configuration directory when possible; backing up only the database does not preserve plugin secrets or adjacent runtime data.
+
+## Authentication on a new install
+
+Before the first user exists, the daemon allows the setup flow to create an administrator. You can also seed the first administrator with `ELOWEN_BOOTSTRAP_USER` and `ELOWEN_BOOTSTRAP_PASS` when starting the daemon.
+
+Once a user exists, normal requests require authentication. `ELOWEN_ALLOW_OPEN=1` is not a supported runtime switch for disabling authentication; do not use it as a security control.
 
 [Next: Docker](docker)

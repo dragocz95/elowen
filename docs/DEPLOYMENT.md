@@ -1,194 +1,161 @@
 # Deployment
 
-## Prerequisites
+This page covers building Elowen from a checkout, running its two processes, and provisioning a machine for service-managed operation.
 
-- **Node.js** ≥22 (ESM)
-- **tmux** ≥3.x
-- **npm**
+## Supported installation paths
 
-## Production build
+The supported machine provisioner is `elowen install`:
+
+- **Debian or Ubuntu:** run it as root (`sudo elowen install`). It creates a dedicated service user, two systemd services, and an hourly update timer.
+- **macOS:** run it as the current user, without `sudo`. It creates per-user LaunchAgents and binds to localhost.
+- **Windows:** run Elowen inside WSL2. Native Windows is not supported because the runtime uses Linux tooling such as tmux and systemd.
+
+The Linux provisioner requires `apt`; the macOS provisioner requires Homebrew when it must install tmux. Node.js 22 or newer is required on every platform.
+
+For a packaged installation with Node.js already installed:
 
 ```bash
-npm ci --omit=dev
-npm run build
+npm install -g elowen
+elowen install
 ```
 
-`npm run build` compiles TypeScript, copies `src/store/schema.sql` and
-`prompts/` into `dist/`.
+Use `elowen install --help` for unattended installation flags, service-user selection, deployment mode, reverse-proxy selection, and first-admin/model setup. The one-line installers in the repository perform the same package installation and then invoke `elowen install`.
 
-## Running the daemon
+## Build from a source checkout
 
-### Direct
+A source build needs both dependency trees. The web application is not built by `npm run build`.
 
 ```bash
+npm ci
+npm ci --prefix web
+npm run build
+npm run build:web
+```
+
+The commands produce:
+
+- `dist/` — compiled daemon, CLI, and bundled plugin runtime files, plus copied `prompts/` and `src/store/schema.sql`.
+- `web-dist/` — the standalone Next.js server, static assets, and `public/` assets.
+
+Do not patch `dist/` or `web-dist/` by hand. Rebuild them from source instead.
+
+## Run the processes directly
+
+The daemon and web UI are separate processes. Building or starting the daemon does not start the web UI.
+
+Start the daemon from the repository root:
+
+```bash
+ELOWEN_PORT=4400 \
+ELOWEN_HOST=127.0.0.1 \
+ELOWEN_PROJECT_PATH="$PWD" \
 node dist/daemon/index.js
 ```
 
-Starts on port 4400 (override with `ELOWEN_PORT`). Initializes SQLite on first run.
-
-### Environment reference
+Start the built web server in a second terminal:
 
 ```bash
-# Daemon
-ELOWEN_PORT=4400
-ELOWEN_HOST=127.0.0.1              # use 0.0.0.0 to expose externally
-ELOWEN_DB=$HOME/.config/elowen/elowen.db
-ELOWEN_PROJECT=elowen
-ELOWEN_PROJECT_PATH=$PWD
-ELOWEN_ALLOW_OPEN=                  # set to "1" for no-auth mode
-ELOWEN_BOOTSTRAP_USER=              # initial admin username
-ELOWEN_BOOTSTRAP_PASS=              # initial admin password
-
-# CLI
-ELOWEN_URL=http://localhost:4400
-ELOWEN_TOKEN=
-ELOWEN_AUTOSTART=1
-
-# Logging
-ELOWEN_LOG_LEVEL=                   # debug | info | warn | error
-ELOWEN_LOG_DIR=~/.config/elowen/logs # the default — state lives outside the package
-
-# Web UI
-ELOWEN_WEB_PORT=4500
-ELOWEN_DAEMON_URL=http://localhost:4400
-
-# Agent-injected
-ELOWEN_CLI=elowen
+PORT=4500 \
+HOSTNAME=127.0.0.1 \
+ELOWEN_DAEMON_URL=http://127.0.0.1:4400 \
+node web-dist/server.js
 ```
 
-### systemd service
+For development without a build, use `npm run serve` for the daemon and `npm --prefix web run dev` for Next.js. Next.js uses port 3000 by default in this mode; set `PORT` if another port is required.
 
-Create `/etc/systemd/system/elowen-daemon.service`:
+The daemon binds to `127.0.0.1:4400` by default. Keep it private when possible: a daemon bearer token can authorize powerful operations. Deliberately exposing it requires setting `ELOWEN_HOST` and placing an appropriate access boundary in front of it.
 
-```ini
-[Unit]
-Description=Elowen AI agent orchestrator
-After=network.target
+## Runtime configuration
 
-[Service]
-Type=simple
-User=elowen
-WorkingDirectory=/opt/elowen
-ExecStart=/usr/bin/node /opt/elowen/dist/daemon/index.js
-Restart=on-failure
-RestartSec=5
-Environment=NODE_ENV=production
-Environment=ELOWEN_DB=/opt/elowen/data/elowen.db
-Environment=ELOWEN_PROJECT_PATH=/opt/elowen
+The persistent default state directory is `~/.config/elowen`. `ELOWEN_DB` changes only the database path; `ELOWEN_LOG_DIR` changes the log directory.
 
-[Install]
-WantedBy=multi-user.target
-```
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ELOWEN_PORT` | `4400` | Daemon HTTP and WebSocket port. |
+| `ELOWEN_HOST` | `127.0.0.1` | Daemon bind address. |
+| `ELOWEN_DB` | `~/.config/elowen/elowen.db` | SQLite database path. |
+| `ELOWEN_PROJECT` | `elowen` | Default project identifier for a directly started daemon. |
+| `ELOWEN_PROJECT_PATH` | Current working directory | Default project path for a directly started daemon. |
+| `ELOWEN_BOOTSTRAP_USER` / `ELOWEN_BOOTSTRAP_PASS` | Unset | Optional first-account bootstrap credentials when both are supplied. |
+| `ELOWEN_LOG_LEVEL` | `info` | Minimum log level: `debug`, `info`, `warn`, or `error`. |
+| `ELOWEN_LOG_DIR` | `~/.config/elowen/logs` | Directory for daily daemon and web log files. |
+| `ELOWEN_DAEMON_URL` | `http://localhost:4400` in CLI/web integrations | URL used by clients and the web BFF to reach the daemon. |
+| `ELOWEN_URL` | `http://localhost:4400` | CLI daemon URL. |
+| `ELOWEN_TOKEN` | Unset | CLI bearer token, when one is supplied explicitly. |
+| `ELOWEN_AUTOSTART` | `1` | Set to `0` to disable CLI auto-start behavior. |
+| `ELOWEN_CLI` | `elowen` | CLI name used by launcher integrations. |
 
-And for the web UI (`elowen-web.service`):
+The web server itself reads the standard `PORT` and `HOSTNAME` variables. `ELOWEN_WEB_PORT` is an installer/launcher setting; it is not read by the Next.js server. In proxy-less IP deployment, the installer may also set `ELOWEN_WS_DIRECT_PORT` so the browser can connect directly to the daemon terminal WebSocket.
 
-```ini
-[Unit]
-Description=Elowen web UI
-After=elowen-daemon.service
+There is no supported general-purpose no-auth switch. Authentication is open only during the initial zero-user setup flow; after the first user exists, normal requests require a bearer token or the authenticated web session.
 
-[Service]
-Type=simple
-User=elowen
-WorkingDirectory=/opt/elowen/web
-ExecStart=/usr/bin/npm start
-Restart=on-failure
-RestartSec=5
-Environment=ELOWEN_DAEMON_URL=http://localhost:4400
-Environment=NEXT_PRIVATE_STANDALONE=true
+## Service-managed deployment
 
-[Install]
-WantedBy=multi-user.target
-```
+The installer writes these Linux units:
+
+- `elowen-daemon.service`
+- `elowen-web.service`
+- `elowen-update.service`
+- `elowen-update.timer`
+
+The daemon unit runs the compiled `dist/daemon/index.js`; the web unit runs `web-dist/server.js`. The daemon drains active work during shutdown, and the systemd unit uses a longer stop timeout so delegated work can finish. The update timer starts 15 minutes after boot and checks hourly; auto-update must be enabled in Elowen settings before it installs a newer release.
+
+Check the services after installation:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now elowen-daemon elowen-web
-journalctl -u elowen-daemon -f
+sudo systemctl status elowen-daemon elowen-web
+sudo systemctl status elowen-update.timer
+curl -fsS http://127.0.0.1:4400/health
 ```
 
-### Docker
+On macOS, use the LaunchAgents created by `elowen install`; the service logs remain under `~/.config/elowen/logs/`.
 
-```dockerfile
-FROM node:22-alpine
-RUN apk add --no-cache tmux git
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev
-COPY . .
-RUN npm run build
-EXPOSE 4400
-CMD ["node", "dist/daemon/index.js"]
-```
+## Reverse proxy
 
-```bash
-docker build -t elowen .
-docker run -d --name elowen -p 4400:4400 \
-  -v elowen-data:/app/data \
-  -e ELOWEN_DB=/app/data/elowen.db \
-  -e ELOWEN_ALLOW_OPEN=1 \
-  elowen
-```
-
-## Web frontend
-
-```bash
-cd web
-npm ci --omit=dev
-npm run build
-npm start   # default port 3000
-```
-
-The web UI is typically served on port 4500 behind nginx.
-
-### Reverse proxy (nginx)
+When a reverse proxy fronts the web UI, route browser traffic to the web process and only the terminal WebSocket and plugin webhooks directly to the daemon:
 
 ```nginx
 server {
     listen 443 ssl;
     server_name elowen.example.com;
 
-    # A chat attachment is base64 inside the JSON body (+~37%) and the browser allows images up to 5 MB,
-    # so nginx's 1 MB default rejects phone screenshots with 413 before the daemon ever sees them.
+    # Browser image attachments are base64 JSON and may be up to 5 MB.
     client_max_body_size 25m;
 
-    # Web UI
     location / {
         proxy_pass http://127.0.0.1:4500;
         proxy_http_version 1.1;
     }
 
-    # Daemon API + SSE + MCP (BFF proxy — Next.js handles /api internally)
+    # Next.js BFF: daemon API, SSE, and MCP requests.
     location /api/ {
         proxy_pass http://127.0.0.1:4500;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+        proxy_set_header x-real-ip $remote_addr;
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 86400s;
-        proxy_set_header x-real-ip $remote_addr;
     }
 
-    # Real-PTY WebSocket terminal (bypasses BFF, goes straight to daemon)
+    # Real PTY terminal streaming.
     location /ws/ {
         proxy_pass http://127.0.0.1:4400;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400s;
         proxy_set_header x-real-ip $remote_addr;
+        proxy_read_timeout 86400s;
     }
 
-    # Plugin webhooks (e.g. the Microsoft Teams bot endpoint /hooks/msteams/messages —
-    # only needed when a plugin with an inbound webhook is enabled)
+    # Only enable this location when an inbound plugin webhook is configured.
     location /hooks/ {
         proxy_pass http://127.0.0.1:4400;
         proxy_http_version 1.1;
         proxy_set_header x-real-ip $remote_addr;
     }
 
-    # Service worker — must never be cached
     location = /sw.js {
         proxy_pass http://127.0.0.1:4500;
         add_header Cache-Control "no-cache, no-store, must-revalidate" always;
@@ -196,74 +163,67 @@ server {
 }
 ```
 
-Notes:
-- SSE requires `proxy_buffering off` and `proxy_read_timeout 86400s`
-- The `/ws/` location is required for real-PTY terminal streaming; without it,
-  terminals fall back to snapshot mirror
-- The `/hooks/` location exposes plugin webhooks (the msteams plugin's Bot Framework
-  messaging endpoint lives there); requests are authenticated by the plugin itself
-  (e.g. Microsoft's JWT), not by the daemon's bearer token
-- Set `x-real-ip` for correct login rate limiting
+`proxy_buffering off` and a long `proxy_read_timeout` are required for SSE. The `/ws/` route is required for real-PTY terminal streaming. The `/hooks/` route is authenticated by the receiving plugin, not by the daemon bearer-token middleware. Forward `x-real-ip` from the trusted proxy so the daemon can apply its configured client-IP policy and login rate limits.
 
-## Monitoring
+## Persistent state and backups
 
-### Health check
+The database is only one part of the runtime state. Back up the complete `~/.config/elowen` directory when possible. It contains the database, logs, plugin data, plans, attachments, provider credentials, and other account state.
+
+If backing up SQLite separately, retain the matching plugin secret key beside it:
 
 ```bash
-curl http://localhost:4400/health
-# {"ok":true}
+sqlite3 /path/to/elowen.db \
+  ".backup /backup/elowen-$(date +%Y%m%d).db"
+install -m 600 /path/to/plugin-secrets.key \
+  "/backup/plugin-secrets-$(date +%Y%m%d).key"
 ```
 
-### Logs
+The database and `plugin-secrets.key` must come from the same backup set. Restoring the database without its matching key cannot recover encrypted plugin credentials. Elowen has no built-in backup/restore command.
+
+SQLite runs with WAL mode, foreign keys, a five-second busy timeout, and automatic migrations at daemon boot. Plugin-owned schemas use the plugin migration API. Start the new daemon after restoring a backup and inspect the logs for migration errors before serving traffic.
+
+## Logs and health
+
+The default files are daily:
+
+```text
+~/.config/elowen/logs/daemon-YYYY-MM-DD.log
+~/.config/elowen/logs/web-YYYY-MM-DD.log
+```
+
+On systemd, the same process output is also available in the journal:
 
 ```bash
 journalctl -u elowen-daemon -f
-tail -f ~/.config/elowen/logs/daemon-$(date +%F).log   # file-based (ELOWEN_LOG_DIR)
+journalctl -u elowen-web -f
 ```
 
-The files are daily, so the name carries the date — there is no rolling
-`daemon.log`. Settings → Data → Logs reads the same directory in the web UI.
+The daemon health probe is public and does not require an account:
+
+```bash
+curl -fsS http://127.0.0.1:4400/health
+# {"ok":true}
+```
 
 ## Updating
 
-### Self-update
+For a package installation managed by the launcher or installer:
 
 ```bash
 elowen update
 ```
 
-The update is **self-locating** — it computes the npm `--prefix` from its own
-binary path, so it works regardless of where Elowen is installed. It handles
-root-owned prefixes transparently via sudo.
+The command locates its own npm prefix, installs the latest package, and restarts the managed services when a newer release is available. The database migration runs automatically on the next daemon boot. A plain `npm update -g elowen` does not restart already-running services.
 
-### Auto-update timer
-
-Provisioned by `elowen install`. Checks hourly and uses the daemon's guarded drain/restart path so active work is not interrupted. Toggle in Settings → System.
-
-## Database
-
-SQLite with WAL mode. Default: `~/.config/elowen/elowen.db`.
-
-### Backup
-
-Back up the database and `plugin-secrets.key` together. The key is stable, but an encrypted database backup without its matching key cannot recover plugin credentials.
+For a source checkout, rebuild the affected artifacts and restart both processes through the service manager:
 
 ```bash
-sqlite3 /path/to/elowen.db ".backup /backup/elowen-$(date +%Y%m%d).db"
-install -m 600 /path/to/plugin-secrets.key /backup/plugin-secrets-$(date +%Y%m%d).key
+npm ci
+npm ci --prefix web
+npm run build
+npm run build:web
+sudo systemctl restart elowen-daemon elowen-web
+curl -fsS http://127.0.0.1:4400/health
 ```
 
-### Migration
-
-Core schema changes use additive migrations and shape-guarded one-shot rebuilds. Plugin-owned tables use the plugin migration API.
-
-## Troubleshooting
-
-| Symptom | Check |
-|---------|-------|
-| Daemon won't start | Node ≥22? Port 4400 free? DB path and config directory writable? |
-| CLI can't reach daemon | `curl http://localhost:4400/health` |
-| Web shows "unreachable" | Daemon running? `ELOWEN_DAEMON_URL` correct? |
-| Login returns 429 | Wait 5 min or restart daemon. Ensure nginx sets `x-real-ip`. |
-| Plugin secrets unavailable | Restore `elowen.db` and `plugin-secrets.key` from the same backup. |
-| Assistant won't start | Is a configured AI provider/model available to this account? |
+Do not expose the daemon directly unless that exposure is deliberate and protected; prefer the web BFF or a reverse proxy for public access.

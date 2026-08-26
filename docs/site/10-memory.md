@@ -8,199 +8,188 @@ group: Everyday use
 
 # Memory & Embeddings
 
-Elowen's memory is a set of durable, reusable facts the agent stores and recalls across conversations. It is not a chat log — it holds stable preferences, architectural decisions, project details, and environment topology. When the agent starts work on a project or with a user it has history with, it recalls relevant memories to pick up where it left off.
+Elowen memory stores durable, reusable facts across conversations: preferences, decisions, project details, and environment topology. It is not a transcript or a chat archive.
 
-Each memory carries a vitality score that tracks how actively it is used. Unused memories decay over time and are softly moved to the trash (recoverable); the agent can also search memory again mid-turn as the work evolves beyond what the opening message described.
+Memory is private to one Elowen account. A conversation can recall only that account's memories, and unlinked platform senders and delegated task workers cannot use the memory tools.
 
-## Storage
+## How recall works
 
-Memories live in SQLite, scoped personally per user. Each memory is a short self-contained sentence or two — not a paragraph, not a conversation excerpt. Retrieval is semantic (embedding similarity) when an embedding model is configured; otherwise it falls back to keyword matching. See [Configuration](configuration) for the settings overview.
+Elowen can recall memories automatically at the start of a turn and, when enabled, again while work is in progress.
 
-### How recall works
+- With embeddings configured, retrieval is semantic: it matches meaning rather than exact words.
+- Without a usable embedding configuration, retrieval falls back to keyword and recency matching.
+- Retrieved results are ranked primarily by semantic similarity, with importance and vitality breaking ties. The current ranking weights are `0.80` similarity, `0.10` importance, and `0.10` vitality.
+- Similar results are deduplicated while they are packed into the prompt. The current packing threshold is cosine similarity `0.70`.
 
-At the start of a turn, the agent issues a recall with a query relevant to the current task. The system returns the top matching memories ranked by a combined score:
+The automatic turn-start recall defaults to a maximum of 10 memories and a shared budget of 20,000 characters. The semantic relevance floor and these limits can be changed under **Settings → Elowen AI**.
 
-- **Semantic similarity** (weight 0.65) — cosine similarity between the query embedding and each memory's vector.
-- **Importance** (weight 0.15) — linear 1..5 → 0..1.
-- **Vitality** (weight 0.2) — the memory's vitality normalized to 0..1.
+`MemorySearch` is also available during a conversation when a fact is needed explicitly. Its default is up to 6 matching memories, subject to the retrieval budget.
 
-Only memories whose raw semantic similarity clears the relevance floor (default 0.30, adjustable in Settings → Elowen AI → Runtime) are eligible. Unrelated memories cannot ride importance or vitality into the prompt. The operator can retune the floor; it travels as an integer per mille (300 = 0.30).
+### Recall while working
 
-Candidates are deduplicated (cosine ≥ 0.97 treated as the same memory) and packed into a character budget. By default up to 6 memories are injected, sharing a budget of ~1500 tokens (6000 characters). Both are operator-tunable in Settings → Elowen AI → Limits.
+Live recall searches again as the agent moves from your initial request to files, tools, and errors. It is non-blocking: the search starts in the background and its result is injected into a later model call.
 
-In the keyword fallback path (no embeddings configured, or the embed call fails), ranking uses keyword match (weight 0.6) + importance (0.25) + recency (0.15).
-
-When the agent later references a recalled memory that names a specific file or config key, it verifies that file still exists before relying on the claim.
-
-### Vitality and retention
-
-Every memory has a vitality score from 0 to 100. It grows with usage (`use_count`, saturating at `n / (n + 5)`) and decays exponentially with time since last use. The decay half-life depends on importance:
-
-| Importance | Half-life (days) |
-|-----------:|:-----------------|
-| 1 | 15 |
-| 2 | 30 |
-| 3 | 60 |
-| 4 | 90 |
-| 5 | never |
-
-A memory at importance 5 is pinned: it never decays and is never evicted, regardless of the retention settings below.
-
-**Eviction.** A daily sweep soft-deletes memories that are past their grace period (default 14 days from creation) and whose vitality has fallen below the vitality floor (default 10). Deleted memories remain in the trash with their full audit trail — an operator can restore a false positive. The sweep runs once every 24 hours.
-
-**Configuration.** Retention is on by default. All knobs live in Settings → Elowen AI → Memory retention, its own editor beside Limits and Runtime:
-
-| Setting | Default | Range | What it does |
-|---------|---------|-------|--------------|
-| Master switch | on | on/off | Off = no automatic eviction |
-| Grace period | 14 days | 0–365 | New memories are exempt from eviction within this window |
-| Vitality floor | 10 | 0–90 | Memories below this vitality are evicted (after the grace period) |
-| Half-life — importance 1 | 15 days | 0–90 | `vitality *= 0.5^(age/halfLife)` |
-| Half-life — importance 2 | 30 days | 0–90 | |
-| Half-life — importance 3 | 60 days | 0–90 | |
-| Half-life — importance 4 | 90 days | 0–90 | |
-| Importance 5 | never | — | Shown read-only; never decays, never evicted |
-
-Setting any half-life to 0 means "never decay" for that level.
-
-### Recall during a turn
-
-Turn-start recall searches from the user's opening message. Once the work moves on to files, tools and errors, the original message says little about what the agent is actually doing — and may produce no hits at all. The agent can search memory again mid-turn, guided by the recent work.
-
-This live recall runs on a budget set in Settings → Elowen AI → Limits, under "Recall while working":
+Configure the per-account switch at **Account → Memory → Recall while working**. The instance-wide limits are under **Settings → Elowen AI → Limits**:
 
 | Setting | Default | Range |
-|---------|---------|-------|
+|---|---:|---:|
 | Searches per turn | 10 | 0–20 |
 | Memories per batch | 2 | 0–10 |
-| Turn byte budget | 20,000 UTF-8 bytes | 10,000–40,000 UTF-8 bytes |
+| Turn byte budget | 20,000 UTF-8 bytes | 10,000–40,000 |
 
-Set searches per turn to 0 to disable mid-turn recall entirely. The search cap prevents unbounded embedding requests in a changing tool loop; the byte budget limits only context actually injected into the turn.
+Set **Searches per turn** to `0` to disable live recall. A new steering message resets the live-recall budget for the redirected turn.
 
-Live recall is **non-blocking**: the agent starts an embedding search and returns immediately, so the model is never stalled on a network call. The result arrives one model call later and is injected as a frozen block after the message that triggered the search. The memories are rendered as `<memory>` elements with id, kind, importance and age.
+## Managing memories
 
-Each user can also turn mid-turn recall off for their own conversations in Account → Memory ("Recall while working"). It is on by default.
+The web interface is at `/memory`. It provides a searchable list, status filters, category filters, sorting, a brain map, a retrieval inspector, and memory details.
 
-If the user sends a new message mid-turn (steering), the recall budget resets — the redirected turn gets fresh searches against the new instruction.
+From the workspace you can create, edit, categorize, merge, restore, or delete memories. The deleted-memory view also supports permanent purge and emptying the trash; those operations cannot be undone.
 
-## Memory operations
+Every memory has:
 
-| Operation | Behavior |
-|-----------|----------|
-| Search | Semantic or keyword lookup by query |
-| Add | Store one fact; near-duplicate detection prevents piling up paraphrases |
-| Update | Revise an existing memory by id — correct the fact, change kind, or re-rank importance |
-| Merge | Collapse several redundant memories into one consolidated fact (sources are soft-deleted) |
-| Delete | Soft-delete by id (retained for audit, no longer recalled) |
-| List recent | Show the most recently stored memories |
+- a self-contained body;
+- a `kind` label, such as `fact`, `preference`, `decision`, or `feedback`;
+- an importance from 1 to 5;
+- a category, which controls whether it can be recalled.
 
-Each memory carries a `kind` (fact, preference, decision) and an `importance` rank from 1 to 5.
+### Memory tools
+
+There is no standalone `elowen memory` CLI command. In terminal chat and other supported Elowen sessions, memory is managed with these tools:
+
+| Tool | Use |
+|---|---|
+| `MemorySearch(query, limit?)` | Search relevant memories. Default limit: 6. |
+| `MemoryAdd(body, kind?, importance?)` | Store one durable fact. Default importance: 3. |
+| `MemoryUpdate(id, body?, kind?, importance?)` | Correct or re-rank one existing memory. |
+| `MemoryMerge(ids, body)` | Replace several memories with one consolidated memory. |
+| `MemoryDelete(id)` | Soft-delete one memory so it is no longer recalled. |
+| `MemoryListRecent(limit?)` | List the newest memories. Default limit: 10. |
+| `MemoryCategories()` | List your categories. |
+| `MemoryCategoryCreate(name, description?, icon?)` | Create a category. |
+| `MemoryCategoryDelete(id)` | Delete a category without deleting its memories. |
+| `MemoryRecategorize(all?)` | Re-run automatic categorization. `all: true` includes already categorized memories. |
+
+`MemoryAdd` always writes the new memory. If it resembles an existing memory, it reports the matching id; decide whether to keep both, update one, merge them, or delete the new one. Similarity warnings do not block storage.
 
 ## Categories and project scope
 
-Categories are user-defined buckets that organize memories. Each has:
+A memory must belong to a category to be recalled. Categories are private to your account and have a unique name, an optional description, an optional icon, and an optional project binding.
 
-- **name** — short unique label
-- **description** — the guide the auto-classifier matches memories against (make it specific)
-- **icon** — optional lucide icon name
-- **project scope** — optionally bound to a specific project
+The category description is the classifier's guide. Make it specific about what belongs there, for example:
 
-The auto-classifier sorts new memories into categories on insert. `MemoryRecategorize` re-runs the classifier — by default only over uncategorized memories, or over all memories with `all: true` (useful after adding or renaming categories).
-
-Deleting a category does not delete its memories; they simply become uncategorized.
-
-### Project-scoped memory
-
-A category can be bound to a project (`Project scope` in the category editor). When the agent works inside a project directory, its recall scope is computed from the working directory:
-
-- Categories bound to that project **and** global categories (no project binding) are included.
-- Categories bound to *other* projects are excluded.
-- Uncategorized memories are **never** recalled — they must belong to a category to surface.
-
-A new memory added while working in a project is auto-classified into the categories available in that project's scope, which naturally includes the project's own categories.
-
-The global scope (used outside any project directory) includes only categories with no project binding.
-
-The binding itself is set in the Web UI: open the category in the Memory workspace and pick a project under **Project scope**. The agent's own `MemoryCategoryCreate` takes a name, a description and an icon — it does not bind a project, so a category the agent creates starts global until you scope it.
-
-Example — creating a category for infrastructure facts:
-
-```
-MemoryCategoryCreate({
-  name: "Infrastructure",
-  description: "Deployment layout, service topology, server addresses, DNS records, and hosting details. No secrets.",
-  icon: "Server"
-})
+```text
+Deployment layout, service topology, DNS records, and hosting details. No secrets.
 ```
 
-The `description` field is what the classifier reads to decide whether a new memory belongs here, so make it specific about what fits and what does not.
+New memories are categorized asynchronously in the background. If a memory is uncategorized, it remains stored but is not recallable. `MemoryRecategorize` can classify uncategorized memories after you create categories; use `all: true` when you deliberately want to re-sort existing assignments. Automatic categorization requires a categorization model configured under **Settings → Memory**.
+
+When a memory is added during work in a project:
+
+- the classifier can place it in any category available to that project;
+- if classification produces no category, Elowen uses the project's own category as a fallback;
+- the project category is created automatically on first use when needed.
+
+A project-bound category is recalled only in that project. Global categories (without a project binding) are also available there. Categories bound to other projects are excluded. Outside a project, only global categories are eligible.
+
+To bind or edit a category, open `/memory`, open the category manager, and set **Project scope**. The `MemoryCategoryCreate` tool creates a global category; project binding is available in the web interface.
+
+Deleting a category keeps its memories but makes them uncategorized, so they stop being recalled until categorized again. Category deletion cannot be undone.
+
+## Vitality and automatic retention
+
+Each memory has a vitality score from 0 to 100. Recalling a memory increases its usage signal; unused memories decay according to their importance.
+
+Default half-lives are:
+
+| Importance | Half-life |
+|---:|---:|
+| 1 | 3 days |
+| 2 | 7 days |
+| 3 | 14 days |
+| 4 | 30 days |
+| 5 | Never |
+
+Automatic retention is enabled by default. A daily maintenance sweep soft-deletes memories that are past the grace period and below the vitality floor. The default retention settings are:
+
+| Setting | Default | Range |
+|---|---:|---:|
+| Retention enabled | On | On/off |
+| Grace period | 14 days | 0–365 days |
+| Vitality floor | 10 | 0–90 |
+| Half-life for importance 1–4 | 3 / 7 / 14 / 30 days | 0–90 days |
+| Importance 5 | Never decays or evicts | Read-only |
+
+Set a half-life to `0` for **never**. Configure these values in **Settings → Elowen AI → Memory retention**. Soft-deleted memories remain in the trash and can be restored from `/memory`; permanent purge removes them irreversibly.
 
 ## Embedding configuration
 
-Configure embeddings in Settings > Memory:
+Configure the embedding model in **Settings → Memory**. The Settings UI selects a provider and model and accepts an optional vector dimension. Providers and their credentials are managed under **Settings → Elowen AI**.
 
-| Field | Purpose |
-|-------|---------|
-| `providerId` | Reuses an existing brain provider's API key. Empty = embeddings disabled. |
-| `model` | Embedding model name (recommended: `text-embedding-3-small`) |
-| `baseUrl` | Optional endpoint override for self-hosted or proxy setups |
-| `dimensions` | Vector dimensions (must match the model's output) |
+A usable embedding configuration needs both:
 
-When `providerId` is empty, semantic search is unavailable and memory retrieval falls back to keyword matching.
+- a non-empty model name; and
+- either a configured provider or an explicit OpenAI-compatible `baseUrl`.
+
+Elowen sends embedding requests to `/v1/embeddings`. If `dimensions` is set, every returned vector must have that width. The default configuration is empty, so semantic retrieval is disabled until you configure a model.
+
+The setup wizard can configure this step:
+
+```bash
+elowen setup --memory reuse --embedding-model text-embedding-3-small
+```
+
+Supported setup flags are:
+
+- `--memory reuse` — reuse an existing provider;
+- `--memory openrouter` — configure the OpenRouter provider;
+- `--memory skip` — leave embeddings disabled;
+- `--memory-key` — provide the OpenRouter key;
+- `--embedding-model` — choose the embedding model;
+- `--skip-test` — skip the connection test.
+
+The setup defaults recommend `text-embedding-3-small` and the OpenRouter API base `https://openrouter.ai/api/v1`. Run `elowen doctor` to check memory readiness.
+
+When you change the embedding model, existing vectors no longer match the model. Use the codebase and memory reindex actions described below as appropriate.
 
 ### Categorization model
 
-The auto-classifier can run on a separate model. Its config (`providerId`, `model`, `baseUrl`) is independent of the embedding config, so you can use a cheap model for classification while keeping a stronger one for embeddings.
+Categorization is separate from embeddings. In **Settings → Memory**, choose a provider and model for classification. It can be a less expensive model than the one used for embeddings. Categorization is best-effort; a categorization failure does not prevent a memory from being stored.
 
-## Codebase indexing
+## Codebase semantic search
 
-The codebase plugin reuses the same embedding model for semantic code search. Three tools expose it:
+The codebase search feature reuses the configured embedding model for semantic search over indexed repositories:
 
-| Tool | Purpose |
-|------|---------|
-| `CodebaseSearch` | Find code by meaning — locates where a concept lives without knowing exact identifiers |
-| `CodebaseReindex` | Rebuild the index (incremental by default; `full` rebuilds from scratch). Admin only. |
-| `CodebaseStatus` | Report indexed chunk/file counts, staleness, and model info per repository |
+- `CodebaseSearch` finds code by meaning;
+- `CodebaseStatus` reports indexed files, chunks, staleness, and model information;
+- `CodebaseReindex` refreshes the index incrementally, or rebuilds it with `full: true`.
 
-Configuration lives under the codebase plugin settings:
+After changing the embedding model, check `CodebaseStatus` and run `CodebaseReindex({ full: true })` so the index is rebuilt with the new vectors.
 
-| Field | Purpose |
-|-------|---------|
-| `includeGlobs` | File patterns to index |
-| `excludeGlobs` | Patterns to skip |
-| `maxFileBytes` | Skip files larger than this |
-| `chunkMaxChars` | Maximum characters per indexed chunk |
-| `topK` | Default result count for searches |
-| `relevanceFloor` | Minimum similarity score to include a result |
-| `autoReindex` | Re-index automatically on file changes |
+## API and privacy
 
-> If you change the embedding model, existing vectors become stale. Run `CodebaseReindex` with `full: true` to rebuild against the new model.
+Memory API routes are caller-owned: a caller can read and modify only its own memories. Embedding and categorization configuration is workspace-level and admin-gated.
 
-## Memory in the web UI
+The main API surfaces are:
 
-The `/memory` page provides:
+- `GET/POST /memory` — list or create memories;
+- `GET/PATCH/DELETE /memory/:id` — inspect, update, or soft-delete one memory;
+- `POST /memory/:id/restore` and `DELETE /memory/:id/purge` — restore or permanently purge;
+- `POST /memory/merge` — merge memories;
+- `GET /memory/categories` and `POST /memory/categories` — list or create categories;
+- `PATCH/DELETE /memory/categories/:cid` — edit or delete a category;
+- `POST /memory/retrieve` — inspect retrieval for a query;
+- `POST /memory/reindex` — synchronously re-embed up to 100 pending memories;
+- `GET/PUT /memory/embedding` and `POST /memory/embedding/test` — inspect, configure, or test embeddings;
+- `GET/PUT /memory/categorization` and `POST /memory/reclassify` — inspect, configure, or run categorization.
 
-- A searchable list of all stored memories with category, kind, and importance
-- A brain map visualization showing relationships between memories
-- A retrieval debug panel that shows exactly what the agent would recall for a given query
+Do not store passwords, tokens, API keys, or other secrets. The curator is instructed not to save secrets, but explicit `MemoryAdd` and API input are not secret-filtered.
 
-Retention settings are in Settings → Elowen AI → Memory retention. The recall and mid-turn recall budgets are in Settings → Elowen AI → Limits, and the relevance floor is in Runtime. Each user's own switch for mid-turn recall is in Account → Memory.
+## Good memory hygiene
 
-See [Brain & Chat](brain-chat) for how recalled memories feed into conversations.
-
-## Scope and privacy
-
-Memory is personal: each user's memories are isolated and only recalled in that user's sessions. Channel conversations do not surface one user's memories to another. Project-scoped memory further narrows recall: when working in a project, only memories from that project's categories and global categories are eligible. The agent never stores secrets, tokens, or credentials — only structural and preference facts.
-
-## Best practices
-
-- Store architectural decisions with enough context to recall *why*, not just *what*. Include the constraint that drove the decision.
-- Store preferences only when stated as standing or expressed more than once. One-time requests are not preferences.
-- Store environment and access topology (deployment layout, service names) but never secrets.
-- Prefer updating an existing memory over adding a paraphrase. Merge similar memories when they accumulate.
-- If a stored fact is contradicted by new evidence, update it — do not leave stale and correct versions coexisting.
-- Recalled memories reflect what was true when written. If one names a file, function, or config key, verify it still exists before relying on it.
-- Keep each memory self-contained: a reader with no other context should understand it in one pass.
-- Bind project-specific categories to their project — this keeps infrastructure facts about one deployment from leaking into the wrong context.
+- Write one self-contained fact, not a conversation excerpt.
+- Store the reason behind an architectural decision, not only the final choice.
+- Use `MemoryUpdate` when a fact changes; use `MemoryMerge` for duplicate or overlapping memories.
+- Give categories precise descriptions and bind project-specific facts to the right project.
+- Treat recalled facts as historical context. Verify files, configuration, and external state before relying on them.
 
 [Next: Usage & Costs](usage-costs)

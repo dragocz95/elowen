@@ -8,108 +8,156 @@ group: Everyday use
 
 # Brain & Chat
 
-The brain is Elowen's embedded, in-process agent runtime. It is what you talk to in the terminal, Web UI, and supported chat platforms. Tasks may use a separate coding CLI in tmux, but a brain conversation is a server-side agent session with its own history, tools, policy, model choice, and live event stream.
+Elowen's **Brain** is the embedded, server-side runtime behind chat. It keeps the conversation history, selected model, tools, permissions, memory context, and live output stream together for each conversation.
+
+It is not a separate tmux coding agent. Terminal commands may use the terminal plugin, but the chat turn itself runs in the daemon and streams its response to the connected client.
 
 ![Elowen brain chat](images/brain-chat.png)
 
-## One conversation model across surfaces
+## Where you can chat
 
-The Web UI chat dock, terminal chat, Discord, Telegram, Microsoft Teams, and WhatsApp all call the same daemon service. They differ only in how they identify and present a conversation:
+The same Brain service powers:
 
-- **The Web UI** follows the user's active conversation and exposes chat alongside the current workspace.
-- **The CLI** binds to a resolved session, so using a second terminal does not unexpectedly move another surface.
-- **Platform adapters** maintain channel-scoped conversations and apply the mapped user's project, tool, model, and role policy.
+- **Web chat** in the Elowen web interface.
+- **CLI chat**, started with `elowen` or `elowen chat`.
+- **Discord, Telegram, Microsoft Teams, and WhatsApp** channel conversations.
 
-Every conversation is checked against the authenticated user's access at the daemon. A UI control cannot grant a model, project, or tool that the server has not allowed.
+The interface changes, but the daemon remains authoritative. A client cannot grant itself a model, project, tool, or permission that the server has not allowed.
 
-## Turns that stay coherent
+## Conversations and queued messages
 
-Only one turn runs in a conversation at a time. If you send a message while the agent is working, it is accepted into a durable queue and delivered as a follow-up after the current turn. Queued items are visible to connected clients and survive a daemon restart. Press **↑** (CLI) or use the recall control (web) while the queue is non-empty to edit or remove a queued message before it is delivered.
+Only one turn runs in a conversation at a time. If you send another message while Elowen is working, the daemon accepts it into the conversation's pending queue and delivers it after the current turn. Connected clients receive the queue state from the server.
 
-Long conversations are managed in three complementary ways:
+You can manage pending messages without interrupting the active turn:
 
-- **Compaction** summarizes older history while retaining the useful tail. The compaction marker and summary are persisted, so the saved tokens are not lost on a later reload.
-- **Image pruning** strips historical image attachments from the model context once they are no longer in the active window, curbing token bloat without losing the surrounding text.
-- **Idle rollover** can start a fresh session after a configured idle period, when continuing an old prompt cache would be wasteful. The previous conversation stays available to browse.
-- **Limits** bound agent steps, tool-output previews, memory recall, goal turns, elicitation waits, and channel-session capacity. Instance owners configure these in **Settings → Elowen AI**.
+- In the CLI, press **↑** with an empty composer to recall the newest queued message.
+- Use the CLI queue-remove keybind to remove the newest pending message.
+- In web chat, use the remove control shown beside a queued message.
 
-## Compaction
+The **Web** and **CLI** surfaces can select a conversation, rename it, and start a fresh one. The `/new` command starts a fresh conversation. `/clear` clears the current Web or CLI conversation while keeping its conversation identity.
 
-When a conversation grows long, Elowen summarizes the older history so the model's context window never overflows. You simply keep talking — the summary replaces the bulky early messages, and nothing that matters is lost. Long-term memory is a separate store and is unaffected by compaction.
+## Chat commands
+
+The command menu is generated from the daemon's command catalog, so the available commands depend on the surface and your permissions. The main conversation controls are:
+
+| Command | Purpose | Surfaces |
+|---|---|---|
+| `/new` | Start a fresh conversation | All chat surfaces |
+| `/clear` | Clear the current conversation and start with an empty context | Web, CLI |
+| `/stop` | Stop the running turn | All chat surfaces |
+| `/stats` | Show model, context, and usage information | All chat surfaces |
+| `/compact` | Summarize the conversation now | Web, CLI, chat platforms |
+| `/model` | Choose a different AI model | Web, CLI, chat platforms |
+| `/reasoning` | Choose the reasoning effort supported by the active model | Web, CLI, chat platforms |
+| `/fast` | Toggle OpenAI OAuth priority processing when supported | Web, CLI, chat platforms |
+| `/plan` | Plan the approach before editing | Web, CLI |
+| `/build` | Implement changes with tools | Web, CLI |
+| `/workflow` | Orchestrate the task as a DAG of sub-agents | Web, CLI |
+
+`/status` is not a current Brain command; use `/stats` for session information. Surface-specific commands, such as CLI session selection and keyboard settings, are listed in the command menu.
+
+## Context windows and compaction
+
+A conversation's context window contains the recent transcript plus the instructions, tools, memory, and other context needed for the current turn. When the context grows, Elowen compacts it by summarizing older messages and retaining the useful recent context.
 
 ### Automatic compaction
 
-Compaction triggers automatically when the conversation reaches a threshold of the model's context window — 80% by default. You can tune the threshold anywhere between 30% and 95%, or turn automatic compaction off entirely, in **Account → Elowen AI** (the auto-compact toggle and slider). A between-turn check makes sure the next request never overflows the window mid-work. Channel conversations and unattended workers compact automatically too, so long-running automation needs no babysitting.
+Automatic compaction is enabled by default and runs at **80%** of the model's context-window capacity. Change it in **Account → Elowen AI**:
 
-### Per-model thresholds
+- Turn automatic compaction on or off.
+- Set the global threshold from **30% to 95%**.
+- Configure a separate threshold for individual models in the per-model threshold editor.
 
-Different models have very different context windows, and a single threshold may not fit all of them. The per-model drawer in **Account → Elowen AI** lets you set a different threshold for each model — a small-context model compacts earlier, a large one later. Each row shows the model's context size so the choice is informed, and any override can be reset back to the default per model.
+The setting applies to live conversations as well as new ones. Channel conversations keep proactive compaction enabled; their threshold follows the composing account's setting.
 
 ### Compaction model
 
-Summarizing does not have to use the same model you chat with. You can pick a separate compaction model — for example, chat on Claude but have a cheaper model do the summarizing. By default the conversation's own model compacts itself.
+You can select a separate model for summarizing in **Account → Elowen AI → Compaction model**. It may use a different provider from the chat model. If you leave it empty, most providers compact with the selected chat model; ChatGPT OAuth may use its configured default model when the selected model is a different catalog entry.
 
 ### Manual compaction
 
-Type `/compact` in the CLI to compact now, without waiting for the threshold. Type `/compact <text>` to steer the summary toward what you want it to keep. If there is nothing worth compacting yet, the command is a harmless no-op.
+Run `/compact` when you want to free context immediately. In Web and CLI chat, you can add text to steer what the summary should preserve, for example:
 
-### What survives a compaction
+```text
+/compact Keep the deployment decisions and the files changed so far.
+```
 
-Compaction is not a blind trim. What carries over:
+A conversation that has nothing to compact returns a harmless no-op. After a real compaction, the transcript shows a `context compacted` divider. The compaction summary is persisted with the conversation, and long-term memory is stored separately, so compaction does not delete your memories.
 
-- The recent tail of the conversation, kept verbatim.
-- Your active plan, which is persisted to disk and re-injected after compaction.
-- A working set of up to 12 files the agent has touched, marked as edited or read.
-- Long-term memory, which lives outside the conversation entirely.
+## Models, reasoning, and images
 
-> After a compaction, the agent is instructed to re-read files rather than trust the summary — so always trust freshly re-read state over a recalled detail.
+### Choosing a model
 
-### What you see
+The default model is configured per account in **Account → Elowen AI**. You can also switch the active conversation from the model picker or with `/model`. The model catalog is assembled from the providers enabled by the instance operator, including configured OpenAI-compatible and Anthropic providers and supported OAuth accounts:
 
-The CLI shows a `compacting conversation…` note while it runs, then a `· · · context compacted · · ·` divider in the transcript. Web chat shows the same labelled divider. The compaction marker and summary are persisted, so the saved tokens are not lost on a later reload.
+- OpenAI Codex / ChatGPT OAuth
+- Claude OAuth
+- GitHub Copilot OAuth
+- Kimi OAuth
 
-## Personality
+Changing the model keeps the conversation and switches the live session to the new model. The selected provider must still be configured; Elowen does not silently substitute another provider when one is missing.
 
-The personality setting shapes the tone and verbosity of your agent's replies. Four presets are available: **professional**, **friendly**, **concise**, and **detailed**. In Czech conversations it also controls tykání versus vykání.
+### Reasoning effort
 
-Set it in **Account → Elowen AI** — the presets appear as pills. Your choice applies to your conversations on every surface: CLI, web chat, and channels.
+Reasoning controls are model-specific. Elowen only shows levels the active model and provider support; an unknown custom model does not receive a guessed reasoning parameter. Set the level in the model picker or with `/reasoning`. The effective level is saved to your account settings.
 
-If none of the presets fits, you can write your own custom personality text, which overrides the preset entirely. See [Your Account & Preferences](account-preferences) for details.
+`/fast` enables OpenAI OAuth priority processing only for compatible Codex models. It is rejected for unsupported providers or models rather than being silently ignored.
 
-## Models and reasoning
+### Vision fallback
 
-Elowen supports configured OpenAI-compatible and Anthropic providers, plus OAuth-backed **Claude**, **ChatGPT**, **GitHub Copilot**, and **Kimi** accounts. A provider's model catalog is used by chat, delegated sub-agents, and plugins that request a model field. OpenRouter's zero-cost `:free` catalog variants are filtered out at the source, so every listed model has metered, reported pricing.
+Set an optional **Vision model** in **Account → Elowen AI**. When a message contains an image and the current model is not known to support images, Elowen temporarily switches to the configured vision model. It switches back to the normal model on a later text-only turn.
 
-Select a model for the current conversation where your surface provides a picker. Reasoning options are shown only when the chosen model exposes them. ChatGPT OAuth models can additionally use priority processing through `/fast` when the selected model supports it. The daemon preserves provider credentials and returns only safe configuration metadata to the Web UI.
+A model already known to support images is not replaced by the fallback. If no vision model is configured, Elowen keeps using the current model and the provider determines whether the image can be processed.
 
-Connected **ChatGPT**, **Claude**, and **Kimi** accounts expose their subscription usage limits, which Elowen polls and maps into shared 5-hour and weekly windows. In **Settings → Elowen AI**, each connected OAuth account row carries a slim per-account subscription usage bar. It is reported independently of the active model and colored by pressure: accent normally, warning at about 70%, then danger at about 90%.
+### Subscription usage
 
-Use the provider connection flow in **Settings → Elowen AI**. It can test a configured provider before you rely on it for normal chat or automation. In the same connected-accounts list, an unused, disconnected OAuth account type can be hidden and later restored from a **+** menu. This is a display filter only — credentials and provider entries are untouched, and a type that is actually connected is never hidden.
+Usage indicators are available for connected ChatGPT, Claude, and Kimi OAuth accounts when their provider exposes usage data. Elowen reports the provider's limits; it cannot increase or reset them. GitHub Copilot does not have a subscription usage rail in Elowen.
 
-## Context is assembled per turn
+## Context assembled for each turn
 
-Elowen builds a normal turn from the user's message plus the current policy, selected tools, relevant memory, skills, and plugin contributions. Dynamic context is sampled for the current turn only, so time-sensitive information does not become a stale system prompt or a stored user message.
+Before sending a normal message, Elowen combines:
 
-Plugins may request their dynamic context before or after the user's text. Both placements are explicitly framed as ephemeral context, are not persisted in the transcript, and are skipped for raw plugin prompt commands. This lets a plugin add live facts such as the current date or runtime state while preserving the user's original message and conversation history.
+- Your message and the current conversation context.
+- The active model and reasoning setting.
+- The applicable tool and permission policy.
+- Relevant personal or project-scoped memories.
+- Loaded skills and enabled plugin context.
+- The current working directory and other runtime context where the surface provides them.
 
-## Memory
+Dynamic plugin context is ephemeral: it is used for the current turn and is not added to the visible transcript as a user message.
 
-Memory is per user and durable. Before a turn, Elowen retrieves a small, relevant set of memories; semantic retrieval is used when an embedding model is configured, otherwise it falls back to keyword retrieval. Retrieved text is framed as context rather than executable instruction.
+## Memory during chat
 
-Recall does not stop at the start of a turn. The opening search is driven by your message alone, which says little once the work moves on to files, tools, and errors, so additional passes search again from what the turn has actually done. Mid-turn recall never blocks the answer: the search starts and the model proceeds, and any memory it finds lands in the context one model call later. Retrieved memories are injected at a fixed, anchored position rather than appended wherever the work happens to be, so their arrival does not move the bytes the provider's prompt cache already holds. Shared channel sessions do not run mid-turn recall, because one person's memories must never surface to another sender.
+Turn-start recall searches from the message you send. When the work later moves through files, tools, and errors, Elowen can search again using the work already done in that turn. This **recall while working** is non-blocking: the model continues, and a result that arrives is available on a later model call.
 
-Both recall paths have their own switch in **Account → Memory**: auto-recall searches after each message, and the "recall while working" toggle covers the mid-turn passes. Operators bound how many mid-turn searches a single turn may run and how much context their results may add in **Settings → Elowen AI → Limits** (recall while working — passes, memories, and tokens).
+Both automatic recall and recall while working are enabled by default for user conversations. Change the personal switches in **Account → Memory**. Operators configure the recall budgets in **Settings → Elowen AI → Limits**.
 
-After an owner exchange, optional curation can extract durable facts in a capped background operation. You can inspect, create, edit, categorize, merge, restore, or purge memories in the [Memory workspace](web-ui#memory).
+In shared channel conversations, memory is scoped to the verified account associated with the sender. An unlinked sender does not recall that account's personal memories, and one sender's memories are not exposed to another sender. See [Memory & Embeddings](memory) for retrieval, categories, retention, and project scope.
 
 ![Memory workspace](images/brain-memory.png)
 
-Configure embeddings and categorization in **Settings → Memory**. An API-key or OpenAI-compatible Elowen AI provider can be reused without storing a duplicate key. OAuth-only accounts do not expose an embedding endpoint, so semantic memory needs a supported embedding provider; without one, recall remains available through keyword matching.
+## Tools, approvals, and safety
 
-## Tools, approvals, and output
+Tools come from Elowen core and from enabled plugins. The server applies the account's project, tool, and permission rules before execution; the client cannot widen them.
 
-Tools come from the core and enabled plugins. Per-user policy narrows the visible and executable tool set, and execution-time checks remain authoritative. A tool's successful output is hidden unless its built-in or plugin declaration explicitly opts into transcript display; failures and important annotations remain visible.
+Some tools require approval. An interactive chat can pause while it waits for your answer. Unattended work uses its captured non-interactive permission boundary and fails closed when it cannot obtain the required authority.
 
-Approval questions are part of the conversation lifecycle. Interactive turns can wait for a decision; unattended work follows its captured non-interactive permission boundary and fails closed when it cannot obtain authority. See [Autonomy & Safety](autonomy-safety).
+The **YOLO** setting can auto-approve eligible tool requests for a session, while explicit deny rules still apply. Configure its account default, unattended-ask behavior, and granular permission rules in **Account → Elowen AI**. Use `/yolo` in the CLI for the active conversation only. Read [Autonomy & Safety](autonomy-safety) before enabling automatic approval.
 
-[Next: Memory & Embeddings](memory)
+## Plan, build, and workflow modes
+
+Web and CLI chat can stamp each outgoing turn with a mode:
+
+- **Plan** (`/plan`) asks Elowen to work out the approach before editing and applies the plan-mode tool policy.
+- **Build** (`/build`) is the normal implementation mode.
+- **Workflow** (`/workflow`) asks Elowen to orchestrate the work as a dependency-aware DAG of sub-agents.
+
+The mode applies to following messages; changing it does not send a message by itself. See [Projects & Workflow](projects-workflow) and [Autonomy & Safety](autonomy-safety) for the operating details.
+
+## Related pages
+
+- [CLI](cli) — start chat, select sessions, and use the terminal interface.
+- [CLI keybinds](cli-keybinds) — keyboard controls for queueing, interrupting, and editing prompts.
+- [Memory & Embeddings](memory) — memory storage, recall budgets, categories, and embeddings.
+- [Account & Preferences](account-preferences) — model, personality, memory, and permission settings.
+- [Configuration](configuration) — instance-level providers, models, limits, and runtime settings.

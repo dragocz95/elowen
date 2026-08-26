@@ -8,71 +8,121 @@ group: Everyday use
 
 # Web UI
 
-The Web UI observes and steers the same daemon used by the terminal and chat-platform plugins. It does not have a second conversation store, Project policy, permission model, or credential store.
+The Web UI is the browser interface to your Elowen daemon. After you sign in, the shell gives you one navigation rail, a shared chat dock, account controls, and a command palette. The browser and CLI operate on the same server-side conversations and account permissions.
 
-Desktop navigation uses one shared rail. On smaller screens the same information becomes a linear layout with drawers rather than a compressed desktop composition.
+The root URL redirects to `/dash`.
 
-## The shell
+## Navigation
 
-Every page shares authentication, localization, React Query state, command palette, account controls, and the advisor chat surface. Enabled plugins contribute their own navigation worlds and settings sections at runtime; disabling a plugin removes those pages without leaving a fake empty core screen.
+The core navigation is deliberately small:
 
-## Core workspaces
-
-| Route | Use it for |
+| Route | What it contains |
 | --- | --- |
-| `/dash` | Current assistant activity, recent events, schedules, and setup signals. |
-| `/chat` | Full-page conversation, model controls, queued messages, workflows, sub-agents, processes, and telemetry. |
-| `/projects` | Project registration, access context, and read-only Git checkout state. |
-| `/memory` | Durable memories, categories, vitality, retrieval, merge, restore, and purge. |
-| `/settings` | Instance configuration and enabled plugin settings. |
-| `/users` | Administrator account, Project, plugin, model, and tool access management. |
-| `/account` | Personal profile, security, notifications, communication, model, and terminal preferences. |
+| `/dash` | Home view with setup status, current activity, team presence, and the activity journal. |
+| `/chat` | Full-page chat with conversation history, model controls, live telemetry, workflows, and sub-agents. |
+| `/projects` | Projects you can access, their filesystem paths, access assignments, and Git status. |
+| `/memory` | Your account's durable memories, categories, retrieval inspection, and lifecycle actions. |
+| `/account` | Your profile, password, notifications, model, memory, communication, and terminal preferences. |
+| `/users` | Administrator-only account and access management. |
+| `/settings` | Administrator-only daemon, model, plugin, memory, and data settings. |
 
-Plugin pages render under `/p/<plugin>/<route>`. Their labels and localized copy come from the plugin manifest/i18n files, not from retired host dictionary namespaces.
+Your navigation layout is stored per account. You can hide or reorder destinations from the navigation menu; hidden destinations remain reachable from a direct URL or the command palette.
 
 ![Elowen's dashboard](images/web-ui-dashboard.png)
 
+## Shared shell controls
+
+The top bar provides:
+
+- the current page title and location;
+- the command palette, opened with the search button (`⌘K` is shown on desktop);
+- language selection;
+- your account menu and sign-out control.
+
+On wide screens the navigation is a column or compact icon rail. On narrow screens it opens as a drawer over the page. Use `Escape` or the backdrop to close the drawer.
+
+The advisor launcher opens the chat dock from other pages. `/chat` uses the full-page chat instead of opening a second dock. Plugin pages are hosted under `/p/<plugin>` or `/p/<plugin>/<route>` and appear only when the corresponding plugin UI is available to your account.
+
 ## Chat
 
-The chat dock is available across the product, and `/chat` expands the same conversation into a full-page view. Both surfaces use the same server-side session as the CLI and channel adapters.
+Open `/chat` for the full conversation surface. It uses the same conversation controller as the chat dock, CLI, and channel adapters.
 
-- **Composer** — slash commands, file attachments, paste, and queued follow-ups.
-- **Model controls** — switch model, reasoning effort, fast mode, plan/build mode, and conversation-level YOLO.
-- **History** — search, rename, fork, export, delete, or start a conversation.
-- **Todos** — the generic conversation checklist from the bundled todo plugin.
-- **Sub-agents and workflows** — live progress and drill-in to each child conversation or workflow node.
-- **Processes** — background shell processes owned by the current session/account.
-- **Telemetry** — context, usage, goals, workflows, sub-agents, processes, Project, MCP, and LSP state.
+- **Composer:** send messages, use slash commands, attach files, paste content, and queue follow-ups.
+- **Model controls:** choose a model, reasoning effort, fast mode, plan/build mode, and conversation-level YOLO.
+- **History drawer:** search, rename, fork, export, delete, or start conversations. The register also lets you inspect available sessions and open one in chat.
+- **Live work:** see todos, sub-agent progress, workflow nodes, tool calls, and background processes.
+- **Telemetry:** inspect context and usage, goals, workflows, sub-agents, processes, the active Project, MCP, and LSP state.
 
-Long conversations load lazily and preserve scroll position while older messages are fetched. Tool calls, reasoning, session changes, and workflow markers render in the transcript rather than in a separate task/mission UI.
+On desktop, telemetry can stay open as a column beside the conversation. On mobile it opens as a drawer. Conversation history is loaded in pages, so older messages appear as you scroll upward.
 
 ## Projects
 
-Projects defines the directories accounts may work in. The core page shows metadata, access context, branches, recent commits, sanitized remotes, current branch/HEAD/upstream, and dirty/untracked/ahead/behind state.
+Open `/projects` to browse the Project roots configured for Elowen. A Project is a path boundary: access is assigned to accounts by an administrator, and members cannot register, edit, or remove Projects.
 
-Core Projects does not display a PR switch, GitHub token, repository mapping, worktree lifecycle, publication, or merge action. File editors and any future local/remote workflow are plugin-owned and consume the same Project tenancy and path guard.
+Select a Project to open its detail panel. The core overview can include:
+
+- the Project slug, path, and notes;
+- the current branch and clean/changed state;
+- ahead/behind counts;
+- available branches and recent commits.
+
+Administrators also see the **Access** section for assigning non-admin accounts to the Project. Removing a Project from Elowen detaches its registration; it does not delete files from disk.
 
 ![Projects workspace](images/projects-list.png)
 
+### Project plugins
+
+Enabled plugins can add tabs to the Project detail panel. These tabs are not part of core Projects.
+
+- **Sandbox** provides account-scoped Git worktree management. Create or select a workspace for a Project and conversation, review changes, commit explicitly selected workspace-relative paths, or remove a workspace after its loss preview and confirmation.
+- **GitHub** connects your GitHub identity, maps a Project to a repository, and provides repository and pull-request views with checks, reviews, and changed files.
+
+GitHub branch publishing requires both a verified Project repository mapping and an active Sandbox workspace for the current conversation and Project. Publishing, pull-request creation, reviews, and merges show a server-generated preview and require a one-time confirmation. The GitHub plugin's default merge method is **Squash**.
+
 ## Memory
 
-The Memory workspace lets you inspect, search, categorize, merge, restore, or purge durable facts. List and detail views show importance, usage, category, audit history, and vitality. Retrieval runs the real recall pipeline and shows the score breakdown the assistant would receive.
+Open `/memory` to manage durable facts belonging to your account. The workspace provides three views:
 
-## Settings
+- **List** — search and filter memories by status, kind, category, and text; sort and select records for bulk actions.
+- **Brain** — inspect the relationship map of your memories.
+- **Retrieval** — run the real recall pipeline and inspect the scores and results that would be supplied to the assistant.
 
-Core settings cover:
+Select a memory to open its detail panel. Depending on its state, you can edit its category, merge it with other records, restore it, or permanently purge it. Personal memories are not visible across accounts.
 
-1. **System** — readiness, service state, updates, and token lifetime.
-2. **Elowen AI** — provider accounts, agent identity, limits, retention, runtime, and context windows.
-3. **Models** — visible model presets, custom entries, and notes.
-4. **Data** — administrative maintenance and cleanup.
-5. **Plugins** — installation, enable/disable, grants, logs, and plugin-owned sections.
-6. **Memory** — embedding and categorization configuration.
+## Account
 
-Plugin credentials are never returned to the browser. New integration secrets live in the encrypted plugin vault; API responses expose only non-secret metadata or whether a value is set.
+Open `/account` for settings that belong to your account rather than the whole daemon. The profile section includes your display name, email, avatar, default Elowen AI model, interface scale, visual-effects preference, and links to your Discord, Microsoft Teams, Telegram, or WhatsApp identity where supported.
+
+Other sections cover:
+
+- **CLI** — personal Elowen/CLI behavior and model settings;
+- **Memory** — recall and memory-saving preferences;
+- **Personality** — your instructions and response style;
+- **Notifications** — browser push notifications;
+- **Security** — password changes;
+- **Terminal** — terminal appearance and behavior.
+
+Plugins can add account sections. For example, the GitHub plugin adds **GitHub** under Account, while Sandbox adds **Development environment** for your account HOME, execution mode, and Git identity.
+
+## Administration
+
+Only administrators can open `/users` and `/settings`.
+
+`/users` manages accounts, administrator status, Project assignments, plugin grants, model access, and tool access. Select an account to inspect or change its access context.
+
+`/settings` contains the daemon-wide sections:
+
+- **System** — service readiness, updates, and token lifetime;
+- **Elowen AI** — provider configuration, agent identity, limits, retention, runtime, and context windows;
+- **Models** — visible presets and custom model entries;
+- **Plugins** — installation, enable/disable state, grants, logs, and plugin configuration;
+- **Memory** — embedding and categorization configuration;
+- **Data** — administrative maintenance and cleanup.
+
+Plugin settings are owned by the plugin and open in that plugin's page, not as a second copy inside core Settings. Plugin credentials stay server-side; the browser receives metadata and status, not secret values.
 
 ## Responsive and accessible behavior
 
-Register-style workspaces preserve text status alongside color, keyboard row navigation, visible focus, error-before-loading rendering, and full-width mobile drawers. Confirm dialogs present server-provided previews, but the server remains responsible for authorization and stale-state checks.
+The same navigation and controls work with keyboard, mouse, and touch. Lists support keyboard selection and visible focus, statuses are conveyed with text as well as color, and mobile detail panels become drawers. Destructive or external actions show a preview before confirmation; the server performs the final authorization and stale-state check.
 
 [Next: CLI](cli)
