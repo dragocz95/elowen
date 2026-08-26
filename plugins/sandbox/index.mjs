@@ -31,7 +31,7 @@ export async function register(ctx) {
   // Forked sub-agent runners consume the daemon-migrated database and must not race a filesystem handoff.
   // They still create account HOME lazily through prepareExecution when a delegated command actually runs.
   const migrationState = typeof process.send === 'function'
-    ? { collisions: [], migrated: 0, retiredSessions: 0 }
+    ? { collisions: [], migrated: 0, retainedSessions: [] }
     : migrateLegacyHomes(dataDir);
   let workspaces;
   const execution = createExecutionService({ ctx, db, dataDir, listWorkspaces: () => workspaces?.listWorkspaces() ?? [] });
@@ -51,9 +51,14 @@ export async function register(ctx) {
   };
 
   ctx.registerControl('sandbox', {
-    workspaceRoots: ({ accountUserId, projectIds }) => workspaces.workspaceRoots({ accountUserId, projectIds }),
+    workspaceRoots: ({ projectIds }) => {
+      const accountUserId = accountId();
+      return accountUserId === null ? [] : workspaces.workspaceRoots({ accountUserId, projectIds });
+    },
     activeWorkspace: (input) => {
-      const workspace = workspaces.activeWorkspace(input);
+      const accountUserId = accountId();
+      if (accountUserId === null) return null;
+      const workspace = workspaces.activeWorkspace({ ...input, accountUserId });
       return workspace ? {
         workspaceId: workspace.id,
         projectId: workspace.projectId,
@@ -165,6 +170,11 @@ export async function register(ctx) {
       id: 'sandbox', label: 'Sandbox', ok: false,
       detail: 'Legacy and current account HOME directories both exist; migration was refused.',
       hint: 'Inspect plugins-data/terminal/sandbox-home and plugins-data/sandbox/users before choosing which HOME to retain.',
+    };
+    if (migrationState.retainedSessions.length > 0) return {
+      id: 'sandbox', label: 'Sandbox', ok: false,
+      detail: `${migrationState.retainedSessions.length} legacy session HOME director${migrationState.retainedSessions.length === 1 ? 'y is' : 'ies are'} retained because process ownership cannot be verified.`,
+      hint: 'Confirm no legacy process uses these directories, then remove them manually from plugins-data/terminal/sandbox-home.',
     };
     if (ctx.config.confineNonOperators === false) return {
       id: 'sandbox', label: 'Sandbox', ok: true,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 const EXECUTION_LEASE_MS = 20_000;
 const REPO_LEASE_MS = 30_000;
@@ -70,23 +71,51 @@ export function initSandboxDb(ctx) {
   return db;
 }
 
-function processAlive(pid) {
+function processExists(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; }
-  catch (error) { return error?.code === 'EPERM'; }
+  catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    return null;
+  }
 }
 
-export function reconcileStaleLeases(db, now = Date.now()) {
-  const execution = db.prepare('SELECT id, outer_pid, expires_at FROM p_sandbox_execution_leases').all();
+export function processIdentity(pid = process.pid) {
+  try {
+    const bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const end = stat.lastIndexOf(')');
+    if (!bootId || end < 0) return null;
+    const fields = stat.slice(end + 1).trim().split(/\s+/);
+    const startTicks = fields[19];
+    return startTicks && /^\d+$/.test(startTicks) ? `linux:${bootId}:${startTicks}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function ownerProvablyDead(row) {
+  const pid = Number(row.outer_pid);
+  const exists = processExists(pid);
+  if (exists === false) return true;
+  if (exists !== true) return false;
+  const stored = String(row.runner_identity ?? '');
+  if (!stored.startsWith('linux:')) return false;
+  const current = processIdentity(pid);
+  return current !== null && current !== stored;
+}
+
+export function reconcileStaleLeases(db, _now = Date.now()) {
+  const execution = db.prepare('SELECT id, outer_pid, runner_identity FROM p_sandbox_execution_leases').all();
   let executionRemoved = 0;
   for (const row of execution) {
-    if (Number(row.expires_at) >= now && processAlive(Number(row.outer_pid))) continue;
+    if (!ownerProvablyDead(row)) continue;
     executionRemoved += db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id = ?').run(String(row.id)).changes;
   }
-  const repos = db.prepare('SELECT common_dir, outer_pid, expires_at FROM p_sandbox_repo_leases').all();
+  const repos = db.prepare('SELECT common_dir, outer_pid, runner_identity FROM p_sandbox_repo_leases').all();
   let reposRemoved = 0;
   for (const row of repos) {
-    if (Number(row.expires_at) >= now && processAlive(Number(row.outer_pid))) continue;
+    if (!ownerProvablyDead(row)) continue;
     reposRemoved += db.prepare('DELETE FROM p_sandbox_repo_leases WHERE common_dir = ?').run(String(row.common_dir)).changes;
   }
   return { executionRemoved, reposRemoved };
@@ -96,7 +125,7 @@ export function createExecutionLease(db, input) {
   reconcileStaleLeases(db);
   const id = `sxl_${randomUUID()}`;
   const now = Date.now();
-  const runnerIdentity = `${process.env.ELOWEN_RUNNER_ID || 'process'}:${process.pid}`;
+  const runnerIdentity = processIdentity() ?? `unverifiable:${randomUUID()}`;
   db.prepare(`INSERT INTO p_sandbox_execution_leases
     (id, user_id, workspace_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -135,24 +164,27 @@ export function activeExecutionLeases(db, input = {}) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export async function waitForExecutionLeases(db, input = {}, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const active = activeExecutionLeases(db, input);
+    if (active.length === 0) return [];
+    if (Date.now() >= deadline) return active;
+    await sleep(50);
+  }
+}
+
 export async function withRepoLease(db, commonDir, fn, opts = {}) {
   const ownerId = `srl_${randomUUID()}`;
-  const runnerIdentity = `${process.env.ELOWEN_RUNNER_ID || 'process'}:${process.pid}`;
+  const runnerIdentity = processIdentity() ?? `unverifiable:${randomUUID()}`;
   const deadline = Date.now() + (opts.waitMs ?? 10_000);
   for (;;) {
     reconcileStaleLeases(db);
     const now = Date.now();
-    const claimed = db.prepare(`INSERT INTO p_sandbox_repo_leases
+    const claimed = db.prepare(`INSERT OR IGNORE INTO p_sandbox_repo_leases
       (common_dir, owner_id, outer_pid, runner_identity, heartbeat_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(common_dir) DO UPDATE SET
-        owner_id = excluded.owner_id,
-        outer_pid = excluded.outer_pid,
-        runner_identity = excluded.runner_identity,
-        heartbeat_at = excluded.heartbeat_at,
-        expires_at = excluded.expires_at
-      WHERE p_sandbox_repo_leases.expires_at < ?`)
-      .run(commonDir, ownerId, process.pid, runnerIdentity, now, now + REPO_LEASE_MS, now);
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(commonDir, ownerId, process.pid, runnerIdentity, now, now + REPO_LEASE_MS);
     const held = db.prepare('SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir = ?').get(commonDir);
     if (claimed.changes > 0 && held?.owner_id === ownerId) break;
     if (Date.now() >= deadline) throw new Error('repository worktree metadata is busy in another process');

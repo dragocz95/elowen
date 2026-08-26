@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { activeExecutionLeases, withRepoLease } from './db.mjs';
+import { activeExecutionLeases, waitForExecutionLeases, withRepoLease } from './db.mjs';
 import { assertRelativePath, runPrepared, userWorkspacesRoot } from './execution.mjs';
 
 const GIT_BASE_ARGS = [
@@ -290,7 +290,8 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
 
   const removeAccount = async (userId) => withRepoLease(db, `home:${userId}`, async () => {
     const owned = listWorkspaces({ userId });
-    if (activeExecutionLeases(db, { accountUserId: userId }).length > 0) throw coded('account sandbox data is in use by an active process', 'account_in_use', 409);
+    const active = await waitForExecutionLeases(db, { accountUserId: userId }, 5_000);
+    if (active.length > 0) throw coded('account sandbox data is in use by an active process', 'account_in_use', 409);
     for (const workspace of owned) {
       const project = ctx.host.stores().projects.get(workspace.projectId);
       if (!project) continue;

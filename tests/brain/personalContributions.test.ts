@@ -13,7 +13,7 @@ import { PluginRegistry } from '../../src/plugins/registry.js';
 import { toolAuthorityForUser } from '../../src/brain/brainDeps.js';
 import type { BrainDeps } from '../../src/brain/brainDeps.js';
 import { composeSessionTools, visibleToolNames } from '../../src/brain/session/capabilities.js';
-import { currentWorkDir, runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.js';
+import { currentContributionUserId, currentWorkDir, runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import { ChannelSessionService } from '../../src/brain/channels.js';
 import { LiveSessionRegistry } from '../../src/brain/session/liveRegistry.js';
@@ -413,19 +413,25 @@ describe('a room turn resolves personal contributions for whoever is writing', (
         allowedPaths: () => [project, amyWorkspace, bobWorkspace],
       };
       const sandbox: KnownControls['sandbox'] = {
-        workspaceRoots: ({ accountUserId }) => [{
-          workspaceId: accountUserId === 2 ? 'ws-amy' : 'ws-bob',
-          projectId: 7,
-          path: accountUserId === 2 ? amyWorkspace : bobWorkspace,
-        }],
-        activeWorkspace: ({ accountUserId }) => ({
-          workspaceId: accountUserId === 2 ? 'ws-amy' : 'ws-bob',
-          projectId: 7,
-          path: accountUserId === 2 ? amyWorkspace : bobWorkspace,
-          label: accountUserId === 2 ? 'Amy' : 'Bob',
-          branch: accountUserId === 2 ? 'amy/topic' : 'bob/topic',
-          baseRef: 'main',
-        }),
+        workspaceRoots: () => {
+          const accountUserId = currentContributionUserId();
+          return [{
+            workspaceId: accountUserId === 2 ? 'ws-amy' : 'ws-bob',
+            projectId: 7,
+            path: accountUserId === 2 ? amyWorkspace : bobWorkspace,
+          }];
+        },
+        activeWorkspace: () => {
+          const accountUserId = currentContributionUserId();
+          return {
+            workspaceId: accountUserId === 2 ? 'ws-amy' : 'ws-bob',
+            projectId: 7,
+            path: accountUserId === 2 ? amyWorkspace : bobWorkspace,
+            label: accountUserId === 2 ? 'Amy' : 'Bob',
+            branch: accountUserId === 2 ? 'amy/topic' : 'bob/topic',
+            baseRef: 'main',
+          };
+        },
         prepareExecution: async () => ({}) as never,
       };
       const r = room({

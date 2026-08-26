@@ -2,6 +2,7 @@ import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import type { PluginHostPush } from '../plugins/api.js';
+import { runWithContributionUser } from '../plugins/policyContext.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -369,7 +370,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   function sandboxWorkspaceRoots(accountUserId: number, projectIds: readonly number[]): { projectId: number; path: string }[] {
     const control = loadedPluginRegistry?.control('sandbox');
     if (!control) return [];
-    try { return control.workspaceRoots({ accountUserId, projectIds }); }
+    try { return runWithContributionUser(accountUserId, () => control.workspaceRoots({ projectIds })); }
     catch { return []; }
   }
   // Same late binding for the push transport: the PushSender is a bootstrap construct (it needs the

@@ -945,8 +945,8 @@ export interface SandboxPreparedExecution {
 /** Live Sandbox domain seam. Consumers resolve it on every use; retaining a value across plugin reloads is
  * invalid because its DB/runtime generation may already have been replaced. */
 export interface SandboxControl {
-  workspaceRoots(input: { accountUserId: number; projectIds: readonly number[] }): SandboxWorkspaceRoot[];
-  activeWorkspace(input: { accountUserId: number; sessionId: string; projectId: number }): SandboxWorkspace | null;
+  workspaceRoots(input: { projectIds: readonly number[] }): SandboxWorkspaceRoot[];
+  activeWorkspace(input: { sessionId: string; projectId: number }): SandboxWorkspace | null;
   prepareExecution(input: {
     command: SandboxExecutionCommand;
     cwd: string;

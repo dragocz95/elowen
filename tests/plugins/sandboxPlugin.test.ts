@@ -13,7 +13,7 @@ import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContex
 import type { Policy } from '../../src/plugins/policy.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 import { bubblewrapProbe, migrateLegacyHomes } from '../../plugins/sandbox/lib/execution.mjs';
-import { withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
+import { processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const log = { info() {}, warn() {}, error() {} };
@@ -118,10 +118,13 @@ describe('sandbox plugin workspaces', () => {
     expect(workspace.branch).toMatch(/^elowen\/u1\/feature-alpha-/);
     expect(existsSync(workspace.path)).toBe(true);
     const control = registry.control('sandbox')!;
-    expect(control.activeWorkspace({ accountUserId: 1, sessionId: 'brain-amy', projectId: 1 })?.path).toBe(workspace.path);
-    expect(control.workspaceRoots({ accountUserId: 1, projectIds: [1] })).toEqual([{ workspaceId: workspace.id, projectId: 1, path: workspace.path }]);
-    expect(control.workspaceRoots({ accountUserId: 1, projectIds: [] })).toEqual([]);
-    expect(control.workspaceRoots({ accountUserId: 2, projectIds: [1] })).toEqual([]);
+    const asAccount = <T>(userId: number, run: () => T) => runWithPolicy(policy(projectPath), run, {
+      identity: nonOperator(userId), contributionUserId: userId, sessionId: `brain-${userId}`, workDir: projectPath,
+    });
+    expect(asAccount(1, () => control.activeWorkspace({ sessionId: 'brain-amy', projectId: 1 }))?.path).toBe(workspace.path);
+    expect(asAccount(1, () => control.workspaceRoots({ projectIds: [1] }))).toEqual([{ workspaceId: workspace.id, projectId: 1, path: workspace.path }]);
+    expect(asAccount(1, () => control.workspaceRoots({ projectIds: [] }))).toEqual([]);
+    expect(asAccount(2, () => control.workspaceRoots({ projectIds: [1] }))).toEqual([]);
   });
 
   it('commits only explicit paths and leaves unrelated changes in place', async () => {
@@ -164,7 +167,9 @@ describe('sandbox plugin workspaces', () => {
     expect(handler).toBeTruthy();
     await handler!.fn(1);
     expect(existsSync(workspace.path)).toBe(true);
-    expect(registry.control('sandbox')!.activeWorkspace({ accountUserId: 1, sessionId: 'brain-orphan', projectId: 1 })).toBeNull();
+    expect(runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.activeWorkspace({ sessionId: 'brain-orphan', projectId: 1 }), {
+      identity: nonOperator(1), contributionUserId: 1, sessionId: 'brain-orphan', workDir: projectPath,
+    })).toBeNull();
   });
 
   it('boot reconciliation removes account data left while the plugin was disabled', async () => {
@@ -233,6 +238,25 @@ describe('sandbox execution HOME and leases', () => {
     await waitUntil(() => (db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get() as { n: number }).n === 0);
   });
 
+  it('rejects a control consumer cwd outside the current account roots', async () => {
+    const { registry, projectPath } = await setup();
+    const outside = temp('control-cwd');
+    await expect(runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({
+      command: { type: 'shell', command: 'pwd' }, cwd: outside, leaseKind: 'terminal',
+    }), { identity: nonOperator(1), contributionUserId: 1, sessionId: 'brain-control-cwd', workDir: projectPath }))
+      .rejects.toThrow(/outside the current account/);
+  });
+
+  it('keeps the lease until a foreground shell descendant exits', async () => {
+    const { registry, db, projectPath } = await setup(['sandbox', 'terminal']);
+    const running = runAs(registry, projectPath, 1, 'brain-descendant', 'Bash', { command: 'sleep 0.4 >/dev/null 2>&1 &' });
+    await waitUntil(() => (db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get() as { n: number }).n === 1);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    expect((db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get() as { n: number }).n).toBe(1);
+    await running;
+    expect((db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get() as { n: number }).n).toBe(0);
+  });
+
   it('fails closed without Sandbox for a non-operator and keeps the explicit operator fallback', async () => {
     const { registry, projectPath } = await setup(['terminal']);
     const refused = await runAs(registry, projectPath, 1, 'brain-no-sandbox', 'Bash', { command: 'echo no' });
@@ -243,6 +267,29 @@ describe('sandbox execution HOME and leases', () => {
 });
 
 describe('sandbox durable repository locks', () => {
+  it('does not reclaim an expired lease while its exact process owner is still alive', async () => {
+    const { db } = await setup();
+    const identity = processIdentity();
+    expect(identity).toBeTruthy();
+    db.prepare(`INSERT INTO p_sandbox_execution_leases
+      (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
+      VALUES ('live',1,NULL,1,?,?, 'terminal',0,0)`).run(process.pid, identity);
+    db.prepare(`INSERT INTO p_sandbox_repo_leases
+      (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+      VALUES ('/repo/live','owner',?,?,0,0)`).run(process.pid, identity);
+    expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 0, reposRemoved: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id='live'").get()).toEqual({ n: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/live'").get()).toEqual({ n: 1 });
+  });
+
+  it('reclaims a reused PID only when the stored process identity is provably different', async () => {
+    const { db } = await setup();
+    db.prepare(`INSERT INTO p_sandbox_execution_leases
+      (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
+      VALUES ('reused',1,NULL,1,?,'linux:different-boot:1','terminal',0,0)`).run(process.pid);
+    expect(reconcileStaleLeases(db, Date.now()).executionRemoved).toBe(1);
+  });
+
   it('serializes one Git common directory across concurrent owners', async () => {
     const { db } = await setup();
     let release!: () => void;
@@ -295,11 +342,21 @@ describe('sandbox HOME migration', () => {
     const collision = migrateLegacyHomes(sandboxData);
     expect(collision.collisions).toHaveLength(1);
     expect(existsSync(source)).toBe(true);
+
+    const legacySession = join(dataRoot, 'terminal', 'sandbox-home', 'session-0123456789abcdef');
+    mkdirSync(legacySession, { recursive: true });
+    writeFileSync(join(legacySession, 'state'), 'unknown owner');
+    const retained = migrateLegacyHomes(sandboxData);
+    expect(retained.retainedSessions).toContain(legacySession);
+    expect(existsSync(legacySession)).toBe(true);
   });
 });
 
-describe.skipIf(!bubblewrapProbe().available)('sandbox Linux confinement integration', () => {
+const confinementProbe = bubblewrapProbe();
+const confinementRequired = process.env.ELOWEN_REQUIRE_BWRAP === '1';
+describe.skipIf(!confinementRequired && !confinementProbe.available)('sandbox Linux confinement integration', () => {
   it('keeps the own root writable, foreign data unreadable, resolver visible and NoNewPrivs set', async () => {
+    expect(confinementProbe.available, confinementProbe.reason ?? 'bubblewrap probe failed').toBe(true);
     const { registry, projectPath, dataRoot } = await setup(['sandbox', 'terminal'], true);
     const foreign = temp('foreign');
     writeFileSync(join(foreign, 'secret.txt'), 'foreign-secret');

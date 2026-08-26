@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import type { KnownControls, SandboxWorkspace } from '../../plugins/api.js';
 import type { Policy } from '../../plugins/policy.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
+import { runWithContributionUser } from '../../plugins/policyContext.js';
 
 /** The client-reported directory, validated: a real directory the caller may access (all-access:
  *  anywhere; scoped: inside an allowed repo root), realpath-resolved. Undefined otherwise. */
@@ -75,8 +76,9 @@ export function effectiveTurnWorkDir(input: {
   if (projectIds.length === 0) return fallback;
 
   let roots: ReturnType<KnownControls['sandbox']['workspaceRoots']> = [];
-  try { roots = input.sandbox.workspaceRoots({ accountUserId: input.accountUserId, projectIds }); }
-  catch { return fallback; }
+  try {
+    roots = runWithContributionUser(input.accountUserId, () => input.sandbox!.workspaceRoots({ projectIds }));
+  } catch { return fallback; }
 
   const projects = input.projects.list().filter((project) => projectIds.includes(project.id));
   const registered = projects.find((project) => realPathWithin(input.baseWorkDir!, [project.path]) !== null);
@@ -86,11 +88,10 @@ export function effectiveTurnWorkDir(input: {
 
   let workspace: SandboxWorkspace | null;
   try {
-    workspace = input.sandbox.activeWorkspace({
-      accountUserId: input.accountUserId,
+    workspace = runWithContributionUser(input.accountUserId, () => input.sandbox!.activeWorkspace({
       sessionId: input.sessionId,
       projectId,
-    });
+    }));
   } catch { return fallback; }
   if (!workspace || workspace.projectId !== projectId) return fallback;
   const allowed = clientDir(input.policy, workspace.path);

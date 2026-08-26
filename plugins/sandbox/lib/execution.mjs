@@ -80,8 +80,8 @@ export function migrateLegacyHomes(dataDir) {
   const legacyRoot = join(pluginDataRoot, 'terminal', 'sandbox-home');
   const collisions = [];
   let migrated = 0;
-  let retiredSessions = 0;
-  if (!existsSync(legacyRoot)) return { collisions, migrated, retiredSessions };
+  const retainedSessions = [];
+  if (!existsSync(legacyRoot)) return { collisions, migrated, retainedSessions };
   for (const entry of readdirSync(legacyRoot)) {
     const source = join(legacyRoot, entry);
     if (!lstatSync(source).isDirectory()) continue;
@@ -98,13 +98,10 @@ export function migrateLegacyHomes(dataDir) {
       migrated += 1;
       continue;
     }
-    if (/^session-[a-f0-9]{16}$/.test(entry)) {
-      rmSync(source, { recursive: true, force: true });
-      retiredSessions += 1;
-    }
+    if (/^session-[a-f0-9]{16}$/.test(entry)) retainedSessions.push(source);
   }
-  try { if (readdirSync(legacyRoot).length === 0) rmSync(legacyRoot, { recursive: true, force: true }); } catch { /* collision remains */ }
-  return { collisions, migrated, retiredSessions };
+  try { if (readdirSync(legacyRoot).length === 0) rmSync(legacyRoot, { recursive: true, force: true }); } catch { /* collision or retained session HOME remains */ }
+  return { collisions, migrated, retainedSessions };
 }
 
 function bindableRoots(roots) {
@@ -149,8 +146,6 @@ function shellWord(word) {
 function buildBubblewrap(command, cwd, roots, home) {
   const binds = bindableRoots(roots);
   if (binds.length === 0) throw new Error('no accessible project directory is available for confined execution');
-  const cwdReal = realpathSync(cwd);
-  if (!binds.some((root) => within(cwdReal, root))) binds.push(cwdReal);
   const args = [
     '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup',
     '--die-with-parent', '--new-session',
@@ -194,8 +189,12 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
       : ctx.currentContributionUserId() ?? ctx.currentIdentity()?.elowenUserId ?? null;
     const owner = options.owner !== undefined ? options.owner === true : access.owner === true;
     const configuredRoots = options.roots ?? ctx.allowedRoots();
-    const roots = [...new Set(configuredRoots.map(String))];
-    const workspace = workspaceForCwd(listWorkspaces(), accountUserId, input.cwd);
+    const roots = bindableRoots([...new Set(configuredRoots.map(String))]);
+    const cwd = realpathSync(input.cwd);
+    if (!owner && !roots.some((root) => within(cwd, root))) {
+      throw new Error('execution cwd is outside the current account’s accessible project and workspace roots');
+    }
+    const workspace = workspaceForCwd(listWorkspaces(), accountUserId, cwd);
 
     let home = process.env.HOME || '/';
     let generation = null;
@@ -219,7 +218,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
       const probe = bubblewrapProbe();
       if (!probe.available) throw new Error(`confined execution is unavailable: ${probe.reason || 'bubblewrap probe failed'}`);
       mode = 'confined';
-      launch = buildBubblewrap(input.command, input.cwd, roots, accountUserId === null ? null : home);
+      launch = buildBubblewrap(input.command, cwd, roots, accountUserId === null ? null : home);
     }
 
     const mintLease = () => createExecutionLease(db, {
@@ -238,7 +237,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
         });
     return {
       mode,
-      cwd: input.cwd,
+      cwd,
       home,
       roots,
       launch,

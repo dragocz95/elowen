@@ -4,7 +4,7 @@
 //
 // The plugin is `userGrantable` and carries no grant gate of its own: the host's per-account tool policy
 // decides who may reach Bash and the process tools.
-import { defineTool, truncateTail, formatSize, createLocalBashOperations } from '@earendil-works/pi-coding-agent';
+import { defineTool, truncateTail, formatSize } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
@@ -40,13 +40,19 @@ const clampSeconds = (value, def, min, max) => {
 /** Short process id shared by the foreground-detach and background spawn paths. */
 const newProcessId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
-// PI's local shell backend for FOREGROUND runs. Two things it gets right that a hand-rolled spawn does
-// not: (1) `waitForChildProcess` resolves on the shell's exit WITHOUT hanging on a stdout/stderr pipe a
-// detached grandchild (e.g. a dev-server the command forked) still holds open; (2) a timeout kills the
-// whole process TREE via `killProcessTree`, not just the top shell. We pair it with a streaming UTF-8
-// decoder below so a multibyte character split across two `data` chunks is never mangled. Background
-// processes stay on our own spawn (BgProcess) — PI has no live, re-readable, kill-by-id registry.
-const bashOps = createLocalBashOperations();
+const processGroupAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(-pid, 0); return true; }
+  catch (error) { return error?.code === 'EPERM'; }
+};
+const killProcessGroup = (child) => {
+  if (!child) return;
+  try { process.kill(-child.pid, 'SIGKILL'); }
+  catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
+};
+const waitForProcessGroupExit = async (pid) => {
+  while (processGroupAlive(pid)) await new Promise((resolve) => setTimeout(resolve, 25));
+};
 
 const startLeaseHeartbeat = (lease) => {
   const timer = setInterval(() => { void lease.heartbeat(); }, 5_000);
@@ -99,16 +105,19 @@ class BgProcess {
     this.child.stdout.on('data', onData(this.stdoutDecoder));
     this.child.stderr.on('data', onData(this.stderrDecoder));
     let settled = false;
-    const finish = (code, error) => {
+    const finish = async (code, error) => {
       if (settled) return;
       settled = true;
+      if (error) killProcessGroup(this.child);
+      await waitForProcessGroupExit(this.child.pid);
       this.output += this.stdoutDecoder.end() + this.stderrDecoder.end();
       if (error) this.output += `\n[spawn error: ${error.message}]`;
       this.exitCode = code ?? -1;
-      void this.releaseLease().finally(() => onClose?.());
+      await this.releaseLease();
+      onClose?.();
     };
-    this.child.on('close', (code) => finish(code));
-    this.child.on('error', (error) => finish(-1, error));
+    this.child.on('close', (code) => { void finish(code); });
+    this.child.on('error', (error) => { void finish(-1, error); });
   }
   get running() { return this.exitCode === null; }
   kill() {
@@ -133,7 +142,7 @@ class ForegroundRun {
     this.detached = false;
     this.timedOut = false;
     this.spawnError = null;
-    this.controller = new AbortController();
+    this.child = null;
     this.workspaceId = prepared.workspace?.workspaceId ?? null;
     this.homeGeneration = prepared.lease.homeGeneration;
     if (prepared.launch.type !== 'shell') {
@@ -156,7 +165,7 @@ class ForegroundRun {
   }
   kill() {
     if (this._timer) { clearTimeout(this._timer); this._timer = null; }
-    this.controller.abort();
+    killProcessGroup(this.child);
   }
   async run(onProgress) {
     let lastEmit = 0;
@@ -176,12 +185,34 @@ class ForegroundRun {
       }
       emitProgress();
     };
-    this._timer = setTimeout(() => { this.timedOut = true; this.controller.abort(); }, this.timeoutMs);
+    this._timer = setTimeout(() => { this.timedOut = true; killProcessGroup(this.child); }, this.timeoutMs);
     try {
-      const res = await bashOps.exec(this.launch.command, this.cwd, { onData, env: this.launch.env, signal: this.controller.signal, timeout: undefined });
-      this.exitCode = res.exitCode;
+      await new Promise((resolveRun, rejectRun) => {
+        let settled = false;
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          if (error) rejectRun(error); else resolveRun();
+        };
+        try {
+          this.child = spawn(this.launch.command, {
+            cwd: this.cwd, shell: true, env: this.launch.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+          });
+        } catch (error) {
+          finish(error);
+          return;
+        }
+        this.child.stdout.on('data', onData);
+        this.child.stderr.on('data', onData);
+        this.child.once('error', finish);
+        this.child.once('close', (code) => {
+          this.exitCode = code ?? -1;
+          void waitForProcessGroupExit(this.child.pid).then(() => finish(), finish);
+        });
+      });
     } catch (error) {
-      if (!this.controller.signal.aborted) this.spawnError = error instanceof Error ? error.message : String(error);
+      this.spawnError = error instanceof Error ? error.message : String(error);
+      killProcessGroup(this.child);
     } finally {
       if (this._timer) { clearTimeout(this._timer); this._timer = null; }
       this.output += this._decoder.end();
