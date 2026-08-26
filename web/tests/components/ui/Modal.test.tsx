@@ -35,13 +35,42 @@ describe('Modal', () => {
 
   it('keeps large code and diff dialogs inside a visible desktop frame', () => {
     render(
-      <Modal title="Code diff" size="lg" onClose={vi.fn()}>
+      <Modal title="Code diff" size="lg" presentation="center" onClose={vi.fn()}>
         <span>diff</span>
       </Modal>,
       { wrapper: W },
     );
 
     expect(screen.getByRole('dialog', { name: 'Code diff' })).toHaveClass('max-w-[90rem]');
+  });
+
+  it('opens the first overlay as a drawer and anything raised from inside it as a centered window', () => {
+    render(
+      <Modal title="First" size="md" onClose={vi.fn()}>
+        <Modal title="Second" size="md" onClose={vi.fn()}><span>nested</span></Modal>
+      </Modal>,
+      { wrapper: W },
+    );
+
+    // Queried through the DOM rather than by role: the overlay stack correctly makes the outer dialog
+    // inert once the inner one opens, which takes it out of the accessibility tree.
+    const [first, second] = Array.from(document.querySelectorAll('[data-elowen-modal]'));
+
+    // The first click out of a section is a rail; the step taken FROM it is a window. Neither call
+    // site says so — the rule is resolved from overlay depth, so it cannot be got wrong one row at a
+    // time, which is exactly how the two presentations drifted apart before.
+    expect(first).toHaveClass('animate-drawer-in');
+    expect(second).not.toHaveClass('animate-drawer-in');
+    expect(second).toHaveClass('max-w-lg');
+  });
+
+  it('gives a drawer the room a large centered dialog would have had', () => {
+    render(
+      <Modal title="Wide" size="lg" onClose={vi.fn()}><span>table</span></Modal>,
+      { wrapper: W },
+    );
+
+    expect(screen.getByRole('dialog', { name: 'Wide' })).toHaveClass('w-[min(72rem,calc(100vw-3rem))]');
   });
 
   it('reuses the accessible dialog shell for fullscreen content and header actions', () => {

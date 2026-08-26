@@ -211,7 +211,6 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
               applied={appliedLimits}
               onChange={(fn) => setLimits((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setLimitsOpen(false)}
-              presentation="drawer"
             />
       ) : null}
       {runtime && runtimeOpen ? (
@@ -220,7 +219,6 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
               applied={appliedRuntime}
               onChange={(fn) => setRuntime((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setRuntimeOpen(false)}
-              presentation="drawer"
             />
       ) : null}
       {runtime && toolLoadingOpen ? (
@@ -234,7 +232,6 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
                 limits: { ...current.limits, toolDeferThreshold: next.limits.toolDeferThreshold },
               } : current)}
               onClose={() => setToolLoadingOpen(false)}
-              presentation="drawer"
             />
       ) : null}
       {runtime && retentionOpen ? (
@@ -243,7 +240,6 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
               applied={appliedRetention}
               onChange={(fn) => setRuntime((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setRetentionOpen(false)}
-              presentation="drawer"
             />
       ) : null}
     </>

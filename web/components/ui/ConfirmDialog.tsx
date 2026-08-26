@@ -17,7 +17,9 @@ export function ConfirmDialog({ open, title, description, confirmLabel, onConfir
   const { t } = useTranslation();
   if (!open) return null;
   return (
-    <Modal title={title} onClose={onClose} size="sm" icon={AlertTriangle}>
+    // A confirmation is a centered dialog wherever it is raised. It asks one question about the
+    // action you just chose; sliding it in as a drawer would read as another settings surface.
+    <Modal title={title} onClose={onClose} size="sm" icon={AlertTriangle} presentation="center">
       <ModalBody>
         {/* `whitespace-pre-line`: a confirmation that lists what is about to happen needs its lines to
             survive. Single-paragraph descriptions read identically. */}

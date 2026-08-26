@@ -365,7 +365,6 @@ export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, 
       title={d.title}
       description={selectedSession ? `${selectedSession.title || selectedSession.id} · ${selectedSession.userName || selectedSession.username}` : d.description}
       icon={Database}
-      presentation="fullscreen"
       onClose={onClose}
       headerActions={<div className="flex md:hidden"><button type="button" aria-label={d.sessions} className="p-2 text-text-muted" onClick={() => setMobilePanel('sessions')}><Menu size={18} /></button><button type="button" aria-label={d.tools} className="p-2 text-text-muted" onClick={() => setMobilePanel('tools')}><PanelRightOpen size={18} /></button></div>}
     >
@@ -448,7 +447,7 @@ export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, 
         <aside className="hidden min-h-0 border-l border-border md:block">{toolsPanel}</aside>
       </div>
       {mobile && mobilePanel ? (
-        <Modal title={mobilePanel === 'sessions' ? d.sessions : d.tools} presentation="drawer" onClose={() => setMobilePanel(null)}>
+        <Modal title={mobilePanel === 'sessions' ? d.sessions : d.tools} onClose={() => setMobilePanel(null)}>
           {mobilePanel === 'sessions' ? sessionRail : toolsPanel}
         </Modal>
       ) : null}

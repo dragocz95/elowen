@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { OverlayDepthProvider } from './overlayDepth';
 import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
 import { SpatialWorkspaceHero, WorkspaceMetric, type SpatialWorkspaceHeroProps } from './WorkspaceHero';
@@ -93,7 +94,7 @@ export function WorkspaceDetailRail({ label, closeLabel, onClose, children }: { 
         <span>{label}</span>
         <button type="button" onClick={onClose} aria-label={closeLabel} className="workspace-detail-rail__close">×</button>
       </header>
-      <div className="workspace-detail-rail__body">{children}</div>
+      <div className="workspace-detail-rail__body"><OverlayDepthProvider>{children}</OverlayDepthProvider></div>
       </aside>
     </div>
   );

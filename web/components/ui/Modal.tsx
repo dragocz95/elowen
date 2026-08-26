@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useDialogOverlay } from './overlayStack';
+import { OverlayDepthProvider, resolveOverlayPresentation, useOverlayDepth } from './overlayDepth';
 
 interface ModalProps {
   title: string;
@@ -16,8 +17,17 @@ interface ModalProps {
   description?: string;
   /** Actions rendered in the shared header before the close button. */
   headerActions?: ReactNode;
-  /** Fullscreen keeps the same portal/overlay/focus contract while using the available viewport. */
-  presentation?: 'center' | 'drawer' | 'fullscreen';
+  /** Fullscreen keeps the same portal/overlay/focus contract while using the available viewport.
+   *
+   *  Left alone this is `auto`, which resolves from how deep the overlay already is: the first click
+   *  out of a section opens a right-hand drawer, and anything opened FROM that drawer is a centered
+   *  window. Pass a literal only to opt out — a confirmation is a centered dialog wherever it is
+   *  raised, and a few data-heavy surfaces want the whole viewport. */
+  presentation?: 'auto' | 'center' | 'drawer' | 'fullscreen';
+  /** Widens a drawer for content that genuinely needs the room (log tables, diagnostics). Defaults to
+   *  wide for `size="lg"`, so a dialog that already declared it needs a large frame keeps that room
+   *  when it renders as a drawer instead. Ignored by the other presentations, which take `size`. */
+  drawerWidth?: 'default' | 'wide';
 }
 
 const SIZES = {
@@ -27,9 +37,12 @@ const SIZES = {
   sm: 'max-h-[80vh] w-full max-w-md',
 };
 
-export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'center' }: ModalProps) {
-  const drawer = presentation === 'drawer';
-  const fullscreen = presentation === 'fullscreen';
+export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', drawerWidth }: ModalProps) {
+  const wide = (drawerWidth ?? (size === 'lg' ? 'wide' : 'default')) === 'wide';
+  const depth = useOverlayDepth();
+  const resolved = presentation === 'auto' ? resolveOverlayPresentation(depth) : presentation;
+  const drawer = resolved === 'drawer';
+  const fullscreen = resolved === 'fullscreen';
   const { t } = useTranslation();
   const titleId = useId();
   const descriptionId = useId();
@@ -71,7 +84,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
         // bright outline around the entire dialog that vanished on the first click inside. Controls INSIDE
         // keep their own rings; this only silences the container's.
         className={drawer
-          ? 'animate-drawer-in flex h-full w-[min(38rem,calc(100vw-3rem))] flex-col rounded-l-lg border-l border-border focus:outline-none'
+          ? `animate-drawer-in flex h-full ${wide ? 'w-[min(72rem,calc(100vw-3rem))]' : 'w-[min(38rem,calc(100vw-3rem))]'} flex-col rounded-l-lg border-l border-border focus:outline-none`
           : fullscreen
             ? 'animate-pop-in relative flex min-h-0 w-full flex-col border border-border bg-surface focus:outline-none sm:rounded-lg'
             : `animate-pop-in flex flex-col rounded-lg bg-surface border border-border focus:outline-none ${SIZES[size]}`}
@@ -105,7 +118,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
           </button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {children}
+          <OverlayDepthProvider>{children}</OverlayDepthProvider>
         </div>
       </div>
     </div>,
