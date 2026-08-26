@@ -176,7 +176,7 @@ export interface ProcessInfo { id: string; command: string; cwd: string; started
 // read. `subgoals` is the stored JSON array.
 
 /** The statusline plugin's display toggles (null = plugin disabled). */
-export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
+export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean; showSpeed?: boolean }
 /** Where the conversation works: the live (or last stamped) directory and its git branch. Both null for
  *  a chat that never reported a directory — an ordinary web conversation has no client cwd. */
 export interface BrainProject { cwd: string | null; branch: string | null }

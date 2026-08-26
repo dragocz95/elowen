@@ -518,7 +518,7 @@ export function createChatComposition(
 
   // Adaptive footer lines: fitters receive the exact render width from StatusBar, so narrowing the
   // terminal drops whole segments (by priority) instead of cutting a hint mid-word.
-  const metaLeftLine = (opts: { leader?: boolean; goalSuffix?: boolean; level?: boolean; provider?: boolean; fast?: boolean } = {}): string => {
+  const metaLeftLine = (opts: { leader?: boolean; goalSuffix?: boolean; level?: boolean; provider?: boolean; fast?: boolean; tps?: boolean } = {}): string => {
     const goal = goalMeta(rt.goal);
     const trimmedGoal = goal && opts.goalSuffix === false ? { primary: goal.primary, suffix: '' } : goal;
     const child = rt.childView;
@@ -548,19 +548,24 @@ export function createChatComposition(
       rt.workMode,
       modelArg,
       level,
-      activityChip(activity, seconds),
+      // Speed follows the same focus as the seconds beside it: drilled in, both describe the CHILD.
+      activityChip(activity, seconds, opts.tps === false ? null : focusedUsage()?.outputTps),
       rt.yoloOn,
       opts.fast === false ? false : rt.fastOn,
       trimmedGoal,
     ) + (opts.leader === false ? '' : leaderChip());
   };
+  // Speed is dropped early — right after the leader chip. It is the one field here that answers
+  // curiosity rather than "what am I talking to and how far along is it", so on a narrow terminal it
+  // should go before the model identity or the reasoning level do.
   promptMeta.setLeftFit((w) => fitVariants([
     metaLeftLine(),
     metaLeftLine({ leader: false }),
-    metaLeftLine({ leader: false, goalSuffix: false }),
-    metaLeftLine({ leader: false, goalSuffix: false, level: false }),
-    metaLeftLine({ leader: false, goalSuffix: false, level: false, provider: false }),
-    metaLeftLine({ leader: false, goalSuffix: false, level: false, provider: false, fast: false }),
+    metaLeftLine({ leader: false, tps: false }),
+    metaLeftLine({ leader: false, tps: false, goalSuffix: false }),
+    metaLeftLine({ leader: false, tps: false, goalSuffix: false, level: false }),
+    metaLeftLine({ leader: false, tps: false, goalSuffix: false, level: false, provider: false }),
+    metaLeftLine({ leader: false, tps: false, goalSuffix: false, level: false, provider: false, fast: false }),
   ], w));
   bottomBar.setLeftFit((w) => {
     const footerState = rt.childView ? 'child' : rt.transcript.thinking ? 'thinking' : 'idle';

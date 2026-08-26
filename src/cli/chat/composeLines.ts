@@ -13,8 +13,11 @@ import type { Keymap, KeybindAction } from './keys.js';
 /** Render the bottom statusline from the plugin's display toggles + live usage. Empty string when the
  *  statusline plugin is disabled or nothing is toggled on. Pure — unit-testable without a TTY. */
 export function statusline(
-  cfg: { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean } | null,
-  usage: { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number } | null,
+  cfg: { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean; showSpeed?: boolean } | null,
+  usage: {
+    tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number;
+    outputTps?: number | null;
+  } | null,
   model: string,
 ): string {
   if (!cfg) return '';
@@ -24,6 +27,11 @@ export function statusline(
     parts.push(`context ${Math.round(usage.percent)}% (${formatK(usage.tokens ?? 0)}/${formatK(usage.contextWindow)})`);
   }
   if (cfg.showTokens && usage) parts.push(`Σ ${formatK(usage.totalTokens)} tok`);
+  // Measured generation speed, so it stays absent until something has been timed — and below 1 t/s the
+  // rounded figure would read as a stall rather than as too few samples.
+  if (cfg.showSpeed && typeof usage?.outputTps === 'number' && usage.outputTps >= 1) {
+    parts.push(`${Math.round(usage.outputTps)} tok/s`);
+  }
   if (cfg.showCost && usage) parts.push(`$${usage.cost.toFixed(2)}`);
   return parts.join('  ·  ');
 }
@@ -35,11 +43,23 @@ export function settledTurnMeta(durationMs: number): string {
 }
 
 /** One stable composer activity chip. Compaction is named explicitly because the agent run may already
- * be idle while its summary request is still busy; ordinary generation keeps the compact spinner/time. */
-export function activityChip(activity: 'agent' | 'compaction' | null, seconds: number): string | undefined {
+ * be idle while its summary request is still busy; ordinary generation keeps the compact spinner/time.
+ *
+ * `tps` is the session's measured output speed, so it answers a different question from the seconds
+ * beside it: the duration is wall-clock for this turn (mostly time spent in tools), while this is how
+ * fast the model actually writes. Measured generations only — a turn that never carried a timing stamp
+ * reports nothing rather than a rate divided by guessed seconds. */
+export function activityChip(
+  activity: 'agent' | 'compaction' | null,
+  seconds: number,
+  tps?: number | null,
+): string | undefined {
   if (!activity) return undefined;
   const label = activity === 'compaction' ? `${color.warning('compacting')} ` : '';
-  return `${color.accent(spinnerFrame())} ${label}${color.faint(formatDuration(seconds))}`;
+  // Below 1 t/s the rounded figure would read as "0 t/s", which looks like a stall rather than a
+  // measurement nobody has enough samples for yet.
+  const speed = typeof tps === 'number' && tps >= 1 ? color.faint(` · ${Math.round(tps)} t/s`) : '';
+  return `${color.accent(spinnerFrame())} ${label}${color.faint(formatDuration(seconds))}${speed}`;
 }
 
 /** Active-goal status lives in the existing composer metadata row, so it consumes no layout height and

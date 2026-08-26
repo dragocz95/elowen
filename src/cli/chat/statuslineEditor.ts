@@ -14,6 +14,7 @@ import type { StatuslineConfig } from './brainClient.js';
 const STATUSLINE_FIELDS: readonly { key: keyof StatuslineConfig; label: string; hint: string }[] = [
   { key: 'showContext', label: 'Context usage', hint: 'how full the context window is (percent + tokens)' },
   { key: 'showTokens', label: 'Total tokens', hint: "the conversation's cumulative token count" },
+  { key: 'showSpeed', label: 'Speed', hint: 'measured output tokens per second' },
   { key: 'showCost', label: 'Cost', hint: "the conversation's cost (subscriptions report $0)" },
 ];
 

@@ -1357,6 +1357,7 @@ export const en = {
     attachOnly: '(attachment)',
     deleteChat: 'Delete conversation',
     context: 'context',
+    tokensPerSecond: 'tok/s',
     newChat: 'New chat',
     searchPlaceholder: 'Search conversations…',
     searchEmpty: 'No matches',

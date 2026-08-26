@@ -13,6 +13,10 @@
       "label": "Celkom tokenov",
       "hint": "Zobrazí celkový počet tokenov v konverzácii."
     },
+    "showSpeed": {
+      "label": "Rýchlosť",
+      "hint": "Zobrazí nameranú rýchlosť generovania v tokenoch za sekundu."
+    },
     "showCost": {
       "label": "Náklady",
       "hint": "Zobrazí celkové náklady konverzácie (poskytovatelia s API kľúčom ich hlásia, pri predplatných sa zobrazí 0 $)."

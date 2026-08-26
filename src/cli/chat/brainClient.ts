@@ -33,7 +33,7 @@ export interface BrainClientOpts {
 }
 
 /** Statusline display toggles (the statusline plugin's config; null when the plugin is disabled). */
-export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
+export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean; showSpeed?: boolean }
 export interface BrainUsageView {
   tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number;
   /** Cumulative per-session breakdown (absent on older daemons — treat as 0/unknown). */

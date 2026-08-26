@@ -1351,6 +1351,7 @@ export const sk = {
     attachOnly: '(príloha)',
     deleteChat: 'Vymazať konverzáciu',
     context: 'kontext',
+    tokensPerSecond: 'tok/s',
     newChat: 'Nová konverzácia',
     searchPlaceholder: 'Hľadať v konverzáciách…',
     searchEmpty: 'Nič nenájdené',

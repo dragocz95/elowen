@@ -1141,7 +1141,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           chevron collapses the whole row in-chat — the quick alternative to the plugin's settings, mainly
           for a phone where the metrics crowd the composer. Collapsed leaves only the chevron to bring it
           back. */}
-      {lineCfg && (lineCfg.showModel || lineCfg.showContext || lineCfg.showTokens || lineCfg.showCost) ? (
+      {lineCfg && (lineCfg.showModel || lineCfg.showContext || lineCfg.showTokens || lineCfg.showSpeed || lineCfg.showCost) ? (
         // Exactly ONE line, phone included: a second row here pushes the composer down and eats the little
         // vertical room a phone has. The metrics are the point and stay whole (`shrink-0 whitespace-nowrap`,
         // needed because a no-wrap FLEX row still lets each item's own text wrap); the model name is the
@@ -1169,6 +1169,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
                 <span className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
               ) : null}
               {lineCfg.showTokens && usage ? <span className="shrink-0 whitespace-nowrap">Σ {formatTokens(usage.totalTokens)} {t.sessionsPanel.tok}</span> : null}
+              {/* Measured generation speed: absent until something has been timed, and hidden below
+                  1 tok/s where the rounded figure would read as a stall rather than as too few samples. */}
+              {lineCfg.showSpeed && typeof usage?.outputTps === 'number' && usage.outputTps >= 1 ? (
+                <span className="shrink-0 whitespace-nowrap">{Math.round(usage.outputTps)} {t.brainChat.tokensPerSecond}</span>
+              ) : null}
               {lineCfg.showCost && usage ? <span className="shrink-0 whitespace-nowrap">{formatCost(usage.cost, 2)}</span> : null}
             </>
           ) : null}
