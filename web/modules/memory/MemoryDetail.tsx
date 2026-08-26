@@ -22,10 +22,14 @@ import { memoryStatusTone, memoryStatusLabel, categorySwatch, vitalityPct } from
 import { MemoryAuditFeed } from './MemoryAuditFeed';
 /** Loaded on demand: the chart pulls in the charting library, and this detail is one drawer on a page
  *  that otherwise has no chart at all — a static import would put ~376 kB of it into the first load of
- *  the whole memory list. */
+ *  the whole memory list.
+ *
+ *  `ssr: false` because the chart measures its own box, which is zero on the server and would make
+ *  hydration disagree. The placeholder reserves the plot's real height so the audit feed underneath
+ *  does not jump when the chunk lands. */
 const MemoryVitalityChart = dynamic(
   () => import('./MemoryVitalityChart').then((m) => m.MemoryVitalityChart),
-  { ssr: false, loading: () => <LoadingState variant="block" /> },
+  { ssr: false, loading: () => <LoadingState variant="block" height="h-[168px]" /> },
 );
 import { CategoryIcon } from '../../lib/categoryIcons';
 import { RankSlider, CategorySelect } from './MemoryFields';

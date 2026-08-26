@@ -8,7 +8,7 @@ import type { MemoryVitalityHistory } from '../../lib/types';
 import { useMemoryVitalityHistory } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { parseTs } from '../../lib/format';
-import { vitalityPct, vitalityTone } from './memoryMeta';
+import { vitalityTone } from './memoryMeta';
 import { TONE_TEXT } from '../../components/ui/tone';
 import { CardHead, CardRow, CardShell } from '../../components/ui/ChartCard';
 import { LoadingState } from '../../components/ui/states';
@@ -21,7 +21,17 @@ import { LoadingState } from '../../components/ui/states';
  *  happened — which a bare curve with no axis and no hover could not answer. The curve itself is
  *  computed daemon-side: the half-life table is server config the browser deliberately never sees. */
 
+/** Height of the plot itself, and the same number as a Tailwind class for the loading placeholders,
+ *  which have to reserve the space the drawn chart will take — otherwise opening the detail shoves the
+ *  audit feed below it down the page twice, once per placeholder.
+ *
+ *  Spelled out as a literal rather than interpolated: Tailwind generates utilities by scanning source
+ *  text, so a class built from a runtime value simply does not exist in the stylesheet. Change both. */
 const CHART_H = 168;
+export const VITALITY_CHART_H_CLASS = 'h-[168px]';
+
+/** Every other figure in the app is monospaced and tabular; axis ticks are figures too. */
+const AXIS_TICK = { fontSize: 10, fill: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' } as const;
 
 const TONE_STROKE: Record<ReturnType<typeof vitalityTone>, string> = {
   default: 'var(--color-text-muted)',
@@ -56,9 +66,14 @@ export function buildSeries(history: MemoryVitalityHistory): Row[] | null {
   for (const point of history.forecast) put(point.at, 'projected', point.vitality);
 
   // The seam: the last measured point also seeds the projection, otherwise the dashed line starts one
-  // step to the right of where the solid one ends and the curve reads as broken.
+  // step to the right of where the solid one ends and the curve reads as broken. Only when the forecast
+  // does not already cover that instant — the daemon computes the two halves against different
+  // reference points when a memory has no logged recalls, and its projected value wins over ours.
   const lastPast = history.points.at(-1);
-  if (lastPast) put(lastPast.at, 'projected', lastPast.vitality);
+  const seamAt = lastPast ? parseTs(lastPast.at) : null;
+  if (lastPast && seamAt != null && rows.get(seamAt)?.projected === undefined) {
+    put(lastPast.at, 'projected', lastPast.vitality);
+  }
 
   const series = [...rows.values()].sort((a, b) => a.t - b.t);
   return series.length < 2 ? null : series;
@@ -76,7 +91,7 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
   );
 
   if (query.isLoading) {
-    return <LoadingState variant="block" />;
+    return <LoadingState variant="block" height={VITALITY_CHART_H_CLASS} />;
   }
   // The curve elaborates on a number that is already shown next to it, so a failure here is not worth
   // an error state of its own — the drawer simply carries on without it.
@@ -102,11 +117,15 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
         <span className={`text-[11px] ${history.evictAt ? TONE_TEXT.warning : TONE_TEXT.muted}`}>{summary}</span>
       </div>
 
+      {/* No `role="img"` and no label on the box. `role="img"` makes every child presentational, which
+       *  would hide the tooltip — the only place the individual dates and values can be read at all.
+       *  A label is not needed either: the vitality figure and the eviction sentence are both already
+       *  on screen, one in the metric row above and one in the header right here, so describing the
+       *  chart would only make a screen reader say them a third time. Recharts' own keyboard layer
+       *  stays on, so the series can be stepped through with the arrow keys. */}
       <div
         className="w-full rounded-md border border-border/70 bg-elevated/30 pr-2 pt-2"
         style={{ height: CHART_H }}
-        role="img"
-        aria-label={`${t.memory.fieldVitality} ${vitalityPct(vitality)}/100. ${summary}`}
       >
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={series} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
@@ -117,7 +136,7 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
               scale="time"
               domain={['dataMin', 'dataMax']}
               tickFormatter={dayLabel}
-              tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }}
+              tick={AXIS_TICK}
               stroke="var(--color-border)"
               tickLine={false}
               minTickGap={28}
@@ -126,7 +145,7 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
               domain={[0, 100]}
               ticks={[0, 50, 100]}
               width={28}
-              tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }}
+              tick={AXIS_TICK}
               stroke="var(--color-border)"
               tickLine={false}
             />
@@ -140,13 +159,14 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
             />
             {/* Where the reconstructed past ends and the projection begins. */}
             {nowMs == null ? null : <ReferenceLine x={nowMs} stroke="var(--color-border-strong)" />}
-            {/* One mark per recall, sitting on the floor of the plot rather than on the curve — these
-             *  are events in time, not vitality readings. */}
+            {/* One mark per recall, sitting just above the floor of the plot rather than on the curve —
+             *  these are events in time, not vitality readings. Lifted clear of the axis line so the
+             *  dot is not half-hidden by it. */}
             {recalls.map((ms) => (
               <ReferenceDot
                 key={ms}
                 x={ms}
-                y={0}
+                y={3}
                 r={2}
                 fill="var(--color-accent)"
                 stroke="none"

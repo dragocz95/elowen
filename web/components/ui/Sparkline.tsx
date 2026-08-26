@@ -20,6 +20,13 @@ import {
 
 export type SparkVariant = 'area' | 'line' | 'bar';
 
+/** Recharts turns its keyboard layer on by default, which puts `role="application"` and `tabIndex=0` on
+ *  the root svg. Inside an `aria-hidden` wrapper that is an accessibility fault rather than a feature —
+ *  a focus stop that no screen reader will ever announce — and one of these sits inside a link, where it
+ *  would also be an interactive element nested in an anchor. There is nothing here to navigate: the
+ *  figure is printed next to the shape. */
+const CHART_A11Y = { accessibilityLayer: false } as const;
+
 export function Sparkline({ values, colour, variant = 'area', highlightLast = false, className }: {
   values: number[];
   colour: string;
@@ -32,8 +39,10 @@ export function Sparkline({ values, colour, variant = 'area', highlightLast = fa
 }) {
   const gradientId = useId();
 
-  // A flat or single-point series has no shape to show, and drawing it produces a straight line that
-  // reads as a measurement rather than as the absence of one.
+  // Nothing measured yet, or a series that never leaves zero: drawing it produces a flat line pinned to
+  // the floor, which reads as a recorded run of zeros rather than as the absence of data. The caller
+  // loses the strip entirely in that case — deliberate, and the reason this returns null rather than an
+  // empty box.
   if (values.length < 2 || !values.some((v) => v > 0)) return null;
 
   const data = values.map((v, i) => ({ i, v }));
@@ -43,7 +52,7 @@ export function Sparkline({ values, colour, variant = 'area', highlightLast = fa
     <div aria-hidden className={className}>
       <ResponsiveContainer width="100%" height="100%">
         {variant === 'bar' ? (
-          <BarChart data={data} margin={{ top: 1, right: 0, bottom: 0, left: 0 }} barCategoryGap={1}>
+          <BarChart {...CHART_A11Y} data={data} margin={{ top: 1, right: 0, bottom: 0, left: 0 }} barCategoryGap={1}>
             {/* A zero-height bar would vanish and make the series look shorter than it is. */}
             <Bar dataKey="v" isAnimationActive={false} minPointSize={2} radius={[1, 1, 0, 0]}>
               {data.map((d) => (
@@ -56,14 +65,14 @@ export function Sparkline({ values, colour, variant = 'area', highlightLast = fa
             </Bar>
           </BarChart>
         ) : variant === 'line' ? (
-          <LineChart data={data} margin={{ top: 2, right: 1, bottom: 1, left: 1 }}>
+          <LineChart {...CHART_A11Y} data={data} margin={{ top: 2, right: 1, bottom: 1, left: 1 }}>
             <Line
               dataKey="v" type="monotone" stroke={colour} strokeWidth={1.25}
               dot={false} isAnimationActive={false}
             />
           </LineChart>
         ) : (
-          <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+          <AreaChart {...CHART_A11Y} data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
             <defs>
               <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={colour} stopOpacity={0.35} />

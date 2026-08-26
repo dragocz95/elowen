@@ -81,13 +81,13 @@ describe('buildSeries', () => {
 });
 
 describe('MemoryVitalityChart', () => {
-  it('says when the memory would be binned, and carries it into the label for screen readers', async () => {
+  it('says when the memory would be binned, in plain sight', async () => {
     renderChart(61);
-    await waitFor(() => expect(screen.getByRole('img')).toBeInTheDocument());
-
-    expect(screen.getByRole('img').getAttribute('aria-label')).toContain('61/100');
+    // Said once, visibly. The chart carries no label of its own: `role="img"` would make the tooltip
+    // — the only place the individual dates and values can be read — invisible to assistive tech, and
+    // a hidden copy of this sentence would just make a screen reader repeat what is already on screen.
     // The rendered date follows the active locale, so pin the sentence and the year, not the format.
-    expect(screen.getByText(/Moves to the trash on .*2026/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Moves to the trash on .*2026/)).toBeInTheDocument());
   });
 
   it('states plainly that a pinned memory is never deleted', async () => {
