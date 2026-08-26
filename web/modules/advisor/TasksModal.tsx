@@ -70,7 +70,10 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
               {rows.map((task) => (
                 <div key={task.id} className="flex items-start gap-3 bg-surface px-3 py-3">
                   <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <span className="text-sm font-medium text-text">{task.subject}</span>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-xs tabular-nums text-text-muted">#{task.id}</span>
+                      <span className="text-sm font-medium text-text">{task.subject}</span>
+                    </div>
                     <span className="whitespace-pre-wrap text-xs text-text-muted">{task.description}</span>
                     {task.blockedBy.length > 0 ? (
                       <span className="text-xs text-warning">{t.tasksModal.blockedBy}: {task.blockedBy.map((id) => `#${id}`).join(', ')}</span>
