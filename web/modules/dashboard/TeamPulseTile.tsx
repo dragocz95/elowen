@@ -3,19 +3,22 @@ import { usePulse } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { LoadingState } from '../../components/ui/states';
 import { formatCost, formatTokens } from '../../lib/format';
-import { PulseDonut } from './PulseDonut';
+import { PulseRings } from './PulseRings';
 import { PulseStats } from './PulseStats';
 
-/** The dashboard's people tile: what the instance is doing today, who has been carrying the month, and
- *  what it cost.
+/** The dashboard's people tile: what the instance is doing today, and how the month divided.
  *
- *  Two windows on purpose: the gauges and the headline report TODAY, the ring below them reports the
- *  trailing month, because a single day divides too thinly between people to have a shape. Both sit on
- *  the daemon's UTC day basis, which is how the rollups behind them are keyed.
+ *  Two windows on purpose: the gauges and the headline report TODAY, the rings below them report the
+ *  trailing month, because a single day divides too thinly to have a shape. Both sit on the daemon's
+ *  UTC day basis, which is how the rollups behind them are keyed.
  *
- *  The ring carries no legend. Identity lives in its hover card, which already has to exist for the
- *  numbers — a second copy of the same names underneath would say nothing the card does not, and it read
- *  as clutter next to the ring itself.
+ *  FOUR rings rather than one, because one cut lies by omission here — this instance's tokens belong
+ *  almost entirely to a single person, so a per-person ring alone is a solid circle. Where the work came
+ *  from, what the tokens were spent on, and how cost divides (differently from tokens, since the
+ *  surfaces do not run the same models) each answer something the others cannot.
+ *
+ *  The rings carry no legend. Identity lives in their hover cards, which have to exist for the numbers
+ *  anyway — a second copy of the same names underneath said nothing more and competed for attention.
  *
  *  The tile is fed by one request and refreshed by the same SSE 'activity' event as the feed, so a turn
  *  starting lights it up without a poll — there is no refresh interval to state. */
@@ -53,9 +56,9 @@ export function TeamPulseTile() {
       ) : !data || people.length === 0 ? (
         <p className="text-sm text-text-muted">{t.dashboard.pulseNobody}</p>
       ) : (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-6">
           <PulseStats data={data} t={t} />
-          <PulseDonut people={people} totalTokens={data.month?.tokens ?? 0} t={t} />
+          <PulseRings people={people} month={data.month} t={t} />
         </div>
       )}
     </section>

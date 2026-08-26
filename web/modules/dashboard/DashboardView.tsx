@@ -23,13 +23,15 @@ export function DashboardView() {
         <MotionReveal className="relative z-[1]">
           <HeroNowTile now={nowMs} />
         </MotionReveal>
+        {/* The pulse tile takes the full width because it now draws four rings side by side; squeezed
+            into a column they shrink to the point where the arcs stop being comparable, which is the
+            only thing a ring is for. The feed follows underneath — it is a list of short rows and never
+            needed the width it used to be given. */}
         <MotionReveal delay={0.06} className="relative z-[1] @container">
-          {/* Not an even split: the feed is a list of short rows and reads fine narrow, while the pulse
-              tile carries a chart and a seven-column table that earn every pixel they get. */}
-          <div className="grid w-full grid-cols-1 gap-x-8 gap-y-2 @4xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-            <ActivityTile />
-            <TeamPulseTile />
-          </div>
+          <TeamPulseTile />
+        </MotionReveal>
+        <MotionReveal delay={0.1} className="relative z-[1] @container">
+          <ActivityTile />
         </MotionReveal>
       </div>
     </WorkspacePage>

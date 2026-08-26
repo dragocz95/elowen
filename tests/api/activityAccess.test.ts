@@ -164,7 +164,11 @@ describe('GET /activity/pulse', () => {
         turns: number; tokens: number; cost: number | null; activePeople: number;
         runningAgents: number; memoryHits: number; cacheHitPct: number | null;
       };
-      month: { from: string; days: number; tokens: number; cost: number | null };
+      month: {
+        from: string; days: number; tokens: number; cost: number | null;
+        surfaces: { surface: string; turns: number; tokens: number; cost: number | null }[];
+        context: { cacheRead: number; input: number; cacheWrite: number; output: number };
+      };
       spendAvailable: boolean;
     };
 
@@ -249,6 +253,39 @@ describe('GET /activity/pulse', () => {
     expect(them.tokens).toBe(0);
     expect(them.activeToday).toBe(false);
     expect(body.totals.activePeople).toBe(1);
+  });
+
+  it('collapses every web caller into one surface instead of a slice per IP address', async () => {
+    const { app, usageOrigins, tok, adminId } = setupPulse();
+    const now = Date.now();
+    // The rollup keys a browser turn by the caller's IP, so a month of web work is dozens of distinct
+    // origins. Drawn raw, the channel ring would be a haze of unnamed slivers.
+    usageOrigins.addTurn(adminId, { value: '172.68.213.108', kind: 'ip', trusted: true },
+      usage({ total: 100, cost: 1 }), now);
+    usageOrigins.addTurn(adminId, { value: '172.71.15.88', kind: 'ip', trusted: true },
+      usage({ total: 50, cost: 0.5 }), now);
+    usageOrigins.addTurn(adminId, { value: 'local', kind: 'local', trusted: true },
+      usage({ total: 30, cost: 0.25 }), now);
+
+    const { month } = await pulse(app, tok);
+    const web = month.surfaces.find((s) => s.surface === 'web')!;
+    expect(web.tokens).toBe(150);
+    expect(web.cost).toBe(1.5);
+    expect(web.turns).toBe(2);
+    // ...and the CLI stays its own slice rather than being folded in with it.
+    expect(month.surfaces.find((s) => s.surface === 'cli')!.tokens).toBe(30);
+    expect(month.surfaces.filter((s) => s.surface === 'web')).toHaveLength(1);
+  });
+
+  it('splits the month by kind of token, not just by how many there were', async () => {
+    const { app, usageOrigins, tok, adminId } = setupPulse();
+    // Warm reads bill at a fraction of fresh input, so this split is the difference between a big month
+    // and an expensive one. A single total cannot say which this was.
+    usageOrigins.addTurn(adminId, { value: 'local', kind: 'local', trusted: true },
+      { input: 100, output: 20, cacheRead: 900, cacheWrite: 40, total: 1060, cost: 1 }, Date.now());
+
+    const { month } = await pulse(app, tok);
+    expect(month.context).toEqual({ cacheRead: 900, input: 100, cacheWrite: 40, output: 20 });
   });
 
   it('counts a delegated session as a running agent, not as a person at a keyboard', async () => {

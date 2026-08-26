@@ -644,8 +644,19 @@ export interface PulsePerson {
 /** The whole team pulse tile in one response. */
 export interface PulseResponse {
   today: string;
-  /** The ring's window: `from` is its first day (inclusive, UTC), `days` its length. */
-  month: { from: string; days: number; tokens: number; cost: number | null };
+  /** The rings' window: `from` is its first day (inclusive, UTC), `days` its length. */
+  month: {
+    from: string;
+    days: number;
+    tokens: number;
+    cost: number | null;
+    /** The same month folded by WHERE the work came from. Every web turn is keyed by caller IP in the
+     *  rollup, so those collapse into one 'web' entry rather than an address per slice. */
+    surfaces: { surface: string; turns: number; tokens: number; cost: number | null }[];
+    /** Where the tokens went. Warm cache reads bill at a fraction of fresh input, so this split is what
+     *  says whether a big month was also an expensive one. */
+    context: { cacheRead: number; input: number; cacheWrite: number; output: number };
+  };
   people: PulsePerson[];
   totals: {
     turns: number;

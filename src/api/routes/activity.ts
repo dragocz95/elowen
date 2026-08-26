@@ -47,6 +47,51 @@ function cachePct(acc: UsageAcc | undefined): number | null {
   return context > 0 ? ((acc?.cacheRead ?? 0) / context) * 100 : null;
 }
 
+/** The same rollup rows folded by WHERE the work came from instead of by who did it.
+ *
+ *  Worth its own cut because the two answers genuinely differ: on this instance one person owns
+ *  essentially all the tokens, so a per-person split says nothing, while the split between scheduled
+ *  internal work, the CLI and the browser is the shape that actually moves. Every web turn is keyed by
+ *  the caller's IP in the rollup, so those rows collapse into one 'web' surface here rather than
+ *  drawing a slice per address. */
+interface SurfaceUsage {
+  surface: string; turns: number; tokens: number; cost: number | null;
+}
+function sumBySurface(rows: {
+  turns: number; tokens: number; cost: number | null; origin: string | null; originKind: string | null;
+}[]): SurfaceUsage[] {
+  const out = new Map<string, SurfaceUsage>();
+  for (const row of rows) {
+    const surface = surfaceOf(row.origin, row.originKind);
+    // An unrecognised origin kind is dropped rather than bucketed as "other": a slice nobody can name
+    // invites a wrong reading, and surfaceOf already refuses to guess.
+    if (!surface) continue;
+    const acc = out.get(surface) ?? { surface, turns: 0, tokens: 0, cost: null };
+    acc.turns += row.turns;
+    acc.tokens += row.tokens;
+    if (row.cost !== null) acc.cost = (acc.cost ?? 0) + row.cost;
+    out.set(surface, acc);
+  }
+  return [...out.values()].sort((a, b) => b.tokens - a.tokens);
+}
+
+/** Where the tokens went, which is a different question from how many there were: context served warm
+ *  from the cache is billed at a fraction of context sent fresh, so a month that looks enormous in
+ *  totals can be cheap — or the reverse. Splitting the four kinds is the only way that shows. */
+function sumContext(rows: { cacheRead: number; input: number; cacheWrite: number; output: number }[]): {
+  cacheRead: number; input: number; cacheWrite: number; output: number;
+} {
+  return rows.reduce(
+    (acc, r) => ({
+      cacheRead: acc.cacheRead + r.cacheRead,
+      input: acc.input + r.input,
+      cacheWrite: acc.cacheWrite + r.cacheWrite,
+      output: acc.output + r.output,
+    }),
+    { cacheRead: 0, input: 0, cacheWrite: 0, output: 0 },
+  );
+}
+
 /** Where a turn came from, as the pulse tile labels it. The rollup stores platform turns as
  *  'platform:<name>', local CLI turns as 'local', daemon-internal work as 'internal', and web turns
  *  under the caller's IP — so the surface is already in the row and needs no second lookup.
@@ -180,9 +225,13 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     // once each — the wider read is the cheap one, since the rollup holds a handful of rows per day.
     const monthFrom = new Date(Date.now() - (MONTH_DAYS - 1) * 86_400_000).toISOString().slice(0, 10);
     const spend = sumUsage(d.usageOrigins?.topOrigins({ group: 'pair', fromIso: today, limit: 500 }) ?? []);
-    const monthSpend = sumUsage(
-      d.usageOrigins?.topOrigins({ group: 'pair', fromIso: monthFrom, limit: 500 }) ?? [],
-    );
+    // Read ONCE and folded three ways. The rows are already grouped by (user, origin), which is the
+    // finest cut any of the rings needs, so asking the store a second time would re-scan the same
+    // buckets to reach an answer this array already contains.
+    const monthRows = d.usageOrigins?.topOrigins({ group: 'pair', fromIso: monthFrom, limit: 500 }) ?? [];
+    const monthSpend = sumUsage(monthRows);
+    const monthSurfaces = sumBySurface(monthRows);
+    const monthContext = sumContext(monthRows);
 
     // Which slot of the month a day falls in, oldest first, so the ring's hover curve is indexable
     // without the client parsing dates.
@@ -303,7 +352,10 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     return c.json({
       today,
       people,
-      month: { from: monthFrom, days: MONTH_DAYS, tokens: monthTotals.tokens, cost: monthTotals.cost },
+      month: {
+        from: monthFrom, days: MONTH_DAYS, tokens: monthTotals.tokens, cost: monthTotals.cost,
+        surfaces: monthSurfaces, context: monthContext,
+      },
       totals: {
         ...totals,
         // Counted off the flag, not off `people.length`: the list now also carries people who worked

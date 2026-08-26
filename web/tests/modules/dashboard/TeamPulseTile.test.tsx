@@ -4,7 +4,7 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { TeamPulseTile } from '../../../modules/dashboard/TeamPulseTile';
-import { PersonCard } from '../../../modules/dashboard/PulseDonut';
+import { PersonCard } from '../../../modules/dashboard/PulseRings';
 import { createWrapper } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { PulsePerson, PulseResponse } from '../../../lib/types';
@@ -45,6 +45,11 @@ function mount(people: PulsePerson[], over: Partial<PulseResponse> = {}) {
       from: '2026-07-28', days: MONTH_DAYS,
       tokens: people.reduce((n, p) => n + p.month.tokens, 0),
       cost: 40,
+      surfaces: [
+        { surface: 'internal', turns: 200, tokens: 600_000, cost: 25 },
+        { surface: 'cli', turns: 100, tokens: 300_000, cost: 15 },
+      ],
+      context: { cacheRead: 800_000, input: 60_000, cacheWrite: 30_000, output: 10_000 },
     },
     people,
     totals: {
@@ -61,9 +66,9 @@ function mount(people: PulsePerson[], over: Partial<PulseResponse> = {}) {
   render(<Wrapper><TeamPulseTile /></Wrapper>);
 }
 
-/** Render the hover card the way Recharts would, without needing a measured chart. */
-function showCard(p: PulsePerson, share = 50, index = 0) {
-  render(<PersonCard active payload={[{ payload: { person: p, index, share } }]} t={en} />);
+/** Render the hover card the way a ring would, without needing a measured chart. */
+function showCard(p: PulsePerson, share = 50) {
+  render(<PersonCard person={p} share={share} colour="var(--color-accent)" t={en} />);
 }
 
 describe('TeamPulseTile — ring', () => {
@@ -148,9 +153,17 @@ describe('TeamPulseTile — hover card', () => {
     expect(screen.queryByText('0 %')).not.toBeInTheDocument();
   });
 
-  it('draws nothing at all when the pointer is not on a slice', () => {
-    const { container } = render(<PersonCard t={en} />);
-    expect(container).toBeEmptyDOMElement();
+  it('says a ring has no data rather than drawing an empty circle', async () => {
+    // Every slice is zero, so there is no arc to draw and nothing to hover. An empty ring would read
+    // as a rendering fault; the label says the measurement is simply absent.
+    mount([person({ month: month({ tokens: 0 }) })], {
+      month: {
+        from: '2026-07-28', days: MONTH_DAYS, tokens: 0, cost: null,
+        surfaces: [], context: { cacheRead: 0, input: 0, cacheWrite: 0, output: 0 },
+      },
+    });
+
+    expect((await screen.findAllByText(en.dashboard.pulseRingEmpty)).length).toBeGreaterThan(0);
   });
 });
 
