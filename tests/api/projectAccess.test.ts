@@ -17,6 +17,7 @@ function setup() {
   const adminTok = users.issueToken(admin.id);
   const bobTok = users.issueToken(bob.id);
   const projects = new ProjectStore(db);
+  const userProjects = new UserProjectStore(db);
   const config = new ConfigStore(db);
   const bus = new EventBus();
   const app = createServer({
@@ -24,12 +25,12 @@ function setup() {
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: process.cwd() }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config,
-    users, projects, userProjects: new UserProjectStore(db),
+    users, projects, userProjects,
     // No plugins: what is measured here is the daemon's OWN gate over /projects, /activity and /events.
     // The same gate seen through the plugin-served task surface moved with those routes to the plugin
     // registry (tests/work-projectAccess.test.ts there).
   });
-  return { app, adminTok, bobTok, bob };
+  return { app, adminTok, bobTok, bob, userProjects };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -39,6 +40,13 @@ describe('project access gating', () => {
     const { app, adminTok, bobTok } = setup();
     expect(((await (await app.request('/projects', auth(adminTok))).json()) as unknown[]).length).toBe(1);
     expect(((await (await app.request('/projects', auth(bobTok))).json()) as unknown[]).length).toBe(0);
+  });
+
+  it('projects expose their assigned members only to administrators', async () => {
+    const { app, adminTok, bobTok, bob, userProjects } = setup();
+    userProjects.assign(bob.id, 1);
+    expect(await (await app.request('/projects/1/users', auth(adminTok))).json()).toEqual([bob.id]);
+    expect((await app.request('/projects/1/users', auth(bobTok))).status).toBe(403);
   });
 
   it('a non-admin cannot manage assignments or create projects (no privilege escalation)', async () => {

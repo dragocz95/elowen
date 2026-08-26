@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { GitBranch, Plus, Search, Activity, FileWarning, FolderGit2 } from 'lucide-react';
-import { jsonBody, localizedError, runtime, type Overview, type Workspace } from './runtime';
+import { jsonBody, localizedError, runtime, type Overview, type Project, type Workspace } from './runtime';
 
 const QUERY_KEY = ['plugin', 'sandbox', 'overview'];
 
@@ -11,8 +11,9 @@ type RemovePreview = {
   activeProcesses: number; files: string[]; previewHash: string; phrase: string;
 };
 
-export function WorkspacesSettings({ surface }: { surface: 'page' | 'deck' }) {
+export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'deck' | 'project'; project?: Project }) {
   const { components: C, hooks, api } = runtime();
+  const projectMode = surface === 'project' && project !== undefined;
   const s = hooks.usePluginStrings('sandbox');
   const { toast } = hooks.useToast();
   const qc = hooks.useQueryClient();
@@ -48,19 +49,21 @@ export function WorkspacesSettings({ surface }: { surface: 'page' | 'deck' }) {
   const data = query.data;
   const projects = useMemo(() => data?.projects ?? [], [data?.projects]);
   const workspaces = useMemo(() => data?.workspaces ?? [], [data?.workspaces]);
-  const projectNames = useMemo(() => new Map(projects.map((project) => [project.id, project.slug])), [projects]);
+  const projectNames = useMemo(() => new Map(projects.map((item) => [item.id, item.slug])), [projects]);
+  const effectiveProjectFilter = projectMode ? String(project?.id ?? '') : projectFilter;
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return workspaces.filter((workspace) => {
-      if (projectFilter !== 'all' && workspace.projectId !== Number(projectFilter)) return false;
+      if (effectiveProjectFilter !== 'all' && workspace.projectId !== Number(effectiveProjectFilter)) return false;
       if (!needle) return true;
       return [workspace.label, workspace.branch, workspace.baseRef, projectNames.get(workspace.projectId) ?? '']
         .some((value) => value.toLowerCase().includes(needle));
     });
-  }, [workspaces, search, projectFilter, projectNames]);
-  const selected = workspaces.find((workspace) => workspace.id === selectedId) ?? null;
-  const activeCount = workspaces.filter((workspace) => workspace.bindings.length > 0).length;
-  const changedCount = workspaces.reduce((sum, workspace) => sum + (workspace.status?.dirty ?? 0) + (workspace.status?.untracked ?? 0), 0);
+  }, [workspaces, search, effectiveProjectFilter, projectNames]);
+  const selected = filtered.find((workspace) => workspace.id === selectedId) ?? null;
+  const counted = projectMode ? filtered : workspaces;
+  const activeCount = counted.filter((workspace) => workspace.bindings.length > 0).length;
+  const changedCount = counted.reduce((sum, workspace) => sum + (workspace.status?.dirty ?? 0) + (workspace.status?.untracked ?? 0), 0);
 
   const diff = hooks.useQuery<{ diff: string }>({
     queryKey: ['plugin', 'sandbox', 'diff', selected?.id],
@@ -97,24 +100,54 @@ export function WorkspacesSettings({ surface }: { surface: 'page' | 'deck' }) {
     }, { onSuccess: () => { setRemoveWorkspace(null); setRemovePreview(null); setSelectedId(null); } });
   };
 
+  const selectedDetail = selected ? (
+    <div className="flex flex-col gap-5 p-4">
+      <div>
+        <p className="font-mono text-xs text-text">{selected.branch}</p>
+        <p className="mt-1 break-all font-mono text-[11px] text-text-muted">{selected.path}</p>
+      </div>
+      {stateBadges(selected)}
+      <dl className="grid grid-cols-2 gap-3 text-xs">
+        <div><dt className="text-text-muted">{s.ahead}</dt><dd className="font-mono text-text">{selected.status?.ahead ?? 0}</dd></div>
+        <div><dt className="text-text-muted">{s.behind}</dt><dd className="font-mono text-text">{selected.status?.behind ?? 0}</dd></div>
+        <div><dt className="text-text-muted">{s.processes}</dt><dd className="font-mono text-text">{selected.activeProcesses}</dd></div>
+        <div><dt className="text-text-muted">{s.lastUsed}</dt><dd className="text-text">{new Date(selected.lastUsedAt).toLocaleString()}</dd></div>
+      </dl>
+      <div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">{s.changedFiles}</h3>
+        {selected.files.length ? <ul className="space-y-1 font-mono text-xs text-text">{selected.files.map((file) => <li key={`${file.code}:${file.path}`}>{file.code} {file.path}</li>)}</ul> : <p className="text-xs text-text-muted">{s.clean}</p>}
+      </div>
+      <div className="min-h-52 overflow-hidden rounded-lg border border-border">
+        <C.PatchView diff={diff.data?.diff ?? ''} empty={s.emptyPatch} loading={diff.isLoading} />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <C.Button onClick={() => { setUseWorkspace(selected); setUseSession(data?.sessions[0]?.id ?? ''); }} disabled={!selected.accessible || selected.lifecycle !== 'active'}>{s.use}</C.Button>
+        <C.Button onClick={() => { setCommitWorkspace(selected); setCommitForm({ message: '', paths: selected.files.map((file) => file.path).join('\n') }); }} disabled={!selected.accessible || selected.lifecycle !== 'active' || selected.files.length === 0}>{s.commit}</C.Button>
+        <C.Button variant="danger" onClick={() => openRemove(selected)} disabled={!selected.accessible}>{s.remove}</C.Button>
+      </div>
+    </div>
+  ) : null;
+
   const content = query.isError ? (
     <C.ErrorState message={s.loadError} onRetry={() => query.refetch()} />
   ) : query.isLoading ? (
     <C.LoadingState variant="list" />
   ) : (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 py-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative min-w-0 flex-1">
-          <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-          <C.Input value={search} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)} placeholder={s.search} className="pl-9" />
-        </div>
-        <C.SelectMenu
-          value={projectFilter}
-          onChange={setProjectFilter}
-          label={s.project}
-          options={[{ value: 'all', label: s.filterAll }, ...projects.map((project) => ({ value: String(project.id), label: project.slug }))]}
-        />
-        <C.Button variant="accent" icon={Plus} onClick={() => setCreateForm({ projectId: String(projects[0]?.id ?? ''), label: '', baseRef: 'main' })} disabled={projects.length === 0}>{s.create}</C.Button>
+        {!projectMode ? <>
+          <div className="relative min-w-0 flex-1">
+            <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <C.Input value={search} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)} placeholder={s.search} className="pl-9" />
+          </div>
+          <C.SelectMenu
+            value={projectFilter}
+            onChange={setProjectFilter}
+            label={s.project}
+            options={[{ value: 'all', label: s.filterAll }, ...projects.map((item) => ({ value: String(item.id), label: item.slug }))]}
+          />
+        </> : <p className="min-w-0 flex-1 text-xs leading-relaxed text-text-muted">{s.workspacesHint}</p>}
+        <C.Button variant="accent" icon={Plus} onClick={() => setCreateForm({ projectId: String(project?.id ?? projects[0]?.id ?? ''), label: '', baseRef: 'main' })} disabled={projects.length === 0}>{s.create}</C.Button>
       </div>
 
       {filtered.length === 0 ? <C.EmptyState title={s.emptyWorkspaces} icon={FolderGit2} /> : (
@@ -152,39 +185,15 @@ export function WorkspacesSettings({ surface }: { surface: 'page' | 'deck' }) {
         </C.DataTable>
       )}
 
-      {selected ? (
+      {selected && !projectMode ? (
         <C.WorkspaceDetailRail label={selected.label} closeLabel={s.cancel} onClose={() => setSelectedId(null)}>
-          <div className="flex flex-col gap-5 p-4">
-            <div>
-              <p className="font-mono text-xs text-text">{selected.branch}</p>
-              <p className="mt-1 break-all font-mono text-[11px] text-text-muted">{selected.path}</p>
-            </div>
-            {stateBadges(selected)}
-            <dl className="grid grid-cols-2 gap-3 text-xs">
-              <div><dt className="text-text-muted">{s.ahead}</dt><dd className="font-mono text-text">{selected.status?.ahead ?? 0}</dd></div>
-              <div><dt className="text-text-muted">{s.behind}</dt><dd className="font-mono text-text">{selected.status?.behind ?? 0}</dd></div>
-              <div><dt className="text-text-muted">{s.processes}</dt><dd className="font-mono text-text">{selected.activeProcesses}</dd></div>
-              <div><dt className="text-text-muted">{s.lastUsed}</dt><dd className="text-text">{new Date(selected.lastUsedAt).toLocaleString()}</dd></div>
-            </dl>
-            <div>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">{s.changedFiles}</h3>
-              {selected.files.length ? <ul className="space-y-1 font-mono text-xs text-text">{selected.files.map((file) => <li key={`${file.code}:${file.path}`}>{file.code} {file.path}</li>)}</ul> : <p className="text-xs text-text-muted">{s.clean}</p>}
-            </div>
-            <div className="min-h-52 overflow-hidden rounded-lg border border-border">
-              <C.PatchView diff={diff.data?.diff ?? ''} empty={s.emptyPatch} loading={diff.isLoading} />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <C.Button onClick={() => { setUseWorkspace(selected); setUseSession(data?.sessions[0]?.id ?? ''); }} disabled={!selected.accessible || selected.lifecycle !== 'active'}>{s.use}</C.Button>
-              <C.Button onClick={() => { setCommitWorkspace(selected); setCommitForm({ message: '', paths: selected.files.map((file) => file.path).join('\n') }); }} disabled={!selected.accessible || selected.lifecycle !== 'active' || selected.files.length === 0}>{s.commit}</C.Button>
-              <C.Button variant="danger" onClick={() => openRemove(selected)} disabled={!selected.accessible}>{s.remove}</C.Button>
-            </div>
-          </div>
+          {selectedDetail}
         </C.WorkspaceDetailRail>
       ) : null}
     </div>
   );
 
-  const framed = surface === 'deck' ? content : (
+  const framed = surface !== 'page' ? content : (
     <C.SpatialWorkspaceLayout hero={{
       eyebrow: s.workspacesTitle,
       title: s.workspacesTitle,
@@ -201,10 +210,15 @@ export function WorkspacesSettings({ surface }: { surface: 'page' | 'deck' }) {
 
   return <>
     {framed}
+    {selected && projectMode ? (
+      <C.Modal title={selected.label} size="lg" onClose={() => setSelectedId(null)}>
+        <C.ModalBody>{selectedDetail}</C.ModalBody>
+      </C.Modal>
+    ) : null}
     {createForm ? (
       <C.Modal title={s.createTitle} size="sm" onClose={() => setCreateForm(null)}>
         <C.ModalBody>
-          <C.Field label={s.project}><C.SelectMenu value={createForm.projectId} onChange={(projectId: string) => setCreateForm({ ...createForm, projectId })} label={s.project} options={projects.map((project) => ({ value: String(project.id), label: project.slug }))} /></C.Field>
+          {!projectMode ? <C.Field label={s.project}><C.SelectMenu value={createForm.projectId} onChange={(projectId: string) => setCreateForm({ ...createForm, projectId })} label={s.project} options={projects.map((item) => ({ value: String(item.id), label: item.slug }))} /></C.Field> : null}
           <C.Field label={s.label}><C.Input autoFocus value={createForm.label} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setCreateForm({ ...createForm, label: event.target.value })} placeholder={s.labelPlaceholder} /></C.Field>
           <C.Field label={s.baseRef}><C.Input value={createForm.baseRef} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setCreateForm({ ...createForm, baseRef: event.target.value })} placeholder={s.baseRefPlaceholder} className="font-mono" /></C.Field>
         </C.ModalBody>

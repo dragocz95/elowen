@@ -13,7 +13,7 @@ import { onUnhandledRequest } from '../msw';
 
 ensurePluginUiRuntime();
 const strings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
-const listing = [{ name: 'sandbox', url: '/plugins/sandbox/web/index.js', apiVersion: 3, nav: [], settings: [], strings }];
+const listing = [{ name: 'sandbox', url: '/plugins/sandbox/web/index.js', apiVersion: 4, nav: [], account: manifest.web.account, project: manifest.web.project, settings: [], strings }];
 
 const overview = {
   projects: [{ id: 1, slug: 'demo', path: '/repo' }],
@@ -48,9 +48,9 @@ function mount(node: ReactNode) {
   render(<Wrapper><ToastProvider>{node}</ToastProvider></Wrapper>);
 }
 
-describe('sandbox Workspaces settings', () => {
-  it('supports keyboard row selection and renders the live patch in the responsive detail rail', async () => {
-    mount(<WorkspacesSettings surface="deck" />);
+describe('sandbox Project workspaces', () => {
+  it('supports keyboard row selection and renders the live patch in a Project modal', async () => {
+    mount(<WorkspacesSettings surface="project" project={overview.projects[0]} />);
     const row = await screen.findByRole('row', { name: /Feature Alpha/i });
     fireEvent.keyDown(row, { key: 'Enter' });
     const detail = await screen.findByRole('dialog', { name: 'Feature Alpha' });
@@ -65,7 +65,7 @@ describe('sandbox Workspaces settings', () => {
       submitted = await request.json();
       return HttpResponse.json({ workspace: overview.workspaces[0] }, { status: 201 });
     }));
-    mount(<WorkspacesSettings surface="deck" />);
+    mount(<WorkspacesSettings surface="project" project={overview.projects[0]} />);
     fireEvent.click(await screen.findByRole('button', { name: strings.create }));
     const dialog = within(await screen.findByRole('dialog', { name: strings.createTitle }));
     fireEvent.change(dialog.getByPlaceholderText(strings.labelPlaceholder!), { target: { value: 'Fix checkout' } });
@@ -76,7 +76,7 @@ describe('sandbox Workspaces settings', () => {
 
   it('shows the error state instead of a loading skeleton after the request fails', async () => {
     server.use(http.get('*/api/plugins/sandbox/api/overview', () => HttpResponse.json({ error: 'broken' }, { status: 500 })));
-    mount(<WorkspacesSettings surface="deck" />);
+    mount(<WorkspacesSettings surface="project" project={overview.projects[0]} />);
     expect(await screen.findByText(strings.loadError!)).toBeInTheDocument();
   });
 });

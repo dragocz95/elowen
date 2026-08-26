@@ -69,17 +69,19 @@
   "web": {
     "entry": "web/index.js",
     "css": "web/index.css",
-    "requiresApiVersion": 3,
-    "settings": [
-      {
-        "id": "workspaces",
-        "label": "Workspaces",
-        "icon": "GitBranch"
-      },
+    "requiresApiVersion": 4,
+    "account": [
       {
         "id": "environment",
-        "label": "Environment",
+        "label": "Development environment",
         "icon": "Box"
+      }
+    ],
+    "project": [
+      {
+        "id": "workspaces",
+        "label": "My workspaces",
+        "icon": "GitBranch"
       }
     ],
     "strings": {

@@ -11,9 +11,11 @@
     }
   },
   "web": {
-    "settings": {
-      "workspaces": "Pracovní prostory",
-      "environment": "Prostředí"
+    "account": {
+      "environment": "Vývojové prostředí"
+    },
+    "project": {
+      "workspaces": "Moje pracovní prostory"
     },
     "strings": {
       "workspacesTitle": "Pracovní prostory",

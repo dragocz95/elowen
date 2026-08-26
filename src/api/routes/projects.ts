@@ -16,6 +16,15 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     const allowed = u ? new Set(d.userProjects.forUser(u.id)) : new Set<number>();
     return c.json(all.filter((p) => allowed.has(p.id)));
   });
+  // Project-centric access projection for the administrator's Project detail. Assignment writes keep
+  // using the canonical /users/:id/projects routes so there is still only one mutation contract.
+  app.get('/projects/:id/users', (c) => {
+    if (!d.projects || !d.userProjects || !d.users) return c.json({ error: 'projects unavailable' }, 400);
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const id = Number(c.req.param('id'));
+    if (!d.projects.get(id)) return c.json({ error: 'project not found' }, 404);
+    return c.json(d.userProjects.forProject(id));
+  });
   // Browse the server's directory tree to pick a new project's path (the new-project file manager).
   // Admin-only — it lists directory names outside any project root, so it sits behind the same gate as
   // project registration. Read-only and directory-only: never returns file contents.

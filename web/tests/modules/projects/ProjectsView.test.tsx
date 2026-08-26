@@ -13,6 +13,11 @@ const server = setupServer(
   http.get('*/api/projects/1/commit/deadbee', () => HttpResponse.json({ diff: '', files: [] })),
   http.get('*/api/projects/1/changed', () => HttpResponse.json({ changed: [] })),
   http.get('*/api/plugins/ui', () => HttpResponse.json([])),
+  http.get('*/api/users', () => HttpResponse.json([
+    { id: 1, username: 'admin', name: 'Admin', is_admin: true, created_at: '', allowed_execs: [], disabled_tools: [], allowed_tools: [], granted_plugins: [], email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false },
+    { id: 2, username: 'bob', name: 'Bob', is_admin: false, created_at: '', allowed_execs: [], disabled_tools: [], allowed_tools: [], granted_plugins: [], email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false },
+  ])),
+  http.get('*/api/projects/1/users', () => HttpResponse.json([2])),
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', is_admin: true } })),
 );
 beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
@@ -30,6 +35,18 @@ describe('ProjectsView', () => {
     expect(screen.getByTestId('projects-register')).not.toHaveClass('border-t-0');
     expect(row.closest('[role="row"]')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('dialog', { name: 'Project detail' })).toBeInTheDocument();
+  });
+
+  it('manages member access from the selected Project', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByText('elowen'));
+    fireEvent.click(await screen.findByRole('radio', { name: 'Access' }));
+    expect(await screen.findByText('1 of 1 users have access')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    const dialog = await screen.findByRole('dialog', { name: 'User access' });
+    expect(dialog).toHaveTextContent('Bob');
+    expect(dialog).not.toHaveTextContent('@admin');
   });
 
   it('selects a project with Space', async () => {

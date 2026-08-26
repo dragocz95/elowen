@@ -17,6 +17,7 @@ import { ContextMenu, DIVIDER, type ContextMenuState, type MenuEntry } from '../
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { ProjectIconPicker } from './ProjectIconPicker';
 import { DirectoryPicker } from './DirectoryPicker';
+import { ProjectDetailTabs } from './ProjectDetailTabs';
 import { EntityList, EntityRow } from '../../components/ui/EntityList';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
@@ -271,56 +272,57 @@ export function ProjectsView() {
                       </div>
                     </div>
 
-                    {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-text-muted">{selectedProject.notes}</p> : null}
-
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 py-3">
                       {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-text"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
                       {isAdmin ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}
                     </div>
 
-                    {git.isLoading ? <LoadingLine /> : null}
-                    {git.data && !git.data.isRepo ? <div className="py-4"><Badge tone="muted">{t.projects.notGit}</Badge></div> : null}
-                    {git.data?.status ? (
-                      <section className="border-b border-border/70 py-4">
-                        <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text"><FolderGit2 size={14} className="text-text-muted" aria-hidden />{t.projects.git}</h3>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Badge tone="accent"><GitBranch size={11} className="mr-1" aria-hidden />{git.data.status.branch}</Badge>
-                          {git.data.status.clean
-                            ? <Badge tone="success"><CheckCircle2 size={11} className="mr-1" aria-hidden />{t.projects.clean}</Badge>
-                            : editorEnabled ? <button type="button" onClick={openWorking} title={t.projects.viewChanges} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"><Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge></button>
-                            : <Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge>}
-                          {git.data.status.ahead > 0 ? <Badge tone="accent"><ArrowUp size={11} className="mr-0.5" aria-hidden />{git.data.status.ahead}</Badge> : null}
-                          {git.data.status.behind > 0 ? <Badge tone="muted"><ArrowDown size={11} className="mr-0.5" aria-hidden />{git.data.status.behind}</Badge> : null}
-                        </div>
-                      </section>
-                    ) : null}
+                    <ProjectDetailTabs project={selectedProject} isAdmin={isAdmin} overview={<>
+                      {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-text-muted">{selectedProject.notes}</p> : null}
+                      {git.isLoading ? <LoadingLine /> : null}
+                      {git.data && !git.data.isRepo ? <div className="py-4"><Badge tone="muted">{t.projects.notGit}</Badge></div> : null}
+                      {git.data?.status ? (
+                        <section className="border-b border-border/70 py-4">
+                          <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text"><FolderGit2 size={14} className="text-text-muted" aria-hidden />{t.projects.git}</h3>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge tone="accent"><GitBranch size={11} className="mr-1" aria-hidden />{git.data.status.branch}</Badge>
+                            {git.data.status.clean
+                              ? <Badge tone="success"><CheckCircle2 size={11} className="mr-1" aria-hidden />{t.projects.clean}</Badge>
+                              : editorEnabled ? <button type="button" onClick={openWorking} title={t.projects.viewChanges} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"><Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge></button>
+                              : <Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge>}
+                            {git.data.status.ahead > 0 ? <Badge tone="accent"><ArrowUp size={11} className="mr-0.5" aria-hidden />{git.data.status.ahead}</Badge> : null}
+                            {git.data.status.behind > 0 ? <Badge tone="muted"><ArrowDown size={11} className="mr-0.5" aria-hidden />{git.data.status.behind}</Badge> : null}
+                          </div>
+                        </section>
+                      ) : null}
 
-                    {git.data?.isRepo && git.data.branches.length > 0 ? (
-                      <section className="border-b border-border/70 py-4">
-                        <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text"><GitBranch size={14} className="text-text-muted" aria-hidden />{t.projects.branches}</h3>
-                        <div className="flex flex-wrap gap-1.5">{git.data.branches.map((branch) => <Badge key={branch.name} tone={branch.current ? 'accent' : 'muted'}>{branch.name}{branch.current ? ' *' : ''}</Badge>)}</div>
-                      </section>
-                    ) : null}
+                      {git.data?.isRepo && git.data.branches.length > 0 ? (
+                        <section className="border-b border-border/70 py-4">
+                          <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text"><GitBranch size={14} className="text-text-muted" aria-hidden />{t.projects.branches}</h3>
+                          <div className="flex flex-wrap gap-1.5">{git.data.branches.map((branch) => <Badge key={branch.name} tone={branch.current ? 'accent' : 'muted'}>{branch.name}{branch.current ? ' *' : ''}</Badge>)}</div>
+                        </section>
+                      ) : null}
 
-                    {git.data?.isRepo && git.data.commits.length > 0 ? (
-                      <section className="py-4">
-                        <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold text-text"><GitCommitHorizontal size={14} className="text-text-muted" aria-hidden />{t.projects.commits}</h3>
-                        <EntityList>
-                          {git.data.commits.map((commit) => (
-                            <EntityRow key={commit.hash} interactive={false} className="py-0">
-                              {editorEnabled ? <button type="button" onClick={() => openEditor(commit.hash)} title={t.projects.viewCommit} className="flex w-full min-w-0 flex-col gap-1 px-1 py-3 text-left transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70">
-                                <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-accent">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
-                                <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
-                              </button> : <div className="flex min-w-0 flex-col gap-1 px-1 py-3">
-                                <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-accent">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
-                                <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
-                              </div>}
-                            </EntityRow>
-                          ))}
-                        </EntityList>
-                      </section>
-                    ) : null}
-                    {git.isError ? <ErrorState message={t.projects.gitError} onRetry={() => git.refetch()} /> : null}
+                      {git.data?.isRepo && git.data.commits.length > 0 ? (
+                        <section className="py-4">
+                          <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold text-text"><GitCommitHorizontal size={14} className="text-text-muted" aria-hidden />{t.projects.commits}</h3>
+                          <EntityList>
+                            {git.data.commits.map((commit) => (
+                              <EntityRow key={commit.hash} interactive={false} className="py-0">
+                                {editorEnabled ? <button type="button" onClick={() => openEditor(commit.hash)} title={t.projects.viewCommit} className="flex w-full min-w-0 flex-col gap-1 px-1 py-3 text-left transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70">
+                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-accent">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
+                                  <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
+                                </button> : <div className="flex min-w-0 flex-col gap-1 px-1 py-3">
+                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-accent">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
+                                  <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
+                                </div>}
+                              </EntityRow>
+                            ))}
+                          </EntityList>
+                        </section>
+                      ) : null}
+                      {git.isError ? <ErrorState message={t.projects.gitError} onRetry={() => git.refetch()} /> : null}
+                    </>} />
                   </WorkspaceDetailRail>
                 ) : null}
               </ControlSurfaceRegister>

@@ -326,7 +326,12 @@ export function useAssignProject() {
   return useMutation({
     mutationFn: (v: { userId: number; projectId: number; currentlyAssigned: boolean }) =>
       v.currentlyAssigned ? elowenClient.unassignProject(v.userId, v.projectId) : elowenClient.assignProject(v.userId, v.projectId),
-    onSuccess: (_r, v) => qc.invalidateQueries({ queryKey: ['user-projects', v.userId] }),
+    onSuccess: async (_r, v) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['user-projects', v.userId] }),
+        qc.invalidateQueries({ queryKey: ['project-users', v.projectId] }),
+      ]);
+    },
   });
 }
 const inFlightFileWrites = new Map<string, Promise<{ ok: boolean }>>();

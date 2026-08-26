@@ -12,6 +12,13 @@ export class UserProjectStore {
       .map((r) => r.project_id);
   }
 
+  /** Non-admin account ids explicitly assigned to one Project. Admin access is global and therefore is
+   *  not represented by assignment rows. */
+  forProject(projectId: number): number[] {
+    return (this.db.prepare('SELECT user_id FROM user_projects WHERE project_id = ? ORDER BY user_id').all(projectId) as { user_id: number }[])
+      .map((r) => r.user_id);
+  }
+
   assign(userId: number, projectId: number): void {
     this.db.prepare('INSERT OR IGNORE INTO user_projects (user_id, project_id) VALUES (?, ?)').run(userId, projectId);
   }

@@ -60,7 +60,12 @@ interface SandboxRuntime {
 }
 
 type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[]; surface: 'page' | 'deck' }>;
-interface Registration { requiresApiVersion: number; settings: Record<string, PluginPageComponent> }
+type PluginProjectComponent = ComponentType<{ plugin: string; panelId: string; project: Project; surface: 'project' }>;
+interface Registration {
+  requiresApiVersion: number;
+  account?: Record<string, PluginPageComponent>;
+  project?: Record<string, PluginProjectComponent>;
+}
 interface HostWindow {
   ElowenUiRuntime?: unknown;
   __elowenRegisterPluginUi?: (plugin: string, registration: Registration) => void;

@@ -229,11 +229,11 @@ for (const name of pluginNames) {
         errors.push(`plugin ${name} (${locale}): unknown top-level key "${key}" (only description/fields/web are read)`);
       }
     }
-    // Inside the `web` block only these four are read (pluginUi.ts localized()); anything else is a
+    // Inside the `web` block only these keys are read (pluginUi.ts localized()); anything else is a
     // typo that silently translates nothing — the same orphan rule the top-level keys get.
     for (const key of Object.keys(i18n.web ?? {})) {
-      if (!['label', 'nav', 'settings', 'strings'].includes(key)) {
-        errors.push(`plugin ${name} (${locale}): unknown web key "${key}" (only label/nav/settings/strings are read)`);
+      if (!['label', 'nav', 'account', 'project', 'settings', 'strings'].includes(key)) {
+        errors.push(`plugin ${name} (${locale}): unknown web key "${key}" (only label/nav/account/project/settings/strings are read)`);
       }
     }
     // The world's own name in the left menu (manifest `web.label`): coverage BOTH ways, like every other
@@ -245,19 +245,26 @@ for (const name of pluginNames) {
     // Browser-UI menu labels (manifest `web` block): every override must name a declared nav route /
     // settings id, and every declared entry needs a translation — same rule as fields.
     const webNavRoutes = new Set((manifest.web?.nav ?? []).map((n) => n.route ?? ''));
+    const webAccountIds = new Set((manifest.web?.account ?? []).map((s) => s.id));
+    const webProjectIds = new Set((manifest.web?.project ?? []).map((s) => s.id));
     const webSettingsIds = new Set((manifest.web?.settings ?? []).map((s) => s.id));
+    const checkSections = (kind, declared, translated = {}) => {
+      for (const id of Object.keys(translated)) {
+        if (!declared.has(id)) errors.push(`plugin ${name} (${locale}): web.${kind}.${id} has no matching manifest web.${kind} id`);
+      }
+      for (const id of declared) {
+        if (!translated[id]) errors.push(`plugin ${name} (${locale}): missing web.${kind}.${id} translation`);
+      }
+    };
     for (const route of Object.keys(i18n.web?.nav ?? {})) {
       if (!webNavRoutes.has(route)) errors.push(`plugin ${name} (${locale}): web.nav["${route}"] has no matching manifest web.nav route`);
-    }
-    for (const id of Object.keys(i18n.web?.settings ?? {})) {
-      if (!webSettingsIds.has(id)) errors.push(`plugin ${name} (${locale}): web.settings.${id} has no matching manifest web.settings id`);
     }
     for (const route of webNavRoutes) {
       if (!i18n.web?.nav?.[route]) errors.push(`plugin ${name} (${locale}): missing web.nav["${route}"] translation`);
     }
-    for (const id of webSettingsIds) {
-      if (!i18n.web?.settings?.[id]) errors.push(`plugin ${name} (${locale}): missing web.settings.${id} translation`);
-    }
+    checkSections('account', webAccountIds, i18n.web?.account);
+    checkSections('project', webProjectIds, i18n.web?.project);
+    checkSections('settings', webSettingsIds, i18n.web?.settings);
     // Bundle view strings (manifest `web.strings`): same coverage rule — every manifest key needs a
     // translation, and an i18n key that no longer exists in the manifest is an orphan.
     const webStringKeys = new Set(Object.keys(manifest.web?.strings ?? {}));

@@ -368,6 +368,7 @@ export const elowenClient = {
   updateProject: (id: number, patch: { path?: string; notes?: string; icon?: string }) => req<Project>(`/projects/${id}`, json(patch, 'PATCH')),
   removeProject: (id: number) => req<{ ok: boolean }>(`/projects/${id}`, { method: 'DELETE' }),
   projectGit: (id: number) => req<ProjectGit>(`/projects/${id}/git`),
+  projectUsers: (id: number) => req<number[]>(`/projects/${id}/users`),
   projectFiles: (id: number) => req<FileNode[]>(`/projects/${id}/files`),
   /** Browse the server's directory tree to pick a new project's path. Admin-only on the daemon. */
   browseDirs: (path?: string) => req<DirListing>(`/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`),

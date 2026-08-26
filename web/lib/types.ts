@@ -292,6 +292,8 @@ export interface PluginUiListing {
   nav: { label: string; icon?: string; route?: string }[];
   /** Per-account plugin panels. Optional for compatibility with an older daemon listing. */
   account?: { id: string; label: string; icon?: string }[];
+  /** Contextual panels contributed to a selected Project. Optional for older daemons. */
+  project?: { id: string; label: string; icon?: string }[];
   /** `layout` picks the section's rendering: 'orbital' uses the constellation layout the core
    *  Settings sections use, anything else (or absent) the classic stacked rows. */
   settings: { id: string; label: string; icon?: string; layout?: 'classic' | 'orbital' }[];

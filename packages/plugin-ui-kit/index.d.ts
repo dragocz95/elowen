@@ -10,7 +10,17 @@ import type { ComponentType } from 'react';
 /** See index.js — bump on incompatible changes to `ElowenUiRuntime`. Deliberately a LITERAL type:
  *  the web app re-declares the value and annotates it with `typeof PLUGIN_UI_API_VERSION`, so a kit
  *  bump that forgets the host fails the web typecheck instead of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 3;
+export declare const PLUGIN_UI_API_VERSION: 4;
+
+/** Project metadata exposed to a contextual plugin panel. The Project remains core-owned; a panel uses
+ *  this identity to address only its own project-scoped API data. */
+export interface PluginUiProject {
+  id: number;
+  slug: string;
+  path: string;
+  notes: string;
+  icon?: string;
+}
 
 /** Props every plugin page/settings component receives. */
 export interface PluginPageProps {
@@ -33,6 +43,15 @@ export interface PluginPageProps {
   onSaveState?: (status: 'idle' | 'saving' | 'saved' | 'error', retry?: () => void) => void;
 }
 
+/** Props for a contextual Project panel. It is never a standalone route: the selected Project and panel
+ *  id come from the host's Project detail rail. */
+export interface PluginProjectPanelProps {
+  plugin: string;
+  panelId: string;
+  project: PluginUiProject;
+  surface: 'project';
+}
+
 /** What a bundle hands to window.__elowenRegisterPluginUi. Routes are `/`-joined segment patterns
  *  (`''` = the root page, `detail/:id` captures params). `account` and `settings` components are keyed by
  *  their matching manifest section ids and mount in the host's Account or plugin settings surface. */
@@ -40,6 +59,7 @@ export interface PluginUiRegistration {
   requiresApiVersion: number;
   pages?: Record<string, ComponentType<PluginPageProps>>;
   account?: Record<string, ComponentType<PluginPageProps>>;
+  project?: Record<string, ComponentType<PluginProjectPanelProps>>;
   settings?: Record<string, ComponentType<PluginPageProps>>;
 }
 
