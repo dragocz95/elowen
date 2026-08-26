@@ -130,6 +130,9 @@ describe('AccountView', () => {
     for (const label of ['Microsoft Teams identity', 'Telegram ID', 'WhatsApp number']) {
       expect(screen.queryByRole('textbox', { name: label })).toBeNull();
     }
+    // The mark is Discord's own brand asset, the same one the activity feed uses — not a stand-in chat
+    // glyph, which is what the row shipped with first and what nobody would notice going back.
+    expect(document.querySelector('img[src="/platforms/discord.svg"]')).not.toBeNull();
   });
 
   // Disconnecting is the same edit as clearing the box by hand, so it must travel the same autosave path

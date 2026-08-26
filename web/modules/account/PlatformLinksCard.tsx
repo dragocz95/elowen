@@ -1,24 +1,29 @@
 'use client';
 import { useState } from 'react';
-import { AtSign, Link2, MessageCircle, MessageSquareText, Send } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Link2 } from 'lucide-react';
 import { SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
+import { PlatformIcon } from '../../components/ui/PlatformIcon';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { useTranslation } from '../../lib/i18n';
-import type { PlatformLinkKey } from '../../lib/types';
+import type { PlatformLinkKey, PlatformSurface } from '../../lib/types';
 
 /** How each platform link presents itself. A `Record` over the daemon's link keys, so it is EXHAUSTIVE
  *  by type: a platform added to the identity descriptors fails this build until it has an entry here.
  *  The keys are spelled out rather than imported because the descriptor module is daemon runtime code
- *  and this app takes TYPES only from `src/` — the type is what enforces the set, not the spelling. */
-const PLATFORM_LINK_INPUTS: Record<PlatformLinkKey, { placeholder: string; icon: LucideIcon }> = {
-  discordUserId: { placeholder: '123456789012345678', icon: AtSign },
-  msteamsUserId: { placeholder: '00000000-0000-0000-0000-000000000000', icon: MessageSquareText },
-  telegramUserId: { placeholder: '123456789', icon: Send },
-  whatsappNumber: { placeholder: '420778433908', icon: MessageCircle },
+ *  and this app takes TYPES only from `src/` — the type is what enforces the set, not the spelling.
+ *
+ *  The mark is the platform's own, drawn by {@link PlatformIcon} from `public/platforms/` — the same
+ *  brand asset the activity feed and the session list already use, so one identity is one logo across
+ *  the app. `platform` is typed rather than spelled free-hand, so a link key can only ever point at a
+ *  platform the daemon actually knows. */
+const PLATFORM_LINK_INPUTS: Record<PlatformLinkKey, { placeholder: string; platform: PlatformSurface }> = {
+  discordUserId: { placeholder: '123456789012345678', platform: 'discord' },
+  msteamsUserId: { placeholder: '00000000-0000-0000-0000-000000000000', platform: 'msteams' },
+  telegramUserId: { placeholder: '123456789', platform: 'telegram' },
+  whatsappNumber: { placeholder: '420778433908', platform: 'whatsapp' },
 };
 /** Render and save order — the declaration order above, never a second list to keep in step. */
 export const PLATFORM_LINK_ORDER = Object.keys(PLATFORM_LINK_INPUTS) as PlatformLinkKey[];
@@ -55,10 +60,10 @@ export function PlatformLinksCard({ available, values, onChange }: {
       <SpatialRow title={t.account.linkedAccounts} icon={Link2} description={t.help.accountPlatformLinks}>
         <SelectionSummary
           countText={linked.length === 0 ? t.account.linkedAccountsNone : ''}
-          samples={linked.map((key) => {
-            const Icon = PLATFORM_LINK_INPUTS[key].icon;
-            return { label: copy[key].title, icon: <Icon size={12} /> };
-          })}
+          samples={linked.map((key) => ({
+            label: copy[key].title,
+            icon: <PlatformIcon platform={PLATFORM_LINK_INPUTS[key].platform} size={12} />,
+          }))}
           moreCount={0}
           onManage={() => setOpen(true)}
           manageLabel={t.managePicker.manage}
@@ -70,12 +75,11 @@ export function PlatformLinksCard({ available, values, onChange }: {
           <p className="mb-4 text-xs leading-relaxed text-text-muted">{t.help.accountPlatformLinks}</p>
           <div className="flex flex-col divide-y divide-border">
             {shown.map((key) => {
-              const Icon = PLATFORM_LINK_INPUTS[key].icon;
               const value = values[key] ?? '';
               return (
                 <div key={key} className="py-3.5">
                   <div className="flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted"><Icon size={18} aria-hidden /></span>
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center"><PlatformIcon platform={PLATFORM_LINK_INPUTS[key].platform} size={18} /></span>
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{copy[key].title}</span>
                     {/* Disconnecting only clears the field, so it needs no confirmation — but it stays a
                         quiet ghost until hovered, because it is the one action in this row nobody is

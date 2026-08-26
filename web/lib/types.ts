@@ -73,9 +73,9 @@ import type {
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
   BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
-  CommitFileChange, CommitLogEntry, PlatformLinkKey,
+  CommitFileChange, CommitLogEntry, PlatformLinkKey, PlatformSurface,
 } from '../../src/shared/wireContract.js';
-export type { PlatformLinkKey };
+export type { PlatformLinkKey, PlatformSurface };
 // `BrainStreamControl` is only referenced by the snapshot frame below, so it is imported but not re-exported.
 export type { ToolOutputView, BrainWorkflowView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, RuntimeLimits, BrainUsage, CommitFileChange, CommitLogEntry };
 export type {
