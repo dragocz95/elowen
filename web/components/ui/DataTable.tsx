@@ -49,7 +49,9 @@ export function DataTableRow({ children, header = false, selected = false, inter
       role="row"
       data-state={selected ? 'selected' : 'idle'}
       data-row-height={header ? undefined : height}
-      className={`data-table-grid items-center gap-x-3 border-b border-border/70 px-4 last:border-b-0 ${header ? 'data-table-header sticky top-0' : `${interactive || onOpen ? 'interactive-row' : ''}`} ${selected ? 'bg-accent/[0.055]' : ''} ${className}`}
+      // `.data-table-header` carries the sticky positioning itself; a `sticky` utility here would be
+      // overridden by `.data-table-grid`'s own `position: relative` (see data-table.css).
+      className={`data-table-grid items-center gap-x-3 border-b border-border/70 px-4 last:border-b-0 ${header ? 'data-table-header' : `${interactive || onOpen ? 'interactive-row' : ''}`} ${selected ? 'bg-accent/[0.055]' : ''} ${className}`}
       {...rest}
     >
       {children}

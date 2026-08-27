@@ -1700,6 +1700,7 @@ export const cs = {
     filterBuiltin: 'Vestavěné',
     colName: 'Název',
     colDescription: 'Popis',
+    openRow: 'Otevřít položku: {name}',
   },
   pluginUi: {
     eyebrow: 'Rozšíření',

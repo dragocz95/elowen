@@ -9,6 +9,12 @@ const DAEMON_URL = `http://127.0.0.1:${FAKE_DAEMON_PORT}`;
 // Where global setup stashes the authenticated storage state (a real login through the app → cookie).
 export const STORAGE_STATE = 'tests/e2e/.auth/admin.json';
 
+// Machines that cannot download Playwright's pinned Chromium (offline CI, a locked-down host) can point
+// the run at a locally installed Chrome/Chromium instead. Unset by default: the pinned build is the one
+// the suite is calibrated against, and silently drifting to whatever browser is on PATH would hide that.
+const browserPath = process.env.E2E_BROWSER_PATH;
+const launchOptions = browserPath ? { executablePath: browserPath } : undefined;
+
 export default defineConfig({
   testDir: './tests/e2e/specs',
   testMatch: '**/*.e2e.ts',
@@ -25,9 +31,9 @@ export default defineConfig({
   },
   projects: [
     // Authenticated admin: reuses the cookie global setup saved.
-    { name: 'authed', use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE } },
+    { name: 'authed', use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE, launchOptions } },
     // Anonymous visitor: no stored session, so the app should fall through to the login form.
-    { name: 'unauthed', use: { ...devices['Desktop Chrome'], storageState: { cookies: [], origins: [] } } },
+    { name: 'unauthed', use: { ...devices['Desktop Chrome'], storageState: { cookies: [], origins: [] }, launchOptions } },
   ],
   webServer: [
     {

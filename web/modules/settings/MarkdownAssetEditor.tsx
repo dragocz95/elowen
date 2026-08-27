@@ -1,7 +1,7 @@
 'use client';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
-import { ChevronRight, Search, Trash2 } from 'lucide-react';
+import { Search, Trash2 } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input, textareaClass } from '../../components/ui/Input';
@@ -10,7 +10,7 @@ import { RegisterSearch } from '../../components/ui/RegisterSearch';
 import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
+import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '../../components/ui/DataTable';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -231,8 +231,8 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
             <div className="flex min-w-0 flex-col gap-3">
               <DataTable
                 ariaLabel={t.assetEditor.colName}
-                columns={ownership ? 'minmax(0,14rem) minmax(0,1fr) 7rem 8rem 6rem 3.5rem' : 'minmax(0,14rem) minmax(0,1fr) 8rem 6rem 3.5rem'}
-                compactColumns="minmax(0,1fr) 3.5rem"
+                columns={ownership ? 'minmax(0,14rem) minmax(0,1fr) 7rem 10rem 6rem 3rem 1.25rem' : 'minmax(0,14rem) minmax(0,1fr) 10rem 6rem 3rem 1.25rem'}
+                compactColumns="minmax(0,1fr) 3rem 1.25rem"
               >
                 <DataTableRow header>
                   <DataTableCell header>{t.assetEditor.colName}</DataTableCell>
@@ -240,7 +240,9 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   {ownership ? <DataTableCell header priority="wide">{ownership.header}</DataTableCell> : null}
                   <DataTableCell header priority="wide" role="presentation" aria-hidden>{null}</DataTableCell>
                   <DataTableCell header priority="wide" role="presentation" aria-hidden>{null}</DataTableCell>
-                  <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
+                  <DataTableCell header labelHidden>{t.common.actions}</DataTableCell>
+                  {/* The trailing chevron track: an affordance, not a column, so its header is empty. */}
+                  <DataTableCell header aria-hidden>{null}</DataTableCell>
                 </DataTableRow>
                 {pageItems.map((item) => {
                   // Two different questions, deliberately kept apart: WHERE the entry came from (drives the
@@ -249,48 +251,60 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   // somebody who may not edit it is still a custom skill, not a built-in one.
                   const isUser = item.source === 'user';
                   const editable = isUser && item.canDelete !== false;
-                  const open = () => { if (editable) { setForm(formFromItem(item)); setEditing(item); } };
+                  const open = () => { setForm(formFromItem(item)); setEditing(item); };
                   const isOpen = editing !== null && assetKey(editing) === assetKey(item);
-                  return (
-                    <DataTableRow
-                      key={assetKey(item)}
-                      interactive={editable}
-                      selected={isOpen}
-                      aria-selected={isOpen}
-                      className="group"
-                    >
-                      <DataTableCell>
-                        {editable ? (
-                          <button type="button" onClick={open} className="block w-full truncate text-left font-mono text-sm text-text">{item.name}</button>
-                        ) : (
-                          <span className="block truncate font-mono text-sm text-text">{item.name}</span>
-                        )}
-                      </DataTableCell>
+                  const cells = (
+                    <>
+                      <DataTableCell className="font-mono text-sm text-text">{item.name}</DataTableCell>
                       {/* Preview, not wrap: a description is a sentence and would push every other row
                           out of alignment; the full text is on hover. */}
-                      <DataTableCell priority="wide" title={item.description} className="truncate text-xs text-text-muted">
+                      <DataTableCell priority="wide" title={item.description} className="text-xs text-text-muted">
                         {item.description || '—'}
                       </DataTableCell>
                       {ownership ? (
-                        <DataTableCell priority="wide" title={ownership.label(item)} className="truncate text-xs text-text-muted">
+                        <DataTableCell priority="wide" title={ownership.label(item)} className="text-xs text-text-muted">
                           {ownership.label(item)}
                         </DataTableCell>
                       ) : null}
-                      <DataTableCell priority="wide" className="flex flex-wrap items-center gap-1.5">
+                      {/* One line, never a stack: the source badge and whatever the caller adds (a version,
+                          a "manual only" marker) sit side by side and clip at the column edge. Wrapping them
+                          was what made this register measure 27px, 41px and 59px row by row while every
+                          other one holds a single rhythm — a badge is a marker, not a reason to grow a row. */}
+                      <DataTableCell priority="wide" className="flex items-center gap-1.5">
                         <Badge tone={isUser ? 'accent' : 'default'}>{isUser ? labels.badgeUser : labels.badgeBuiltin}</Badge>
                         {renderBadges?.(item)}
                       </DataTableCell>
-                      <DataTableCell priority="wide" className="flex items-center">
+                      <DataTableCell priority="wide" lines="auto" className="flex items-center">
                         {editable ? renderRowControl?.(item) : null}
                       </DataTableCell>
-                      <DataTableCell className="flex items-center justify-end gap-1">
+                      <DataTableCell lines="auto" reveal className="flex items-center justify-end">
                         {editable ? (
-                          <>
-                            <Button variant="ghost-danger" icon={Trash2} aria-label={labels.remove} onClick={() => setPendingDelete(item)} />
-                            <ChevronRight size={15} aria-hidden className="shrink-0 text-text-muted/50 transition-colors group-hover:text-text" />
-                          </>
+                          <Button variant="ghost-danger" icon={Trash2} aria-label={labels.remove} onClick={() => setPendingDelete(item)} />
                         ) : null}
                       </DataTableCell>
+                      {/* A built-in entry does not open, so it gets the track without the affordance —
+                          a chevron on a row nothing happens to is a promise the register cannot keep. */}
+                      {editable ? <DataTableChevronCell /> : <DataTableCell aria-hidden>{null}</DataTableCell>}
+                    </>
+                  );
+                  // `onOpen` and `openLabel` are one structurally typed pair, so the two cases are two
+                  // elements rather than a spread — a row that opens always carries its short name, and
+                  // a built-in row carries neither. The label comes from the host dictionary, not from
+                  // `labels`: a new required entry there would be a contract change every plugin
+                  // embedding this register would have to ship before its rows could open again.
+                  return editable ? (
+                    <DataTableRow
+                      key={assetKey(item)}
+                      selected={isOpen}
+                      aria-selected={isOpen}
+                      onOpen={open}
+                      openLabel={t.assetEditor.openRow.replace('{name}', item.name)}
+                    >
+                      {cells}
+                    </DataTableRow>
+                  ) : (
+                    <DataTableRow key={assetKey(item)} selected={isOpen} aria-selected={isOpen}>
+                      {cells}
                     </DataTableRow>
                   );
                 })}

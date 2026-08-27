@@ -1706,6 +1706,7 @@ export const en = {
     filterBuiltin: 'Built-in',
     colName: 'Name',
     colDescription: 'Description',
+    openRow: 'Open entry: {name}',
   },
   pluginUi: {
     eyebrow: 'Extension',

@@ -19,8 +19,17 @@
 .data-table-grid[data-row-height='tall'] { min-height: var(--data-table-row-tall); }
 
 /* A sticky header scrolls rows UNDER itself, so its fill has to be opaque. The 1.2% white it used to
-   carry let every row read straight through the column names on any register long enough to scroll. */
+   carry let every row read straight through the column names on any register long enough to scroll.
+
+   `position: sticky` belongs HERE and not on the element as a utility class. This stylesheet is imported
+   unlayered, so every rule in it outranks the whole of Tailwind's `@layer utilities` no matter what the
+   specificity is — and `.data-table-grid` above puts `position: relative` on every row, the header row
+   included. A `sticky` class on the header lost that fight silently: the column names simply scrolled
+   away with the rows. Keeping both declarations in one file is what stops the next `position` added to a
+   row from quietly winning it again. */
 .data-table-header {
+  position: sticky;
+  top: 0;
   min-height: var(--data-table-row-header);
   background: var(--color-surface-sticky);
   z-index: var(--z-sticky);
