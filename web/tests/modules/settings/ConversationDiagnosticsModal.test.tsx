@@ -85,6 +85,16 @@ function renderModal(captureEnabled = true, onEnableCapture = vi.fn()) {
 }
 
 describe('ConversationDiagnosticsModal', () => {
+  it('takes the whole viewport instead of the drawer a first overlay otherwise defaults to', async () => {
+    // Three columns of raw provider payloads (session list, transcript, inspector). A drawer gives it
+    // neither the width for the columns nor the height to read a request, so this one opts out of the
+    // section default explicitly — dropping the prop silently reverts it to a drawer.
+    renderModal();
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveClass('w-full');
+    expect(dialog.className).not.toMatch(/w-\[min\(/);
+  });
+
   it('loads only an explicitly opened segment and keeps the raw provider body lazy', async () => {
     renderModal();
     expect(await screen.findByLabelText('Prompt token segments')).toBeInTheDocument();

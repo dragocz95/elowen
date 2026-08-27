@@ -361,10 +361,14 @@ export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, 
   const toolsPanel = <ToolsPanel sessionId={sessionId} requestId={requestId} tools={tools} query={toolQuery} setQuery={setToolQuery} />;
 
   return (
+    // Fullscreen, not the drawer the first overlay in a section otherwise gets: this is a three-column
+    // workspace (session list, transcript, inspector) over raw provider payloads, and a drawer gives it
+    // neither the width for the columns nor the height to read a request without scrolling the rail away.
     <Modal
       title={d.title}
       description={selectedSession ? `${selectedSession.title || selectedSession.id} · ${selectedSession.userName || selectedSession.username}` : d.description}
       icon={Database}
+      presentation="fullscreen"
       onClose={onClose}
       headerActions={<div className="flex md:hidden"><button type="button" aria-label={d.sessions} className="p-2 text-text-muted" onClick={() => setMobilePanel('sessions')}><Menu size={18} /></button><button type="button" aria-label={d.tools} className="p-2 text-text-muted" onClick={() => setMobilePanel('tools')}><PanelRightOpen size={18} /></button></div>}
     >
