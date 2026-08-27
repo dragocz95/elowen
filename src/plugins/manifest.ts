@@ -203,8 +203,16 @@ export interface PluginManifest {
     navKind?: 'domain' | 'infrastructure';
     nav?: { label: string; icon?: string; route?: string }[];
     /** Per-account integration panels mounted in Account. The listing is grant-filtered server-side with
-     *  the rest of the plugin UI, so a user never sees a connector they cannot open. */
-    account?: { id: string; label: string; icon?: string }[];
+     *  the rest of the plugin UI, so a user never sees a connector they cannot open.
+     *
+     *  `placement` picks WHERE the panel hangs, the same way `settings[].layout` picks how a settings
+     *  section renders: 'section' (the default) gives it its own entry in the Account section rail, while
+     *  'linkedAccount' mounts it as one more row of the Linked accounts drawer, beside the chat identities
+     *  the account already claims there. A plugin whose panel IS an identity — "which GitHub am I" — reads
+     *  as a stray top-level menu next to that drawer, so it says so itself rather than the host learning
+     *  the name of a plugin. An older host that does not know the field ignores it and keeps the panel in
+     *  the rail, which is why this needs no `requiresApiVersion` bump: the fallback is the old behaviour. */
+    account?: { id: string; label: string; icon?: string; placement?: 'section' | 'linkedAccount' }[];
     /** Administrator-only panels mounted in Users detail. The host passes the selected User DTO; metadata
      *  is stripped from non-admin listings before any bundle is loaded. */
     user?: { id: string; label: string; icon?: string }[];
@@ -308,6 +316,7 @@ const ManifestSchema = Type.Object({
       id: Type.String({ minLength: 1 }),
       label: Type.String({ minLength: 1 }),
       icon: Type.Optional(Type.String()),
+      placement: Type.Optional(Type.Union([Type.Literal('section'), Type.Literal('linkedAccount')])),
     }))),
     user: Type.Optional(Type.Array(Type.Object({
       id: Type.String({ minLength: 1 }),

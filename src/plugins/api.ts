@@ -698,7 +698,7 @@ export interface PluginWebUi {
   /** Name of the plugin's world in the main navigation; absent = the world borrows its first page's. */
   label?: string;
   nav: { label: string; icon?: string; route?: string }[];
-  account: { id: string; label: string; icon?: string }[];
+  account: { id: string; label: string; icon?: string; placement?: 'section' | 'linkedAccount' }[];
   /** Administrator-only panels mounted for a selected core User. */
   user: { id: string; label: string; icon?: string }[];
   project: { id: string; label: string; icon?: string }[];

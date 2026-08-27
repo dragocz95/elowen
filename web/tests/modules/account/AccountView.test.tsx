@@ -11,6 +11,13 @@ vi.mock('../../../lib/monaco/monacoLoader', () => ({
   ),
   MonacoDiffEditor: () => null,
 }));
+// A plugin bundle is fetched from the network at runtime; stub the loader so a contributed account panel
+// can be asserted where it MOUNTS without standing up an actual bundle.
+const { loadPluginUi } = vi.hoisted(() => ({ loadPluginUi: vi.fn() }));
+vi.mock('../../../lib/pluginUi', async (loadOriginal) => ({
+  ...(await loadOriginal<typeof import('../../../lib/pluginUi')>()),
+  loadPluginUi,
+}));
 import { AccountView } from '../../../modules/account/AccountView';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { UiScaleProvider } from '../../../lib/useUiScale';
@@ -65,6 +72,53 @@ describe('AccountView', () => {
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
       'Account', 'GitHub', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
+  });
+
+  // An account panel that IS an identity belongs beside the other identities, not as a top-level menu of
+  // its own next to the drawer that holds them. The host must place it on the manifest field alone — it
+  // never learns the name of a plugin — and the panel has to survive the trip: mounting it in the rail and
+  // in the drawer are different call sites, and only one of them is behind a click.
+  it('mounts an account panel declaring placement linkedAccount inside the Linked accounts drawer', async () => {
+    loadPluginUi.mockResolvedValue({
+      requiresApiVersion: 3,
+      account: { connection: () => <div>GitHub device flow</div> },
+    });
+    server.use(
+      http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'github', url: '/plugins/github/web/hash.js', apiVersion: 3, nav: [], account: [{ id: 'connection', label: 'GitHub', icon: 'Github', placement: 'linkedAccount' }], settings: [], strings: { accountHint: 'Your GitHub identity.' } }])),
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '' })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    const rail = await screen.findByRole('radiogroup', { name: 'Account sections' });
+    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
+      'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
+    ]);
+    // Nothing of the panel exists until the drawer is opened — one click, one overlay, no second window.
+    expect(screen.queryByText('GitHub device flow')).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Linked accounts' }));
+    expect(await screen.findByText('GitHub device flow')).toBeInTheDocument();
+  });
+
+  // The section id survives in localStorage, so a plugin that MOVES into the drawer would otherwise leave
+  // the deck pointing at a rail entry that no longer exists — a blank Account page on next visit.
+  it('falls back to the profile when a remembered plugin section has moved into the drawer', async () => {
+    localStorage.setItem('elowen.account.section', 'plugin-account:github:connection');
+    loadPluginUi.mockResolvedValue({ requiresApiVersion: 3, account: { connection: () => <div>GitHub device flow</div> } });
+    server.use(
+      http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'github', url: '/plugins/github/web/hash.js', apiVersion: 3, nav: [], account: [{ id: 'connection', label: 'GitHub', icon: 'Github', placement: 'linkedAccount' }], settings: [] }])),
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '' })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    expect(await screen.findByRole('button', { name: 'Linked accounts' })).toBeInTheDocument();
   });
 
   it('saves only the platform link edited in this form, preserving a concurrent Teams TOFU link', async () => {

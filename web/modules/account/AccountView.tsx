@@ -96,14 +96,23 @@ export function AccountView() {
     id: pluginAccountSectionId(entry.name, account.id),
     plugin: entry,
     sectionId: account.id,
+    // Absent means 'section': a daemon too old to send the field, like every plugin that never asked for
+    // anything else, keeps its own entry in the rail.
+    placement: account.placement ?? 'section',
     icon: pluginLucideIcon(account.icon),
     label: account.label,
     description: entry.strings?.accountHint ?? entry.label ?? account.label,
   }))), [pluginUi.data]);
+  // A panel that declares itself an identity hangs in the Linked accounts drawer instead of the rail. The
+  // host splits on the manifest field alone and never on which plugin sent it.
+  const deckPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement !== 'linkedAccount'), [pluginAccountSections]);
+  const connectorPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement === 'linkedAccount'), [pluginAccountSections]);
   useEffect(() => {
     if (!pluginUi.data || !parsePluginAccountSectionId(section)) return;
-    if (!pluginAccountSections.some((item) => item.id === section)) setSection('profile');
-  }, [pluginAccountSections, pluginUi.data, section, setSection]);
+    // Also catches a section id left in localStorage by a plugin that has since MOVED into the drawer:
+    // it is no longer a rail section, so the remembered selection would land on nothing.
+    if (!deckPluginSections.some((item) => item.id === section)) setSection('profile');
+  }, [deckPluginSections, pluginUi.data, section, setSection]);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -285,7 +294,7 @@ export function AccountView() {
   // (memory, personality), then operational (notifications, security), with the cosmetic terminal last.
   const spatialSections: { id: AccountSection; icon: LucideIcon; label: string; description: string }[] = [
     { id: 'profile', icon: UserCog, label: t.account.tabProfile, description: t.account.profileHint },
-    ...pluginAccountSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
+    ...deckPluginSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
     { id: 'cli', icon: Cpu, label: t.account.tabCli, description: t.account.defaultElowenAiHint },
     { id: 'memory', icon: Brain, label: t.account.tabMemory, description: t.help.memoryRecall },
     { id: 'personality', icon: Sparkles, label: t.account.tabPersonality, description: t.personality.intro },
@@ -297,6 +306,9 @@ export function AccountView() {
     { status: profileSave.status, retry: profileSave.retry },
     { status: linksSave.status, retry: linksSave.retry },
     { status: saveModel.isError ? 'error' : saveModel.isPending ? 'saving' : saveModel.isSuccess ? 'saved' : 'idle', retry: () => applyElowen(elowenSel) },
+    // Plugin connectors in the Linked accounts drawer report here too — without this their save state
+    // would be recorded and then read by nobody, since `profile` takes its feedback from this fold.
+    sectionFeedback.profile ?? { status: 'idle' },
   );
   const activeFeedback = section === 'profile' ? profileFeedback : (sectionFeedback[section] ?? { status: 'idle' as const });
   // Who this account is and what it may run — the four facts every section below is about. All of it is
@@ -328,7 +340,7 @@ export function AccountView() {
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
       >
-      {pluginAccountSections.map((item) => (
+      {deckPluginSections.map((item) => (
         <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
           <PluginAccountSection entry={item.plugin} sectionId={item.sectionId} onSaveState={reportSaveState} />
         </AccountPanel>
@@ -418,6 +430,19 @@ export function AccountView() {
             available={visibleLinkKeys}
             values={links}
             onChange={(key, value) => setLinks((current) => ({ ...current, [key]: value }))}
+            /* A connector's autosave state is reported against `profile`, not against its own section id:
+               the drawer it lives in belongs to the profile panel, so that is the deck header whose
+               indicator the user is actually looking at while they operate it. */
+            connectors={connectorPluginSections.map((item) => ({
+              id: item.id,
+              node: (
+                <PluginAccountSection
+                  entry={item.plugin}
+                  sectionId={item.sectionId}
+                  onSaveState={(_id, status, retry) => reportSaveState('profile', status, retry)}
+                />
+              ),
+            }))}
           />
         );
         return (

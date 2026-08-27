@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link2 } from 'lucide-react';
 import { SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
@@ -28,18 +28,24 @@ const PLATFORM_LINK_INPUTS: Record<PlatformLinkKey, { placeholder: string; platf
 /** Render and save order — the declaration order above, never a second list to keep in step. */
 export const PLATFORM_LINK_ORDER = Object.keys(PLATFORM_LINK_INPUTS) as PlatformLinkKey[];
 
-/** The account's chat identities, as one row that opens a drawer rather than a column of bare text
- *  boxes. Each platform reports a sender id and the account claims it by pasting that id, so what the
- *  row has to answer at a glance is "which of these am I reachable as" — a job for a summary of linked
- *  platforms, with the editing behind one click.
+/** Every identity this account owns elsewhere, as one row that opens a drawer rather than a column of
+ *  bare text boxes. A chat platform reports a sender id and the account claims it by pasting that id; a
+ *  plugin connector brings its own panel. Either way the question is "which of these am I" — a job for a
+ *  summary, with the claiming behind one click.
  *
  *  Only platforms the daemon reports as live are offered: a field for a channel this instance is not
- *  connected to can never match an incoming sender. With none of them live the row disappears entirely
- *  instead of presenting an empty control that explains nothing. */
-export function PlatformLinksCard({ available, values, onChange }: {
+ *  connected to can never match an incoming sender. With neither a live platform nor a connector the row
+ *  disappears entirely instead of presenting an empty control that explains nothing. */
+export function PlatformLinksCard({ available, values, onChange, connectors = [] }: {
   available: PlatformLinkKey[];
   values: Partial<Record<PlatformLinkKey, string>>;
   onChange: (key: PlatformLinkKey, value: string) => void;
+  /** Identities a PLUGIN owns, contributed through its `web.account` entries declaring
+   *  `placement: 'linkedAccount'`. They are the same question as the rows above — "which account am I
+   *  over there" — so they belong behind the same one click rather than each as its own top-level menu.
+   *  The host renders the panel and knows nothing about what it connects to; it deliberately does NOT
+   *  claim them in the summary chips, because only the plugin knows whether it is currently connected. */
+  connectors?: { id: string; node: ReactNode }[];
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -52,14 +58,19 @@ export function PlatformLinksCard({ available, values, onChange }: {
     whatsappNumber: { title: t.account.whatsappNumber, description: t.help.accountWhatsappNumber },
   };
   const shown = PLATFORM_LINK_ORDER.filter((key) => available.includes(key));
-  if (shown.length === 0) return null;
+  // The row survives on plugin connectors alone: an instance connected to no chat platform can still own
+  // a GitHub identity, and hiding the whole row would leave that connector unreachable.
+  if (shown.length === 0 && connectors.length === 0) return null;
   const linked = shown.filter((key) => (values[key] ?? '').trim().length > 0);
 
   return (
     <>
       <SpatialRow title={t.account.linkedAccounts} icon={Link2} description={t.help.accountPlatformLinks}>
+        {/* The count line speaks only for the chat platforms it can actually count; with none of them
+            offered it would be a sentence about an empty set sitting over a connector that may well be
+            connected. */}
         <SelectionSummary
-          countText={linked.length === 0 ? t.account.linkedAccountsNone : ''}
+          countText={shown.length > 0 && linked.length === 0 ? t.account.linkedAccountsNone : ''}
           samples={linked.map((key) => ({
             label: copy[key].title,
             icon: <PlatformIcon platform={PLATFORM_LINK_INPUTS[key].platform} size={12} />,
@@ -72,7 +83,9 @@ export function PlatformLinksCard({ available, values, onChange }: {
       </SpatialRow>
       {open ? (
         <WorkspaceDetailRail label={t.account.linkedAccounts} closeLabel={t.common.close} onClose={() => setOpen(false)}>
-          <p className="mb-4 text-xs leading-relaxed text-text-muted">{t.help.accountPlatformLinks}</p>
+          {/* Chat-platform copy, so it stands over the chat rows only — a drawer holding nothing but a
+              plugin connector is not "paste the sender id this platform reports". */}
+          {shown.length > 0 ? <p className="mb-4 text-xs leading-relaxed text-text-muted">{t.help.accountPlatformLinks}</p> : null}
           <div className="flex flex-col divide-y divide-border">
             {shown.map((key) => {
               const value = values[key] ?? '';
@@ -99,6 +112,12 @@ export function PlatformLinksCard({ available, values, onChange }: {
                 </div>
               );
             })}
+            {/* A plugin's own identity panel, rendered whole as one more row. The host gives it the space
+                and the divider and nothing else: what "connected" means, and every action that changes
+                it, stay entirely the plugin's. */}
+            {connectors.map((connector) => (
+              <div key={connector.id} className="py-3.5">{connector.node}</div>
+            ))}
           </div>
         </WorkspaceDetailRail>
       ) : null}

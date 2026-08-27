@@ -294,8 +294,11 @@ export interface PluginUiListing {
    *  world borrows its first page's name. */
   label?: string;
   nav: { label: string; icon?: string; route?: string }[];
-  /** Per-account plugin panels. Optional for compatibility with an older daemon listing. */
-  account?: { id: string; label: string; icon?: string }[];
+  /** Per-account plugin panels. Optional for compatibility with an older daemon listing.
+   *  `placement` picks where the panel hangs: 'section' (the default, and what a daemon too old to send
+   *  the field means) gives it its own entry in the Account section rail; 'linkedAccount' mounts it as a
+   *  row of the Linked accounts drawer instead. */
+  account?: { id: string; label: string; icon?: string; placement?: 'section' | 'linkedAccount' }[];
   /** Administrator-only panels contributed to a selected User. Optional for older daemons. */
   user?: { id: string; label: string; icon?: string }[];
   /** Contextual panels contributed to a selected Project. Optional for older daemons. */
