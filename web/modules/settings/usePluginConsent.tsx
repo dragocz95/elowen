@@ -41,6 +41,27 @@ export function usePluginConsent(opts: {
   const { t } = useTranslation();
   const [asking, setAsking] = useState<Pending | null>(null);
 
+  /** A 409 naming missing controls is NOT a question - there is nothing for the reader to approve, only
+   *  another plugin to turn on first. Turned into a sentence here so every caller of this hook reports it
+   *  the same way, instead of showing a raw `missing plugin dependency`. */
+  const dependencyError = (e: unknown): Error | null => {
+    if (!(e instanceof ElowenApiError) || e.status !== 409) return null;
+    const controls = e.details?.controls;
+    if (!Array.isArray(controls) || controls.length === 0) return null;
+    const parts = controls.map((entry) => {
+      const item = entry as { key?: unknown; providedBy?: unknown };
+      const key = typeof item.key === 'string' ? item.key : '';
+      const providers = Array.isArray(item.providedBy)
+        ? item.providedBy.filter((n): n is string => typeof n === 'string')
+        : [];
+      if (!key) return null;
+      return providers.length > 0
+        ? t.plugins.dependencyOn.replace('{plugin}', providers.join(', ')).replace('{control}', key)
+        : t.plugins.dependencyMissing.replace('{control}', key);
+    }).filter((line): line is string => line !== null);
+    return parts.length > 0 ? new Error(parts.join(' ')) : null;
+  };
+
   /** A 409 that names powers is the consent question; anything else is a genuine failure. */
   const askedGrants = (e: unknown): string[] | null => {
     const grants = e instanceof ElowenApiError && e.status === 409 ? e.details?.grants : undefined;
@@ -53,7 +74,7 @@ export function usePluginConsent(opts: {
       onError: (e) => {
         const grants = askedGrants(e);
         if (grants) { setAsking({ name, grants, kind: 'enable' }); return; }
-        opts.onError?.(e);
+        opts.onError?.(dependencyError(e) ?? e);
       },
     });
   };
@@ -64,7 +85,7 @@ export function usePluginConsent(opts: {
       onError: (e) => {
         const grants = askedGrants(e);
         if (grants) { setAsking({ name, grants, kind: 'install' }); return; }
-        opts.onInstallError?.(e);
+        opts.onInstallError?.(dependencyError(e) ?? e);
       },
       onSettled: () => opts.onSettled?.(),
     });

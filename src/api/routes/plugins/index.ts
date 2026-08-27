@@ -157,7 +157,42 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   /** Enable + apply live, shared by the toggle and the marketplace install so both reach the runtime the
    *  same way (config write, then registry swap; a deferred swap answers 202, see `applied`). */
+  /** Control keys `name` declares it cannot work without, that nothing ENABLED would publish.
+   *
+   *  A plugin whose provider is missing does not crash - `ctx.control()` answers undefined and the plugin
+   *  hides its own surface - so this is not a safety gate. It is the difference between "enabled it and
+   *  nothing happened" and being told which other plugin to turn on first. Providers are read from
+   *  manifests, so the daemon never learns that one named plugin needs another: it only matches a key.
+   *
+   *  The plugin being enabled counts as its own provider, so a plugin that both publishes and consumes a
+   *  key does not deadlock itself. */
+  const missingControls = (name: string): { key: string; providedBy: string[] }[] => {
+    const installed = discoverPlugins(d.pluginDirs ?? []);
+    const target = installed.find((p) => p.manifest.name === name);
+    const required = target?.manifest.requiresControls ?? [];
+    if (required.length === 0) return [];
+
+    const enabled = new Set(d.config.get().plugins.enabled);
+    enabled.add(name);
+    const satisfied = new Set<string>();
+    for (const plugin of installed) {
+      if (!enabled.has(plugin.manifest.name)) continue;
+      for (const key of plugin.manifest.provides?.controls ?? []) satisfied.add(key);
+    }
+
+    return required.filter((key) => !satisfied.has(key)).map((key) => ({
+      key,
+      // Named from what is on disk, so the message can say "turn on msteams" rather than leaving somebody
+      // to guess which plugin publishes a key they have never heard of.
+      providedBy: installed
+        .filter((plugin) => (plugin.manifest.provides?.controls ?? []).includes(key))
+        .map((plugin) => plugin.manifest.name),
+    }));
+  };
+
   const enablePlugin = async (c: Context, name: string) => {
+    const missing = missingControls(name);
+    if (missing.length > 0) return c.json({ error: 'missing plugin dependency', controls: missing }, 409);
     const cur = new Set(d.config.get().plugins.enabled);
     cur.add(name);
     d.config.update({ plugins: { enabled: [...cur] } });

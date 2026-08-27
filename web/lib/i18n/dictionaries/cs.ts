@@ -1219,6 +1219,8 @@ export const cs = {
     grantMemory: 'Číst a zapisovat uložené vzpomínky',
     grantEvents: 'Zapisovat do protokolu aktivity',
     grantWorkflowDag: 'Měnit běžící workflow dílčích agentů',
+    dependencyOn: 'Tento doplněk vyžaduje, aby byl nejprve zapnutý doplněk {plugin} — ten poskytuje {control}.',
+    dependencyMissing: 'Tento doplněk vyžaduje jiný doplněk poskytující {control}, žádný však není nainstalován.',
     toggleError: 'Změna pluginu selhala',
     empty: 'Žádné pluginy nenalezeny',
     configure: 'Nastavit',

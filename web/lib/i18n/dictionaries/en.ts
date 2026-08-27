@@ -1219,6 +1219,8 @@ export const en = {
     grantMemory: 'Read and write your stored memories',
     grantEvents: 'Write to the activity log',
     grantWorkflowDag: 'Change running sub-agent workflows',
+    dependencyOn: 'This add-on needs {plugin} switched on first — that is what provides {control}.',
+    dependencyMissing: 'This add-on needs another add-on that provides {control}, and none is installed.',
     toggleError: 'Changing the plugin failed',
     empty: 'No plugins found',
     configure: 'Configure',

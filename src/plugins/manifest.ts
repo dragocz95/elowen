@@ -111,7 +111,14 @@ export interface PluginManifest {
   description: string;
   /** Path (relative to the plugin folder) of the built ESM entry exporting `register(ctx)`. */
   entry: string;
-  provides?: { tools?: string[]; skills?: string[]; platforms?: string[]; destinations?: string[]; httpRoutes?: string[]; apiRoutes?: string[]; mcpTools?: string[] };
+  provides?: {
+    tools?: string[]; skills?: string[]; platforms?: string[]; destinations?: string[];
+    httpRoutes?: string[]; apiRoutes?: string[]; mcpTools?: string[];
+    /** Control keys this plugin PUBLISHES for other plugins (`ctx.registerControl`). Declared so the
+     *  daemon can answer "who would satisfy this dependency" from manifests alone, without loading a
+     *  plugin or hardcoding a single name. */
+    controls?: string[];
+  };
   /** Per-tool display icons (emoji), keyed by tool name — surfaced in the chat clients' tool-call lines.
    *  Overrides the core default icon map; a tool without an entry falls back to it, then to a generic glyph. */
   icons?: Record<string, string>;
@@ -155,6 +162,18 @@ export interface PluginManifest {
    *  applied only if the matching value is listed in `mutates`. A manifest with no `capabilities` can
    *  mutate nothing. */
   capabilities?: PluginCapabilities;
+  /** Control keys this plugin CANNOT work without, e.g. `['microsoftIdentity']`.
+   *
+   *  A control is how one plugin lends a capability to another (`ctx.control(key)`), and a consumer whose
+   *  provider is absent already degrades quietly - `control()` answers undefined and a well-written plugin
+   *  hides its own surface. That is right at RUNTIME and useless at INSTALL time: somebody enables a
+   *  plugin, nothing appears anywhere, and there is nothing on screen saying why. Declaring the dependency
+   *  lets the daemon refuse to enable it and NAME what is missing.
+   *
+   *  Deliberately keyed on the control, not on a plugin name: the daemon must never learn that OneDrive
+   *  needs Teams specifically, only that something has to publish `microsoftIdentity`. Any plugin that
+   *  publishes the key satisfies it. */
+  requiresControls?: string[];
   /** Browser UI bundle (plugin platform F0). `entry` is the built same-origin ESM bundle (relative to
    *  the plugin folder) that calls `window.__elowenRegisterPluginUi`; nav/settings metadata live HERE so
    *  menus render before (and without) the bundle's JS. Labels are English fallback — locale overrides
@@ -240,6 +259,7 @@ const ManifestSchema = Type.Object({
   version: Type.String({ minLength: 1 }),
   apiVersion: Type.String({ minLength: 1 }),
   requiresCore: Type.Optional(Type.String({ pattern: '^\\d+(\\.\\d+)*$' })),
+  requiresControls: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
   requiresSharedApi: Type.Optional(Type.Integer({ minimum: 1 })),
   description: Type.String(),
   entry: Type.String({ minLength: 1 }),
@@ -251,6 +271,7 @@ const ManifestSchema = Type.Object({
     httpRoutes: Type.Optional(Type.Array(Type.String())),
     apiRoutes: Type.Optional(Type.Array(Type.String())),
     mcpTools: Type.Optional(Type.Array(Type.String())),
+    controls: Type.Optional(Type.Array(Type.String())),
   })),
   icons: Type.Optional(Type.Record(Type.String(), Type.String())),
   showOutput: Type.Optional(Type.Array(Type.String())),

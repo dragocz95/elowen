@@ -5,6 +5,17 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- A plugin can declare the controls it cannot work without (`requiresControls`) and the controls it
+  publishes for others (`provides.controls`). The daemon refuses to enable a plugin whose required
+  control nothing switched on provides, and names the plugin that would. Keyed on the control, never on
+  a plugin name, so core stays ignorant of which plugin depends on which.
+
+  Before this, a plugin whose provider was missing enabled perfectly happily and then did nothing
+  visible, with no screen saying why - `ctx.control()` simply answers undefined and a careful plugin
+  hides its own surface. That is the right behaviour at runtime and useless at install time.
+
 ## [0.28.11] - 2026-08-22
 
 The agent can hand you a file to download. Until now it could only write a link to one, which a browser

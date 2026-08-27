@@ -1213,6 +1213,8 @@ export const sk = {
     grantMemory: 'Čítať a zapisovať uložené spomienky',
     grantEvents: 'Zapisovať do protokolu aktivity',
     grantWorkflowDag: 'Meniť bežiace workflow čiastkových agentov',
+    dependencyOn: 'Tento doplnok vyžaduje, aby bol najprv zapnutý doplnok {plugin} — ten poskytuje {control}.',
+    dependencyMissing: 'Tento doplnok vyžaduje iný doplnok poskytujúci {control}, žiadny však nie je nainštalovaný.',
     toggleError: 'Zmena pluginu zlyhala',
     empty: 'Žiadne pluginy nenájdené',
     configure: 'Nastaviť',

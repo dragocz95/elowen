@@ -42,6 +42,10 @@ function setup() {
   const dataRoot = tmpDir('plugdata');
   makePlugin(root, 'skills');
   makePlugin(root, 'files');
+  // A consumer and its provider, wired only through a control KEY - the daemon never learns that one is
+  // named after the other.
+  makePlugin(root, 'mirror', { requiresControls: ['cloudIdentity'] });
+  makePlugin(root, 'identity', { provides: { tools: ['identity_tool'], controls: ['cloudIdentity'] } });
   // Claims two powers that outlive a turn (stored memory, the live workflow DAG) plus one that does not
   // (`prompt`), so the consent tests can prove the line is drawn by REACH and not by "declares anything".
   makePlugin(root, 'risky', { capabilities: { mutates: ['prompt', 'memory', 'workflow-dag'] } });
@@ -86,7 +90,7 @@ describe('plugin routes', () => {
     const res = await app.request('/plugins', auth(adminTok));
     expect(res.status).toBe(200);
     const list = await res.json() as { name: string; enabled: boolean; configurable: boolean; provides: { tools?: string[] } }[];
-    expect(list.map((p) => p.name).sort()).toEqual(['discord', 'files', 'risky', 'skills']);
+    expect(list.map((p) => p.name).sort()).toEqual(['discord', 'files', 'identity', 'mirror', 'risky', 'skills']);
     expect(list.every((p) => !p.enabled)).toBe(true);
     expect(list.find((p) => p.name === 'files')?.provides.tools).toEqual(['files_tool']);
     expect(list.find((p) => p.name === 'discord')?.configurable).toBe(true);
@@ -169,6 +173,38 @@ describe('plugin routes', () => {
     const full = await app.request('/plugins/risky', patch(adminTok, { enabled: true, acknowledgeGrants: ['memory', 'workflow-dag'] }));
     expect(full.status).toBe(200);
     expect(config.get().plugins.enabled).toEqual(['risky']);
+  });
+
+  it('refuses to enable a plugin whose control provider is not switched on, and names it', async () => {
+    // A missing provider does not break anything at runtime - `ctx.control()` answers undefined and the
+    // plugin hides its own surface. That is precisely the problem: somebody enables it, nothing appears
+    // anywhere, and no screen says why. So the refusal happens here, naming what to turn on first.
+    const { app, config, reloadPlugins, adminTok } = setup();
+    config.update({ plugins: { enabled: [], removed: [] } });
+
+    const refused = await app.request('/plugins/mirror', patch(adminTok, { enabled: true }));
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      error: 'missing plugin dependency',
+      controls: [{ key: 'cloudIdentity', providedBy: ['identity'] }],
+    });
+    expect(config.get().plugins.enabled).toEqual([]);
+    expect(reloadPlugins).not.toHaveBeenCalled();
+
+    // With the provider on, the same request goes through unchanged.
+    config.update({ plugins: { enabled: ['identity'], removed: [] } });
+    const allowed = await app.request('/plugins/mirror', patch(adminTok, { enabled: true }));
+    expect(allowed.status).toBe(200);
+    expect(config.get().plugins.enabled).toContain('mirror');
+  });
+
+  it('lets a plugin that declares no control dependency through untouched', async () => {
+    // The gate must be invisible to every plugin that never asked for it - which is all of them today.
+    const { app, config, adminTok } = setup();
+    config.update({ plugins: { enabled: [], removed: [] } });
+    const res = await app.request('/plugins/files', patch(adminTok, { enabled: true }));
+    expect(res.status).toBe(200);
+    expect(config.get().plugins.enabled).toEqual(['files']);
   });
 
   it('asks for no consent to take powers away, nor for a plugin that only shapes a live turn', async () => {
