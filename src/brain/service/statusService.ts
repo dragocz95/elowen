@@ -2,12 +2,12 @@ import { createAgentSession, SessionManager, DefaultResourceLoader } from '@eare
 import type { BrainStore, BrainSearchHit, BrainMessageRow, BrainWorkflowRun } from '../../store/brainStore.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
-import { extractText, shapeBrainMessages, withSubagentAnchors, withWorkflowAnchors, lastAssistant, pendingSubmittedPlan } from '../messageView.js';
+import { extractText, isSubagentToolName, shapeBrainMessages, withSubagentAnchors, withWorkflowAnchors, lastAssistant, pendingSubmittedPlan } from '../messageView.js';
 import type { BrainMessageView } from '../messageView.js';
 import type { BrainContextBreakdown, BrainPendingPlan, BrainWorkMode } from '../../shared/wireContract.js';
 import { buildContextBreakdown, contextSnapshotOf } from '../contextBreakdown.js';
 import { sessionUsageSnapshot } from '../events.js';
-import type { AskQuestion, BrainCard, BrainUsage } from '../events.js';
+import type { AskQuestion, BrainCard, BrainEvent, BrainUsage } from '../events.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import { queuedWithPending } from '../session/queueMirror.js';
@@ -219,10 +219,10 @@ export class BrainStatusService {
     });
   }
 
-  /** The one place a conversation's durable history is shaped: rows plus every sidecar. Callers pass rows
-   *  only when they have already filtered them (streamSnapshot). Keeping the sidecar list here is what
-   *  stops the same three-argument call being copied to each read path. */
-  private shapedHistory(sessionId: string, rows = this.d.store.getMessages(sessionId)): BrainMessageView[] {
+  /** The one place user-facing settled history is shaped: rows plus every sidecar. Callers may pass an
+   *  already-filtered settled subset (streamSnapshot's journaled-user removal); every ordinary history
+   *  and paging path starts from the store's shared settled read model. */
+  private shapedHistory(sessionId: string, rows = this.d.store.getSettledMessages(sessionId)): BrainMessageView[] {
     return shapeBrainMessages(
       rows,
       this.subagentRuns(sessionId),
@@ -232,11 +232,27 @@ export class BrainStatusService {
   }
 
   /** Pin live sidecars whose transcript tool row was compacted or windowed away. The status readers are the
-   *  source of truth for liveness; the synthetic rows only restore the client anchor they need to project it. */
-  private withRunningAnchors(sessionId: string, views: BrainMessageView[]): BrainMessageView[] {
+   *  source of truth for liveness; the synthetic rows only restore the client anchor they need to project it.
+   *  A stream snapshot also carries the unsettled replay tail: a typed tool event there is already the real
+   *  anchor, so synthesizing the same one into history would recreate the duplicate this projection prevents. */
+  private withRunningAnchors(
+    sessionId: string,
+    views: BrainMessageView[],
+    replayEvents: readonly BrainEvent[] = [],
+  ): BrainMessageView[] {
+    const replaySubagentAnchors = new Set<string>();
+    const replayWorkflowAnchors = new Set<string>();
+    for (const event of replayEvents) {
+      if (event.type !== 'tool' || !event.id) continue;
+      if (isSubagentToolName(event.name)) replaySubagentAnchors.add(event.id);
+      if (event.name === 'WorkflowStart') replayWorkflowAnchors.add(event.id);
+    }
     return withWorkflowAnchors(
-      withSubagentAnchors(views, this.subagentRuns(sessionId)),
-      this.workflowRuns(sessionId),
+      withSubagentAnchors(
+        views,
+        this.subagentRuns(sessionId).filter((run) => !replaySubagentAnchors.has(run.toolCallId)),
+      ),
+      this.workflowRuns(sessionId).filter((run) => !replayWorkflowAnchors.has(run.toolCallId)),
     );
   }
 
@@ -507,14 +523,15 @@ export class BrainStatusService {
     const orderedUserRows = new Set(replay.events.flatMap((event) =>
       event.type === 'user' && event.durableId ? [event.durableId] : []));
     // Journaled users are already durable, but replaying them is what preserves their position among
-    // pre/post-steer deltas. Remove exactly those id-matched rows from the history prefix (no text
-    // guessing: display text may differ from persisted image/mention framing).
-    const rows = this.d.store.getMessages(sessionId);
+    // pre/post-steer deltas. Pending assistant/tool rows are read only for control state (a plan submitted
+    // between message_end and agent_end) and never enter the user-facing history sequence.
+    const rawRows = this.d.store.getMessages(sessionId);
+    const settledRows = this.d.store.getSettledMessages(sessionId);
     const clean = this.shapedHistory(
       sessionId,
-      rows.filter((message) => !orderedUserRows.has(message.id)),
+      settledRows.filter((message) => !orderedUserRows.has(message.id)),
     );
-    // Window AFTER the removal, never before: cutting first would let a journaled row consume a slot of
+    // Window AFTER the removal, never before: cutting first would let an unsettled row consume a slot of
     // the window and drop a real turn out of the page. The removed rows all belong to the UNSETTLED run,
     // i.e. the very tail, so everything before `nextBefore` is identical in the unfiltered array the
     // lazy-load pages through — the cursor stays valid across the two endpoints.
@@ -523,7 +540,7 @@ export class BrainStatusService {
     // anchor row was compacted or windowed away would otherwise vanish and drop every later live snapshot.
     const views = page ? page.items : clean;
     const anchoredViews = history?.before === undefined
-      ? this.withRunningAnchors(sessionId, views)
+      ? this.withRunningAnchors(sessionId, views, replay.events)
       : views;
     return {
       type: 'snapshot',
@@ -535,7 +552,7 @@ export class BrainStatusService {
       control: {
         streaming: !!live && (live.session.isStreaming || this.d.sessions.hasActiveChildren(live.sessionId)),
         pendingAsk: live ? this.d.elicitation.pendingForSession(live.sessionId) : null,
-        ...this.planState(live, sessionId, rows),
+        ...this.planState(live, sessionId, rawRows),
       },
       ...(page ? { hasMore: page.hasMore, nextBefore: page.nextBefore } : {}),
       ...replay,

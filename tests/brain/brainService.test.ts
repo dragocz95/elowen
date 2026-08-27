@@ -4593,6 +4593,102 @@ describe('sub-agent session tap + owner steering', () => {
     attached.off();
   });
 
+  it('keeps a pending mid-turn assistant out of snapshot history without duplicating its replay anchor', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    d.store.appendMessage({
+      id: 'snapshot-user', sessionId, parentId: null, role: 'user',
+      content: { role: 'user', content: 'stored before the run' },
+    });
+    d.store.appendMessage({
+      id: 'snapshot-settled', sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'settled before the run' }] },
+    });
+
+    const toolCallId = 'shared-live-anchor';
+    d.emit({ type: 'agent_start' });
+    d.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'partial answer' } });
+    d.emit({ type: 'tool_execution_start', toolName: 'DelegateContinue', toolCallId, args: { id: 'dlg-live' } });
+    d.emit({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'partial answer' },
+          { type: 'toolCall', id: toolCallId, name: 'DelegateContinue', arguments: { id: 'dlg-live' } },
+        ],
+      },
+    });
+    expect(d.store.pendingMessages(sessionId)).toHaveLength(1);
+
+    const childId = 'brain-ch-subagent-snapshot-live';
+    d.store.createSession({ id: childId, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, {
+      id: toolCallId, sessionId: childId, status: 'running', task: 'continue inspection', tools: 1, seconds: 2,
+    });
+    (svc as unknown as { sessions: { setChildRunning(parent: string, child: string, running: boolean): void } })
+      .sessions.setChildRunning(sessionId, childId, true);
+    d.store.upsertWorkflowRun(sessionId, {
+      id: 'wf-colliding', toolCallId, title: 'Colliding workflow', status: 'running',
+      nodes: [{ id: 'gather', task: 'gather facts', status: 'running', deps: [] }],
+    });
+    const live = (svc as unknown as {
+      sessions: { get(id: string): { replay: { publish(event: unknown): void } } | undefined };
+    }).sessions.get(sessionId)!;
+    live.replay.publish({
+      type: 'subagent', id: toolCallId, sessionId: childId, status: 'running', task: 'continue inspection', tools: 1, seconds: 2,
+    });
+
+    const snapshot = (await svc.tapSessionSnapshot(1, sessionId, () => {}, undefined, undefined, { limit: 1 })).snapshot;
+    expect(snapshot.history.some((view) => view.text === 'partial answer')).toBe(false);
+    expect(snapshot.history.some((view) => view.id === 'snapshot-settled')).toBe(true);
+    expect(snapshot.history.some((view) => view.id === `sub-anchor-${toolCallId}`)).toBe(false);
+    expect(snapshot.history.find((view) => view.id === `wf-anchor-${toolCallId}`)?.segments?.[0])
+      .toMatchObject({ kind: 'tool', name: 'WorkflowStart', id: toolCallId });
+    expect(snapshot.events.filter((event) => event.type === 'text'))
+      .toEqual([{ type: 'text', delta: 'partial answer' }]);
+    const toolEvents = snapshot.events.filter((event) => event.type === 'tool');
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0]).toMatchObject({ type: 'tool', name: 'DelegateContinue', id: toolCallId });
+  });
+
+  it('restores a running anchor when replay truncation drops the pending tool call', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const toolCallId = 'truncated-delegate-anchor';
+
+    d.emit({ type: 'agent_start' });
+    d.emit({ type: 'tool_execution_start', toolName: 'Delegate', toolCallId, args: { task: 'long inspection' } });
+    d.emit({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: toolCallId, name: 'Delegate', arguments: { task: 'long inspection' } }],
+      },
+    });
+    expect(d.store.pendingMessages(sessionId)).toHaveLength(1);
+
+    const childId = 'brain-ch-subagent-snapshot-truncated';
+    d.store.createSession({ id: childId, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, {
+      id: toolCallId, sessionId: childId, status: 'running', task: 'long inspection', tools: 1, seconds: 2,
+    });
+    (svc as unknown as { sessions: { setChildRunning(parent: string, child: string, running: boolean): void } })
+      .sessions.setChildRunning(sessionId, childId, true);
+    for (let i = 0; i < 512; i += 1) {
+      d.emit({ type: 'tool_execution_start', toolName: 'Read', toolCallId: `later-${i}`, args: { path: `src/${i}.ts` } });
+    }
+
+    const snapshot = (await svc.tapSessionSnapshot(1, sessionId, () => {})).snapshot;
+    expect(snapshot.truncated).toBe(true);
+    expect(snapshot.events.some((event) => event.type === 'tool' && event.id === toolCallId)).toBe(false);
+    expect(snapshot.history.some((view) => view.text === 'long inspection')).toBe(false);
+    expect(snapshot.history.find((view) => view.id === `sub-anchor-${toolCallId}`)?.segments?.[0])
+      .toMatchObject({ kind: 'tool', name: 'Delegate', id: toolCallId });
+  });
+
   // The run journal is transient — cleared at settle, bounded, and holding no terminal event across an
   // internal retry — so a client that derives "a turn is running" from its tail drifts from the daemon
   // (the web's stuck Stop button). The snapshot therefore carries the authoritative answer.
@@ -4623,6 +4719,39 @@ describe('sub-agent session tap + owner steering', () => {
     d.session.isStreaming = false;
     expect((await svc.tapSessionSnapshot(1, sessionId, () => {})).snapshot.control)
       .toEqual({ streaming: false, pendingAsk: null, workMode: 'build', pendingPlan: null });
+  });
+
+  it('keeps a mid-turn pending plan in snapshot control but out of settled history', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    await svc.send({ userId: 1, text: 'draft the plan', mode: 'plan', session: sessionId });
+
+    const toolCallId = 'pending-plan-call';
+    d.emit({ type: 'agent_start' });
+    d.emit({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: toolCallId, name: 'ExitPlanMode', arguments: { plan: '# Pending plan' } }],
+      },
+    });
+    d.emit({
+      type: 'message_end',
+      message: {
+        role: 'toolResult', toolCallId,
+        content: [{ type: 'text', text: 'Plan submitted for approval.' }],
+        details: { plan: '# Pending plan' },
+      },
+    });
+    expect(d.store.pendingMessages(sessionId)).toHaveLength(2);
+
+    const snapshot = (await svc.tapSessionSnapshot(1, sessionId, () => {})).snapshot;
+    expect(snapshot.control).toMatchObject({
+      workMode: 'plan', pendingPlan: { id: toolCallId, plan: '# Pending plan' },
+    });
+    expect(snapshot.history.flatMap((view) => view.segments ?? [])
+      .some((segment) => segment.kind === 'tool' && segment.id === toolCallId)).toBe(false);
   });
 
   // Plan mode's decision lives in no client: the mode is stamped per send and the plan is a tool call, so
@@ -4854,6 +4983,57 @@ describe('sub-agent session tap + owner steering', () => {
     expect(older.hasMore).toBe(false);
     expect(older.nextBefore).toBeNull();
     windowed.off();
+  });
+
+  it('pages the same settled sequence after truncated replay crosses interleaved pending rows', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    for (const n of [1, 2]) {
+      d.store.appendMessage({
+        id: `settled-${n}`, sessionId, parentId: null, role: 'user',
+        content: { role: 'user', content: `settled ${n}` },
+      });
+    }
+
+    const pendingAssistant = (text: string) => d.emit({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'text', text }] },
+    });
+    d.emit({ type: 'agent_start' });
+    d.session.isStreaming = true;
+    pendingAssistant('pending one');
+    await svc.send({ userId: 1, text: 'steer one', session: sessionId });
+    d.deliverQueued('steer one');
+    pendingAssistant('pending two');
+    await svc.send({ userId: 1, text: 'steer two', session: sessionId });
+    d.deliverQueued('steer two');
+    pendingAssistant('pending three');
+    d.session.isStreaming = false;
+    expect(d.store.pendingMessages(sessionId)).toHaveLength(3);
+
+    // Evict the ordered user markers so snapshot history must carry the durable steers itself. The page
+    // cursor still has to be valid for the ordinary history endpoint, despite pending rows between them.
+    for (let i = 0; i < 512; i += 1) {
+      d.emit({ type: 'tool_execution_start', toolName: 'Read', toolCallId: `cursor-${i}`, args: { path: `src/${i}.ts` } });
+    }
+    const newest = await svc.tapSessionSnapshot(1, sessionId, () => {}, undefined, undefined, { limit: 1 });
+    expect(newest.snapshot.truncated).toBe(true);
+    expect(newest.snapshot.events.some((event) => event.type === 'user')).toBe(false);
+    expect(newest.snapshot.history.map((row) => row.text)).toEqual(['steer two']);
+    expect(newest.snapshot.nextBefore).toBe(3);
+
+    const older = svc.messagesPage(1, sessionId, { limit: 2, before: newest.snapshot.nextBefore! });
+    expect(older.items.map((row) => row.text)).toEqual(['settled 2', 'steer one']);
+    expect(older.nextBefore).toBe(1);
+    const oldest = svc.messagesPage(1, sessionId, { limit: 2, before: older.nextBefore! });
+    expect(oldest.items.map((row) => row.text)).toEqual(['settled 1']);
+    expect(oldest.nextBefore).toBeNull();
+
+    const expected = ['settled 1', 'settled 2', 'steer one', 'steer two'];
+    expect(svc.history(1).map((row) => row.text)).toEqual(expected);
+    expect(svc.messagesOf(1, sessionId).map((row) => row.text)).toEqual(expected);
+    newest.off();
   });
 
   it('includes the durable goal in every reconnect snapshot after replay journal boundaries', async () => {
