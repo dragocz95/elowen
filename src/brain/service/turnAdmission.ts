@@ -31,6 +31,7 @@ interface AdmissionInput {
  * visible only after PI accepts it; every pre-admission failure rolls a visible user turn back. */
 export class TurnAdmission {
   private durableId?: string;
+  private durableCreatedAt?: string;
   private persistText?: string;
   private stored: StoredChatImage[] = [];
   private admitted = false;
@@ -46,7 +47,9 @@ export class TurnAdmission {
     }
     this.persistText = this.durableText();
     this.stored = this.storeImages();
-    this.durableId = projectUserTurn(this.d.store, this.input.live.sessionId, this.persistText, this.stored);
+    const projected = projectUserTurn(this.d.store, this.input.live.sessionId, this.persistText, this.stored);
+    this.durableId = projected.id;
+    this.durableCreatedAt = projected.createdAt;
     return { durableId: this.durableId, persistText: this.persistText };
   }
 
@@ -77,6 +80,7 @@ export class TurnAdmission {
       text: this.displayText(),
       durableId,
       ...(this.stored.length ? { images: toMessageImages(this.stored) } : {}),
+      ...(this.durableCreatedAt ? { createdAt: this.durableCreatedAt } : {}),
     });
     this.echoed = true;
   }

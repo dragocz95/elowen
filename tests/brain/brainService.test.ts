@@ -2971,7 +2971,7 @@ describe('BrainService', () => {
     d.store.appendMessage({ id: 'c', sessionId: 'brain-1', parentId: null, role: 'toolResult', content: { role: 'toolResult', toolCallId: 'tc1', toolName: 'edit', content: [{ type: 'text', text: 'RAW OUTPUT' }], details: { diff: '-old\n+new' } } });
     const h = svc.history(1);
     expect(h).toEqual([
-      { id: 'a', role: 'user', text: 'ahoj' },
+      { id: 'a', role: 'user', text: 'ahoj', createdAt: expect.any(String) },
       { id: 'b', role: 'assistant', text: 'čau', createdAt: expect.any(String), segments: [
         { kind: 'text', text: 'čau' },
         { kind: 'tool', id: 'tc1', name: 'edit', detail: 'src/a.ts', diff: '-old\n+new' },
@@ -4573,7 +4573,7 @@ describe('sub-agent session tap + owner steering', () => {
     const attached = await svc.tapSessionSnapshot(1, 'brain-1', (event) => afterSnapshot.push(event.type));
     // The steered row is removed from the durable prefix by exact row id, then replayed at its original
     // position. This also prevents the two text streams from coalescing across the user boundary.
-    expect(attached.snapshot.history).toEqual([{ id: 'snapshot-user', role: 'user', text: 'stored before opening' }]);
+    expect(attached.snapshot.history).toEqual([{ id: 'snapshot-user', role: 'user', text: 'stored before opening', createdAt: expect.any(String) }]);
     const ordered = attached.snapshot.events.map((event) => event.type);
     expect(ordered).toEqual(['text', 'tool', 'queue', 'user', 'text']);
     expect(attached.snapshot.events[0]).toEqual({ type: 'text', delta: 'partial answer' });
@@ -7598,7 +7598,7 @@ describe('BrainService admin oversight of a foreign conversation', () => {
     const live: unknown[] = [];
     const attached = await svc.tapSessionSnapshot(1, 'brain-2', (e) => live.push(e), undefined, undefined, undefined, { anyOwner: true });
 
-    expect(attached.snapshot.history).toEqual([{ id: 'theirs-1', role: 'user', text: 'their private work' }]);
+    expect(attached.snapshot.history).toEqual([{ id: 'theirs-1', role: 'user', text: 'their private work', createdAt: expect.any(String) }]);
     // No live tap. Attaching would be a WRITE to the owner's routing state (it counts as an attachment
     // and can re-key which session their CLI resumes), so reading somebody's history must not do it.
     // Proven by behaviour rather than by spying on the attachment: the owner's session emits and the

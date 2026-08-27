@@ -42,7 +42,7 @@ export type TranscriptEvent =
   /** A server-delivered user message (a steered mid-turn message never optimistically echoed) — folded as
    *  a 'you' turn. `durableId` is the store row id, kept on the turn so a later `discard_user` can find it.
    *  The `queue` snapshot event (PI steering queue) is handled outside this fold. */
-  | { type: 'user'; text: string; durableId?: string; images?: BrainMessageImage[] }
+  | { type: 'user'; text: string; durableId?: string; images?: BrainMessageImage[]; createdAt?: string }
   /** The daemon discarded a just-sent user turn (Esc/Stop before any output): remove the matching 'you'
    *  bubble by `durableId`. Its `text` is restored to the composer by the provider, which owns input state. */
   | { type: 'discard_user'; durableId: string; text: string }
@@ -200,6 +200,7 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
       if (m.text.trim() || m.images?.length) turns.push({
         role: 'you', text: m.text, id: m.id,
         ...(m.images?.length ? { images: m.images } : {}),
+        ...(m.createdAt ? { createdAt: m.createdAt } : {}),
       });
       continue;
     }
@@ -424,8 +425,10 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
           role: 'you',
           text: e.text,
           ...(e.durableId ? { id: e.durableId } : {}),
-          // Same references the reload path will serve, so the bubble does not change on refresh.
+          // Same references and timestamp the reload path will serve, so the bubble does not change on
+          // refresh — the daemon reads both back off the durable row it just wrote.
           ...(e.images?.length ? { images: e.images } : {}),
+          ...(e.createdAt ? { createdAt: e.createdAt } : {}),
         }],
         thinking: true,
         notice: view.notice,

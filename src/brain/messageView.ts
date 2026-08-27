@@ -529,6 +529,7 @@ export function shapeBrainMessages(
           view: {
             ...(row.id ? { id: row.id } : {}), role: 'user', text,
             ...(images.length ? { images: toMessageImages(images) } : {}),
+            ...(row.created_at ? { createdAt: row.created_at } : {}),
           },
         });
       }

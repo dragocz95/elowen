@@ -128,7 +128,7 @@ export function deliverQueuedUserEcho(store: BrainStore, live: LiveBrain, delive
   const [item] = pending.splice(index, 1);
   const echo = item?.echo;
   if (!echo) return false;
-  const durableId = projectUserTurn(store, live.sessionId, echo.persistText, echo.images);
+  const { id: durableId, createdAt } = projectUserTurn(store, live.sessionId, echo.persistText, echo.images);
   deliveredEchoes.set(echo, durableId);
   // A second user message now sits AFTER the admitted one, and Esc-discard deletes from the admitted row to
   // the end of the session. Leaving the discard claim armed would take this message with it while restoring
@@ -140,6 +140,7 @@ export function deliverQueuedUserEcho(store: BrainStore, live: LiveBrain, delive
     text: echo.displayText,
     durableId,
     ...(echo.images?.length ? { images: toMessageImages(echo.images) } : {}),
+    ...(createdAt ? { createdAt } : {}),
   };
   if (echo.publish) live.replay.publish(event);
   else live.replay.journal(event);

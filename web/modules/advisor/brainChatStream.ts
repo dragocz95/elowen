@@ -42,7 +42,7 @@ interface LiveStreamHandlers {
   process: (processes: ProcessInfo[]) => void;
   card: (card: BrainCard) => void;
   queue: (items: { id: string; text: string }[]) => void;
-  user: (frame: { text: string; durableId?: string; images?: BrainMessageImage[] }) => void;
+  user: (frame: { text: string; durableId?: string; images?: BrainMessageImage[]; createdAt?: string }) => void;
   discardUser: (frame: { durableId: string; text: string }) => void;
   compacted: () => void;
   sessionEvent: () => void;
@@ -200,7 +200,7 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     // Queue events are server-authoritative full snapshots, not deltas.
     onFrame('queue', (e) => handlers.queue((JSON.parse((e as MessageEvent).data) as { items: { id: string; text: string }[] }).items));
     // The daemon authoritatively renders every immediate or queued user turn; the composer never echoes it.
-    onFrame('user', (e) => handlers.user(JSON.parse((e as MessageEvent).data) as { text: string; durableId?: string; images?: BrainMessageImage[] }));
+    onFrame('user', (e) => handlers.user(JSON.parse((e as MessageEvent).data) as { text: string; durableId?: string; images?: BrainMessageImage[]; createdAt?: string }));
     onFrame('discard_user', (e) => handlers.discardUser(JSON.parse((e as MessageEvent).data) as { durableId: string; text: string }));
     onFrame('compacted', handlers.compacted);
     onFrame('session-event', handlers.sessionEvent);

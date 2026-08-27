@@ -153,6 +153,9 @@ export type BrainEvent =
       /** Attachments kept on disk for this turn. The sender's bubble draws them right away and the reload
        *  path rebuilds the identical thing from the store, so a refresh changes nothing on screen. */
       images?: BrainMessageImage[];
+      /** When the durable row was written — the store's own `created_at`, verbatim, so the bubble shows
+       *  the same time live and after a refresh. Absent on echoes with no durable row behind them. */
+      createdAt?: string;
     }
   /** The DAEMON discarded a just-sent user turn: the user hit Esc/Stop before the turn produced any output,
    *  so its durable row was deleted and clients must pull the matching `you` bubble (`durableId`) from the

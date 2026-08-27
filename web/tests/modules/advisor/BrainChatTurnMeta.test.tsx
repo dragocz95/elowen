@@ -65,22 +65,24 @@ afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
 /** The transcript hydrates from the stream's snapshot frame, so the settled turn arrives there. */
-async function renderSurface(): Promise<{ container: HTMLElement }> {
+async function renderSurface(history: readonly unknown[] = HISTORY): Promise<{ container: HTMLElement; stream: FakeES }> {
   const { wrapper: Wrapper } = createWrapper();
   const { container } = render(
     <Wrapper><ToastProvider><BrainChatProvider><BrainChatSurface variant="full" /></BrainChatProvider></ToastProvider></Wrapper>,
   );
   await waitFor(() => expect(FakeES.instances.length).toBeGreaterThan(0));
-  FakeES.instances[0]!.emit('snapshot', { history: HISTORY, events: [] });
-  await waitFor(() => expect(screen.getAllByTestId('chat-tool-pill')).toHaveLength(4));
-  return { container };
+  const stream = FakeES.instances[0]!;
+  stream.emit('snapshot', { history, events: [] });
+  return { container, stream };
 }
 
 describe('settled turn metadata', () => {
   it('stamps a multi-tool turn exactly once, on its closing row', async () => {
     // Every tool round really is on screen — otherwise "one stamp" would be trivially true.
     await renderSurface();
+    await waitFor(() => expect(screen.getAllByTestId('chat-tool-pill')).toHaveLength(4));
 
+    // HISTORY's user row predates the timestamp column, so the agent turn owns the only stamp here.
     const metas = screen.getAllByTestId('chat-turn-meta');
     expect(metas).toHaveLength(1);
 
@@ -91,7 +93,34 @@ describe('settled turn metadata', () => {
 
   it('leaves the intermediate tool rounds unstamped', async () => {
     const { container } = await renderSurface();
+    await waitFor(() => expect(screen.getAllByTestId('chat-tool-pill')).toHaveLength(4));
     // The <time> element is the timestamp itself: one per visible turn, not one per tool round.
     expect(container.querySelectorAll('time')).toHaveLength(1);
+  });
+});
+
+/** A sent message is a turn of its own and carries its own stamp. The whole chain used to drop it — the
+ *  daemon's user view, the live `user` frame, the stream handler's cast, the provider's destructure and the
+ *  transcript fold — so the chat could only ever date the agent's replies, never the user's own messages. */
+describe('sent message metadata', () => {
+  it('stamps the user bubble from the row the message was stored with', async () => {
+    const { container } = await renderSurface([
+      { role: 'user', id: 'u1', text: 'oprav to', createdAt: '2026-08-22T09:14:58.000Z' },
+      TOOL_ROUND('a1', 'Bash', 'git commit', '2026-08-22T09:15:12.000Z', 31_000),
+    ]);
+    await waitFor(() => expect(screen.getAllByTestId('chat-tool-pill')).toHaveLength(1));
+
+    expect([...container.querySelectorAll('time')].map((el) => el.getAttribute('datetime')))
+      .toEqual(['2026-08-22T09:14:58.000Z', '2026-08-22T09:15:12.000Z']);
+  });
+
+  it('stamps the live bubble with the exact time the reload path will serve', async () => {
+    // The daemon reads `createdAt` back off the durable row it just wrote rather than stamping a second
+    // clock, so refreshing must not move the time under a message the user is still looking at.
+    const { container, stream } = await renderSurface([]);
+    stream.emit('user', { text: 'zkus to znovu', durableId: 'u9', createdAt: '2026-08-22 09:20:41' });
+
+    await waitFor(() => screen.getByText('zkus to znovu'));
+    expect(container.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-22 09:20:41');
   });
 });

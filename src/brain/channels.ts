@@ -881,11 +881,13 @@ export class ChannelSessionService {
         // The attachment marker was included before serialization, so the model and durable row receive the
         // same parseable text while image bytes still ride only the live prompt.
         const displayText = turnText;
-        const durableId = opts.internalSystem ? undefined : projectUserTurn(this.d.store, sessionId, displayText);
+        const projected = opts.internalSystem ? undefined : projectUserTurn(this.d.store, sessionId, displayText);
         // A child transcript is an owner-facing chat surface, so its daemon stream is the one echo
         // authority just like owner chat. Ordinary Discord/WhatsApp messages remain platform-rendered
         // and do not broadcast this marker back into their room.
-        if (opts.ownerSteer && durableId) ch.replay.publish({ type: 'user', text: displayText, durableId });
+        if (opts.ownerSteer && projected) {
+          ch.replay.publish({ type: 'user', text: displayText, durableId: projected.id, createdAt: projected.createdAt });
+        }
         // Name a brand-new channel conversation from the sender's own words (pre-backfill, so injected
         // channel history never leaks into the title). Same helper the owner chat titles through, called
         // at the same moment — once this turn's user row exists.

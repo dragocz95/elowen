@@ -544,8 +544,9 @@ function useBrainChatController(): BrainChatValue {
           setRemovingQueue(new Set());
           setQueued(items);
         },
-        user: ({ text, durableId, images }) => applyEvent({
+        user: ({ text, durableId, images, createdAt }) => applyEvent({
           type: 'user', text, ...(durableId ? { durableId } : {}), ...(images?.length ? { images } : {}),
+          ...(createdAt ? { createdAt } : {}),
         }),
         // A cancelled just-sent turn is removed by durable id and restored only into an empty composer.
         discardUser: ({ durableId, text }) => {

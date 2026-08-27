@@ -15,14 +15,18 @@ import { isErroredContextOverflow } from './events.js';
  *  agent_end atomically reorders this row with the generated messages when mid-turn steering occurred.
  *  `images` are REFERENCES to files already written next to the database — never the base64 itself, which
  *  must stay out of `brain_messages` (see the note on persistAgentRun below). They are what lets the
- *  attachment still render after a reload, since the bytes the model saw are gone with the turn. */
-export function projectUserTurn(store: BrainStore, sessionId: string, text: string, images?: readonly StoredChatImage[]): string {
+ *  attachment still render after a reload, since the bytes the model saw are gone with the turn.
+ *
+ *  Returns the row's `created_at` alongside its id so the live `user` event can carry the SAME timestamp
+ *  string the reload path will later serve for this row. Stamping the event from a second clock instead
+ *  would let the sent bubble change its displayed time on refresh. */
+export function projectUserTurn(store: BrainStore, sessionId: string, text: string, images?: readonly StoredChatImage[]): { id: string; createdAt: string } {
   const content = images?.length
     ? { role: 'user' as const, content: text, images: [...images] }
     : { role: 'user' as const, content: text };
   const row = store.appendMessage({ id: randomUUID(), sessionId, parentId: null, role: 'user', content });
   store.touchSession(sessionId);
-  return row.id;
+  return { id: row.id, createdAt: row.created_at };
 }
 
 /** Mirror a finished turn into SQLite (the sole store). `agent_end` carries the complete run order,
