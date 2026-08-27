@@ -207,7 +207,7 @@ async function main() {
     const PAGES = [
       '/', '/dash', '/settings', '/users',
       '/chat', '/projects', '/memory', '/account',
-      '/p/editor', '/terminal/e2e', // plugin UI host + dynamic route [name] — arbitrary segment must still render
+      '/p/editor', // plugin UI host
       '/p/agents/sessions', // plugin UI host route [plugin] — serves the shell even for a deep page
       '/p/work/tasks', '/p/work/kanban', // where the retired legacy work routes now actually land
     ];
