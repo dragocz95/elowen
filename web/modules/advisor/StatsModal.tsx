@@ -43,8 +43,9 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
   const pct = u?.percent != null ? Math.round(u.percent) : null;
   const convCacheHit = u && u.cacheRead != null && u.input != null ? cacheHitPct({ cacheRead: u.cacheRead, input: u.input }) : null;
 
+  // `inspect`: a read-only report. Nothing here is edited, so a phone shows it as a bottom sheet.
   return (
-    <Modal title={t.stats.modalTitle} onClose={onClose} size="md" icon={BarChart3}>
+    <Modal title={t.stats.modalTitle} onClose={onClose} size="md" icon={BarChart3} intent="inspect">
       <ModalBody gap={4}>
         {/* Section pager */}
         <div className="flex items-center justify-between gap-3">

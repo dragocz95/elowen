@@ -69,7 +69,10 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <Modal title={t.tasksModal.modalTitle} onClose={onClose} size="md" icon={ListChecks}>
+      {/* `inspect`: the turn's task list, read and ticked off beside the conversation it belongs to — a
+          bottom sheet on a phone. The two clear confirmations below are a level deeper and take the
+          screen, which is what a destructive question should do. */}
+      <Modal title={t.tasksModal.modalTitle} onClose={onClose} size="md" icon={ListChecks} intent="inspect">
         <ModalBody gap={4}>
           <Input
             value={filter}

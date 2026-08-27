@@ -16,7 +16,7 @@ import { useSaveEmbeddingSettings, useReindexMemories, useSaveCategorizationSett
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { elowenClient, ElowenApiError } from '../../lib/elowenClient';
 import type { BrainModelOption } from '../../lib/types';
-import { SettingsGroup, SettingsRow } from './SettingsSurface';
+import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 
 /** Deduped model ids from the brain catalog, scoped to the chosen provider (or all when none picked).
  *  The catalog only ever holds real API/chat/embedding models from configured brain providers — CLI

@@ -19,7 +19,7 @@ import { OAuthUsageRail } from './OAuthUsageRail';
 import { useUpdateConfig, useSaveBrainProviders, useBrainOauthDisconnect } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
 import type { BrainProvider, BrainProviderType, OAuthFlowState, ElowenConfig } from '../../lib/types';
-import { SettingsGroup, SettingsRow, SettingsState } from './SettingsSurface';
+import { SettingsGroup, SettingsRow, SettingsState } from '../../components/ui/SettingsSurface';
 import { DomainFavicon } from './providers';
 
 // UI-only icon slug per OAuth type. The daemon exposes the SUPPORTED type set (the keys of

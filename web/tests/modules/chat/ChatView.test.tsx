@@ -60,6 +60,15 @@ describe('ChatView (/chat page)', () => {
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
   });
 
+  // /chat was the one route in the app with no level-1 heading at all: its title was a styled span, and
+  // the hero carrying it was withheld from small screens entirely, so a screen reader had nothing to
+  // orient by. The heading is deliberately compact — visual size and semantic level are independent —
+  // and it must be present at every width, so the hero mounts unconditionally.
+  it('gives the page a real level-1 heading', async () => {
+    renderChat(<ChatView />);
+    expect(await screen.findByRole('heading', { level: 1, name: /^(Chat)$/ })).toBeInTheDocument();
+  });
+
   it('opens one stream even with the dock chat surface AND /chat mounted together', async () => {
     renderChat(<><BrainChat /><ChatView /></>);
     await screen.findAllByPlaceholderText(/Write a message|Napište zprávu/i);

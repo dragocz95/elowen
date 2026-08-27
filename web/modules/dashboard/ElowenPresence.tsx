@@ -36,9 +36,12 @@ export function ElowenPresence({ state, compact = false, label }: {
         .elowen-presence--thinking .elowen-presence__orbit { animation-duration: 6.5s; }
         .elowen-presence--working .elowen-presence__particle { animation-duration: 1.8s; opacity: .9; }
         .elowen-presence--working .elowen-presence__mascot { animation-duration: 2.2s; }
-        .elowen-presence--needs_input .elowen-presence__aura { background: radial-gradient(circle, rgb(245 158 11 / .28), rgb(var(--accent-rgb) / .08) 48%, transparent 72%); animation-duration: 1.5s; }
-        .elowen-presence--needs_input .elowen-presence__orbit { border-color: rgb(245 158 11 / .45); }
-        .elowen-presence--success .elowen-presence__aura { background: radial-gradient(circle, rgb(34 197 94 / .18), rgb(var(--accent-rgb) / .08) 46%, transparent 72%); }
+        /* The two off-accent states are the semantic tokens, not the amber and green they happen to be
+           in the built-in design: baked literals here would keep the aura orange-and-green under a skin
+           that repaints every other status in the app. */
+        .elowen-presence--needs_input .elowen-presence__aura { background: radial-gradient(circle, color-mix(in srgb, var(--color-warning) 28%, transparent), rgb(var(--accent-rgb) / .08) 48%, transparent 72%); animation-duration: 1.5s; }
+        .elowen-presence--needs_input .elowen-presence__orbit { border-color: color-mix(in srgb, var(--color-warning) 45%, transparent); }
+        .elowen-presence--success .elowen-presence__aura { background: radial-gradient(circle, color-mix(in srgb, var(--color-success) 18%, transparent), rgb(var(--accent-rgb) / .08) 46%, transparent 72%); }
         .elowen-presence--offline .elowen-presence__mascot { filter: grayscale(.85) opacity(.58); animation: none; }
         .elowen-presence--offline .elowen-presence__orbit, .elowen-presence--offline .elowen-presence__particle { animation-play-state: paused; opacity: .12; }
         @keyframes elowen-breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-2.5%) scale(1.018); } }

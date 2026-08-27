@@ -8,7 +8,7 @@ import type { PluginConfigField, PluginDetail } from '../../lib/types';
 
 // One shared surface for every preview tile so the panel reads as a single clean card language instead of
 // a mix of accent-bordered, elevated and surface boxes.
-const previewBox = 'rounded-lg border border-border/70 bg-white/[0.02] px-3 py-2.5';
+const previewBox = 'rounded-lg border border-border/70 bg-text/[0.02] px-3 py-2.5';
 
 function valueOf(detail: PluginDetail, values: Record<string, unknown>, key: string): unknown {
   if (values[key] !== undefined) return values[key];
@@ -88,7 +88,7 @@ function CronPreview({ detail, values }: { detail: PluginDetail; values: Record<
   const tick = Number(valueOf(detail, values, 'tickMs') ?? 30000) / 1000;
   const attempts = Number(valueOf(detail, values, 'retryAttempts') ?? 2);
   return (
-    <div className="rounded-lg border border-border/70 bg-white/[0.02] p-3">
+    <div className="rounded-lg border border-border/70 bg-text/[0.02] p-3">
       <div className="mb-3 flex items-center gap-2 text-sm font-medium text-text"><Clock3 size={15} className="text-accent" aria-hidden />{t.pluginDetail.previewScheduler}</div>
       <dl className="grid grid-cols-2 gap-2 text-xs">
         <dt className="text-text-muted">{t.pluginDetail.previewCheckEvery}</dt><dd className="text-right font-mono text-text">{tick}s</dd>
@@ -139,10 +139,10 @@ export function PluginLivePreview({ detail, values, fieldLabel }: {
   else if (name === 'whatsapp') body = <WhatsAppPreview detail={detail} values={values} />;
   else if (name === 'cronjob') body = <CronPreview detail={detail} values={values} />;
   else if (name === 'terminal') body = <TerminalPreview detail={detail} values={values} />;
-  else if (name.includes('personality')) body = <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-white/[0.02] p-3 text-sm text-text"><Bot size={15} className="text-accent" aria-hidden />{t.pluginDetail.previewPersonality}</div>;
+  else if (name.includes('personality')) body = <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-text/[0.02] p-3 text-sm text-text"><Bot size={15} className="text-accent" aria-hidden />{t.pluginDetail.previewPersonality}</div>;
   else body = <GenericPreview detail={detail} values={values} fieldLabel={fieldLabel} />;
   return (
-    <section aria-label={t.pluginDetail.livePreview} className="rounded-[var(--radius-lg)] border border-white/[0.075] bg-white/[0.012] p-4">
+    <section aria-label={t.pluginDetail.livePreview} className="rounded-[var(--radius-lg)] border border-text/[0.075] bg-text/[0.012] p-4">
       <header className="mb-4 flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-sm font-medium text-text"><MessageCircle size={15} className="text-accent" aria-hidden />{t.pluginDetail.livePreview}</span><span className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.08em] text-success"><Check size={11} aria-hidden />{t.pluginDetail.previewLive}</span></header>
       {body}
     </section>

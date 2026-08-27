@@ -73,7 +73,7 @@ function ToastCard({ item, meta, durationMs, dismissLabel, onDismiss }: { item: 
         type="button"
         aria-label={dismissLabel}
         onClick={onDismiss}
-        className="overlay-touch-target -mr-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-75 transition-opacity hover:bg-black/10 hover:opacity-100 sm:h-7 sm:w-7"
+        className="overlay-touch-target -mr-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-75 transition-opacity hover:bg-on-status/10 hover:opacity-100 sm:h-7 sm:w-7"
         style={{ color: onFill }}
       >
         <X size={15} aria-hidden />

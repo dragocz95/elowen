@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Circle, FileCode, FileJson, ChevronLeft, ChevronRight, MoreHorizontal, Search } from 'lucide-react';
+import { Trash2, Circle, FileCode, FileJson, MoreHorizontal } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
 import { openBrainSession } from '../../lib/brainDock';
 import { localDateTime, formatTokens } from '../../lib/format';
@@ -13,7 +13,8 @@ import { Avatar } from '../ui/Avatar';
 import { ModelIcon } from '../ui/ModelIcon';
 import { PlatformIcon } from '../ui/PlatformIcon';
 import { Segmented } from '../ui/Segmented';
-import { Input } from '../ui/Input';
+import { Pager } from '../ui/Pager';
+import { RegisterSearch } from '../ui/RegisterSearch';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { HelpTip } from '../ui/HelpTip';
 import { Button } from '../ui/Button';
@@ -205,16 +206,15 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
           <HelpTip align="right">{t.help.sessionsPanel}</HelpTip>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="relative flex items-center">
-            <Search size={14} className="pointer-events-none absolute left-2 text-text-muted" aria-hidden />
-            <Input
-              aria-label={t.sessionsPanel.searchLabel}
-              placeholder={t.sessionsPanel.searchLabel}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-9 w-44 pl-7"
-            />
-          </label>
+          {/* The shared register search. Its predecessor here was a hand-built field pinned at `w-44`,
+              which could neither grow into a wide toolbar nor shrink out of the way of the view switch
+              and the bulk-delete button on a narrow one. */}
+          <RegisterSearch
+            value={search}
+            onChange={setSearch}
+            label={t.sessionsPanel.searchLabel}
+            placeholder={t.sessionsPanel.searchLabel}
+          />
           {isAdmin ? (
             <Segmented
               size="sm"
@@ -335,23 +335,18 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
       </div>
 
       {/* Inside the register so the pager shares the card's horizontal inset (it used to sit as a
-          sibling and hug the card edge). */}
+          sibling and hug the card edge). The shared Pager owns the range text, the divider, the disabled
+          states and the narrow-width behaviour — this used to be a hand-written copy that borrowed the
+          CALENDAR's previous/next labels, so the same control read "Následující" here and "Další" on
+          /memory. */}
       {visible.length > 0 ? (
-        <div className="flex shrink-0 flex-col gap-2 border-t border-border/80 pt-3 sm:flex-row sm:items-center sm:justify-between">
-          <span className="font-mono text-xs text-text-muted">
-            {t.sessionsPanel.pageRange
-              .replace('{from}', String(clampedPage * pageSize + 1))
-              .replace('{to}', String(clampedPage * pageSize + pageRows.length))
-              .replace('{total}', String(visible.length))}
-          </span>
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" icon={ChevronLeft} disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>{t.calendar.previous}</Button>
-            <span className="min-w-24 text-center font-mono text-xs text-text-muted">
-              {t.sessionsPanel.pageLabel.replace('{page}', String(clampedPage + 1)).replace('{pages}', String(pageCount))}
-            </span>
-            <Button variant="ghost" disabled={clampedPage >= pageCount - 1} onClick={() => setPage(clampedPage + 1)}>{t.calendar.next}<ChevronRight size={15} className="ml-1" aria-hidden /></Button>
-          </div>
-        </div>
+        <Pager
+          page={clampedPage}
+          pageSize={pageSize}
+          total={visible.length}
+          onPageChange={setPage}
+          ariaLabel={t.sessionsPanel.tab}
+        />
       ) : null}
       </ControlSurfaceRegister>
 

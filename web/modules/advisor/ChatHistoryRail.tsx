@@ -235,7 +235,14 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                     aria-label={t.chat.moreActions}
                     title={t.chat.moreActions}
                     aria-expanded={menuFor === s.id}
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-all hover:bg-elevated hover:text-text ${menuFor === s.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                    // Rename, branch, export and delete are reachable ONLY through this button, so it
+                    // cannot be a hover affordance. A coarse pointer has no hover at all: on a phone the
+                    // control was invisible and every per-conversation action unreachable. It is therefore
+                    // always visible on touch (and always at least a 44px target there), and it reveals
+                    // itself on keyboard focus as well — a tab stop that stays at `opacity-0` is a control
+                    // a keyboard user cannot see they have landed on. Fading in on a fine pointer is the
+                    // only part of the old behaviour worth keeping, and it stays.
+                    className={`overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-all hover:bg-elevated hover:text-text ${menuFor === s.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100'}`}
                   >
                     <MoreVertical size={14} aria-hidden />
                   </button>
@@ -300,7 +307,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
     if (!open) return null;
     return (
       <div className="overlay-layer-drawer fixed inset-0" onKeyDown={(e) => { if (e.key === 'Escape') onClose?.(); }}>
-        <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
+        <div className="absolute inset-0 bg-bg/50" onClick={onClose} aria-hidden />
         <aside
           role="dialog"
           aria-modal="true"

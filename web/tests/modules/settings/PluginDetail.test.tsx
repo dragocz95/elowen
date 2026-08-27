@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { LanguageProvider } from '../../../lib/i18n';
 import { ThemeProvider } from '../../../lib/useTheme';
 import { EffectsProvider } from '../../../lib/useEffects';
-import { SettingsDocument } from '../../../modules/settings/SettingsSurface';
+import { SettingsDocument } from '../../../components/ui/SettingsSurface';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { PluginDetail as PluginDetailData, PluginConfigField } from '../../../lib/types';
 

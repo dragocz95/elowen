@@ -73,7 +73,7 @@ export function CommandPalette() {
   };
 
   return (
-    <div className="overlay-layer-modal fixed inset-0 flex items-start justify-center bg-black/70 p-4 pt-[12dvh]" onClick={() => setOpen(false)}>
+    <div className="overlay-layer-modal fixed inset-0 flex items-start justify-center bg-bg/70 p-4 pt-[12dvh]" onClick={() => setOpen(false)}>
       <div className="animate-pop-in w-full max-w-lg overflow-hidden rounded-xl border border-border bg-surface" style={{ boxShadow: 'var(--shadow-raised)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2.5 border-b border-border px-4">
           <Search size={16} className="shrink-0 text-text-muted" aria-hidden />

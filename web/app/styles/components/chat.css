@@ -1,24 +1,101 @@
-/* Chat register: .chat-hero*, .chat-gutter, .chat-composer, .chat-markdown overflow, .chat-tool*. */
+/* Chat register: .chat-hero*, .chat-gutter, .chat-transcript, .chat-statusline, .chat-composer*,
+   .chat-markdown overflow, .chat-tool*. */
 
-/* /chat identity hero: the section icon + title with a row of live conversation stats. Compact so the
-   native conversation below owns the viewport. */
-.chat-hero { display: flex; align-items: center; gap: 1rem; padding: 1rem var(--shell-gutter) 0.9rem; }
+/* /chat identity hero: the section icon + the page's real <h1>, with a row of live conversation stats.
+   Deliberately compact — the conversation below owns the viewport — but the heading is a genuine level 1
+   so the document HAS one, exactly like every other page. Visual size and semantic level are independent.
+
+   The hero is its own container. /chat is the one route that opts out of the global content cap (see
+   Shell.tsx), so the hero's width follows the window and the docked telemetry rail — something no
+   viewport query can describe. */
+.chat-hero {
+  container: chat-hero / inline-size;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding-block: 1rem 0.9rem;
+  padding-inline: max(var(--shell-gutter), var(--safe-left)) max(var(--shell-gutter), var(--safe-right));
+}
 .chat-hero__icon { display: grid; width: 2.7rem; height: 2.7rem; flex: none; place-items: center; border: 1px solid rgb(var(--accent-rgb) / 0.2); border-radius: 50%; color: var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.1), transparent 68%); box-shadow: var(--glow-soft); }
 .chat-hero__body { display: flex; min-width: 0; flex-direction: column; gap: 0.4rem; }
-.chat-hero__title { color: var(--color-text); font-size: clamp(1.25rem, 1.1rem + 0.4vw, 1.55rem); font-weight: 610; letter-spacing: -0.035em; line-height: 1; }
-.chat-hero__stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 1.1rem; }
-.chat-hero__stat { display: inline-flex; align-items: baseline; gap: 0.35rem; min-width: 0; }
-.chat-hero__stat-value { max-width: 18rem; overflow: hidden; color: var(--color-text); font-size: 0.78rem; font-weight: 600; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.chat-hero__stat-label { color: var(--color-text-muted); font-size: 0.6rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+/* Sized against the hero, not the window. The old `0.4vw` term was written while the whole app rendered
+   at a 70-75% CSS zoom; on a native 1024-1900px desktop it produced a heading barely larger than the
+   stats beneath it. `cqi` ties it to the room the hero actually has. */
+.chat-hero h1 { color: var(--color-text); font-size: clamp(1.3rem, 1.05rem + 1.1cqi, 1.75rem); font-weight: 610; letter-spacing: -0.035em; line-height: 1; }
+
+/* The live conversation stats are WorkspaceMetric — the same primitive every other hero uses. This is
+   its compact INLINE presentation, not a second set of typography: the markup, the tokens and the label
+   casing stay the component's own, and only the geometry changes, because a full 1.7rem metric column
+   belongs to a register opening and would stand taller here than the heading above it. */
+.chat-hero__metrics { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 1.1rem; }
+.chat-hero__metrics .workspace-metric { min-width: 0; flex-direction: row; align-items: baseline; gap: 0.35rem; padding: 0; border-inline-end: 0; }
+.chat-hero__metrics .workspace-metric__value { max-width: 18rem; overflow: hidden; font-family: inherit; font-size: 0.78rem; font-weight: 600; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.chat-hero__metrics .workspace-metric__label { margin-top: 0; font-size: 0.6rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+
+/* Narrow hero (a phone, or a desktop window with the telemetry rail docked): the stat row goes. Every
+   figure in it is already in the telemetry panel and in the statusline above the composer, and on a small
+   screen the wrapping row cost two lines of the little vertical room the conversation has. The heading
+   stays — it is the document's h1, and it is one line. */
+@container chat-hero (width < 34rem) {
+  .chat-hero__icon { width: 2.1rem; height: 2.1rem; }
+  .chat-hero__metrics { display: none; }
+}
 
 /* /chat full-page surface gutter: one shared horizontal inset for the control bar, transcript and
-   composer, matching the hero's --shell-gutter so every register sits on the same left edge. */
-.chat-gutter { padding-inline: var(--shell-gutter); }
+   composer, matching the hero's --shell-gutter so every register sits on the same left edge. In landscape
+   the notch is on a SIDE, so the gutter has to clear the safe area as well as carry the inset. */
+.chat-gutter {
+  padding-inline: max(var(--shell-gutter), var(--safe-left)) max(var(--shell-gutter), var(--safe-right));
+}
+
+.chat-transcript { padding-block: 1rem; }
+
+/* The statusline is its own container, so the truncation order below follows the width the row actually
+   has — the docked telemetry rail narrows it without the viewport changing at all. */
+.chat-statusline { container: chat-statusline / inline-size; }
+
+/* Truncation priority. The row is exactly ONE line — a second one pushes the composer down and eats the
+   vertical room a phone does not have — so something must give when it will not fit. The model name is
+   what the reader most needs (which model am I talking to?) and the statistics are what they least need,
+   yet the plain flex row did the opposite: the numbers held their full width and the model truncated to
+   "op…". So the STATISTICS drop, cheapest first, and the model keeps whatever room that frees. Nothing
+   is lost — every figure here is also in the telemetry panel, and the whole row collapses from its own
+   chevron anyway. */
+@container chat-statusline (width < 30rem) {
+  .chat-statusline [data-stat='cost'], .chat-statusline [data-stat='speed'] { display: none; }
+}
+@container chat-statusline (width < 22rem) {
+  .chat-statusline [data-stat='tokens'] { display: none; }
+}
+@container chat-statusline (width < 18rem) {
+  .chat-statusline [data-stat='context'] { display: none; }
+}
+
+/* The sticky composer dock. `position: relative` anchors the transcript fade drawn inside it — with no
+   positioned ancestor of its own the fade resolved against the whole surface and was painted off-screen
+   above it. The safe-area inset is what keeps the composer clear of a phone's home indicator: the dock
+   sits at `bottom: 0`, so with no bottom padding the send button lands underneath it. */
+.chat-composer-dock { position: relative; padding-bottom: var(--safe-bottom); }
+.chat-composer-slot { padding-block: 0.25rem 1rem; }
 
 /* The full /chat composer is ONE bordered field with an invisible textarea inside it — the global
    focus ring on that textarea would draw a rectangle inside the box, so the box carries the focus
    state instead (its focus-within border shift). */
 .chat-composer textarea:focus-visible { box-shadow: none; }
+/* How tall the composer may GROW is capped on the textarea itself (BrainChatSurface), so the dock and the
+   full page share one figure — see the note there. */
+
+/* Short viewport — a phone in landscape, a split window. Nothing here is a component-level layout choice;
+   it is genuinely about how much SCREEN there is, which no container query can answer, so the height
+   media query is the right tool. At 740x360 the hero, the transcript padding and the composer dock
+   between them left barely half the height for the conversation. */
+@media (height < 34rem) {
+  .chat-hero { gap: 0.7rem; padding-block: 0.45rem; }
+  .chat-hero__icon { display: none; }
+  .chat-hero__metrics { display: none; }
+  .chat-transcript { padding-block: 0.5rem; }
+  .chat-composer-slot { padding-block: 0.25rem 0.4rem; }
+}
 
 /* Wide content in assistant prose (markdown tables, fenced code) scrolls inside its own box so the page
    never scrolls sideways at narrow / mobile widths. */

@@ -36,7 +36,7 @@ describe('ProjectsView', () => {
     expect(screen.getByRole('columnheader', { name: 'Summary' })).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Pilot info' })).toBeNull();
     expect(screen.getByLabelText('1 assigned users')).toBeInTheDocument();
-    fireEvent.click(row);
+    fireEvent.click(screen.getByRole('button', { name: 'Open project elowen' }));
     expect(await screen.findByText('master')).toBeTruthy();
     expect(await screen.findByText('feat: x')).toBeTruthy();
     expect(screen.getByTestId('projects-register')).toHaveAttribute('role', 'table');
@@ -49,7 +49,7 @@ describe('ProjectsView', () => {
   it('manages member access from the selected Project', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
-    fireEvent.click(await screen.findByText('elowen'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project elowen' }));
     fireEvent.click(await screen.findByRole('radio', { name: 'People' }));
     expect(await screen.findByText('1 of 1 users have access')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
@@ -58,19 +58,26 @@ describe('ProjectsView', () => {
     expect(dialog).not.toHaveTextContent('@admin');
   });
 
-  it('selects a project with Space', async () => {
+  // A row opens through a real button spanning it, so Enter and Space come from the platform rather than
+  // a keydown handler — and the accessible name is the short one the caller supplies, not the row's text.
+  it('opens a project from a single named button, not from the row itself', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
-    const card = (await screen.findByText('elowen')).closest('[role="row"]')!;
-    fireEvent.keyDown(card, { key: ' ' });
+    const open = await screen.findByRole('button', { name: 'Open project elowen' });
+    expect(open.tagName).toBe('BUTTON');
+    const row = open.closest('[role="row"]')!;
+    expect(row).not.toHaveAttribute('tabindex');
+
+    fireEvent.click(open);
     expect(await screen.findByText('master')).toBeTruthy();
+    expect(row).toHaveAttribute('aria-selected', 'true');
   });
 
   it('withholds editor controls when the editor plugin is unavailable', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
 
-    fireEvent.click(await screen.findByText('elowen'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project elowen' }));
     expect(await screen.findByText('master')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open editor' })).toBeNull();
   });
@@ -113,7 +120,7 @@ describe('ProjectsView', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryAllByRole('menuitem')).toHaveLength(0));
-    fireEvent.click(screen.getByText('elowen'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open project elowen' }));
     expect(await screen.findByText('master')).toBeInTheDocument();
     expect(screen.queryByText('Edit project')).toBeNull();
   });

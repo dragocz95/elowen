@@ -30,7 +30,7 @@ export function PluginHero({ name, detail, description, toolCount }: { name: str
           { term: t.pluginDetail.overviewSource, value: detail.source === 'bundled' ? t.plugins.bundled : t.plugins.user, mono: false },
           { term: t.pluginDetail.tools, value: String(toolCount), mono: true },
         ].map((fact) => (
-          <div key={fact.term} className="inline-flex items-center gap-2 rounded-full border border-border bg-white/[0.012] px-3 py-1.5">
+          <div key={fact.term} className="inline-flex items-center gap-2 rounded-full border border-border bg-text/[0.012] px-3 py-1.5">
             <dt className="text-[9px] font-semibold uppercase tracking-[0.12em] text-text-muted">{fact.term}</dt>
             <dd className={`text-xs text-text ${fact.mono ? 'font-mono' : ''}`}>{fact.value}</dd>
           </div>

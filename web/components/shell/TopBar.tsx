@@ -35,7 +35,7 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
             type="button"
             onClick={onMenuClick}
             aria-label={t.common.toggleSidebar}
-            className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-black/55 text-text-muted backdrop-blur-md transition-colors hover:border-accent/40 hover:text-accent"
+            className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-bg/55 text-text-muted backdrop-blur-md transition-colors hover:border-accent/40 hover:text-accent"
           >
             <Menu size={19} aria-hidden />
           </button>
@@ -54,7 +54,7 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
         ) : null}
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-black/45 p-1 backdrop-blur-xl">
+      <div className="ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-bg/45 p-1 backdrop-blur-xl">
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}

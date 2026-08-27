@@ -20,8 +20,10 @@ import { useTranslation } from '../../lib/i18n';
 import { localDateTime } from '../../lib/format';
 import { UserDetailPane } from './UserDetailPane';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
-import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
-import { WorkspaceDetailRail, WorkspaceMetric, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
+import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '../../components/ui/DataTable';
+import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
+import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { RegisterSearch } from '../../components/ui/RegisterSearch';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 
 export function UsersView() {
@@ -144,24 +146,25 @@ export function UsersView() {
   if (me.data?.user && !isAdmin) return (
     <>
       <ModuleHeader title={t.page.users} icon={Users} />
-      <SpatialWorkspaceLayout hero={{ eyebrow: t.users.workspaceEyebrow, title: t.page.users, description: t.users.workspaceIntro, mascotState: 'error', metrics: <></> }}>
+      <WorkspaceShell variant="register" hero={{ eyebrow: t.users.workspaceEyebrow, title: t.page.users, description: t.users.workspaceIntro, mascot: 'error' }}>
         <ControlSurfaceDocument>
           <ControlSurfaceState><EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} /></ControlSurfaceState>
         </ControlSurfaceDocument>
-      </SpatialWorkspaceLayout>
+      </WorkspaceShell>
     </>
   );
 
   return (
     <>
       <ModuleHeader title={t.page.users} count={users.data?.length} icon={Users} />
-      <SpatialWorkspaceLayout
+      <WorkspaceShell
+        variant="register"
         hero={{
           eyebrow: t.users.workspaceEyebrow,
           title: t.page.users,
           count: data.length,
           description: t.users.workspaceIntro,
-          mascotState: users.isLoading ? 'saving' : users.isError ? 'error' : 'idle',
+          mascot: users.isLoading ? 'saving' : users.isError ? 'error' : 'idle',
           status: !users.isLoading && !users.isError ? <span className="workspace-status">{t.users.workspaceReady}</span> : undefined,
           action: <Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button>,
           metrics: <>
@@ -174,36 +177,51 @@ export function UsersView() {
       >
         <ControlSurfaceDocument>
           <ControlSurfaceToolbar>
-            <div className="relative flex-1">
-              <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.users.searchPlaceholder} className="pl-9" />
-            </div>
+            <RegisterSearch
+              value={query}
+              onChange={setQuery}
+              placeholder={t.users.searchPlaceholder}
+              label={t.users.searchLabel}
+              onClear={() => setQuery('')}
+              clearLabel={t.users.searchClear}
+            />
           </ControlSurfaceToolbar>
         {users.isLoading ? <ControlSurfaceState><LoadingState variant="list" /></ControlSurfaceState>
           : users.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.users.loadError} onRetry={() => users.refetch()} /></ControlSurfaceState>
           : data.length === 0 ? <ControlSurfaceState><EmptyState title={t.users.empty} description={t.users.emptyDescription} icon={Users} action={<Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button>} /></ControlSurfaceState>
           : (
             <ControlSurfaceRegister>
-            <div className="workspace-master-detail users-workspace-grid" data-detail={selected != null}>
+            <div className="workspace-master-detail" data-detail={selected != null}>
               <div className="min-w-0">
                 {filteredUsers.length === 0 ? <ControlSurfaceState><EmptyState title={t.users.noMatches} icon={Search} /></ControlSurfaceState> : (
-                  <DataTable ariaLabel={t.users.tableLabel} columns="minmax(13rem,1.2fr) minmax(10rem,1fr) 8rem 10rem 3rem" compactColumns="minmax(0,1fr) 3rem" data-testid="users-register">
+                  <DataTable ariaLabel={t.users.tableLabel} columns="minmax(13rem,1.2fr) minmax(10rem,1fr) 8rem 10rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 3rem 1.25rem" data-testid="users-register">
                     <DataTableRow header>
                       <DataTableCell header>{t.users.user}</DataTableCell>
                       <DataTableCell header priority="wide">{t.users.username}</DataTableCell>
                       <DataTableCell header priority="wide">{t.users.role}</DataTableCell>
                       <DataTableCell header priority="wide">{t.users.createdAt}</DataTableCell>
-                      <DataTableCell header><span className="sr-only">{t.common.actions}</span></DataTableCell>
+                      {/* The chevron track carries no header: its cell is decorative. */}
+                      <DataTableCell header labelHidden>{t.common.actions}</DataTableCell>
                     </DataTableRow>
                     {filteredUsers.map((user) => {
                       const active = selected?.id === user.id;
+                      const displayName = user.name || user.username;
                       return (
-                        <DataTableRow key={user.id} selected={active} interactive tabIndex={0} aria-selected={active} className="group cursor-pointer" onClick={() => setSelectedId(user.id)} onContextMenu={(event) => openCtxMenu(event, user)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(user.id); } }}>
-                          <DataTableCell className="flex items-center gap-3"><Avatar user={user} size={36} /><span className="truncate text-sm font-medium text-text group-hover:text-accent">{user.name || user.username}</span></DataTableCell>
-                          <DataTableCell priority="wide" className="truncate font-mono text-xs text-text-muted">@{user.username}</DataTableCell>
+                        <DataTableRow
+                          key={user.id}
+                          selected={active}
+                          aria-selected={active}
+                          className="group cursor-pointer"
+                          onOpen={() => setSelectedId(user.id)}
+                          openLabel={t.users.openUser.replace('{name}', displayName)}
+                          onContextMenu={(event) => openCtxMenu(event, user)}
+                        >
+                          <DataTableCell title={displayName} className="flex items-center gap-3"><Avatar user={user} size={32} /><span className="min-w-0 truncate text-sm font-medium text-text group-hover:text-accent">{displayName}</span></DataTableCell>
+                          <DataTableCell priority="wide" title={`@${user.username}`} className="font-mono text-xs text-text-muted">@{user.username}</DataTableCell>
                           <DataTableCell priority="wide">{user.is_admin ? <Badge tone="accent"><ShieldCheck size={10} className="mr-1" aria-hidden />{t.users.admin}</Badge> : <span className="text-xs text-text-muted">{t.users.member}</span>}</DataTableCell>
                           <DataTableCell priority="wide" className="text-xs text-text-muted">{localDateTime(user.created_at, locale, false)}</DataTableCell>
-                          <DataTableCell onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><ActionMenu label={`${user.username}: ${t.common.actions}`} items={userActions(user)} trigger={<MoreHorizontal size={16} aria-hidden />} triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted opacity-60 hover:bg-elevated hover:text-text group-hover:opacity-100" /></DataTableCell>
+                          <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><ActionMenu label={`${user.username}: ${t.common.actions}`} items={userActions(user)} trigger={<MoreHorizontal size={16} aria-hidden />} triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted opacity-60 hover:bg-elevated hover:text-text group-hover:opacity-100" /></DataTableCell>
+                          <DataTableChevronCell />
                         </DataTableRow>
                       );
                     })}
@@ -215,7 +233,7 @@ export function UsersView() {
             </ControlSurfaceRegister>
           )}
         </ControlSurfaceDocument>
-      </SpatialWorkspaceLayout>
+      </WorkspaceShell>
 
       {creating && (
         <Modal title={t.users.addUser} onClose={() => setCreating(false)} size="md" icon={UserPlus}>

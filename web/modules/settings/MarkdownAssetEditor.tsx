@@ -1,10 +1,12 @@
 'use client';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Search, Trash2 } from 'lucide-react';
+import { ChevronRight, Search, Trash2 } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input, textareaClass } from '../../components/ui/Input';
+import { Pager } from '../../components/ui/Pager';
+import { RegisterSearch } from '../../components/ui/RegisterSearch';
 import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -193,10 +195,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
     <div className="flex min-w-0 flex-col gap-4">
       <ControlSurfaceToolbar className="flex-col items-stretch">
         <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
-          <div className="relative min-w-[15rem] flex-1">
-            <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t.assetEditor.search} className="pl-9" />
-          </div>
+          <RegisterSearch value={search} onChange={setSearch} placeholder={t.assetEditor.search} label={t.assetEditor.search} />
           {/* One filter row, never two: an asset type with ownership scopes already splits the same set
               more finely (mine / instance / bundled), so showing the coarse source filter beside it would
               offer two controls whose answers overlap — and "Built-in" in both of them. */}
@@ -297,21 +296,13 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                 })}
               </DataTable>
 
-              <div className="flex flex-col gap-2 border-b border-border/80 pb-3 sm:flex-row sm:items-center sm:justify-between">
-                <span className="font-mono text-xs text-text-muted">
-                  {t.assetEditor.pageRange
-                    .replace('{from}', String(clampedPage * PAGE_SIZE + 1))
-                    .replace('{to}', String(clampedPage * PAGE_SIZE + pageItems.length))
-                    .replace('{total}', String(filtered.length))}
-                </span>
-                <div className="flex items-center gap-1">
-                  <Button variant="ghost" icon={ChevronLeft} disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>{t.assetEditor.prevPage}</Button>
-                  <span className="min-w-24 text-center font-mono text-xs text-text-muted">
-                    {t.assetEditor.pageLabel.replace('{page}', String(clampedPage + 1)).replace('{pages}', String(pageCount))}
-                  </span>
-                  <Button variant="ghost" disabled={clampedPage >= pageCount - 1} onClick={() => setPage(clampedPage + 1)}>{t.assetEditor.nextPage}<ChevronRight size={15} className="ml-1" aria-hidden /></Button>
-                </div>
-              </div>
+              <Pager
+                page={clampedPage}
+                pageSize={PAGE_SIZE}
+                total={filtered.length}
+                onPageChange={setPage}
+                ariaLabel={t.assetEditor.colName}
+              />
             </div>
           )}
       </ControlSurfaceRegister>

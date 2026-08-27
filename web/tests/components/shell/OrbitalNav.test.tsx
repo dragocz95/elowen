@@ -33,8 +33,12 @@ describe('orbital navigation geometry', () => {
     expect(getStableOffsets(8, 66)).toEqual([-231, -165, -99, -33, 33, 99, 165, 231]);
   });
   it('tightens spacing only when the axis needs it', () => {
-    expect(railSpacing(8, 845)).toBe(66);
-    expect(railSpacing(12, 704)).toBeLessThan(66);
+    expect(railSpacing(8, 845)).toBe(48);
+    // The whole point of the 48px resting spacing: a full menu on an ordinary laptop no longer has to
+    // tighten at all. The rail used to render at ~72% of these numbers under an automatic page zoom, so
+    // reading the old 66 as real pixels made twelve destinations overflow every 1280×800 screen.
+    expect(railSpacing(12, 704)).toBe(48);
+    expect(railSpacing(14, 520)).toBeLessThan(48);
   });
 });
 
@@ -62,7 +66,7 @@ describe('OrbitalNav', () => {
 
   it('collapses to the icon rail without changing destinations', () => {
     mount(true);
-    expect(screen.getByTestId('future-navigation')).toHaveClass('w-[4.75rem]');
+    expect(screen.getByTestId('future-navigation')).toHaveClass('w-[3.5rem]');
     expect(screen.getByRole('link', { name: 'Statistics' })).toBeInTheDocument();
   });
 });

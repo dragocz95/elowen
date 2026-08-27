@@ -11,7 +11,9 @@ export function HomeComposer({ placeholder, actionLabel }: { placeholder: string
   };
   return (
     <form
-      className="group relative flex min-h-28 flex-col rounded-2xl border border-accent/45 bg-black/45 p-3 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04),0_18px_70px_rgb(255_82_54_/_0.08)] transition-[border-color,box-shadow] focus-within:border-accent focus-within:shadow-[inset_0_1px_0_rgb(255_255_255_/_0.05),0_20px_80px_rgb(255_82_54_/_0.14)]"
+      // The lit/unlit shadow pair lives in the stylesheet (.home-composer, dashboard-cosmos.css): both
+      // compose `color-mix()`, whose own commas cannot survive a Tailwind arbitrary value.
+      className="home-composer group relative flex min-h-28 flex-col rounded-2xl border border-accent/45 bg-bg/45 p-3 transition-[border-color,box-shadow] focus-within:border-accent"
       onSubmit={(event) => { event.preventDefault(); open(); }}
     >
       <textarea

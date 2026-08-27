@@ -5,7 +5,7 @@ import { useConfig } from '../../lib/queries';
 import { useUpdateConfig } from '../../lib/mutations';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { SettingsRow } from './SettingsSurface';
+import { SettingsRow } from '../../components/ui/SettingsSurface';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { BUILTIN_SKIN, SKIN_CHOICES } from '../../lib/skins';

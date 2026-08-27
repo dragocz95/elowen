@@ -11,7 +11,7 @@ import { Slider } from '../../components/ui/Slider';
 import { Toggle } from '../../components/ui/Toggle';
 import { useTranslation } from '../../lib/i18n';
 import type { ConfigPatch, RuntimeConfig } from '../../lib/types';
-import { SettingsGroup, SettingsRow } from './SettingsSurface';
+import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 
 type ToolLoadingMode = 'immediate' | 'deferred';
 type ToolDeferralOverrides = NonNullable<RuntimeConfig['toolDeferralOverrides']>;

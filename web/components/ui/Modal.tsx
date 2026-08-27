@@ -72,7 +72,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
   return createPortal(
     <div
       ref={overlayRef}
-      className={`overlay-layer-modal fixed inset-0 flex bg-black/70 ${drawer ? 'justify-end' : surface ? 'items-stretch justify-stretch p-0' : 'items-center justify-center'}`}
+      className={`overlay-layer-modal fixed inset-0 flex bg-bg/70 ${drawer ? 'justify-end' : surface ? 'items-stretch justify-stretch p-0' : 'items-center justify-center'}`}
       // A centered dialog keeps its 1rem breathing room, widened to the safe area where the device has
       // one — in landscape the notch is on a SIDE, so a fixed inset is not enough on its own.
       style={drawer || surface ? undefined : {

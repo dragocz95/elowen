@@ -29,16 +29,21 @@ describe('UsersView', () => {
     expect(screen.getByTestId('users-register')).not.toHaveClass('border-t-0');
   });
 
-  it('selects rows with Space and keeps the always-visible action menu independent', async () => {
+  // A row opens through a real button spanning it, so Enter and Space come from the platform. The action
+  // menu is a sibling of that button, never inside it, so working the menu must not open the row.
+  it('opens a row from its own named button and keeps the action menu independent', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
-    const bobRow = (await screen.findByText('bob')).closest('[role="row"]')!;
+    const open = await screen.findByRole('button', { name: 'Open user bob' });
+    expect(open.tagName).toBe('BUTTON');
+    const bobRow = open.closest('[role="row"]')!;
+    expect(bobRow).not.toHaveAttribute('tabindex');
     expect(bobRow).toHaveAttribute('aria-selected', 'false');
 
     fireEvent.keyDown(screen.getByRole('button', { name: 'bob: Actions' }), { key: 'Enter' });
     expect(bobRow).toHaveAttribute('aria-selected', 'false');
 
-    fireEvent.keyDown(bobRow, { key: ' ' });
+    fireEvent.click(open);
     expect(bobRow).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -62,10 +67,9 @@ describe('UsersView', () => {
     // Admin (alice) carries an Admin badge in the list. Select bob → his allowed-models summary shows
     // in the detail pane; Manage opens the selection modal.
     expect(await screen.findByText('Admin')).toBeTruthy();
-    fireEvent.click((await screen.findByText('bob')).closest('[role="row"]')!);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open user bob' }));
     expect(await screen.findByText('All models allowed · 2 available')).toBeTruthy();
-    // Projects list is empty ("—") and bob has no tools, so the models summary owns the only Manage button.
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Manage allowed models' }));
     fireEvent.click(await screen.findByRole('button', { name: /Claude Sonnet/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 

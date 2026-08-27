@@ -94,4 +94,21 @@ describe('SettingsPage', () => {
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
   });
+
+  /** Both restart buttons must be DIRECT children of the hero's action row. The rule that stops them
+   *  alternating right- then left-aligned down a narrow column — `.workspace-hero__actions >
+   *  :not(.workspace-hero__status) { flex: 1 1 10rem }` — is a child selector, so wrapping the pair in a
+   *  layout div would quietly bring the zig-zag back with nothing else on the page changing. */
+  it('hangs both hero restart actions directly off the hero action row', async () => {
+    localStorage.setItem('elowen.settings.category', 'system');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'System' });
+
+    const actions = container.querySelector('.workspace-hero__actions');
+    expect(actions).not.toBeNull();
+    for (const label of [en.settings.restartDaemon, en.settings.restartWeb]) {
+      expect(screen.getByRole('button', { name: label }).parentElement).toBe(actions);
+    }
+  });
 });

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { toolGlyph } from '../../lib/toolGlyph';
+import { toolGlyph, toolLucideIcon } from '../../lib/toolGlyph';
 
 /** The canonical copy is `src/shared/toolGlyph.ts`, and the web may not IMPORT it: dependency-cruiser's
  *  `web-not-to-backend` rule allows exactly one types-only file across that boundary, because the rest of
@@ -40,5 +40,27 @@ describe('toolGlyph', () => {
     expect(toolGlyph('LspDiagnostics')).toBe('⚙');
     expect(toolGlyph('Bash')).toBe('⚙');
     expect(toolGlyph('')).toBe('⚙');
+  });
+});
+
+/** The web draws tools instead of printing them, and the icon has to come from the SAME branch table —
+ *  the users drawer used to render whatever emoji a plugin manifest declared, under a column of Lucide
+ *  icons. Icons are compared by their display name, which is what Lucide gives each component. */
+describe('toolLucideIcon', () => {
+  const nameOf = (tool: string) => toolLucideIcon(tool).displayName;
+
+  it('follows the same families as the glyph', () => {
+    expect(nameOf('Search')).toBe('Search');
+    expect(nameOf('Grep')).toBe('Search');
+    expect(nameOf('Edit')).toBe('PenLine');
+    expect(nameOf('CreateSkill')).toBe('FilePlus2');
+    expect(nameOf('Read')).toBe('FileText');
+    expect(nameOf('ListDir')).toBe('FolderOpen');
+    expect(nameOf('WebFetch')).toBe('Globe');
+  });
+
+  it('falls back to a generic tool for anything unknown', () => {
+    expect(nameOf('discord_send')).toBe('Wrench');
+    expect(nameOf('')).toBe('Wrench');
   });
 });

@@ -29,7 +29,8 @@ import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 import { ChoiceField } from '../../components/ui/ChoiceField';
-import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
+import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { MotionReveal } from '../../components/ui/Motion';
@@ -59,8 +60,8 @@ function AccountPanel({ id, active, visited, children }: {
   if (id !== active && !visited.has(id)) return null;
   return (
     <Activity mode={id === active ? 'visible' : 'hidden'}>
-      {/* data-constellation drops the card frame so sections float on the page background. */}
-      <MotionReveal data-account-panel={id} data-constellation="">{children}</MotionReveal>
+      {/* No frame of its own: the section cards inside carry the chrome, exactly as on /settings. */}
+      <MotionReveal data-account-panel={id}>{children}</MotionReveal>
     </Activity>
   );
 }
@@ -313,8 +314,13 @@ export function AccountView() {
   // Who this account is and what it may run — the four facts every section below is about. All of it is
   // already loaded for the sections themselves, so the hero costs no extra request and, unlike the
   // per-user stats in the Users directory, needs no admin rights to read.
+  const activeSection = spatialSections.find((item) => item.id === section) ?? spatialSections[0]!;
   const deckHero = {
-    mascotState: (me.isError ? 'error' : activeFeedback.status === 'saving' ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
+    eyebrow: t.account.title,
+    title: activeSection.label,
+    description: activeSection.description,
+    status: <AutoSaveStatus status={activeFeedback.status} onRetry={activeFeedback.retry} />,
+    mascot: (me.isError ? 'error' : activeFeedback.status === 'saving' ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
     metrics: (
       <>
         <WorkspaceMetric label={t.users.role} value={u.is_admin ? t.users.admin : t.users.member} icon={ShieldCheck} />
@@ -329,15 +335,15 @@ export function AccountView() {
     <div className="flex w-full min-w-0 flex-col">
       <ModuleHeader title={t.account.title} icon={UserCog} />
 
-      <SpatialControlDeck
-        eyebrow={t.account.title}
-        ariaLabel={t.account.sectionsNav}
-        sections={spatialSections}
-        value={section}
-        onChange={(v) => setSection(v as typeof section)}
+      <WorkspaceShell
+        variant="deck"
         hero={deckHero}
-        status={activeFeedback.status}
-        onRetry={activeFeedback.retry}
+        navigation={{
+          sections: spatialSections,
+          value: activeSection.id,
+          onChange: (v) => setSection(v as typeof section),
+          ariaLabel: t.account.sectionsNav,
+        }}
       >
       {deckPluginSections.map((item) => (
         <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
@@ -567,7 +573,7 @@ export function AccountView() {
           
         ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>}
       </AccountPanel>
-      </SpatialControlDeck>
+      </WorkspaceShell>
     </div>
   );
 }

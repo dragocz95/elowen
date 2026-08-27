@@ -1,7 +1,7 @@
 'use client';
 import { useState, type ReactNode } from 'react';
 import { Wrench, Search } from 'lucide-react';
-import { SettingsGroup } from './SettingsSurface';
+import { SettingsGroup } from '../../components/ui/SettingsSurface';
 import { Input } from '../../components/ui/Input';
 import { MorePill } from '../../components/ui/MorePill';
 import { EmptyState } from '../../components/ui/states';

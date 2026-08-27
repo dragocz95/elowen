@@ -2,7 +2,7 @@
 import { useState, type ReactNode } from 'react';
 import { Trash2, HardDrive } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
-import { SettingsGroup } from './SettingsSurface';
+import { SettingsGroup } from '../../components/ui/SettingsSurface';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';

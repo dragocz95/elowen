@@ -24,7 +24,7 @@ import { useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib
 import { usePluginConsent } from './usePluginConsent';
 import type { PluginInfo, MarketplaceEntry } from '../../lib/types';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
-import { SettingsGroup, SettingsState, SettingsToolbar } from './SettingsSurface';
+import { SettingsGroup, SettingsState, SettingsToolbar } from '../../components/ui/SettingsSurface';
 
 /** Marketplace categories, derived from a plugin's `provides`/name (see `categorize`). */
 type Category = 'platforms' | 'tools' | 'memory' | 'automation' | 'ui' | 'security' | 'development';

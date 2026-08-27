@@ -5,8 +5,40 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AdditiveBlending, Group, MathUtils, Sprite, TextureLoader } from 'three';
 import type { SpatialMascotState } from './SpatialMascot.types';
 import { useEffects } from '../../lib/useEffects';
+import { useSkin } from '../../lib/skinContext';
 
-function EmberScene({ state, iconSrc, onReady }: { state: SpatialMascotState; iconSrc: string; onReady: () => void }) {
+/** What the scene paints with. A WebGL material takes a colour VALUE, so these cannot be `var(--…)`;
+ *  they are resolved from the live document below and re-resolved when the skin changes. */
+interface EmberPalette {
+  /** The resting ember — the accent the whole interface is built around. */
+  accent: string;
+  success: string;
+  error: string;
+  /** The pale end of the ember ramp, sprinkled through the particle ring. */
+  spark: string;
+}
+
+const PALETTE_TOKENS: Record<keyof EmberPalette, string> = {
+  accent: '--color-accent',
+  success: '--color-success',
+  error: '--color-danger',
+  spark: '--color-ember',
+};
+
+/** Read the palette off `<html>`. Safe to call during render: the scene is imported with `ssr: false`,
+ *  so it only ever exists in a browser. */
+function readEmberPalette(): EmberPalette {
+  const root = getComputedStyle(document.documentElement);
+  const read = (token: string) => root.getPropertyValue(token).trim();
+  return {
+    accent: read(PALETTE_TOKENS.accent),
+    success: read(PALETTE_TOKENS.success),
+    error: read(PALETTE_TOKENS.error),
+    spark: read(PALETTE_TOKENS.spark),
+  };
+}
+
+function EmberScene({ state, iconSrc, palette, onReady }: { state: SpatialMascotState; iconSrc: string; palette: EmberPalette; onReady: () => void }) {
   const mascot = useLoader(TextureLoader, iconSrc);
   const group = useRef<Group>(null);
   const orbitOne = useRef<Group>(null);
@@ -62,7 +94,7 @@ function EmberScene({ state, iconSrc, onReady }: { state: SpatialMascotState; ic
     if (particleGroup.current) particleGroup.current.rotation.z += delta * speed * 0.12;
   });
 
-  const ember = state === 'error' ? '#9a3028' : state === 'success' ? '#42d28f' : '#ff5236';
+  const ember = state === 'error' ? palette.error : state === 'success' ? palette.success : palette.accent;
   const speed = state === 'saving' ? 1.9 : 0.65;
 
   return (
@@ -86,7 +118,7 @@ function EmberScene({ state, iconSrc, onReady }: { state: SpatialMascotState; ic
         {particles.map((particle, index) => (
           <mesh key={index} position={[particle.x, particle.y, particle.z]} scale={particle.scale}>
             <sphereGeometry args={[1, 7, 7]} />
-            <meshBasicMaterial color={index % 4 === 0 ? '#ffb071' : ember} transparent opacity={0.76} blending={AdditiveBlending} />
+            <meshBasicMaterial color={index % 4 === 0 ? palette.spark : ember} transparent opacity={0.76} blending={AdditiveBlending} />
           </mesh>
         ))}
       </group>
@@ -100,6 +132,12 @@ export function SpatialMascotScene({ state, iconSrc, onReady }: { state: Spatial
   const [intersecting, setIntersecting] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(true);
   const { motionEnabled } = useEffects();
+  // Resolved OUT here rather than inside the scene on purpose: `<Canvas>` mounts its own React
+  // reconciler root, which the app's context providers do not reach into. The palette therefore has to
+  // cross that boundary as an ordinary prop.
+  const { choice: skin } = useSkin();
+  const [palette, setPalette] = useState<EmberPalette>(readEmberPalette);
+  useEffect(() => { setPalette(readEmberPalette()); }, [skin]);
 
   useEffect(() => {
     const node = host.current;
@@ -127,7 +165,7 @@ export function SpatialMascotScene({ state, iconSrc, onReady }: { state: Spatial
         camera={{ position: [0, 0, 10], zoom: 72 }}
         gl={{ alpha: true, antialias: true, powerPreference: 'low-power' }}
       >
-        <EmberScene state={state} iconSrc={iconSrc} onReady={onReady} />
+        <EmberScene state={state} iconSrc={iconSrc} palette={palette} onReady={onReady} />
       </Canvas>
     </div>
   );

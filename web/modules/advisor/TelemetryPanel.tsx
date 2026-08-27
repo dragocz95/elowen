@@ -444,7 +444,7 @@ export function TelemetryPanel({ variant, open = false, onClose, onOpenWorkflow 
     if (!open) return null;
     return (
       <div className="overlay-layer-drawer fixed inset-0" onKeyDown={(e) => { if (e.key === 'Escape') onClose?.(); }}>
-        <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
+        <div className="absolute inset-0 bg-bg/50" onClick={onClose} aria-hidden />
         <aside
           role="dialog"
           aria-modal="true"

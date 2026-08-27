@@ -1,7 +1,7 @@
 'use client';
 import { KeyRound, ShieldCheck, Globe } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
-import { SettingsGroup } from './SettingsSurface';
+import { SettingsGroup } from '../../components/ui/SettingsSurface';
 import type { Tone } from '../../components/ui/tone';
 import { useTranslation } from '../../lib/i18n';
 import type { PluginConfigField, PluginDetail } from '../../lib/types';

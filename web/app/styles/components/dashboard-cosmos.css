@@ -27,35 +27,50 @@
 /* bare content surface (compact deck): no hairlines, no sheet gradient — pure page background */
 
 .hero-cosmos { position: relative; width: 100%; }
-.hero-cosmos[data-mode='orbit'] { flex: 1 1 auto; min-height: 28rem; }
+/* Sized for the screen, not for the old 1900px design: the field used to reserve 28rem and the core
+   24rem because the whole app was rendered at ~72% and they landed near 20rem / 17rem on the glass.
+   Nothing shrinks the page any more, so those are the numbers the field asks for directly. */
+.hero-cosmos[data-mode='orbit'] { flex: 1 1 auto; min-height: 20rem; }
 .hero-cosmos__filaments { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.hero-cosmos[data-mode='orbit'] .hero-cosmos__core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(58%, 24rem); pointer-events: none; }
+.hero-cosmos[data-mode='orbit'] .hero-cosmos__core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(58%, 17rem); pointer-events: none; }
 .hero-cosmos__pods { position: absolute; inset: 0; }
 .hero-cosmos__pod { position: absolute; translate: -50% -50%; display: flex; align-items: flex-start; gap: 0.6rem; width: 11.5rem; padding: 0.55rem 0.6rem; border-radius: 1rem; transition: transform var(--motion-base) var(--ease-out); }
 .hero-cosmos__pod:hover, .hero-cosmos__pod:focus-visible { transform: translateY(-3px); }
-.hero-cosmos__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), #050505 68%); color: var(--color-accent); box-shadow: 0 0 0 4px #040404, var(--glow-active), inset 0 0 14px rgb(var(--accent-rgb) / 0.08); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out); }
+.hero-cosmos__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), var(--color-document) 68%); color: var(--color-accent); box-shadow: 0 0 0 4px var(--color-bg), var(--glow-active), inset 0 0 14px rgb(var(--accent-rgb) / 0.08); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out); }
 .hero-cosmos__orb::before { content: ''; position: absolute; inset: -1rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
-.hero-cosmos__orb::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42); opacity: 0.7; }
+.hero-cosmos__orb::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 color-mix(in srgb, var(--color-ember) 48%, transparent), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 color-mix(in srgb, var(--color-ember) 42%, transparent); opacity: 0.7; }
 html[data-effects='full'] .hero-cosmos__orb::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; animation-delay: calc(var(--i, 0) * -0.45s); }
-.hero-cosmos__pod:hover .hero-cosmos__orb, .hero-cosmos__pod:focus-visible .hero-cosmos__orb { box-shadow: 0 0 0 4px #040404, var(--glow-active), 0 0 30px rgb(var(--accent-rgb) / 0.4), inset 0 0 14px rgb(var(--accent-rgb) / 0.12); }
+.hero-cosmos__pod:hover .hero-cosmos__orb, .hero-cosmos__pod:focus-visible .hero-cosmos__orb { box-shadow: 0 0 0 4px var(--color-bg), var(--glow-active), 0 0 30px rgb(var(--accent-rgb) / 0.4), inset 0 0 14px rgb(var(--accent-rgb) / 0.12); }
 .hero-cosmos__body { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 0.1rem; }
 .hero-cosmos__label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-muted); }
 .hero-cosmos__value { min-width: 3ch; font-family: var(--font-mono); font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-text); }
 .hero-cosmos__detail { overflow: hidden; font-size: 11px; color: var(--color-text-muted); text-overflow: ellipsis; white-space: nowrap; }
 /* alert tone: unresolved decisions, and the needs_input filament matching the presence aura */
-.hero-cosmos__pod--alert .hero-cosmos__orb { border-color: rgb(245 158 11 / 0.6); color: var(--color-warning); background: radial-gradient(circle, rgb(245 158 11 / 0.13), #050505 68%); box-shadow: 0 0 0 4px #040404, 0 0 0 1px rgb(245 158 11 / 0.3), 0 0 24px rgb(245 158 11 / 0.2), 0 0 64px rgb(245 158 11 / 0.1), inset 0 0 14px rgb(245 158 11 / 0.08); }
-.hero-cosmos__pod--alert .hero-cosmos__orb::before { background: radial-gradient(ellipse at 50% 66%, rgb(245 158 11 / 0.26), rgb(245 158 11 / 0.07) 34%, transparent 69%); }
-.hero-cosmos__pod--alert .hero-cosmos__orb::after { background: var(--color-warning); box-shadow: -1.15rem -0.15rem 0 rgb(245 158 11 / 0.55), 1.25rem 0.35rem 0 rgb(252 211 77 / 0.45), -0.45rem -1.22rem 0 rgb(245 158 11 / 0.48), 0.65rem -1.05rem 0 rgb(252 211 77 / 0.4); }
+/* Every amber here is --color-warning at a different strength, so a skin that repaints the warning tone
+   carries the alert orb with it instead of leaving one orange dot behind. */
+.hero-cosmos__pod--alert .hero-cosmos__orb { border-color: color-mix(in srgb, var(--color-warning) 60%, transparent); color: var(--color-warning); background: radial-gradient(circle, color-mix(in srgb, var(--color-warning) 13%, transparent), var(--color-document) 68%); box-shadow: 0 0 0 4px var(--color-bg), 0 0 0 1px color-mix(in srgb, var(--color-warning) 30%, transparent), 0 0 24px color-mix(in srgb, var(--color-warning) 20%, transparent), 0 0 64px color-mix(in srgb, var(--color-warning) 10%, transparent), inset 0 0 14px color-mix(in srgb, var(--color-warning) 8%, transparent); }
+.hero-cosmos__pod--alert .hero-cosmos__orb::before { background: radial-gradient(ellipse at 50% 66%, color-mix(in srgb, var(--color-warning) 26%, transparent), color-mix(in srgb, var(--color-warning) 7%, transparent) 34%, transparent 69%); }
+.hero-cosmos__pod--alert .hero-cosmos__orb::after { background: var(--color-warning); box-shadow: -1.15rem -0.15rem 0 color-mix(in srgb, var(--color-warning) 55%, transparent), 1.25rem 0.35rem 0 color-mix(in srgb, var(--color-ember-bright) 45%, transparent), -0.45rem -1.22rem 0 color-mix(in srgb, var(--color-warning) 48%, transparent), 0.65rem -1.05rem 0 color-mix(in srgb, var(--color-ember-bright) 40%, transparent); }
 .hero-cosmos__pod--alert .hero-cosmos__value { color: var(--color-warning); }
 .hero-cosmos[data-mode='stack'] { display: flex; flex-direction: column; gap: 0.75rem; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__filaments { display: none; }
-.hero-cosmos[data-mode='stack'] .hero-cosmos__core { margin: 0 auto; width: min(100%, 20rem); }
+/* Stack mode is a phone, and there the mascot is neither orbited nor connected to anything — it is a
+   20rem portrait that pushes the greeting, the status line and the composer off the first screen. The
+   advisor launcher already carries Elowen's face in the corner of that same screen, so drawing her
+   twice bought a third of the viewport for a duplicate. The field keeps its beam-docked signal rows;
+   the being returns with the orbit, where it has a field to be the core of. */
+.hero-cosmos[data-mode='stack'] .hero-cosmos__core { display: none; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__pods { position: relative; inset: auto; display: flex; flex-direction: column; gap: 0.25rem; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__pods::before { content: ''; position: absolute; top: 0.3rem; bottom: 0.3rem; left: 1.35rem; width: 2px; translate: -50% 0; background: linear-gradient(180deg, transparent, rgb(var(--accent-rgb) / 0.26) 7%, rgb(var(--accent-rgb) / 0.26) 90%, transparent); filter: blur(1px); }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__pod { position: relative; translate: none; width: 100%; align-items: center; padding: 0.45rem 0.25rem; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__pod:hover { transform: none; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__orb { width: 2.2rem; height: 2.2rem; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__body { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 0.6rem; }
+/* The dashboard composer's resting and focused glow. Here rather than on the element because both
+   shadows compose color-mix(), and the commas inside it cannot survive a Tailwind arbitrary value. */
+.home-composer { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 4%, transparent), 0 18px 70px rgb(var(--accent-rgb) / 0.08); }
+.home-composer:focus-within { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 5%, transparent), 0 20px 80px rgb(var(--accent-rgb) / 0.14); }
+
 .dash-label { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 650; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(var(--accent-rgb) / 0.5); }
 .dash-beam { background: linear-gradient(180deg, rgb(var(--accent-rgb) / 0.3), rgb(var(--accent-rgb) / 0.12) 70%, transparent); }
 /* The trunk: one continuous filament flowing from the mascot's core down into the journal spine,

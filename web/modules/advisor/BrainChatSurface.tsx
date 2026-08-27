@@ -1019,7 +1019,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           turns stack with NO container gap — each segment carries its own margin, so tool rows keep one
           uniform rhythm across turn boundaries and only a speaker change opens a block break. The compact
           dock keeps its own internal scroll and per-turn gap. */}
-      <div ref={scrollRef} data-testid="chat-transcript" className={`flex flex-1 flex-col ${variant === 'full' ? 'chat-gutter py-4' : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
+      <div ref={scrollRef} data-testid="chat-transcript" className={`flex flex-1 flex-col ${variant === 'full' ? 'chat-gutter chat-transcript' : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
         {turns.length === 0 && ready ? (
           variant === 'full' ? (
             <div className="m-auto flex max-w-md flex-col items-center gap-2 text-center">
@@ -1143,8 +1143,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
 
       {/* Composer footer (statusline + staged attachments + queue + composer). In the full page it sticks
           to the viewport bottom so it stays reachable while the whole page scrolls behind it; the compact
-          dock keeps it in normal flow at the bottom of its own scroll box. */}
-      <div className={variant === 'full' ? 'sticky bottom-0 z-10 bg-bg' : ''}>
+          dock keeps it in normal flow at the bottom of its own scroll box.
+
+          `.chat-composer-dock` (chat.css) carries the bottom safe-area inset. Without it the composer's
+          send button sits UNDER a phone's home indicator: the dock is pinned at `bottom: 0`, which is the
+          edge of the viewport, not the edge of the usable screen. */}
+      <div className={variant === 'full' ? 'chat-composer-dock sticky bottom-0 z-10 bg-bg' : ''}>
       {/* No hairline above the footer — a soft fade lets the transcript slide under it instead. */}
       {variant === 'full' ? (
         <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-gradient-to-t from-bg to-transparent" />
@@ -1162,10 +1166,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           back. */}
       {lineCfg && (lineCfg.showModel || lineCfg.showContext || lineCfg.showTokens || lineCfg.showSpeed || lineCfg.showCost) ? (
         // Exactly ONE line, phone included: a second row here pushes the composer down and eats the little
-        // vertical room a phone has. The metrics are the point and stay whole (`shrink-0 whitespace-nowrap`,
-        // needed because a no-wrap FLEX row still lets each item's own text wrap); the model name is the
-        // long, expendable part, so it alone absorbs the squeeze and truncates, with the full id on title.
-        <div data-testid="chat-statusline" className={`flex min-w-0 items-center gap-x-2 overflow-hidden py-1 font-mono text-text-muted sm:gap-x-3 ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
+        // vertical room a phone has. Each statistic stays whole (`shrink-0 whitespace-nowrap`, needed
+        // because a no-wrap FLEX row still lets each item's own text wrap) — but when the row runs out of
+        // width it is the STATISTICS that give way, cheapest first, and the model name that keeps the room
+        // they free. Which one drops at which width is the `[data-stat]` ladder in chat.css, driven by the
+        // row's own container: the docked telemetry rail narrows it without the viewport changing.
+        <div data-testid="chat-statusline" className={`chat-statusline flex min-w-0 items-center gap-x-2 overflow-hidden py-1 font-mono text-text-muted sm:gap-x-3 ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
           <button
             type="button"
             onClick={() => setStatuslinePref(statuslineShown ? 'hidden' : 'shown')}
@@ -1182,18 +1188,18 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
                 const model = currentModel || active?.model || '';
                 const modelProvider = currentModel ? provider : (active?.provider ?? '');
                 const label = brainModelQualifiedLabel({ provider: modelProvider, model });
-                return <span className="min-w-0 truncate" title={label}>{label}</span>;
+                return <span data-stat="model" className="min-w-0 truncate" title={label}>{label}</span>;
               })() : null}
               {lineCfg.showContext && usage && usage.percent != null ? (
-                <span className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
+                <span data-stat="context" className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
               ) : null}
-              {lineCfg.showTokens && usage ? <span className="shrink-0 whitespace-nowrap">Σ {formatTokens(usage.totalTokens)} {t.sessionsPanel.tok}</span> : null}
+              {lineCfg.showTokens && usage ? <span data-stat="tokens" className="shrink-0 whitespace-nowrap">Σ {formatTokens(usage.totalTokens)} {t.sessionsPanel.tok}</span> : null}
               {/* Measured generation speed: absent until something has been timed, and hidden below
                   1 tok/s where the rounded figure would read as a stall rather than as too few samples. */}
               {lineCfg.showSpeed && typeof usage?.outputTps === 'number' && usage.outputTps >= 1 ? (
-                <span className="shrink-0 whitespace-nowrap">{Math.round(usage.outputTps)} {t.brainChat.tokensPerSecond}</span>
+                <span data-stat="speed" className="shrink-0 whitespace-nowrap">{Math.round(usage.outputTps)} {t.brainChat.tokensPerSecond}</span>
               ) : null}
-              {lineCfg.showCost && usage ? <span className="shrink-0 whitespace-nowrap">{formatCost(usage.cost, 2)}</span> : null}
+              {lineCfg.showCost && usage ? <span data-stat="cost" className="shrink-0 whitespace-nowrap">{formatCost(usage.cost, 2)}</span> : null}
             </>
           ) : null}
         </div>
@@ -1246,14 +1252,14 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
 
       {/* Composer — replaced by a read-only banner when viewing a channel/task session's history. */}
       {readOnly ? (
-        <div className={variant === 'full' ? 'chat-gutter pb-4 pt-1' : ''}>
+        <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
           <div className={`flex items-center justify-between gap-2 bg-elevated/40 p-3 text-sm text-text-muted ${variant === 'full' ? 'rounded-xl border border-border' : ''}`}>
             <span className="flex min-w-0 items-center gap-2"><FileText size={14} className="shrink-0" aria-hidden /><span className="truncate">{t.brainChat.readOnly}</span></span>
             <button type="button" onClick={exitReadOnly} className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-text transition-colors hover:bg-elevated">{t.brainChat.readOnlyExit}</button>
           </div>
         </div>
       ) : (
-      <div className={variant === 'full' ? 'chat-gutter pb-4 pt-1' : ''}>
+      <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
       {/* In the full page the whole composer is ONE quiet rounded field (attach + textarea + send inside
           it, Claude-style); the dock keeps its original three-control row. */}
       <form
@@ -1327,7 +1333,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           }}
           rows={1}
           placeholder={t.brainChat.placeholder}
-          className={`max-h-40 flex-1 resize-none text-sm text-text placeholder:text-text-muted ${
+          // How tall the composer may grow is a share of the SCREEN, not a fixed desktop figure. The flat
+          // 10rem this used to carry is a comfortable third of a desktop composer and most of a landscape
+          // phone, which is how the dock came to take half the reading height at 740x360. dvh, never vh:
+          // a collapsing mobile toolbar makes vh taller than the screen really is.
+          className={`max-h-[min(10rem,22dvh)] flex-1 resize-none text-sm text-text placeholder:text-text-muted ${
             variant === 'full'
               ? 'bg-transparent px-2 py-2 focus:outline-none'
               : 'rounded-lg border border-border bg-bg px-3 py-2 focus:border-accent'
@@ -1341,7 +1351,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             aria-label={t.brainChat.stop}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors ${
               variant === 'full'
-                ? 'rounded-xl bg-accent text-white hover:bg-accent-hot'
+                ? 'rounded-xl bg-accent text-text hover:bg-accent-hot'
                 : 'rounded-lg border border-accent bg-accent/15 text-accent hover:bg-accent/25'
             }`}
           >
@@ -1355,7 +1365,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             aria-label={t.brainChat.send}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${
               variant === 'full'
-                ? 'rounded-xl bg-accent text-white hover:bg-accent-hot'
+                ? 'rounded-xl bg-accent text-text hover:bg-accent-hot'
                 : 'rounded-lg border border-accent bg-accent/15 text-accent hover:bg-accent/25'
             }`}
           >

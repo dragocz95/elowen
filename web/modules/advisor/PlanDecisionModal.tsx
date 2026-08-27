@@ -17,8 +17,11 @@ export function PlanDecisionModal({ plan, submitting, onImplement, onDismiss }: 
   onDismiss: () => void;
 }) {
   const { t } = useTranslation();
+  // The one advisor overlay that is NOT `inspect`. It is a decision the reader commits or cancels, and
+  // the plan it presents has to be read in full before either — so on a phone it takes the screen rather
+  // than sharing it with the transcript.
   return (
-    <Modal title={t.brainChat.planDecisionTitle} onClose={onDismiss} size="md" icon={ClipboardList} description={t.brainChat.planDecision}>
+    <Modal title={t.brainChat.planDecisionTitle} onClose={onDismiss} size="md" icon={ClipboardList} description={t.brainChat.planDecision} intent="edit">
       <ModalBody gap={4}>
         <div data-testid="plan-decision-body" className="whitespace-pre-wrap break-words rounded-md border border-border bg-surface-muted px-3 py-2 text-sm leading-relaxed text-text">
           {plan}

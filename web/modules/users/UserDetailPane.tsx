@@ -78,6 +78,7 @@ function ProjectChips({ userId, projects }: { userId: number; projects: Project[
         moreCount={Math.max(0, assignedProjects.length - 3)}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
+        manageAriaLabel={t.users.manageProjects}
       />
       <ManageSelectionModal
         title={t.users.projects}
@@ -178,6 +179,7 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
         moreCount={Math.max(0, summarySource.length - 3)}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
+        manageAriaLabel={t.users.manageModels}
       />
       <ManageSelectionModal
         title={t.users.allowedModels}
@@ -238,6 +240,7 @@ function PluginGrantChips({ user }: { user: ElowenUser }) {
         moreCount={Math.max(0, granted.length - 3)}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
+        manageAriaLabel={t.users.managePlugins}
       />
       <ManageSelectionModal
         title={t.users.grantedPlugins}

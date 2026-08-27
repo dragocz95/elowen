@@ -1,6 +1,6 @@
 'use client';
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags, Trash2, RotateCcw, Layers, ChevronLeft, ChevronRight, SlidersHorizontal, Clock, Activity, CheckCircle2, Archive } from 'lucide-react';
+import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags, Trash2, RotateCcw, Layers, SlidersHorizontal, Clock, Activity, CheckCircle2, Archive } from 'lucide-react';
 import type { Memory, MemoryCategory } from '../../lib/types';
 import { useMemories, useMemoryCategories } from '../../lib/queries';
 import { useCreateMemory, useMergeMemories, useDeleteMemory, useRestoreMemory, usePurgeMemories, useEmptyTrash, useSetMemoryCategory } from '../../lib/mutations';
@@ -14,12 +14,15 @@ import { SelectMenu, type SelectMenuOption } from '../../components/ui/SelectMen
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
-import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
-import { WorkspaceDetailRail, WorkspaceMetric, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
+import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow, DataTableSortCell } from '../../components/ui/DataTable';
+import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
+import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { Pager } from '../../components/ui/Pager';
+import { RegisterSearch } from '../../components/ui/RegisterSearch';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { useToast } from '../../components/ui/Toast';
-import { useTranslation } from '../../lib/i18n';
+import { interpolate, useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { formatTaskTime, compactElapsed, parseTs } from '../../lib/format';
 import { useNow } from '../../lib/useNow';
@@ -42,6 +45,15 @@ const LAYOUT_VALUES: readonly Layout[] = ['flat', 'grouped'];
 const SORT_KEYS: readonly SortKey[] = ['updated', 'used', 'importance', 'vitality'];
 const SORT_DIRECTIONS: readonly ('asc' | 'desc')[] = ['asc', 'desc'];
 const PAGE_SIZE = 20;
+/** How much of a memory body may stand in for it inside a control's accessible name. A memory has no
+ *  title, so the body is the only thing that identifies a row — but the whole body is not a name: the
+ *  longest one measured here ran past 3000 characters, all of it read out before the user learned that
+ *  the control opens a record. */
+const ROW_LABEL_MAX = 60;
+function memoryExcerpt(body: string): string {
+  const flat = body.replace(/\s+/g, ' ').trim();
+  return flat.length > ROW_LABEL_MAX ? `${flat.slice(0, ROW_LABEL_MAX).trimEnd()}…` : flat;
+}
 
 /** Memory module: a searchable master/detail list of the caller's private memories, a retrieval
  *  inspector, and (for admins) the workspace embedding settings. All data via React Query. */
@@ -272,7 +284,7 @@ export function MemoryView() {
           if (!next) return;
           // Arrow/Home/End move the row focus only. Opening the modal detail drawer here would
           // inert the register underneath it and interrupt keyboard traversal after one step.
-          requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-memory-open="${next.id}"]`)?.focus());
+          requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-memory-row="${next.id}"] .data-table-row-open`)?.focus());
         }}
       />
     </MotionLayoutItem>
@@ -280,13 +292,15 @@ export function MemoryView() {
 
   return (
     <>
-      <SpatialWorkspaceLayout
+      <WorkspaceShell
+        variant="register"
         hero={{
-          eyebrow: t.page.memory,
+          // No eyebrow: it repeated the title verbatim ("Memory" over "Memory"), which on a phone spends
+          // a line of the first screen saying nothing.
           title: t.page.memory,
           count: allMemories.data?.length ?? 0,
           description: t.memory.workspaceIntro,
-          mascotState: allMemories.isLoading ? 'saving' : allMemories.isError ? 'error' : 'idle',
+          mascot: allMemories.isLoading ? 'saving' : allMemories.isError ? 'error' : 'idle',
           status: !allMemories.isLoading && !allMemories.isError ? <span className="workspace-status">{t.memory.synchronized}</span> : undefined,
           action: <>
             <Button variant="ghost" icon={Tags} onClick={() => setCreatingCategory(true)}>{t.memory.categoryNew}</Button>
@@ -315,10 +329,13 @@ export function MemoryView() {
           <div className="flex min-w-0 flex-col gap-4">
             <ControlSurfaceToolbar className="flex-col items-stretch">
               <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
-                <div className="relative min-w-[15rem] flex-1">
-                  <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-                  <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.memory.searchPlaceholder} className="pl-9" />
-                </div>
+                <RegisterSearch
+                  value={query}
+                  onChange={setQuery}
+                  placeholder={t.memory.searchPlaceholder}
+                  onClear={() => setQuery('')}
+                  clearLabel={t.memory.searchClear}
+                />
                 <SelectMenu
                   value={status}
                   onChange={setStatus}
@@ -340,7 +357,7 @@ export function MemoryView() {
               </div>
 
               {filtersOpen ? (
-                <div className="grid gap-4 border-t border-border/70 py-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto_auto] lg:items-end">
+                <div className="grid gap-4 border-t border-border/70 py-4 @2xl:grid-cols-2 @5xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto_auto] @5xl:items-end">
                   <Field label={t.memory.filterKind}>
                     <SelectMenu
                       value={kind}
@@ -398,7 +415,7 @@ export function MemoryView() {
                     compactColumns="2rem minmax(0,1fr) 1.25rem"
                   >
                     <DataTableRow header>
-                      <DataTableCell header className="flex items-center justify-center">
+                      <DataTableCell header lines="auto" className="flex items-center justify-center">
                         <button
                           type="button"
                           onClick={toggleSelectAll}
@@ -414,27 +431,20 @@ export function MemoryView() {
                       <DataTableCell header>{t.page.memory}</DataTableCell>
                       <DataTableCell header priority="wide">{t.memory.categoryFilter}</DataTableCell>
                       <DataTableCell header priority="wide">{t.memory.filterKind}</DataTableCell>
-                      <DataTableCell header priority="wide" aria-sort={sortKey === 'vitality' ? (sortDirection === 'desc' ? 'descending' : 'ascending') : 'none'}>
-                        <button type="button" onClick={() => changeSort('vitality')} className="inline-flex items-center gap-1 hover:text-text">
-                          {t.memory.fieldVitality}{sortKey === 'vitality' ? <span aria-hidden>{sortDirection === 'desc' ? '↓' : '↑'}</span> : null}
-                        </button>
-                      </DataTableCell>
-                      <DataTableCell header priority="wide" aria-sort={sortKey === 'importance' ? (sortDirection === 'desc' ? 'descending' : 'ascending') : 'none'}>
-                        <button type="button" onClick={() => changeSort('importance')} className="inline-flex items-center gap-1 hover:text-text">
-                          {t.memory.fieldImportance}{sortKey === 'importance' ? <span aria-hidden>{sortDirection === 'desc' ? '↓' : '↑'}</span> : null}
-                        </button>
-                      </DataTableCell>
-                      <DataTableCell header priority="wide" aria-sort={sortKey === 'updated' ? (sortDirection === 'desc' ? 'descending' : 'ascending') : 'none'}>
-                        <button type="button" onClick={() => changeSort('updated')} className="inline-flex items-center gap-1 hover:text-text">
-                          {t.memory.updatedAt}{sortKey === 'updated' ? <span aria-hidden>{sortDirection === 'desc' ? '↓' : '↑'}</span> : null}
-                        </button>
-                      </DataTableCell>
-                      <DataTableCell header priority="wide" aria-sort={sortKey === 'used' ? (sortDirection === 'desc' ? 'descending' : 'ascending') : 'none'}>
-                        <button type="button" onClick={() => changeSort('used')} className="inline-flex items-center gap-1 hover:text-text">
-                          {t.memory.usedAt}{sortKey === 'used' ? <span aria-hidden>{sortDirection === 'desc' ? '↓' : '↑'}</span> : null}
-                        </button>
-                      </DataTableCell>
-                      <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
+                      <DataTableSortCell priority="wide" active={sortKey === 'vitality'} direction={sortDirection} onSort={() => changeSort('vitality')}>
+                        {t.memory.fieldVitality}
+                      </DataTableSortCell>
+                      <DataTableSortCell priority="wide" active={sortKey === 'importance'} direction={sortDirection} onSort={() => changeSort('importance')}>
+                        {t.memory.fieldImportance}
+                      </DataTableSortCell>
+                      <DataTableSortCell priority="wide" active={sortKey === 'updated'} direction={sortDirection} onSort={() => changeSort('updated')}>
+                        {t.memory.updatedAt}
+                      </DataTableSortCell>
+                      <DataTableSortCell priority="wide" active={sortKey === 'used'} direction={sortDirection} onSort={() => changeSort('used')}>
+                        {t.memory.usedAt}
+                      </DataTableSortCell>
+                      {/* The trailing chevron track: an affordance, not a column, so its header is empty. */}
+                      <DataTableCell header aria-hidden>{null}</DataTableCell>
                     </DataTableRow>
 
                     {layout === 'grouped' ? (
@@ -457,21 +467,13 @@ export function MemoryView() {
                 )}
 
                 {filtered.length > 0 ? (
-                  <div className="flex flex-col gap-2 border-b border-border/80 pb-3 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="font-mono text-xs text-text-muted">
-                      {t.memory.pageRange
-                        .replace('{from}', String(clampedPage * PAGE_SIZE + 1))
-                        .replace('{to}', String(clampedPage * PAGE_SIZE + pageItems.length))
-                        .replace('{total}', String(filtered.length))}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" icon={ChevronLeft} disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>{t.memory.prevPage}</Button>
-                      <span className="min-w-24 text-center font-mono text-xs text-text-muted">
-                        {t.memory.pageLabel.replace('{page}', String(clampedPage + 1)).replace('{pages}', String(pageCount))}
-                      </span>
-                      <Button variant="ghost" disabled={clampedPage >= pageCount - 1} onClick={() => setPage(clampedPage + 1)}>{t.memory.nextPage}<ChevronRight size={15} className="ml-1" aria-hidden /></Button>
-                    </div>
-                  </div>
+                  <Pager
+                    page={clampedPage}
+                    pageSize={PAGE_SIZE}
+                    total={filtered.length}
+                    onPageChange={setPage}
+                    ariaLabel={t.page.memory}
+                  />
                 ) : null}
               </div>
             )}
@@ -485,7 +487,7 @@ export function MemoryView() {
           </div>
           )}
         </ControlSurfaceDocument>
-      </SpatialWorkspaceLayout>
+      </WorkspaceShell>
 
       {/* Floating bulk toolbar. Merge needs ≥2; soft-delete shows outside the trash, restore inside it,
           permanent delete everywhere (behind a confirm). Kept a sibling of the layout so it's never
@@ -575,32 +577,30 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
   return (
     <DataTableRow
       data-testid="memory-row"
+      data-memory-row={memory.id}
       selected={active || selected}
-      interactive
       aria-selected={active || selected}
+      onOpen={onSelect}
+      openLabel={interpolate(t.memory.openRow, { excerpt: memoryExcerpt(memory.body) })}
+      onKeyDown={(event) => {
+        // Roving traversal belongs to the row-open button alone: the checkbox is a separate control in
+        // the same row, and an arrow key pressed on it must not walk the register away from it.
+        if (!(event.target instanceof HTMLElement) || !event.target.classList.contains('data-table-row-open')) return;
+        const direction = event.key === 'ArrowDown' ? 'next' : event.key === 'ArrowUp' ? 'previous' : event.key === 'Home' ? 'home' : event.key === 'End' ? 'end' : null;
+        if (!direction) return;
+        event.preventDefault();
+        onNavigate(direction);
+      }}
       className="group"
     >
-      <DataTableCell className="flex items-center justify-center">
+      <DataTableCell lines="auto" className="flex items-center justify-center">
         <button type="button" onClick={onToggleSelect} aria-label={t.memory.merge} aria-pressed={selected}>
           <Checkbox checked={selected} />
         </button>
       </DataTableCell>
-      <DataTableCell>
-        <button
-          type="button"
-          data-memory-open={memory.id}
-          onClick={onSelect}
-          onKeyDown={(event) => {
-            const direction = event.key === 'ArrowDown' ? 'next' : event.key === 'ArrowUp' ? 'previous' : event.key === 'Home' ? 'home' : event.key === 'End' ? 'end' : null;
-            if (!direction) return;
-            event.preventDefault();
-            onNavigate(direction);
-          }}
-          className="flex w-full min-w-0 items-center gap-2 text-left"
-        >
-          <span className="truncate text-sm text-text">{memory.body}</span>
-          {memory.status !== 'active' ? <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge> : null}
-        </button>
+      <DataTableCell title={memory.body} className="flex items-center gap-2">
+        <span className="truncate text-sm text-text">{memory.body}</span>
+        {memory.status !== 'active' ? <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge> : null}
       </DataTableCell>
       <DataTableCell priority="wide" className="truncate text-xs text-text-muted">
         {category ? (
@@ -626,7 +626,7 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
           <span className={usedMs == null ? 'text-text-muted/60' : undefined}>{used.label}</span>
         </span>
       </DataTableCell>
-      <DataTableCell aria-hidden className="text-text-muted/50 transition-colors group-hover:text-text"><ChevronRight size={15} /></DataTableCell>
+      <DataTableChevronCell />
     </DataTableRow>
   );
 }

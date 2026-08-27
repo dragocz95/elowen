@@ -194,21 +194,22 @@ function RequestGraph({ request, segments, cachedEstimateLabel }: { request: Bra
   const prompt = graph.reduce((sum, segment) => sum + segment.estimatedTokens, 0);
   const cached = Math.max(0, request.cacheReadTokens ?? 0);
   const cachedPercent = prompt > 0 ? Math.min(100, cached / prompt * 100) : 0;
+  // No minimum width and nothing to scroll sideways. Every segment is sized as a percentage, so the bar
+  // is legible at any width; the 36rem floor it used to sit behind was a hard 576px that overflowed the
+  // dialog on every phone.
   return (
-    <div className="overflow-x-auto" aria-label="Prompt token segments">
-      <div className="min-w-[36rem]">
-        <div className="relative flex h-8 overflow-hidden rounded-md border border-border bg-bg sm:h-12">
-          {graph.map((segment) => {
-            const role = segmentRole(segment);
-            const width = prompt > 0 ? Math.max(2, segment.estimatedTokens / prompt * 100) : 100 / Math.max(1, graph.length);
-            return <div key={`${segment.index}-${segment.digest}`} title={`${role}: ~${segment.estimatedTokens} tokens`} className={`${ROLE_CLASS[role] ?? 'bg-text-muted'} border-r border-bg/40 opacity-80`} style={{ width: `${width}%` }} />;
-          })}
-          {cachedPercent > 0 ? <div className="pointer-events-none absolute inset-y-0 left-0 border-r-2 border-dashed border-text bg-text/10" style={{ width: `${cachedPercent}%` }} /> : null}
-        </div>
-        <div className="mt-1 flex items-center justify-between text-[10px] text-text-muted">
-          <span>~{formatTokens(prompt)} prompt tokens</span>
-          <span>{cachedEstimateLabel}: ~{Math.round(cachedPercent)}%</span>
-        </div>
+    <div aria-label="Prompt token segments">
+      <div className="relative flex h-8 overflow-hidden rounded-md border border-border bg-bg sm:h-12">
+        {graph.map((segment) => {
+          const role = segmentRole(segment);
+          const width = prompt > 0 ? Math.max(2, segment.estimatedTokens / prompt * 100) : 100 / Math.max(1, graph.length);
+          return <div key={`${segment.index}-${segment.digest}`} title={`${role}: ~${segment.estimatedTokens} tokens`} className={`${ROLE_CLASS[role] ?? 'bg-text-muted'} border-r border-bg/40 opacity-80`} style={{ width: `${width}%` }} />;
+        })}
+        {cachedPercent > 0 ? <div className="pointer-events-none absolute inset-y-0 left-0 border-r-2 border-dashed border-text bg-text/10" style={{ width: `${cachedPercent}%` }} /> : null}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 text-[10px] text-text-muted">
+        <span>~{formatTokens(prompt)} prompt tokens</span>
+        <span>{cachedEstimateLabel}: ~{Math.round(cachedPercent)}%</span>
       </div>
     </div>
   );

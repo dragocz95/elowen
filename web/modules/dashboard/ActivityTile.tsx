@@ -76,7 +76,7 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
         ) : (
           <span
             data-trunk-dot
-            className="grid h-8 w-8 place-items-center rounded-full border border-accent/30 bg-bg shadow-[0_0_10px_rgb(255_82_54_/_0.14)] transition-colors group-hover:border-accent/60"
+            className="grid h-8 w-8 place-items-center rounded-full border border-accent/30 bg-bg shadow-[0_0_10px_rgb(var(--accent-rgb)_/_0.14)] transition-colors group-hover:border-accent/60"
           >
             <Icon size={14} className="text-text-muted" aria-hidden />
           </span>

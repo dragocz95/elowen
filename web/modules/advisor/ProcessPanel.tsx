@@ -25,7 +25,8 @@ export function ProcessOutputModal({ proc, onClose }: { proc: ProcessInfo; onClo
   }, [proc.id, proc.running]);
   useEffect(() => { preRef.current?.scrollTo({ top: preRef.current.scrollHeight }); }, [output]);
   return (
-    <Modal title={proc.command} description={proc.running ? t.processes.running : t.processes.exited} onClose={onClose} size="xl" icon={TerminalSquare}>
+    // `inspect`: a live output tail. It is watched, never typed into.
+    <Modal title={proc.command} description={proc.running ? t.processes.running : t.processes.exited} onClose={onClose} size="xl" icon={TerminalSquare} intent="inspect">
       <pre ref={preRef} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap bg-bg p-4 font-mono text-tiny leading-relaxed text-text-muted">
         {output || t.processes.noOutput}
       </pre>

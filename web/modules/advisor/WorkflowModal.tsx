@@ -229,6 +229,8 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
       onClose={onClose}
       size="lg"
       icon={Workflow}
+      // `inspect`: the DAG is read, not edited — picking a node only opens its detail below the graph.
+      intent="inspect"
     >
       <div data-testid="workflow-modal" className="flex min-h-0 flex-1 flex-col">
         {body()}

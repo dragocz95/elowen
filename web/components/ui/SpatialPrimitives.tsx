@@ -1,7 +1,7 @@
 'use client';
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { SettingsGroup, SettingsRow } from '../../modules/settings/SettingsSurface';
+import { SettingsGroup, SettingsRow } from './SettingsSurface';
 
 /** Account sections and Settings sections used to be two parallel implementations of the same
  *  label/control form — two sets of class names, two paddings, two hover treatments — which is why the

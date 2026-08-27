@@ -80,15 +80,16 @@ export function MemoryBrainMap({ memories, categories, onSelectMemory }: {
       <div className="flex flex-col gap-4 @3xl:flex-row @3xl:items-stretch">
         {/* Glass-brain canvas. */}
         <div
-          className="brain-canvas relative aspect-[16/9] min-h-[440px] w-full min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-black sm:min-h-[560px]"
+          className="brain-canvas relative aspect-[16/9] min-h-[24rem] w-full min-w-0 flex-1 overflow-hidden rounded-xl border border-border @2xl:min-h-[35rem]"
           style={{ boxShadow: 'var(--shadow-card)' }}
           onClick={() => setSelected(null)}
         >
-          {/* Backdrop stack: faint dot grid → grayscale brain PNG (mix-blend-screen) → radial vignette. */}
+          {/* Backdrop stack: faint grid → grayscale brain PNG → radial vignette. Every layer's colour is a
+              token derivation, so the canvas repaints with the skin instead of staying black under it. */}
           <div aria-hidden className="brain-grid pointer-events-none absolute inset-0" />
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-[1.5%] bg-contain bg-center bg-no-repeat opacity-[0.92] mix-blend-screen grayscale"
+            className="brain-figure pointer-events-none absolute inset-[1.5%] bg-contain bg-center bg-no-repeat grayscale"
             style={{ backgroundImage: "url('/images/neural-brain-vercel.png')" }}
           />
           <div aria-hidden className="brain-vignette pointer-events-none absolute inset-0" />
@@ -157,7 +158,7 @@ export function MemoryBrainMap({ memories, categories, onSelectMemory }: {
 
           {/* Hidden-leaf affordance. */}
           {graph.truncated > 0 ? (
-            <span className="absolute bottom-3 right-3 rounded-md border border-white/15 bg-black/50 px-2 py-1 font-mono text-[10px] text-white/70 backdrop-blur-sm">
+            <span className="brain-chip absolute bottom-3 right-3 rounded-md px-2 py-1 font-mono text-[10px]">
               {t.memory.brainMoreNodes.replace('{n}', String(graph.truncated))}
             </span>
           ) : null}
@@ -182,11 +183,11 @@ function CoreNodeView({ label, x, y, lit, active, onSelect }: { label: string; x
       className="group absolute z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5 transition-opacity"
       style={{ left: `${x}%`, top: `${y}%`, opacity: lit ? 1 : 0.22 }}
     >
-      <span className="relative flex h-16 w-16 items-center justify-center rounded-full border border-accent/50 bg-black/40 backdrop-blur-[1px]">
+      <span className="brain-disc relative flex h-16 w-16 items-center justify-center rounded-full border border-accent/50">
         <span aria-hidden className="brain-core-pulse absolute inset-0 rounded-full" />
         <span aria-hidden className="absolute -inset-2 rounded-full" style={{ boxShadow: `0 0 34px 8px color-mix(in srgb, var(--color-accent) ${active ? 60 : 38}%, transparent)` }} />
       </span>
-      <span className={`rounded-md bg-black/55 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-white backdrop-blur-sm transition-opacity ${active ? 'opacity-100' : 'opacity-85'}`}>
+      <span className={`brain-chip rounded-md px-2 py-0.5 text-[11px] font-semibold tracking-wide transition-opacity ${active ? 'opacity-100' : 'opacity-85'}`}>
         {label}
       </span>
     </button>
@@ -205,7 +206,7 @@ function HubNode({ node, lit, active, count, onSelect }: { node: CategoryNode; l
     >
       <span aria-hidden className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full blur-md transition-opacity" style={{ width: node.size * 1.9, height: node.size * 1.9, backgroundColor: node.color, opacity: active ? 0.4 : 0.24 }} />
       <span
-        className="relative flex items-center justify-center rounded-full border bg-black/35 backdrop-blur-[1px] transition-transform group-hover:scale-105"
+        className="brain-disc relative flex items-center justify-center rounded-full border transition-transform group-hover:scale-105"
         style={{
           width: node.size, height: node.size,
           borderColor: `color-mix(in srgb, ${node.color} 60%, transparent)`,
@@ -215,7 +216,8 @@ function HubNode({ node, lit, active, count, onSelect }: { node: CategoryNode; l
         <span aria-hidden className="rounded-full" style={{ width: '38%', height: '38%', backgroundColor: node.color, opacity: 0.92 }} />
       </span>
       <span
-        className={`max-w-[7rem] truncate rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm transition-opacity ${active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        className="brain-chip brain-node-label max-w-[7rem] truncate rounded-md px-1.5 py-0.5 text-[10px] font-medium"
+        data-active={active}
       >
         {node.label}
       </span>
@@ -243,7 +245,8 @@ function LeafNode({ node, lit, active, onSelect }: { node: MemoryNode; lit: bool
         }}
       />
       <span
-        className={`pointer-events-none absolute top-5 left-1/2 max-w-[10rem] -translate-x-1/2 truncate rounded-md border border-white/12 bg-black/78 px-1.5 py-0.5 text-[10px] text-white/85 shadow-[0_8px_24px_rgba(0,0,0,0.4)] backdrop-blur-sm transition-opacity ${active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        className="brain-chip brain-node-label pointer-events-none absolute top-5 left-1/2 max-w-[10rem] -translate-x-1/2 truncate rounded-md px-1.5 py-0.5 text-[10px] shadow-[var(--shadow-card)]"
+        data-active={active}
       >
         {node.memory.body}
       </span>
@@ -328,18 +331,44 @@ function DetailCard({ accent, label, icon: Icon, children }: { accent: string; l
   );
 }
 
-/** Scoped keyframes/backdrop for the brain — kept local so no shared CSS file is touched. The panel is
- *  intentionally dark (the glass brain is a dark-mode visual, mem0-style) in both themes. Honors
- *  reduced-motion by freezing the pulses. */
+/** Scoped keyframes/backdrop for the brain — kept local so no shared CSS file is touched. Every colour
+ *  here is derived from a token: the canvas is the page's own deepest surface rather than a frozen black,
+ *  and the figure blends with `difference` rather than `screen` so the artwork stays legible whether the
+ *  active skin paints that surface dark or light. Honors reduced-motion by freezing the pulses. */
 function BrainStyles() {
   return (
     <style>{`
-      .brain-vignette { background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 0%, rgba(0,0,0,0.05) 58%, rgba(0,0,0,0.72) 96%); }
+      .brain-canvas { background: var(--color-bg); }
+      .brain-figure { opacity: 0.92; mix-blend-mode: difference; }
+      .brain-vignette {
+        background: radial-gradient(circle at 50% 50%,
+          color-mix(in srgb, var(--color-bg) 0%, transparent) 0%,
+          color-mix(in srgb, var(--color-bg) 5%, transparent) 58%,
+          color-mix(in srgb, var(--color-bg) 72%, transparent) 96%);
+      }
       .brain-grid {
         background-image:
-          linear-gradient(to right, rgba(255,255,255,0.014) 1px, transparent 1px),
-          linear-gradient(to bottom, rgba(255,255,255,0.012) 1px, transparent 1px);
+          linear-gradient(to right, color-mix(in srgb, var(--color-text) 1.4%, transparent) 1px, transparent 1px),
+          linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.2%, transparent) 1px, transparent 1px);
         background-size: 32px 32px;
+      }
+      /* Node discs and label chips: a wash of the canvas colour, so they read as glass over it. */
+      .brain-map .brain-disc { background: color-mix(in srgb, var(--color-bg) 40%, transparent); backdrop-filter: blur(1px); }
+      .brain-map .brain-chip {
+        border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+        background: color-mix(in srgb, var(--color-bg) 62%, transparent);
+        color: var(--color-text);
+        backdrop-filter: blur(4px);
+      }
+      /* A node's label is quiet until the node is hovered, focused or selected. A coarse pointer has no
+         hover to reveal it with, so there every label is simply on — hidden-until-hover meant the labels
+         did not exist at all on a touch screen. */
+      .brain-map .brain-node-label { opacity: 0; transition: opacity var(--motion-fast) var(--ease-out); }
+      .brain-map .brain-node-label[data-active='true'] { opacity: 1; }
+      .brain-map .group:hover > .brain-node-label,
+      .brain-map .group:focus-visible > .brain-node-label { opacity: 1; }
+      @media (pointer: coarse) {
+        .brain-map .brain-node-label { opacity: 1; }
       }
       @keyframes brain-core { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.16); opacity: 0.12; } }
       .brain-core-pulse {

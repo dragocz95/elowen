@@ -20,8 +20,10 @@ import { DirectoryPicker } from './DirectoryPicker';
 import { ProjectDetailTabs } from './ProjectDetailTabs';
 import { EntityList, EntityRow } from '../../components/ui/EntityList';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
-import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
-import { WorkspaceDetailRail, WorkspaceMetric, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
+import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '../../components/ui/DataTable';
+import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
+import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { RegisterSearch } from '../../components/ui/RegisterSearch';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 import { copyText } from '../../lib/clipboard';
 import { Avatar } from '../../components/ui/Avatar';
@@ -205,19 +207,21 @@ export function ProjectsView() {
         : filteredProjects[index + (direction === 'next' ? 1 : -1)];
     if (!next) return;
     setSelectedId(next.id);
-    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-project-row="${next.id}"]`)?.focus());
+    // The row itself is no longer a tab stop — its open button is, so that is what receives focus.
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-project-row="${next.id}"] .data-table-row-open`)?.focus());
   };
 
   return (
     <>
       <ModuleHeader title={t.page.projects} count={projects.data?.length} icon={FolderGit2} />
-      <SpatialWorkspaceLayout
+      <WorkspaceShell
+        variant="register"
         hero={{
           eyebrow: t.projects.registry,
           title: t.page.projects,
           count: projects.data?.length ?? 0,
           description: t.projects.workspaceIntro,
-          mascotState: projects.isLoading ? 'saving' : projects.isError ? 'error' : 'idle',
+          mascot: projects.isLoading ? 'saving' : projects.isError ? 'error' : 'idle',
           status: !projects.isLoading && !projects.isError ? <span className="workspace-status">{t.projects.registryReady}</span> : undefined,
           action: isAdmin ? <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button> : undefined,
           metrics: <>
@@ -229,10 +233,14 @@ export function ProjectsView() {
       >
         <ControlSurfaceDocument>
           <ControlSurfaceToolbar className="flex-wrap">
-            <div className="relative min-w-[15rem] flex-1">
-              <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.projects.searchPlaceholder} className="pl-9" />
-            </div>
+            <RegisterSearch
+              value={query}
+              onChange={setQuery}
+              placeholder={t.projects.searchPlaceholder}
+              label={t.projects.searchLabel}
+              onClear={() => setQuery('')}
+              clearLabel={t.projects.searchClear}
+            />
           </ControlSurfaceToolbar>
 
           {projects.isLoading ? <ControlSurfaceState><LoadingState variant="list" /></ControlSurfaceState>
@@ -244,12 +252,14 @@ export function ProjectsView() {
                   {filteredProjects.length === 0 ? (
                     <ControlSurfaceState><EmptyState title={t.projects.noMatches} icon={Search} /></ControlSurfaceState>
                   ) : (
-                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(14rem,1.2fr) 3rem" compactColumns="minmax(0,1fr) 3rem" data-testid="projects-register">
+                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(14rem,1.2fr) 3rem 1.25rem" compactColumns="minmax(0,1fr) 3rem 1.25rem" data-testid="projects-register">
                       <DataTableRow header>
                         <DataTableCell header>{t.projects.columnProject}</DataTableCell>
                         <DataTableCell header priority="wide">{t.projects.columnPath}</DataTableCell>
                         <DataTableCell header priority="wide">{t.projects.columnSummary}</DataTableCell>
-                        <DataTableCell header><span className="sr-only">{t.common.actions}</span></DataTableCell>
+                        {/* The chevron track carries no header: its cell is decorative, so a fifth
+                            column name would be one more than the rows actually expose. */}
+                        <DataTableCell header labelHidden>{t.common.actions}</DataTableCell>
                       </DataTableRow>
                       {filteredProjects.map((project) => {
                         const active = selectedId === project.id;
@@ -257,33 +267,34 @@ export function ProjectsView() {
                           <DataTableRow
                             key={project.id}
                             selected={active}
-                            interactive
-                            tabIndex={0}
                             aria-selected={active}
                             data-project-row={project.id}
                             className="group cursor-pointer"
-                            onClick={() => setSelectedId(project.id)}
+                            onOpen={() => setSelectedId(project.id)}
+                            openLabel={t.projects.openProject.replace('{slug}', project.slug)}
                             onContextMenu={(event) => openCtxMenu(event, project)}
+                            // Enter and Space belong to the row's own open button now. Only the roving
+                            // arrow/Home/End navigation is left, and it still lives on the row because
+                            // that is where a keystroke aimed at any cell bubbles to.
                             onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(project.id); }
                               if (event.key === 'ArrowDown') { event.preventDefault(); navigateProject(project, 'next'); }
                               if (event.key === 'ArrowUp') { event.preventDefault(); navigateProject(project, 'previous'); }
                               if (event.key === 'Home') { event.preventDefault(); navigateProject(project, 'home'); }
                               if (event.key === 'End') { event.preventDefault(); navigateProject(project, 'end'); }
                             }}
                           >
-                            <DataTableCell className="flex items-center gap-3">
-                              <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated/60">
-                                <ProjectIcon project={project} size={project.icon ? 32 : 18} className="text-text-muted" />
+                            {/* The path is the cell's title rather than a second stacked line: a register
+                                whose rows measure one height is what makes it scannable, and the path has
+                                its own column plus the detail rail one tap away. */}
+                            <DataTableCell title={project.path} className="flex items-center gap-3">
+                              <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated/60">
+                                <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-text-muted" />
                               </span>
-                              <span className="min-w-0">
-                                <span className="block truncate text-sm font-semibold text-text transition-colors group-hover:text-accent">{project.slug}</span>
-                                <span className="mt-0.5 block truncate font-mono text-[11px] text-text-muted lg:hidden">{project.path}</span>
-                              </span>
+                              <span className="min-w-0 truncate text-sm font-semibold text-text transition-colors group-hover:text-accent">{project.slug}</span>
                             </DataTableCell>
-                            <DataTableCell priority="wide" className="truncate font-mono text-xs text-text-muted"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
-                            <DataTableCell priority="wide"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
-                            <DataTableCell onClick={(event) => event.stopPropagation()}>
+                            <DataTableCell priority="wide" title={project.path} className="font-mono text-xs text-text-muted"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
+                            <DataTableCell priority="wide" lines="auto"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
+                            <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()}>
                               <ActionMenu
                                 label={`${project.slug}: ${t.common.actions}`}
                                 items={projectActions(project)}
@@ -291,6 +302,7 @@ export function ProjectsView() {
                                 triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-elevated hover:text-text group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
                               />
                             </DataTableCell>
+                            <DataTableChevronCell />
                           </DataTableRow>
                         );
                       })}
@@ -366,7 +378,7 @@ export function ProjectsView() {
               </ControlSurfaceRegister>
             )}
         </ControlSurfaceDocument>
-      </SpatialWorkspaceLayout>
+      </WorkspaceShell>
 
       {creating && (
         <Modal title={t.projects.newProject} onClose={() => setCreating(false)} size="md" icon={FolderGit2}>

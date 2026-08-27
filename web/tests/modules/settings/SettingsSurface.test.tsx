@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { SettingsDocument, SettingsGroup, SettingsRow } from '../../../modules/settings/SettingsSurface';
+import { SettingsDocument, SettingsGroup, SettingsRow } from '../../../components/ui/SettingsSurface';
 import { createWrapper } from '../../test-utils';
 
 describe('SettingsSurface', () => {

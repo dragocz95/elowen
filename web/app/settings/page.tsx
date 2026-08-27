@@ -34,9 +34,10 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
-import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
+import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
-import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../modules/settings/SettingsSurface';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
+import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../components/ui/SettingsSurface';
 import { SkinsRow } from '../../modules/settings/SkinsRow';
 import { MotionReveal } from '../../components/ui/Motion';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
@@ -371,8 +372,13 @@ export default function SettingsPage() {
   // The hero answers "is this instance healthy right now" on every settings tab, and carries the one
   // action an operator reaches for after changing something. Restarting still goes through the same
   // confirmation as the row in the System section — this is a second door to it, not a second path.
+  const activeSection = deckSections.find((section) => section.id === category) ?? deckSections[0]!;
   const deckHero = {
-    mascotState: (system.isError ? 'error' : systemRestart.isPending ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
+    eyebrow: t.page.settings,
+    title: activeSection.label,
+    description: activeSection.description,
+    status: <AutoSaveStatus status={activeFeedback.status} onRetry={activeFeedback.retry} />,
+    mascot: (system.isError ? 'error' : systemRestart.isPending ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
     action: (
       <>
         <Button icon={RotateCcw} disabled={systemRestart.isPending} onClick={() => setRestartTarget('daemon')}>
@@ -398,15 +404,10 @@ export default function SettingsPage() {
       <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
 
       <div className="flex w-full min-w-0 flex-col">
-      <SpatialControlDeck
-        eyebrow={t.page.settings}
-        ariaLabel={t.settings.sectionsNav}
-        sections={deckSections}
-        value={category}
-        onChange={setCategory}
-        status={activeFeedback.status}
-        onRetry={activeFeedback.retry}
+      <WorkspaceShell
+        variant="deck"
         hero={deckHero}
+        navigation={{ sections: deckSections, value: activeSection.id, onChange: setCategory, ariaLabel: t.settings.sectionsNav }}
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>
           <>
@@ -745,7 +746,7 @@ export default function SettingsPage() {
 
         </SettingsPanel>
 
-      </SpatialControlDeck>
+      </WorkspaceShell>
       </div>
 
       {logsOpen ? <LogsModal onClose={() => setLogsOpen(false)} /> : null}

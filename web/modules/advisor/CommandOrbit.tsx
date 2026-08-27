@@ -190,7 +190,7 @@ export function CommandOrbit({ onClose }: { onClose: () => void }) {
     <div ref={overlayRef} className="overlay-layer-modal fixed inset-0">
       <div
         data-testid="command-orbit-backdrop"
-        className="absolute inset-0 bg-black/80"
+        className="absolute inset-0 bg-bg/80"
         style={{
           backdropFilter: 'var(--command-orbit-backdrop-filter, none)',
           WebkitBackdropFilter: 'var(--command-orbit-backdrop-filter, none)',
@@ -215,7 +215,7 @@ export function CommandOrbit({ onClose }: { onClose: () => void }) {
           data-testid="command-orbit-close"
           aria-label={t.common.close}
           title={t.common.close}
-          className="cmd-orbit__close"
+          className="cmd-orbit__close overlay-touch-target"
         >
           <X size={18} aria-hidden />
         </button>

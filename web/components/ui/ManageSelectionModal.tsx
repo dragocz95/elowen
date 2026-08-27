@@ -81,7 +81,7 @@ function RadioDot({ checked }: { checked: boolean }) {
       }`}
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full bg-white transition-transform duration-150 ${checked ? 'scale-100' : 'scale-0'}`}
+        className={`h-1.5 w-1.5 rounded-full bg-text transition-transform duration-150 ${checked ? 'scale-100' : 'scale-0'}`}
         style={{ transitionTimingFunction: 'var(--ease-spring)' }}
       />
     </span>

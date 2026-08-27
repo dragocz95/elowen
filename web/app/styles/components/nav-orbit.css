@@ -1,6 +1,6 @@
 /* Navigation rail orbit nodes: .orbit-node, .orbit-node-active. */
 
-.orbit-node { position: relative; isolation: isolate; box-shadow: 0 0 0 6px #000, inset 0 1px rgb(255 255 255 / 0.025); }
+.orbit-node { position: relative; isolation: isolate; box-shadow: 0 0 0 6px var(--color-bg), inset 0 1px color-mix(in srgb, var(--color-text) 2.5%, transparent); }
 .orbit-node::before {
   content: '';
   position: absolute;
@@ -22,8 +22,8 @@
    blurred aura, flickering ember dots) so both menus read as one design language. The hover-trace
    ring is re-purposed as the aura on the active node — same pseudo-element, section-rail visuals. */
 .orbit-node-active {
-  background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), #050505 68%);
-  box-shadow: 0 0 0 6px #000, var(--glow-active), inset 0 0 20px rgb(var(--accent-rgb) / 0.09);
+  background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), var(--color-document) 68%);
+  box-shadow: 0 0 0 6px var(--color-bg), var(--glow-active), inset 0 0 20px rgb(var(--accent-rgb) / 0.09);
 }
 .orbit-node-active::before {
   inset: -1.35rem;
@@ -42,7 +42,7 @@
   height: 0.16rem;
   border-radius: 50%;
   background: var(--color-ember);
-  box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42);
+  box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 color-mix(in srgb, var(--color-ember) 48%, transparent), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 color-mix(in srgb, var(--color-ember) 42%, transparent);
   opacity: 0.7;
 }
 html[data-effects='full'] .orbit-node-active::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; }

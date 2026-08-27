@@ -65,14 +65,17 @@ const DRAG_THRESHOLD = 6;
 /** How long a finger has to rest before a press becomes a menu rather than a tap or a scroll. */
 const LONG_PRESS_MS = 500;
 
-/** The public site's rail spacing — the look this rail matches. */
-const SPACING = 66;
+/** The rail's resting spacing. Measured in REAL screen pixels: it used to be 66, chosen when an
+ *  automatic `zoom` shrank the whole app to roughly 72% and put it on the glass at about 48. Nothing
+ *  shrinks the page any more, so 66 became 66 — and twelve destinations then needed 806px of axis, which
+ *  no 1280×800 laptop has. The rail scrolled on every laptop in the building. */
+const SPACING = 48;
 /** Vertical room the largest (active) node needs, so the end destinations never clip. It is the
- *  diameter of the active node (4.65rem), and it only works because the items are anchored at exactly
+ *  diameter of the active node (3.4rem), and it only works because the items are anchored at exactly
  *  half the axis: `getStableOffsets` spreads them symmetrically around the centre, so an anchor even
  *  one percent off centre spends that much of this headroom and clips the first node on a short
  *  screen — which is what a phone is. */
-const NODE_HEADROOM = 80;
+const NODE_HEADROOM = 56;
 
 /** Where each destination is parked on the axis: a fixed, centered order that does NOT depend on which
  *  route is active. Only scale/opacity/blur react to the active route, so the rail never re-shuffles. */
@@ -83,7 +86,7 @@ export function getStableOffsets(count: number, spacing: number): number[] {
 
 /** Below this the destinations stop being separate things and start being a stripe, so the axis
  *  scrolls instead of tightening any further. */
-const MIN_SPACING = 46;
+const MIN_SPACING = 34;
 
 /** The public rail carries 8 destinations at SPACING; this one carries more, which overflows a
  *  laptop-height axis. Keep SPACING wherever it fits and otherwise tighten — but only down to a
@@ -384,7 +387,8 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     if (next?.href && nextIndex !== activeIndex) router.push(next.href);
   };
 
-  const axis = compact ? '2.2rem' : '2.5rem';
+  // The axis is the CENTRE of the icon column, so it is always exactly half that column's width.
+  const axis = compact ? '1.6rem' : '1.8rem';
 
   const hidden = drawer && !drawerOpen;
 
@@ -394,9 +398,12 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         <div
           aria-hidden
           onClick={onDrawerClose}
-          className={`overlay-layer-nav-drawer fixed inset-0 bg-black/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+          className={`overlay-layer-nav-drawer fixed inset-0 bg-bg/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       ) : null}
+    {/* The column widths below are real pixels now. 17rem/4.75rem were a 1900px design read through an
+        automatic ~72% zoom, which put the full rail at roughly 12.5rem and the icon rail at 3.5rem on
+        the glass; rendered natively, 17rem spent a fifth of a 1280px laptop on a menu. */}
     <nav
       ref={navRef}
       data-side={side}
@@ -417,11 +424,11 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
       onPointerMove={endSurfacePress}
       onPointerUp={endSurfacePress}
       onPointerCancel={endSurfacePress}
-      className={`overflow-hidden border-border/45 bg-black ${drawer
+      className={`overflow-hidden border-border/45 bg-bg ${drawer
         ? `overlay-layer-nav-drawer overlay-nav-drawer fixed inset-y-0 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
           ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
           : `left-0 border-r ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}`
-        : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4.75rem]' : 'w-[17rem]'}`}`}
+        : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[3.5rem]' : 'w-[12.5rem]'}`}`}
       style={drawer ? { transitionTimingFunction: 'var(--ease-out)' } : undefined}
     >
       {/* A dialog needs a way out that is not "guess that the strip of backdrop is a target". Tapping
@@ -448,7 +455,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         // menu away from the keyboard and from a screen reader for a whole round trip on a first visit
         // — a menu in registry order beats no menu at all, and the gate exists to avoid showing a
         // re-sort, not to withhold navigation. `tests/app/navPrefetch.test.tsx` pins that first paint.
-        className={`absolute inset-x-0 bottom-24 top-0 ${layoutReady ? 'opacity-100' : 'opacity-0'} before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-accent/45 before:to-accent/10`}
+        className={`absolute inset-x-0 bottom-[4.5rem] top-0 ${layoutReady ? 'opacity-100' : 'opacity-0'} before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-accent/45 before:to-accent/10`}
         style={{ ['--rail-axis' as string]: axis }}
       >
         {routeEntries.map((entry, index) => {
@@ -492,16 +499,25 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                 draggable={false}
                 aria-label={compact ? entry.label : undefined}
                 aria-current={active ? 'page' : undefined}
+                // Tabbing to a destination parked off the stage would otherwise focus something the
+                // reader cannot see: the axis moves by transform, so the browser has no scroll box to
+                // bring into view on its own. Keyboard focus only — `:focus-visible` keeps a click from
+                // yanking the rail out from under the pointer that is already on the right entry.
+                onFocus={(event) => {
+                  if (scrollRange <= 0 || !event.currentTarget.matches(':focus-visible')) return;
+                  setAxisOffset(clampAxis(-(positions[index] ?? 0)));
+                }}
                 // A resting destination is drawn as a 2.65rem node, which is under the 44px a finger
                 // needs. The node keeps its size; the row it sits in grows to the floor around it.
                 className={`overlay-touch-target group flex items-center gap-2 whitespace-nowrap ${active ? 'text-accent' : 'text-text-muted hover:text-text'}`}
                 title={compact ? undefined : entry.label}
               >
-                <span className={`flex shrink-0 justify-center ${compact ? 'w-[4.4rem]' : 'w-[5rem]'}`} aria-hidden>
-                  <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-black transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
-                    ? `orbit-node-active border-accent ${compact ? 'h-[4.35rem] w-[4.35rem]' : 'h-[4.65rem] w-[4.65rem]'}`
-                    : `border-border-strong/80 ${compact ? 'h-[2.45rem] w-[2.45rem]' : 'h-[2.65rem] w-[2.65rem]'}`}`}>
-                    <Icon size={active ? 24 : 17} strokeWidth={1.45} />
+                {/* The icon column is twice `axis`, because `axis` is where the spine is drawn. */}
+                <span className={`flex shrink-0 justify-center ${compact ? 'w-[3.2rem]' : 'w-[3.6rem]'}`} aria-hidden>
+                  <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-bg transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
+                    ? `orbit-node-active border-accent ${compact ? 'h-[3.05rem] w-[3.05rem]' : 'h-[3.4rem] w-[3.4rem]'}`
+                    : `border-border-strong/80 ${compact ? 'h-[1.75rem] w-[1.75rem]' : 'h-[1.9rem] w-[1.9rem]'}`}`}>
+                    <Icon size={active ? 18 : 13} strokeWidth={1.45} />
                   </span>
                 </span>
                 {/* The active entry renders ~40% larger, so a label that fits at rest can outgrow the
@@ -509,20 +525,29 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                     word cut off mid-glyph against the rail's `overflow-hidden`; the `title` above keeps
                     the full text reachable. Plugin labels are translated by their own authors, so no
                     length is guaranteed. */}
-                {!compact ? <span className={`min-w-0 truncate ${active ? 'text-[1.65rem] font-medium' : 'text-[1.16rem]'} tracking-[-0.03em]`}>{entry.label}</span> : null}
+                {!compact ? <span className={`min-w-0 truncate ${active ? 'text-xl font-medium' : 'text-sm'} tracking-[-0.03em]`}>{entry.label}</span> : null}
               </Link>
             </div>
           );
         })}
       </div>
-      {!compact ? (
-        <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center bg-gradient-to-t from-black via-black to-transparent pb-5 pt-8">
-          <div className="spatial-scroll-cue mb-3 flex flex-col items-center font-mono text-[8px] font-semibold tracking-[.24em] text-text-muted/45" aria-hidden>
-            <span>SCROLL</span>
-            <span className="mt-1 h-3 w-px bg-gradient-to-b from-accent/45 to-transparent" />
-            <ChevronDown size={11} className="-mt-0.5 text-accent/55" />
-          </div>
-          <div className="flex justify-center font-mono text-[9px] tracking-[.14em] text-text-muted/35"><span>&lt;</span><span className="mx-3">{health.data?.version ? `v${health.data.version}` : '—'}</span><span>&gt;</span></div>
+      {/* The axis travels by transform rather than by native scrolling — see `onWheel` — so the browser
+          draws no scrollbar and nothing says the rail continues past the bottom. The cue is that signal,
+          and it now appears exactly when there IS something below: it was previously shown in the full
+          rail whether or not the destinations overflowed (a promise the rail could not keep) and never in
+          the icon rail, which is the width that overflows soonest. */}
+      {!compact || scrollRange > 0 ? (
+        <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center bg-gradient-to-t from-bg via-bg to-transparent pb-4 pt-6">
+          {scrollRange > 0 ? (
+            <div className="spatial-scroll-cue mb-2 flex flex-col items-center font-mono text-[8px] font-semibold tracking-[.24em] text-text-muted/45" aria-hidden>
+              {!compact ? <span>SCROLL</span> : null}
+              <span className="mt-1 h-3 w-px bg-gradient-to-b from-accent/45 to-transparent" />
+              <ChevronDown size={11} className="-mt-0.5 text-accent/55" />
+            </div>
+          ) : null}
+          {!compact ? (
+            <div className="flex justify-center font-mono text-[9px] tracking-[.14em] text-text-muted/35"><span>&lt;</span><span className="mx-3">{health.data?.version ? `v${health.data.version}` : '—'}</span><span>&gt;</span></div>
+          ) : null}
         </div>
       ) : null}
       {/* The keyboard's way into the menu that the right-click and the long press open. It has to exist

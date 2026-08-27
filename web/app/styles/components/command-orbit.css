@@ -3,7 +3,13 @@
 .cmd-orbit { position: fixed; inset: 0; display: flex; flex-direction: column; pointer-events: none; padding: 1rem; padding-top: max(1rem, var(--safe-top)); padding-bottom: max(1rem, var(--safe-bottom)); padding-left: max(1rem, var(--safe-left)); padding-right: max(1rem, var(--safe-right)); }
 .cmd-orbit:focus { outline: none; }
 .cmd-orbit__hint { margin: 0 3rem 0 0; font-size: 0.75rem; color: var(--color-text-muted); }
-.cmd-orbit__close { position: absolute; top: max(0.75rem, var(--safe-top)); right: max(0.75rem, var(--safe-right)); display: grid; place-items: center; width: 2.75rem; height: 2.75rem; border-radius: 0.75rem; pointer-events: auto; color: var(--color-text-muted); transition: background var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out); }
+/* The one close affordance the app draws everywhere else (cf. .workspace-detail-rail__close): a 1.8rem
+   square at the muted step. It used to be declared at 2.75rem — the touch floor written into the resting
+   size — which made the palette's close visibly larger than every other close in the interface.
+   The finger floor is applied where it belongs, on a coarse pointer only, and it comes from the shared
+   `.overlay-touch-target` the button also carries (styles/components/primitives.css) rather than from a
+   second copy of the same media query here. */
+.cmd-orbit__close { position: absolute; top: max(0.75rem, var(--safe-top)); right: max(0.75rem, var(--safe-right)); display: grid; place-items: center; width: 1.8rem; height: 1.8rem; border-radius: var(--radius-lg); pointer-events: auto; color: var(--color-text-muted); transition: background var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out); }
 .cmd-orbit__close:hover { background: var(--color-elevated); color: var(--color-text); }
 .cmd-orbit__field { position: relative; flex: 1 1 auto; width: 100%; }
 .cmd-orbit__filaments { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
@@ -13,15 +19,15 @@
    mascot's top edge instead of its middle. */
 .cmd-orbit__core { position: absolute; pointer-events: none; aspect-ratio: 1; }
 .cmd-orbit__pods { position: absolute; inset: 0; }
-.cmd-orbit__pod { position: absolute; translate: -50% -50%; display: flex; align-items: center; border-radius: 1rem; border: 1px solid transparent; background: rgb(5 5 5 / 0.72); pointer-events: auto; transition: transform var(--motion-base) var(--ease-out), border-color var(--motion-base) var(--ease-out); }
+.cmd-orbit__pod { position: absolute; translate: -50% -50%; display: flex; align-items: center; border-radius: 1rem; border: 1px solid transparent; background: color-mix(in srgb, var(--color-document) 72%, transparent); pointer-events: auto; transition: transform var(--motion-base) var(--ease-out), border-color var(--motion-base) var(--ease-out); }
 .cmd-orbit__pod:hover, .cmd-orbit__pod:focus-visible { transform: translateY(-3px); border-color: var(--color-border-strong); }
 .cmd-orbit__pod:focus-visible { outline: 2px solid var(--color-text); outline-offset: 3px; }
-.cmd-orbit__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.6rem; height: 2.6rem; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), #050505 68%); color: var(--color-accent); box-shadow: 0 0 0 4px #040404, var(--glow-active), inset 0 0 14px rgb(var(--accent-rgb) / 0.08); transition: box-shadow var(--motion-base) var(--ease-out); }
+.cmd-orbit__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.6rem; height: 2.6rem; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), var(--color-document) 68%); color: var(--color-accent); box-shadow: 0 0 0 4px var(--color-bg), var(--glow-active), inset 0 0 14px rgb(var(--accent-rgb) / 0.08); transition: box-shadow var(--motion-base) var(--ease-out); }
 .cmd-orbit__orb::before { content: ''; position: absolute; inset: -1rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
-.cmd-orbit__pod:hover .cmd-orbit__orb, .cmd-orbit__pod:focus-visible .cmd-orbit__orb { box-shadow: 0 0 0 4px #040404, var(--glow-active), 0 0 30px rgb(var(--accent-rgb) / 0.4), inset 0 0 14px rgb(var(--accent-rgb) / 0.12); }
+.cmd-orbit__pod:hover .cmd-orbit__orb, .cmd-orbit__pod:focus-visible .cmd-orbit__orb { box-shadow: 0 0 0 4px var(--color-bg), var(--glow-active), 0 0 30px rgb(var(--accent-rgb) / 0.4), inset 0 0 14px rgb(var(--accent-rgb) / 0.12); }
 .cmd-orbit__label { min-width: 0; font-size: 0.8125rem; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmd-orbit__pod--active { border-color: var(--color-accent); background: rgb(var(--accent-rgb) / 0.08); }
-.cmd-orbit__pod--active .cmd-orbit__orb { box-shadow: 0 0 0 4px #040404, var(--glow-active), 0 0 34px rgb(var(--accent-rgb) / 0.45), inset 0 0 14px rgb(var(--accent-rgb) / 0.14); }
+.cmd-orbit__pod--active .cmd-orbit__orb { box-shadow: 0 0 0 4px var(--color-bg), var(--glow-active), 0 0 34px rgb(var(--accent-rgb) / 0.45), inset 0 0 14px rgb(var(--accent-rgb) / 0.14); }
 .cmd-orbit__pod--active .cmd-orbit__label { color: var(--color-ember); }
 
 .cmd-orbit[data-layout='orbit'] .cmd-orbit__core { left: 50%; top: 50%; translate: -50% -50%; width: min(30dvh, 15rem); }

@@ -89,6 +89,10 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const dockLeft = docked && dock.state.side === 'left';
   const dockTop = docked && dock.state.side === 'top';
   const dockBottom = docked && dock.state.side === 'bottom';
+  // Whether the floating advisor launcher is on screen. Both the launcher itself and the bottom
+  // clearance the page keeps for it read this ONE flag, so a page can never reserve the corner for a
+  // control that is not there, nor run its last row under one that is.
+  const launcherVisible = !docked && !onChat;
 
   // Measure the region the sidebar + content actually share (everything but a left/right dock). The
   // sidebar's mode (full / rail / drawer) and the mobile top bar key off THIS, so the chrome reacts to
@@ -154,7 +158,13 @@ function ShellLayout({ children }: { children: ReactNode }) {
               showLocation={false}
             />
           </div>
-          <div className="px-2 pb-8"><RouteTransition>{children}</RouteTransition></div>
+          {/* The launcher floats over the bottom-right corner of this scroller, so the last thing on a
+              page must not end underneath it. The clearance is the same `--fab-clearance` the toast dock
+              composes (styles/components/primitives.css), and it is spent only while the launcher is
+              actually mounted — the condition below is the same one that renders it. */}
+          <div className="px-2" style={{ paddingBottom: launcherVisible ? 'var(--fab-clearance)' : '2rem' }}>
+            <RouteTransition>{children}</RouteTransition>
+          </div>
         </div>
       </main>
     </div>
@@ -184,7 +194,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
         {dockBottom ? <AdvisorPanel dock={dock} /> : null}
       </div>
       <CommandPalette />
-      {!docked && !onChat && <AdvisorLauncher onOpen={openAdvisor} />}
+      {launcherVisible && <AdvisorLauncher onOpen={openAdvisor} />}
     </BrainChatProvider>
   );
 }

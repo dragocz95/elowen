@@ -125,8 +125,12 @@ export function LogsModal({ onClose }: { onClose: () => void }) {
   return (
     <>
       <Modal title={t.settings.logs} description={list.data?.dir} icon={ScrollText} onClose={onClose}>
-        <div className="flex min-h-0 flex-1 gap-4 p-4">
-          <div className="flex w-64 shrink-0 flex-col gap-2">
+        {/* The file list is a 16rem companion column on a desktop dialog and a short stacked list above
+            the viewer on a phone. It used to be `w-64 shrink-0` unconditionally, which left roughly
+            130px for the editor inside the fullscreen presentation a phone gets. Container, not
+            viewport: the same dialog is a drawer on a wide screen. */}
+        <div className="@container flex min-h-0 flex-1 flex-col gap-4 p-4 @2xl:flex-row">
+          <div className="flex max-h-52 shrink-0 flex-col gap-2 @2xl:max-h-none @2xl:w-64">
             <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border">
               {files.length === 0 ? (
                 <EmptyState title={t.settings.logsEmpty} icon={ScrollText} />

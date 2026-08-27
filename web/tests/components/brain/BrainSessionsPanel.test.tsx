@@ -46,7 +46,10 @@ describe('BrainSessionsPanel (conversation register)', () => {
     // One header row plus a page of conversations.
     expect(screen.getByTestId('brain-sessions-list').children).toHaveLength(13);
     expect(screen.queryByText('Conversation 13')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    // The shared <Pager /> — its controls carry a full accessible name ("Next page") because at narrow
+    // widths the visible label is dropped and only that name is left to identify the button.
+    expect(screen.getByRole('navigation', { name: 'Conversations' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     expect(await screen.findByText('Conversation 13')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Conversation 1')).not.toBeInTheDocument());
   });

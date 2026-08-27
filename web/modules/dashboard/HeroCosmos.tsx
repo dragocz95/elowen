@@ -18,9 +18,14 @@ import type { PresenceState } from './usePresence';
  *  the dashboard navigates, it doesn't configure — tied to the core by the same curved filaments as
  *  the settings constellation. Below the orbit threshold the pods collapse into beam-docked rows. */
 
-/** 0.5rem slack under the hero's 26rem cosmos column so subpixel rounding can't flap the mode. */
-const ORBIT_MIN_WIDTH_PX = 408;
-const ORBIT_MIN_HEIGHT_PX = 336;
+/** 0.5rem slack under the hero's 20rem cosmos column and its 18rem reserved height, so subpixel
+ *  rounding cannot flap the mode. Both mirror HeroNowTile's `@3xl:` grid; the pair moved down together
+ *  when the column stopped being sized for a page that was afterwards shrunk to ~72%.
+ *
+ *  Orbit mode's own `min-height` (20rem, dashboard-cosmos.css) sits ABOVE the height threshold on
+ *  purpose: entering orbit must not immediately measure a box that fails the test that let it in. */
+const ORBIT_MIN_WIDTH_PX = 312;
+const ORBIT_MIN_HEIGHT_PX = 280;
 
 type PodId = 'people' | 'cron' | 'cost';
 

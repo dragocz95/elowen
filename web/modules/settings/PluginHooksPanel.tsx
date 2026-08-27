@@ -1,7 +1,7 @@
 'use client';
 import { Webhook } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
-import { SettingsGroup } from './SettingsSurface';
+import { SettingsGroup } from '../../components/ui/SettingsSurface';
 import { EmptyState } from '../../components/ui/states';
 import type { Tone } from '../../components/ui/tone';
 import { useTranslation } from '../../lib/i18n';
