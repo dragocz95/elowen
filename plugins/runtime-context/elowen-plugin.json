@@ -2,7 +2,7 @@
   "name": "runtime-context",
   "version": "0.2.0",
   "apiVersion": "1",
-  "description": "Injects the current date, time, weekday and timezone into every turn, plus who the sender is and whether this is a private chat or a shared room, so Elowen never guesses about \"now\" nor about whom it is acting for. Cache-safe: both ride the user message, not the system prompt.",
+  "description": "Adds the current date, time, timezone, sender, and chat type to every turn, so Elowen knows when and for whom it acts. This stays in the user message to preserve the prompt cache.",
   "entry": "index.mjs",
   "provides": {},
   "configSchema": [

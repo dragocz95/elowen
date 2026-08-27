@@ -1,9 +1,9 @@
 {
-  "description": "Webový výzkum: WebSearch (Tavily nebo Serper) a WebFetch (načtení stránky jako čitelný text).",
+  "description": "Vyhledávání na webu pomocí WebSearch a načítání stránek jako čitelného textu pomocí WebFetch.",
   "fields": {
     "provider": {
       "label": "Vyhledávač",
-      "hint": "Který backend odpovídá na WebSearch. Automaticky použije Tavily, pokud je nastavený jeho klíč, jinak Serper.",
+      "hint": "Která služba zajišťuje WebSearch. Automatický režim použije Tavily, pokud je nastaven klíč, jinak Serper.",
       "options": {
         "auto": "Automaticky",
         "tavily": "Tavily",
@@ -20,7 +20,7 @@
     },
     "maxResults": {
       "label": "Počet výsledků vyhledávání",
-      "hint": "Kolik výsledků WebSearch vrátí (výchozí 5)."
+      "hint": "Kolik výsledků WebSearch vrátí. Výchozí hodnota je 5."
     }
   }
 }

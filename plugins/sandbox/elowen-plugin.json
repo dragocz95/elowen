@@ -2,7 +2,7 @@
   "name": "sandbox",
   "version": "0.1.0",
   "apiVersion": "1",
-  "description": "Account-scoped execution environment: persistent HOME, bubblewrap confinement, Git worktree workspaces, durable process leases, explicit-path commits and safe cleanup.",
+  "description": "Account-scoped execution with persistent HOME, bubblewrap confinement, Git worktrees, safe commits, and cleanup.",
   "entry": "index.mjs",
   "provides": {
     "tools": [
@@ -122,7 +122,7 @@
       "removeTitle": "Remove workspace",
       "removeCleanDescription": "The clean worktree and its generated branch will be removed.",
       "discardTitle": "Discard workspace",
-      "discardWarning": "This workspace contains local changes or commits not present in its base ref. Review the loss preview and type the exact phrase to continue.",
+      "discardWarning": "This workspace contains local changes or commits outside its base ref. Review the loss preview and type the exact phrase to continue.",
       "confirmationPhrase": "Confirmation phrase",
       "changedFiles": "Changed files",
       "patch": "Working patch",

@@ -19,7 +19,7 @@
     "strings": {
       "title": "MCP",
       "description": "Pripojte externé MCP servery a určte, kto smie používať ich nástroje.",
-      "workspaceReady": "Premostenie beží",
+      "workspaceReady": "Premostenie je aktívne",
       "addServer": "Pridať server",
       "removeServer": "Odobrať server",
       "reconnectServer": "Znova pripojiť",

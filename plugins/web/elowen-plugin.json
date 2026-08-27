@@ -2,7 +2,7 @@
   "name": "web",
   "version": "0.3.0",
   "apiVersion": "1",
-  "description": "Web research: WebSearch (Tavily or Serper) and WebFetch (fetch a page as readable text).",
+  "description": "Search the web with WebSearch and fetch pages as readable text with WebFetch.",
   "entry": "index.mjs",
   "provides": {
     "tools": [
@@ -30,7 +30,7 @@
           "label": "Serper"
         }
       ],
-      "hint": "Which backend answers WebSearch. Automatic uses Tavily when its key is set, otherwise Serper."
+      "hint": "Which service powers WebSearch. Automatic uses Tavily when its key is set, otherwise Serper."
     },
     {
       "key": "tavilyApiKey",

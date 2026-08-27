@@ -19,7 +19,7 @@
     "strings": {
       "title": "MCP",
       "description": "Připojte externí MCP servery a určete, kdo smí používat jejich nástroje.",
-      "workspaceReady": "Přemostění běží",
+      "workspaceReady": "Přemostění je aktivní",
       "addServer": "Přidat server",
       "removeServer": "Odebrat server",
       "reconnectServer": "Znovu připojit",
@@ -27,7 +27,7 @@
       "scope": "Vlastnictví",
       "scopePersonal": "Osobní",
       "scopeInstance": "Instance",
-      "scopeHelp": "Osobní přihlašovací údaje jsou uložené pouze pro váš účet. Servery instance jsou sdílené se všemi oprávněnými konverzacemi.",
+      "scopeHelp": "Osobní přihlašovací údaje zůstávají jen ve vašem účtu. Servery instance mohou používat všechny oprávněné konverzace.",
       "transport": "Přenos",
       "command": "Příkaz",
       "commandHelp": "Příkaz a argumenty se spustí jako místní proces. Přidejte pouze server, kterému výslovně důvěřujete.",
@@ -50,13 +50,13 @@
       "searchPlaceholder": "Hledat server…",
       "filterAll": "Vše",
       "pageRange": "{from}–{to} z {total}",
-      "pageLabel": "Strana {page} z {pages}",
+      "pageLabel": "Stránka {page} z {pages}",
       "prevPage": "Zpět",
       "nextPage": "Další",
       "loadError": "MCP servery se nepodařilo načíst.",
       "saveError": "MCP server se nepodařilo uložit.",
       "actionError": "Akci se nepodařilo dokončit.",
-      "removeConfirm": "Odebrat MCP server {name}?",
+      "removeConfirm": "Opravdu chcete odebrat MCP server {name}?",
       "save": "Uložit",
       "saving": "Ukládání…"
     }

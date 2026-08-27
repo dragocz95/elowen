@@ -86,7 +86,7 @@
       "step": 5,
       "placeholder": "20",
       "default": 20,
-      "hint": "Max PDF pages one Read call may request. The Read tool states this cap to the model, so raising it also lets the model ask for wider ranges. Range 5-50, default 20."
+      "hint": "Maximum PDF pages one Read call may request. Raising this limit lets the model request wider ranges. Range 5–50; default 20."
     }
   ]
 }

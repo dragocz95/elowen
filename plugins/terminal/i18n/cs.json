@@ -1,9 +1,9 @@
 {
-  "description": "Shellové příkazy s životním cyklem procesů na popředí a pozadí. Oprávnění k souborům, účtový HOME, pracovní prostory a izolace se za běhu přebírají z ovládání Sandboxu; chybějící vlastník selže bezpečně s výjimkou výslovného přímého režimu provozovatele instance.",
+  "description": "Spouští shellové příkazy na popředí i pozadí a spravuje jejich životní cyklus. Přístup k souborům, HOME, pracovním prostorům a izolaci určuje Sandbox. Bez ověřeného vlastníka se spuštění odmítne, s výjimkou výslovného přímého režimu provozovatele instance.",
   "fields": {
     "sec_limits": {
       "label": "Limity",
-      "hint": "Limity velikosti výstupu a časového limitu pro shellové příkazy."
+      "hint": "Limity velikosti výstupu a délky běhu shellových příkazů."
     },
     "outputCap": {
       "label": "Limit výstupu",
@@ -11,11 +11,11 @@
     },
     "commandTimeoutMs": {
       "label": "Časový limit příkazu (ms)",
-      "hint": "Jak dlouho může příkaz na popředí běžet, než je ukončen."
+      "hint": "Jak dlouho může příkaz na popředí běžet, než se ukončí."
     },
     "maxBackgroundProcesses": {
       "label": "Procesy na pozadí na relaci a účet",
-      "hint": "Kolik procesů na pozadí smí jedna relace a účet souběžně udržovat; spuštění dalšího je odmítnuto, dokud některý neukončíte. Rozsah 1–64, výchozí 16."
+      "hint": "Kolik procesů na pozadí může současně běžet v jedné relaci pro jeden účet. Další spuštění se odmítne, dokud některý neukončíte. Rozsah 1–64, výchozí 16."
     }
   }
 }

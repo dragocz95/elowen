@@ -2,7 +2,7 @@
   "name": "mcp",
   "version": "0.1.3",
   "apiVersion": "1",
-  "description": "Bridge external MCP servers (stdio, HTTP, SSE) into the assistant's toolset.",
+  "description": "Connect external MCP servers to the assistant’s tools.",
   "entry": "index.mjs",
   "icons": { "mcp__*": "🧩", "*McpServer*": "🧩", "ListMcpResources": "🧩", "ReadMcpResource": "🧩" },
   "provides": {
@@ -26,7 +26,7 @@
       "scope": "Ownership",
       "scopePersonal": "Personal",
       "scopeInstance": "Instance",
-      "scopeHelp": "Personal credentials are stored for your account only. Instance servers are shared with every eligible conversation.",
+      "scopeHelp": "Personal credentials stay in your account only. Every eligible conversation can use instance servers.",
       "transport": "Transport",
       "command": "Command",
       "commandHelp": "The command and arguments are executed as a local process. Add only a server you explicitly trust.",

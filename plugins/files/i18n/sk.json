@@ -1,5 +1,5 @@
 {
-  "description": "Čítanie, zápis a výpis súborov v repozitároch Elowen, ku ktorým má používateľ prístup.",
+  "description": "Číta, zapisuje a vypisuje súbory v repozitároch, ku ktorým má používateľ prístup.",
   "fields": {
     "sec_limits": {
       "label": "Limity",

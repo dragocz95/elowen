@@ -1,5 +1,5 @@
 {
-  "description": "Stavový řádek chatu: zobrazuje využití kontextu, celkový počet tokenů relace a náklady pod konverzací — ve webovém docku i v elowen chat CLI. Níže vyberte, co se má zobrazovat.",
+  "description": "Stavový řádek chatu zobrazuje pod konverzací kontext, tokeny a náklady ve webu i CLI `elowen chat`. Vyberte, které údaje se mají zobrazovat.",
   "fields": {
     "showModel": {
       "label": "Model",

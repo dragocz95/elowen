@@ -1,5 +1,5 @@
 {
-  "description": "Čtení, zápis a výpis souborů v repozitářích Elowen, ke kterým má uživatel přístup.",
+  "description": "Čte, zapisuje a vypisuje soubory v repozitářích, ke kterým má uživatel přístup.",
   "fields": {
     "sec_limits": {
       "label": "Limity",
@@ -10,7 +10,7 @@
       "hint": "Maximální počet bajtů načtených ze souboru a vrácených před oříznutím."
     },
     "searchMaxMatches": {
-      "label": "Maximální počet shod hledání",
+      "label": "Limit shod ve vyhledávání",
       "hint": "Maximální počet shod, které Search vrátí před oříznutím."
     },
     "globMax": {
@@ -19,7 +19,7 @@
     },
     "pdfMaxPages": {
       "label": "Stránky PDF na jedno čtení",
-      "hint": "Maximální počet stránek PDF, které lze vyžádat jedním voláním nástroje Read. Nástroj Read tento limit uvádí modelu, takže jeho zvýšení zároveň modelu dovolí vyžadovat širší rozsahy. Rozsah 5–50, výchozí 20."
+      "hint": "Maximální počet stránek PDF pro jedno volání Read. Vyšší limit umožní vyžádat širší rozsah. Rozsah 5–50, výchozí 20."
     }
   }
 }

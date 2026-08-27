@@ -1,5 +1,5 @@
 {
-  "description": "Vkládá do každého tahu aktuální datum, čas, den v týdnu a časové pásmo a k tomu údaj o tom, kdo píše a zda jde o soukromý chat, nebo sdílený kanál. Elowen tak nehádá, jaké je „teď“, ani za koho jedná. Bezpečné pro cache: obojí jede v uživatelské zprávě, ne v systémovém promptu.",
+  "description": "Přidává do každého tahu aktuální datum, čas, časové pásmo, odesílatele a typ chatu. Elowen tak ví, kdy a za koho jedná. Údaje jsou v uživatelské zprávě, takže nenarušují cache.",
   "fields": {
     "timezone": {
       "label": "Časové pásmo",

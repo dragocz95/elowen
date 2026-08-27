@@ -2,7 +2,7 @@
   "name": "statusline",
   "version": "0.1.1",
   "apiVersion": "1",
-  "description": "Chat statusline: shows context usage, session token totals and cost under the conversation — in the web dock and the elowen chat CLI. Pick what to display below.",
+  "description": "Shows context, token totals, and cost below the conversation in the web UI and `elowen chat` CLI. Choose what to display.",
   "entry": "index.mjs",
   "provides": {},
   "configSchema": [

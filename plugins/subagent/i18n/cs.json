@@ -1,5 +1,5 @@
 {
-  "description": "Delegování: spustí nového izolovaného subagenta, který zpracuje samostatný úkol a vrátí výsledek. Subagent dědí přístup volajícího, nikdy víc.",
+  "description": "Umožňuje delegovat samostatný úkol novému izolovanému subagentovi a vrátit jeho výsledek. Subagent nikdy nezíská širší přístup než volající.",
   "fields": {
     "sec_retention": {
       "label": "Uchování výsledků",
@@ -24,7 +24,7 @@
     },
     "strings": {
       "title": "Agenti",
-      "sectionHint": "Typovaní agenti, kterým může asistent delegovat práci. Vestavěné explore a plan jsou jen ke čtení; přidejte si vlastní.",
+      "sectionHint": "Specializovaní agenti, kterým může asistent delegovat práci. Vestavění `explore` a `plan` jsou jen pro čtení; můžete přidat vlastní.",
       "empty": "Zatím žádní agenti.",
       "badgeBuiltin": "vestavěný",
       "badgeUser": "vlastní",
@@ -36,7 +36,7 @@
       "name": "Název",
       "description": "Popis",
       "tools": "Nástroje",
-      "toolsHint": "Co smí agent použít. „Jen pro čtení“ dá nástroje bez úprav a shell omezený na nedestruktivní příkazy.",
+      "toolsHint": "Nástroje, které smí agent používat. „Jen pro čtení“ poskytne nástroje bez úprav a shell s nedestruktivními příkazy.",
       "toolsReadOnly": "Jen pro čtení (+ nedestruktivní shell)",
       "toolsAll": "Vše (plná sada nástrojů)",
       "toolsInherit": "Zdědit nástroje volajícího",
@@ -52,7 +52,7 @@
       "deleted": "Agent smazán",
       "helpName": "kebab-case: malá písmena, číslice a pomlčky (např. „code-reviewer“).",
       "helpDescription": "Jedna věta: kdy delegovat tomuto agentovi (podle ní volí asistent).",
-      "helpBody": "Systémový prompt agenta — jeho role, mantinely a jak má reportovat.",
+      "helpBody": "Systémový prompt agenta: jeho role, omezení a způsob reportování.",
       "workspaceEyebrow": "Agenti",
       "workspaceReady": "Agenti načteni"
     }

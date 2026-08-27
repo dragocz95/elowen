@@ -1,5 +1,5 @@
 {
-  "description": "Prostředí oddělené podle účtů: trvalý HOME, izolace bubblewrap, pracovní prostory Git worktree, trvalé procesní pronájmy, commity s výslovnými cestami a bezpečný úklid.",
+  "description": "Izolované prostředí pro jednotlivé účty: trvalý HOME, bubblewrap, pracovní prostory Git worktree, bezpečné commity a úklid.",
   "fields": {
     "sec_execution": {
       "label": "Spouštění",
@@ -31,7 +31,7 @@
       "columnBranch": "Větev",
       "columnState": "Stav",
       "emptyWorkspaces": "Tomuto filtru neodpovídá žádný pracovní prostor.",
-      "loading": "Načítám data Sandboxu…",
+      "loading": "Načítání dat Sandboxu…",
       "loadError": "Data Sandboxu se nepodařilo načíst.",
       "retry": "Zkusit znovu",
       "create": "Vytvořit pracovní prostor",
@@ -55,7 +55,7 @@
       "removeTitle": "Odebrat pracovní prostor",
       "removeCleanDescription": "Čistý worktree a jeho vygenerovaná větev budou odebrány.",
       "discardTitle": "Zahodit pracovní prostor",
-      "discardWarning": "Pracovní prostor obsahuje místní změny nebo commity, které nejsou ve výchozím refu. Zkontroluj náhled ztrát a pokračuj přesným opsáním fráze.",
+      "discardWarning": "Pracovní prostor obsahuje místní změny nebo commity mimo výchozí ref. Zkontrolujte náhled ztráty a pokračujte přesným zadáním fráze.",
       "confirmationPhrase": "Potvrzovací fráze",
       "changedFiles": "Změněné soubory",
       "patch": "Pracovní patch",
@@ -77,7 +77,7 @@
       "environmentHint": "HOME, režim spouštění a Git identita tohoto účtu.",
       "mode": "Režim spouštění",
       "modeConfined": "Izolovaný",
-      "modeDirect": "Přímý hostitel",
+      "modeDirect": "Přímý přístup k hostiteli",
       "modeUnavailable": "Nedostupný",
       "probe": "Zkouška bubblewrap",
       "probeReady": "Připraveno",

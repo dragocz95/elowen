@@ -1,3 +1,3 @@
 {
-  "description": "Položí uživateli strukturované otázky s výběrem z předdefinovaných možností a před pokračováním počká na odpověď. Agent položí jednu či více otázek s předem danými možnostmi (výběr jedné nebo více možností, volitelně volná textová odpověď); uživatel zvolí v chatu (CLI/web), přes tlačítka či výběry na Discordu nebo číslovanou odpovědí na WhatsAppu a tah pokračuje podle jeho volby."
+  "description": "Umožňuje asistentovi položit strukturovanou otázku s předdefinovanými možnostmi a před pokračováním počkat na odpověď. Podporuje jednu i více otázek, výběr jedné či více možností a vlastní odpověď v chatu, na Discordu i WhatsAppu."
 }
