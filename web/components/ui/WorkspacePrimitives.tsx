@@ -12,7 +12,6 @@ import { useDialogOverlay } from './overlayStack';
 // cycle through this module's section rail. Re-exported here because every existing caller — including
 // the plugin UI runtime surface — reaches them by this path.
 export { SpatialWorkspaceHero, WorkspaceMetric };
-export type { SpatialWorkspaceHeroProps };
 
 export function WorkspacePage({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`workspace-page ${className}`}>{children}</div>;

@@ -1,6 +1,6 @@
 'use client';
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import type { TimeSeriesChartProps, TimeSeriesSeries } from './TimeSeriesChart';
+import type { TimeSeriesChartProps, TimeSeriesSeries } from './timeSeriesChartTypes';
 
 /** The Recharts half of `TimeSeriesChart`, split out so the library only ever arrives in its own async
  *  chunk. The wrapper is what everything imports; nothing should import this module directly. */

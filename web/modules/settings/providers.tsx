@@ -14,7 +14,7 @@ const ICON_PATHS = ['favicon.ico', 'favicon.png', 'favicon.svg'] as const;
  *
  *  Every candidate is a plain image request straight to the provider. No third-party favicon service
  *  sits in the middle, so opening Settings tells nobody except the provider you already talk to. */
-export function faviconCandidates(baseUrl: string | undefined): string[] {
+function faviconCandidates(baseUrl: string | undefined): string[] {
   if (!baseUrl) return [];
   let host: string;
   try { host = new URL(baseUrl).hostname; } catch { return []; }
