@@ -6809,20 +6809,6 @@ describe('BrainService.bindChannelContext (/context move-binding)', () => {
     expect(svc.listContextSessions(1).items.map((s) => s.id)).not.toContain(chosen);
   });
 
-  it('tears down a bound `elowen chat` terminal before re-keying so the sweep cannot later reap it as conversationGone', async () => {
-    const d = fakeDeps();
-    const svc = new BrainService(d as never);
-    const teardown = vi.fn(async () => {});
-    svc.attachTerminalTeardown(teardown);
-    await svc.start(1);
-    const chosen = await freshSpoken(svc, 'has a live terminal');
-
-    await svc.bindChannelContext(1, 'discord-c1', chosen);
-
-    // The bound terminal was torn down under the OLD id, before reassignSession moved it out of reach.
-    expect(teardown).toHaveBeenCalledWith(1, chosen);
-  });
-
   it('rejects a foreign session (owner-scope guard, invariant 6)', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

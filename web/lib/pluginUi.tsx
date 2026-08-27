@@ -59,7 +59,6 @@ import { SelectionSummary } from '../components/ui/SelectionSummary';
 import { DetailBlock } from '../components/ui/DetailBlock';
 import { BrainModelField } from '../components/ui/BrainModelField';
 import { useToast } from '../components/ui/Toast';
-import { TerminalModal } from '../components/terminal/TerminalModal';
 import { LiveTail } from '../components/terminal/LiveTail';
 import { BackendPicker } from '../components/ui/BackendPicker';
 import { ProviderPicker } from '../components/ui/ProviderPicker';
@@ -107,7 +106,6 @@ import {
 import { formatCost, formatDuration } from './format';
 import { fileIcon } from './fileIcon';
 import { dirName } from './filePath';
-import { openTerminalWindow } from './openTerminalWindow';
 import { buildUsageSummary } from './usageBars';
 import { DEFAULT_RANGE, isStoredRange, parseRange, rangeBounds, serializeRange } from './dateRange';
 import { eventIcon } from './eventMeta';
@@ -273,13 +271,16 @@ export function ensurePluginUiRuntime(): void {
     react: React,
     reactDom: ReactDom,
     jsxRuntime: JsxRuntime,
-    // @platform-keep plugin-ui-primitives :: DataTable, DataTableRow, DataTableCell && PatchView && ProgressRibbon && TerminalModal && LiveTail
+    // @platform-keep plugin-ui-primitives :: DataTable, DataTableRow, DataTableCell && PatchView && ProgressRibbon && LiveTail
     // Generic UI platform for future github/sandblox bundles; zero callers for any one primitive is expected.
     // Growing this list is cheap; shrinking it is a breaking change.
-    // `ConstellationScope` left with the orbital settings rendering it existed to switch on. The API
-    // version deliberately did NOT move for it: no bundle in this repo or in the registry ever named it,
-    // so nothing a released plugin can ask for changed. Withdrawing a primitive some bundle DOES
-    // reference has to bump the version instead.
+    // `ConstellationScope` left with the orbital settings rendering it existed to switch on, and
+    // `TerminalModal` + the `openTerminalWindow` helper left with the browser terminal they opened. The
+    // API version deliberately did NOT move for any of them: no bundle in this repo, the registry or the
+    // Chetty fork ever named one, so nothing a released plugin can ask for changed. Withdrawing a
+    // primitive some bundle DOES reference has to bump the version instead — though note the version is
+    // a compatibility CEILING (`entry.apiVersion <= host`), so it can announce an ADDITION and cannot
+    // express a removal at all; that is exactly why a referenced primitive must not be withdrawn.
     components: {
       Button, Input, Avatar: PluginAvatar, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
       Toggle, ModuleHeader, Segmented, SelectMenu, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
@@ -289,7 +290,7 @@ export function ensurePluginUiRuntime(): void {
       WorkspacePage, CompactWorkspaceHeader, PluginPageHeader, PluginPageFrame, PluginSection, ProjectFilterPills,
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
-      ConfirmDialog, TerminalModal, LiveTail,
+      ConfirmDialog, LiveTail,
       SettingsDocument, SettingsGroup, SettingsRow, SpatialIdentity, TimeSeriesChart, PluginConfigEditor, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends). DetailBlock is
@@ -327,7 +328,7 @@ export function ensurePluginUiRuntime(): void {
       allModels, cliProviders: PROVIDERS,
       compactElapsed, parseTs, isValidSchedule, baseName, copyText,
       defineEditorThemes, editorTheme,
-      formatCost, formatDuration, fileIcon, dirName, openTerminalWindow,
+      formatCost, formatDuration, fileIcon, dirName,
       buildUsageSummary, eventIcon, elowenClient, ElowenApiError,
       // The date-range helpers a usage page needs to persist and read back its own filter. They were
       // added here for the retired `work` views and removed with them, but `stats` reads the same five

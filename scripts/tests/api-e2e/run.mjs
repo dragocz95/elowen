@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// REST / SSE / WebSocket daemon contract E2E — against the REAL built daemon (`dist/daemon/index.js`).
+// REST / SSE daemon contract E2E — against the REAL built daemon (`dist/daemon/index.js`).
 //
-// Three areas, each exercised against a freshly-booted real daemon (throwaway port + temp DB/config, full
+// Two areas, each exercised against a freshly-booted real daemon (throwaway port + temp DB/config, full
 // teardown in finally, zero prod impact):
 //
 //   1) AUTH GUARD MATRIX — enumerated straight from src/api/auth.ts (isPublic allow-list, the
@@ -11,11 +11,6 @@
 //   2) SSE STREAM LIFECYCLE — GET /brain/stream against a fully-wired daemon (spawnRealDaemon + a scripted
 //      model server): authed open delivers frames and idles, an UNAUTHED open is rejected, and a client
 //      disconnect closes cleanly with no hang.
-//   3) WEBSOCKET CHANNEL — GET /ws/terminal (the @hono/node-server WS upgrade). It is public in isPublic; its
-//      capability is the single-use ticket minted through the core ticket store, which is reachable ONLY
-//      from an authenticated route holding the `reads:['terminals']` grant. Asserts the ticket gate:
-//      no/garbage ticket is rejected (close 4001 'ticket'), the mint is Bearer-gated and grant-gated, and
-//      a valid ticket passes the gate exactly once.
 //
 // TEETH: an unauthed protected request that wrongly succeeds, an SSE open that wrongly bypasses auth, or a
 // WS that accepts a ticketless client all fail the run loudly. No bare sleeps — every wait is deadline-
@@ -68,28 +63,6 @@ async function postJsonWithHeaders(baseUrl, path, token, body, extra) {
   let json = null;
   try { json = text ? JSON.parse(text) : null; } catch { /* leave null */ }
   return { status: res.status, json };
-}
-
-async function patchJson(baseUrl, path, token, body) {
-  const headers = { 'content-type': 'application/json' };
-  if (token) headers.authorization = `Bearer ${token}`;
-  const res = await fetch(`${baseUrl}${path}`, { method: 'PATCH', headers, body: JSON.stringify(body ?? {}) });
-  const text = await res.text();
-  let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch { /* leave null */ }
-  return { status: res.status, json };
-}
-
-/** Turn a discovered plugin on, performing the same two-step consent handshake the UI does: the first call
- *  answers 409 listing the grants it wants, the second repeats them back. Reading them off the refusal
- *  instead of hardcoding a list keeps this working when a manifest changes what it asks for. */
-async function enablePlugin(baseUrl, token, name) {
-  let r = await patchJson(baseUrl, `/plugins/${name}`, token, { enabled: true });
-  if (r.status === 409 && Array.isArray(r.json?.grants)) {
-    r = await patchJson(baseUrl, `/plugins/${name}`, token, { enabled: true, acknowledgeGrants: r.json.grants });
-  }
-  assert(r.status === 200, `[enable/${name}] PATCH /plugins/${name} {enabled:true} → 200 (got ${r.status} ${JSON.stringify(r.json)})`);
-  return r;
 }
 
 // ---- SSE helper (same frame parsing as scripts/tests/brain-e2e/chat-turn.mjs) ------------------------
@@ -161,67 +134,6 @@ async function openStream(baseUrl, path, token) {
   };
 }
 
-// ---- WebSocket helper -------------------------------------------------------------------------------
-
-/** Open a WS to `url`, then resolve with the observed lifecycle within `deadlineMs`. A close resolves
- *  immediately with its code/reason; if the socket stays open past the deadline we resolve open+not-closed
- *  (the daemon accepted a bridge — used only for the valid-ticket path). Node 22 ships a global WebSocket. */
-function wsProbe(url, deadlineMs = 5_000) {
-  return new Promise((resolve) => {
-    const ws = new WebSocket(url);
-    const result = { opened: false, closed: false, code: null, reason: null, errored: false };
-    let settled = false;
-    const finish = () => { if (settled) return; settled = true; clearTimeout(timer); try { ws.close(); } catch { /* already closing */ } resolve(result); };
-    const timer = setTimeout(finish, deadlineMs);
-    ws.addEventListener('open', () => { result.opened = true; });
-    ws.addEventListener('error', () => { result.errored = true; });
-    ws.addEventListener('close', (e) => { result.closed = true; result.code = e.code; result.reason = e.reason; finish(); });
-  });
-}
-
-const toWs = (baseUrl) => baseUrl.replace(/^http/, 'ws');
-
-// ---- fixture plugins for the WS ticket area ---------------------------------------------------------
-
-/** The session name the mint routes below issue tickets for. Any string works — the core ticket store
- *  does not interpret it; who may ask for one is the mint route's business. */
-const WS_SESSION = 'elowen-e2e';
-
-/** GRANTED minter: the shape a plugin takes when it owns a terminal surface. Root-mounts an
- *  authenticated route that calls the core `host.terminals().ticketIssue` seam — the SAME single-use
- *  store `/ws/terminal` redeems — and declares the `reads:['terminals']` capability that seam is gated on.
- *
- *  Why a fixture and not a product plugin: the ticket mint used to be `POST /sessions/:name/ws-ticket`
- *  from the bundled `agents` plugin, which now lives in the plugin registry and is not in this package
- *  (and cannot be fetched from CI). The daemon-side subject never moved — the ticket store, the
- *  `/ws/terminal` upgrade in src/daemon/index.ts, its isPublic exemption and the auth guard in front of
- *  every non-exempt route are all core. So the mint gets a fixture SUBJECT and the gate keeps its teeth. */
-const WS_TICKET_PLUGIN = {
-  name: 'e2e-ws-ticket',
-  manifest: {
-    provides: { apiRoutes: ['/e2e-terminal/ws-ticket/:session'] },
-    capabilities: { reads: ['terminals'] },
-  },
-  register: `
-  ctx.registerApiRoute({
-    rootMount: '/e2e-terminal/ws-ticket/:session', path: '', method: 'POST', access: 'user',
-    handler: async (req) => ({ body: { ticket: ctx.host.terminals().ticketIssue(req.params.session, req.auth.userId) } }),
-  });`,
-};
-
-/** UNGRANTED minter: identical route, manifest deliberately WITHOUT reads:['terminals']. The host seam
- *  must refuse it, so an admin-installed plugin cannot reach the terminal capability without declaring
- *  (and having consented to) the power it is asking for. */
-const WS_TICKET_UNGRANTED_PLUGIN = {
-  name: 'e2e-ws-ticket-ungranted',
-  manifest: { provides: { apiRoutes: ['/e2e-terminal-ungranted/ws-ticket/:session'] } },
-  register: `
-  ctx.registerApiRoute({
-    rootMount: '/e2e-terminal-ungranted/ws-ticket/:session', path: '', method: 'POST', access: 'user',
-    handler: async (req) => ({ body: { ticket: ctx.host.terminals().ticketIssue(req.params.session, req.auth.userId) } }),
-  });`,
-};
-
 // ---- prod-safety guard: prod daemon PID must be untouched -------------------------------------------
 
 function prodDaemonPid() {
@@ -231,76 +143,6 @@ function prodDaemonPid() {
   } catch { return null; }
 }
 
-// =====================================================================================================
-// 3) WEBSOCKET CHANNEL — /ws/terminal ticket gate, on the re-engaged plain daemon.
-// =====================================================================================================
-async function websocketChannel(baseUrl, token) {
-  console.log('\n[3] WEBSOCKET CHANNEL — /ws/terminal (ticket gate)');
-  const wsBase = toWs(baseUrl);
-
-  const mintPath = `/e2e-terminal/ws-ticket/${WS_SESSION}`;
-  const ungrantedMintPath = `/e2e-terminal-ungranted/ws-ticket/${WS_SESSION}`;
-
-  // Nothing in THIS package mints a terminal ticket any more (the `agents` plugin that root-mounted
-  // POST /sessions/:name/ws-ticket moved to the plugin registry), so the two fixture plugins written
-  // into the daemon's plugin dir before boot supply the mint. Hold the enable to 200: if a minter
-  // cannot be turned on, this area has nothing to test and must say so rather than quietly checking
-  // the wrong thing.
-  await enablePlugin(baseUrl, token, WS_TICKET_PLUGIN.name);
-  await enablePlugin(baseUrl, token, WS_TICKET_UNGRANTED_PLUGIN.name);
-  ok('enabled the granted + ungranted fixture minters (root-mounted routes over the core ticket store)');
-
-  // The mint endpoint is Bearer-gated (NOT in isPublic): tokenless → 401 unauthorized. The guard runs
-  // before the plugin dispatcher, so this is the daemon refusing, not the plugin.
-  let p = await postJson(baseUrl, mintPath, null, {});
-  assert(p.status === 401 && p.json?.error === 'unauthorized',
-    `[ws-ticket/no-token] POST ${mintPath} → 401 tokenless (got ${p.status} ${JSON.stringify(p.json)})`);
-  ok('POST <mint> → 401 tokenless (capability mint is Bearer-gated)');
-
-  // Grant gate: the same route in a plugin that did not declare reads:['terminals'] must NOT get a
-  // ticket, even with a valid admin Bearer. The seam throws, the dispatcher answers 500 — what matters
-  // is that no capability came back.
-  p = await postJson(baseUrl, ungrantedMintPath, token, {});
-  assert(p.status !== 200 && !p.json?.ticket,
-    `[ws-ticket/no-grant] an ungranted plugin gets NO ticket from host.terminals() (got ${p.status} ${JSON.stringify(p.json)})`);
-  ok(`POST <ungranted mint> → ${p.status}, no ticket (reads:['terminals'] is enforced at the host seam)`);
-
-  // No ticket → the upgrade is accepted but the handler immediately closes 4001 'ticket' (the gate).
-  let w = await wsProbe(`${wsBase}/ws/terminal`);
-  assert(w.closed && w.code === 4001 && w.reason === 'ticket',
-    `[ws/no-ticket] /ws/terminal with no ticket closes 4001 'ticket' (got ${JSON.stringify(w)})`);
-  ok("WS /ws/terminal (no ticket) → closed 4001 'ticket' (ticketless client rejected)");
-
-  // Garbage ticket → same rejection (consume() returns null for an unknown id).
-  w = await wsProbe(`${wsBase}/ws/terminal?ticket=deadbeefdeadbeefdeadbeef`);
-  assert(w.closed && w.code === 4001 && w.reason === 'ticket',
-    `[ws/garbage-ticket] /ws/terminal with a garbage ticket closes 4001 'ticket' (got ${JSON.stringify(w)})`);
-  ok("WS /ws/terminal (garbage ticket) → closed 4001 'ticket'");
-
-  // Authed mint on the GRANTED plugin → a real single-use ticket out of the core store.
-  p = await postJson(baseUrl, mintPath, token, {});
-  assert(p.status === 200 && typeof p.json?.ticket === 'string' && p.json.ticket,
-    `[ws-ticket/authed] POST ${mintPath} → 200 { ticket } with a valid Bearer (got ${p.status} ${JSON.stringify(p.json)})`);
-  const ticket = p.json.ticket;
-  ok('POST <mint> → 200 { ticket } with a valid Bearer');
-
-  // Valid ticket → PAST the ticket gate. It is consumed; the handler then tries to attach a PTY. node-pty
-  // is unavailable in this environment, so it closes 4001 'pty' — a DIFFERENT reason than the ticket-gate
-  // rejection, which is exactly what proves the ticket was accepted. If a host DID have node-pty the socket
-  // would instead stay open (a bridge); both outcomes are "not the 'ticket' rejection".
-  w = await wsProbe(`${wsBase}/ws/terminal?ticket=${encodeURIComponent(ticket)}`);
-  assert(!(w.closed && w.reason === 'ticket'),
-    `[ws/valid-ticket] a valid ticket must pass the ticket gate (not close with reason 'ticket') (got ${JSON.stringify(w)})`);
-  ok(`WS /ws/terminal (valid ticket) → passed the ticket gate (${w.closed ? `closed 4001 '${w.reason}'` : 'bridge stayed open'})`);
-
-  // Single-use: re-presenting the SAME (already consumed) ticket is rejected like an unknown one.
-  w = await wsProbe(`${wsBase}/ws/terminal?ticket=${encodeURIComponent(ticket)}`);
-  assert(w.closed && w.code === 4001 && w.reason === 'ticket',
-    `[ws/replayed-ticket] a consumed ticket is single-use → closes 4001 'ticket' (got ${JSON.stringify(w)})`);
-  ok("WS /ws/terminal (replayed consumed ticket) → closed 4001 'ticket' (single-use enforced)");
-}
-
-// =====================================================================================================
 // 2) SSE STREAM LIFECYCLE — /brain/stream, on a fully-wired daemon (spawnRealDaemon + model server).
 // =====================================================================================================
 async function sseStreamLifecycle() {
@@ -461,8 +303,8 @@ async function main() {
   // down here because a plugin folder that appears after boot is not discovered until a rescan.
   let plainDaemon = null;
   try {
-    plainDaemon = await bootPlainDaemon({ plugins: [WS_TICKET_PLUGIN, WS_TICKET_UNGRANTED_PLUGIN] });
-    await runAuthAndWs(plainDaemon);
+    plainDaemon = await bootPlainDaemon();
+    await runAuthGuardMatrix(plainDaemon);
   } finally {
     if (plainDaemon) await plainDaemon.stop();
   }
@@ -481,7 +323,7 @@ async function main() {
 
 /** Run the auth matrix, then the WS area on the same re-engaged plain daemon (the CALLER owns the boot
  *  and the teardown). Kept together because area 3 needs area 1's live daemon + admin token. */
-async function runAuthAndWs(daemon) {
+async function runAuthGuardMatrix(daemon) {
   console.log('\n[1] AUTH GUARD MATRIX');
   const { baseUrl } = daemon;
   const admin = { username: 'admin', password: `e2e-${Math.random().toString(36).slice(2)}` };
@@ -552,9 +394,6 @@ async function runAuthAndWs(daemon) {
   r = await get(baseUrl, '/health');
   assert(r.status === 200 && r.json?.ok === true, `[public/isPublic] GET /health → 200 tokenless after re-engage (got ${r.status})`);
   ok('GET /health → 200 tokenless after auth re-engaged (isPublic state-independent)');
-
-  // Area 3 rides the same re-engaged daemon + admin token.
-  await websocketChannel(baseUrl, token);
 }
 
 main().then(() => {

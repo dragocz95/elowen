@@ -120,10 +120,6 @@ export const brainContextSchema = z.object({
 
 /** Open (or re-attach to) the caller's `elowen chat` terminal bound to their conversation
  *  (POST /brain/terminal, admin-only). A non-string/absent `session` is a 400. */
-export const brainTerminalSchema = z.object({
-  session: z.string(),
-});
-
 /** Set a persistent goal on the caller's conversation (POST /brain/goal). A non-string/absent `text` is a
  *  400; `turnBudget` is clamped to [1, 50] by the route; `draft` opens the goal in draft (contract) mode. */
 export const brainGoalSchema = z.object({

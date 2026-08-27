@@ -6,16 +6,6 @@ import type { BrainBinding } from './brainSession';
 // daemon bearer token server-side from the httpOnly session cookie. No token ever lives in JS.
 export const BASE = '/api';
 
-/** WebSocket URL for the terminal PTY stream, carrying only the single-use ticket (never the token).
- *  Behind a proxy / on localhost it's same-origin — nginx's `/ws/` location (or the local daemon)
- *  bridges it. In proxy-less IP mode there's no `/ws/` hop, so `directPort` (the daemon's public port,
- *  surfaced by `/api/ws-config`) targets the daemon straight: `ws://<host>:<port>/ws/terminal`. */
-export function terminalWsUrl(ticket: string, directPort?: number | null): string {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = directPort ? `${location.hostname}:${directPort}` : location.host;
-  return `${proto}//${host}/ws/terminal?ticket=${encodeURIComponent(ticket)}`;
-}
-
 export class ElowenApiError extends Error {
   /** `details` carries the parsed error body. A refusal sometimes states what the caller has to answer
    *  with — the grants an enable must acknowledge, say — which the short `code` cannot express. */
@@ -110,14 +100,6 @@ export const elowenClient = {
   /** Admin: clear the caller's recorded brain usage and origin rollup. */
   resetUsage: () => req<ResetUsageResult>('/usage/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
   sessionPane: (name: string, ansi = false) => req<{ pane: string }>(`/sessions/${encodeURIComponent(name)}/pane${ansi ? '?ansi=1' : ''}`),
-  resizeSession: (name: string, cols: number, rows: number) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/resize`, json({ cols, rows })),
-  /** Forward raw xterm `onData` bytes to a session's pane (snapshot-mirror interactive terminal). */
-  sessionInput: (name: string, data: string) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/input`, json({ data })),
-  /** Mint a single-use ticket to open the terminal WebSocket stream for a session (PTY stream). */
-  wsTicket: (name: string) => req<{ ticket: string }>(`/sessions/${encodeURIComponent(name)}/ws-ticket`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
-  // Web-native (not proxied to the daemon): how to reach the terminal WS. `directPort` set ⇒ connect
-  // straight to the daemon (proxy-less IP mode); null ⇒ same-origin `/ws/`. Stable per deployment.
-  wsConfig: () => req<{ directPort: number | null }>('/ws-config'),
   // Enabled plugins with a browser UI (menu metadata + bundle URL). `lang` localizes menu labels.
   pluginUi: (lang?: string) => req<PluginUiListing[]>(`/plugins/ui${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`),
   getConfig: () => req<ElowenConfig>('/config'),

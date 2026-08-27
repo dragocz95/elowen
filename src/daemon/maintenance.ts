@@ -3,7 +3,6 @@ import { sweepChatImages } from '../brain/chatImages.js';
 import { chatFilesDir, sweepChatFiles } from '../brain/chatFiles.js';
 import { isEvictable, vitality, type MemoryRetentionConfig } from '../brain/memoryVitality.js';
 import { createBootRecovery } from '../brain/recovery/index.js';
-import type { BrainTerminalService } from '../brain/terminalService.js';
 import type { EmbeddingQueue } from '../embeddings/embedQueue.js';
 import { SystemClock } from '../shared/clock.js';
 import type { ConfigStore } from '../store/configStore.js';
@@ -13,7 +12,6 @@ import type { MemoryStore } from '../store/memoryStore.js';
 import { USAGE_HISTORY_DAYS } from '../store/memoryStore.js';
 import type { UsageOriginStore } from '../store/usageOriginStore.js';
 import type { UserStore } from '../store/userStore.js';
-import type { TicketStore } from '../terminal/ticketStore.js';
 import { announceBoot, installGracefulShutdown, type ShutdownControl } from './shutdown.js';
 
 const MEMORY_EVICTION_BATCH_SIZE = 1_000;
@@ -45,7 +43,6 @@ export function runMemoryEvictionSweep(deps: MemoryEvictionSweepDeps): number {
 
 interface MaintenanceDeps {
   brain: BrainService | undefined;
-  brainTerminal: BrainTerminalService | undefined;
   brainStore: BrainStore;
   chatImagesDir: string | undefined;
   config: ConfigStore;
@@ -54,7 +51,6 @@ interface MaintenanceDeps {
   memoryStore: MemoryStore;
   users: UserStore;
   usageOrigins: UsageOriginStore | undefined;
-  tickets: TicketStore;
   pluginReconcile: Promise<unknown>;
   dbPath: string;
   restartMarker: string | undefined;
@@ -83,9 +79,6 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     // channel turn — and no client connecting the moment the port opens — can observe (or act on) a
     // phantom running delegation. Per-provider failures are isolated inside the coordinator.
     recovery?.claimAll(clock.now());
-    // One-shot: reap chat terminals + tokens orphaned while the daemon was down (tmux died / conversation
-    // deleted), and kill stray `elowen-chat-*` panes with no binding. Periodic sweep is scheduled below.
-    void deps.brainTerminal?.sweep().catch((e) => deps.log.error('brain terminal sweep failed', e));
     // Bring up plugin platform channels (Discord bot, …). Fail-open per adapter. Once they are connected,
     // announce that the daemon is up — every boot, with the wording depending on whether an operator
     // `/restart` asked for it.
@@ -188,13 +181,6 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     };
     sweepChatAttachments();
     const stopChatImageSweep = clock.setInterval(sweepChatAttachments, 86_400_000);
-    // Sweep expired terminal-WS tickets so a burst of unredeemed tickets can't grow the map unbounded.
-    const stopTicketSweep = clock.setInterval(() => deps.tickets.sweep(clock.now()), 60_000);
-    // Reconcile chat terminals against live tmux: reap orphaned tokens/bindings and stray `elowen-chat-*`
-    // panes. Backstops the proactive teardown (self-exit `/quit`, delete-conversation) so nothing leaks.
-    const stopTerminalSweep = clock.setInterval(() => {
-      void deps.brainTerminal?.sweep().catch((e) => deps.log.error('brain terminal sweep failed', e));
-    }, 60_000);
     // Reap live PI sessions nobody watches and nothing runs in. A client's binding expires on its own
     // TTL, but the RUNTIME was owned by no one: a browser tab closed over a running agent (which no
     // longer stops it) would otherwise leak its session until the daemon restarted. The countdown starts
@@ -207,6 +193,6 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     const stopEmbedQueue = clock.setInterval(() => {
       void deps.embedQueue.drain().catch((e) => deps.log.error('embed queue drain failed', e));
     }, 30_000);
-    return () => { stopTokenPurge(); stopEventPurge(); stopOriginRetention(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopTicketSweep(); stopTerminalSweep(); stopIdleSessionReap(); stopEmbedQueue(); };
+    return () => { stopTokenPurge(); stopEventPurge(); stopOriginRetention(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopIdleSessionReap(); stopEmbedQueue(); };
   };
 }

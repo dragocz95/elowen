@@ -202,15 +202,3 @@ export function mayDeliverToSession<T extends { user_id: number; direct: number 
     && row.direct === 1;
 }
 
-/** The deterministic tmux session name for an admin's interactive `elowen chat` terminal bound to one
- *  brain conversation. Derived (never reverse-hashed): the DB row stays authoritative for the exact
- *  `brainSessionId` + token, while `classifySession` can extract the owner userId back out of the name.
- *    brain-<uid>        → elowen-chat-<uid>-default
- *    brain-<uid>-<tail> → elowen-chat-<uid>-<tail>
- *  The `chat-` prefix is reserved (workers are personas, advisors use `advisor-`), so it never collides. */
-export function brainTerminalName(userId: number, brainSessionId: string): string {
-  const tail = brainSessionId === defaultUserSessionId(userId)
-    ? 'default'
-    : brainSessionId.slice(`brain-${userId}-`.length);
-  return `elowen-chat-${userId}-${tail}`;
-}

@@ -444,14 +444,12 @@ export class BrainService {
         return this.bindChannelContext(linked.id, channelKey, sessionId);
       },
     });
-    // Destructive-lifecycle unit. Every collaborator is a live instance built above; `terminalTeardown` is
-    // read through a getter because it is attached to the facade only AFTER construction (attachTerminalTeardown).
+    // Destructive-lifecycle unit. Every collaborator is a live instance built above.
     this.teardown = new SessionTeardownService({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
       elicitation: this.elicitation, goals: this.goals, cards: this.cards,
       channelService: this.channelService, lifecycle: this.lifecycle, idleClock: this.idleClock,
       resolvePlugins: () => this.resolvePlugins(),
-      terminalTeardown: () => this.terminalTeardown,
     });
     this.processSvc = new SessionProcessService({ store: d.store, attachments: this.attachments, identity: this.identity });
     this.queue = new SessionQueueService({ sessions: this.sessions, lifecycle: this.lifecycle });
@@ -466,15 +464,6 @@ export class BrainService {
    *  for is the one that asked for it), so this is the moment its rollback copy can finally be judged.
    *  Late-bound because the marketplace is constructed after the brain, like `restartHandler`. */
   afterPluginsApplied?: () => Promise<void>;
-
-  /** Tear down the admin chat terminal bound to a conversation before it is deleted (BrainTerminalService.
-   *  stopForSession). Late-bound: the terminal service is constructed AFTER the brain (it needs store+users),
-   *  so bootstrap attaches this once ready and avoids a constructor cycle.
-   *  Undefined ⇒ no terminals wired; the janitor sweep still reaps an orphaned binding as a backstop. */
-  private terminalTeardown?: (userId: number, sessionId: string) => Promise<void>;
-  attachTerminalTeardown(fn: (userId: number, sessionId: string) => Promise<void>): void {
-    this.terminalTeardown = fn;
-  }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
     return this.sessions.withLock(key, fn);
@@ -1285,11 +1274,6 @@ export class BrainService {
       if (!this.isBindQuiescent(chosenSessionId)) {
         throw new Error('this conversation has work in progress and cannot be moved into a channel right now');
       }
-      // A bound `elowen chat` terminal was launched with `--session <chosenSessionId>`; the re-key below
-      // moves that id out from under it, so its tmux would resume a gone id and the next sweep would reap
-      // it as 'conversationGone' — killing the live pane and revoking its token. Tear it down cleanly
-      // first (mirrors deleteSession), a no-op when the conversation has no bound terminal.
-      void this.terminalTeardown?.(callerUserId, chosenSessionId).catch((e) => logger('brain').error(`terminal teardown failed for ${chosenSessionId}`, e));
       // Live-session safety: a conversation open in web/CLI must not have its id changed underneath the
       // live PI object — dispose it and clear the active pointer first (mirrors deleteSession).
       if (this.sessions.get(chosenSessionId)) this.sessions.dispose(chosenSessionId);

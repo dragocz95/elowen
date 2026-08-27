@@ -18,11 +18,13 @@ function setup(
   const admin = users.create('admin', 'pw'); // first user → is_admin
   const carol = users.create('carol', 'pw');
   const config = new ConfigStore(db);
-  /** Terminal bindings still resolvable when deleteAllManagedSessions was invoked (-1 = never invoked). */
+  /** The user's own rows still present when deleteAllManagedSessions was invoked (-1 = never invoked).
+   *  `user_prompts` stands in for "the user's stored data": it is wiped by users.delete(), so seeing it
+   *  still there proves the teardown ran BEFORE the delete, which is the order under test. */
   let bindingsAtTeardown = -1;
   const brain = {
     deleteAllManagedSessions: (userId: number): number => {
-      bindingsAtTeardown = (db.prepare('SELECT COUNT(*) c FROM brain_terminals WHERE user_id = ?').get(userId) as { c: number }).c;
+      bindingsAtTeardown = (db.prepare('SELECT COUNT(*) c FROM user_prompts WHERE user_id = ?').get(userId) as { c: number }).c;
       return 0;
     },
   };
@@ -40,13 +42,13 @@ const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Beare
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('DELETE /users/:id tears down what is running before it deletes what is stored', () => {
-  it('runs brain-session teardown while the user\'s brain_terminals bindings still exist', async () => {
+  it('runs brain-session teardown while the user\'s own rows still exist', async () => {
     const { app, db, carol, adminTok, bindings } = setup();
-    db.prepare("INSERT INTO brain_terminals (terminal_name, user_id, brain_session_id, token) VALUES ('elowen-chat-x', ?, 'brain-1', 'tok')").run(carol.id);
+    db.prepare("INSERT INTO user_prompts (user_id, name, content) VALUES (?, 'p', 'b')").run(carol.id);
 
     expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
     expect(bindings()).toBe(1);
-    expect(db.prepare('SELECT COUNT(*) c FROM brain_terminals WHERE user_id = ?').get(carol.id)).toEqual({ c: 0 });
+    expect(db.prepare('SELECT COUNT(*) c FROM user_prompts WHERE user_id = ?').get(carol.id)).toEqual({ c: 0 });
   });
 
   it('runs loaded plugin cleanup while the user row still exists', async () => {

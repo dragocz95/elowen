@@ -101,6 +101,7 @@ function migrate(db: Db): void {
   // migration with the highest number placed earlier would raise the counter past every migration
   // below it and skip them all in silence.
   makeProjectIdsMonotonic(db);
+  dropBrainTerminals(db);
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
@@ -478,7 +479,7 @@ const USER_REFERENCE_COLUMNS: readonly (readonly [table: string, column: string]
   ['brain_sessions', 'user_id'], ['brain_goals', 'user_id'],
   ['memories', 'user_id'], ['memory_events', 'user_id'], ['memory_categories', 'user_id'],
   ['user_projects', 'user_id'], ['user_prompts', 'user_id'], ['auth_tokens', 'user_id'],
-  ['brain_terminals', 'user_id'], ['user_plugin_config', 'user_id'], ['plugin_secrets', 'owner_id'],
+  ['user_plugin_config', 'user_id'], ['plugin_secrets', 'owner_id'],
   ['user_external_identities', 'user_id'],
   ['usage_by_origin', 'user_id'], ['brain_session_origins', 'user_id'],
 ];
@@ -504,6 +505,18 @@ function seedUserSequenceAboveEveryReference(db: Db): void {
   // The row exists only once an AUTOINCREMENT insert has happened, so upsert rather than assuming it.
   db.prepare("INSERT INTO sqlite_sequence (name, seq) SELECT 'users', ? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'users')").run(highest);
   db.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'users' AND seq < ?").run(highest, highest);
+}
+
+/** v17 — drop the retired interactive-terminal binding table. The browser terminal (the xterm page, its
+ *  WebSocket stream and the tmux-attached `elowen chat` session behind it) was removed, so nothing reads
+ *  or writes `brain_terminals` any more. Its CREATE statement is gone from schema.sql, so a fresh DB never
+ *  makes it; this drops it on every DB that predates the removal. DROP TABLE IF EXISTS is idempotent and
+ *  takes the table's indexes with it. The per-terminal auth tokens went with the feature, and the table
+ *  held no data anyone can miss — a binding was only ever meaningful while its tmux pane was alive. */
+function dropBrainTerminals(db: Db): void {
+  runOnce(db, 17, () => {
+    db.exec('DROP TABLE IF EXISTS brain_terminals;');
+  });
 }
 
 /** v6 — drop the retired per-user/per-platform personality tables. The personality subsystem collapsed

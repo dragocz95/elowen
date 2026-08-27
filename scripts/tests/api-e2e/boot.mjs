@@ -14,7 +14,7 @@
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,46 +59,17 @@ async function waitForHealth(baseUrl, deadlineMs) {
   throw new Error(`daemon did not become healthy within ${deadlineMs}ms (last: ${lastErr})`);
 }
 
-/** Write a FIXTURE plugin into the daemon's writable plugin dir, the way the marketplace lays an
- *  installed plugin down: `<dirname(dbPath)>/plugins/<name>/` (brainCore.ts derives that path from the
- *  DB location, so a plugin put there before the first boot is discovered by the boot scan).
- *
- *  Same reasoning as `tests/helpers/fixturePlugin.ts`, which does this for the in-process suites: when
- *  the subject is a DAEMON mechanism reached through a plugin seam, the plugin has to be a fixture. A
- *  product plugin would tie the assertion to whatever that plugin currently does — and after the
- *  extraction the product plugin that used to own this seam is not in this package at all. The source
- *  lives here as a string for the same reason it does there: it must be a real folder on disk, and
- *  generating it keeps the plugin and the assertion that reads it in one file.
- *
- *  @param {string} dataDir  The daemon's data dir (the DB sits directly inside it).
- *  @param {{name: string, manifest?: object, register: string}} spec
- */
-function writeFixturePlugin(dataDir, spec) {
-  const dir = join(dataDir, 'plugins', spec.name);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
-    name: spec.name, version: '1.0.0', apiVersion: '1',
-    description: `api-e2e fixture plugin ${spec.name}`, entry: 'index.mjs',
-    ...(spec.manifest ?? {}),
-  }, null, 2));
-  writeFileSync(join(dir, 'index.mjs'), `export function register(ctx){\n${spec.register}\n}\n`);
-}
-
 /**
  * Boot a plain daemon in fresh-install setup mode (0 users). No bootstrap, no provider config.
  *
  * @param {object} [opts]
  * @param {number} [opts.healthTimeoutMs] Hard deadline for boot readiness (default 30000).
- * @param {{name: string, manifest?: object, register: string}[]} [opts.plugins] Fixture plugins to lay
- *   down in the writable plugin dir BEFORE the first boot. Written, not enabled — the test enables them
- *   through the real PATCH /plugins/:name route, so the daemon takes the same path a user's toggle does.
  * @returns {Promise<{ baseUrl: string, port: number, dataDir: string, stop: ()=>Promise<void> }>}
  */
 export async function bootPlainDaemon(opts = {}) {
   const healthTimeoutMs = opts.healthTimeoutMs ?? 30_000;
   const dataDir = mkdtempSync(join(tmpdir(), 'elowen-api-e2e-'));
   const dbPath = join(dataDir, 'elowen.db');
-  for (const spec of opts.plugins ?? []) writeFixturePlugin(dataDir, spec);
   const port = await freePort();
   const baseUrl = `http://127.0.0.1:${port}`;
 

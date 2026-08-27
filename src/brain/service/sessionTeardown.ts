@@ -17,7 +17,6 @@ import type { ConversationLifecycle } from './lifecycle.js';
 import type { IdleSessionClock } from './liveSessionReaper.js';
 import { sessionHasWorkInFlight, sparedChildSessionIds } from './sessionQuiescence.js';
 
-type TerminalTeardownFn = (userId: number, sessionId: string) => Promise<void>;
 
 interface SessionTeardownDeps {
   store: BrainStore;
@@ -33,7 +32,6 @@ interface SessionTeardownDeps {
   resolvePlugins: () => Promise<PluginRegistry | undefined>;
   /** The chat-terminal teardown is attached to BrainService AFTER construction, so it is read through a
    *  getter each time — capturing it by value here would freeze in the unwired `undefined`. */
-  terminalTeardown: () => TerminalTeardownFn | undefined;
 }
 
 /** The destructive session lifecycle, split out of BrainService: interrupting a running turn (Esc/Stop),
@@ -53,7 +51,6 @@ export class SessionTeardownService {
   private readonly lifecycle: ConversationLifecycle;
   private readonly idleClock: IdleSessionClock;
   private readonly resolvePlugins: () => Promise<PluginRegistry | undefined>;
-  private readonly terminalTeardown: () => TerminalTeardownFn | undefined;
   constructor(deps: SessionTeardownDeps) {
     this.store = deps.store;
     this.sessions = deps.sessions;
@@ -65,7 +62,6 @@ export class SessionTeardownService {
     this.lifecycle = deps.lifecycle;
     this.idleClock = deps.idleClock;
     this.resolvePlugins = deps.resolvePlugins;
-    this.terminalTeardown = deps.terminalTeardown;
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -394,11 +390,6 @@ export class SessionTeardownService {
    *  A delete spares nothing, unlike a stop: a detached delegate or a background workflow keeps burning
    *  tokens for an inbox that has ceased to exist. */
   private teardownDeletedSession(userId: number, id: string): void {
-    // Tear down any chat terminal bound to this conversation FIRST (docs order: terminal, then session).
-    // Fire-and-forget — no delete path awaits it, and the binding row outlives store.deleteSession
-    // (separate table), so the async teardown still resolves the row; the janitor is the backstop if
-    // it's unwired. No-op when the conversation has no bound terminal (channel/task sessions never do).
-    void this.terminalTeardown()?.(userId, id).catch((e) => logger('brain').error(`terminal teardown failed for ${id}`, e));
     this.cleanupProcessesForTree(id);
     this.cancelDelegatedWorkFor(id);
     this.elicitation.cancelForSession(id, 'conversation deleted'); // release a parked turn before dropping its session

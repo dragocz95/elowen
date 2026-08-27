@@ -116,7 +116,6 @@
     "shiki": "^4.3.1",
     "typebox": "^1.1.38",
     "web-push": "^3.6.7",
-    "ws": "^8.21.1",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
@@ -132,7 +131,6 @@
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "@types/web-push": "^3.6.4",
-    "@types/ws": "^8.18.1",
     "dependency-cruiser": "^17.4.3",
     "elowen-plugin-ui-kit": "0.4.0",
     "eslint": "^10.8.0",

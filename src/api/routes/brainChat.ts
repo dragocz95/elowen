@@ -1,5 +1,5 @@
 import { parseBody } from '../validation.js';
-import { brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSchema, brainToggleSchema, brainThinkSchema, brainCwdSchema, brainCompactSchema, brainContextSchema, brainTerminalSchema, brainGoalSchema, brainAnswerSchema, subagentSendSchema } from '../schemas/brain.js';
+import { brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSchema, brainToggleSchema, brainThinkSchema, brainCwdSchema, brainCompactSchema, brainContextSchema, brainGoalSchema, brainAnswerSchema, subagentSendSchema } from '../schemas/brain.js';
 import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
 import { logger } from '../../shared/logger.js';
 import type { ElowenApp, ElowenContext } from '../context.js';
@@ -183,27 +183,6 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     const { channel, session } = await parseBody(c, brainContextSchema);
     try { return c.json(await brain.bindChannelContext(c.get('user').id, channel, session)); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
-  }, { admin: true }));
-
-  // Open (or re-attach to) an admin's interactive `elowen chat` terminal bound to one of THEIR OWN
-  // conversations. ADMIN-only (invariant 4): agent tokens AND ordinary full-scope non-admins are rejected
-  // 403 — the same is_admin gate /brain/context uses. Ownership is enforced inside open() (a foreign
-  // admin's session throws `unknown session`), so the generic admin bypass never widens this. The response
-  // carries only { terminal, created } — the per-terminal token (invariant 5) never leaves the daemon.
-  // The running state is DERIVED from the owner-filtered GET /sessions (no separate polling endpoint).
-  app.post('/brain/terminal', withBrain(async (c) => {
-    if (!d.brainTerminal) return c.json({ error: 'brain unavailable' }, 503);
-    const { session } = await parseBody(c, brainTerminalSchema);
-    try { return c.json(await d.brainTerminal.open(c.get('user').id, session), 201); }
-    catch (e) {
-      // Never echo raw error text here: open()'s launch-failure path would otherwise carry the tmux argv
-      // (and thus the per-terminal token) into the response body. Only the known ownership rejection is
-      // surfaced verbatim; open() already sanitizes launch failures to a constant, and any other throw
-      // collapses to that same constant so nothing sensitive leaks (invariant 5).
-      const msg = (e as Error).message;
-      if (msg === 'unknown session') return c.json({ error: msg }, 404);
-      return c.json({ error: 'terminal launch failed' }, 409);
-    }
   }, { admin: true }));
 
   // Set the active conversation's reasoning effort live (the /think command) — no session rebuild.

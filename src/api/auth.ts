@@ -16,11 +16,6 @@ function isPublic(method: string, path: string, hasAvatarSig: boolean): boolean 
   // and the asset route serves only whitelisted PNGs of the active theme.
   if (method === 'GET' && path === '/public/theme') return true;
   if (method === 'GET' && /^\/public\/theme\/assets\/[^/]+$/.test(path)) return true;
-  // Terminal WebSocket upgrade. It reaches the daemon directly (nginx /ws/ → :4400), bypassing the
-  // BFF that injects the session cookie, so it carries no token. Its capability is the single-use,
-  // short-TTL ticket in the query string, minted only after an authenticated POST /sessions/:name/
-  // ws-ticket passed the ownership check and consumed inside the WS handler.
-  if (method === 'GET' && path === '/ws/terminal') return true;
   // A signed avatar request (?sig=…) carries its own short-lived HMAC and is validated in the route,
   // so it doesn't need a session token — that's the whole point of finding W2's fix (no token in the
   // <img> URL). Only the signed form is open; the unsigned form still requires a bearer/token.

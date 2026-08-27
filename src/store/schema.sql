@@ -558,15 +558,6 @@ CREATE INDEX IF NOT EXISTS idx_usage_by_origin_day ON usage_by_origin(day);
 -- is stored verbatim (not hashed) because the tmux session survives a daemon restart and teardown must be
 -- able to revoke the exact live token; this table is private, out of every wire/log path. One terminal per
 -- (admin, conversation) via the UNIQUE constraint; the tmux name is the stable handle the DELETE/stream
--- routes key on.
-CREATE TABLE IF NOT EXISTS brain_terminals (
-  terminal_name    TEXT PRIMARY KEY,
-  user_id          INTEGER NOT NULL,
-  brain_session_id TEXT NOT NULL,
-  token            TEXT NOT NULL,
-  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (user_id, brain_session_id)
-);
 
 -- Elowen RAW memory (v1: user-scoped only). Durable facts/preferences/instructions/corrections about a
 -- user. Vectors live inline as packed Float32 BLOBs in memory_embeddings (no external vector DB).

@@ -1,8 +1,5 @@
-import { serve, upgradeWebSocket } from '@hono/node-server';
-import { WebSocketServer } from 'ws';
+import { serve } from '@hono/node-server';
 import { buildApp } from './bootstrap.js';
-import { terminalWsHandler } from '../terminal/wsHandler.js';
-import { loadPty } from '../terminal/ptyLoader.js';
 import { logger, LOG_DIR } from '../shared/logger.js';
 import { dbPath } from '../shared/paths.js';
 
@@ -64,19 +61,7 @@ try {
   log.error('daemon boot failed', e);
   process.exit(1);
 }
-const { app, startLoops, tickets, tmux } = built;
-
-// Real-PTY terminal stream: the browser opens wss://…/ws/terminal?ticket=… straight at the daemon
-// (nginx proxies /ws/ here), the handler redeems the single-use ticket and bridges a tmux-attached PTY
-// to the socket. The upgrade is handled by node-server itself (v2 built-in WS): the `ws` server below
-// is passed to `serve()` as `websocket.server` and must stay `noServer` — node-server owns the upgrade.
-app.get('/ws/terminal', upgradeWebSocket(terminalWsHandler({
-  tickets,
-  loadPty,
-  // A client resize must also resize the tmux *window* — the advisor session is `window-size manual`,
-  // so the PTY size alone won't reflow the content to fill the panel.
-  resizeWindow: (session, cols, rows) => { void tmux.resize(session, cols, rows); },
-})));
+const { app, startLoops } = built;
 
 // Bind to localhost by default: a daemon token can spawn agents (effectively RCE), so the daemon
 // must not be publicly reachable. Front it with the web app's BFF proxy (or a reverse proxy). Set
@@ -86,7 +71,6 @@ const server = serve({
   fetch: app.fetch,
   port: Number((process.env.ELOWEN_PORT) ?? 4400),
   hostname: host,
-  websocket: { server: new WebSocketServer({ noServer: true }) },
 }, info => {
   log.info(`elowen serve on ${host}:${info.port} — logs → ${LOG_DIR}`);
   // Boot reconcile terminalizes delegation rows left `running` by a previous process, which is only

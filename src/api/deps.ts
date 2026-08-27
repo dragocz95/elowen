@@ -65,9 +65,6 @@ export interface ServerDeps {
   avatarSecret?: string;
   /** Per-user embedded brain (PI agent) — the new advisor engine. Absent → brain routes degrade to 503. */
   brain?: import('../brain/brainService.js').BrainService;
-  /** Admin-only interactive `elowen chat` terminals bound to existing brain conversations. Absent →
-   *  POST /brain/terminal degrades to 503 and the DELETE /sessions chat branch is inert. */
-  brainTerminal?: import('../brain/terminalService.js').BrainTerminalService;
   /** Restart the Elowen daemon (the admin-only `/restart` slash command): announce it on the platforms,
    *  drop a marker so the next boot announces "back online", then hand off to systemd. Absent → 501. */
   restartDaemon?: (byUserId: number) => Promise<void>;

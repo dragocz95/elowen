@@ -370,9 +370,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // re-elect another user as admin. The flag must be transferred deliberately first.
     if (users.isAdmin(id)) return c.json({ error: 'cannot delete the admin' }, 400);
     // Teardown order is load-bearing: kill what is RUNNING first, drop the user's data next, and remove
-    // the user row LAST. Brain-session teardown resolves each conversation's `brain_terminals` binding
-    // to kill its `elowen chat` tmux and revoke that terminal's token. users.delete() wipes those bindings,
-    // so deleting first would leave the terminal unresolvable and alive.
+    // the user row LAST.
     // Deleting the user row last also makes a failed cleanup safely retryable: every step below is
     // idempotent, and while the row still exists the admin can simply repeat the request.
     // Dispose any live conversations (+ their terminals/processes) for the user, then hard-delete ALL of

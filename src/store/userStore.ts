@@ -22,10 +22,10 @@ export function readIsAdmin(db: Db, userId: number): boolean {
   const r = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(userId) as { is_admin: number } | undefined;
   return !!r?.is_admin;
 }
-/** What a token may do. `full` is an interactive user session. `advisor` and `terminal` are stored
- *  separately so revoking those sessions never disturbs login tokens; both resolve to full user access. */
+/** What a token may do. `full` is an interactive user session. `advisor` is stored separately so
+ *  revoking those sessions never disturbs login tokens; it resolves to full user access. */
 export type TokenScope = 'full';
-export type StoredScope = TokenScope | 'advisor' | 'terminal';
+export type StoredScope = TokenScope | 'advisor';
 export interface Principal { user: User; scope: TokenScope }
 export interface ExternalIdentityInput {
   provider: string;
@@ -430,7 +430,6 @@ export class UserStore {
     // credentials behind. Plugin-owned rows and files are handled through registerUserRemoved before this.
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
-      this.db.prepare('DELETE FROM brain_terminals WHERE user_id = ?').run(id); // no orphan terminal bindings (their tokens went with auth_tokens above)
       this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments
       this.db.prepare('DELETE FROM user_prompts WHERE user_id = ?').run(id); // no orphan prompt overrides
       this.db.prepare('DELETE FROM user_plugin_config WHERE user_id = ?').run(id);
@@ -453,7 +452,7 @@ export class UserStore {
   principalForToken(token: string, days?: number): Principal | null {
     const r = this.db
       .prepare(`SELECT u.* FROM auth_tokens t JOIN users u ON u.id = t.user_id
-        WHERE t.token = ? AND t.scope IN ('full', 'advisor', 'terminal')
+        WHERE t.token = ? AND t.scope IN ('full', 'advisor')
           AND t.created_at > datetime('now', '-${ttlDays(days)} days')`)
       .get(token) as Row | undefined;
     return r ? { user: mask(r), scope: 'full' } : null;

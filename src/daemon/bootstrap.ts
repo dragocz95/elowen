@@ -1,7 +1,6 @@
 import { installEventRecording } from './eventRecording.js';
 import { createServer } from '../api/server.js';
 import { ELOWEN_VERSION } from '../api/version.js';
-import { createTicketStore } from '../terminal/ticketStore.js';
 import { RealTmuxDriver } from '../tmux/driver.js';
 import { SystemClock } from '../shared/clock.js';
 import { ensureVapidKeys } from '../push/vapid.js';
@@ -10,7 +9,6 @@ import { buildTurnDone } from '../push/messages.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import { logger, setLogSink } from '../shared/logger.js';
 import { PluginLogBuffer } from '../shared/logBuffer.js';
-import { BrainTerminalService } from '../brain/terminalService.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { isSubagentSession } from '../brain/sessionId.js';
 import { discoverPlugins } from '../plugins/loader.js';
@@ -18,7 +16,6 @@ import { MarketplaceService } from '../plugins/marketplace.js';
 import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
 import { buildBrainCore } from './brainCore.js';
 import { SubagentRunnerPool } from '../subagent/pool.js';
 import { resolvePoolMax } from '../subagent/sizing.js';
@@ -117,7 +114,7 @@ export async function buildApp(opts: BuildOpts) {
   const {
     config, users, homeProject, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, prompts, git,
-    cliArgv, elowenCli, bus, events,
+    elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainCreds, brainOauth, embeddings,
     brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets, embedQueue, memoryCategorizer,
@@ -156,15 +153,6 @@ export async function buildApp(opts: BuildOpts) {
   // Per-process secret for short-lived signed avatar URLs (finding W2) — keeps the long-lived session
   // token out of <img> src query strings. Rotates on restart; links live ~5 min, so that's harmless.
   const avatarSecret = randomBytes(32).toString('hex');
-  // Admin-only interactive `elowen chat` terminals bound to existing brain conversations. Its cwd is a
-  // neutral per-admin scratch dir alongside the DB (never a project checkout), mirroring the advisor dir.
-  // Constructed after `brain` (it needs store+users+url); the delete-conversation teardown is attached back
-  // onto the brain via a late setter to avoid a constructor cycle.
-  const brainTerminal = opts.dbPath === ':memory:' ? undefined : new BrainTerminalService({
-    tmux, users, store: brainStore, url: elowenCli.url, cliArgv,
-    terminalDir: (id) => { const p = join(dirname(opts.dbPath), 'terminal', String(id)); mkdirSync(p, { recursive: true }); return p; },
-  });
-  if (brain && brainTerminal) brain.attachTerminalTeardown((userId, sessionId) => brainTerminal.stopForSession(userId, sessionId));
   // A delegated child running in the sub-agent runner can delegate FURTHER, inside that same process. The
   // abort tree, `/stop` and the shutdown gate are authoritative here, so those nested edges are mirrored
   // into this registry — and retracted wholesale if the runner dies.
@@ -208,9 +196,6 @@ export async function buildApp(opts: BuildOpts) {
     })
       .catch(() => { /* best-effort wake */ });
   });
-  // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
-  // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
-  const tickets = createTicketStore();
   // The plugin marketplace: install/update/remove plugins from the curated GitHub registry into the
   // writable user plugin dir (pluginDirs[1]), applied live via the brain's plugin hot-reload. The registry
   // repo is a shallow-clone cache next to the DB; ELOWEN_PLUGIN_REGISTRY overrides the repo URL (tests).
@@ -276,7 +261,7 @@ export async function buildApp(opts: BuildOpts) {
     bus, events,
     project: homeProject, clock: new SystemClock(), config, users, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth,
-    brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal,
+    brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain,
     restartDaemon, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets,
     memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes,
     killAccountProcesses: async (userId) => processRegistry.killAccount(userId) + (subagentRunner ? await subagentRunner.killAccountProcesses(userId) : 0),
@@ -284,10 +269,10 @@ export async function buildApp(opts: BuildOpts) {
   });
 
   const startLoops = createMaintenanceLoops({
-    brain, brainTerminal, brainStore, chatImagesDir, config, embedQueue, events,
-    memoryStore, users, usageOrigins, tickets, pluginReconcile, dbPath: opts.dbPath,
+    brain, brainStore, chatImagesDir, config, embedQueue, events,
+    memoryStore, users, usageOrigins, pluginReconcile, dbPath: opts.dbPath,
     restartMarker, bootMarker, version: ELOWEN_VERSION, log,
     onShutdownInstalled: (control) => { shutdown = control; },
   });
-  return { app, startLoops, tickets, tmux };
+  return { app, startLoops };
 }

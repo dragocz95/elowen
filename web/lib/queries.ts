@@ -199,7 +199,7 @@ export const useMyCliSettings = () =>
   useQuery({ queryKey: ['my-cli-settings'], queryFn: elowenClient.myCliSettings });
 
 /** The current user's web-terminal appearance settings (palette/font/cursor). Edited in Account →
- *  Terminal; consumed by every xterm instance via useTerminalPrefs. */
+ *  Terminal, and rendered by the preview there. */
 export const useMyTerminalSettings = () =>
   useQuery({ queryKey: ['my-terminal-settings'], queryFn: elowenClient.myTerminalSettings, staleTime: 5 * 60 * 1000 });
 
