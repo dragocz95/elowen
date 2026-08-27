@@ -17,6 +17,10 @@ ensurePluginUiRuntime();
 
 const strings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
 
+/** A row opens through ONE button spanning it, whose accessible name is the manifest's short open
+ *  label — not the server name, which is only the text of a cell inside the row. */
+const openLabel = (name: string) => strings.openServer!.replace('{name}', name);
+
 const server: McpServer = {
   name: 'github',
   scope: 'personal',
@@ -137,7 +141,7 @@ describe('MCP scope transfer', () => {
       http.patch('*/api/plugins/mcp/api/servers/docs', () => { calls.push('patch'); return HttpResponse.json({ server: remote }); }),
     );
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'docs' }));
+    fireEvent.click(await screen.findByRole('button', { name: openLabel('docs') }));
     const drawer = within(await screen.findByRole('dialog', { name: 'docs' }));
 
     // The scope picker is a SelectMenu: it renders its options only while the listbox is open.
@@ -159,7 +163,7 @@ describe('MCP scope transfer', () => {
       http.patch('*/api/plugins/mcp/api/servers/docs', () => { calls.push('patch'); return HttpResponse.json({ server: remote }); }),
     );
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'docs' }));
+    fireEvent.click(await screen.findByRole('button', { name: openLabel('docs') }));
     const drawer = within(await screen.findByRole('dialog', { name: 'docs' }));
     fireEvent.change(drawer.getByLabelText(strings.url!), { target: { value: 'https://mcp.example.test/v2' } });
     fireEvent.click(drawer.getByRole('button', { name: strings.save }));
@@ -179,7 +183,7 @@ describe('MCP scope transfer', () => {
       )),
     );
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'docs' }));
+    fireEvent.click(await screen.findByRole('button', { name: openLabel('docs') }));
     const drawer = within(await screen.findByRole('dialog', { name: 'docs' }));
     fireEvent.click(drawer.getByRole('combobox', { name: strings.scope }));
     fireEvent.click(await screen.findByRole('option', { name: strings.scopePersonal }));
@@ -193,7 +197,7 @@ describe('MCP scope transfer', () => {
 describe('MCP drawer tool list', () => {
   const openDrawer = async (name: string) => {
     mount();
-    fireEvent.click(await screen.findByRole('button', { name }));
+    fireEvent.click(await screen.findByRole('button', { name: openLabel(name) }));
     return within(await screen.findByRole('dialog', { name }));
   };
 

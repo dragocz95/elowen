@@ -262,7 +262,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                         <button type="button" onClick={() => exportSession(s.id, 'jsonl')} className={MENU_ITEM}>
                           <Download size={13} aria-hidden /> {t.chat.exportJsonl}
                         </button>
-                        <button type="button" onClick={() => removeSession(s.id, s.active)} className={`${MENU_ITEM} hover:text-red-400`}>
+                        <button type="button" onClick={() => removeSession(s.id, s.active)} className={`${MENU_ITEM} hover:text-danger`}>
                           <Trash2 size={13} aria-hidden /> {t.brainChat.deleteChat}
                         </button>
                       </div>

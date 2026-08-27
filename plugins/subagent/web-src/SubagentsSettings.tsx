@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Eye, Package, Plus, User } from 'lucide-react';
-import { runtime, type PluginSubagent } from './runtime';
+import { Eye, GitFork, Package, Plus, User } from 'lucide-react';
+import { runtime, type PluginSubagent, type SaveStatus } from './runtime';
 
 type ToolsMode = 'read-only' | 'all' | 'inherit' | 'custom';
 /** `customTools` is a comma-separated tool list, used only when `toolsMode === 'custom'`. */
@@ -22,6 +22,14 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
 
   const toolsLabel = (tools: PluginSubagent['tools']): string =>
     Array.isArray(tools) ? tools.join(', ') : { 'read-only': s.toolsReadOnly, all: s.toolsAll, inherit: s.toolsInherit }[tools];
+
+  // On its own page nothing above this component reports a save any more, so the outcome of the two
+  // mutations that write agents is read straight off them. Both are watched: deleting an agent is as
+  // much a save as editing one, and a failed delete with no indicator looks like nothing happened.
+  const saveStatus: SaveStatus = save.isPending || remove.isPending ? 'saving'
+    : save.isError || remove.isError ? 'error'
+    : save.isSuccess || remove.isSuccess ? 'saved'
+    : 'idle';
 
   const agents: PluginSubagent[] = query.data ?? [];
   const userCount = agents.filter((agent) => agent.source === 'user').length;
@@ -107,18 +115,23 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
     </C.ControlSurfaceDocument>
   );
 
-  // In the Settings deck the surrounding panel supplies the page frame; on its own page the section
-  // wears the same spatial workspace every built-in page wears.
+  // In the Settings deck the surrounding panel supplies the page frame; on its own page this section
+  // owns the whole surface (see `ownsPageFrame` in index.tsx), so it brings the shell — and, because
+  // there is no host masthead above it any more, its own save indicator.
   if (surface === 'deck') return surfaceDocument;
   return (
-    <C.SpatialWorkspaceLayout
+    <C.WorkspaceShell
+      variant="register"
       hero={{
         eyebrow: s.workspaceEyebrow,
         title: s.title,
         count: agents.length,
         description: s.sectionHint,
-        mascotState: query.isLoading ? 'saving' : query.isError ? 'error' : 'idle',
-        status: !query.isLoading && !query.isError ? <span className="workspace-status">{s.workspaceReady}</span> : undefined,
+        icon: GitFork,
+        mascot: query.isLoading ? 'saving' : query.isError ? 'error' : 'idle',
+        status: saveStatus !== 'idle'
+          ? <C.AutoSaveStatus status={saveStatus} />
+          : !query.isLoading && !query.isError ? <span className="workspace-status">{s.workspaceReady}</span> : undefined,
         action: addButton,
         metrics: <>
           <C.WorkspaceMetric label={t.assetEditor.filterUser} value={userCount} icon={User} />
@@ -128,6 +141,6 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
       }}
     >
       {surfaceDocument}
-    </C.SpatialWorkspaceLayout>
+    </C.WorkspaceShell>
   );
 }

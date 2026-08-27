@@ -12,7 +12,7 @@
   "web": {
     "entry": "web/index.js",
     "css": "web/index.css",
-    "requiresApiVersion": 2,
+    "requiresApiVersion": 8,
     "navKind": "infrastructure",
     "nav": [{ "label": "MCP", "icon": "Blocks", "route": "" }],
     "strings": {
@@ -48,10 +48,7 @@
       "emptySearch": "No server matches the filter",
       "searchPlaceholder": "Search servers…",
       "filterAll": "All",
-      "pageRange": "{from}–{to} of {total}",
-      "pageLabel": "Page {page} of {pages}",
-      "prevPage": "Back",
-      "nextPage": "Next",
+      "openServer": "Open server {name}",
       "loadError": "Could not load MCP servers.",
       "saveError": "Could not save the MCP server.",
       "actionError": "The action could not be completed.",

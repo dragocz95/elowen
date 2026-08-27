@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, PlugZap, Plus, RefreshCw, Search, Server, Trash2, TriangleAlert, Wrench } from 'lucide-react';
-import { apiJson, runtime, type McpScope, type McpServer, type McpServersResponse, type McpTransport } from './runtime';
+import { Blocks, PlugZap, Plus, RefreshCw, Search, Server, Trash2, TriangleAlert, Wrench } from 'lucide-react';
+import { apiJson, runtime, DATA_TABLE_ICON_SIZE, type McpScope, type McpServer, type McpServersResponse, type McpTransport } from './runtime';
 
 /** One page of servers, matching the register size every workspace page in the app uses. */
 const PAGE_SIZE = 20;
@@ -93,49 +93,58 @@ function scopeLabel(scope: McpScope, strings: Record<string, string>): string {
 /** One server = one register row. The connection state is the leading dot, the columns that only make
  *  sense on a wide workspace fold away as a unit, and everything that can be long is a single
  *  truncated line with the full value on hover — a wrapped cell would push every other row out of
- *  alignment. */
-function McpServerRow({ server, showScope, selected, onSelect }: {
+ *  alignment.
+ *
+ *  Opening the editor is the ROW's contract (`onOpen` + a short `openLabel`), not a button around the
+ *  name: one tab stop per row, a target the width of the row, and an accessible name that says what
+ *  activating it does rather than repeating the server name alone. */
+function McpServerRow({ server, showScope, selected, onOpen }: {
   server: McpServer;
   showScope: boolean;
   selected: boolean;
-  onSelect: () => void;
+  onOpen: () => void;
 }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings('mcp');
   const label = statusLabel(server, s);
   return (
-    <C.DataTableRow interactive selected={selected} aria-selected={selected} className="group">
-      <C.DataTableCell className="flex items-center justify-center">
-        <span className={`h-2 w-2 rounded-full ${statusDot(server)}`} title={label} aria-hidden />
+    <C.DataTableRow
+      selected={selected}
+      aria-selected={selected}
+      onOpen={onOpen}
+      openLabel={s.openServer.replace('{name}', server.name)}
+    >
+      <C.DataTableCell lines="auto" title={label} className="flex items-center justify-center">
+        <span className={`h-2 w-2 rounded-full ${statusDot(server)}`} aria-hidden />
         {/* The dot carries the state in colour alone. `title` is not reliably announced, so the state
             also travels as text a screen reader reads out with the row. */}
         <span className="sr-only">{label}</span>
       </C.DataTableCell>
-      <C.DataTableCell>
-        <button type="button" onClick={onSelect} className="flex w-full min-w-0 items-center gap-2 text-left">
+      <C.DataTableCell title={server.name}>
+        <span className="flex w-full min-w-0 items-center gap-2">
           <span className="truncate text-sm text-text">{server.name}</span>
           {!server.enabled ? <C.Badge tone="muted">{s.statusDisabled}</C.Badge> : null}
-        </button>
+        </span>
       </C.DataTableCell>
-      <C.DataTableCell priority="wide" className="whitespace-nowrap">
+      <C.DataTableCell priority="wide" lines="auto" className="whitespace-nowrap">
         <C.Badge>{server.transport.toUpperCase()}</C.Badge>
       </C.DataTableCell>
       {showScope ? (
-        <C.DataTableCell priority="wide" title={scopeLabel(server.scope, s)} className="truncate text-xs text-text-muted">
+        <C.DataTableCell priority="wide" className="text-xs text-text-muted">
           {scopeLabel(server.scope, s)}
         </C.DataTableCell>
       ) : null}
-      <C.DataTableCell priority="wide" className="whitespace-nowrap text-xs text-text-muted">
-        <span className="flex items-center gap-1.5"><Wrench size={12} aria-hidden />{server.toolCount}</span>
+      <C.DataTableCell priority="wide" className="text-xs text-text-muted">
+        <span className="flex items-center gap-1.5"><Wrench size={DATA_TABLE_ICON_SIZE} aria-hidden />{server.toolCount}</span>
       </C.DataTableCell>
       {/* A failure message is far longer than the column: one line, rest on hover. */}
-      <C.DataTableCell priority="wide" title={server.lastError ?? label} className="truncate text-xs text-text-muted">
+      <C.DataTableCell priority="wide" title={server.lastError ?? label} className="text-xs text-text-muted">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="shrink-0">{server.lastError ? <TriangleAlert size={12} aria-hidden /> : <PlugZap size={12} aria-hidden />}</span>
+          <span className="shrink-0">{server.lastError ? <TriangleAlert size={DATA_TABLE_ICON_SIZE} aria-hidden /> : <PlugZap size={DATA_TABLE_ICON_SIZE} aria-hidden />}</span>
           <span className={`truncate ${server.lastError ? 'text-danger' : ''}`}>{server.lastError ?? label}</span>
         </span>
       </C.DataTableCell>
-      <C.DataTableCell aria-hidden className="text-text-muted/50 transition-colors group-hover:text-text"><ChevronRight size={15} /></C.DataTableCell>
+      <C.DataTableChevronCell />
     </C.DataTableRow>
   );
 }
@@ -392,13 +401,16 @@ export function McpServersPage() {
         compactColumns="2rem minmax(0,1fr) 1.25rem"
       >
         <C.DataTableRow header>
-          <C.DataTableCell header><span className="sr-only">{s.colStatus}</span></C.DataTableCell>
+          {/* Both this column and the one carrying the failure text state the connection. Only one of
+              them can be called "Status" out loud, so the dot column's name is for assistive
+              technology alone rather than a second visible header with the same word. */}
+          <C.DataTableCell header labelHidden>{s.colStatus}</C.DataTableCell>
           <C.DataTableCell header>{s.name}</C.DataTableCell>
           <C.DataTableCell header priority="wide">{s.transport}</C.DataTableCell>
           {canManageInstance ? <C.DataTableCell header priority="wide">{s.scope}</C.DataTableCell> : null}
           <C.DataTableCell header priority="wide">{s.tools}</C.DataTableCell>
-          <C.DataTableCell header priority="wide" className="whitespace-nowrap">{s.colStatus}</C.DataTableCell>
-          <C.DataTableCell header role="presentation" aria-hidden>{null}</C.DataTableCell>
+          <C.DataTableCell header priority="wide">{s.colStatus}</C.DataTableCell>
+          {/* The chevron track carries no header: its cell is decorative. */}
         </C.DataTableRow>
         {pageItems.map((server) => (
           <McpServerRow
@@ -406,37 +418,25 @@ export function McpServersPage() {
             server={server}
             showScope={canManageInstance}
             selected={editor?.key === serverKey(server)}
-            onSelect={() => openServer(server)}
+            onOpen={() => openServer(server)}
           />
         ))}
       </C.DataTable>
 
-      <div className="flex flex-col gap-2 border-b border-border/80 pb-3 sm:flex-row sm:items-center sm:justify-between">
-        <span className="font-mono text-xs text-text-muted">
-          {s.pageRange
-            .replace('{from}', String(clampedPage * PAGE_SIZE + 1))
-            .replace('{to}', String(clampedPage * PAGE_SIZE + pageItems.length))
-            .replace('{total}', String(filtered.length))}
-        </span>
-        <div className="flex items-center gap-1">
-          <C.Button variant="ghost" icon={ChevronLeft} disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>{s.prevPage}</C.Button>
-          <span className="min-w-24 text-center font-mono text-xs text-text-muted">
-            {s.pageLabel.replace('{page}', String(clampedPage + 1)).replace('{pages}', String(pageCount))}
-          </span>
-          <C.Button variant="ghost" disabled={clampedPage >= pageCount - 1} onClick={() => setPage(clampedPage + 1)}>{s.nextPage}<ChevronRight size={15} className="ml-1" aria-hidden /></C.Button>
-        </div>
-      </div>
+      <C.Pager page={clampedPage} pageSize={PAGE_SIZE} total={filtered.length} onPageChange={setPage} ariaLabel={s.title} />
     </div>
   );
 
   return (
-    <C.SpatialWorkspaceLayout
+    <C.WorkspaceShell
+      variant="register"
       hero={{
         eyebrow: t.pluginUi.eyebrow,
         title: s.title,
         count: rows.length,
         description: s.description,
-        mascotState: loadError ? 'error' : loading ? 'saving' : 'idle',
+        icon: Blocks,
+        mascot: loadError ? 'error' : loading ? 'saving' : 'idle',
         status: !loading && !loadError ? <span className="workspace-status">{s.workspaceReady}</span> : undefined,
         action: addButton,
         metrics: <>
@@ -455,10 +455,7 @@ export function McpServersPage() {
             <div className="flex min-w-0 flex-col gap-4">
               <C.ControlSurfaceToolbar className="flex-col items-stretch">
                 <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
-                  <div className="relative min-w-[15rem] flex-1">
-                    <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <C.Input value={query} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)} placeholder={s.searchPlaceholder} className="pl-9" />
-                  </div>
+                  <C.RegisterSearch value={query} onChange={setQuery} placeholder={s.searchPlaceholder} label={s.searchPlaceholder} />
                   {/* Only the instance owner ever sees more than one ownership scope, so only he is
                       offered the filter that narrows to one. */}
                   {canManageInstance ? (
@@ -525,6 +522,6 @@ export function McpServersPage() {
         onClose={() => setRemoving(undefined)}
         onConfirm={() => void removeServer()}
       />
-    </C.SpatialWorkspaceLayout>
+    </C.WorkspaceShell>
   );
 }

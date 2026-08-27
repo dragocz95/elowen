@@ -97,7 +97,7 @@
   },
   "web": {
     "entry": "web/index.js",
-    "requiresApiVersion": 1,
+    "requiresApiVersion": 8,
     "adminOnly": true,
     "settings": [
       {

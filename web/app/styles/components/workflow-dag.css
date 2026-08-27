@@ -6,7 +6,7 @@
    its own painting context), so its fill is set here and tracks the edge's resting tone. */
 .wf-dag__arrowhead { fill: rgb(var(--accent-rgb) / 0.55); }
 /* An edge feeding a RUNNING node carries the dashed flow stroke — the eye lands on live work first. */
-.wf-dag__edge--live { stroke: rgb(255 154 98 / 0.7); stroke-dasharray: 3 34; }
+.wf-dag__edge--live { stroke: color-mix(in srgb, var(--color-ember) 70%, transparent); stroke-dasharray: 3 34; }
 .wf-dag__node--running { box-shadow: 0 0 0 1px var(--color-accent), 0 0 18px rgb(var(--accent-rgb) / 0.22); }
 @media (prefers-reduced-motion: no-preference) {
   html[data-effects='full'] .wf-dag__edge--live { animation: cosmos-fil-flow 3.2s linear infinite; }

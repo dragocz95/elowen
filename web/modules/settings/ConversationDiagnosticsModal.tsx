@@ -20,9 +20,12 @@ import type {
   BrainDebugRequestItem, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload, BrainDebugSessionItem,
 } from '../../lib/types';
 
+/** The segment legend's swatches. `tool` and `reasoning` need a hue no semantic token owns — calling
+ *  them "info" or "warning" would state something about the segment that is not true — so they take the
+ *  two categorical tones tokens.css declares for exactly this. */
 const ROLE_CLASS: Record<string, string> = {
-  system: 'bg-accent', user: 'bg-success', assistant: 'bg-warning', tool: 'bg-[#a78bfa]',
-  reasoning: 'bg-[#f472b6]', error: 'bg-danger', options: 'bg-text-muted', response: 'bg-warning',
+  system: 'bg-accent', user: 'bg-success', assistant: 'bg-warning', tool: 'bg-tone-violet',
+  reasoning: 'bg-tone-magenta', error: 'bg-danger', options: 'bg-text-muted', response: 'bg-warning',
 };
 
 type Filters = {

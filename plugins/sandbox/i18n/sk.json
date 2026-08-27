@@ -30,6 +30,7 @@
       "columnProject": "Projekt",
       "columnBranch": "Vetva",
       "columnState": "Stav",
+      "openWorkspace": "Otvoriť pracovný priestor {name}",
       "emptyWorkspaces": "Tomuto filtru nezodpovedá žiadny pracovný priestor.",
       "loading": "Načítavam údaje Sandboxu…",
       "loadError": "Údaje Sandboxu sa nepodarilo načítať.",

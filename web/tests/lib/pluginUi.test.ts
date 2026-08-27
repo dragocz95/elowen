@@ -18,9 +18,21 @@ describe('plugin UI runtime', () => {
     // 6 adds SpatialIdentity, so a plugin section can lead with the same identity block a native
     // account section does instead of rebuilding it from raw markup. 7 adds LinkedAccountRow and
     // SummaryChip, so a connector identity IS the drawer row and the summary chip the host draws for a
-    // chat platform rather than a bundle's approximation of one.
-    expect(PLUGIN_UI_API_VERSION).toBe(7);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(7);
+    // chat platform rather than a bundle's approximation of one. 8 adds the redesigned register pieces —
+    // the canonical shell and hero, the shared pager, the toolbar search and the row's chevron cell —
+    // each of which every plugin register had hand-rolled its own copy of, plus the full-application
+    // takeover, which is the one surface a bundle genuinely cannot build for itself because the overlay
+    // layer scale and the focus/inert machinery live in the host.
+    expect(PLUGIN_UI_API_VERSION).toBe(8);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(8);
+    expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({
+      WorkspaceShell: expect.any(Function),
+      WorkspaceHero: expect.any(Function),
+      Pager: expect.any(Function),
+      RegisterSearch: expect.any(Function),
+      DataTableChevronCell: expect.any(Function),
+      WorkspaceTakeover: expect.any(Function),
+    }));
     expect(window.ElowenUiRuntime?.components).toHaveProperty('LinkedAccountRow');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('SummaryChip');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('PluginConfigEditor');

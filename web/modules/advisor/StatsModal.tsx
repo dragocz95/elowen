@@ -235,8 +235,11 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                         className="h-px rounded-full"
                         style={{
                           width: `${row.pct}%`,
-                          background: 'linear-gradient(90deg, var(--color-accent), #ff955f, #ffd09a)',
-                          boxShadow: '0 0 6px rgba(255,82,54,0.3)',
+                          // The heat ramp end to end: accent → ember → the pale ember stop. All three
+                          // are tokens, so the bar follows a repaint instead of staying orange under a
+                          // skin that moved the accent out from under it.
+                          background: 'linear-gradient(90deg, var(--color-accent), var(--color-ember), var(--color-ember-bright))',
+                          boxShadow: '0 0 6px rgb(var(--accent-rgb) / 0.3)',
                         }}
                       />
                     </div>

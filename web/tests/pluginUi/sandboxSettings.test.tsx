@@ -53,10 +53,13 @@ function mount(node: ReactNode) {
 }
 
 describe('sandbox Project workspaces', () => {
-  it('supports keyboard row selection and renders the live patch in a Project modal', async () => {
+  it('opens a row through its single named control and renders the live patch in a Project modal', async () => {
     mount(<WorkspacesSettings surface="project" project={overview.projects[0]} />);
-    const row = await screen.findByRole('row', { name: /Feature Alpha/i });
-    fireEvent.keyDown(row, { key: 'Enter' });
+    // Opening a row is the row contract: ONE real button spanning it, carrying a short accessible name
+    // rather than the row's whole text. It is a native button, so Enter and Space come from the
+    // platform instead of a key handler the row has to re-implement.
+    const open = await screen.findByRole('button', { name: strings.openWorkspace!.replace('{name}', 'Feature Alpha') });
+    fireEvent.click(open);
     const detail = await screen.findByRole('dialog', { name: 'Feature Alpha' });
     expect(within(detail).getByText((_text, element) => element?.tagName === 'LI' && element.textContent?.includes('src/app.ts') === true)).toBeInTheDocument();
     expect(await within(detail).findByText('+change')).toBeInTheDocument();

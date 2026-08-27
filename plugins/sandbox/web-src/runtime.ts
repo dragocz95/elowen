@@ -49,7 +49,7 @@ interface RuntimeComponents {
   SelectMenu: AnyComponent; Modal: AnyComponent; ModalBody: AnyComponent; ModalFooter: AnyComponent;
   LoadingState: AnyComponent; ErrorState: AnyComponent; EmptyState: AnyComponent;
   SpatialWorkspaceLayout: AnyComponent; WorkspaceMetric: AnyComponent; WorkspaceDetailRail: AnyComponent;
-  DataTable: AnyComponent; DataTableRow: AnyComponent; DataTableCell: AnyComponent;
+  DataTable: AnyComponent; DataTableRow: AnyComponent; DataTableCell: AnyComponent; DataTableChevronCell: AnyComponent;
   PatchView: AnyComponent; ConfirmDialog: AnyComponent; PluginSection: AnyComponent;
   SettingsDocument: AnyComponent; SettingsGroup: AnyComponent; SettingsRow: AnyComponent;
   // The host's own preview-plus-manage row, so the account drawer reads the same as its neighbours.

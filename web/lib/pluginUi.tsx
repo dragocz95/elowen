@@ -40,6 +40,11 @@ import { EntityList, EntityRow } from '../components/ui/EntityList';
 import { LoadingState, LoadingLine, ErrorState, EmptyState } from '../components/ui/states';
 import { MotionLayoutItem, MotionPresence } from '../components/ui/Motion';
 import { SpatialWorkspaceLayout, WorkspaceMetric, WorkspacePage, CompactWorkspaceHeader } from '../components/ui/WorkspacePrimitives';
+import { WorkspaceShell } from '../components/ui/WorkspaceShell';
+import { WorkspaceHero } from '../components/ui/WorkspaceHero';
+import { WorkspaceTakeover } from '../components/ui/WorkspaceTakeover';
+import { Pager } from '../components/ui/Pager';
+import { RegisterSearch } from '../components/ui/RegisterSearch';
 import { SpatialIdentity } from '../components/ui/SpatialPrimitives';
 import { TimeSeriesChart } from '../components/ui/TimeSeriesChart';
 import { ProjectFilterPills } from '../components/ui/ProjectFilterPills';
@@ -67,14 +72,14 @@ import { ModelCatalogField } from '../components/ui/ModelCatalogField';
 import { ChoiceField } from '../components/ui/ChoiceField';
 import { AutoSaveStatus } from '../components/ui/AutoSaveStatus';
 import { Checkbox } from '../components/ui/Checkbox';
-import { DataTable, DataTableCell, DataTableRow } from '../components/ui/DataTable';
+import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '../components/ui/DataTable';
 import { DateRangeFilter } from '../components/ui/DateRangeFilter';
 import { ExecutorPicker } from '../components/ui/ExecutorPicker';
 import { Spinner } from '../components/ui/states';
 import { MotionLayout } from '../components/ui/Motion';
 import { WorkspaceDetailRail } from '../components/ui/WorkspacePrimitives';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
-import { SettingsDocument, SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
+import { SettingsDocument, SettingsGroup, SettingsRow } from '../components/ui/SettingsSurface';
 import { PluginConfigEditor } from '../modules/settings/PluginConfigEditor';
 import { usePluginConfigDraft } from './usePluginConfigDraft';
 import { MarkdownAssetEditor } from '../modules/settings/MarkdownAssetEditor';
@@ -116,7 +121,7 @@ import { eventIcon } from './eventMeta';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 7;
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 8;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -272,7 +277,7 @@ export function ensurePluginUiRuntime(): void {
     react: React,
     reactDom: ReactDom,
     jsxRuntime: JsxRuntime,
-    // @platform-keep plugin-ui-primitives :: DataTable, DataTableRow, DataTableCell && PatchView && ProgressRibbon && LiveTail
+    // @platform-keep plugin-ui-primitives :: DataTable, DataTableRow, DataTableCell && PatchView && ProgressRibbon && LiveTail && WorkspaceShell, WorkspaceHero && Pager, RegisterSearch, DataTableChevronCell && WorkspaceTakeover
     // Generic UI platform for future github/sandblox bundles; zero callers for any one primitive is expected.
     // Growing this list is cheap; shrinking it is a breaking change.
     // `ConstellationScope` left with the orbital settings rendering it existed to switch on, and
@@ -305,6 +310,20 @@ export function ensurePluginUiRuntime(): void {
       LinkedAccountRow, SummaryChip,
       Checkbox, DataTable, DataTableRow, DataTableCell, DateRangeFilter, ExecutorPicker,
       ProgressRibbon, PatchView, Spinner, MotionLayout, WorkspaceDetailRail,
+      // The canonical page shell, published so a bundle stops reaching for the SpatialWorkspaceLayout
+      // alias: the alias only ever built a `register` page, so a plugin whose surface is a settings deck
+      // or a single working pane had to approximate the other two variants out of raw markup.
+      WorkspaceShell, WorkspaceHero,
+      // The full-application takeover a plugin page occupies when its surface IS the whole screen (the
+      // editor's fullscreen mode). Published because every hand-rolled version got the same three things
+      // wrong — `vh` sizing, a literal z-index in the middle of the overlay scale, and an unlabelled
+      // 28px chevron as the only exit — and a bundle cannot reach the overlay machinery any other way.
+      WorkspaceTakeover,
+      // The register footer, the register toolbar's search field and the row's trailing open affordance —
+      // the three pieces every plugin register hand-rolled. Five bundles (mcp, cronjob, stats, onedrive,
+      // editor) each carried their own pager, and the search field was copy-pasted with a hard `min-w`
+      // that pushed its sibling controls out of a narrow toolbar.
+      Pager, RegisterSearch, DataTableChevronCell,
     } as Record<string, ComponentType<never>>,
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a

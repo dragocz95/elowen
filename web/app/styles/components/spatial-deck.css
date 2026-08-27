@@ -17,14 +17,14 @@
 .spatial-section-rail__track::before { content: ''; position: absolute; top: 2.95rem; right: 3.4rem; left: 3.4rem; height: 1px; background: linear-gradient(90deg, transparent, rgb(var(--accent-rgb) / 0.34) 4%, rgb(var(--accent-rgb) / 0.2) 96%, transparent); }
 .spatial-section-node { position: relative; z-index: 1; display: flex; min-width: 7rem; flex: 1 0 7rem; flex-direction: column; align-items: center; gap: 0.72rem; color: var(--color-text-muted); font-size: 0.78rem; transition: color var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
 .spatial-section-node:hover { color: var(--color-text); transform: translateY(-2px); }
-.spatial-section-node__icon { position: relative; display: grid; width: 3.45rem; height: 3.45rem; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 50%; background: var(--color-document); box-shadow: 0 0 0 6px var(--color-bg), inset 0 1px rgb(255 255 255 / 0.025); transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+.spatial-section-node__icon { position: relative; display: grid; width: 3.45rem; height: 3.45rem; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 50%; background: var(--color-document); box-shadow: 0 0 0 6px var(--color-bg), inset 0 1px color-mix(in srgb, var(--color-text) 2.5%, transparent); transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
 .spatial-section-node__icon > svg { position: relative; z-index: 2; }
 .spatial-section-node--active { color: var(--color-accent); font-weight: 570; }
 .spatial-section-node--active .spatial-section-node__icon { border-color: var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), var(--color-document) 68%); box-shadow: 0 0 0 6px var(--color-bg), var(--glow-active), inset 0 0 20px rgb(var(--accent-rgb) / 0.09); transform: scale(1.1); }
 .spatial-section-node--active .spatial-section-node__icon::before { content: ''; position: absolute; inset: -1.35rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
 .spatial-section-node__count { margin-left: 0.35rem; color: var(--color-text-muted); font-family: var(--font-mono); font-size: 0.64rem; font-weight: 500; }
 .spatial-section-node--active .spatial-section-node__count { color: color-mix(in srgb, var(--color-accent) 72%, var(--color-text)); }
-.spatial-section-node--active .spatial-section-node__icon::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42); opacity: 0.7; }
+.spatial-section-node--active .spatial-section-node__icon::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 color-mix(in srgb, var(--color-ember) 48%, transparent), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 color-mix(in srgb, var(--color-ember) 42%, transparent); opacity: 0.7; }
 html[data-effects='full'] .spatial-section-node--active .spatial-section-node__icon::before { animation: ember-breathe 2.8s ease-in-out infinite; }
 html[data-effects='full'] .spatial-section-node--active .spatial-section-node__icon::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; }
 .spatial-section-node:focus-visible { outline: none; }
@@ -74,13 +74,13 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
   background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.1), rgb(var(--accent-rgb) / 0.03) 44%, transparent 72%);
   filter: blur(10px);
 }
-.spatial-mascot-fallback img { position: relative; z-index: 1; width: min(58%, 11.25rem); height: auto; filter: drop-shadow(0 1rem 2rem rgb(255 65 35 / 0.1)); }
+.spatial-mascot-fallback img { position: relative; z-index: 1; width: min(58%, 11.25rem); height: auto; filter: drop-shadow(0 1rem 2rem color-mix(in srgb, var(--color-accent) 10%, transparent)); }
 .spatial-mascot-fallback__ring { position: absolute; border: 1px solid rgb(var(--accent-rgb) / 0.18); border-radius: 50%; }
 .spatial-mascot-fallback__ring--outer { inset: 3% 0; transform: rotate(-12deg); }
 .spatial-mascot-fallback__ring--inner { inset: 19% 13%; transform: rotate(17deg); }
 .spatial-mascot-fallback--saving::before { animation: ember-breathe 1.1s ease-in-out infinite; }
-.spatial-mascot-fallback--success::before { background: radial-gradient(circle, rgb(50 201 134 / 0.2), rgb(var(--accent-rgb) / 0.04) 48%, transparent 72%); }
-.spatial-mascot-fallback--error::before { background: radial-gradient(circle, rgb(233 77 66 / 0.15), transparent 70%); }
+.spatial-mascot-fallback--success::before { background: radial-gradient(circle, color-mix(in srgb, var(--color-success) 20%, transparent), rgb(var(--accent-rgb) / 0.04) 48%, transparent 72%); }
+.spatial-mascot-fallback--error::before { background: radial-gradient(circle, color-mix(in srgb, var(--color-error) 15%, transparent), transparent 70%); }
 
 /* Chat telemetry rail ------------------------------------------------------ */
 /* The rail scrolls a long panel vertically but never draws the bar: an 8px rule down a 240px companion
@@ -109,12 +109,12 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .settings-group {
   min-width: 0;
   overflow: clip;
-  border: 1px solid rgb(255 255 255 / 0.07);
+  border: 1px solid color-mix(in srgb, var(--color-text) 7%, transparent);
   border-radius: var(--radius-xl);
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.02), transparent 42%), var(--color-document);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-text) 2%, transparent), transparent 42%), var(--color-document);
   box-shadow: var(--shadow-card);
 }
-.settings-group[data-tone="danger"] { border-color: rgb(239 68 68 / 0.28); background: linear-gradient(180deg, rgb(239 68 68 / 0.05), transparent 46%), var(--color-document); }
+.settings-group[data-tone="danger"] { border-color: color-mix(in srgb, var(--color-danger) 28%, transparent); background: linear-gradient(180deg, color-mix(in srgb, var(--color-danger) 5%, transparent), transparent 46%), var(--color-document); }
 
 .settings-group__header { display: flex; min-height: 3.4rem; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem 1rem; padding: 0.95rem clamp(1rem, 1.6vw, 1.4rem); border-bottom: var(--hairline); }
 /* Grow so the heading keeps the first line to itself; when wide actions (e.g. the tool-loading Segmented
@@ -133,9 +133,9 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .settings-group__body:has(> .settings-row),
 .settings-group__body:has(> .settings-group__column) {
   margin: 0.8rem clamp(0.8rem, 1.4vw, 1.15rem) clamp(0.9rem, 1.4vw, 1.15rem);
-  border: 1px solid rgb(255 255 255 / 0.055);
+  border: 1px solid color-mix(in srgb, var(--color-text) 5.5%, transparent);
   border-radius: var(--radius-lg);
-  background: rgb(255 255 255 / 0.011);
+  background: color-mix(in srgb, var(--color-text) 1.1%, transparent);
 }
 
 /* THE ALIGNMENT RULE. A stack of records owns the column tracks and every record borrows them through
@@ -152,7 +152,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
    record on the left does not stretch whatever sits opposite it. */
 .settings-group__body:has(> .settings-group__column) { display: grid; grid-template-columns: 1fr 1fr; }
 .settings-group__column { min-width: 0; }
-.settings-group__column + .settings-group__column { border-left: 1px solid rgb(255 255 255 / 0.055); }
+.settings-group__column + .settings-group__column { border-left: 1px solid color-mix(in srgb, var(--color-text) 5.5%, transparent); }
 /* Half the width means half the room: the label track gives some of it back to the control. */
 .settings-group__column { grid-template-columns: minmax(8rem, 1fr) minmax(0, 0.85fr) auto; }
 
@@ -178,7 +178,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
   align-items: center;
   gap: 0.75rem 1rem;
   padding: 0.8rem 0.95rem;
-  border-bottom: 1px solid rgb(255 255 255 / 0.045);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 4.5%, transparent);
   transition: background-color var(--motion-base) var(--ease-out);
 }
 /* Borrow the stack's tracks — but ONLY when the record actually sits in one. A record rendered inside a
@@ -200,7 +200,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
   opacity: 0;
   transition: opacity var(--motion-base) var(--ease-out);
 }
-.settings-row:hover { background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.05), rgb(255 255 255 / 0.008) 58%, transparent); }
+.settings-row:hover { background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.05), color-mix(in srgb, var(--color-text) 0.8%, transparent) 58%, transparent); }
 .settings-row:hover::before, .settings-row:focus-within::before { opacity: 1; }
 
 .settings-row__label { display: flex; min-width: 0; align-items: flex-start; gap: 0.7rem; }
@@ -248,7 +248,7 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 .settings-model-rows { container-type: inline-size; }
 .settings-model-row { position: relative; min-height: 4.1rem; padding: 0.65rem clamp(1rem, 1.6vw, 1.4rem); border-bottom: var(--hairline); transition: background-color var(--motion-base) var(--ease-out); }
 .settings-model-row:last-child { border-bottom: 0; }
-.settings-model-row:hover { background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.05), rgb(255 255 255 / 0.008) 58%, transparent); }
+.settings-model-row:hover { background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.05), color-mix(in srgb, var(--color-text) 0.8%, transparent) 58%, transparent); }
 
 /* Responsive ---------------------------------------------------------------- */
 /* Named container queries throughout. These were viewport media queries while the surface lived in a
@@ -258,7 +258,7 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 
 @container workspace-shell (width < 73.75rem) {
   .settings-group__body:has(> .settings-group__column) { grid-template-columns: 1fr; }
-  .settings-group__column + .settings-group__column { border-left: 0; border-top: 1px solid rgb(255 255 255 / 0.055); }
+  .settings-group__column + .settings-group__column { border-left: 0; border-top: 1px solid color-mix(in srgb, var(--color-text) 5.5%, transparent); }
 }
 
 @container workspace-shell (width < 56.25rem) {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { SKINS } from '../../lib/skins';
 
 // The design system's numeric invariants. Every other token test in the repo checks that a token EXISTS
@@ -137,5 +137,172 @@ describe('no hardcoded colour outside the token layer', () => {
     const structural = stripComments(skinCss(skin)).replace(/--[a-z0-9-]+\s*:[^;}]+[;]?/gi, '');
     expect([...structural.matchAll(COLOUR_LITERAL)].map((m) => m[0]), `hardcoded colour in ${skin}/skin.css`)
       .toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// No hardcoded colour in the host component tree
+// ---------------------------------------------------------------------------------------------------
+
+describe('the host component tree paints from tokens, not from literals', () => {
+  // The same invariant the check above enforces for a skin's own stylesheet, applied to the code that
+  // stylesheet has to be able to restyle. `tests/contract/pluginBundleDesignTokens.test.ts` has enforced
+  // it for plugin bundles for a while; the HOST had nothing — no stylelint, no eslint colour rule — so a
+  // literal in a component was caught only by someone noticing it in review. That is the wrong half to
+  // leave open: a plugin's stray colour discolours one panel, a component's discolours the whole app for
+  // every skin at once, and it is invisible until someone switches skin and finds one frozen surface.
+  //
+  // The scan is deliberately mechanical. The answer to "this shade has no token" is to add the token
+  // (which a skin can then move) rather than to write the shade where no skin can reach it.
+
+  /** Sources a skin has to be able to restyle: every component and module, the stylesheets they use, and
+   *  the root document — which paints the first frame before any stylesheet lands. Tests are excluded:
+   *  a test asserting on a literal is checking the token layer, not shipping a colour. */
+  function scannedFiles(): string[] {
+    const walk = (dir: string, match: RegExp, out: string[] = []): string[] => {
+      let entries: string[];
+      try { entries = readdirSync(dir); } catch { return out; }
+      for (const entry of entries) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) { walk(full, match, out); continue; }
+        if (match.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(full);
+      }
+      return out;
+    };
+    return [
+      ...walk(join(root, 'components'), /\.tsx?$/),
+      ...walk(join(root, 'modules'), /\.tsx?$/),
+      ...walk(join(root, 'app', 'styles'), /\.css$/),
+      join(root, 'app', 'layout.tsx'),
+    ].sort();
+  }
+
+  /** Blank out everything that is not a shipped colour value, preserving line numbers so a report stays
+   *  navigable. Comments go in both languages — prose about `accent-blue` is not a utility class. In CSS,
+   *  `--token: value` declarations go too: those ARE the token layer, and a literal is exactly what they
+   *  are for, which is the same carve-out the skin check above makes. */
+  function paintable(text: string, isCss: boolean): string {
+    const blank = (m: string) => m.replace(/[^\n]/g, ' ');
+    let out = text.replace(/\/\*[\s\S]*?\*\//g, blank);
+    if (isCss) out = out.replace(/--[a-z0-9-]+\s*:[^;}]+/gi, blank);
+    else out = out.split('\n').map((line) => (/^\s*\/\//.test(line) ? '' : line)).join('\n');
+    return out;
+  }
+
+  /** A colour written out by hand. Three shapes, and each excludes the token spelling of itself:
+   *  - a hex literal, including the `bg-[#a78bfa]` arbitrary-value form;
+   *  - `rgb()`/`hsl()` and their alpha variants opened with a NUMBER, so the channel-token idiom
+   *    `rgb(var(--accent-rgb) / .16)` — and `color-mix(in srgb, var(--color-warning), …)`, which never
+   *    opens with a digit at all — stay clean;
+   *  - Tailwind's literal colour utilities: `bg-black`, `text-white`, and the named palette
+   *    (`bg-red-500`, `text-slate-400`), all of which bypass the semantic tokens entirely.
+   *  The semantic utilities the app actually uses — `bg-accent`, `text-muted`, `border-danger` — carry
+   *  no palette name and so match none of these. */
+  const LITERAL_PATTERNS = [
+    /#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/g,
+    /\b(?:rgba?|hsla?)\(\s*[0-9.]/g,
+    /\b(?:bg|text|border|from|via|to|ring|fill|stroke|outline|caret|placeholder|shadow)-(?:black|white|slate|gray|grey|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)(?:-\d{2,3})?\b/g,
+  ];
+
+  /** Every hardcoded colour in one file, as `path:line literal`. */
+  function literalsIn(file: string): string[] {
+    const hits: string[] = [];
+    const lines = paintable(readFileSync(file, 'utf-8'), file.endsWith('.css')).split('\n');
+    lines.forEach((line, i) => {
+      for (const pattern of LITERAL_PATTERNS) {
+        pattern.lastIndex = 0;
+        for (const hit of line.match(pattern) ?? []) hits.push(`${relative(root, file)}:${i + 1} ${hit}`);
+      }
+    });
+    return hits;
+  }
+
+  /** Files whose colours genuinely cannot come from a custom property. Each carries its reason inline
+   *  and the shape is enforced below, so an exemption without a stated justification cannot exist —
+   *  a bare path is how an allowlist quietly becomes the place violations go to die. */
+  const EXEMPT: { path: string; reason: string }[] = [
+    { path: 'components/terminal/xtermTheme.ts', reason: "xterm's renderer takes a colour object and cannot read CSS custom properties." },
+    { path: 'components/terminal/palettes.ts', reason: 'The terminal colour schemes fed to that same xterm colour object.' },
+    { path: 'components/auth/LoginForm.tsx', reason: "The Microsoft logo's four brand quadrants, which a skin must not recolour." },
+    { path: 'modules/settings/providers.tsx', reason: 'Third-party provider brand identity colours.' },
+    { path: 'components/ui/Avatar.tsx', reason: 'The monogram sits on a fixed eight-colour identity palette that deliberately ignores the skin, so its ink has to be equally fixed.' },
+    { path: 'modules/memory/memoryMeta.ts', reason: 'The category swatch is a fixed ten-colour identity ramp, the same kind of palette as Avatar: it identifies a category rather than styling it, so the skin must not move it.' },
+    { path: 'app/layout.tsx', reason: 'The anti-FOUC paint: the root background and themeColor land before any stylesheet, so no token exists yet.' },
+    { path: 'app/styles/base.css', reason: 'The same anti-FOUC paint on <html>, held with the root element rather than in the cascade below it.' },
+  ];
+
+  /** Literals that are plain debt, not exemptions — a ledger, in the idiom of `coreCssOwnership.test.ts`.
+   *  Each of these should resolve to a token; none has been converted yet. Pinned by equality both ways
+   *  at file granularity, so a NEW offending file fails as debt added quietly and a file that has been
+   *  cleaned up fails as a stale entry. File granularity rather than `path:line` on purpose: line numbers
+   *  churn under every unrelated edit, and a ledger that fails on churn gets deleted rather than paid. */
+  //  EMPTY, and it stays that way. Every entry that was here has been paid: the white washes across the
+  //  settings surface and the interactive row became `color-mix` of --color-text, the black scrims became
+  //  --color-bg, the status glows resolved to the --color-success / --color-danger / --color-error and
+  //  --color-ember tokens they were already spelling out by hand, the diagnostics legend got the two
+  //  categorical tone tokens it needed, and the terminal preview now asks xtermTheme for the background
+  //  it tints itself against instead of writing its own. Adding a line here again means a literal is
+  //  shipping in the component tree — say why in the reason, and mean "not yet", not "never".
+  const DEBT: { path: string; reason: string }[] = [];
+
+  const recorded = new Map([...EXEMPT, ...DEBT].map((entry) => [entry.path, entry] as const));
+
+  it('records a stated reason for every path it excuses', () => {
+    // An entry with no reason is an unfalsifiable exemption, and this list is the one place where one
+    // would silently keep a hardcoded colour alive forever.
+    expect(recorded.size, 'a path is recorded twice').toBe(EXEMPT.length + DEBT.length);
+    for (const entry of recorded.values()) {
+      expect(entry.reason.length, `${entry.path} records no usable reason`).toBeGreaterThan(30);
+      expect(entry.reason, `${entry.path} reason must be a sentence`).toMatch(/\.$/);
+    }
+    for (const entry of DEBT) {
+      expect(entry.reason, `${entry.path} is debt and must be marked as such`).toMatch(/^TODO\(redesign\): /);
+    }
+  });
+
+  it('actually scans the component tree', () => {
+    // A guard that matches nothing passes forever. Both halves are load-bearing: the corpus has to be
+    // real (a broken walk or a moved folder collapses it silently), and the matcher has to fire on a
+    // colour it has never seen while leaving the token spellings alone.
+    const files = scannedFiles();
+    expect(files.length, 'the scan found almost no files — the walk is broken').toBeGreaterThan(50);
+
+    const flagged = (source: string) => LITERAL_PATTERNS.some((p) => { p.lastIndex = 0; return p.test(source); });
+    for (const offender of [
+      'color: #1e90ff;',
+      'background: rgba(12, 14, 18, 0.4);',
+      'border-color: hsl(210 40% 50%);',
+      '<div className="bg-black text-sm" />',
+      '<div className="text-white" />',
+      '<div className="border-white/10" />',
+      '<div className="bg-gradient-to-r from-black to-transparent" />',
+      '<div className="bg-red-500" />',
+      '<span className="text-slate-400" />',
+      '<span className="bg-[#a78bfa]" />',
+    ]) expect(flagged(offender), `should have been flagged: ${offender}`).toBe(true);
+
+    for (const legitimate of [
+      'background: rgb(var(--accent-rgb) / .16);',
+      'border-color: color-mix(in srgb, var(--color-warning) 40%, transparent);',
+      'background: var(--color-surface-sticky);',
+      '<div className="bg-accent text-muted border-danger" />',
+      '<div className="bg-surface hover:bg-elevated" />',
+      'const gap = "gap-3 pt-2";',
+    ]) expect(flagged(legitimate), `should NOT have been flagged: ${legitimate}`).toBe(false);
+  });
+
+  it('has no hardcoded colour outside the recorded paths', () => {
+    const offenders = scannedFiles()
+      .filter((file) => !recorded.has(relative(root, file)))
+      .flatMap(literalsIn);
+    expect(offenders, 'a skin cannot restyle these — resolve them from a semantic token').toEqual([]);
+  });
+
+  it('carries exactly the recorded set of files that still hold a literal', () => {
+    // Equality both ways, the same way `coreCssOwnership.test.ts` pins its ledger: a NEW file with a
+    // literal fails as debt added quietly, and a recorded file that no longer has one fails as a stale
+    // entry — so cleaning a file up means deleting its line here, and the list can only shrink.
+    const holding = scannedFiles().filter((file) => literalsIn(file).length > 0).map((file) => relative(root, file)).sort();
+    expect(holding).toEqual([...recorded.keys()].sort());
   });
 });

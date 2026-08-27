@@ -112,7 +112,10 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
         // Drawers and sheets share the workspace detail rail's near-black document tone, not the
         // lighter surface tone of centered windows.
         style={drawer
-          ? { background: 'var(--color-document)', boxShadow: '-2rem 0 5rem rgb(0 0 0 / 0.72)' }
+          // The cast shadow is the page's own canvas at 72%, not a literal black: --color-bg is what a
+          // skin moves when it moves the document's darkest tone, and a frozen black under a pale skin
+          // is a smudge rather than depth.
+          ? { background: 'var(--color-document)', boxShadow: '-2rem 0 5rem color-mix(in srgb, var(--color-bg) 72%, transparent)' }
           : sheet
             ? { background: 'var(--color-document)' }
             : { boxShadow: 'var(--shadow-raised)' }}

@@ -17,7 +17,10 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
 .interactive-row {
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
-.interactive-row:hover { background: rgb(255 255 255 / 0.025); }
+/* The wash is the ink at a very low alpha rather than a literal white: --color-text is what a skin moves
+   when it moves the design's "light", so the hover follows a repaint instead of staying near-white on a
+   surface that no longer is. */
+.interactive-row:hover { background: color-mix(in srgb, var(--color-text) 2.5%, transparent); }
 
 :root {
   /* The room the advisor launcher claims in the bottom-right corner. Anything else that docks at the
@@ -92,6 +95,18 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
     border-radius: var(--radius-lg);
     padding: 0;
   }
+}
+
+/* A TAKEOVER is the page, not a dialog raised over it (components/ui/WorkspaceTakeover.tsx). It shares
+   the fullscreen geometry above — which is the point: one place owns the dvh-correct sizing — but it
+   keeps the full bleed and the four safe-area paddings at EVERY width, where a fullscreen dialog insets
+   itself and drops both from the tablet breakpoint up. Two classes plus the attribute, so it wins over
+   that media query wherever the two files land in the cascade. */
+.overlay-surface.workspace-takeover[data-presentation='fullscreen'] {
+  inset: 0;
+  border-width: 0;
+  border-radius: 0;
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
 }
 
 @keyframes overlay-sheet-in {

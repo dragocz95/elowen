@@ -40,6 +40,14 @@
   --color-approve: #32c986;
   --color-cancelled: #756d68;
 
+  /* Two CATEGORICAL tones. Unlike the semantic five above they say nothing about state — they exist so a
+     legend or a role swatch can stay distinguishable from its neighbours without borrowing "danger" or
+     "success" and implying something it does not mean. They are literals rather than derivations of the
+     accent precisely because their job is to be UNLIKE it; a skin that repaints the palette moves these
+     two with it. */
+  --color-tone-violet: #a78bfa;
+  --color-tone-magenta: #f472b6;
+
   /* Organic but disciplined: compact controls, roomier panels, never pill-shaped by default. */
   --radius-sm: 0.375rem;
   --radius: 0.5rem;

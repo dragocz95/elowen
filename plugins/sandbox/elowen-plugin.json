@@ -69,7 +69,7 @@
   "web": {
     "entry": "web/index.js",
     "css": "web/index.css",
-    "requiresApiVersion": 5,
+    "requiresApiVersion": 8,
     "user": [
       {
         "id": "environment",
@@ -97,6 +97,7 @@
       "columnProject": "Project",
       "columnBranch": "Branch",
       "columnState": "State",
+      "openWorkspace": "Open workspace {name}",
       "emptyWorkspaces": "No workspaces match this filter.",
       "loading": "Loading sandbox data…",
       "loadError": "Sandbox data could not be loaded.",
