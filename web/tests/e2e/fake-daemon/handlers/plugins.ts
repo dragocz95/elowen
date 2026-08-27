@@ -14,6 +14,7 @@
 import type { Hono } from 'hono';
 import { createHash } from 'node:crypto';
 import { getResponse } from '../overrides.ts';
+import { realPlugins } from '../realPlugins.ts';
 
 /** The fixture plugin's name — also its route: `/p/<name>`. */
 export const PLUGIN_NAME = 'cssprobe';
@@ -69,7 +70,14 @@ export function registerPluginRoutes(app: Hono): void {
   app.get('/plugins/ui', (c) => c.json(getResponse('plugins/ui', [] as unknown)));
 
   app.get('/plugins/:name/web/:file', (c) => {
-    if (c.req.param('name') !== PLUGIN_NAME) return c.json({ error: 'not found' }, 404);
+    const name = c.req.param('name');
+    if (name !== PLUGIN_NAME) {
+      // A REAL built bundle from `plugins/<name>/web` (see realPlugins.ts). Same content-hash rule as
+      // the fixture plugin below and as the real route: only the CURRENT hash resolves.
+      const asset = realPlugins().get(name)?.assets.get(c.req.param('file'));
+      if (!asset) return c.json({ error: 'not found' }, 404);
+      return c.body(asset.body, 200, { 'Content-Type': asset.type, 'Cache-Control': 'public, max-age=31536000, immutable' });
+    }
     const file = c.req.param('file');
     if (file === `${BUNDLE_HASH}.js`) {
       return c.body(BUNDLE, 200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=31536000, immutable' });

@@ -41,7 +41,10 @@ export default defineConfig({
       command: 'node --experimental-strip-types tests/e2e/fake-daemon/server.ts',
       url: `${DAEMON_URL}/health`,
       reuseExistingServer: !process.env.CI,
-      env: { FAKE_DAEMON_PORT: String(FAKE_DAEMON_PORT) },
+      // E2E_PLUGIN_DIRS points the real-plugin fixture at extra checkouts that contain plugin folders
+      // (the plugin registry is its own repository). Forwarded explicitly so it reaches the daemon
+      // process; the repo's own `plugins/` needs no setting. A spec skips any plugin it does not find.
+      env: { FAKE_DAEMON_PORT: String(FAKE_DAEMON_PORT), ...(process.env.E2E_PLUGIN_DIRS ? { E2E_PLUGIN_DIRS: process.env.E2E_PLUGIN_DIRS } : {}) },
       stdout: 'pipe',
       stderr: 'pipe',
     },

@@ -16,6 +16,7 @@ import { registerDebugRoutes } from './handlers/debug.ts';
 import { registerControlRoutes } from './handlers/control.ts';
 import { registerPluginRoutes } from './handlers/plugins.ts';
 import { registerMemoryRoutes } from './handlers/memory.ts';
+import { registerPluginSurfaceRoutes } from './handlers/pluginSurfaces.ts';
 
 const app = new Hono();
 
@@ -43,6 +44,9 @@ registerDebugRoutes(app);
 registerControlRoutes(app);
 registerPluginRoutes(app);
 registerMemoryRoutes(app);
+// Plugin-owned endpoints the real bundles read. Registered after the core handlers so a core route
+// always wins, and before the catch-all — which is what used to answer these with a bare `[]`.
+registerPluginSurfaceRoutes(app);
 
 // Anything the shell polls that we haven't modeled: answer 200 [] rather than 404, so an unmodeled
 // ambient GET never throws in the UI. Non-GET unknowns still 404 (a real missing write is a test bug).

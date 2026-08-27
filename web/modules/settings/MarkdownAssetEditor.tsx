@@ -193,8 +193,12 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <ControlSurfaceToolbar className="flex-col items-stretch">
-        <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
+      {/* `w-full` on the row, NOT `items-stretch` on the toolbar: `.control-surface-toolbar` sets
+          `align-items: center` unlayered, and every Tailwind utility lives in `@layer utilities`, so the
+          stretch lost silently. The row then took its max-content width and ran 42px past the surface at
+          320px, clipping the last filter — the same specificity trap the register's sticky header hit. */}
+      <ControlSurfaceToolbar>
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 py-3">
           <RegisterSearch value={search} onChange={setSearch} placeholder={t.assetEditor.search} label={t.assetEditor.search} />
           {/* One filter row, never two: an asset type with ownership scopes already splits the same set
               more finely (mine / instance / bundled), so showing the coarse source filter beside it would

@@ -13,6 +13,7 @@ import type {
   BrainModelOption,
   SlashCommandDef,
   ElowenConfig,
+  PluginUiListing,
 } from '../../../lib/types.ts';
 import type { OverrideKey } from '../fake-daemon/overrides.ts';
 import {
@@ -81,6 +82,22 @@ export class Seed {
    *  Routed through the dedicated `POST /__test/setup` control endpoint. */
   async needsSetup(on = true): Promise<void> {
     await this.request.post(`${DAEMON_URL}/__test/setup`, { data: { needsSetup: on } });
+  }
+
+  /** Arm `GET /plugins/ui` with the REAL plugin bundles this checkout has built, so `/p/<plugin>` renders
+   *  a plugin's actual UI in the browser instead of the host's "unavailable" notice. The rows are derived
+   *  from each plugin's own `elowen-plugin.json`; the fake daemon serves the built bundle and stylesheet
+   *  on the content-hash URLs those rows point at.
+   *
+   *  Returns the plugin names that were armed. A registry plugin lives in another repository and is only
+   *  present when the harness was pointed at that checkout (`E2E_PLUGIN_DIRS`), so a caller MUST check the
+   *  returned list and skip what is not there rather than assume a page exists. */
+  async realPlugins(only?: readonly string[]): Promise<string[]> {
+    const res = await this.request.get(`${DAEMON_URL}/__test/real-plugins`);
+    const { plugins } = await res.json() as { plugins: PluginUiListing[] };
+    const armed = only ? plugins.filter((p) => only.includes(p.name)) : plugins;
+    await this.response('plugins/ui', armed);
+    return armed.map((p) => p.name);
   }
 
   /** Reference to the shared seed defaults, for a spec that wants to build on them. */
