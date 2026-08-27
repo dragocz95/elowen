@@ -29,7 +29,13 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   // (no users yet), which is exactly what keeps first-run onboarding — GET /setup, then creating the
   // first admin — reachable through this proxy before any session cookie can exist.
   if (token) headers.set('authorization', `Bearer ${token}`);
-  const upstream = await fetch(`${daemonUrl()}/${path.join('/')}${search}`, {
+  // Re-encode each segment. Next.js hands them over DECODED, so joining them raw puts the literal
+  // character back into a URL where it is syntax again: a platform conversation id like
+  // `brain-ch-msteams-a:1uAU…#4` turns everything from `#` onward into a fragment, which fetch never
+  // sends — the daemon receives a truncated path missing both the id's tail and the route after it, and
+  // answers 404. `?` would swallow the rest into the query the same way. safeSegments() has already
+  // rejected anything carrying a slash, so re-encoding cannot smuggle in a traversal.
+  const upstream = await fetch(`${daemonUrl()}/${path.map(encodeURIComponent).join('/')}${search}`, {
     method: req.method,
     headers,
     // STREAM the body through rather than reading it into memory. It must not be req.text() — decoding

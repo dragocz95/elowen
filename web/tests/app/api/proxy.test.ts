@@ -90,6 +90,24 @@ describe('proxy catch-all', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('re-encodes a segment whose literal characters are URL syntax, so a Teams conversation id survives', async () => {
+    // Next.js hands the segments over DECODED, and a Teams 1:1 conversation id ends in `#<n>`. Joining
+    // them raw turned everything from the `#` into a fragment, which fetch never sends — the daemon got a
+    // path missing both the tail of the id AND the route behind it, and answered 404. That is why
+    // Settings → Data could not open the transcript of any Teams conversation.
+    fetchMock.mockResolvedValue(new Response('{"items":[]}', { status: 200 }));
+    const sessionId = 'brain-ch-msteams-a:1uAUssTAR-rJYOk6bvUIVuqo3uU#4';
+    const req = new Request('https://web.test/api/brain/debug/sessions/x/legacy-transcript?limit=100', {
+      headers: { cookie: 'elowen_session=tok' },
+    });
+    await GET(req, ctx(['brain', 'debug', 'sessions', sessionId, 'legacy-transcript']));
+    const url = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(url.hash).toBe('');
+    expect(url.pathname).toBe(`/brain/debug/sessions/${encodeURIComponent(sessionId)}/legacy-transcript`);
+    // The daemon decodes the segment back to the id it stored, tail included.
+    expect(decodeURIComponent(url.pathname.split('/')[4]!)).toBe(sessionId);
+  });
+
   it('never echoes an upstream Set-Cookie back to the browser', async () => {
     fetchMock.mockResolvedValue(new Response('{}', { status: 200, headers: { 'set-cookie': 'daemon_sess=leak; Path=/' } }));
     const req = new Request('https://web.test/api/projects', { headers: { cookie: 'elowen_session=tok' } });
