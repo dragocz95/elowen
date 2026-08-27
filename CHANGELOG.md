@@ -5,6 +5,17 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.17] - 2026-08-27
+
+The first release since 0.28.11. Versions 0.28.12 through 0.28.16 were tagged during development and
+never published, so everything below arrives together.
+
+### Projects became the place capabilities attach to
+
+A Project is now the hub: plugins contribute their own panels to a project rather than claiming a
+top-level navigation entry of their own. Sandbox environments and GitHub repositories are reached from
+the project they belong to, and each plugin keeps its own data and its own connection.
+
 ### Added
 
 - A plugin can declare the controls it cannot work without (`requiresControls`) and the controls it
@@ -15,6 +26,35 @@ All notable changes to Elowen are documented here. The format loosely follows
   Before this, a plugin whose provider was missing enabled perfectly happily and then did nothing
   visible, with no screen saying why - `ctx.control()` simply answers undefined and a careful plugin
   hides its own surface. That is the right behaviour at runtime and useless at install time.
+
+- Plugins can contribute panels to an account, to a project, and (for administrators) to a user, and can
+  hide their own panels from an account that cannot use them. A capability that depends on a connection
+  somebody has not made now stays out of the way instead of showing an empty labelled tab.
+- A real charting component, used by the statistics page, with axes wide enough for a currency tick and
+  measured output speed reported in tokens per second.
+- Platform account links (Discord, Microsoft, Telegram, WhatsApp) are a click-through row that opens a
+  drawer, offered only where a message from that platform could actually arrive, and each carries its own
+  brand mark.
+- Sub-agent and task cards show live elapsed time, stable task identifiers, and confirmed bulk clearing.
+
+### Changed
+
+- Account and Settings are built from section cards instead of the orbital layout, with a mascot hero.
+  The first click in a section opens a right-hand drawer; a centered window is only ever the second step
+  from a drawer. Provider and environment dialogs moved onto the shared modal.
+- Plugin UI API 6 hands `SpatialIdentity` to plugin bundles.
+- Moved to PI 0.84.3 for the wider model catalogue; `glm-5.3` has its reasoning effort back.
+
+### Fixed
+
+- Public OAuth callbacks require HTTPS.
+- Deleting an account drains its running processes first.
+- Sandbox execution ownership and leases are enforced per account, and the terminal preserves foreground
+  kill semantics.
+- Compacted usage stays attributed to its original UTC day, and cold compaction is priced against the
+  cache TTL actually used.
+- The Codex prompt cache key stays stable across session rehydration.
+- Nine of eleven navigation icons were silently rendering a puzzle piece.
 
 ## [0.28.11] - 2026-08-22
 
