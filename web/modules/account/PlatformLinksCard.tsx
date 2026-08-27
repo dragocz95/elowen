@@ -1,8 +1,9 @@
 'use client';
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { Link2 } from 'lucide-react';
 import { SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
+import { LinkedAccountRow } from '../../components/ui/LinkedAccountRow';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { PlatformIcon } from '../../components/ui/PlatformIcon';
 import { Input } from '../../components/ui/Input';
@@ -43,9 +44,13 @@ export function PlatformLinksCard({ available, values, onChange, connectors = []
   /** Identities a PLUGIN owns, contributed through its `web.account` entries declaring
    *  `placement: 'linkedAccount'`. They are the same question as the rows above — "which account am I
    *  over there" — so they belong behind the same one click rather than each as its own top-level menu.
-   *  The host renders the panel and knows nothing about what it connects to; it deliberately does NOT
-   *  claim them in the summary chips, because only the plugin knows whether it is currently connected. */
-  connectors?: { id: string; node: ReactNode }[];
+   *  The host renders the panel and knows nothing about what it connects to.
+   *
+   *  `chip` is how a connector appears in the closed summary beside the chat platforms. The host cannot
+   *  compute it — whether an OAuth connector is currently linked is a question only the plugin can
+   *  answer — so the plugin contributes the chip and renders nothing when it is not connected. Without
+   *  it a linked GitHub was invisible until the drawer was opened, while Discord announced itself. */
+  connectors?: { id: string; node: ReactNode; chip?: ReactNode }[];
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -76,6 +81,7 @@ export function PlatformLinksCard({ available, values, onChange, connectors = []
             icon: <PlatformIcon platform={PLATFORM_LINK_INPUTS[key].platform} size={12} />,
           }))}
           moreCount={0}
+          extraSamples={connectors.map((connector) => <Fragment key={connector.id}>{connector.chip}</Fragment>)}
           onManage={() => setOpen(true)}
           manageLabel={t.managePicker.manage}
           manageAriaLabel={t.account.linkedAccounts}
@@ -90,33 +96,33 @@ export function PlatformLinksCard({ available, values, onChange, connectors = []
             {shown.map((key) => {
               const value = values[key] ?? '';
               return (
-                <div key={key} className="py-3.5">
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center"><PlatformIcon platform={PLATFORM_LINK_INPUTS[key].platform} size={18} /></span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{copy[key].title}</span>
-                    {/* Disconnecting only clears the field, so it needs no confirmation — but it stays a
-                        quiet ghost until hovered, because it is the one action in this row nobody is
-                        looking for. It appears only when there is something to disconnect. */}
-                    {value ? (
-                      <Button variant="ghost-danger" onClick={() => onChange(key, '')}>{t.account.linkDisconnect}</Button>
-                    ) : null}
-                  </div>
+                <LinkedAccountRow
+                  key={key}
+                  icon={<PlatformIcon platform={PLATFORM_LINK_INPUTS[key].platform} size={18} />}
+                  title={copy[key].title}
+                  /* Disconnecting only clears the field, so it needs no confirmation — but it stays a
+                     quiet ghost until hovered, because it is the one action in this row nobody is
+                     looking for. It appears only when there is something to disconnect. */
+                  actions={value ? <Button variant="ghost-danger" onClick={() => onChange(key, '')}>{t.account.linkDisconnect}</Button> : null}
+                  description={copy[key].description}
+                >
                   <Input
                     value={value}
                     onChange={(e) => onChange(key, e.target.value)}
                     placeholder={PLATFORM_LINK_INPUTS[key].placeholder}
-                    className="mt-2 font-mono"
+                    className="font-mono"
                     aria-label={copy[key].title}
                   />
-                  <p className="mt-2 text-xs leading-relaxed text-text-muted">{copy[key].description}</p>
-                </div>
+                </LinkedAccountRow>
               );
             })}
-            {/* A plugin's own identity panel, rendered whole as one more row. The host gives it the space
-                and the divider and nothing else: what "connected" means, and every action that changes
-                it, stay entirely the plugin's. */}
+            {/* A plugin's own identity panel, rendered whole as one more row. The host gives it the
+                divider and nothing else: what "connected" means, and every action that changes it, stay
+                entirely the plugin's. The padding is NOT the host's here — the plugin builds its row out
+                of the same LinkedAccountRow as the platforms above, which carries its own, and a wrapper
+                adding more would make the connector the one row sitting lower than its neighbours. */}
             {connectors.map((connector) => (
-              <div key={connector.id} className="py-3.5">{connector.node}</div>
+              <div key={connector.id}>{connector.node}</div>
             ))}
           </div>
         </WorkspaceDetailRail>

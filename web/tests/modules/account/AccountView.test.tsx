@@ -98,9 +98,39 @@ describe('AccountView', () => {
       'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
     // Nothing of the panel exists until the drawer is opened — one click, one overlay, no second window.
+    // This bundle registers no chip, which is also the guarantee that the closed summary stays clean: the
+    // host asks for a chip on every connector, and one that has none must contribute NOTHING rather than
+    // its whole panel rendered sideways into a row of chips.
     expect(screen.queryByText('GitHub device flow')).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: 'Linked accounts' }));
     expect(await screen.findByText('GitHub device flow')).toBeInTheDocument();
+  });
+
+  // A connected connector has to announce itself in the CLOSED summary the way a chat platform does —
+  // otherwise the row reads "no chat account linked" while GitHub sits linked behind it, which is exactly
+  // what it did. Whether it is linked is a fact only the bundle holds, so it registers the chip itself.
+  it('shows a connector chip in the closed summary without mounting the panel behind it', async () => {
+    loadPluginUi.mockResolvedValue({
+      requiresApiVersion: 7,
+      account: { connection: () => <div>GitHub device flow</div> },
+      accountChip: { connection: () => <span>GitHub</span> },
+    });
+    server.use(
+      http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'github', url: '/plugins/github/web/hash.js', apiVersion: 7, nav: [], account: [{ id: 'connection', label: 'GitHub', icon: 'Github', placement: 'linkedAccount' }], settings: [], strings: { accountHint: 'Your GitHub identity.' } }])),
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '' })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    // Anchored on the Manage button, because the Account page carries several summaries and the first in
+    // the DOM is the model picker's.
+    const summary = (await screen.findByRole('button', { name: 'Linked accounts' })).closest('[data-selection-summary]') as HTMLElement;
+    await waitFor(() => expect(summary.textContent).toContain('GitHub'));
+    // The chip is not the panel: asking for one must not drag the drawer's contents onto the page.
+    expect(screen.queryByText('GitHub device flow')).not.toBeInTheDocument();
   });
 
   // The section id survives in localStorage, so a plugin that MOVES into the drawer would otherwise leave

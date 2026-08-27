@@ -442,6 +442,18 @@ export function AccountView() {
                   onSaveState={(_id, status, retry) => reportSaveState('profile', status, retry)}
                 />
               ),
+              /* The same mount asked for its one-line claim, so a linked connector appears in the closed
+                 summary like a chat platform does. It renders nothing unless the plugin says it is
+                 linked — the host cannot know that, and must not guess a chip that outlives a
+                 disconnect. */
+              chip: (
+                <PluginAccountSection
+                  entry={item.plugin}
+                  sectionId={item.sectionId}
+                  view="chip"
+                  onSaveState={(_id, status, retry) => reportSaveState('profile', status, retry)}
+                />
+              ),
             }))}
           />
         );

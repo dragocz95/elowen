@@ -18,11 +18,28 @@ interface SelectionSummaryProps {
   /** The summary opens a display-only list (ManageSelectionModal in `readOnly` mode): the action is an
    *  EYE rather than a gear, so the button does not promise a setting the modal will not offer. */
   readOnly?: boolean;
+  /** Chips the CALLER renders, shown after `samples`. For a summary whose membership the component
+   *  cannot compute: a plugin connector knows whether it is currently linked and nothing here does, so
+   *  it contributes the chip itself — through {@link SummaryChip}, so it is the same chip and not a
+   *  lookalike. Renders nothing when the contributor decides it has nothing to claim. */
+  extraSamples?: ReactNode;
+}
+
+/** One chip of a summary. Exported so a caller that owns a fact this component cannot see can still put
+ *  it in the same row looking like everything beside it. */
+export function SummaryChip({ icon, label, variant = 'default' }: { icon?: ReactNode; label: string; variant?: 'default' | 'line' }) {
+  const line = variant === 'line';
+  return (
+    <span className={`inline-flex max-w-full items-center gap-1.5 text-[11px] ${line ? 'text-text' : 'rounded-md border border-border bg-elevated px-2 py-0.5 text-text-muted'}`}>
+      {icon ? <span aria-hidden className="shrink-0">{icon}</span> : null}
+      <span className="truncate">{label}</span>
+    </span>
+  );
 }
 
 /** Compact on-page summary for a managed selection: a count line, sample chips and a
  *  "Manage" button that opens the ManageSelectionModal. Replaces long toggle-pill rows. */
-export function SelectionSummary({ countText, samples, moreCount, onManage, manageLabel, manageAriaLabel, variant = 'default', readOnly = false }: SelectionSummaryProps) {
+export function SelectionSummary({ countText, samples, moreCount, onManage, manageLabel, manageAriaLabel, variant = 'default', readOnly = false, extraSamples }: SelectionSummaryProps) {
   const line = variant === 'line';
   return (
     <div
@@ -32,14 +49,12 @@ export function SelectionSummary({ countText, samples, moreCount, onManage, mana
     >
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         {countText ? <span className="text-xs font-medium text-text">{countText}</span> : null}
-        {(samples.length > 0 || moreCount > 0) && (
+        {(samples.length > 0 || moreCount > 0 || extraSamples) && (
           <div className="flex flex-wrap items-center gap-1.5">
             {samples.map((s) => (
-              <span key={s.label} className={`inline-flex max-w-full items-center gap-1.5 text-[11px] ${line ? 'text-text' : 'rounded-md border border-border bg-elevated px-2 py-0.5 text-text-muted'}`}>
-                {s.icon ? <span aria-hidden className="shrink-0">{s.icon}</span> : null}
-                <span className="truncate">{s.label}</span>
-              </span>
+              <SummaryChip key={s.label} icon={s.icon} label={s.label} variant={variant} />
             ))}
+            {extraSamples}
             {moreCount > 0 && (
               <span className={`font-mono text-[11px] text-text-muted ${line ? '' : 'rounded-md border border-border bg-elevated px-2 py-0.5'}`}>+{moreCount}</span>
             )}

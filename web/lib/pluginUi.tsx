@@ -55,7 +55,8 @@ import { ProgressRibbon } from '../components/ui/ProgressRibbon';
 import { PatchView } from '../components/ui/PatchView';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { ManageSelectionModal } from '../components/ui/ManageSelectionModal';
-import { SelectionSummary } from '../components/ui/SelectionSummary';
+import { SelectionSummary, SummaryChip } from '../components/ui/SelectionSummary';
+import { LinkedAccountRow } from '../components/ui/LinkedAccountRow';
 import { DetailBlock } from '../components/ui/DetailBlock';
 import { BrainModelField } from '../components/ui/BrainModelField';
 import { useToast } from '../components/ui/Toast';
@@ -115,7 +116,7 @@ import { eventIcon } from './eventMeta';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 6;
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 7;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -297,6 +298,11 @@ export function ensurePluginUiRuntime(): void {
       // the caption+hint wrapper the user detail puts above each of these summaries, shared so a plugin
       // showing a managed selection reads as the same thing rather than an approximation of it.
       ManageSelectionModal, SelectionSummary, DetailBlock, BrainModelField, MarkdownAssetEditor,
+      // A connector identity, shaped like the chat platforms it sits between. Both are here so a plugin
+      // cannot approximate either one: the drawer row it hangs in and the chip it contributes to the
+      // closed summary are the SAME components the host draws for Discord and friends, so "looks the
+      // same" is a fact about the code rather than a resemblance someone has to maintain by eye.
+      LinkedAccountRow, SummaryChip,
       Checkbox, DataTable, DataTableRow, DataTableCell, DateRangeFilter, ExecutorPicker,
       ProgressRibbon, PatchView, Spinner, MotionLayout, WorkspaceDetailRail,
     } as Record<string, ComponentType<never>>,

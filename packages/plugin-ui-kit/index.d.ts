@@ -10,7 +10,7 @@ import type { ComponentType } from 'react';
 /** See index.js — bump on incompatible changes to `ElowenUiRuntime`. Deliberately a LITERAL type:
  *  the web app re-declares the value and annotates it with `typeof PLUGIN_UI_API_VERSION`, so a kit
  *  bump that forgets the host fails the web typecheck instead of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 6;
+export declare const PLUGIN_UI_API_VERSION: 7;
 
 /** Project metadata exposed to a contextual plugin panel. The Project remains core-owned; a panel uses
  *  this identity to address only its own project-scoped API data. */
@@ -86,6 +86,12 @@ export interface PluginUiRegistration {
   requiresApiVersion: number;
   pages?: Record<string, ComponentType<PluginPageProps>>;
   account?: Record<string, ComponentType<PluginPageProps>>;
+  /** For an `account` entry placed as `linkedAccount`: its one-line claim in the CLOSED Linked accounts
+   *  summary, keyed by the same panel id. Whether a connector is currently linked is a fact only the
+   *  bundle holds, so the host cannot draw this chip on its behalf — but it also must not mount the
+   *  PANEL to ask, which is why this is its own entry. Omit it and the summary simply says nothing
+   *  about this connector. Draw it with `components.SummaryChip` so it matches the chips beside it. */
+  accountChip?: Record<string, ComponentType<PluginPageProps>>;
   user?: Record<string, ComponentType<PluginUserPanelProps>>;
   project?: Record<string, ComponentType<PluginProjectPanelProps>>;
   settings?: Record<string, ComponentType<PluginPageProps>>;
