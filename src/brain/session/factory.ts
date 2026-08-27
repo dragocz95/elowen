@@ -213,9 +213,14 @@ export function compactionReserveTokens(contextWindow: number, proactive: boolea
  * Elowen never overrode, so every session silently ran it — 62% of a 32k window but only 10% of a 200k
  * one, and on small models the floor alone swallowed the room the threshold was supposed to buy. The tail
  * is the only part of the post-compaction floor Elowen controls through PI's settings surface, so it must
- * be sized from what actually constrains it: the room left under the compaction TRIGGER once the
- * never-shrinking parts are paid for. Sizing it from the window instead ignores the trigger, which lands
- * it on the constant default exactly where the headroom demanded less.
+ * be sized from what actually constrains it.
+ *
+ * What constrains it is the POST-COMPACTION CEILING, not the trigger. Sizing the tail from the room left
+ * under the trigger asks "does the tail still fit below the point that FIRES compaction", and on a large
+ * trigger the answer is trivially yes — 500k minus the fixed cost leaves hundreds of thousands of tokens
+ * of headroom, so the tail lands on {@link COMPACTION_TAIL_MAX} and the trigger stops influencing it at
+ * all. That is the wrong question: a compaction exists to make the context small again, so what the tail
+ * must fit under is how much context the conversation may still carry AFTERWARDS.
  *
  * The floor after a compaction is `fixed cost + summary + tail`, where the fixed cost (system prompt +
  * tool definitions) is known — or closely estimable — when the session is built, and the summary is NOT:
@@ -223,17 +228,32 @@ export function compactionReserveTokens(contextWindow: number, proactive: boolea
  * content. {@link COMPACTION_SUMMARY_ALLOWANCE} is an honest middle estimate for the summary at tail-sizing
  * time ("a few thousand tokens" in practice); the guard in the circuit breaker re-measures the real floor
  * after each compaction and stops the retry loop when the summary has grown past the headroom.
- * {@link COMPACTION_TRIGGER_MARGIN} keeps the floor comfortably below the trigger rather than at it, so
- * one summarization request buys a useful amount of working room. */
+ * {@link COMPACTION_TRIGGER_MARGIN} keeps that floor comfortably below the trigger rather than at it. */
 const COMPACTION_TAIL_MIN = 2_000;
 const COMPACTION_TAIL_MAX = 20_000;
 const COMPACTION_SUMMARY_ALLOWANCE = 8_000;
 const COMPACTION_TRIGGER_MARGIN = 5_000;
 
-/** The token room left under the trigger after the fixed cost, the summary allowance and the margin.
- *  Negative (or smaller than the minimal tail) means the percentage cannot be honored on this session. */
+/** How much context a conversation may still carry once a compaction has run, as a share of the trigger
+ *  that fired it. A compaction that leaves the context near its own trigger buys nothing and fires again
+ *  on the next turn, having spent a full standalone summarization request — billed at full input price,
+ *  because PI sends summaries with `cacheRetention: "none"` and they never read the conversation's cache.
+ *
+ *  It is a CEILING, not a target: landing further below it is always fine and is never corrected upwards. */
+const POST_COMPACTION_CEILING_PCT = 20;
+
+/** The most context this session may keep after a compaction, derived from the trigger in force. */
+export function postCompactionCeiling(triggerTokens: number): number {
+  return Math.round((triggerTokens * POST_COMPACTION_CEILING_PCT) / 100);
+}
+
+/** The token room left under the post-compaction ceiling once the fixed cost and the summary are paid for.
+ *  Negative (or smaller than the minimal tail) means the ceiling cannot be honoured on this session —
+ *  typically because the never-shrinking fixed cost alone already exceeds it. The tail then sits at its
+ *  minimum, which is as close to the ceiling as this session can get: compaction still runs, because
+ *  shrinking the context part of the way is strictly better than not shrinking it at all. */
 function compactionTailHeadroom(triggerTokens: number, fixedCostTokens: number): number {
-  return triggerTokens - fixedCostTokens - COMPACTION_SUMMARY_ALLOWANCE - COMPACTION_TRIGGER_MARGIN;
+  return postCompactionCeiling(triggerTokens) - fixedCostTokens - COMPACTION_SUMMARY_ALLOWANCE;
 }
 
 /** Estimate the never-shrinking part of one provider request — system prompt + append chunks + tool
@@ -247,10 +267,11 @@ export function estimateFixedCostTokens(
   return Math.ceil((systemPrompt.length + (appendSystemPrompt?.join('\n\n').length ?? 0) + toolsChars) / 4);
 }
 
-/** The retained recent-message tail for one trigger point: everything the trigger does not buy is denied
- *  to the tail. PI keeps AT LEAST this many tokens (it cuts at the first message boundary past the
- *  budget), so the tail is a floor on the post-compaction context — sized by the headroom, clamped to a
- *  coherent minimum and to PI's own default at the top. */
+/** The retained recent-message tail for one trigger point: whatever the post-compaction ceiling does not
+ *  leave over is denied to the tail. PI keeps AT LEAST this many tokens — it cuts at the first message
+ *  boundary past the budget and never inside a tool result — so this is a FLOOR handed to PI, not a
+ *  guarantee: one oversized entry can still carry the retained tail past the ceiling. Sized by the
+ *  headroom, clamped to a coherent minimum and to PI's own default at the top. */
 export function compactionKeepRecentTokens(triggerTokens: number, fixedCostTokens: number): number {
   return Math.min(COMPACTION_TAIL_MAX, Math.max(COMPACTION_TAIL_MIN, Math.round(compactionTailHeadroom(triggerTokens, fixedCostTokens))));
 }

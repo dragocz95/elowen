@@ -7,6 +7,7 @@ import {
   compactionKeepRecentTokens,
   compactionReserveTokens,
   estimateFixedCostTokens,
+  postCompactionCeiling,
   resolveAutoCompactPct,
 } from '../../src/brain/session/factory.js';
 import { openDb } from '../../src/store/db.js';
@@ -61,15 +62,27 @@ describe('BrainSessionFactory compaction budget', () => {
     expect(estimateFixedCostTokens('x'.repeat(32_113), [], [])).toBe(Math.ceil((32_113 + 2) / 4));
   });
 
-  it('sizes the tail from the headroom under the trigger, not the window', () => {
-    // 200k at 40% (trigger 80k) with the measured ~27.6k fixed cost: the whole default tail fits.
-    expect(compactionKeepRecentTokens(80_000, 27_619)).toBe(20_000); // cap = PI's own default
-    // 128k at 40% (trigger 51.2k): headroom = 51_200 − 27_619 − 8_000 allowance − 5_000 margin.
-    expect(compactionKeepRecentTokens(51_200, 27_619)).toBe(10_581);
-    // 32k at 40% (trigger 12.8k): fixed cost alone already exceeds it — the tail can only shrink.
-    expect(compactionKeepRecentTokens(12_800, 27_619)).toBe(2_000); // floor clamp
-    // A tiny 8k window at 40%: the tail must not swallow half of it.
-    expect(compactionKeepRecentTokens(3_200, 8_000)).toBe(2_000);   // floor clamp
+  it('sizes the tail from the post-compaction ceiling, not from the room under the trigger', () => {
+    // 1M at 50% (trigger 500k) with the measured ~27.6k fixed cost: the 100k ceiling leaves far more
+    // room than PI's own default tail, so the cap wins.
+    expect(compactionKeepRecentTokens(500_000, 27_619)).toBe(20_000); // cap = PI's own default
+    // 200k trigger: ceiling 40_000 − 27_619 fixed − 8_000 summary allowance.
+    expect(compactionKeepRecentTokens(200_000, 27_619)).toBe(4_381);
+    // 150k trigger: the fixed cost and the summary already exceed the 30k ceiling on their own.
+    expect(compactionKeepRecentTokens(150_000, 27_619)).toBe(2_000); // floor clamp
+    // A tiny 8k window at 40%: the tail must not swallow the whole ceiling.
+    expect(compactionKeepRecentTokens(3_200, 8_000)).toBe(2_000);    // floor clamp
+  });
+
+  it('keeps the projected post-compaction floor under the ceiling wherever the ceiling is reachable', () => {
+    // The invariant the ceiling exists for. Sizing the tail from the trigger broke exactly this: a 200k
+    // trigger took the full 20k default tail, putting the floor at 55.6k against a 40k ceiling — so the
+    // compaction landed above the size it was supposed to bring the conversation down to.
+    const fixedCostTokens = 27_619;
+    for (const trigger of [200_000, 300_000, 500_000, 1_000_000]) {
+      const floor = fixedCostTokens + 8_000 + compactionKeepRecentTokens(trigger, fixedCostTokens);
+      expect(floor).toBeLessThanOrEqual(postCompactionCeiling(trigger));
+    }
   });
 
 });
@@ -109,12 +122,12 @@ describe('BrainSessionFactory compaction settings handed to PI', () => {
   }
 
   it('hands PI an explicit keepRecentTokens, not the constant default by omission', async () => {
-    // 64k at 40%: trigger 25.6k; after the 8k fixed cost, the 8k summary allowance and the 5k margin only
-    // 4.6k of headroom remain, so the tail Elowen hands over is a value only this derivation produces.
-    // PI's own constant default (20k) would not survive the headroom math, so asserting it proves the
-    // value is explicit rather than defaulted by omission.
-    const { read } = await captureCompactionSettings(64_000, true, 40);
-    expect(read()).toEqual({ enabled: true, reserveTokens: 38_400, keepRecentTokens: 4_600 });
+    // 300k at 50%: trigger 150k, so the post-compaction ceiling is 30k; after the 8k fixed cost and the
+    // 8k summary allowance, 14k remains, and that is a value only this derivation produces. PI's own
+    // constant default (20k) would not survive the ceiling math, so asserting it proves the value is
+    // explicit rather than defaulted by omission.
+    const { read } = await captureCompactionSettings(300_000, true, 50);
+    expect(read()).toEqual({ enabled: true, reserveTokens: 150_000, keepRecentTokens: 14_000 });
   });
 
   it('keeps the retained tail small relative to a small window', async () => {
@@ -126,23 +139,25 @@ describe('BrainSessionFactory compaction settings handed to PI', () => {
   });
 
   it('re-derives keepRecentTokens from the live threshold on a threshold change', async () => {
-    // The tail is a function of the TRIGGER, not the window, so a live percentage change must re-derive
-    // it: loosening to 80% on a 64k window restores the 20k cap, tightening to 40% cuts it to 4.6k.
-    const { read, applyCompaction } = await captureCompactionSettings(64_000, true, 80);
-    expect(read()).toEqual({ enabled: true, reserveTokens: 12_800, keepRecentTokens: 20_000 });
+    // The tail is a function of the ceiling the TRIGGER implies, so a live percentage change must
+    // re-derive it: on a 200k window, 80% leaves a 32k ceiling and a 16k tail, while tightening to 40%
+    // drops the ceiling to 16k, which the fixed cost and summary allowance consume entirely.
+    const { read, applyCompaction } = await captureCompactionSettings(200_000, true, 80);
+    expect(read()).toEqual({ enabled: true, reserveTokens: 40_000, keepRecentTokens: 16_000 });
     applyCompaction(true, 40);
-    expect(read()).toEqual({ enabled: true, reserveTokens: 38_400, keepRecentTokens: 4_600 });
+    expect(read()).toEqual({ enabled: true, reserveTokens: 120_000, keepRecentTokens: 2_000 });
   });
 
-  it('sizes the retained tail from the headroom under the trigger, not the window', async () => {
-    // 200k at 40% (trigger 80k) with the measured ~27.6k fixed cost: the whole default tail fits and the
-    // floor still lands far below the trigger. 128k at 40% (trigger 51.2k): only ~10.6k of headroom
-    // remains, and that — not the window — is what the tail gets. On the 128k capture the derived value
-    // differs from PI's 20k default, so deleting the wiring line turns this test red.
-    const roomy = await captureCompactionSettings(200_000, true, 40, 27_619);
-    expect(roomy.read()).toEqual({ enabled: true, reserveTokens: 120_000, keepRecentTokens: 20_000 });
-    const tight = await captureCompactionSettings(128_000, true, 40, 27_619);
-    expect(tight.read()).toEqual({ enabled: true, reserveTokens: 76_800, keepRecentTokens: 10_581 });
+  it('sizes the retained tail from the post-compaction ceiling, not the window', async () => {
+    // 1M at 50% (trigger 500k) with the measured ~27.6k fixed cost: the 100k ceiling has room to spare,
+    // so the tail sits at PI's own default. 400k at 50% (trigger 200k): the 40k ceiling leaves only
+    // ~4.4k once the fixed cost and the summary allowance are paid for, and that is what the tail gets.
+    // On the 400k capture the derived value differs from PI's 20k default, so deleting the wiring line
+    // turns this test red.
+    const roomy = await captureCompactionSettings(1_000_000, true, 50, 27_619);
+    expect(roomy.read()).toEqual({ enabled: true, reserveTokens: 500_000, keepRecentTokens: 20_000 });
+    const tight = await captureCompactionSettings(400_000, true, 50, 27_619);
+    expect(tight.read()).toEqual({ enabled: true, reserveTokens: 200_000, keepRecentTokens: 4_381 });
   });
 });
 
