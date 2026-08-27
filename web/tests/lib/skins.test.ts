@@ -103,8 +103,10 @@ describe('skin choice resolution', () => {
   it('offers only names this build compiled, in the order the operator listed them', () => {
     expect(allowedSkinChoices(['midnight', BUILTIN_SKIN])).toEqual(['midnight', BUILTIN_SKIN]);
     // A name left behind by a deployment that used to ship a skin would otherwise be offered as an
-    // option that visibly does nothing.
-    expect(allowedSkinChoices(['chetty', 'midnight'])).toEqual(['midnight']);
+    // option that visibly does nothing. The placeholder is deliberately one no build can ever compile:
+    // this file is inherited by deployment forks that DO add skins of their own, and naming a real one
+    // here would fail there for the wrong reason.
+    expect(allowedSkinChoices(['not-a-compiled-skin', 'midnight'])).toEqual(['midnight']);
     expect(allowedSkinChoices(['midnight', 'midnight'])).toEqual(['midnight']);
     expect(allowedSkinChoices(null)).toEqual([]);
   });
