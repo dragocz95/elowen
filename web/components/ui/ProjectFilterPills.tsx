@@ -45,7 +45,7 @@ export function ProjectFilterPills({ value, onChange, includeAll = true, variant
           <ChevronDown size={13} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
         </button>
         {open ? (
-          <div role="menu" aria-label={t.common.filterProjectsAria} className="absolute left-0 top-full z-40 mt-2 w-64 origin-top-left animate-fade-up rounded-xl border border-border bg-surface p-1.5 shadow-[var(--shadow-raised)]">
+          <div role="menu" aria-label={t.common.filterProjectsAria} className="overlay-layer-menu absolute left-0 top-full mt-2 w-64 origin-top-left animate-fade-up rounded-xl border border-border bg-surface p-1.5 shadow-[var(--shadow-raised)]">
             {includeAll ? (
               <button type="button" role="menuitemradio" aria-checked={value === 'all'} onClick={() => choose('all')} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-text transition-colors hover:bg-elevated">
                 <FolderGit2 size={14} className="shrink-0 text-accent" aria-hidden />

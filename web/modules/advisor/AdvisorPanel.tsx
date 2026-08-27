@@ -15,7 +15,7 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
     { side: 'top', Icon: PanelTop, label: t.advisor.dockTop }, { side: 'bottom', Icon: PanelBottom, label: t.advisor.dockBottom },
   ];
   const ActiveIcon = options.find((option) => option.side === state.side)!.Icon;
-  const panel = <div className={`flex shrink-0 flex-col overflow-hidden border-border bg-surface ${horizontal ? 'h-full' : 'w-full'}`} style={horizontal ? { width: `min(${state.width}px, 100vw)` } : { height: `min(${state.height}px, 85vh)` }}>
+  const panel = <div className={`flex shrink-0 flex-col overflow-hidden border-border bg-surface ${horizontal ? 'h-full' : 'w-full'}`} style={horizontal ? { width: `min(${state.width}px, 100vw)` } : { height: `min(${state.height}px, 85dvh)` }}>
     <div className="flex items-center gap-1 border-b border-border px-2 py-1.5"><span className="text-sm font-medium">{t.advisor.title}</span><div className="flex-1" />
       <div className="relative"><button type="button" onClick={() => setSideMenuOpen((v) => !v)} aria-label={t.advisor.dockPosition} className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-elevated hover:text-text"><ActiveIcon size={16} /></button>
         {sideMenuOpen ? <div className="absolute right-0 top-8 z-30 flex gap-0.5 rounded-md border border-border bg-surface p-0.5 shadow-lg">{options.map(({ side, Icon, label }) => <button key={side} type="button" onClick={() => { setSide(side); setSideMenuOpen(false); }} aria-label={label} className={`flex h-7 w-7 items-center justify-center rounded ${side === state.side ? 'bg-accent/15 text-accent' : 'text-text-muted hover:bg-elevated hover:text-text'}`}><Icon size={15} /></button>)}</div> : null}

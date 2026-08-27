@@ -78,7 +78,7 @@ function DiffBlock({ diff }: { diff: string }) {
       <div
         id={bodyId}
         data-testid="chat-diff"
-        className={expanded ? 'max-h-[60vh] overflow-y-auto' : ''}
+        className={expanded ? 'max-h-[60dvh] overflow-y-auto' : ''}
         // A scrollable region has to be reachable by keyboard alone, and it only scrolls when expanded.
         tabIndex={expanded ? 0 : undefined}
         role={expanded ? 'group' : undefined}

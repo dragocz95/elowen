@@ -77,11 +77,10 @@ export function AccountView() {
   const { toast } = useToast();
   const { t, locale } = useTranslation();
   const pluginUi = usePluginUi(locale);
-  const { scale, preference, setPreference } = useUiScale();
+  const { preference, setPreference } = useUiScale();
   const effects = useEffects();
   const fileRef = useRef<HTMLInputElement>(null);
   const prefPct = Math.round(preference * 100);
-  const appliedPct = Math.round(scale * 100);
   const [section, setSection] = usePersistentState<AccountSection>('elowen.account.section', 'profile', isAccountSection);
   const [visitedSections, setVisitedSections] = useState<Set<AccountSection>>(() => new Set([section]));
   const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<AccountSection, SaveFeedback>>>({});
@@ -389,17 +388,13 @@ export function AccountView() {
           </SpatialRow>
         );
         // Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. The
-        // slider sets the personal factor; the window width supplies an automatic base underneath it, so
-        // the applied zoom is shown alongside whenever the two disagree — otherwise a slider reading
-        // 100% on a visibly shrunken app looks like a bug.
+        // slider is the only input: nothing scales the app underneath it, so what it reads is what the
+        // app renders at.
         const rowUiScale = (
           <SpatialRow title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
             <div className="flex min-w-0 flex-wrap items-center justify-center gap-3">
               <Slider value={prefPct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setPreference(v / 100)} aria-label={t.account.uiScale} />
               <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{prefPct}%</span>
-              {appliedPct !== prefPct && (
-                <span className="shrink-0 font-mono text-sm tabular-nums text-text-muted" title={t.account.uiScaleApplied}>→ {appliedPct}%</span>
-              )}
               <button type="button" className="spatial-inline-action" onClick={() => setPreference(DEFAULT_SCALE)} disabled={prefPct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</button>
             </div>
           </SpatialRow>

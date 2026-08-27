@@ -1,10 +1,13 @@
-import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown } from 'lucide-react';
 import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
 
 type TableStyle = CSSProperties & {
   '--data-table-columns'?: string;
   '--data-table-compact-columns'?: string;
 };
+
+/** Every icon inside a register is this size. One number, so a table never mixes 11px and 15px glyphs. */
+const DATA_TABLE_ICON_SIZE = 12;
 
 /** Responsive register table. Wide-only cells disappear as a unit and the compact grid closes ranks. */
 export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)', children, className = '', ...rest }: {
@@ -18,20 +21,56 @@ export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)'
   return <div role="table" aria-label={ariaLabel} style={style} className={`@container overflow-x-clip rounded-lg border border-border/80 ${className}`} {...rest}>{children}</div>;
 }
 
-export function DataTableRow({ children, header = false, selected = false, interactive = false, className = '', ...rest }: {
+type DataTableRowBase = {
   children: ReactNode;
   header?: boolean;
   selected?: boolean;
+  /** Row-level hover feedback for a row whose activation the consumer drives itself. A row that opens
+   *  something should pass `onOpen` instead — that is the contract, this is only the paint. */
   interactive?: boolean;
-} & HTMLAttributes<HTMLDivElement>) {
+  /** `tall` is the deliberate two-line register. Everything else keeps the one canonical row rhythm,
+   *  which is what makes a register scannable — rows that measure 27px, 41px and 59px do not. */
+  height?: 'standard' | 'tall';
+} & HTMLAttributes<HTMLDivElement>;
+
+/** Opening a row is ONE contract, and the label is part of it. The label becomes the accessible name of
+ *  the row's control; without it the name falls back to the row's own text, which on /memory was the
+ *  entire memory body — thousands of characters read out before the user learns what the control does.
+ *  Keep it short and specific: `Open memory: <title>`. */
+type DataTableRowOpen =
+  | { onOpen: () => void; openLabel: string }
+  | { onOpen?: undefined; openLabel?: undefined };
+
+export type DataTableRowProps = DataTableRowBase & DataTableRowOpen;
+
+export function DataTableRow({ children, header = false, selected = false, interactive = false, height = 'standard', onOpen, openLabel, className = '', ...rest }: DataTableRowProps) {
   return (
     <div
       role="row"
       data-state={selected ? 'selected' : 'idle'}
-      className={`data-table-grid items-center gap-x-3 border-b border-border/70 px-4 last:border-b-0 ${header ? 'data-table-header sticky top-0 z-10 py-2.5' : `py-3.5 ${interactive ? 'interactive-row' : ''}`} ${selected ? 'bg-accent/[0.055]' : ''} ${className}`}
+      data-row-height={header ? undefined : height}
+      className={`data-table-grid items-center gap-x-3 border-b border-border/70 px-4 last:border-b-0 ${header ? 'data-table-header sticky top-0' : `${interactive || onOpen ? 'interactive-row' : ''}`} ${selected ? 'bg-accent/[0.055]' : ''} ${className}`}
       {...rest}
     >
       {children}
+      {onOpen ? (
+        // A real button stretched over the row (see .data-table-row-open): a short accessible name, a
+        // single tab stop, and Enter/Space activation the platform gives us rather than a keydown
+        // handler that has to re-implement it. Action buttons live in cells that paint ABOVE it, so
+        // they are hit on their own — they are siblings of this button, never its children.
+        <button
+          type="button"
+          className="data-table-row-open"
+          aria-label={openLabel}
+          onClick={(event) => {
+            // The overlay sits inside the row, so its click bubbles to whatever onClick the consumer put
+            // on the row itself (selection, context handling) and would run that a second time.
+            // Activation is this button's job alone.
+            event.stopPropagation();
+            onOpen();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -54,6 +93,7 @@ export function DataTableSortCell({ children, active, direction, onSort, priorit
     <DataTableCell
       header
       priority={priority}
+      lines="auto"
       aria-sort={active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}
       className={className}
       {...rest}
@@ -65,25 +105,55 @@ export function DataTableSortCell({ children, active, direction, onSort, priorit
       >
         <span className="truncate">{children}</span>
         {/* The neutral arrow stays laid out but invisible, so a header does not shift when hovered. */}
-        <Arrow size={12} aria-hidden className={`shrink-0 ${active ? 'text-accent' : 'opacity-0 transition-opacity group-hover/sort:opacity-60'}`} />
+        <Arrow size={DATA_TABLE_ICON_SIZE} aria-hidden className={`shrink-0 ${active ? 'text-accent' : 'opacity-0 transition-opacity group-hover/sort:opacity-60'}`} />
       </button>
     </DataTableCell>
   );
 }
 
-export function DataTableCell({ children, header = false, priority = 'always', className = '', ...rest }: {
+export function DataTableCell({ children, header = false, priority = 'always', lines = 1, labelHidden = false, reveal = false, title, className = '', ...rest }: {
   children: ReactNode;
   header?: boolean;
   priority?: 'always' | 'wide';
+  /** `1` (the default) holds the canonical row rhythm: one line, ellipsised at the column edge, with the
+   *  full value on `title`. `auto` is for a cell that hosts a control, or that carries a second line on
+   *  a row marked `height="tall"` — an opt-in, so a stacked cell cannot quietly deform a whole register. */
+  lines?: 1 | 'auto';
+  /** Header-only: the column's body is an icon or a dot, so its name is for assistive technology alone.
+   *  Use it instead of shipping a second visible header with the same word — /p/mcp renders a status dot
+   *  and a status text and labelled BOTH columns "Stav". */
+  labelHidden?: boolean;
+  /** A ghost row action (delete, retry): revealed with the row on a fine pointer, always present and at
+   *  least a finger wide on a coarse one, where there is no hover to reveal it with. */
+  reveal?: boolean;
 } & HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       role={header ? 'columnheader' : 'cell'}
       data-priority={priority}
-      className={`${priority === 'wide' ? 'data-table-wide' : ''} min-w-0 ${header ? 'text-[10px] font-semibold uppercase tracking-wider text-text-muted' : ''} ${className}`}
+      data-lines={lines}
+      data-reveal={reveal ? 'hover' : undefined}
+      // A truncated cell hides part of its own content, so the full value has to stay reachable. It can
+      // only be recovered when the cell IS the text; a composed cell passes its own `title`.
+      title={title ?? (lines === 1 && typeof children === 'string' ? children : undefined)}
+      className={`data-table-cell ${priority === 'wide' ? 'data-table-wide' : ''} min-w-0 ${header ? 'text-[10px] font-semibold uppercase tracking-wider text-text-muted' : ''} ${className}`}
       {...rest}
     >
-      {children}
+      {labelHidden ? <span className="sr-only">{children}</span> : children}
     </div>
+  );
+}
+
+/** The trailing open affordance of an interactive register. Reserve a `1.25rem` track for it as the last
+ *  column of both templates, so the chevron survives the compact layout.
+ *
+ *  @public No caller yet: it ships with the row contract above (`onOpen` + `openLabel`) and the registers
+ *  that render it are migrated in phase C of the redesign. `.data-table-chevron` in
+ *  app/styles/components/data-table.css is its half of the same pair. */
+export function DataTableChevronCell({ className = '' }: { className?: string }) {
+  return (
+    <DataTableCell aria-hidden className={`data-table-chevron flex items-center justify-end ${className}`}>
+      <ChevronRight size={DATA_TABLE_ICON_SIZE} />
+    </DataTableCell>
   );
 }

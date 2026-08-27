@@ -1,6 +1,5 @@
 /* Settings and Account share ONE section language: a stack of cards, each with an accent-marked
    header over a panel of label/control records. Shared deck geometry stays in components.css. */
-[data-module="settings"] .spatial-deck-heading h1 { letter-spacing: -0.045em; }
 [data-module="settings"] .spatial-content-surface { padding: 1rem 0.5rem 2rem; }
 [data-module="settings"] [data-settings-panel] { min-width: 0; }
 

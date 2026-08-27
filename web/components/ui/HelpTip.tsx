@@ -74,7 +74,7 @@ export function HelpTip({ children, align = 'right' }: { children: ReactNode; al
       <span
         ref={tooltipRef}
         role="tooltip"
-        className={`pointer-events-none fixed z-[130] w-64 rounded-md border border-border bg-surface p-3 text-xs font-normal normal-case leading-relaxed tracking-normal text-text-muted${position ? '' : ' invisible'}`}
+        className={`overlay-layer-menu pointer-events-none fixed w-64 rounded-md border border-border bg-surface p-3 text-xs font-normal normal-case leading-relaxed tracking-normal text-text-muted${position ? '' : ' invisible'}`}
         style={{ left: position?.left ?? 0, top: position?.top ?? 0, boxShadow: 'var(--shadow-raised)' }}
       >
         {children}

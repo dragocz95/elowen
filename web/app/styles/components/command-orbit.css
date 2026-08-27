@@ -1,0 +1,38 @@
+/* Command palette orbit overlay: .cmd-orbit*. */
+
+.cmd-orbit { position: fixed; inset: 0; display: flex; flex-direction: column; pointer-events: none; padding: 1rem; padding-top: max(1rem, var(--safe-top)); padding-bottom: max(1rem, var(--safe-bottom)); padding-left: max(1rem, var(--safe-left)); padding-right: max(1rem, var(--safe-right)); }
+.cmd-orbit:focus { outline: none; }
+.cmd-orbit__hint { margin: 0 3rem 0 0; font-size: 0.75rem; color: var(--color-text-muted); }
+.cmd-orbit__close { position: absolute; top: max(0.75rem, var(--safe-top)); right: max(0.75rem, var(--safe-right)); display: grid; place-items: center; width: 2.75rem; height: 2.75rem; border-radius: 0.75rem; pointer-events: auto; color: var(--color-text-muted); transition: background var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out); }
+.cmd-orbit__close:hover { background: var(--color-elevated); color: var(--color-text); }
+.cmd-orbit__field { position: relative; flex: 1 1 auto; width: 100%; }
+.cmd-orbit__filaments { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+/* The square has to be declared, not inferred: the mascot glyph is `height: 100%` over absolutely
+   positioned layers, so it contributes no height of its own and this box collapses to zero. The field
+   MEASURES this element to place the filaments, so a zero-height core converged every line on the
+   mascot's top edge instead of its middle. */
+.cmd-orbit__core { position: absolute; pointer-events: none; aspect-ratio: 1; }
+.cmd-orbit__pods { position: absolute; inset: 0; }
+.cmd-orbit__pod { position: absolute; translate: -50% -50%; display: flex; align-items: center; border-radius: 1rem; border: 1px solid transparent; background: rgb(5 5 5 / 0.72); pointer-events: auto; transition: transform var(--motion-base) var(--ease-out), border-color var(--motion-base) var(--ease-out); }
+.cmd-orbit__pod:hover, .cmd-orbit__pod:focus-visible { transform: translateY(-3px); border-color: var(--color-border-strong); }
+.cmd-orbit__pod:focus-visible { outline: 2px solid var(--color-text); outline-offset: 3px; }
+.cmd-orbit__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.6rem; height: 2.6rem; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), #050505 68%); color: var(--color-accent); box-shadow: 0 0 0 4px #040404, var(--glow-active), inset 0 0 14px rgb(var(--accent-rgb) / 0.08); transition: box-shadow var(--motion-base) var(--ease-out); }
+.cmd-orbit__orb::before { content: ''; position: absolute; inset: -1rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
+.cmd-orbit__pod:hover .cmd-orbit__orb, .cmd-orbit__pod:focus-visible .cmd-orbit__orb { box-shadow: 0 0 0 4px #040404, var(--glow-active), 0 0 30px rgb(var(--accent-rgb) / 0.4), inset 0 0 14px rgb(var(--accent-rgb) / 0.12); }
+.cmd-orbit__label { min-width: 0; font-size: 0.8125rem; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmd-orbit__pod--active { border-color: var(--color-accent); background: rgb(var(--accent-rgb) / 0.08); }
+.cmd-orbit__pod--active .cmd-orbit__orb { box-shadow: 0 0 0 4px #040404, var(--glow-active), 0 0 34px rgb(var(--accent-rgb) / 0.45), inset 0 0 14px rgb(var(--accent-rgb) / 0.14); }
+.cmd-orbit__pod--active .cmd-orbit__label { color: var(--color-ember); }
+
+.cmd-orbit[data-layout='orbit'] .cmd-orbit__core { left: 50%; top: 50%; translate: -50% -50%; width: min(30dvh, 15rem); }
+.cmd-orbit[data-layout='orbit'] .cmd-orbit__pod { gap: 0.7rem; width: 11.5rem; min-height: 3.25rem; padding: 0.55rem 0.75rem; }
+
+.cmd-orbit[data-layout='arc'] .cmd-orbit__field { transform: scale(var(--k, 1)); transform-origin: bottom center; }
+.cmd-orbit[data-layout='arc'] .cmd-orbit__core { left: 50%; top: 0.5rem; translate: -50% 0; width: 9.5rem; }
+.cmd-orbit[data-layout='arc'] .cmd-orbit__pod { flex-direction: column; gap: 0.35rem; width: 6rem; min-height: 2.75rem; padding: 0.5rem 0.35rem; text-align: center; }
+.cmd-orbit[data-layout='arc'] .cmd-orbit__orb { width: 2.4rem; height: 2.4rem; }
+.cmd-orbit[data-layout='arc'] .cmd-orbit__label { max-width: 100%; font-size: 0.75rem; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .cmd-orbit--enter .cmd-orbit__pod { opacity: 0; animation: cosmos-pod-in 0.6s var(--ease-out) forwards; animation-delay: calc(var(--i) * 60ms + 80ms); }
+  }

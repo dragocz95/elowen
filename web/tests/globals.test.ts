@@ -1,11 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
-const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'styles', 'tokens.css'), 'utf-8');
-const components = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'styles', 'components.css'), 'utf-8');
-const animations = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'styles', 'animations.css'), 'utf-8');
+const STYLES = join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'styles');
+const read = (path: string): string => readFileSync(path, 'utf-8');
+
+const css = read(join(STYLES, 'tokens.css'));
+const animations = read(join(STYLES, 'animations.css'));
+
+/** The component stylesheet as the BROWSER sees it: components.css is an ordered @import list and
+ *  postcss-import flattens it in place, so the shipped sheet is the concatenation of the parts in that
+ *  order. Following the imports rather than naming the parts means a file split, a rename or a new part
+ *  cannot quietly drop an assertion below into a stylesheet nobody reads. */
+const components = [
+  ...read(join(STYLES, 'components.css')).replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/@import\s+["']([^"']+)["']/g),
+].map(([, target]) => read(resolve(STYLES, target!))).join('\n');
 
 describe('design tokens', () => {
   it('defines the OLED Ember depth and motion tokens', () => {
@@ -25,15 +35,21 @@ describe('design tokens', () => {
     expect(components).toMatch(/\.control-surface-document\s*\{[^}]*background:[^;}]*var\(--color-document\)/);
   });
 
-  it('stacks spatial hero metrics into a readable mobile grid', () => {
-    expect(components).toMatch(/@container \(max-width: 38\.75rem\)[\s\S]*\.spatial-workspace-hero__metrics\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  it('collapses the hero metrics into a compact strip in a narrow hero', () => {
+    // The metric row is the hero's heaviest block, and at phone width a multi-column grid of it pushed
+    // the first record of the register roughly two screens down. It becomes ONE horizontally scrolling
+    // strip instead. The query is the hero's own NAMED container, never the viewport: the same hero is
+    // rendered beside a pinned dock and inside a rail, where the window width says nothing useful.
+    expect(components).toMatch(
+      /@container workspace-hero \(width < 34rem\)[\s\S]*?\.workspace-hero__metrics\s*\{[^}]*display:\s*flex;[^}]*overflow-x:\s*auto/,
+    );
   });
 
   it('uses component width for spatial deck layout changes', () => {
-    expect(components).toMatch(/@container \(max-width: 56\.25rem\)[\s\S]*\.spatial-section-rail__track/);
-    // The deck's label/control record stacks on the DECK's width, not the window's: the same form is
+    expect(components).toMatch(/@container workspace-shell \(width < 56\.25rem\)[\s\S]*\.spatial-section-rail__track/);
+    // The deck's label/control record stacks on the SHELL's width, not the window's: the same form is
     // rendered inside a detail rail, where a viewport media query would keep it in three tracks.
-    expect(components).toMatch(/@container \(max-width: 38\.75rem\)[\s\S]*\.settings-row\s*\{[^}]*grid-template-columns:\s*1fr/);
+    expect(components).toMatch(/@container workspace-shell \(width < 38\.75rem\)[\s\S]*\.settings-row\s*\{[^}]*grid-template-columns:\s*1fr/);
   });
 
   it('hides the telemetry rail scrollbar with a class the unlayered base rules cannot outrank', () => {

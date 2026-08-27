@@ -5,6 +5,11 @@
   --color-surface: #070707;
   --color-elevated: #0d0d0d;
   --color-overlay: #151515;
+  /* Opaque backing for anything that scrolls content UNDER itself — sticky table headers, sticky
+     toolbars. It must not be translucent or rows show through the header as it passes. Derived from the
+     document surface so every skin, including forks this repo cannot see, inherits a correct sticky
+     colour without declaring one. */
+  --color-surface-sticky: color-mix(in srgb, var(--color-document) 94%, var(--color-text) 6%);
   --color-border: #242424;
   --color-border-strong: #363636;
   --color-accent: #ff5236;
@@ -16,7 +21,11 @@
 
   --color-text: #f7f3f0;
   --color-text-muted: #9d948e;
-  --color-text-subtle: #6e6661;
+  /* The third step of the text ramp still has to be READABLE, not decorative: it carries timestamps,
+     units and table metadata. It is held at >= 4.5:1 (WCAG AA, normal text) against every surface token
+     — 4.57:1 on the lightest one, --color-elevated — while staying far enough under --color-text-muted
+     (6.53:1 there) that the three steps remain distinguishable. */
+  --color-text-subtle: #827974;
 
   --color-danger: #e94d42;
   --color-success: #32c986;
@@ -34,16 +43,6 @@
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
   --radius-2xl: 1.25rem;
-
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.25rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
-  --space-10: 2.5rem;
-  --space-12: 3rem;
 
   --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
   --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -74,19 +73,49 @@
   --ease-spring: cubic-bezier(0.34, 1.35, 0.64, 1);
 }
 
+/* Host-document state. Deliberately kept out of the theme block above: these describe THIS document —
+   stacking order, the device's safe area, the shell's measure — rather than the design vocabulary a
+   plugin bundle compiles against, and the plugin-ui-kit mirror carries the theme block only. */
 :root {
   color-scheme: dark;
   --shell-gutter: clamp(1rem, 1.9vw, 2.25rem);
-  /* Spatial and data workspaces must keep filling ultrawide screens even when the user applies a
-     compact UI zoom. Individual reading surfaces constrain their own prose where needed. */
-  --content-max: none;
+
+  /* The single authority for how wide a workspace may grow. Fluid, so a 1440px laptop fills edge to
+     edge (the 90rem floor never binds below it) while a 2560px display stops at 1888px instead of
+     stretching a table across the whole desk. Every shell and content surface reads this token; no
+     component may restate a width cap of its own. */
+  --content-max: clamp(90rem, 96vw, 118rem);
+
+  /* One stacking order for the whole app, so a new overlay cannot be talked into an arbitrary number.
+     Toast sits above the modal on purpose: a confirmation or an error raised BY a dialog has to stay
+     readable over it, otherwise the user is told nothing while the dialog waits. */
+  --z-sticky: 20;
+  --z-fab: 40;
+  --z-nav-drawer: 80;
+  --z-drawer: 90;
+  --z-modal: 100;
+  --z-menu: 120;
+  --z-toast: 130;
+
+  /* The device's safe area, resolved ONCE. Every fixed or sticky consumer composes these instead of
+     calling env() again — a raw env() in a component silently evaluates to 0px wherever the fallback
+     was forgotten, and there is nothing to grep for when a control ends up under the home indicator. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Minimum hit area for an interactive control on a touch pointer (WCAG 2.5.8 / platform guidance). */
+  --touch-target: 44px;
 }
 
 /* A phone is held at arm's length and read at a glance, so the two smallest text tokens grow on small
    screens: 9px metadata is simply unreadable there. The utilities compile to `var(--text-tiny)` /
    `var(--text-caption)`, so every use picks the bump up with no per-component change — and desktop, where
-   the compact scale is deliberate, is untouched. */
-@media (max-width: 767px) {
+   the compact scale is deliberate, is untouched. The breakpoint is the exact complement of Tailwind's
+   `md:` (48rem), so a component that stacks at `md` also gets the larger metadata type — the two cannot
+   disagree by a pixel, and both follow the user's root font size rather than a hard-coded 767px. */
+@media (width < 48rem) {
   :root {
     --text-tiny: 0.6875rem;    /* 9px  -> 11px */
     --text-caption: 0.8125rem; /* 11px -> 13px */

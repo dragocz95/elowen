@@ -491,7 +491,7 @@ export function MemoryView() {
           permanent delete everywhere (behind a confirm). Kept a sibling of the layout so it's never
           clipped. */}
       {tab === 'list' && selected.size > 0 ? (
-        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border border-border bg-elevated px-3 py-2 shadow-[var(--shadow-raised)] animate-fade-up">
+        <div className="overlay-layer-fab fixed bottom-6 left-1/2 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border border-border bg-elevated px-3 py-2 shadow-[var(--shadow-raised)] animate-fade-up">
           <span className="px-1 text-sm text-text">{t.memory.selectedCount.replace('{n}', String(selected.size))}</span>
           <Button variant="accent" icon={GitMerge} disabled={selected.size < 2} onClick={() => setMerging(true)}>{t.memory.merge}</Button>
           {status === 'deleted' ? (

@@ -75,7 +75,7 @@ function MenuRow({ entry, index, onClose }: { entry: MenuEntry; index: number; o
       data-index={index}
       disabled={entry.disabled}
       onClick={() => { entry.onClick(); onClose(); }}
-      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${entry.danger ? 'text-danger hover:bg-danger/10' : 'hover:bg-surface'}`}
+      className={`overlay-menu-item flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${entry.danger ? 'text-danger hover:bg-danger/10' : 'hover:bg-surface'}`}
     >
       {Icon ? <Icon size={13} className="shrink-0" aria-hidden /> : <span className="w-[13px]" aria-hidden />}
       <span className="truncate">{entry.label}</span>
@@ -115,7 +115,7 @@ function SubmenuRow({ entry, onClose }: { entry: MenuSubmenu; onClose: () => voi
         aria-expanded={open}
         disabled={entry.disabled}
         onClick={() => !entry.disabled && setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+        className="overlay-menu-item flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
       >
         {Icon ? <Icon size={13} className="shrink-0" aria-hidden /> : <span className="w-[13px]" aria-hidden />}
         <span className="flex-1 truncate">{entry.label}</span>
@@ -125,7 +125,9 @@ function SubmenuRow({ entry, onClose }: { entry: MenuSubmenu; onClose: () => voi
         <div
           ref={panelRef}
           role="menu"
-          className="absolute z-10 min-w-44 max-h-[60vh] overflow-y-auto rounded-lg border border-border bg-elevated py-1"
+          // dvh: a mobile browser's collapsing toolbar makes vh taller than the screen, so a long
+          // submenu measured in vh runs off the bottom instead of scrolling.
+          className="absolute z-10 min-w-44 max-h-[60dvh] overflow-y-auto rounded-lg border border-border bg-elevated py-1"
           style={{ [flipLeft ? 'right' : 'left']: '100%', [flipUp ? 'bottom' : 'top']: 0, boxShadow: 'var(--shadow-card)' }}
         >
           {entry.items.map((item, i) => <MenuRow key={i} entry={item} index={i} onClose={onClose} />)}

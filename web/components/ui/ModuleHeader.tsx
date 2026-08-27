@@ -22,13 +22,16 @@ export function ModuleHeader({ title, count, icon: Icon, children, subtitle }: {
 
   if (!children && !subtitle) return null;
   return (
-    <div className="mb-6 flex flex-col gap-2">
+    // `children` being present is not the same as `children` rendering something: an idle AutoSaveStatus
+    // is an empty live region. The `.module-header` classes let the stylesheet collapse the wrapper (and
+    // its margin) when nothing inside it is actually visible — see workspace-shell.css.
+    <div className="module-header mb-6 flex flex-col gap-2">
       {subtitle ? <p className="text-sm text-text-muted">{subtitle}</p> : null}
       {/* Responsive toolbar: filter/action groups wrap as whole controls, while controls that contain
           their own collections (project pills, segmented filters) may wrap internally. Keeping every
           direct child bounded to the row prevents one long group from creating body-level overflow. */}
       {children ? (
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 [&>*]:max-w-full">
+        <div className="module-header__toolbar flex min-w-0 flex-wrap items-center justify-end gap-2 [&>*]:max-w-full">
           {children}
         </div>
       ) : null}

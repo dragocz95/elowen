@@ -170,6 +170,19 @@ export const en = {
     outcomeOk: 'Success',
     outcomeFail: 'Failed',
   },
+  // The one pagination vocabulary of the app. Every register footer reads from here, so a locale says
+  // "previous" with a single word instead of the four competing ones the copy-pasted pagers drifted into.
+  // `previous`/`next` are the visible labels; `previousPage`/`nextPage` are the accessible names the
+  // buttons keep when a narrow container collapses them to icons.
+  pagination: {
+    label: 'Pagination',
+    previous: 'Previous',
+    next: 'Next',
+    previousPage: 'Previous page',
+    nextPage: 'Next page',
+    range: '{from}–{to} of {total}',
+    pageLabel: 'Page {page} of {pages}',
+  },
   auth: {
     signIn: 'Sign in',
     signInWithMicrosoft: 'Sign in with Microsoft',
@@ -751,7 +764,6 @@ export const en = {
     passwordWrong: 'Current password is incorrect',
     passwordError: 'Password change failed',
     uiScale: 'Interface scale',
-    uiScaleApplied: 'Actual scale after automatic adjustment to the window width',
     uiScaleReset: 'Reset',
     tabProfile: 'Account',
     tabSecurity: 'Security',

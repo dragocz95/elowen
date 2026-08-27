@@ -1,56 +1,26 @@
 'use client';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { MOBILE_MAX_WIDTH } from './useMobile';
 
-/** Whole-app UI scale (CSS `zoom` on the document root).
+/** Whole-app UI scale (CSS `zoom` on the document root) — a personal PREFERENCE and nothing else: a
+ *  per-device localStorage value saying how big the user likes things, because the right size depends on
+ *  the eyes and the screen in front of you. It is off (1) until someone moves the Account slider.
  *
- *  The applied zoom is two independent factors multiplied together:
- *    - an AUTOMATIC base derived from the window width, so a half-screen window stops rendering a
- *      desktop-width design at desktop density (the complaint: everything feels oversized);
- *    - a personal PREFERENCE (the Account slider) — a per-device localStorage value saying how big the
- *      user likes things *relative to normal*, because the right size depends on the eyes and the screen
- *      in front of you.
- *  Splitting them means there is no on/off mode to reason about and no dead slider: the window drives
- *  density, the slider drives taste, and the two simply compose. */
+ *  There is deliberately no automatic width-derived component. One used to multiply in underneath this
+ *  one, and it was unsound rather than merely mistuned: it exempted phones and shrank everything else,
+ *  which makes it discontinuous by construction — 767px rendered at 100% and 768px at 70%, flipping the
+ *  app from a phone layout at full size to a desktop layout at 70% on one pixel of window travel. It was
+ *  also non-monotonic below the reference width (a 1366px window got a WIDER layout viewport than a
+ *  1440px one), it parked every tablet and every 1280/1366 laptop on its 0.7 floor, and by inflating the
+ *  layout viewport it made `@media` and `@container` queries fire against a viewport no window ever had
+ *  — so the mobile rules never reached a tablet. Fitting the design to the window is the stylesheet's
+ *  job, and it is done there now. */
 
 const KEY = 'elowen:ui-scale';
 export const MIN_SCALE = 0.8;
 export const MAX_SCALE = 1.5;
 export const DEFAULT_SCALE = 1;
 
-/** The width the interface is drawn for: at this many CSS px it renders at its reference density, and a
- *  narrower window is scaled down in proportion (a 1425px window gets 75%), so the design keeps the same
- *  relative roominess instead of cramming full-size chrome into half a screen. A wider window is left
- *  alone — nothing is ever inflated past its reference size.
- *
- *  Width is read from `window.innerWidth`, which root `zoom` does NOT scale, so the applied zoom cannot
- *  feed back into the measurement that produced it. Measuring `documentElement.clientWidth` would spiral. */
-const AUTO_REFERENCE_WIDTH = 1900;
-/** Past this the shrinking stops: below it the app would be small rather than merely dense. */
-const AUTO_FLOOR_SCALE = 0.7;
-
-const round = (n: number, places: number): number => {
-  const f = 10 ** places;
-  return Math.round(n * f) / f;
-};
-
 const clamp = (n: number): number => Math.min(MAX_SCALE, Math.max(MIN_SCALE, n));
-
-/** Quantised to 5% notches: dragging a window edge should re-scale in steps, not reflow the whole app on
- *  every pixel of travel. Falls back to the neutral 1 when there is no measurable window (SSR). */
-export function autoScaleFor(width: number): number {
-  if (!(width > 0)) return DEFAULT_SCALE;
-  // A phone is not a cramped desktop window, and the ramp only makes sense for one. Below the mobile
-  // breakpoint the app has ALREADY switched to its own compact layout — drawer navigation, full-screen
-  // chat, a telemetry drawer instead of a side column — so the desktop shrink compacts a design that is
-  // the compact one a second time. A 390px phone lands far past the ramp, at the 0.7 floor: 14px body
-  // text rendered at 9.8px and a 36px control at 25px. That, not the type scale, is what "everything is
-  // tiny and unclickable on the phone" was. The personal preference still multiplies on top, so anyone
-  // who does want it smaller keeps the slider.
-  if (width <= MOBILE_MAX_WIDTH) return DEFAULT_SCALE;
-  const fit = Math.round((width / AUTO_REFERENCE_WIDTH) * 20) / 20;
-  return Math.min(DEFAULT_SCALE, Math.max(AUTO_FLOOR_SCALE, fit));
-}
 
 function readPreference(): number {
   try {
@@ -64,7 +34,7 @@ function readPreference(): number {
 }
 
 interface UiScaleValue {
-  /** The zoom actually applied to the document: `auto × preference`. */
+  /** The zoom actually applied to the document. */
   scale: number;
   /** The user's personal factor — what the Account slider sets. */
   preference: number;
@@ -74,23 +44,14 @@ const UiScaleContext = createContext<UiScaleValue | null>(null);
 
 export function UiScaleProvider({ children }: { children: ReactNode }) {
   const [preference, setPreferenceState] = useState(DEFAULT_SCALE);
-  const [auto, setAuto] = useState(DEFAULT_SCALE);
-  const scale = round(auto * preference, 4);
+  const scale = preference;
 
-  // Both inputs hydrate after mount, so the server always renders the same neutral 1. Re-measuring on
-  // every resize is cheap: the quantised base yields the same number for most pixels of travel, and React
-  // bails out of an identical state update without re-rendering.
+  // The preference hydrates after mount, so the server always renders the same neutral 1.
   useEffect(() => { setPreferenceState(readPreference()); }, []);
-  useEffect(() => {
-    const measure = () => setAuto(autoScaleFor(window.innerWidth));
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
 
-  // Keep the document root's zoom in lockstep with the product. The `--ui-scale` var is published too so
-  // viewport-height layout (e.g. the shell's full-height column) can divide by it: a `100dvh` box under
-  // `zoom: z` renders at z×viewport, so full-height containers must size to `100dvh / z` to still fill.
+  // Keep the document root's zoom in lockstep with the preference. The `--ui-scale` var is published too
+  // so viewport-height layout (e.g. the shell's full-height column) can divide by it: a `100dvh` box
+  // under `zoom: z` renders at z×viewport, so full-height containers must size to `100dvh / z` to fill.
   useEffect(() => {
     const root = document.documentElement.style;
     root.setProperty('zoom', String(scale));

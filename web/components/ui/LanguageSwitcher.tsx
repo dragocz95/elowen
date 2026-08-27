@@ -83,7 +83,7 @@ export function LanguageSwitcher({ collapsed = false }: { collapsed?: boolean })
           role="menu"
           aria-label={t.common.language}
           onKeyDown={onMenuKey}
-          className="absolute right-0 top-full z-50 mt-2 min-w-[9rem] overflow-hidden rounded-lg border border-border bg-surface py-1"
+          className="overlay-layer-menu absolute right-0 top-full mt-2 min-w-[9rem] overflow-hidden rounded-lg border border-border bg-surface py-1"
           style={{ boxShadow: 'var(--shadow-raised)' }}
         >
           {LANGS.map((l, i) => {

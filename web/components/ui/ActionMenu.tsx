@@ -138,7 +138,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
                 type="button"
                 role="menuitem"
                 onClick={() => { closeMenu(true); it.onSelect(); }}
-                className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors ${danger ? 'text-danger hover:bg-danger hover:text-bg' : 'text-text hover:bg-elevated'}`}
+                className={`overlay-menu-item flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors ${danger ? 'text-danger hover:bg-danger hover:text-bg' : 'text-text hover:bg-elevated'}`}
                 style={{ transitionDuration: 'var(--motion-fast)' }}
               >
                 {it.iconNode ?? (Icon ? <Icon size={15} aria-hidden /> : null)}

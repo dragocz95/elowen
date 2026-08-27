@@ -1,0 +1,17 @@
+/* Bordered control surface chrome: .control-surface-document, .control-surface-toolbar, .control-surface-register, .control-surface-state. */
+.control-surface-document { min-width: 0; overflow: clip; border: var(--hairline); border-radius: var(--radius-xl); background: linear-gradient(135deg, color-mix(in srgb, var(--color-document) 96%, var(--color-text) 4%), var(--color-document) 38%); box-shadow: var(--shadow-card); }
+/* The toolbar WRAPS. It carries a search field, a segmented switch and a couple of buttons, and at 320px
+   that content is wider than the surface: nowrap silently clipped the last control instead of folding.
+   Children may shrink below their content width so a field gives way before the row breaks. */
+.control-surface-toolbar { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 0.625rem 0.75rem; padding: 1rem clamp(1.25rem, 2vw, 2rem); border-bottom: var(--hairline); background: var(--color-surface-sticky); }
+.control-surface-toolbar > * { min-width: 0; }
+.control-surface-register { min-width: 0; padding: 1rem clamp(1.25rem, 2vw, 2rem); }
+.control-surface-state { padding: 2.5rem clamp(1.25rem, 2vw, 2rem); color: var(--color-text-muted); text-align: center; }
+.control-surface-state[data-tone='danger'] { color: var(--color-danger); }
+
+/* Narrow shell: the clamped inset gives back what it can. This reacts to the SHELL's width, not the
+   viewport's — the same surface is rendered inside a detail rail at a full-width window. */
+@container workspace-shell (width < 38.75rem) {
+  .control-surface-toolbar { padding-inline: 1rem; }
+  .control-surface-register { padding-inline: 1rem; }
+}

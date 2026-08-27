@@ -24,7 +24,7 @@ import { ControlSurfaceRegister, ControlSurfaceToolbar } from '../ui/ControlSurf
 import { LoadingLine } from '../ui/states';
 
 /** The page is sized to the dialog instead of being a fixed count. The register lives in a FIXED-height
- *  modal (`lg` is `h-[88vh]`), so twelve rows left a dead band under the table on a large screen while
+ *  modal (`lg` is `h-[88dvh]`), so twelve rows left a dead band under the table on a large screen while
  *  still overflowing a short one — the table stopped where the dialog kept going.
  *
  *  Only the VIEWPORT is measured, never the content: the scroll box takes its height from flex, so how

@@ -9,6 +9,11 @@
   --color-surface: #070707;
   --color-elevated: #0d0d0d;
   --color-overlay: #151515;
+  /* Opaque backing for anything that scrolls content UNDER itself — sticky table headers, sticky
+     toolbars. It must not be translucent or rows show through the header as it passes. Derived from the
+     document surface so every skin, including forks this repo cannot see, inherits a correct sticky
+     colour without declaring one. */
+  --color-surface-sticky: color-mix(in srgb, var(--color-document) 94%, var(--color-text) 6%);
   --color-border: #242424;
   --color-border-strong: #363636;
   --color-accent: #ff5236;
@@ -20,7 +25,11 @@
 
   --color-text: #f7f3f0;
   --color-text-muted: #9d948e;
-  --color-text-subtle: #6e6661;
+  /* The third step of the text ramp still has to be READABLE, not decorative: it carries timestamps,
+     units and table metadata. It is held at >= 4.5:1 (WCAG AA, normal text) against every surface token
+     — 4.57:1 on the lightest one, --color-elevated — while staying far enough under --color-text-muted
+     (6.53:1 there) that the three steps remain distinguishable. */
+  --color-text-subtle: #827974;
 
   --color-danger: #e94d42;
   --color-success: #32c986;
@@ -38,16 +47,6 @@
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
   --radius-2xl: 1.25rem;
-
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.25rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
-  --space-10: 2.5rem;
-  --space-12: 3rem;
 
   --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
   --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

@@ -1,0 +1,90 @@
+/* Responsive data-register grammar shared by every table: .data-table-*. */
+
+/* The row rhythm of every register in the app. Declared here rather than in tokens.css on purpose: this
+   is the table's own geometry, not part of the design vocabulary a skin or a plugin bundle compiles
+   against. Height comes from min-height, never from padding, so an avatar row and a text row measure the
+   same; the padding only ever wins when a cell is genuinely taller than the rhythm. */
+.data-table-grid {
+  --data-table-row: 3rem;
+  --data-table-row-tall: 4.25rem;
+  --data-table-row-header: 2.5rem;
+
+  /* Containing block for the row-open overlay button. */
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--data-table-compact-columns, minmax(0, 1fr));
+  min-height: var(--data-table-row);
+  padding-block: 0.25rem;
+}
+.data-table-grid[data-row-height='tall'] { min-height: var(--data-table-row-tall); }
+
+/* A sticky header scrolls rows UNDER itself, so its fill has to be opaque. The 1.2% white it used to
+   carry let every row read straight through the column names on any register long enough to scroll. */
+.data-table-header {
+  min-height: var(--data-table-row-header);
+  background: var(--color-surface-sticky);
+  z-index: var(--z-sticky);
+}
+
+/* One line per cell is the default, clipped at the column edge with an ellipsis — that is what keeps
+   every row the same height. `clip` rather than `hidden`, plus a clip margin, so a focus ring on a
+   control inside the cell stays visible while the text still ellipsizes. A cell that genuinely needs to
+   breathe opts out with lines="auto", on a row marked height="tall" when it needs the space. */
+.data-table-cell[data-lines='1'] {
+  white-space: nowrap;
+  overflow: clip;
+  overflow-clip-margin: 0.25rem;
+  text-overflow: ellipsis;
+}
+
+/* The single trailing open affordance: quiet until the row is hovered. */
+.data-table-chevron {
+  color: var(--color-text-subtle);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+.data-table-grid:hover .data-table-chevron { color: var(--color-text); }
+
+/* Row activation is a real button stretched over the row: one tab stop, native Enter/Space, and a SHORT
+   accessible name supplied by the caller — the row's own text is not one (a memory body ran past 3000
+   characters). It is painted below any cell that holds its own control, so an action button is hit and
+   fired on its own instead of the overlay swallowing the click. */
+.data-table-row-open {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--radius-sm);
+}
+.data-table-row-open:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+.data-table-cell:has(button, a, input, select, textarea, [role='button'], [role='menuitem']) {
+  position: relative;
+  z-index: 1;
+}
+
+/* A ghost row action (delete, retry) is quiet on a mouse and revealed with the row. A touch pointer has
+   no hover to reveal it with, so there it is always present and always at least a finger wide. Gated on
+   the pointer, never on the viewport: a narrow window on a laptop still has a mouse. */
+@media (hover: hover) and (pointer: fine) {
+  .data-table-cell[data-reveal='hover'] {
+    opacity: 0;
+    transition: opacity var(--motion-fast) var(--ease-out);
+  }
+  .data-table-grid:hover .data-table-cell[data-reveal='hover'],
+  .data-table-grid[data-state='selected'] .data-table-cell[data-reveal='hover'],
+  .data-table-cell[data-reveal='hover']:focus-within { opacity: 1; }
+}
+@media (pointer: coarse) {
+  .data-table-cell[data-reveal='hover'] :is(button, a) {
+    min-height: var(--touch-target);
+    min-width: var(--touch-target);
+  }
+}
+
+/* Wide-only cells disappear as a unit and the compact grid closes ranks. */
+.data-table-wide { display: none; }
+@container (min-width: 56rem) {
+  .data-table-grid { grid-template-columns: var(--data-table-columns, minmax(0, 1fr)); }
+  .data-table-wide { display: block; }
+}

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
-import { ChevronDown, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, MoreHorizontal, X } from 'lucide-react';
 import { useHealth } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { useShellNavigation } from './useShellNavigation';
@@ -394,13 +394,18 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         <div
           aria-hidden
           onClick={onDrawerClose}
-          className={`fixed inset-0 z-40 bg-black/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+          className={`overlay-layer-nav-drawer fixed inset-0 bg-black/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       ) : null}
     <nav
       ref={navRef}
       data-side={side}
       data-testid="future-navigation"
+      // As a drawer this is a layer over the page that takes focus and traps Escape, so it says so:
+      // a panel with no role is an overlay only the mouse knows about. `aria-modal` is claimed only
+      // while it is actually open — a closed drawer is inert chrome, not a dialog nobody can leave.
+      role={drawer ? 'dialog' : undefined}
+      aria-modal={drawer && drawerOpen ? true : undefined}
       aria-label={t.common.primaryNav}
       aria-hidden={hidden ? true : undefined}
       inert={hidden ? true : undefined}
@@ -413,12 +418,25 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
       onPointerUp={endSurfacePress}
       onPointerCancel={endSurfacePress}
       className={`overflow-hidden border-border/45 bg-black ${drawer
-        ? `fixed inset-y-0 z-50 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
+        ? `overlay-layer-nav-drawer overlay-nav-drawer fixed inset-y-0 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
           ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
           : `left-0 border-r ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}`
         : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4.75rem]' : 'w-[17rem]'}`}`}
       style={drawer ? { transitionTimingFunction: 'var(--ease-out)' } : undefined}
     >
+      {/* A dialog needs a way out that is not "guess that the strip of backdrop is a target". Tapping
+          the backdrop and picking a destination were the only two exits, and neither is discoverable.
+          First in the DOM so the open effect below lands focus on it. */}
+      {drawer ? (
+        <button
+          type="button"
+          onClick={onDrawerClose}
+          aria-label={t.common.close}
+          className="overlay-touch-target absolute right-2 top-2 z-30 grid place-items-center rounded-full text-text-muted transition-colors hover:bg-elevated hover:text-text"
+        >
+          <X size={18} aria-hidden />
+        </button>
+      ) : null}
       {/* Ambient sparks behind the rail. The nav is already `relative` + `overflow-hidden`, so it is the
           containing block that both sizes and clips them; every item below sits on z-10, above the canvas. */}
       <EmberFall />
@@ -474,7 +492,9 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                 draggable={false}
                 aria-label={compact ? entry.label : undefined}
                 aria-current={active ? 'page' : undefined}
-                className={`group flex items-center gap-2 whitespace-nowrap ${active ? 'text-accent' : 'text-text-muted hover:text-text'}`}
+                // A resting destination is drawn as a 2.65rem node, which is under the 44px a finger
+                // needs. The node keeps its size; the row it sits in grows to the floor around it.
+                className={`overlay-touch-target group flex items-center gap-2 whitespace-nowrap ${active ? 'text-accent' : 'text-text-muted hover:text-text'}`}
                 title={compact ? undefined : entry.label}
               >
                 <span className={`flex shrink-0 justify-center ${compact ? 'w-[4.4rem]' : 'w-[5rem]'}`} aria-hidden>
@@ -515,7 +535,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           const box = event.currentTarget.getBoundingClientRect();
           customization.openSurfaceMenu(box.left + box.width / 2, box.top);
         }}
-        className="absolute bottom-1 left-1/2 z-30 -translate-x-1/2 rounded-full p-1.5 text-text-muted/40 transition-colors hover:text-text focus-visible:text-text"
+        className="overlay-touch-target absolute bottom-0 left-1/2 z-30 grid -translate-x-1/2 place-items-center rounded-full p-1.5 text-text-muted/40 transition-colors hover:text-text focus-visible:text-text"
       >
         <MoreHorizontal size={13} />
       </button>

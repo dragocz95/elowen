@@ -73,7 +73,7 @@ function ToastCard({ item, meta, durationMs, dismissLabel, onDismiss }: { item: 
         type="button"
         aria-label={dismissLabel}
         onClick={onDismiss}
-        className="-mr-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-75 transition-opacity hover:bg-black/10 hover:opacity-100 sm:h-7 sm:w-7"
+        className="overlay-touch-target -mr-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-75 transition-opacity hover:bg-black/10 hover:opacity-100 sm:h-7 sm:w-7"
         style={{ color: onFill }}
       >
         <X size={15} aria-hidden />
@@ -105,10 +105,12 @@ export function ToastProvider({ children, durationMs = DEFAULT_TOAST_MS }: { chi
   return (
     <Ctx.Provider value={ctx}>
       {children}
-      {/* Top-right, and mobile-first: on a phone the desktop 28rem card filled almost the whole screen and
-          sat at the bottom over the input. Narrow it with a small margin, tuck it to the top-right corner,
-          and step the size back up from `sm` onward. */}
-      <div className="pointer-events-none fixed top-3 right-3 z-50 flex w-[calc(100vw-1.5rem)] flex-col gap-2 sm:top-5 sm:right-5 sm:w-[26rem] sm:gap-2.5">
+      {/* Placement, layer and safe-area insets all live in `.overlay-toast-dock` (styles/components/
+          primitives.css), with the rest of the overlay system: on a phone the stack docks bottom-right
+          clear of the advisor launcher, from the tablet breakpoint up it is the conventional top-right
+          column. It sits on --z-toast, above even a modal, because a message about what just happened
+          has to be readable over the thing that caused it. */}
+      <div className="overlay-toast-dock pointer-events-none">
         {items.map((item) => (
           <ToastCard key={item.id} item={item} meta={TONE[item.tone]} durationMs={durationMs} dismissLabel={t.common.dismiss} onDismiss={() => dismiss(item.id)} />
         ))}

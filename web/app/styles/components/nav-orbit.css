@@ -1,0 +1,48 @@
+/* Navigation rail orbit nodes: .orbit-node, .orbit-node-active. */
+
+.orbit-node { position: relative; isolation: isolate; box-shadow: 0 0 0 6px #000, inset 0 1px rgb(255 255 255 / 0.025); }
+.orbit-node::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -9px;
+  border: 1px solid rgb(var(--accent-rgb) / 0.2);
+  border-radius: 9999px;
+  opacity: 0;
+  transform: scale(0.72) rotate(-24deg);
+  box-shadow: 0 0 24px rgb(var(--accent-rgb) / 0.14), inset 0 0 16px rgb(var(--accent-rgb) / 0.05);
+  transition: opacity var(--motion-base) var(--ease-out), transform var(--motion-slow) var(--ease-out);
+}
+.group:hover .orbit-node::before,
+.group:focus-visible .orbit-node::before {
+  opacity: 0.72;
+  transform: scale(1) rotate(18deg);
+}
+/* The active destination mirrors the section rail's active pill exactly (radial core, glow + inset,
+   blurred aura, flickering ember dots) so both menus read as one design language. The hover-trace
+   ring is re-purposed as the aura on the active node — same pseudo-element, section-rail visuals. */
+.orbit-node-active {
+  background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), #050505 68%);
+  box-shadow: 0 0 0 6px #000, var(--glow-active), inset 0 0 20px rgb(var(--accent-rgb) / 0.09);
+}
+.orbit-node-active::before {
+  inset: -1.35rem;
+  border: 0;
+  background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%);
+  filter: blur(5px);
+  box-shadow: none;
+  opacity: 0.78;
+  transform: none;
+}
+.orbit-node-active::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  width: 0.16rem;
+  height: 0.16rem;
+  border-radius: 50%;
+  background: var(--color-ember);
+  box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42);
+  opacity: 0.7;
+}
+html[data-effects='full'] .orbit-node-active::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; }

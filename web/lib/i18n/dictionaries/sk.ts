@@ -170,6 +170,15 @@ export const sk = {
     outcomeOk: 'Úspech',
     outcomeFail: 'Zlyhalo',
   },
+  pagination: {
+    label: 'Stránkovanie',
+    previous: 'Predchádzajúca',
+    next: 'Ďalšia',
+    previousPage: 'Predchádzajúca strana',
+    nextPage: 'Ďalšia strana',
+    range: '{from}–{to} z {total}',
+    pageLabel: 'Strana {page} z {pages}',
+  },
   auth: {
     signIn: 'Prihlásiť sa',
     signInWithMicrosoft: 'Prihlásiť sa cez Microsoft',
@@ -745,7 +754,6 @@ export const sk = {
     passwordWrong: 'Súčasné heslo nie je správne',
     passwordError: 'Zmena hesla zlyhala',
     uiScale: 'Mierka rozhrania',
-    uiScaleApplied: 'Skutočná mierka po automatickom prispôsobení šírke okna',
     uiScaleReset: 'Predvolené',
     tabProfile: 'Účet',
     tabSecurity: 'Zabezpečenie',

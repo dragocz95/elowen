@@ -1,0 +1,105 @@
+/* The workspace hero and its metric row: .workspace-hero*, .workspace-metric*, plus the two unrelated
+   classes that share the register's vertical rhythm (.escalation-register-row, .spatial-scroll-cue). */
+
+/* The hero is its OWN container. Its compression follows the space it actually has rather than the
+   viewport, because the same hero sits in a full-width register, beside a pinned advisor dock and
+   inside a narrow rail — three very different widths at one window size. The queries are named so a
+   rule here can never be captured by some other container that happens to sit in between. */
+.workspace-hero {
+  container: workspace-hero / inline-size;
+  min-width: 0;
+  border-bottom: var(--hairline);
+}
+.workspace-hero__head {
+  display: flex;
+  min-height: 8.6rem;
+  align-items: center;
+  gap: 1rem;
+  padding-block: 1.5rem;
+}
+.workspace-hero__icon {
+  display: grid;
+  place-items: center;
+  width: 2.8rem;
+  height: 2.8rem;
+  flex: none;
+  border: 1px solid rgb(var(--accent-rgb) / 0.2);
+  border-radius: 50%;
+  color: var(--color-accent);
+  background: rgb(var(--accent-rgb) / 0.035);
+}
+.workspace-hero__titles { min-width: 0; flex: 1 1 auto; }
+.workspace-hero__eyebrow { margin-bottom: 0.35rem; font-family: var(--font-mono); color: var(--color-accent); font-size: 0.62rem; font-weight: 650; letter-spacing: 0.16em; text-transform: uppercase; }
+.workspace-hero__headline { display: flex; min-width: 0; align-items: baseline; gap: 0.75rem; }
+/* Sized against the hero, not the window: the title has to shrink when a dock narrows the region even
+   though the viewport never changed. */
+.workspace-hero h1 { color: var(--color-text); font-size: clamp(1.75rem, 1.25rem + 2.2cqi, 2.6rem); font-weight: 610; letter-spacing: -0.045em; line-height: 1; }
+.workspace-hero__count { color: var(--color-text-muted); font-family: var(--font-mono); font-size: 0.9rem; }
+.workspace-hero__description { max-width: 42rem; margin-top: 0.5rem; color: var(--color-text-muted); font-size: 0.78rem; line-height: 1.55; }
+.workspace-hero__actions { display: flex; flex: none; align-items: center; gap: 0.75rem; margin-inline-start: auto; }
+.workspace-hero__status { display: inline-flex; min-width: 0; flex: 0 0 auto; align-items: center; }
+
+.workspace-hero__body { display: grid; min-height: 12rem; grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 1.28fr); border-top: var(--hairline); }
+/* Metrics without a mascot: the row takes the whole width and stops pretending to be a hero panel. */
+.workspace-hero:not(:has(.workspace-hero__mascot)) .workspace-hero__body { min-height: 0; grid-template-columns: minmax(0, 1fr); }
+.workspace-hero__mascot { position: relative; min-width: 0; overflow: hidden; border-inline-end: var(--hairline); background: radial-gradient(circle at 46% 54%, rgb(var(--accent-rgb) / 0.11), transparent 62%); pointer-events: none; }
+.workspace-hero__mascot .spatial-mascot { width: min(100%, 20rem); margin-inline: auto; transform: scale(0.82); transform-origin: center; }
+.workspace-hero__metrics { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); align-items: stretch; }
+
+.workspace-metric { display: flex; min-width: 8.5rem; flex-direction: column; justify-content: center; padding: 1.2rem 2rem; border-inline-end: var(--hairline); }
+.workspace-metric:last-child { border-inline-end: 0; }
+.workspace-metric__value { display: block; color: var(--color-text); font-family: var(--font-mono); font-size: 1.7rem; line-height: 1; }
+.workspace-metric__label { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.65rem; color: var(--color-text-muted); font-size: 0.72rem; }
+
+.escalation-register-row:last-child { border-bottom: var(--hairline); }
+.spatial-scroll-cue svg { animation: spatial-scroll-cue 1.8s ease-in-out infinite; }
+@keyframes spatial-scroll-cue { 0%, 100% { transform: translateY(0); opacity: 0.55; } 50% { transform: translateY(3px); opacity: 0.9; } }
+@media (prefers-reduced-motion: reduce) { .spatial-scroll-cue svg { animation: none; } }
+
+
+/* Narrow region: the head stacks and the mascot moves above the metrics.
+
+   The action row is deliberately LEFT-anchored and stretched rather than `space-between`. With
+   space-between two wrapped buttons alternate right-aligned then left-aligned down the column, so the
+   primary action lands in a different place on every row — the zig-zag seen on /settings and /memory.
+   Stretching each action to fill its row instead puts it in one predictable place at every width. */
+@container workspace-hero (width < 48rem) {
+  .workspace-hero__head { align-items: flex-start; flex-direction: column; min-height: 0; gap: 1rem; padding-block: 1.25rem; }
+  .workspace-hero__actions { width: 100%; flex-wrap: wrap; justify-content: flex-start; margin-inline-start: 0; }
+  .workspace-hero__actions > :not(.workspace-hero__status) { flex: 1 1 10rem; justify-content: center; }
+  .workspace-hero__body { min-height: 0; grid-template-columns: minmax(0, 1fr); }
+  .workspace-hero__mascot { min-height: 9rem; border-inline-end: 0; border-bottom: var(--hairline); }
+  .workspace-metric { min-width: 7rem; padding: 1rem; }
+}
+
+/* Phone: the register has to START on the first screen. At 390x844 the full-weight hero — title,
+   description, status, two actions, mascot panel and a four-up metric grid — pushed the first record
+   past 1700px, roughly two screens of chrome before any content. So the mascot collapses (it is
+   decoration and carries no information), the metrics become one compact scrolling strip instead of a
+   12rem panel, the description keeps its first two lines, and the vertical padding tightens. The
+   desktop hero above is untouched and stays generous. */
+@container workspace-hero (width < 34rem) {
+  .workspace-hero__head { gap: 0.75rem; padding-block: 0.875rem 1rem; }
+  .workspace-hero__eyebrow { margin-bottom: 0.2rem; }
+  .workspace-hero__description {
+    display: -webkit-box;
+    margin-top: 0.35rem;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+  .workspace-hero__mascot { display: none; }
+  .workspace-hero__metrics { display: flex; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; }
+  .workspace-hero__metrics::-webkit-scrollbar { display: none; }
+  .workspace-metric { min-width: 0; flex: 1 0 auto; padding: 0.7rem 0.9rem; }
+  .workspace-metric__value { font-size: 1.15rem; }
+  .workspace-metric__label { margin-top: 0.25rem; white-space: nowrap; }
+}
+
+/* A hero action is a primary control and must clear the platform minimum on a touch pointer. The status
+   is excluded: it is a live region, not a target. */
+@media (pointer: coarse) {
+  .workspace-hero__actions > :not(.workspace-hero__status) { min-height: var(--touch-target); }
+}
+

@@ -73,7 +73,7 @@ export function CommandPalette() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4 pt-[12vh]" onClick={() => setOpen(false)}>
+    <div className="overlay-layer-modal fixed inset-0 flex items-start justify-center bg-black/70 p-4 pt-[12dvh]" onClick={() => setOpen(false)}>
       <div className="animate-pop-in w-full max-w-lg overflow-hidden rounded-xl border border-border bg-surface" style={{ boxShadow: 'var(--shadow-raised)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2.5 border-b border-border px-4">
           <Search size={16} className="shrink-0 text-text-muted" aria-hidden />
@@ -86,7 +86,7 @@ export function CommandPalette() {
             className="h-12 w-full bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
           />
         </div>
-        <ul className="max-h-[50vh] overflow-y-auto p-1.5">
+        <ul className="max-h-[50dvh] overflow-y-auto p-1.5">
           {results.length === 0 ? (
             <li className="px-3 py-6 text-center text-sm text-text-muted">{t.common.noCommands}</li>
           ) : results.map((c, i) => {

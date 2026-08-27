@@ -443,7 +443,7 @@ export function TelemetryPanel({ variant, open = false, onClose, onOpenWorkflow 
     // Mounted only while open, like the history drawer: a closed drawer leaves nothing focusable behind.
     if (!open) return null;
     return (
-      <div className="fixed inset-0 z-[60]" onKeyDown={(e) => { if (e.key === 'Escape') onClose?.(); }}>
+      <div className="overlay-layer-drawer fixed inset-0" onKeyDown={(e) => { if (e.key === 'Escape') onClose?.(); }}>
         <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
         <aside
           role="dialog"

@@ -5,21 +5,26 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { BrainLimitsModal, BRAIN_LIMIT_DEFAULTS } from '../../../modules/settings/BrainLimitsModal';
 
-/** The modal's own stacking layer, read from the real stylesheet — jsdom loads no CSS, so a computed
- *  z-index would be empty for both elements and prove nothing. Reading the shipped value keeps the test
- *  honest: if the layers are ever renumbered, this follows them instead of pinning a stale literal. */
-function modalLayerZ(): number {
-  const css = readFileSync(resolve(process.cwd(), 'app/styles/components.css'), 'utf8');
-  const z = /\.overlay-layer-modal\s*\{[^}]*z-index:\s*(\d+)/.exec(css)?.[1];
-  if (!z) throw new Error('.overlay-layer-modal z-index not found in components.css');
+/** A stacking layer, read from the real stylesheets — jsdom loads no CSS, so a computed z-index would
+ *  be empty for both elements and prove nothing. Reading the shipped value keeps the test honest: if the
+ *  layers are ever renumbered, this follows them instead of pinning a stale literal. Two hops, because
+ *  the layer is a token now: the overlay rule names `--z-modal`, tokens.css sets it. */
+function layerZ(layerClass: string): number {
+  const css = readFileSync(resolve(process.cwd(), 'app/styles/components/primitives.css'), 'utf8');
+  const token = new RegExp(`\\.${layerClass}\\s*\\{[^}]*z-index:\\s*var\\(\\s*(--[a-z0-9-]+)\\s*\\)`).exec(css)?.[1];
+  if (!token) throw new Error(`.${layerClass} z-index not found in components/primitives.css`);
+  const tokens = readFileSync(resolve(process.cwd(), 'app/styles/tokens.css'), 'utf8');
+  const z = new RegExp(`${token}\\s*:\\s*(\\d+)`).exec(tokens)?.[1];
+  if (!z) throw new Error(`${token} not defined in tokens.css`);
   return Number(z);
 }
 
-/** The z-index the tooltip actually carries (a Tailwind arbitrary value, e.g. `z-[130]`). */
+/** The layer the tooltip actually sits on. It names a class from the shared scale rather than a literal,
+ *  so the value has to be resolved through the stylesheet the same way the browser resolves it. */
 function tooltipZ(tooltip: HTMLElement): number {
-  const z = /(?:^|\s)z-\[(\d+)\]/.exec(tooltip.className)?.[1];
-  if (!z) throw new Error(`the help tooltip carries no z-index class: ${tooltip.className}`);
-  return Number(z);
+  const layerClass = /(?:^|\s)(overlay-layer-[a-z-]+)(?:\s|$)/.exec(tooltip.className)?.[1];
+  if (!layerClass) throw new Error(`the help tooltip names no shared overlay layer: ${tooltip.className}`);
+  return layerZ(layerClass);
 }
 
 describe('BrainLimitsModal', () => {
@@ -106,7 +111,7 @@ describe('BrainLimitsModal', () => {
     // 2. it outranks the modal's stacking layer — the half a portal alone does NOT give you.
     expect(tooltip.parentElement).toBe(document.body);
     expect(dialog.compareDocumentPosition(tooltip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(tooltipZ(tooltip)).toBeGreaterThan(modalLayerZ());
+    expect(tooltipZ(tooltip)).toBeGreaterThan(layerZ('overlay-layer-modal'));
   });
 
   it('flips the help body above the trigger so it stays inside the viewport near the fold', () => {

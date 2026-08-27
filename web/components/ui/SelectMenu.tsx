@@ -116,7 +116,7 @@ export function SelectMenu<T extends string>({ id, value, onChange, options, lab
       </button>
 
       {open ? (
-        <div id={listId} role="listbox" aria-label={label} className="absolute left-0 top-full z-50 mt-2 w-max min-w-full max-w-80 origin-top-left animate-fade-up rounded-xl border border-border bg-surface p-1.5 shadow-[var(--shadow-raised)]">
+        <div id={listId} role="listbox" aria-label={label} className="overlay-layer-menu absolute left-0 top-full mt-2 w-max min-w-full max-w-80 origin-top-left animate-fade-up rounded-xl border border-border bg-surface p-1.5 shadow-[var(--shadow-raised)]">
           {options.map((option, index) => {
             const active = option.value === value;
             return (

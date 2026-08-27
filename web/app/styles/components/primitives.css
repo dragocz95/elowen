@@ -1,0 +1,158 @@
+/* Shared interaction primitives and the overlay system: .card-interactive, .interactive-row,
+   .overlay-layer-*, .overlay-surface, .overlay-menu-item, .overlay-toast-dock, .overlay-fab,
+   .overlay-nav-drawer. */
+.card-interactive {
+  transition:
+    border-color var(--motion-base) var(--ease-out),
+    background-color var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+.card-interactive:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-raised);
+}
+html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px); }
+
+.interactive-row {
+  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+}
+.interactive-row:hover { background: rgb(255 255 255 / 0.025); }
+
+:root {
+  /* The room the advisor launcher claims in the bottom-right corner. Anything else that docks at the
+     bottom edge clears it instead of stacking on top of it: its 3.5rem box, its own inset and a gap. */
+  --fab-clearance: 5rem;
+}
+
+/* ── Layers ─────────────────────────────────────────────────────────────────────────────────────────
+   One stacking order for drawers, dialogs, menus and the chrome that floats over the page, taken from
+   the scale in tokens.css. Nothing that floats may carry a z-index of its own: before this the
+   navigation drawer, the launcher, the toasts and the editor takeover all sat on 50, and which of them
+   won was decided by whatever the DOM order happened to be that render. */
+/* `.overlay-layer-fab` is the layer WITHOUT the launcher's fixed placement, for floating page chrome
+   that positions itself (the memory register's bulk-action bar) but must still rank with the launcher
+   rather than against it. `.overlay-fab` below is the launcher itself, layer and placement together. */
+.overlay-layer-fab { z-index: var(--z-fab); }
+.overlay-layer-nav-drawer { z-index: var(--z-nav-drawer); }
+.overlay-layer-drawer { z-index: var(--z-drawer); }
+.overlay-layer-modal { z-index: var(--z-modal); }
+.overlay-layer-menu { z-index: var(--z-menu); }
+
+/* ── Presentation ───────────────────────────────────────────────────────────────────────────────────
+   `resolveOverlayPresentation()` (components/ui/overlayDepth.tsx) decides WHICH presentation an
+   overlay gets; these rules are what each one MEANS geometrically. Every overlay surface in the app
+   carries `.overlay-surface` plus the resolved value in `data-presentation`, so a dialog and a detail
+   rail cannot drift apart on the one viewport where the difference is fatal.
+
+   `drawer` and `center` are the roomy presentations and stay with the surface that owns them — a rail
+   and a dialog want different chrome there. `sheet` and `fullscreen` are the phone presentations,
+   where there is exactly one right answer, so they are settled here once for every consumer.
+
+   The attribute selector is load-bearing, not decorative: a surface's own stylesheet is imported after
+   this file, so only the extra specificity keeps the resolved presentation authoritative over the
+   desktop geometry the surface declares for itself. */
+.overlay-surface[data-presentation='sheet'],
+.overlay-surface[data-presentation='fullscreen'] {
+  position: fixed;
+  width: auto;
+  box-shadow: var(--shadow-raised);
+}
+
+/* A browsing surface comes up from the edge the thumb is already on and deliberately stops short of
+   the top, so the page it belongs to stays visible behind it. dvh, never vh: a mobile browser's
+   collapsing toolbar makes vh taller than the screen, which is what pushed dialog footers — Save and
+   Cancel among them — underneath the browser chrome. */
+.overlay-surface[data-presentation='sheet'] {
+  inset: auto var(--safe-right) 0 var(--safe-left);
+  max-height: 88dvh;
+  padding-bottom: var(--safe-bottom);
+  border: 0;
+  border-top: var(--hairline);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  animation: overlay-sheet-in var(--motion-base) var(--ease-out) both;
+}
+
+/* A focused editing surface takes the screen. Safe-area PADDING rather than an inset, so the surface
+   still paints edge to edge while its header stays clear of the notch and its footer clear of the home
+   indicator. */
+.overlay-surface[data-presentation='fullscreen'] {
+  inset: 0;
+  max-height: none;
+  border-width: 0;
+  border-radius: 0;
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+/* With room, a fullscreen dialog is a takeover rather than a mode change: the small inset and the
+   corner radius keep the page it came from visible behind it. 768px is PHONE_MAX_WIDTH + 1. */
+@media (min-width: 768px) {
+  .overlay-surface[data-presentation='fullscreen'] {
+    inset: 0.5rem;
+    border-width: 1px;
+    border-radius: var(--radius-lg);
+    padding: 0;
+  }
+}
+
+@keyframes overlay-sheet-in {
+  from { opacity: 0.6; transform: translateY(1.5rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay-surface[data-presentation='sheet'] { animation: none; }
+}
+
+/* ── Floating chrome ────────────────────────────────────────────────────────────────────────────────
+   Toasts sit above every other layer, including a modal: a message about what just happened has to be
+   readable over the thing that caused it. On a phone they dock to the BOTTOM — the top-right corner is
+   where the page header lives, and a notification that covers the header while the launcher sits in
+   the opposite corner reads as two unrelated applications. They clear the launcher rather than land on
+   it. From the tablet breakpoint up there is room for the conventional top-right stack. */
+.overlay-toast-dock {
+  position: fixed;
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  inset: auto max(0.75rem, var(--safe-right)) calc(var(--safe-bottom) + var(--fab-clearance)) max(0.75rem, var(--safe-left));
+}
+/* 768px is PHONE_MAX_WIDTH + 1 from lib/breakpoints.ts — the mirror that file documents. */
+@media (min-width: 768px) {
+  .overlay-toast-dock {
+    inset: max(1.25rem, var(--safe-top)) max(1.25rem, var(--safe-right)) auto auto;
+    width: 26rem;
+    gap: 0.625rem;
+  }
+}
+
+/* The advisor launcher. Its own layer, below the navigation drawer and below every dialog: it is the
+   control that OPENS things and is never the thing on top. */
+.overlay-fab {
+  position: fixed;
+  z-index: var(--z-fab);
+  right: max(1rem, var(--safe-right));
+  bottom: max(1rem, var(--safe-bottom));
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+}
+
+/* The navigation drawer's panel is fixed to the viewport, so the safe area is its own responsibility:
+   without it the first destination sits under the notch and the last under the home indicator. */
+.overlay-nav-drawer {
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+}
+.overlay-nav-drawer[data-side='right'] {
+  padding-right: var(--safe-right);
+  padding-left: 0;
+}
+
+/* A pointer that is a finger needs a target it can actually hit. Applied only for a coarse pointer, so
+   a mouse keeps the compact rhythm these controls are drawn at. `.overlay-menu-item` is the dense menu
+   row, which only needs the height; `.overlay-touch-target` is the small square control — a close
+   cross, a dismiss button — which needs both and is otherwise drawn at half the floor. */
+@media (pointer: coarse) {
+  .overlay-menu-item { min-height: var(--touch-target); }
+  .overlay-touch-target { min-width: var(--touch-target); min-height: var(--touch-target); }
+}

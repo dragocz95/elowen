@@ -16,16 +16,19 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
   /** `line` is the quiet settings/navigation treatment: no pill track, active underline only. */
   variant?: 'default' | 'line';
   className?: string;
-  /** Keep the track on one line (no wrapping). Pass it inside the single-line page toolbars so the
-   *  header row scrolls horizontally instead of the control folding onto a second line. Off by default
-   *  so long option sets (e.g. settings) still degrade gracefully by wrapping. */
+  /** Keep the track on one line. Pass it inside the single-line page toolbars so the header row keeps
+   *  its shape instead of the control folding onto a second line. The track then SCROLLS when it runs
+   *  out of room — at 320px the last option used to sit outside the surface and be clipped away. Off by
+   *  default so long option sets (e.g. settings) degrade by wrapping instead. */
   nowrap?: boolean;
   /** Accessible name for the radiogroup — pass it when the control acts as a labelled section nav. */
   'aria-label'?: string;
 }) {
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const pad = size === 'sm' ? 'h-9 px-2.5' : 'h-9 px-3';
-  const wrap = nowrap ? 'flex-nowrap' : 'max-w-full flex-wrap';
+  // Either way the track stays inside its container: it wraps, or it scrolls. It never overflows and
+  // gets clipped by the surface, which is what a bare `flex-nowrap` did in a narrow toolbar.
+  const wrap = nowrap ? 'max-w-full flex-nowrap overflow-x-auto overscroll-x-contain [scrollbar-width:thin]' : 'max-w-full flex-wrap';
   const selectedIndex = options.findIndex((option) => option.value === value);
   const tabbableIndex = selectedIndex >= 0 ? selectedIndex : 0;
   const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -55,7 +58,7 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
             ref={(node) => { buttonRefs.current[index] = node; }}
             onClick={() => onChange(o.value)}
             onKeyDown={(event) => move(event, index)}
-            className={`inline-flex items-center gap-1.5 text-xs font-medium transition-colors ${pad} ${variant === 'line'
+            className={`inline-flex shrink-0 items-center gap-1.5 text-xs font-medium transition-colors pointer-coarse:min-h-[var(--touch-target)] ${pad} ${variant === 'line'
               ? `-mb-px border-b-2 ${active ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text'}`
               : `rounded ${active ? 'bg-accent/15 text-accent' : 'text-text-muted hover:bg-elevated hover:text-text'}`}`}
             style={{ transitionDuration: 'var(--motion-fast)' }}

@@ -1089,7 +1089,7 @@ function ReconnectOverlay() {
   const { t } = useTranslation();
   return (
     <div
-      className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-bg/60 backdrop-blur-md"
+      className="overlay-layer-modal fixed inset-0 flex flex-col items-center justify-center gap-4 bg-bg/60 backdrop-blur-md"
       role="status"
       aria-live="polite"
     >

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation';
 import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT, advisorOpenTarget } from '../../lib/brainDock';
 import { useMobileViewport } from '../../lib/useMobile';
+import { NAV_COLUMN_MIN_WIDTH, NAV_FULL_MIN_WIDTH } from '../../lib/breakpoints';
 import { Providers, type PluginUiSeed, type MeSeed } from '../../app/providers';
 import { LanguageProvider, type Locale } from '../../lib/i18n';
 import { SkinProvider } from '../../lib/skinContext';
@@ -31,20 +32,10 @@ import { EffectsProvider } from '../../lib/useEffects';
 /** How the rail presents itself, decided by the shell from the measured room it has. */
 export type NavMode = 'full' | 'rail' | 'drawer';
 
-/** Below this many px of room for the nav+content region the rail slides in over the content from a
- *  hamburger (real phones, or a dock dragged nearly full-width); below the next it auto-collapses to an
- *  icon rail so the content keeps usable room; above it the user's own pin decides. Driven by the
- *  MEASURED region width (window − dock), not the viewport — so dragging the dock adapts the chrome
- *  just like resizing. */
-const DRAWER_MAX = 760;
-const RAIL_MAX = 1320;
-
-/** The measure the interface is read at, and it tracks the room available rather than being one frozen
- *  number: the column grows with the window but SLOWER than it (72vw), so a bigger screen buys real
- *  content instead of a wider, emptier table. The two rails are what make it safe — below 90rem a narrow
- *  window would keep the column fluid and hand every extra pixel back to the sprawl the cap exists to
- *  stop, and above 128rem an ultrawide would stretch a table across the whole desk. */
-const CONTENT_MAX = 'max-w-[clamp(90rem,72vw,128rem)]';
+/** The measure the interface is read at: `--content-max` (web/app/styles/tokens.css) is the single
+ *  authority on how wide a document column may grow, so a skin can retune the reading measure without
+ *  touching a component. */
+const CONTENT_MAX = 'max-w-[var(--content-max)]';
 
 /** What the user pinned the navigation to, when the window is roomy enough to leave them the choice. */
 type NavPin = 'full' | 'rail';
@@ -53,11 +44,15 @@ const NAV_PINS: readonly NavPin[] = ['full', 'rail'];
 /** The width sets a FLOOR on how compact the chrome is; the user's pin may only go compacter, never
  *  roomier. So the collapse handle is offered exactly when the pin is what decides — in a window already
  *  too narrow for the full rail, a toggle would be a dead control, and before the first measurement
- *  (`regionW === 0`) there is nothing to decide yet. */
+ *  (`regionW === 0`) there is nothing to decide yet.
+ *
+ *  `regionW` is the MEASURED width of the nav+content region (window − advisor dock), in the same CSS
+ *  pixels the stylesheet's media queries and `useMobileViewport()` read — see lib/breakpoints.ts. Using
+ *  the region rather than the viewport is what lets dragging the dock re-chrome the app like a resize. */
 export function resolveNav(regionW: number, pin: NavPin): { mode: NavMode; pinnable: boolean } {
   if (regionW === 0) return { mode: 'full', pinnable: false };
-  if (regionW < DRAWER_MAX) return { mode: 'drawer', pinnable: false };
-  if (regionW < RAIL_MAX) return { mode: 'rail', pinnable: false };
+  if (regionW < NAV_COLUMN_MIN_WIDTH) return { mode: 'drawer', pinnable: false };
+  if (regionW < NAV_FULL_MIN_WIDTH) return { mode: 'rail', pinnable: false };
   return { mode: pin, pinnable: true };
 }
 
@@ -128,11 +123,10 @@ function ShellLayout({ children }: { children: ReactNode }) {
           context menus) to it. Content views scope their own `@container` around just the grid/list
           instead, keeping overlays outside it. */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
-        {/* The measure the interface is read at. Without it the content is purely fluid, and every extra
-            pixel of room — a wide monitor, or the CSS px the automatic zoom hands the layout when it
-            scales down — goes into stretching the same table across a wider, emptier row. Capping it
-            keeps a table's density tied to its type size instead of to the window. The heading rides
-            inside the cap so it stays aligned with the content beneath it. */}
+        {/* The measure the interface is read at. Without it the content is purely fluid and every extra
+            pixel of a wide monitor goes into stretching the same table across a wider, emptier row.
+            Capping it keeps a table's density tied to its type size instead of to the window. The
+            heading rides inside the cap so it stays aligned with the content beneath it. */}
         {/* /chat opts out of the reading measure. It is not a document but an application layout — a
             conversation column with a telemetry rail docked beside it — and a centred cap leaves the rail
             floating short of the window edge with dead space behind it, which reads as a bug rather than
@@ -148,10 +142,12 @@ function ShellLayout({ children }: { children: ReactNode }) {
               link — keyed off the VIEWPORT — never appeared, stranding the reader on /chat with no way
               out. Being CSS it also holds from the first paint instead of flashing the bar before the
               first measurement resolves.
-              The pixel value is deliberate and must stay in step with MOBILE_MAX_WIDTH (web/lib/useMobile.ts):
-              Tailwind's own `md` is 48rem, so a reader whose browser font is not 16px would push the CSS
-              boundary away from the pixel media query the hook runs — reopening exactly the gap with no
-              bar and no back link that this suppression exists to avoid. */}
+              The pixel value is deliberate and must stay in step with PHONE_MAX_WIDTH (web/lib/breakpoints.ts);
+              it is spelled out rather than interpolated because Tailwind scans class names statically.
+              It is a px query, not `md:`, for the same reason the hook is: Tailwind's `md` is 48rem, so a
+              reader whose browser font is not 16px would push the CSS boundary away from the pixel media
+              query the hook runs — reopening exactly the gap with no bar and no back link that this
+              suppression exists to avoid. */}
           <div className={onChat ? 'max-[767px]:hidden' : undefined}>
             <TopBar
               onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
@@ -170,6 +166,10 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // Deliberately inside ShellLayout only, never over ShellBody's chromeless /terminal/* branch.
   return (
     <BrainChatProvider>
+      {/* The app shell is exactly one viewport tall, and `dvh` so a phone's collapsing URL bar does not
+          leave a dead strip. The division survives because the Account UI-scale preference still puts a
+          `zoom` on <html>: a `100dvh` box under `zoom: z` renders at z×viewport, so filling the screen
+          means asking for `100dvh / z`. At the default scale of 1 it is plain `100dvh`. */}
       <div className="flex flex-col overflow-hidden" style={{ height: 'calc(100dvh / var(--ui-scale, 1))' }}>
         <ImpersonationBanner />
         {dockTop ? <AdvisorPanel dock={dock} /> : null}

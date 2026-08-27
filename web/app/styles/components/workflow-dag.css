@@ -1,0 +1,14 @@
+/* Workflow DAG canvas: .wf-dag__*. */
+
+.wf-dag__edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.wf-dag__edge { fill: none; stroke: rgb(var(--accent-rgb) / 0.42); stroke-width: 1.5; }
+/* The arrowhead states the direction of a dependency. It inherits nothing from the stroke (a marker is
+   its own painting context), so its fill is set here and tracks the edge's resting tone. */
+.wf-dag__arrowhead { fill: rgb(var(--accent-rgb) / 0.55); }
+/* An edge feeding a RUNNING node carries the dashed flow stroke — the eye lands on live work first. */
+.wf-dag__edge--live { stroke: rgb(255 154 98 / 0.7); stroke-dasharray: 3 34; }
+.wf-dag__node--running { box-shadow: 0 0 0 1px var(--color-accent), 0 0 18px rgb(var(--accent-rgb) / 0.22); }
+@media (prefers-reduced-motion: no-preference) {
+  html[data-effects='full'] .wf-dag__edge--live { animation: cosmos-fil-flow 3.2s linear infinite; }
+  .wf-dag__node--running .wf-dag__pulse { animation: cosmos-breathe 1.8s ease-in-out infinite; }
+}

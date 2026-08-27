@@ -170,6 +170,15 @@ export const cs = {
     outcomeOk: 'Úspěch',
     outcomeFail: 'Selhalo',
   },
+  pagination: {
+    label: 'Stránkování',
+    previous: 'Předchozí',
+    next: 'Další',
+    previousPage: 'Předchozí strana',
+    nextPage: 'Další strana',
+    range: '{from}–{to} z {total}',
+    pageLabel: 'Strana {page} z {pages}',
+  },
   auth: {
     signIn: 'Přihlásit se',
     signInWithMicrosoft: 'Přihlásit se přes Microsoft',
@@ -751,7 +760,6 @@ export const cs = {
     passwordWrong: 'Současné heslo není správné',
     passwordError: 'Změna hesla selhala',
     uiScale: 'Měřítko rozhraní',
-    uiScaleApplied: 'Skutečné měřítko po automatickém přizpůsobení šířce okna',
     uiScaleReset: 'Výchozí',
     tabProfile: 'Účet',
     tabSecurity: 'Zabezpečení',

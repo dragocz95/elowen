@@ -23,7 +23,9 @@
   --color-ember: #a5e3ff;
   --color-text: #eef2f7;
   --color-text-muted: #8b95a5;
-  --color-text-subtle: #5d6675;
+  /* Held at >= 4.5:1 against this skin's OWN surfaces, which are lighter than the ember ones — 4.59:1
+     on --color-elevated (#10151f) — and clearly under --color-text-muted (6.04:1 there). */
+  --color-text-subtle: #77808f;
   --accent-rgb: 56 189 248;
 
   /* Square, flat, engineering-drawing look: no rounding, no glow — hairlines carry the structure. */
@@ -44,9 +46,8 @@
 /* Structural: drop the ember atmosphere entirely — flat canvas, no radial washes. */
 :root[data-skin='midnight'] body { background-image: none; }
 
-/* Structural: the decorative organics (orbit rings, falling embers, dashboard beams) belong to the
- * ember identity, not to this one. */
-:root[data-skin='midnight'] .cosmos-ring,
+/* Structural: the decorative organics (falling embers, dashboard beams) belong to the ember identity,
+ * not to this one. */
 :root[data-skin='midnight'] .dash-beam,
 :root[data-skin='midnight'] .ember-fall { display: none; }
 
