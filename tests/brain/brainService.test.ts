@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
 import { createBootRecovery } from '../../src/brain/recovery/providers.js';
 import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
-import type { PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
+import type { KnownControls, PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
 import { NO_REPLY_NUDGE } from '../../src/brain/messageView.js';
@@ -3523,9 +3523,10 @@ describe('BrainService', () => {
     const reg = new PluginRegistry();
     reg.contextFor('sandbox', {}, { info() {}, warn() {}, error() {} }).registerControl('sandbox', {
       workspaceRoots: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace }],
+      workspacesFor: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }],
       activeWorkspace: () => ({ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
       prepareExecution: async () => ({}),
-    } as never);
+    } satisfies KnownControls['sandbox'] as never);
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     let scopedCwd: string | undefined;
     d.session.prompt.mockImplementationOnce(async (text: string, options?: { preflightResult?: (success: boolean) => void }) => {

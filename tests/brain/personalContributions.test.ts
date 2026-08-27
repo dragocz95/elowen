@@ -421,6 +421,14 @@ describe('a room turn resolves personal contributions for whoever is writing', (
             path: accountUserId === 2 ? amyWorkspace : bobWorkspace,
           }];
         },
+        workspacesFor: ({ userId }) => [{
+          workspaceId: userId === 2 ? 'ws-amy' : 'ws-bob',
+          projectId: 7,
+          path: userId === 2 ? amyWorkspace : bobWorkspace,
+          label: userId === 2 ? 'Amy' : 'Bob',
+          branch: userId === 2 ? 'amy/topic' : 'bob/topic',
+          baseRef: 'main',
+        }],
         activeWorkspace: () => {
           const accountUserId = currentContributionUserId();
           return {
