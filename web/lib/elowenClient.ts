@@ -224,6 +224,9 @@ export const elowenClient = {
   /** Switch the conversation's model (the `/model` picker). Server rebuilds the session; `session` targets
    *  the caller's own bound conversation. */
   brainSetModel: (sel: { provider?: string; model?: string }, session?: string) => req<{ model: string }>('/brain/model', json({ ...sel, ...(session ? { session } : {}) })),
+  // Move the conversation's working directory (the seam the CLI's /cd uses). The daemon validates the
+  // directory against the caller's policy and refuses one they may not reach, so this never filters here.
+  brainSetCwd: (dir: string, session?: string) => req<{ workDir: string }>('/brain/cwd', json({ dir, ...(session ? { session } : {}) })),
   /** Set the conversation's reasoning effort live (the `/reasoning` picker). Applies to the running
    *  conversation AND becomes the account default shown in Account → Elowen AI — one value, so the
    *  choice survives a reload instead of being replaced by the saved one. */

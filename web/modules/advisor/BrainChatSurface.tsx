@@ -28,6 +28,7 @@ import { ModelModal } from './ModelModal';
 import { PlanDecisionModal } from './PlanDecisionModal';
 import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
+import { ProjectPicker } from './ProjectPicker';
 import { useBrainChat } from './BrainChatProvider';
 import { formatBytes, formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
@@ -690,6 +691,9 @@ function BarOverflowMenu({ workMode, hasTodos, onOpenTodos }: {
           {/* The picker is the menu's heading — it is a control, not a menu row, so it reads wrong pushed
               below one. Plain rows follow it. */}
           <div className="px-1 pb-1"><ModelPicker variant="full" /></div>
+          {/* Where the agent works belongs beside what it is: the phone folds both away, so both come back
+              here rather than leaving the directory reachable only on a desktop. */}
+          <div className="px-1 pb-1"><ProjectPicker variant="full" /></div>
           {/* The narrow bar has no room for a TODO control of its own, so the menu is the way to reach it. */}
           {hasTodos ? (
             <button type="button" onClick={() => { setOpen(false); onOpenTodos(); }} className={rowClass}>
@@ -931,6 +935,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             <ChevronDown size={14} className="shrink-0 text-text-muted" aria-hidden />
           </button>
           <WorkModePill mode={workMode} />
+          <ProjectPicker variant="compact" />
           <ModelPicker variant="compact" />
           <ReasoningButton onOpen={() => setReasoningOpen(true)} />
           <button
@@ -966,6 +971,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           {mobile === false ? (
             <>
               <WorkModePill mode={workMode} full />
+              <ProjectPicker variant="full" />
               <ModelPicker variant="full" />
             </>
           ) : null}
