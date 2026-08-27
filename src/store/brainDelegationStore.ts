@@ -97,6 +97,8 @@ export interface BrainSubagentResult {
   model?: string;
   delivery: 'pending' | 'acknowledged';
   attempts: number;
+  /** This is an unsafe-recovery notice, not a completion the parent may act on autonomously. */
+  requiresUserAction: boolean;
 }
 /** A daemon-restart reconcile enqueues a SYNTHETIC terminal result for each orphaned running child so an
  *  autoDeliver parent still gets woken. Its id carries this prefix so a real completion arriving later for
@@ -238,7 +240,7 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
   };
 }
 
-function normalizeSubagentResult(raw: unknown): Omit<BrainSubagentResult, 'parentSessionId' | 'delivery' | 'attempts' | 'kind' | 'workflowId'> | undefined {
+function normalizeSubagentResult(raw: unknown): Omit<BrainSubagentResult, 'parentSessionId' | 'delivery' | 'attempts' | 'kind' | 'workflowId' | 'requiresUserAction'> | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;
   if (typeof o.id !== 'string' || !o.id || o.id.length > 512) return undefined;
@@ -596,7 +598,11 @@ export class BrainDelegationStore {
    *  can enqueue the result in the SAME transaction that terminalizes the run (see completeRecoveredRun).
    *  withWriteLock uses an IMMEDIATE transaction; nesting one would demote it to a savepoint and lose the
    *  fencing, so this shared seam takes no lock and the two public callers each own theirs. */
-  private enqueueResultRowLocked(parentSessionId: string, result: NonNullable<ReturnType<typeof normalizeSubagentResult>>): boolean {
+  private enqueueResultRowLocked(
+    parentSessionId: string,
+    result: NonNullable<ReturnType<typeof normalizeSubagentResult>>,
+    requiresUserAction = false,
+  ): boolean {
     const linked = result.sessionId ? this.db.prepare(
       `SELECT 1 FROM brain_subagent_runs r
         JOIN brain_sessions p ON p.id = r.parent_session_id
@@ -610,6 +616,7 @@ export class BrainDelegationStore {
     const payload = JSON.stringify({
       result: result.result, error: result.error, tools: result.tools, tokens: result.tokens,
       seconds: result.seconds, model: result.model,
+      ...(requiresUserAction ? { requiresUserAction: true } : {}),
     });
     // Handle BOTH unique constraints (result_id PK + parent/tool_call) so a late or duplicate callback can
     // never throw and silently drop a result. A real completion arriving for a (parent, tool_call) that a
@@ -790,6 +797,7 @@ export class BrainDelegationStore {
           status: row.status === 'done' ? 'done' as const : 'error' as const, task: String(row.task ?? ''),
           ...(typeof payload.result === 'string' ? { result: payload.result } : {}),
           tools: 0, seconds: 0, delivery: 'pending' as const, attempts: Number(row.attempts) || 0,
+          requiresUserAction: false,
         }];
       }
       const normalized = normalizeSubagentResult({
@@ -799,6 +807,7 @@ export class BrainDelegationStore {
       return normalized ? [{
         ...normalized, kind: 'subagent' as const, parentSessionId: String(row.parent_session_id),
         delivery: 'pending' as const, attempts: Number(row.attempts) || 0,
+        requiresUserAction: payload.requiresUserAction === true,
       }] : [];
     });
   }
@@ -999,7 +1008,7 @@ export class BrainDelegationStore {
           WHERE parent_session_id = ? AND tool_call_id = ? AND owner_boot_id = ? AND lifecycle = 'recovering'`
       ).run(bounded(reason, 2_000), bounded(reason, 2_000), parentSessionId, toolCallId, cur).changes === 1;
       if (!changed) return false;
-      return this.enqueueResultRowLocked(parentSessionId, result);
+      return this.enqueueResultRowLocked(parentSessionId, result, true);
     });
   }
 

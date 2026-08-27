@@ -52,6 +52,8 @@ type CustomDelivery = 'landed' | 'landed-unanswered' | 'steered';
 
 export interface PendingResultDrainOutcome {
   answered: boolean;
+  /** At least one unsafe-recovery notice was persisted without starting an autonomous parent turn. */
+  requiresUserAction: boolean;
   acknowledged: { id: string; toolCallId: string; kind: 'subagent' | 'workflow' }[];
   deliveredPending: { id: string; toolCallId: string; kind: 'subagent' | 'workflow' }[];
 }
@@ -62,6 +64,13 @@ export interface PendingResultDrainOutcome {
  *  caller wants: it has no other handle on the thing it just sent. */
 function resultInContext(messages: readonly CustomResultMessage[], resultId: string | undefined): boolean {
   return messages.some((message) => message.role === 'custom' && message.details?.resultId === resultId);
+}
+
+/** An unsafe-recovery notice is consumed only by a later user message in the same live context. A boot-only
+ * custom append has no such message, so the durable inbox row remains the restart-safe gate. */
+function resultFollowedByUser(messages: readonly CustomResultMessage[], resultId: string): boolean {
+  const notice = messages.findIndex((message) => message.role === 'custom' && message.details?.resultId === resultId);
+  return notice >= 0 && messages.slice(notice + 1).some((message) => message.role === 'user');
 }
 
 interface TurnRunnerDeps {
@@ -158,12 +167,21 @@ export class BrainTurnRunner {
   /** Deliver host-owned lifecycle information through PI's native hidden custom-message seam. `display:false`
    * keeps it out of the user transcript either way; how it gets in depends on the parent.
    *
-   * IDLE parent — take the conversation lock and let `triggerTurn` run a turn on it, so the agent reacts now.
+   * IDLE parent — take the conversation lock and normally let `triggerTurn` run a turn on it, so the agent
+   * reacts now. An unsafe-recovery notice passes `triggerTurn=false`: it must enter the durable context but
+   * wait for the user's next turn, because the interrupted request still in history could otherwise replay.
    *
    * STREAMING parent — STEER it into the running turn. PI injects a steering message into the context before
    * that turn's next model call, so a background result reaches the agent during the work it belongs to
    * instead of a whole turn later. Delivery is not confirmed here (see `CustomDelivery`). */
-  async sendCustomSystem(userId: number, session: string, customType: string, content: string, resultId?: string): Promise<CustomDelivery> {
+  async sendCustomSystem(
+    userId: number,
+    session: string,
+    customType: string,
+    content: string,
+    resultId?: string,
+    triggerTurn = true,
+  ): Promise<CustomDelivery> {
     if (isNonUserSession(session)) {
       if (!resultId || !this.d.sendDelegatedCustom) throw new Error('delegated result delivery unavailable');
       await this.d.sendDelegatedCustom(userId, session, customType, content, resultId);
@@ -211,7 +229,8 @@ export class BrainTurnRunner {
       if (resultId && resultInContext(live.session.messages as CustomResultMessage[], resultId)) return 'landed-unanswered';
       const before = lastAssistant(live.session.messages as { role?: string }[]);
       const context = this.contextBuilder.buildScope(userId, live);
-      await context.run(() => live.session.sendCustomMessage(message, { triggerTurn: true, deliverAs: 'followUp' }));
+      await context.run(() => live.session.sendCustomMessage(message, { triggerTurn, deliverAs: 'followUp' }));
+      if (!triggerTurn) return 'landed-unanswered';
       const settled = lastAssistant(live.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[]);
       // A turn that did not settle normally is NOT automatically a failure to deliver: PI appends the
       // custom message to the transcript before running the turn, so the result may already be in the
@@ -300,6 +319,7 @@ export class BrainTurnRunner {
         // A tail result's new answer includes the earlier custom messages already in context; if the tail
         // delivered anything, its answer state supersedes the earlier drain rather than AND-ing with it.
         answered: tail.acknowledged.length + tail.deliveredPending.length > 0 ? tail.answered : first.answered,
+        requiresUserAction: first.requiresUserAction || tail.requiresUserAction,
         acknowledged: [...first.acknowledged, ...tail.acknowledged],
         deliveredPending: [...first.deliveredPending, ...tail.deliveredPending],
       };
@@ -333,8 +353,14 @@ export class BrainTurnRunner {
 
   private async runPendingSubagentResultDrain(userId: number, parentSessionId: string, state: { deferUnanswered: boolean }): Promise<PendingResultDrainOutcome> {
     let allAnswered = true;
+    let requiresUserAction = false;
     const acknowledged: PendingResultDrainOutcome['acknowledged'] = [];
     const deliveredPending: PendingResultDrainOutcome['deliveredPending'] = [];
+    // One unsafe-recovery notice makes the whole batch wait for the user's next parent turn. Otherwise a
+    // normal completion earlier in the same queue could start a model turn that sees the notice and acts on
+    // it autonomously. Delegated parents keep their existing recovery path; this gate is for owner sessions.
+    const withholdParentTurn = !isNonUserSession(parentSessionId)
+      && this.d.store.pendingSubagentResults(parentSessionId).some((result) => result.requiresUserAction);
     const oldTimer = this.resultRetryTimers.get(parentSessionId);
     if (oldTimer) { clearTimeout(oldTimer); this.resultRetryTimers.delete(parentSessionId); }
     // Each result gets at most one shot per drain, so a poisoned one cannot sit at the head of the queue
@@ -365,12 +391,27 @@ export class BrainTurnRunner {
           + 'The child transcript remains available separately; do not claim its internal tool calls as your own.</instruction>\n'
           + '</system-reminder>';
       try {
-        const delivery = await this.sendCustomSystem(userId, parentSessionId, 'subagent-result', content, result.id);
+        const delivery = await this.sendCustomSystem(
+          userId,
+          parentSessionId,
+          'subagent-result',
+          content,
+          result.id,
+          !withholdParentTurn,
+        );
+        if (withholdParentTurn && result.requiresUserAction) requiresUserAction = true;
         // Steered into a running turn: PI holds it, but "PI accepted it" is not "the parent's context has
         // it" — a stop clearing PI's queue in between would erase it. Leave the row pending and move on to
         // the rest of the queue; the post-turn drain finds the message in the transcript and acknowledges
         // it there, or re-delivers it for real. Not a failure: no attempt spent, no retry timer.
         if (delivery === 'steered') continue;
+        // A withheld batch deliberately produces no assistant answer. Keep every row pending until an actual
+        // user turn consumes the custom message: custom PI entries are live context, not brain_messages, so
+        // acknowledging here would lose the only durable copy on another restart or session eviction.
+        if (withholdParentTurn) {
+          deliveredPending.push({ id: result.id, toolCallId: result.toolCallId, kind: result.kind });
+          continue;
+        }
         if (delivery === 'landed-unanswered') {
           allAnswered = false;
           if (state.deferUnanswered) {
@@ -400,10 +441,10 @@ export class BrainTurnRunner {
           continue;
         }
         this.scheduleResultRetry(userId, parentSessionId, result.attempts + 1);
-        return { answered: false, acknowledged, deliveredPending };
+        return { answered: false, requiresUserAction, acknowledged, deliveredPending };
       }
     }
-    return { answered: allAnswered, acknowledged, deliveredPending };
+    return { answered: allAnswered, requiresUserAction, acknowledged, deliveredPending };
   }
 
   /** Acknowledge a boot-delivered row only after its dedicated owner continuation settles. */
@@ -494,6 +535,23 @@ export class BrainTurnRunner {
     // otherwise survive as a phantom chip and execute on a later prompt.
     if (this.d.sessions.isParentAborting(active.sessionId) && !request.interruptResume) {
       throw new Error('session work aborted');
+    }
+    // An unsafe restart notice is an explicit user-decision gate. Goal continuations carry PI user-role
+    // messages too, so reject them visibly (the goal loop pauses on the error); best-effort system nudges may
+    // drop. A real user turn synchronously restores the pending notice into a rehydrated/evicted live session
+    // BEFORE admission, so the model can never see the original delegation request without its warning.
+    const recoveryNotices = this.d.store.pendingSubagentResults(active.sessionId)
+      .filter((result) => result.requiresUserAction);
+    if (internal && recoveryNotices.length > 0) {
+      if (internal.kind === 'systemNudge') return;
+      throw new Error('unsafe sub-agent recovery is waiting for a user message');
+    }
+    if (recoveryNotices.length > 0) {
+      await this.drainPendingSubagentResults(userId, active.sessionId);
+      const restored = recoveryNotices.every((result) =>
+        resultInContext(active.session.messages as CustomResultMessage[], result.id)
+        || this.steeredInFlight.get(active.sessionId)?.has(result.id));
+      if (!restored) throw new Error('unsafe sub-agent recovery notice could not be restored');
     }
     // PI reports both isStreaming=false and isCompacting=false while a native auto-compaction check is
     // awaiting auth. The coordinator spans that gap. Treat it exactly like the running turn it belongs
@@ -611,7 +669,18 @@ export class BrainTurnRunner {
         images: turnImages?.length
           ? turnImages.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
           : undefined,
-        preflightResult: admission.preflightResult,
+        preflightResult: (success: boolean): void => {
+          // Final fail-closed check at PI's actual provider boundary. Recovery may finish while context/memory
+          // assembly awaits; if its new notice is not in this exact live context, reject before the model sees
+          // the old delegation request. A real user send retries restoration; an internal caller fails visibly.
+          if (success) {
+            const missingRecoveryNotice = this.d.store.pendingSubagentResults(live.sessionId)
+              .some((result) => result.requiresUserAction
+                && !resultInContext(live.session.messages as CustomResultMessage[], result.id));
+            if (missingRecoveryNotice) throw new Error('unsafe sub-agent recovery notice could not be restored');
+          }
+          admission.preflightResult(success);
+        },
       };
       const context = await this.contextBuilder.build(turnRequest, live);
       // Meter the turn so the OpenRouter (or OpenRouter-backed proxy) cost pi-ai drops is captured and
@@ -720,6 +789,17 @@ export class BrainTurnRunner {
       // flight. Forget them BEFORE the re-drain: an id held back past the turn it belonged to would make
       // the next drain skip a result that never arrived, turning a duplicate into a loss.
       this.steeredInFlight.delete(completedSessionId);
+      // Unsafe-recovery notices stay pending across boots until a user message actually follows them in the
+      // live context. That message is the explicit parent turn which may choose DelegateContinue; only now is
+      // it safe to release the durable gate and let later ordinary results wake autonomously again.
+      const completedLive = this.d.sessions.get(completedSessionId);
+      if (!internal && completedLive) {
+        for (const result of this.d.store.pendingSubagentResults(completedSessionId)) {
+          if (!result.requiresUserAction
+            || !resultFollowedByUser(completedLive.session.messages as CustomResultMessage[], result.id)) continue;
+          this.acknowledgeDeliveredResult(completedSessionId, result.id, result.toolCallId, result.kind);
+        }
+      }
       // A sub-agent result that arrived while this turn was streaming was STEERED into it and left durable +
       // pending, because PI accepting a steer is not yet proof the context holds it. Now that the turn has
       // settled, re-drain: this pass finds the message in the transcript and acknowledges it — or, if a stop

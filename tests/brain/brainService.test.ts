@@ -5560,12 +5560,57 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(row.lifecycle).toBe('recovery_required');
     expect(JSON.parse(row.state).recoveryReason).toContain('Write');
     expect(d.session.prompt).not.toHaveBeenCalled(); // no blind child respawn — the parent decides
-    // The old assertion expected this notice to remain pending forever. Boot recovery must now wake the
-    // owner with it, while preserving the recovery_required decision and DelegateContinue instruction.
+    // The recovery notice must reach the durable parent context WITHOUT starting an autonomous parent turn:
+    // that turn still contains the original delegation request and could blindly issue Delegate again. The
+    // user's next message is the turn that may inspect the notice and choose DelegateContinue.
     expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
     expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'subagent-result' });
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[1]).toMatchObject({ triggerTurn: false });
     expect(String(d.session.sendCustomMessage.mock.calls[0]?.[0]?.content)).toContain('DelegateContinue');
-    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1); // durable until a user turn consumes it
+    await expect(restarted.send({
+      userId: 1, session: sessionId, text: 'automatic goal continuation', mode: 'build',
+      internal: { kind: 'goalContinue' },
+    })).rejects.toThrow('unsafe sub-agent recovery is waiting for a user message');
+    expect(d.session.prompt).not.toHaveBeenCalled(); // the goal loop receives an error and pauses visibly
+    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1);
+
+    // A later ordinary completion must inherit the same hold. If the recovery marker were acknowledged at
+    // boot, this drain would start exactly the autonomous turn that replayed Delegate in production.
+    const laterChild = 'brain-ch-subagent-later-result';
+    d.store.createSession({ id: laterChild, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, {
+      id: 'delegate-later', sessionId: laterChild, status: 'done', task: 'later', tools: 1, seconds: 1,
+      background: true, autoDeliver: true,
+    });
+    expect(d.store.enqueueSubagentResult(sessionId, {
+      id: 'result-later', toolCallId: 'delegate-later', sessionId: laterChild, status: 'done', task: 'later',
+      result: 'later answer', tools: 1, seconds: 1,
+    })).toBe(true);
+    // Simulate the idle reaper: the custom notice was live-only, while the inbox marker survives. send()
+    // must rehydrate and synchronously restore BOTH pending results before admitting the user's prompt.
+    const sessions = (restarted as unknown as { sessions: { dispose(id: string): void } }).sessions;
+    sessions.dispose(sessionId);
+    d.session.messages.length = 0;
+    d.session.sendCustomMessage.mockClear();
+    d.session.prompt.mockClear();
+    d.session.sendCustomMessage.mockRejectedValueOnce(new Error('custom append failed'));
+    await expect(restarted.send({
+      userId: 1, session: sessionId, text: 'continue the interrupted child',
+    })).rejects.toThrow('unsafe sub-agent recovery notice could not be restored');
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(2);
+    d.session.sendCustomMessage.mockClear();
+
+    await restarted.send({ userId: 1, session: sessionId, text: 'continue the interrupted child' });
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2);
+    expect(d.session.sendCustomMessage.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({ triggerTurn: false }),
+      expect.objectContaining({ triggerTurn: false }),
+    ]);
+    expect(d.session.prompt).toHaveBeenCalledTimes(1);
+    expect(d.session.messages.map((message) => message.role)).toEqual(['custom', 'custom', 'user', 'assistant']);
+    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
   });
 
   it('boot recovery replays a child parked on its own delegation and feeds it the recovered grandchild result (D2)', async () => {
@@ -5630,8 +5675,9 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(JSON.parse(row.state)).toMatchObject({ status: 'error', detail: expect.stringContaining('provider unavailable') });
     expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
     expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'subagent-result' });
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[1]).toMatchObject({ triggerTurn: false });
     expect(String(d.session.sendCustomMessage.mock.calls[0]?.[0]?.content)).toContain('DelegateContinue');
-    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1);
   });
 
   it('midStepWork joins the real coordinator to the registry\'s live turn identities', async () => {

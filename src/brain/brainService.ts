@@ -701,6 +701,11 @@ export class BrainService {
           // complete joined drain acknowledged is returned for durable requeue if that continuation fails.
           const delivery = await this.turnRunner.drainPendingSubagentResults(row.user_id, row.id, true);
           let answered = delivery.answered;
+          if (delivery.requiresUserAction) {
+            if (item.parked) this.d.store.clearSessionPark(row.id);
+            log.info(`boot stored unsafe-recovery notice(s) for owner conversation ${row.id}; waiting for the user's next turn`);
+            return 'released';
+          }
           if (this.d.store.hasPendingDelivery(row.id) && delivery.deliveredPending.length === 0) {
             const failure = failResultWake(`boot result wake for ${row.id} left undelivered result(s) pending; durable outbox retained`);
             if (failure) return failure;
@@ -749,6 +754,11 @@ export class BrainService {
         }
       }
       const completed = this.turnRunner.consumeSettledResultOutcome(row.id);
+      if (!resultWakeFailed && completed?.requiresUserAction) {
+        if (item.parked) this.d.store.clearSessionPark(row.id);
+        log.info(`boot observed unsafe-recovery notice(s) already stored for owner conversation ${row.id}; waiting for the user's next turn`);
+        return 'released';
+      }
       if (!resultWakeFailed && completed?.answered) {
         if (item.parked) this.d.store.clearSessionPark(row.id);
         log.info(`boot observed an already-settled delegated result answer for owner conversation ${row.id}`);

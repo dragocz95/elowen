@@ -225,7 +225,7 @@ describe('BrainStore', () => {
     // The parent learns about it through the durable inbox — otherwise it would wait forever.
     const pending = store.pendingSubagentResults('root');
     expect(pending).toHaveLength(1);
-    expect(pending[0]).toMatchObject({ status: 'error' });
+    expect(pending[0]).toMatchObject({ status: 'error', requiresUserAction: true });
     expect(pending[0]!.error).toContain('DelegateContinue');
   });
 
