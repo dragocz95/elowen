@@ -34,13 +34,8 @@ function ToastCard({ item, meta, durationMs, dismissLabel, onDismiss }: { item: 
   const { Icon, color, title } = meta;
   const [remaining, setRemaining] = useState(100);
   const paused = useRef(false);
-
-  // A clearly-tinted fill mixed into the theme's own elevated surface (near-black in dark mode, near-white
-  // in light) with a strong same-hue border + a lifted accent for icon/title, so it reads as a solid
-  // tinted panel on either palette — not muddy, not pale.
-  const fill = `color-mix(in srgb, ${color} 22%, var(--color-elevated))`;
-  const edge = `color-mix(in srgb, ${color} 58%, var(--color-elevated))`;
-  const accent = `color-mix(in srgb, ${color} 82%, var(--color-text))`;
+  const edge = `color-mix(in srgb, ${color} 72%, var(--color-on-status))`;
+  const onFill = 'var(--color-on-status)';
 
   useEffect(() => {
     // rAF countdown that drives both the progress bar and auto-dismiss; pauses on hover.
@@ -64,25 +59,26 @@ function ToastCard({ item, meta, durationMs, dismissLabel, onDismiss }: { item: 
       className="pointer-events-auto relative flex items-start gap-2.5 overflow-hidden rounded-lg py-2.5 pl-3 pr-2.5 sm:gap-3 sm:py-3 sm:pl-4 sm:pr-3"
       style={{
         boxShadow: 'var(--shadow-raised)',
-        background: fill,
+        background: color,
         border: `1px solid ${edge}`,
         animation: 'toast-in 200ms var(--ease-out)',
       }}
     >
-      <Icon size={18} aria-hidden className="mt-px shrink-0" style={{ color: accent }} />
+      <Icon size={18} aria-hidden className="mt-px shrink-0" style={{ color: onFill }} />
       <div className="min-w-0 flex-1">
-        <div className="text-[13px] font-semibold sm:text-sm" style={{ color: accent }}>{title}</div>
-        <div className="mt-0.5 break-words text-[13px] leading-snug text-text sm:text-sm">{item.message}</div>
+        <div className="text-[13px] font-semibold sm:text-sm" style={{ color: onFill }}>{title}</div>
+        <div className="mt-0.5 break-words text-[13px] leading-snug sm:text-sm" style={{ color: onFill }}>{item.message}</div>
       </div>
       <button
         type="button"
         aria-label={dismissLabel}
         onClick={onDismiss}
-        className="-mr-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text sm:h-7 sm:w-7"
+        className="-mr-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-75 transition-opacity hover:bg-black/10 hover:opacity-100 sm:h-7 sm:w-7"
+        style={{ color: onFill }}
       >
         <X size={15} aria-hidden />
       </button>
-      <span className="absolute bottom-0 left-0 h-0.5" style={{ width: `${remaining}%`, backgroundColor: accent, opacity: 0.55 }} aria-hidden />
+      <span className="absolute bottom-0 left-0 h-0.5" style={{ width: `${remaining}%`, backgroundColor: onFill, opacity: 0.4 }} aria-hidden />
     </div>
   );
 }
@@ -94,8 +90,8 @@ function ToastCard({ item, meta, durationMs, dismissLabel, onDismiss }: { item: 
 export function ToastProvider({ children, durationMs = DEFAULT_TOAST_MS }: { children: ReactNode; durationMs?: number }) {
   const { t } = useTranslation();
   const TONE: Record<Tone, { Icon: LucideIcon; color: string; title: string }> = {
-    ok: { Icon: CheckCircle2, color: '#32CD32', title: t.common.success },
-    error: { Icon: AlertCircle, color: '#FF3131', title: t.common.error },
+    ok: { Icon: CheckCircle2, color: 'var(--color-success)', title: t.common.success },
+    error: { Icon: AlertCircle, color: 'var(--color-danger)', title: t.common.error },
   };
   const [items, setItems] = useState<ToastItem[]>([]);
   const dismiss = useCallback((id: number) => setItems((xs) => xs.filter((x) => x.id !== id)), []);
