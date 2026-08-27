@@ -2,7 +2,16 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { SKINS, activeSkin } from '../../lib/skins';
+import {
+  BUILTIN_SKIN,
+  SKINS,
+  SKIN_CHOICES,
+  allowedSkinChoices,
+  currentSkinChoice,
+  nextSkinChoice,
+  resolveSkin,
+} from '../../lib/skins';
+import { activeSkin } from '../../lib/skinEnv';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -78,5 +87,55 @@ describe('skin registry contract', () => {
   it('globals.css imports the skin registry and the layout wires the attribute', () => {
     expect(readFileSync(join(root, 'app', 'globals.css'), 'utf-8')).toContain('@import "../skins/index.css";');
     expect(readFileSync(join(root, 'app', 'layout.tsx'), 'utf-8')).toContain("'data-skin': skin");
+  });
+
+  it('reserves the built-in name, which no compiled skin may take', () => {
+    // A stored choice is one string. If a skin were ever named `default`, "the plain design" and "that
+    // skin" would be the same value and nothing downstream could tell them apart.
+    expect(SKINS as readonly string[]).not.toContain(BUILTIN_SKIN);
+    expect(SKIN_CHOICES).toEqual([BUILTIN_SKIN, ...SKINS]);
+  });
+});
+
+describe('skin choice resolution', () => {
+  const allowed = allowedSkinChoices([BUILTIN_SKIN, 'midnight']);
+
+  it('offers only names this build compiled, in the order the operator listed them', () => {
+    expect(allowedSkinChoices(['midnight', BUILTIN_SKIN])).toEqual(['midnight', BUILTIN_SKIN]);
+    // A name left behind by a deployment that used to ship a skin would otherwise be offered as an
+    // option that visibly does nothing.
+    expect(allowedSkinChoices(['chetty', 'midnight'])).toEqual(['midnight']);
+    expect(allowedSkinChoices(['midnight', 'midnight'])).toEqual(['midnight']);
+    expect(allowedSkinChoices(null)).toEqual([]);
+  });
+
+  it('honours an allowed choice, and maps the built-in one to no attribute at all', () => {
+    expect(resolveSkin('midnight', allowed, null)).toBe('midnight');
+    expect(resolveSkin(BUILTIN_SKIN, allowed, 'midnight')).toBeNull();
+  });
+
+  it('drops a choice the admin has revoked, back to the deployment default', () => {
+    // This is what makes the allow-list a control rather than a suggestion: nobody has to reach into a
+    // stored value for a revocation to take effect on the next document.
+    expect(resolveSkin('midnight', allowedSkinChoices([BUILTIN_SKIN]), 'midnight')).toBe('midnight');
+    expect(resolveSkin('midnight', [], null)).toBeNull();
+    expect(resolveSkin('ghost', allowed, 'midnight')).toBe('midnight');
+    expect(resolveSkin(null, allowed, 'midnight')).toBe('midnight');
+  });
+
+  it('starts the cycle from what is actually on screen', () => {
+    expect(currentSkinChoice('midnight', allowed, null)).toBe('midnight');
+    // Nothing chosen: the visible design is the operator's default, and that is where cycling starts.
+    expect(currentSkinChoice(null, allowed, 'midnight')).toBe('midnight');
+    expect(currentSkinChoice(null, allowed, null)).toBe(BUILTIN_SKIN);
+    // The deployment default is not itself on offer — cycling must not claim it was picked.
+    expect(currentSkinChoice(null, allowedSkinChoices([BUILTIN_SKIN]), 'midnight')).toBeNull();
+  });
+
+  it('cycles forward and wraps, and starts at the first entry from nothing', () => {
+    expect(nextSkinChoice(BUILTIN_SKIN, allowed)).toBe('midnight');
+    expect(nextSkinChoice('midnight', allowed)).toBe(BUILTIN_SKIN);
+    expect(nextSkinChoice(null, allowed)).toBe(BUILTIN_SKIN);
+    expect(nextSkinChoice(null, [])).toBeNull();
   });
 });

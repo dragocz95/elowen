@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import { daemonUrl, readCookieHeader, COOKIE_NAME } from './proxy';
 import { dictionaries, type Locale } from './i18n/dictionaries';
 import { DEFAULT_LOCALE } from './i18n';
+import { isSkinChoice, type SkinChoice } from './skins';
 import type { PluginUiListing, User } from './types';
 
 /** After a failed fetch, requests skip the daemon for this long. Same reasoning as the theme payload
@@ -59,6 +60,29 @@ async function fetchForCaller<T>(path: string, accept: (body: unknown) => body i
 export const readLocale = cache(async (): Promise<Locale> => {
   const value = readCookieHeader((await headers()).get('cookie') ?? '', 'elowen-locale');
   return value && value in dictionaries ? (value as Locale) : DEFAULT_LOCALE;
+});
+
+/** The skin choice THIS document must render in, read from the cookie the client mirrors its choice
+ *  into — the same trick, and for the same reason, as the locale above. For a skin the stakes are higher
+ *  than a label: without it the document arrives in the operator's design and visibly changes colour once
+ *  hydration reads localStorage. An unknown value falls back to null so a hand-edited cookie cannot put an
+ *  arbitrary string into a DOM attribute. Whether the choice is still ALLOWED is decided later, against
+ *  instance config; this only reports what was asked for. */
+export const readSkinChoice = cache(async (): Promise<SkinChoice | null> => {
+  const value = readCookieHeader((await headers()).get('cookie') ?? '', 'elowen-skin');
+  return isSkinChoice(value) ? value : null;
+});
+
+/** The skins the instance allows accounts to choose between. Null — logged out, 401/403, daemon down —
+ *  means "no switching offered for this document", so the operator's ELOWEN_SKIN renders unchanged: the
+ *  failure mode of not knowing the allow-list is the deployment's own design, never somebody else's. */
+export const fetchAllowedSkins = cache(async (): Promise<string[] | null> => {
+  const config = await fetchForCaller(
+    '/config',
+    (body): body is { allowedSkins: string[] } =>
+      Array.isArray((body as { allowedSkins?: unknown } | null)?.allowedSkins),
+  );
+  return config ? config.allowedSkins : null;
 });
 
 /** Cookie presence is not authentication, but absence is authoritative: a browser with no session must

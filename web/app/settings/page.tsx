@@ -37,6 +37,7 @@ import { Toggle } from '../../components/ui/Toggle';
 import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
 import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
 import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../modules/settings/SettingsSurface';
+import { SkinsRow } from '../../modules/settings/SkinsRow';
 import { MotionReveal } from '../../components/ui/Motion';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -693,6 +694,7 @@ export default function SettingsPage() {
                     {rowVersion}
                     {serviceRows}
                     {rowAutoUpdate}
+                    <SkinsRow />
                     {rowPushContact}
                     {rowTokenTtl}
                     {rowRetention}

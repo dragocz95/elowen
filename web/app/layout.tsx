@@ -6,8 +6,9 @@ import type { ReactNode } from 'react';
 
 import { Shell } from '../components/shell/Shell';
 import { fetchThemePayload, buildThemeStyle, themeIcon } from '../lib/brandServer';
-import { fetchPluginUiListing, fetchMe, hasSessionCookie, readLocale } from '../lib/serverPrefetch';
-import { activeSkin } from '../lib/skins';
+import { fetchPluginUiListing, fetchMe, hasSessionCookie, readLocale, readSkinChoice, fetchAllowedSkins } from '../lib/serverPrefetch';
+import { activeSkin } from '../lib/skinEnv';
+import { allowedSkinChoices, resolveSkin } from '../lib/skins';
 
 // Every route renders per request — the brand payload is fetched live, so a theme switch must land on
 // the next reload. This CANNOT be left to the `no-store` fetch inside fetchThemePayload: its failure
@@ -80,13 +81,18 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // key. Null — logged out, 401/403, daemon down — renders exactly as before and the client queries
   // fill it in.
   const locale = await readLocale();
-  const [pluginUi, me, sessionPresent] = await Promise.all([
-    fetchPluginUiListing(locale), fetchMe(), hasSessionCookie(),
+  const [pluginUi, me, sessionPresent, allowedSkins] = await Promise.all([
+    fetchPluginUiListing(locale), fetchMe(), hasSessionCookie(), fetchAllowedSkins(),
   ]);
-  // Compiled-in design skin (ELOWEN_SKIN env). All skins ship in every build scoped under
-  // `:root[data-skin='…']`; without the attribute none of their rules match, so a skinless instance
-  // renders byte-identical markup to a build from before skins existed.
-  const skin = activeSkin();
+  // Every skin ships in every build, scoped under `:root[data-skin='…']`; without the attribute none of
+  // their rules match, so a skinless instance renders byte-identical markup to a build from before skins
+  // existed. WHICH one applies is resolved here, on the server, from the account's cookie against the
+  // instance allow-list, with the operator's ELOWEN_SKIN as the floor — so the document arrives already
+  // wearing the right design instead of visibly changing colour once hydration reads localStorage.
+  const skinChoice = await readSkinChoice();
+  const allowed = allowedSkinChoices(allowedSkins);
+  const skinDefault = activeSkin();
+  const skin = resolveSkin(skinChoice, allowed, skinDefault);
   return (
     <html
       lang={locale}
@@ -102,7 +108,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_EFFECTS }} />
         {themeStyle ? <style id="theme-overrides" dangerouslySetInnerHTML={{ __html: themeStyle }} /> : null}
       </head>
-      <body style={{ backgroundColor: '#000000' }}><Shell theme={theme} pluginUiSeed={pluginUi ? { locale, listing: pluginUi } : null} meSeed={me} sessionPresent={sessionPresent} initialLocale={locale}>{children}</Shell></body>
+      <body style={{ backgroundColor: '#000000' }}><Shell theme={theme} pluginUiSeed={pluginUi ? { locale, listing: pluginUi } : null} meSeed={me} sessionPresent={sessionPresent} initialLocale={locale} skinSeed={{ choice: skinChoice, allowed, fallback: skinDefault }}>{children}</Shell></body>
     </html>
   );
 }

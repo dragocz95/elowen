@@ -5,6 +5,8 @@ import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT, advisorOpenTarget } from '../../
 import { useMobileViewport } from '../../lib/useMobile';
 import { Providers, type PluginUiSeed, type MeSeed } from '../../app/providers';
 import { LanguageProvider, type Locale } from '../../lib/i18n';
+import { SkinProvider } from '../../lib/skinContext';
+import type { SkinChoice, SkinName } from '../../lib/skins';
 import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand';
 import { ToastProvider, resolveToastDuration } from '../ui/Toast';
 import { useConfig } from '../../lib/queries';
@@ -203,13 +205,14 @@ function ConfiguredToastProvider({ children }: { children: ReactNode }) {
   return <ToastProvider durationMs={resolveToastDuration(config?.runtime?.limits)}>{children}</ToastProvider>;
 }
 
-export function Shell({ children, theme, pluginUiSeed, meSeed, sessionPresent = true, initialLocale }: { children: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null; sessionPresent?: boolean; initialLocale?: Locale }) {
+export function Shell({ children, theme, pluginUiSeed, meSeed, sessionPresent = true, initialLocale, skinSeed }: { children: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null; sessionPresent?: boolean; initialLocale?: Locale; skinSeed?: { choice: SkinChoice | null; allowed: SkinChoice[]; fallback: SkinName | null } }) {
   return (
     <EffectsProvider>
       <Providers pluginUiSeed={pluginUiSeed} meSeed={meSeed}>
         <ThemeProvider>
         <UiScaleProvider>
         <LanguageProvider initialLocale={initialLocale}>
+          <SkinProvider initialChoice={skinSeed?.choice ?? null} allowedSkins={skinSeed?.allowed} fallback={skinSeed?.fallback ?? null}>
         <BrandProvider theme={theme ?? BUILTIN_THEME}>
         <ConfiguredToastProvider>
           <PageHeaderProvider>
@@ -221,6 +224,7 @@ export function Shell({ children, theme, pluginUiSeed, meSeed, sessionPresent = 
           </PageHeaderProvider>
         </ConfiguredToastProvider>
         </BrandProvider>
+          </SkinProvider>
         </LanguageProvider>
         </UiScaleProvider>
         </ThemeProvider>

@@ -54,6 +54,7 @@ export interface ElowenConfig {
   allowedExecs: string[];
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
+  allowedSkins: string[];
   modelNotes: Record<string, string>;
   providers: Providers;
   defaults: { exec: string; autonomy: string; maxSessions: number };
@@ -529,6 +530,26 @@ function sanitizeContextWindows(input: unknown): Record<string, number> {
 }
 
 /** Keep only the non-empty string members of a stored/patched list, dropping any malformed entries. */
+/** The skins an account may choose between, as the operator listed them. Grammar-checked only: the
+ *  daemon cannot know which skins a given web build actually compiled — that registry is a build
+ *  artifact of `web/`, exactly as it is for the ELOWEN_SKIN env var — so an unrecognized name here is
+ *  filtered by the browser, which does know, rather than rejected by a daemon guessing. What IS enforced
+ *  is the single-segment grammar, because the value ends up in a DOM attribute, plus deduplication and a
+ *  bound, so a hand-written config cannot grow an unbounded list. Order is the operator's and is kept:
+ *  it is the order the switcher cycles through. */
+function sanitizeSkinList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  for (const value of input) {
+    if (typeof value !== 'string') continue;
+    const name = value.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) continue;
+    seen.add(name);
+    if (seen.size >= 32) break;
+  }
+  return [...seen];
+}
+
 function sanitizeStringList(input: unknown): string[] {
   return Array.isArray(input) ? input.filter((v): v is string => typeof v === 'string' && v.length > 0) : [];
 }
@@ -648,6 +669,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
   hiddenPresets: [],
+  allowedSkins: [],
   modelNotes: { ...EXEC_NOTES },
   providers: { ...DEFAULT_PROVIDERS },
   defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 2 },
@@ -696,6 +718,7 @@ interface Stored {
   allowedExecs: string[];
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
+  allowedSkins: string[];
   modelNotes: Record<string, string>;
   providers: Providers;
   defaults: { exec: string; autonomy: string; maxSessions: number };
@@ -764,6 +787,7 @@ const defaultStored = (): Stored => ({
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
   hiddenPresets: [],
+  allowedSkins: [],
   modelNotes: { ...EXEC_NOTES },
   providers: { ...DEFAULT_PROVIDERS },
   defaults: { ...DEFAULT_CONFIG.defaults },
@@ -788,6 +812,7 @@ export interface ConfigPatch {
   allowedExecs?: string[];
   customModels?: { label: string; exec: string }[];
   hiddenPresets?: string[];
+  allowedSkins?: string[];
   modelNotes?: Record<string, string>;
   providers?: Providers;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
@@ -835,6 +860,7 @@ export class ConfigStore {
         allowedExecs: Array.isArray(p.allowedExecs) ? sanitizeExecList(p.allowedExecs) : d.allowedExecs,
         customModels: sanitizeCustomModels(p.customModels),
         hiddenPresets: Array.isArray(p.hiddenPresets) ? sanitizeExecList(p.hiddenPresets) : [],
+        allowedSkins: sanitizeSkinList(p.allowedSkins),
         // Seed built-in notes under any stored notes so known models always carry a description,
         // while user edits (including an explicit '' to clear one) take precedence.
         modelNotes: (p.modelNotes && typeof p.modelNotes === 'object' && !Array.isArray(p.modelNotes)) ? { ...d.modelNotes, ...sanitizeModelNotes(p.modelNotes) } : { ...d.modelNotes },
@@ -906,6 +932,7 @@ export class ConfigStore {
       allowedExecs: s.allowedExecs,
       customModels: s.customModels,
       hiddenPresets: s.hiddenPresets,
+      allowedSkins: s.allowedSkins,
       modelNotes: s.modelNotes,
       providers: s.providers,
       defaults: s.defaults,
@@ -1062,6 +1089,7 @@ export class ConfigStore {
       allowedExecs: allowed,
       customModels: sanitizeCustomModels(patch.customModels ?? cur.customModels),
       hiddenPresets: sanitizeExecList(patch.hiddenPresets ?? cur.hiddenPresets),
+      allowedSkins: patch.allowedSkins !== undefined ? sanitizeSkinList(patch.allowedSkins) : cur.allowedSkins,
       modelNotes: sanitizeModelNotes(patch.modelNotes ?? cur.modelNotes),
       providers: patch.providers ? { ...cur.providers, ...sanitizeProviders(patch.providers) } : cur.providers,
       defaults: { exec: defaultExec, autonomy: patch.defaults?.autonomy ?? cur.defaults.autonomy, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },

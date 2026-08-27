@@ -2,6 +2,7 @@ export interface ElowenConfig {
   allowedExecs: string[];
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
+  allowedSkins: string[];
   modelNotes: Record<string, string>;
   providers: Record<string, { bin: string; args: string; skipPermissions: boolean; resume: boolean }>;
   defaults: { exec: string; autonomy: string; maxSessions: number };
@@ -205,6 +206,7 @@ export interface ConfigPatch {
   allowedExecs?: string[];
   customModels?: { label: string; exec: string }[];
   hiddenPresets?: string[];
+  allowedSkins?: string[];
   modelNotes?: Record<string, string>;
   providers?: Record<string, { bin: string; args: string }>;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };

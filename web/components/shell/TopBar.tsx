@@ -9,6 +9,7 @@ import { usePageHeader } from '../../lib/pageHeader';
 import { navigationWorldForPath } from '../../modules/registry';
 import { Avatar } from '../ui/Avatar';
 import { LanguageSwitcher } from '../ui/LanguageSwitcher';
+import { SkinSwitcher } from '../ui/SkinSwitcher';
 import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
 
 /** Frameless page masthead: large location title plus quiet universal actions, never a top bar. */
@@ -77,7 +78,8 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
             <LogOut size={17} aria-hidden />
           </button>
         ) : null}
-        <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
+        <SkinSwitcher collapsed={Boolean(onMenuClick)} />
+      <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
         <Link
           href="/account"
           className="ml-0.5 flex items-center rounded-full ring-accent/30 transition-[opacity,box-shadow] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2"

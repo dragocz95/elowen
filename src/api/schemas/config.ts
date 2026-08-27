@@ -104,6 +104,7 @@ export const configPatchSchema = z.object({
   allowedExecs: z.array(z.string()).optional(),
   customModels: z.array(z.object({ label: z.string(), exec: z.string() })).optional(),
   hiddenPresets: z.array(z.string()).optional(),
+  allowedSkins: z.array(z.string()).optional(),
   modelNotes: z.record(z.string(), z.string()).optional(),
   providers: z.record(z.string(), providerConfigPatchSchema).optional(),
   defaults: z.object({

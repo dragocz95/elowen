@@ -17,6 +17,29 @@ describe('ConfigStore', () => {
   it('update replaces allowedExecs', () => {
     expect(cfg.update({ allowedExecs: ['sonnet'] }).allowedExecs).toEqual(['sonnet']);
   });
+  it('allowedSkins defaults empty, enforces the attribute grammar and keeps the operator order', () => {
+    // Empty by default: an instance that has not enabled skin switching must look exactly as it did
+    // before switching existed, so the switcher has nothing to offer and does not render.
+    expect(cfg.get().allowedSkins).toEqual([]);
+
+    // The daemon does NOT know which skins a given web build compiled — that registry is a build
+    // artifact of web/ — so an unrecognized name is stored and filtered by the browser, which does know.
+    expect(cfg.update({ allowedSkins: ['default', 'midnight', 'not-built-yet'] }).allowedSkins)
+      .toEqual(['default', 'midnight', 'not-built-yet']);
+
+    // What IS enforced is the single-segment grammar, because the value ends up in a DOM attribute.
+    expect(cfg.update({ allowedSkins: ['../etc', 'a b', "x'y", '-lead', 'Midnight', 7, 'ok'] as unknown as string[] }).allowedSkins)
+      .toEqual(['midnight', 'ok']);
+
+    // Order is the operator's — it is the order the switcher cycles through — and duplicates collapse.
+    expect(cfg.update({ allowedSkins: ['midnight', 'default', 'midnight'] }).allowedSkins)
+      .toEqual(['midnight', 'default']);
+
+    // A patch touching a sibling field must not reset the list; an explicit empty one turns it off.
+    cfg.update({ autoUpdate: true });
+    expect(cfg.get().allowedSkins).toEqual(['midnight', 'default']);
+    expect(cfg.update({ allowedSkins: [] }).allowedSkins).toEqual([]);
+  });
   it('brain.hiddenOauth defaults empty, sanitizes, survives a sibling patch, and clears on an empty list', () => {
     expect(cfg.get().brain.hiddenOauth).toEqual([]);
     // Non-string / empty members are dropped on the way in.
