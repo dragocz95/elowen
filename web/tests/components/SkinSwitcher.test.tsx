@@ -1,11 +1,21 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { setupServer } from 'msw/node';
+import { http, HttpResponse } from 'msw';
+import { onUnhandledRequest } from '../msw';
 import { SkinSwitcher } from '../../components/ui/SkinSwitcher';
 import { SkinProvider } from '../../lib/skinContext';
 import { BUILTIN_SKIN, type SkinChoice } from '../../lib/skins';
 import { createWrapper } from '../test-utils';
 
+// The instance config is what the provider reads to learn which skins are allowed. Empty by default, so
+// the cases below that pass an explicit seed are testing the seed and nothing else.
+const server = setupServer(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [] })));
+beforeAll(() => server.listen({ onUnhandledRequest }));
+afterAll(() => server.close());
+
 afterEach(() => {
+  server.resetHandlers();
   localStorage.clear();
   document.documentElement.removeAttribute('data-skin');
   document.cookie = 'elowen-skin=; path=/; max-age=0';
@@ -48,6 +58,16 @@ describe('SkinSwitcher', () => {
     // value. Getting this wrong would leave `data-skin="default"` behind, matching no stylesheet.
     fireEvent.click(screen.getByRole('button'));
     expect(document.documentElement.hasAttribute('data-skin')).toBe(false);
+  });
+
+  it('appears after signing in, without waiting for a full page reload', () => {
+    // The document a visitor logs in ON was rendered while they had no session, so the server prefetch
+    // had no cookie to forward and seeded an EMPTY allow-list. Logging in only opens the shell gate — it
+    // does not re-render the layout. Without the live config query the switcher would stay missing until
+    // the user happened to reload, which looks exactly like the feature not existing.
+    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [BUILTIN_SKIN, 'midnight'] })));
+    mount([]);
+    return waitFor(() => expect(screen.getByRole('button')).toBeTruthy());
   });
 
   it('remembers the choice where both the client and the next server render can find it', () => {

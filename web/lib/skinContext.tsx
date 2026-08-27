@@ -1,5 +1,6 @@
 'use client';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useConfig } from './queries';
 import {
   BUILTIN_SKIN,
   allowedSkinChoices,
@@ -62,7 +63,16 @@ export function SkinProvider({
   allowedSkins?: readonly string[];
   fallback?: SkinName | null;
 }) {
-  const allowed = useMemo(() => allowedSkinChoices(allowedSkins), [allowedSkins]);
+  // The seed is what the SERVER could see, and a logged-out document sees nothing: the prefetch has no
+  // session cookie to forward, so it returns null and the seed is empty. Without the live query, someone
+  // who logs in without reloading would never be offered the switcher at all — the page they land on was
+  // rendered before they had an identity. The query is not an extra request: the shell already reads the
+  // same config for its toast durations.
+  const config = useConfig();
+  const allowed = useMemo(
+    () => allowedSkinChoices(config.data?.allowedSkins ?? allowedSkins),
+    [config.data?.allowedSkins, allowedSkins],
+  );
   const [choice, setChoice] = useState<SkinChoice | null>(initialChoice);
 
   useEffect(() => {

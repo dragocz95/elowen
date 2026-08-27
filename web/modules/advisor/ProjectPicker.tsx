@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useDismiss } from '../../lib/useDismiss';
 import { useTranslation } from '../../lib/i18n';
@@ -47,12 +47,24 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const projects = useProjects();
   const [open, setOpen] = useState(false);
   const [moving, setMoving] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  // The directory the daemon confirmed in its reply to our own move, held only until the status poll
+  // catches up. It exists because that poll is driven by a session event, and a session event is
+  // SUPPRESSED for a conversation with no messages yet (`sessionEvents.ts` returns early when
+  // `lastMessageAt` is empty). Without this, picking a project in a brand-new chat would succeed while
+  // the label kept reading "no project" — the move working but appearing not to. This is not optimism:
+  // it is the value the daemon returned for the move it just performed.
+  const [confirmed, setConfirmed] = useState<string | null>(null);
 
+  const rootRef = useRef<HTMLDivElement>(null);
   useDismiss(rootRef, open, () => setOpen(false));
 
+  const reported = telemetry.project?.cwd ?? null;
+  // A different conversation, or a poll that has caught up, both retire the held value — after which the
+  // label is the daemon's status again and cannot drift.
+  useEffect(() => { setConfirmed(null); }, [activeSessionId, reported]);
+
   const items = projects.data ?? [];
-  const cwd = telemetry.project?.cwd ?? null;
+  const cwd = confirmed ?? reported;
   const current = projectForPath(items, cwd);
 
   // Nothing to switch between is not a control. A single project is already where every turn runs, and an
@@ -60,15 +72,22 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   // suggest a choice that does not exist.
   if (items.length < 2) return null;
 
+  // No live conversation, no directory to move. `/brain/cwd` resolves the caller's ACTIVE session and
+  // answers 409 "brain not started" when there is none, which is exactly the state a freshly opened chat
+  // is in before its first turn — so offering the control there would hand the user an error for doing
+  // what the interface invited them to do.
+  const ready = Boolean(activeSessionId);
+
   const move = async (project: ProjectLike): Promise<void> => {
     setOpen(false);
     if (project.id === current?.id) return;
     setMoving(true);
     try {
-      await elowenClient.brainSetCwd(project.path, activeSessionId ?? undefined);
+      const { workDir } = await elowenClient.brainSetCwd(project.path, activeSessionId ?? undefined);
+      setConfirmed(workDir);
     } catch (e) {
-      // The daemon refuses a directory the caller cannot reach, and refuses entirely when no conversation
-      // is live. Surfacing its own words beats a generic failure: those two cases need different fixes.
+      // The daemon refuses a directory the caller cannot reach. Surfacing its own words beats a generic
+      // failure, because that refusal names a cause the user can act on.
       toast((e as Error).message || t.brainChat.projectPickerFailed, 'error');
     } finally {
       setMoving(false);
@@ -82,10 +101,11 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        disabled={moving}
+        disabled={moving || !ready}
         aria-haspopup="listbox"
         aria-expanded={open}
         title={cwd ? `${t.brainChat.projectPicker}: ${cwd}` : t.brainChat.projectPicker}
+        aria-disabled={!ready}
         className={`flex items-center gap-1.5 rounded-md border border-border text-text-muted transition-colors hover:bg-elevated hover:text-text disabled:opacity-50 ${
           variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[200px] px-2.5 text-xs'
         }`}
