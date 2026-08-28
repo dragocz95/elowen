@@ -56,8 +56,8 @@ export function ModelModal({ initial, existingExecs, activeProviders, onClose, o
           </div>
         </div>
 
-        <Field label={t.settings.labelLabel}>
-          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t.settings.modelPlaceholder} autoFocus />
+        <Field label={t.settings.labelLabel} required>
+          {(control) => <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t.settings.modelPlaceholder} autoFocus {...control} />}
         </Field>
 
         <Field label={t.settings.fieldProvider} hint={t.help.modelProvider}>
@@ -86,20 +86,24 @@ export function ModelModal({ initial, existingExecs, activeProviders, onClose, o
           </div>
         </Field>
 
+        {/* The exec the model resolves to and the "already used" verdict both belong to the field that
+            produces them, so a screen reader gets them as the control's description rather than as two
+            paragraphs floating after the form. */}
         {provider === 'other' ? (
-          <Field label={t.settings.execLabel} hint={t.help.execPlaceholder}>
-            <Input value={rawExec} onChange={(e) => setRawExec(e.target.value)} placeholder={t.help.execPlaceholder} className="font-mono" />
+          <Field label={t.settings.execLabel} hint={t.help.execPlaceholder} required error={dup ? t.settings.execDuplicate : undefined}>
+            {(control) => <Input value={rawExec} onChange={(e) => setRawExec(e.target.value)} placeholder={t.help.execPlaceholder} className="font-mono" {...control} />}
           </Field>
         ) : (
-          <Field label={t.settings.fieldModelId} hint={t.help.modelId}>
-            <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t.settings.modelIdPlaceholder} className="font-mono" />
+          <Field
+            label={t.settings.fieldModelId}
+            hint={t.help.modelId}
+            required
+            description={model.trim() ? `${t.settings.execResolvesTo} ${previewExec}` : undefined}
+            error={dup ? t.settings.execDuplicate : undefined}
+          >
+            {(control) => <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t.settings.modelIdPlaceholder} className="font-mono" {...control} />}
           </Field>
         )}
-
-        {provider !== 'other' && model.trim() ? (
-          <p className="-mt-2 text-xs text-text-muted">{t.settings.execResolvesTo} <code className="font-mono text-text">{previewExec}</code></p>
-        ) : null}
-        {dup ? <p className="-mt-2 text-xs text-danger">{t.settings.execDuplicate}</p> : null}
       </ModalBody>
       <ModalFooter>
         <Button variant="ghost" onClick={onClose}>{t.settings.cancel}</Button>

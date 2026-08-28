@@ -217,9 +217,16 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
   return (
     <Modal title={isNew ? t.brain.addProvider : t.brain.editProvider} icon={Server} size="md" onClose={onClose}>
       <ModalBody gap={4}>
-        <Field label={t.brain.providerLabel}>
-          <Input value={d.label} onChange={(e) => setD({ ...d, label: e.target.value })} placeholder="CoreSynth Proxy" />
-          {isNew && id ? <p className="mt-1 font-mono text-tiny text-text-muted">id: {id}{idTaken ? ` — ${t.brain.idTaken}` : ''}</p> : null}
+        {/* The derived id and the "taken" verdict used to sit INSIDE the wrapping label, which put both
+            into the input's accessible name. As the field's description and error they describe the
+            control instead of renaming it. */}
+        <Field
+          label={t.brain.providerLabel}
+          required
+          description={isNew && id ? `id: ${id}` : undefined}
+          error={idTaken ? t.brain.idTaken : undefined}
+        >
+          {(control) => <Input value={d.label} onChange={(e) => setD({ ...d, label: e.target.value })} placeholder="CoreSynth Proxy" {...control} />}
         </Field>
         <Field label={t.brain.providerType}>
           <Segmented
@@ -230,8 +237,10 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
             onChange={(v) => setD({ ...d, type: v as BrainProviderType })}
           />
         </Field>
-        <Field label={t.brain.baseUrl} hint={d.type === 'openai' ? t.brain.baseUrlHintOpenai : t.brain.baseUrlHintAnthropic}>
-          <Input value={d.baseUrl} onChange={(e) => setD({ ...d, baseUrl: e.target.value })} placeholder={d.type === 'openai' ? 'https://ai.example.com/v1' : 'https://api.anthropic.com'} className="font-mono" />
+        {/* Anthropic falls back to its own default endpoint, so the base URL is only mandatory for the
+            OpenAI-compatible type — the same condition `valid` above enforces. */}
+        <Field label={t.brain.baseUrl} hint={d.type === 'openai' ? t.brain.baseUrlHintOpenai : t.brain.baseUrlHintAnthropic} required={d.type === 'openai'}>
+          {(control) => <Input value={d.baseUrl} onChange={(e) => setD({ ...d, baseUrl: e.target.value })} placeholder={d.type === 'openai' ? 'https://ai.example.com/v1' : 'https://api.anthropic.com'} className="font-mono" {...control} />}
         </Field>
         <Field label={t.brain.apiKey} hint={isNew ? undefined : t.brain.apiKeyKeepHint}>
           <Input type="password" value={d.apiKey} onChange={(e) => setD({ ...d, apiKey: e.target.value })} placeholder={isNew ? 'sk-…' : '••••••'} autoComplete="off" />
@@ -273,6 +282,10 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
                 moreCount={Math.max(0, selectedModels.length - 3)}
                 onManage={() => setModelsOpen(true)}
                 manageLabel={t.managePicker.manage}
+                // The field's label wraps this summary, and a wrapping label names the first labelable
+                // element inside it — this button. Naming it explicitly says which selection it manages
+                // instead of letting it answer to the field's own label.
+                manageAriaLabel={`${t.managePicker.manage}: ${t.brain.models}`}
               />
               <ManageSelectionModal
                 title={t.brain.models}

@@ -6,7 +6,8 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
 vi.mock('next/navigation', () => ({ usePathname: () => '/dash', useRouter: () => ({ push: () => {}, replace: () => {} }), useSearchParams: () => new URLSearchParams() }));
 import { Shell } from '../../components/shell/Shell';
-import type { SkinChoice } from '../../lib/skins';
+import { useSkin } from '../../lib/skinContext';
+import type { SkinChoice, SkinName } from '../../lib/skins';
 
 class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) {} }
 (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
@@ -25,6 +26,7 @@ afterEach(() => {
   server.resetHandlers();
   localStorage.clear();
   document.documentElement.removeAttribute('data-skin');
+  document.documentElement.style.removeProperty('background-color');
   document.cookie = 'elowen-skin=; path=/; max-age=0';
 });
 afterAll(() => server.close());
@@ -93,5 +95,103 @@ describe('switching to a command-profile skin', () => {
       <Shell skinSeed={{ choice: null, allowed: [], fallback: 'studio-light' }}><span>page-body</span></Shell>,
     );
     expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+  });
+});
+
+/** Reports the skin the CONTEXT resolved, so the assertions below can compare it against the attribute
+ *  and the navigation instead of inferring it from them. `builtin` stands for null, which is a value here
+ *  and not an absence: it is how "the plain design" is expressed. */
+function SkinReadout() {
+  const { skin } = useSkin();
+  return <span data-testid="skin-readout">{skin ?? 'builtin'}</span>;
+}
+
+/** The four signals that describe the visible design — the `data-skin` attribute, the context's resolved
+ *  skin, the canvas, and the mounted navigation — have to agree at every moment, including the moments
+ *  nobody pressed anything. They are driven by one resolution, so a change to the inputs of that
+ *  resolution must move all four together.
+ *
+ *  The defect these cover: the document write was made conditionally, only for a truthy skin, so the
+ *  built-in design could never be written back. The context flipped to null and the shell swapped the
+ *  navigation back, while <html> kept `data-skin='studio-light'` and the whole Studio stylesheet with it —
+ *  Studio CSS painting an Ember shell, with the sidebar rules aimed at markup that was no longer there. */
+describe('a design the reader did not switch away from', () => {
+  // With no `allowedSkins` in the config payload the provider reads the seed, which is what lets these
+  // cases change the allow-list and the operator default on a LIVE tree instead of on a fresh mount.
+  const seedOnly = () => server.use(http.get('*/api/config', () => HttpResponse.json({})));
+  const seed = (choice: SkinChoice | null, allowed: SkinChoice[], fallback: SkinName | null) => ({ choice, allowed, fallback });
+
+  it('hands the document back to the built-in design when an admin revokes the active skin', async () => {
+    seedOnly();
+    mounts = 0;
+    localStorage.setItem('elowen-skin', 'studio-light');
+    // What the server served: the attribute, plus the anti-FOUC canvas inline on <html>.
+    document.documentElement.setAttribute('data-skin', 'studio-light');
+    document.documentElement.style.backgroundColor = '#fafafa';
+
+    const { rerender } = render(
+      <Shell skinSeed={seed('studio-light', ALLOWED, null)}><Probe /><SkinReadout /></Shell>,
+    );
+    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    expect(document.documentElement.getAttribute('data-skin')).toBe('studio-light');
+    expect(screen.getByTestId('skin-readout').textContent).toBe('studio-light');
+
+    const probe = await screen.findByLabelText('probe');
+    fireEvent.change(probe, { target: { value: 'unsaved draft' } });
+    expect(mounts).toBe(1);
+
+    // The admin drops studio-light from the instance allow-list. No reload: the new list reaches the
+    // live provider, and the design the reader is looking at is no longer on offer.
+    rerender(<Shell skinSeed={seed('studio-light', ['midnight'], null)}><Probe /><SkinReadout /></Shell>);
+
+    expect(await screen.findByTestId('future-navigation')).toBeInTheDocument();
+    await waitFor(() => expect(document.documentElement.hasAttribute('data-skin')).toBe(false));
+    expect(screen.queryByTestId('studio-navigation')).toBeNull();
+    expect(screen.getByTestId('skin-readout').textContent).toBe('builtin');
+    // The canvas goes back to the cascade rather than staying frozen at the design the document arrived in.
+    expect(document.documentElement.style.backgroundColor).toBe('');
+    // ...and it all happened in place, exactly as a switch does.
+    expect(screen.getByLabelText('probe')).toBe(probe);
+    expect((probe as HTMLInputElement).value).toBe('unsaved draft');
+    expect(mounts).toBe(1);
+
+    // Re-allowing it restores the design: the removal must not be a one-way door, and the stored choice
+    // was never destroyed — only ignored while it was not on offer.
+    rerender(<Shell skinSeed={seed('studio-light', ALLOWED, null)}><Probe /><SkinReadout /></Shell>);
+    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('studio-light'));
+    expect(screen.getByTestId('skin-readout').textContent).toBe('studio-light');
+    expect(screen.queryByTestId('future-navigation')).toBeNull();
+    expect(mounts).toBe(1);
+  });
+
+  it('follows the operator default when it moves under a reader who has nothing resolvable chosen', async () => {
+    seedOnly();
+    mounts = 0;
+    // Nothing is on offer, so the stored choice cannot resolve and the deployment's default is the floor.
+    localStorage.setItem('elowen-skin', 'studio-light');
+    document.documentElement.setAttribute('data-skin', 'studio-light');
+
+    const { rerender } = render(
+      <Shell skinSeed={seed(null, [], 'studio-light')}><Probe /><SkinReadout /></Shell>,
+    );
+    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    expect(screen.getByTestId('skin-readout').textContent).toBe('studio-light');
+
+    // ELOWEN_SKIN moves to a spatial design.
+    rerender(<Shell skinSeed={seed(null, [], 'midnight')}><Probe /><SkinReadout /></Shell>);
+
+    expect(await screen.findByTestId('future-navigation')).toBeInTheDocument();
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('midnight'));
+    expect(screen.getByTestId('skin-readout').textContent).toBe('midnight');
+    expect(screen.queryByTestId('studio-navigation')).toBeNull();
+    expect(mounts).toBe(1);
+
+    // ...and away entirely, which is the built-in design and therefore no attribute at all.
+    rerender(<Shell skinSeed={seed(null, [], null)}><Probe /><SkinReadout /></Shell>);
+    await waitFor(() => expect(document.documentElement.hasAttribute('data-skin')).toBe(false));
+    expect(screen.getByTestId('skin-readout').textContent).toBe('builtin');
+    expect(await screen.findByTestId('future-navigation')).toBeInTheDocument();
+    expect(mounts).toBe(1);
   });
 });

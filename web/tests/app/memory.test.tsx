@@ -52,7 +52,9 @@ describe('MemoryPage', () => {
 
     await screen.findByTestId('memory-row');
     fireEvent.click(screen.getByRole('button', { name: 'New category' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Planning' } });
+    // "Required" belongs to the accessible name: the field states its required state for a screen
+    // reader with an sr-only word beside the visual asterisk.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name Required' }), { target: { value: 'Planning' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(created).toMatchObject({ name: 'Planning', icon: 'Folder' }));

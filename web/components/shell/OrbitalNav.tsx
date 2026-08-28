@@ -13,6 +13,7 @@ import { EmberFall } from './EmberFall';
 import { useElementHeight } from '../../lib/useElementWidth';
 import { entryIsActive, type NavEntry } from './navEntry';
 import { NAV_ROUTE_ORDER, navOrderIndex } from './navOrder';
+import { useNavDrawerFocus } from '../ui/focusCycle';
 
 /** Whether the axis names this page by its own address rather than through its world. That is what
  *  decides which worlds the rail opens up: a world whose pages have their own slots contributes those
@@ -163,23 +164,10 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
   // How far the axis has been moved from its centred rest position. It only ever leaves zero when the
   // destinations genuinely outgrow the stage.
   const navRef = useRef<HTMLElement | null>(null);
-  // An overlay that the keyboard cannot close, and that focus never enters, is a layer only the mouse
-  // knows about. Focus goes in on open and returns to whatever opened it on close.
-  const returnFocusTo = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!drawer) return;
-    if (drawerOpen) {
-      returnFocusTo.current = document.activeElement as HTMLElement | null;
-      navRef.current?.querySelector<HTMLElement>('a[href], button')?.focus();
-      const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onDrawerClose?.(); };
-      window.addEventListener('keydown', onKey);
-      return () => window.removeEventListener('keydown', onKey);
-    }
-    // Only take focus back if it is still inside the drawer; the user may have clicked elsewhere.
-    if (navRef.current?.contains(document.activeElement)) returnFocusTo.current?.focus();
-    returnFocusTo.current = null;
-    return undefined;
-  }, [drawer, drawerOpen, onDrawerClose]);
+  // An overlay that the keyboard cannot close, that focus never enters and that Tab walks straight out
+  // of, is a layer only the mouse knows about — and `aria-modal` below would be a promise this drawer
+  // does not keep. The shared hook owns all of it, identically here and in the Studio sheet.
+  useNavDrawerFocus({ enabled: drawer, open: drawerOpen, containerRef: navRef, onClose: onDrawerClose });
 
   const [axisOffset, setAxisOffset] = useState(0);
   const scrollRange = railScrollRange(routeEntries.length, spacing, stageHeight);

@@ -11,6 +11,7 @@ import { useShellNavigation } from './useShellNavigation';
 import { useNavCustomization } from './NavCustomization';
 import { navOrderIndex } from './navOrder';
 import { entryIsActive, type NavEntry } from './navEntry';
+import { useNavDrawerFocus } from '../ui/focusCycle';
 
 /** The entries Studio presents in its footer region rather than in the scrolling body: the account and
  *  the administration pages, which are where you GO from the studio rather than what you work in.
@@ -94,23 +95,10 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
   // callback is an unstable inline prop from the shell — deliberately not a dependency.
   useEffect(() => { if (drawer) onDrawerClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // An overlay the keyboard cannot close, and that focus never enters, is a layer only the mouse knows
-  // about. Focus goes in on open and returns to whatever opened it on close.
-  const returnFocusTo = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!drawer) return;
-    if (drawerOpen) {
-      returnFocusTo.current = document.activeElement as HTMLElement | null;
-      navRef.current?.querySelector<HTMLElement>('a[href], button')?.focus();
-      const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onDrawerClose?.(); };
-      window.addEventListener('keydown', onKey);
-      return () => window.removeEventListener('keydown', onKey);
-    }
-    // Only take focus back if it is still inside the sheet; the user may have clicked elsewhere.
-    if (navRef.current?.contains(document.activeElement)) returnFocusTo.current?.focus();
-    returnFocusTo.current = null;
-    return undefined;
-  }, [drawer, drawerOpen, onDrawerClose]);
+  // An overlay the keyboard cannot close, that focus never enters and that Tab walks straight out of,
+  // is a layer only the mouse knows about — and `aria-modal` below would be a promise this sheet does
+  // not keep. The shared hook owns all of it, identically here and in the spatial rail's drawer.
+  useNavDrawerFocus({ enabled: drawer, open: drawerOpen, containerRef: navRef, onClose: onDrawerClose });
 
   // The fold is a desktop affordance, so the shortcut exists exactly where the control does: `onToggleCollapse`
   // is absent in the drawer and in a window already forced to the icon column, where it could change nothing.

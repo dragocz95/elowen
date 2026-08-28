@@ -119,9 +119,15 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
   // The project bound to this category, resolved from the loaded list — drives the scope glyph.
   const selectedProject = projectId == null ? null : (projects.data ?? []).find((p) => p.id === projectId) ?? null;
 
+  // A missing name is a property of the name field, not of the whole dialog, so it is stated there
+  // instead of as a toast the reader has to connect back to a control. Latched on the first blocked
+  // submit and derived from the live value, so it clears as soon as something is typed.
+  const [nameSubmitted, setNameSubmitted] = useState(false);
+  const nameError = nameSubmitted && !name.trim() ? t.memory.categoryNameRequired : undefined;
+
   const submit = () => {
     const next = name.trim();
-    if (!next) { toast(t.memory.categoryNameRequired, 'error'); return; }
+    if (!next) { setNameSubmitted(true); return; }
     const body = { name: next, description: description.trim(), color, icon, projectId };
     const onSuccess = () => { toast(t.memory.categorySaved); onClose(); };
     const onError = (e: unknown) => toast(apiErrorMessage(e) || t.memory.categorySaveError, 'error');
@@ -132,8 +138,8 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
   return (
     <Modal title={isEdit ? t.memory.categoryEdit : t.memory.categoryNew} onClose={onClose} size="sm" icon={Tags}>
       <ModalBody>
-        <Field label={t.memory.categoryName}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder={t.memory.categoryNamePlaceholder} />
+        <Field label={t.memory.categoryName} required error={nameError}>
+          {(control) => <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder={t.memory.categoryNamePlaceholder} {...control} />}
         </Field>
         <Field label={t.memory.categoryDescription}>
           <textarea

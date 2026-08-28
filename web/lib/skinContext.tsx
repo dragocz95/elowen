@@ -2,7 +2,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useConfig } from './queries';
 import {
-  BUILTIN_SKIN,
   allowedSkinChoices,
   currentSkinChoice,
   isSkinChoice,
@@ -48,9 +47,16 @@ interface SkinContextValue {
 
 const SkinContext = createContext<SkinContextValue | null>(null);
 
-/** Applies a choice to the live document. This is the entire mechanism: every skin's CSS is already in the
+/** THE ONE WRITER of what the document wears, and the whole mechanism: every skin's CSS is already in the
  *  page, scoped under its own `[data-skin]`, so the attribute alone decides which rules match. No fetch,
  *  no reload, no flash.
+ *
+ *  It takes the RESOLVED skin — a compiled skin name, or null for the built-in design — rather than the
+ *  account's choice, because the resolution is what `data-skin` states and null is a first-class value in
+ *  it, not an error: revoking the active skin from the allow-list, or moving the operator's ELOWEN_SKIN,
+ *  legitimately hands the document back to the built-in design while the page is open. Every path that can
+ *  change the visible design therefore goes through this function via the single effect below, so the
+ *  attribute cannot disagree with the `skin` the context reports and the shell renders from.
  *
  *  The attribute is not quite the whole story, because it is not the only thing painting the canvas. The
  *  server writes an inline `background-color` onto <html> and <body> (app/layout.tsx) so the document has
@@ -65,10 +71,10 @@ const SkinContext = createContext<SkinContextValue | null>(null);
  *  standing in for. The same reasoning covers the theme colour, which is read back from the resolved token
  *  rather than restated — the address bar and the task switcher then follow the design like everything
  *  else, instead of reporting the one the document happened to arrive in. */
-function applySkin(choice: SkinChoice): void {
+function applySkin(skin: SkinName | null): void {
   const root = document.documentElement;
-  if (choice === BUILTIN_SKIN) root.removeAttribute('data-skin');
-  else root.setAttribute('data-skin', choice);
+  if (skin) root.setAttribute('data-skin', skin);
+  else root.removeAttribute('data-skin');
   root.style.removeProperty('background-color');
   document.body?.style.removeProperty('background-color');
   const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
@@ -106,23 +112,25 @@ export function SkinProvider({
     // whose cookie was cleared — still gets its stored choice back, and writing the cookie means the NEXT
     // document is already correct on the server. A stored choice the admin has since revoked is dropped
     // here rather than applied, which is the same rule the server used, so the two cannot disagree.
+    //
+    // Reconciled against the CURRENT choice, not against the one the server seeded: the allow-list is live
+    // and can narrow and widen again while the page is open, and comparing to the seed would make the
+    // first revocation permanent — re-allowing the skin would leave the dropped choice at null, because
+    // the recomputed value happens to equal the seed again. The functional update is what lets React bail
+    // out when nothing changed, which is the only thing the seed comparison was buying.
     const stored = localStorage.getItem(STORAGE_KEY);
     const resolved = currentSkinChoice(stored ?? readSkinCookie(), allowed, fallback);
-    if (resolved !== initialChoice) {
-      setChoice(resolved);
-      if (resolved) applySkin(resolved);
-    }
+    setChoice((previous) => (previous === resolved ? previous : resolved));
     if (resolved) {
       if (stored !== resolved) localStorage.setItem(STORAGE_KEY, resolved);
       if (readSkinCookie() !== resolved) writeSkinCookie(resolved);
     }
-  }, [allowed, fallback, initialChoice]);
+  }, [allowed, fallback]);
 
   const cycle = useCallback(() => {
     const next = nextSkinChoice(choice, allowed);
     if (!next) return;
     setChoice(next);
-    applySkin(next);
     localStorage.setItem(STORAGE_KEY, next);
     writeSkinCookie(next);
   }, [allowed, choice]);
@@ -130,6 +138,12 @@ export function SkinProvider({
   // The same resolution the SERVER ran to decide the attribute (app/layout.tsx), so the two cannot
   // disagree about which design is on screen.
   const skin = useMemo(() => resolveSkin(choice, allowed, fallback), [choice, allowed, fallback]);
+  // The document follows that resolution and nothing else. Every way the visible design can change — first
+  // mount, the switcher, an admin revoking the active skin, the operator's default moving — changes THIS
+  // value and therefore lands here, so there is one place deciding what `<html>` wears and no path that
+  // can leave a stale attribute behind. Notably `null` writes too: it removes the attribute, which is how
+  // the built-in design is expressed.
+  useEffect(() => { applySkin(skin); }, [skin]);
   const value = useMemo(() => ({ choice, skin, allowed, cycle }), [choice, skin, allowed, cycle]);
   return <SkinContext.Provider value={value}>{children}</SkinContext.Provider>;
 }

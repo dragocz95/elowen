@@ -155,6 +155,36 @@ describe('StudioNavigation as an offcanvas sheet', () => {
     expect(onClose.mock.calls.length).toBe(before + 2);
   });
 
+  /** The sheet's own tab order, read off the DOM rather than pinned to particular controls: the sheet
+   *  renders whatever destinations the menu holds, and the trap has to hold at whichever ends it has. */
+  function tabRing() {
+    const nav = screen.getByTestId('studio-navigation');
+    const items = Array.from(nav.querySelectorAll<HTMLElement>('a[href], button'));
+    return { nav, first: items[0]!, last: items.at(-1)! };
+  }
+
+  it('keeps Tab inside the sheet, wrapping at both ends', () => {
+    mount({ drawer: true, drawerOpen: true, onDrawerClose: onClose });
+    const { first, last } = tabRing();
+    expect(document.activeElement).toBe(first);
+
+    last.focus();
+    fireEvent.keyDown(window, { key: 'Tab' });
+    expect(document.activeElement).toBe(first);
+
+    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(last);
+  });
+
+  it('pulls focus back in when it has escaped the sheet, which aria-modal promises', () => {
+    mount({ drawer: true, drawerOpen: true, onDrawerClose: onClose });
+    const outside = document.body.appendChild(document.createElement('button'));
+    outside.focus();
+    fireEvent.keyDown(window, { key: 'Tab' });
+    expect(document.activeElement).toBe(tabRing().first);
+    outside.remove();
+  });
+
   it('gives focus back to whatever opened it, but only while focus is still inside', () => {
     const opener = document.createElement('button');
     document.body.appendChild(opener);

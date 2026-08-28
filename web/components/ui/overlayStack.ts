@@ -1,6 +1,7 @@
 'use client';
 
 import { type RefObject, useEffect, useRef } from 'react';
+import { cycleTabFocus } from './focusCycle';
 
 type OverlayEntry = { id: symbol; root: HTMLElement };
 type PriorState = { inert: boolean; ariaHidden: string | null };
@@ -53,16 +54,6 @@ function isTopmost(id: symbol) {
   return stack.at(-1)?.id === id;
 }
 
-const FOCUSABLE = 'a[href], button, input:not([type="hidden"]), select, textarea, [contenteditable]:not([contenteditable="false"]), [tabindex]:not([tabindex="-1"])';
-
-function focusableWithin(dialog: HTMLElement) {
-  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((node) => {
-    if (node.hasAttribute('disabled') || node.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
-    const style = window.getComputedStyle(node);
-    return style.display !== 'none' && style.visibility !== 'hidden';
-  });
-}
-
 /** Shared modal/drawer lifecycle: stack ownership, background isolation, focus trap and restoration. */
 export function useDialogOverlay({ enabled, rootRef, dialogRef, onClose }: {
   enabled: boolean;
@@ -94,13 +85,7 @@ export function useDialogOverlay({ enabled, rootRef, dialogRef, onClose }: {
         return;
       }
       if (event.key !== 'Tab') return;
-      const items = focusableWithin(dialog);
-      if (items.length === 0) { event.preventDefault(); dialog.focus({ preventScroll: true }); return; }
-      const first = items[0]!;
-      const last = items.at(-1)!;
-      const active = document.activeElement;
-      if (event.shiftKey && (active === first || !dialog.contains(active))) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && (active === last || active === dialog || !dialog.contains(active))) { event.preventDefault(); first.focus(); }
+      cycleTabFocus(event, dialog);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {

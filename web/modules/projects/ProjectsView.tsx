@@ -383,14 +383,18 @@ export function ProjectsView() {
       {creating && (
         <Modal title={t.projects.newProject} onClose={() => setCreating(false)} size="md" icon={FolderGit2}>
           <ModalBody gap={4}>
-            <Field label={t.projects.fieldSlug} hint={t.help.projectSlug}>
-              <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder={t.projects.slugPlaceholder} autoFocus />
+            {/* Slug and path are what "Create" already gates on. The path field is a row of two controls,
+                so only the function child can say WHICH of them the required state belongs to. */}
+            <Field label={t.projects.fieldSlug} hint={t.help.projectSlug} required>
+              {(control) => <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder={t.projects.slugPlaceholder} autoFocus {...control} />}
             </Field>
-            <Field label={t.projects.fieldPath} hint={t.help.projectPath}>
-              <div className="flex items-center gap-2">
-                <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={t.projects.pathPlaceholder} className="flex-1 font-mono text-xs" />
-                <Button icon={Folder} variant="default" onClick={() => setBrowsing(true)}>{t.projects.browse}</Button>
-              </div>
+            <Field label={t.projects.fieldPath} hint={t.help.projectPath} required>
+              {(control) => (
+                <div className="flex items-center gap-2">
+                  <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={t.projects.pathPlaceholder} className="flex-1 font-mono text-xs" {...control} />
+                  <Button icon={Folder} variant="default" onClick={() => setBrowsing(true)}>{t.projects.browse}</Button>
+                </div>
+              )}
             </Field>
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none" />
@@ -424,8 +428,8 @@ export function ProjectsView() {
                 );
               })()}
             </Field>
-            <Field label={t.projects.fieldPath} hint={t.help.projectPath}>
-              <Input value={editPath} onChange={(e) => setEditPath(e.target.value)} className="font-mono text-xs" />
+            <Field label={t.projects.fieldPath} hint={t.help.projectPath} required>
+              {(control) => <Input value={editPath} onChange={(e) => setEditPath(e.target.value)} className="font-mono text-xs" {...control} />}
             </Field>
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
               <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none" />

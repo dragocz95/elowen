@@ -240,11 +240,12 @@ export function UsersView() {
         <Modal title={t.users.addUser} onClose={() => setCreating(false)} size="md" icon={UserPlus}>
           <form onSubmit={(e) => { e.preventDefault(); handleCreate(); }} className="flex min-h-0 flex-1 flex-col">
             <ModalBody gap={4}>
-              <Field label={t.users.fieldUsername}>
-                <Input type="text" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder={t.auth.usernamePlaceholder} autoFocus />
+              {/* Both are what the submit button below already gates on, so the form states it. */}
+              <Field label={t.users.fieldUsername} required>
+                {(control) => <Input type="text" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder={t.auth.usernamePlaceholder} autoFocus {...control} />}
               </Field>
-              <Field label={t.auth.passwordPlaceholder}>
-                <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder={t.auth.passwordPlaceholder} />
+              <Field label={t.auth.passwordPlaceholder} required>
+                {(control) => <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder={t.auth.passwordPlaceholder} {...control} />}
               </Field>
             </ModalBody>
             <ModalFooter>

@@ -77,7 +77,9 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   const pulse = usePulse();
   const people = pulse.data?.people ?? [];
   const working = people.filter((person) => person.working).length;
-  const turnsToday = pulse.data?.totals.turns ?? 0;
+  // Guarded section by section rather than only at `data`: the response is an external payload, and a
+  // pod that reads "0 turns" is a far better failure than an exception taking the whole route down.
+  const turnsToday = pulse.data?.totals?.turns ?? 0;
 
   const me = useMe();
   // Without the cron plugin there is no schedule to read: asking anyway earns a 503 and would render an
