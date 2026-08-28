@@ -52,17 +52,22 @@ const DRAG_THRESHOLD = 6;
 /** How long a finger has to rest before a press becomes a menu rather than a tap or a scroll. */
 const LONG_PRESS_MS = 500;
 
-/** The rail's resting spacing. Measured in REAL screen pixels: it used to be 66, chosen when an
- *  automatic `zoom` shrank the whole app to roughly 72% and put it on the glass at about 48. Nothing
- *  shrinks the page any more, so 66 became 66 — and twelve destinations then needed 806px of axis, which
- *  no 1280×800 laptop has. The rail scrolled on every laptop in the building. */
-const SPACING = 48;
+/** The rail's resting spacing. Measured in REAL screen pixels.
+ *
+ *  Two corrections, in order. The original 66 was chosen when an automatic `zoom` shrank the whole app
+ *  to roughly 72% and put it on the glass at about 48; read natively, twelve destinations needed 806px
+ *  of axis and the rail scrolled on every 1280×800 laptop. Dropping it to 48 fixed the overflow and
+ *  overshot: at 48 the nodes sat close enough to read as a stripe and the whole rail shrank with them.
+ *  60 is the value that satisfies both — twelve destinations still fit a 1280×720 axis without
+ *  scrolling (see the case in tests/components/shell/OrbitalNav.test.tsx), and the destinations stay
+ *  discrete. */
+const SPACING = 60;
 /** Vertical room the largest (active) node needs, so the end destinations never clip. It is the
- *  diameter of the active node (3.4rem), and it only works because the items are anchored at exactly
+ *  diameter of the active node (3.75rem), and it only works because the items are anchored at exactly
  *  half the axis: `getStableOffsets` spreads them symmetrically around the centre, so an anchor even
  *  one percent off centre spends that much of this headroom and clips the first node on a short
  *  screen — which is what a phone is. */
-const NODE_HEADROOM = 56;
+const NODE_HEADROOM = 60;
 
 /** Where each destination is parked on the axis: a fixed, centered order that does NOT depend on which
  *  route is active. Only scale/opacity/blur react to the active route, so the rail never re-shuffles. */
@@ -72,8 +77,16 @@ export function getStableOffsets(count: number, spacing: number): number[] {
 }
 
 /** Below this the destinations stop being separate things and start being a stripe, so the axis
- *  scrolls instead of tightening any further. */
-const MIN_SPACING = 34;
+ *  scrolls instead of tightening any further.
+ *
+ *  It is `--touch-target` (web/app/styles/tokens.css) restated as a number, and that is the whole
+ *  reason for the value. Every destination carries `.overlay-touch-target`, which grows the ROW to 44px
+ *  on a coarse pointer — but the rows are absolutely positioned siblings, so a spacing under 44 does not
+ *  shrink them, it OVERLAPS them: the later row in the DOM covers the top of the one before it and a
+ *  finger aiming at a destination hits its neighbour. A floor at the touch target is therefore the hit
+ *  geometry, not a legibility preference; at 34 the app shipped up to 10px of every touch target
+ *  covered. Past this floor the answer is to scroll the axis, never to tighten it further. */
+const MIN_SPACING = 44;
 
 /** The public rail carries 8 destinations at SPACING; this one carries more, which overflows a
  *  laptop-height axis. Keep SPACING wherever it fits and otherwise tighten — but only down to a
@@ -83,8 +96,10 @@ export function railSpacing(count: number, stageHeight: number): number {
   return Math.min(SPACING, Math.max(MIN_SPACING, (stageHeight - NODE_HEADROOM) / (count - 1)));
 }
 
-/** How far the axis may travel in each direction. */
-function railScrollRange(count: number, spacing: number, stageHeight: number): number {
+/** How far the axis may travel in each direction. Zero means the destinations fit and the rail does not
+ *  scroll at all, which is the property the geometry is actually tuned for — so it is exported and
+ *  asserted rather than inferred from a spacing number. */
+export function railScrollRange(count: number, spacing: number, stageHeight: number): number {
   if (stageHeight <= 0 || count < 2) return 0;
   const span = (count - 1) * spacing + NODE_HEADROOM;
   return Math.max(0, (span - stageHeight) / 2);
@@ -361,8 +376,11 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     if (next?.href && nextIndex !== activeIndex) router.push(next.href);
   };
 
-  // The axis is the CENTRE of the icon column, so it is always exactly half that column's width.
-  const axis = compact ? '1.6rem' : '1.8rem';
+  // The axis is the CENTRE of the icon column, so it is exactly half that column's width — and the icon
+  // column is 4rem in BOTH modes, because the node drawn on it is the same size in both. One value
+  // therefore serves both: the spine, the node centres and the folded column's own centre all coincide,
+  // which is what stops the folded rail from drawing its spine off to one side of its own icons.
+  const axis = '2rem';
 
   const hidden = drawer && !drawerOpen;
 
@@ -375,9 +393,12 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           className={`overlay-layer-nav-drawer fixed inset-0 bg-bg/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       ) : null}
-    {/* The column widths below are real pixels now. 17rem/4.75rem were a 1900px design read through an
-        automatic ~72% zoom, which put the full rail at roughly 12.5rem and the icon rail at 3.5rem on
-        the glass; rendered natively, 17rem spent a fifth of a 1280px laptop on a menu. */}
+    {/* The column widths below are real pixels. 17rem/4.75rem were a 1900px design read through an
+        automatic ~72% zoom and spent a fifth of a 1280px laptop on a menu; 12.5rem/3.5rem, the first
+        correction, undershot the other way — a 200px column left the labels crowded against the nodes
+        and a 56px folded rail was narrower than the 60px node it has to hold. 16rem/4rem is the pair
+        that fits: 4rem is exactly the icon column, so the folded rail IS the node column, and 16rem
+        leaves 12rem of label beside it. */}
     <nav
       ref={navRef}
       data-side={side}
@@ -402,7 +423,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         ? `overlay-layer-nav-drawer overlay-nav-drawer fixed inset-y-0 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
           ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
           : `left-0 border-r ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}`
-        : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[3.5rem]' : 'w-[12.5rem]'}`}`}
+        : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4rem]' : 'w-[16rem]'}`}`}
       style={drawer ? { transitionTimingFunction: 'var(--ease-out)' } : undefined}
     >
       {/* A dialog needs a way out that is not "guess that the strip of backdrop is a target". Tapping
@@ -481,17 +502,21 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                   if (scrollRange <= 0 || !event.currentTarget.matches(':focus-visible')) return;
                   setAxisOffset(clampAxis(-(positions[index] ?? 0)));
                 }}
-                // A resting destination is drawn as a 2.65rem node, which is under the 44px a finger
-                // needs. The node keeps its size; the row it sits in grows to the floor around it.
+                // A resting destination is drawn as a 2.25rem node, which is under the 44px a finger
+                // needs. The node keeps its size; the row it sits in grows to the floor around it, and
+                // MIN_SPACING keeps two such rows from overlapping once the axis tightens.
                 className={`overlay-touch-target group flex items-center gap-2 whitespace-nowrap ${active ? 'text-accent' : 'text-text-muted hover:text-text'}`}
                 title={compact ? undefined : entry.label}
               >
-                {/* The icon column is twice `axis`, because `axis` is where the spine is drawn. */}
-                <span className={`flex shrink-0 justify-center ${compact ? 'w-[3.2rem]' : 'w-[3.6rem]'}`} aria-hidden>
+                {/* The icon column is twice `axis`, because `axis` is where the spine is drawn. The node
+                    inside it is the same size folded or not: the fold takes the LABELS away, not the
+                    destinations, and a rail whose icons shrank as well would read as a different menu
+                    rather than as the same one with its names hidden. */}
+                <span className="flex w-[4rem] shrink-0 justify-center" aria-hidden>
                   <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-bg transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
-                    ? `orbit-node-active border-accent ${compact ? 'h-[3.05rem] w-[3.05rem]' : 'h-[3.4rem] w-[3.4rem]'}`
-                    : `border-border-strong/80 ${compact ? 'h-[1.75rem] w-[1.75rem]' : 'h-[1.9rem] w-[1.9rem]'}`}`}>
-                    <Icon size={active ? 18 : 13} strokeWidth={1.45} />
+                    ? 'orbit-node-active border-accent h-[3.75rem] w-[3.75rem]'
+                    : 'border-border-strong/80 h-[2.25rem] w-[2.25rem]'}`}>
+                    <Icon size={active ? 20 : 15} strokeWidth={1.45} />
                   </span>
                 </span>
                 {/* The active entry renders ~40% larger, so a label that fits at rest can outgrow the
@@ -499,7 +524,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                     word cut off mid-glyph against the rail's `overflow-hidden`; the `title` above keeps
                     the full text reachable. Plugin labels are translated by their own authors, so no
                     length is guaranteed. */}
-                {!compact ? <span className={`min-w-0 truncate ${active ? 'text-xl font-medium' : 'text-sm'} tracking-[-0.03em]`}>{entry.label}</span> : null}
+                {!compact ? <span className={`min-w-0 truncate ${active ? 'text-[1.0625rem] font-medium' : 'text-[0.9375rem]'} tracking-[-0.03em]`}>{entry.label}</span> : null}
               </Link>
             </div>
           );

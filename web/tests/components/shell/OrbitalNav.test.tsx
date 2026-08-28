@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw';
 const pushSpy = vi.hoisted(() => vi.fn());
 const currentPath = vi.hoisted(() => ({ value: '/dash' }));
 vi.mock('next/navigation', () => ({ usePathname: () => currentPath.value, useRouter: () => ({ push: pushSpy }) }));
-import { getStableOffsets, OrbitalNav, railSpacing } from '../../../components/shell/OrbitalNav';
+import { getStableOffsets, OrbitalNav, railScrollRange, railSpacing } from '../../../components/shell/OrbitalNav';
 import { createWrapper } from '../../test-utils';
 
 const server = setupServer(http.get('*/api/health', () => HttpResponse.json({ ok: true })));
@@ -36,17 +36,40 @@ function mount(compact = false) {
   return mountNav({ compact }).view;
 }
 
+/** The measured height of the rail's stage — the nav is one viewport tall and the stage stops 4.5rem
+ *  short of the bottom for the version/cue block. Stated as a helper so the laptop cases below read as
+ *  the window sizes they stand for rather than as two magic numbers. */
+const stageFor = (viewportHeight: number) => viewportHeight - 72;
+
 describe('orbital navigation geometry', () => {
   it('parks destinations in one fixed centered order', () => {
     expect(getStableOffsets(8, 66)).toEqual([-231, -165, -99, -33, 33, 99, 165, 231]);
   });
-  it('tightens spacing only when the axis needs it', () => {
-    expect(railSpacing(8, 845)).toBe(48);
-    // The whole point of the 48px resting spacing: a full menu on an ordinary laptop no longer has to
-    // tighten at all. The rail used to render at ~72% of these numbers under an automatic page zoom, so
-    // reading the old 66 as real pixels made twelve destinations overflow every 1280×800 screen.
-    expect(railSpacing(12, 704)).toBe(48);
-    expect(railSpacing(14, 520)).toBeLessThan(48);
+
+  it('rests at the full spacing wherever the axis has room for it', () => {
+    expect(railSpacing(8, 845)).toBe(60);
+    expect(railSpacing(12, stageFor(900))).toBe(60);
+  });
+
+  it('fits a full menu on the smallest supported laptop without scrolling it', () => {
+    // The property the spacing is actually tuned for, asserted directly rather than through the number
+    // that produces it: at 1280×720 — the narrowest window that still gets the full rail
+    // (NAV_FULL_MIN_WIDTH) — twelve destinations must fit the axis. The rail moves by transform and
+    // draws no scrollbar, so an overflow here is a menu whose ends are simply not on screen.
+    const stage = stageFor(720);
+    const spacing = railSpacing(12, stage);
+    expect(spacing).toBeLessThanOrEqual(60);
+    expect(railScrollRange(12, spacing, stage)).toBe(0);
+  });
+
+  it('never packs destinations closer than the touch target, and scrolls instead', () => {
+    // The rows are absolutely positioned siblings carrying `.overlay-touch-target`, so a spacing under
+    // 44 does not shrink them — it overlaps them, and a finger aiming at one destination lands on its
+    // neighbour. Past the floor the axis has to scroll.
+    const stage = stageFor(520);
+    expect(railSpacing(14, stage)).toBeLessThan(60);
+    expect(railSpacing(40, stage)).toBe(44);
+    expect(railScrollRange(40, railSpacing(40, stage), stage)).toBeGreaterThan(0);
   });
 });
 
@@ -74,7 +97,9 @@ describe('OrbitalNav', () => {
 
   it('collapses to the icon rail without changing destinations', () => {
     mount(true);
-    expect(screen.getByTestId('future-navigation')).toHaveClass('w-[3.5rem]');
+    // 4rem is exactly the icon column the nodes are drawn on, so the folded rail is that column and
+    // nothing else — the spine stays on its centre instead of drifting off to one side.
+    expect(screen.getByTestId('future-navigation')).toHaveClass('w-[4rem]');
     expect(screen.getByRole('link', { name: 'Statistics' })).toBeInTheDocument();
   });
 });
