@@ -157,6 +157,61 @@ test('nothing on a Studio page is laid out wider than the 320px it has', async (
   }
 });
 
+test('the Studio page bar stays put while the register scrolls under it', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  // The bar is `position: sticky`, and a sticky box is clamped to its CONTAINING BLOCK. A wrapper around
+  // it whose only child is the header is exactly the header's height, which leaves a sticky range of
+  // zero: the bar looks perfect until the first wheel click and then simply leaves. Studio's register
+  // header offsets itself by the bar's 48px precisely BECAUSE the bar stays, so the same wrapper also
+  // parks every column name 48px down with rows scrolling visibly above it.
+  //
+  // Neither half is visible in a screenshot of an unscrolled page, and no unit test can see it: it is a
+  // property of the ancestor CHAIN, which only a laid-out document has. Hence this case, and hence the
+  // assertion being about position AFTER scrolling rather than about any class.
+  await useSkin(app, seed, 'studio-light');
+  await app.setViewportSize({ width: 1440, height: 900 });
+  await openStudio(app, REGISTER);
+  const bar = app.locator('.top-bar--bar');
+  await expect(bar).toBeVisible();
+
+  // THE RANGE, first and unconditionally. A sticky box travels within its containing block — for a
+  // `sticky` element that is its nearest block-container ancestor — so the range is that ancestor's
+  // height less the bar's own. Asserting it directly needs no scroll, no rows and no content of any
+  // kind, which is what makes it the assertion that cannot pass for an accidental reason. A wrapper
+  // reintroduced around the header collapses this to 0 whatever else the page is doing.
+  const geometry = await app.evaluate(() => {
+    const el = document.querySelector<HTMLElement>('.top-bar--bar')!;
+    const parent = el.parentElement!;
+    const style = getComputedStyle(parent);
+    return {
+      position: getComputedStyle(el).position,
+      bar: el.getBoundingClientRect().height,
+      // The containing block is the parent's CONTENT box, so its padding comes off.
+      containingBlock: parent.getBoundingClientRect().height
+        - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+    };
+  });
+  expect(geometry.position, 'the bar variant is sticky').toBe('sticky');
+  expect(
+    geometry.containingBlock - geometry.bar,
+    'the bar has room to stay behind — a wrapper holding only the header leaves none',
+  ).toBeGreaterThan(geometry.bar * 4);
+
+  // And then the behaviour itself, once the register is actually long enough to scroll.
+  await expect(app.locator('.data-table-grid').first()).toBeVisible();
+  const scrolled = await app.evaluate(() => {
+    const main = document.querySelector('main')!;
+    if (main.scrollHeight <= main.clientHeight + 200) return null;
+    main.scrollBy(0, 400);
+    return main.scrollTop;
+  });
+  expect(scrolled, 'the register is long enough to scroll').toBeGreaterThan(200);
+  expect(Math.round((await bar.boundingBox())!.y), 'the bar after scrolling').toBe(0);
+  // The column names sit directly under it — not 48px into empty space, not behind the breadcrumb.
+  expect(Math.round((await app.locator('.data-table-header').first().boundingBox())!.y),
+    'the sticky column names clear the bar exactly').toBe(Math.round(geometry.bar));
+});
+
 test('the Studio column is 256px, folds to 48px, and becomes a sheet on a phone', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-light');

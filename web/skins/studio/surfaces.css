@@ -248,8 +248,15 @@
   background: var(--color-document);
 }
 /* And the empty state that REPLACES a table takes the same frame, so a register with no rows is the same
-   shape as a register with rows. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-register > .empty-state {
+   shape as a register with rows.
+   Two selectors because a register states its empty state at two depths. Memory's "nothing here yet"
+   is a direct child; its "nothing MATCHES" stands inside the column that otherwise holds the table and
+   the pager, and is that column's only element once the pager returns null. The second selector is
+   deliberately `> * >` and not a free descendant: an empty state nested deeper belongs to something
+   inside the register rather than standing in for it, and framing that would draw a card inside a
+   card — which is the fault this whole section exists to undo. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-register > .empty-state,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-register > * > .empty-state:only-child {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   background: var(--color-document);

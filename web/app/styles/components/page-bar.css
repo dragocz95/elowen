@@ -13,9 +13,18 @@
    32px ghosts beside a 36px pill and a 36px boxed "EN". Reaching them from their own components would
    mean teaching three shared controls about a variant that is not theirs; the bar is one place and says
    it once.
-   The identity link is excluded: it frames a circular avatar, and a rounded-rectangle focus ring around
-   a disc is worse than no ring at all. */
-.top-bar--bar :is(a, button):not(.top-bar__identity) {
+   Three things are excluded, each for its own reason.
+   The identity link frames a circular avatar, and a rounded-rectangle focus ring around a disc is worse
+   than no ring at all.
+   A floating MENU is not part of the row. `LanguageSwitcher` renders its menu inline rather than through
+   a portal, so a descendant selector reaches every item in it: at 32px a menu item's 8px padding leaves
+   a 16px content box for a 20px line, and the label spilled out of the menu's own `overflow: hidden`.
+   `.overlay-layer-menu` is what every floating menu in the app already wears, so excluding it covers the
+   ones that have not been opened here yet as well.
+   The breadcrumb's steps are the reader's LOCATION, not controls, and must not be sized like one. Today
+   they are inline boxes that a height cannot apply to anyway — which is exactly why the exclusion is
+   written down: the day one of them becomes `flex`, the trail would silently grow to 32px. */
+.top-bar--bar :is(a, button):not(.top-bar__identity, .overlay-layer-menu *, .page-bar__breadcrumb *) {
   height: 2rem;
   border: 0;
   border-radius: var(--radius-sm);
@@ -24,7 +33,9 @@
    carries: this file is unlayered, so the height above would otherwise outrank it. 44px inside a 48px
    bar. */
 @media (pointer: coarse) {
-  .top-bar--bar :is(a, button):not(.top-bar__identity) { height: var(--touch-target); }
+  .top-bar--bar :is(a, button):not(.top-bar__identity, .overlay-layer-menu *, .page-bar__breadcrumb *) {
+    height: var(--touch-target);
+  }
 }
 
 /* The trail must give way before the actions do: it is the one part of the row that can be read from
