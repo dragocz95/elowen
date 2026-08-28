@@ -34,4 +34,13 @@ describe('Segmented', () => {
     expect(screen.getByRole('radio', { name: 'B' })).toHaveClass('border-accent');
     expect(screen.getByRole('radio', { name: 'A' })).toHaveClass('border-transparent');
   });
+  it('keeps nowrap tabs horizontally scrollable without exposing native scrollbars', () => {
+    render(<Segmented nowrap options={opts} value="b" onChange={() => {}} />);
+    expect(screen.getByRole('radiogroup')).toHaveClass(
+      'overflow-x-auto',
+      'overflow-y-hidden',
+      '[scrollbar-width:none]',
+      '[&::-webkit-scrollbar]:hidden',
+    );
+  });
 });

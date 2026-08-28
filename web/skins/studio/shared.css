@@ -30,12 +30,11 @@
    profile `WorkspaceShell` mounts the shared `Segmented` in its `line` variant instead: the same
    radiogroup, the same roving tab stop, the same caller-owned selection, drawn as tabs. */
 
-/* The reading measure. `--content-max` is the single width authority for the shell (tokens.css), and the
-   built-in design's fluid 90–118rem is a canvas measure: it lets a register stretch across a 2560px desk
-   at whatever density the window happens to give it. Studio reads as a dashboard instead, where the
-   content column is a fixed working width and the extra desk is margin. */
+/* Studio workspaces use the whole available desk. Individual prose and form descriptions constrain their
+   own reading measure; a global cap made registers and settings look like a small centred card on ultrawide
+   screens, which is the opposite of an operational workspace. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) {
-  --content-max: 84rem;
+  --content-max: none;
 }
 
 /* ---------------------------------------------------------------------------------------------------

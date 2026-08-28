@@ -36,7 +36,9 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
   const pad = size === 'sm' ? 'h-9 px-2.5' : 'h-9 px-3';
   // Either way the track stays inside its container: it wraps, or it scrolls. It never overflows and
   // gets clipped by the surface, which is what a bare `flex-nowrap` did in a narrow toolbar.
-  const wrap = nowrap ? 'max-w-full flex-nowrap overflow-x-auto overscroll-x-contain [scrollbar-width:thin]' : 'max-w-full flex-wrap';
+  const wrap = nowrap
+    ? 'max-w-full flex-nowrap overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
+    : 'max-w-full flex-wrap';
   const selectedIndex = options.findIndex((option) => option.value === value);
   const tabbableIndex = selectedIndex >= 0 ? selectedIndex : 0;
   const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
