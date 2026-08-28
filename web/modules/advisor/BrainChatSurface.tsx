@@ -34,6 +34,7 @@ import { useBrainChat } from './BrainChatProvider';
 import { formatBytes, formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { isBackgroundProcessCardId } from '../../lib/processScope';
 import {
   DEFAULT_COMPOSE_MARKER_MS,
   DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS,
@@ -797,7 +798,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   // TODO cards with open work (CardBlock hides a card whose every item is done). The phone bar has no room
   // for a control of its own, so the ⋯ menu opens them in a dialog instead.
   const todoCards = cards.filter((cd) => {
-    if (cd.id === 'bg-processes') return false;
+    if (isBackgroundProcessCardId(cd.id)) return false;
     const items = cd.items ?? [];
     return items.length === 0 ? true : !items.every((i) => i.status === 'completed');
   });

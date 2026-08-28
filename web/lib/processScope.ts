@@ -1,6 +1,12 @@
 import type { ProcessInfo } from './types';
 import type { SubagentState } from './transcript';
 
+/** Terminal process cards used to have one global id and are now scoped by account. Both shapes remain
+ * durable in old session snapshots, so every process-specific surface recognizes the whole namespace. */
+export function isBackgroundProcessCardId(id: string): boolean {
+  return id === 'bg-processes' || id.startsWith('bg-processes-');
+}
+
 /** Which background processes belong to the open conversation — the ONE rule both live views share (the
  *  transcript panel showing them, the telemetry rail splitting its own from the rest), so the two can no
  *  longer disagree about what "this conversation" owns.

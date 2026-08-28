@@ -15,6 +15,7 @@ import { subscribeRevive } from '../../lib/useRevive';
 import { resolveStreamSilence } from '../../lib/streamWatchdog';
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { isBackgroundProcessCardId } from '../../lib/processScope';
 import {
   BRAIN_COMPOSE_EVENT,
   BRAIN_OPEN_EVENT,
@@ -28,6 +29,8 @@ import { useBrainChatHistory } from './brainChatHistory';
 import { useBrainChatStream } from './brainChatStream';
 
 const THOUGHTS_VALUES = ['show', 'hide'] as const;
+const withoutBackgroundProcessCards = (cards: readonly BrainCard[]): BrainCard[] =>
+  cards.filter((card) => !isBackgroundProcessCardId(card.id));
 
 /** The `kind:'mode'` commands, in one place — the `/plan`, `/build`, `/workflow` slash names ARE the mode
  *  values, so this is what narrows a command name to a BrainWorkMode without a cast. */
@@ -478,7 +481,7 @@ function useBrainChatController(): BrainChatValue {
           }
           if (Object.prototype.hasOwnProperty.call(snap, 'cards')) {
             hydrationStampRef.current.cards += 1;
-            setCards(snap.cards ?? []);
+            setCards(withoutBackgroundProcessCards(snap.cards ?? []));
           }
           // Explicit nulls matter here: the snapshot can clear a question or plan that another surface settled.
           if (control) {
@@ -535,7 +538,7 @@ function useBrainChatController(): BrainChatValue {
         process: (processes) => qc.setQueryData(['brain-processes'], processes),
         card: (card) => {
           // The background-process card is rendered by ProcessPanel; use it only as a refresh signal.
-          if (card.id === 'bg-processes') { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
+          if (isBackgroundProcessCardId(card.id)) { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
           hydrationStampRef.current.cards += 1;
           setCards((cur) => upsertCard(cur, card));
         },
@@ -636,7 +639,7 @@ function useBrainChatController(): BrainChatValue {
       setDaemonMode(st.workMode ?? 'build');
       setPendingPlan(st.pendingPlan ?? null);
     }
-    if (fresh.cards === statusHydrationStamp.cards) setCards(st.cards ?? []);
+    if (fresh.cards === statusHydrationStamp.cards) setCards(withoutBackgroundProcessCards(st.cards ?? []));
     if (fresh.queue === statusHydrationStamp.queue) setQueued(st.queued ?? []);
   };
 
@@ -709,7 +712,7 @@ function useBrainChatController(): BrainChatValue {
           replaceHistoryWindow(snap.nextBefore ?? null, snap.hasMore ?? false);
           const folded = fromSnapshot(snap);
           setView({ ...folded, thinking: snap.control ? snap.control.streaming : folded.thinking });
-          setCards(snap.cards ?? []);
+          setCards(withoutBackgroundProcessCards(snap.cards ?? []));
           if (snap.session) { setCurrentModel(snap.session.model); setProvider(snap.session.provider); }
           if (snap.sessionId) setActiveSessionId(snap.sessionId);
           if (snap.control) {
@@ -733,7 +736,10 @@ function useBrainChatController(): BrainChatValue {
         image: ({ ref, id, caption }) => applyEvent({ type: 'image', ref, id, caption }),
         file: ({ ref, name, size, id, caption }) => applyEvent({ type: 'file', ref, name, size, id, caption }),
         idle: () => applyEvent({ type: 'idle' }),
-        card: (card) => setCards((cur) => upsertCard(cur, card)),
+        card: (card) => {
+          if (isBackgroundProcessCardId(card.id)) return;
+          setCards((cur) => upsertCard(cur, card));
+        },
         error: (message) => applyEvent({ type: 'error', message }),
         openError: () => {
           toast(t.brainChat.searchOpenError, 'error');
