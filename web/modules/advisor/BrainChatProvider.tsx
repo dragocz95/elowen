@@ -345,9 +345,10 @@ function useBrainChatController(): BrainChatValue {
   // sends, so persisting it would make a reloaded tab claim a mode the user never re-chose.
   const [workMode, setWorkMode] = useState<BrainWorkMode>('build');
   // Plan mode's decision, as the DAEMON sees it — the mode it last ran a turn in plus the plan that turn
-  // submitted. Both are hydrated from the server (status on connect, then every snapshot frame): the mode
-  // above is this tab's own stamp and knows nothing about a plan entered in the CLI, and it resets to
-  // 'build' on reload, which is exactly how the decision used to vanish from the page that had it.
+  // submitted. Both are hydrated from the server (status on connect, every snapshot frame, and — for the
+  // mode, which has no live event — every settled turn): the mode above is this tab's own stamp and knows
+  // nothing about a plan entered in the CLI, and it resets to 'build' on reload, which is exactly how the
+  // decision used to vanish from the page that had it.
   const [daemonMode, setDaemonMode] = useState<BrainWorkMode>('build');
   const [pendingPlan, setPendingPlan] = useState<BrainPendingPlan | null>(null);
   /** The plans this tab has already decided on (implemented or dismissed), one per conversation, keyed like
@@ -594,6 +595,25 @@ function useBrainChatController(): BrainChatValue {
           applyEvent({ type: 'idle' });
           repairTruncatedHistory();
           if (nextUsage) setUsage(nextUsage);
+          // The daemon's work mode is the one piece of plan-mode state with NO live event of its own — it is
+          // committed only once the settled turn's prompt has reached the provider, so status and the
+          // snapshot frame are the only places it is published. A settled turn is therefore both the only
+          // moment it can have changed and the only moment worth re-reading it; without this read
+          // `daemonMode` stayed frozen at whatever CONNECT answered ('build' for any ordinary session) and
+          // the plan submitted afterwards — from this tab or from the CLI — raised no decision at all until
+          // the stream happened to reconnect. Fenced like the connect-time read, so a control frame that
+          // landed meanwhile is not overwritten. Presence-gated, unlike the hydration reads: an absent
+          // `workMode` is a daemon that publishes none, not a conversation that left plan mode (every real
+          // transition names its new mode), and defaulting it to 'build' would erase the decision itself.
+          const controlStamp = hydrationStampRef.current.control;
+          void elowenClient.brainStatus(boundSessionRef.current)
+            .then((status) => {
+              if (generation !== genRef.current || hydrationStampRef.current.control !== controlStamp) return;
+              if (!status.workMode) return;
+              hydrationStampRef.current.control += 1;
+              setDaemonMode(status.workMode);
+            })
+            .catch(() => { /* the mode stays as hydrated; the next settle or reconnect reads it again */ });
           void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
         },
       },
