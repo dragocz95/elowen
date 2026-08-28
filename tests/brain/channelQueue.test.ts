@@ -761,17 +761,31 @@ describe('ChannelSessionService — plugin prompt-command routing', () => {
   });
 });
 
-/** Mid-turn recall in a shared room reads this field, so what the channel writes into it IS the privacy
- *  boundary (the rule it feeds is pinned in liveRecallGate.test.ts). A channel serves several senders and
- *  the session is owned by one of them, so falling back to the owner would hand their private memories to
- *  whoever else happens to be typing. */
+/** Mid-turn recall and live per-account settings read this field, so it is a TURN-SCOPED privacy
+ *  boundary (the recall rule is pinned in liveRecallGate.test.ts). It must identify the current verified
+ *  sender while provider work is running, then clear after settlement so out-of-band work cannot borrow a
+ *  stale room writer. */
 describe('ChannelSessionService — whose memories a turn may recall', () => {
-  it('pins the verified sender for the turn', async () => {
+  it('pins the verified sender only while the turn is running', async () => {
     const { registry, svc, channelId, opts } = setup();
+    await svc.send(opts(7), 'warm');
+    const live = registry.channelGet(channelId)!;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    live.session.prompt.mockImplementationOnce(async (text: string) => {
+      markStarted();
+      await gate;
+      live.session.messages.push({ role: 'assistant', content: `re: ${text}` });
+    });
 
-    await svc.send({ ...opts(7), writerUserId: 42 }, 'ahoj');
-
-    expect(registry.channelGet(channelId)!.turnWriterUserId).toBe(42);
+    const pending = svc.send({ ...opts(7), writerUserId: 42 }, 'ahoj');
+    await started;
+    expect(live.turnWriterUserId).toBe(42);
+    release();
+    await pending;
+    expect(live.turnWriterUserId).toBeNull();
   });
 
   it('leaves nobody pinned for an unlinked sender rather than falling back to the channel owner', async () => {
@@ -782,21 +796,30 @@ describe('ChannelSessionService — whose memories a turn may recall', () => {
     expect(registry.channelGet(channelId)!.turnWriterUserId).toBeNull();
   });
 
-  it('re-pins on every turn, so the next sender never inherits the previous one\'s identity', async () => {
+  it('re-pins each running turn and clears between different senders', async () => {
     const { registry, svc, channelId, opts } = setup();
-    await svc.send({ ...opts(7), writerUserId: 42 }, 'first');
+    await svc.send(opts(7), 'warm');
+    const live = registry.channelGet(channelId)!;
 
-    await svc.send({ ...opts(9), writerUserId: 8 }, 'second');
+    const run = async (identityUserId: number, writerUserId: number, text: string) => {
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      live.session.prompt.mockImplementationOnce(async (prompt: string) => {
+        markStarted();
+        await gate;
+        live.session.messages.push({ role: 'assistant', content: `re: ${prompt}` });
+      });
+      const pending = svc.send({ ...opts(identityUserId), writerUserId }, text);
+      await started;
+      expect(live.turnWriterUserId).toBe(writerUserId);
+      release();
+      await pending;
+      expect(live.turnWriterUserId).toBeNull();
+    };
 
-    expect(registry.channelGet(channelId)!.turnWriterUserId).toBe(8);
-  });
-
-  it('clears the pin when a linked sender is followed by an unlinked one', async () => {
-    const { registry, svc, channelId, opts } = setup();
-    await svc.send({ ...opts(7), writerUserId: 42 }, 'first');
-
-    await svc.send(opts(9), 'second');
-
-    expect(registry.channelGet(channelId)!.turnWriterUserId).toBeNull();
+    await run(7, 42, 'first');
+    await run(9, 8, 'second');
   });
 });

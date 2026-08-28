@@ -478,14 +478,15 @@ describe('a room turn resolves personal contributions for whoever is writing', (
     expect(r.active()).toEqual(['Read']);
   });
 
-  // The Phase C shape, for contributions: a child carries no account identity of its own (delegatedExecution
-  // refuses one), so without the parent's LIVE record it inherits either nothing — "load my checklist and
-  // follow it" silently finding none the moment the work is delegated — or, far worse, the room's row owner.
-  it('composes a delegated child from the writer who delegated it, never from the room\'s owner', async () => {
+  // A child carries no account identity of its own (delegatedExecution refuses one), so the Delegate call
+  // captures the current room writer into its durable scope while the parent turn is live. The room clears
+  // its transient writer after settlement; a resumed child must still compose from the captured account,
+  // never from the room opener.
+  it('composes a delegated child from the captured writer, never from the room\'s owner', async () => {
     const r = room({ skills: [skill('amy-checklist', 2)], channelId: 'discord-parent' });
     await r.write(2, 'go');
     const parentSessionId = channelSessionId('discord-parent');
-    expect(r.registry.channelGet('discord-parent')!.turnWriterUserId).toBe(2);
+    expect(r.registry.channelGet('discord-parent')!.turnWriterUserId).toBeNull();
     // The room row is anchored on account 1 — the opener — which is exactly the id a child must NOT take.
     expect(r.store.getSession(parentSessionId)!.user_id).toBe(1);
 
@@ -493,7 +494,13 @@ describe('a room turn resolves personal contributions for whoever is writing', (
       channelId: 'subagent-sub-1',
       ownerUserId: 1,
       parentSessionId,
-      delegatedAccess: { admin: false, projectIds: [], owner: false, permissionBoundary: null },
+      delegatedAccess: {
+        admin: false,
+        projectIds: [],
+        owner: false,
+        permissionBoundary: null,
+        contributionUserId: 2,
+      },
       accountAllow: undefined,
       scheduled: false,
     }, {
@@ -504,8 +511,7 @@ describe('a room turn resolves personal contributions for whoever is writing', (
 
     const child = r.spawnedWith('brain-ch-subagent-sub-1');
     expect(child.contributionUserId).toBe(2);
-    // The child carries no account identity of its own — which is precisely why the id above cannot be
-    // derived from identity and has to come off the parent.
+    // The child carries no account identity of its own — the captured scope is the only safe authority.
     expect(opts.identity.elowenUserId).toBeUndefined();
   });
 });
