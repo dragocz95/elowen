@@ -32,7 +32,7 @@ export function SkinSwitcher({ collapsed = false }: { collapsed?: boolean }) {
       {/* The name is the only way to tell two dark skins apart at a glance, so it stays visible wherever
           there is room. `collapsed` is the narrow rail, where the icon carries it and the title attribute
           and aria-label still say which skin is on. */}
-      {collapsed ? null : <span className="hidden text-[11px] font-medium uppercase tracking-wide lg:inline">{name}</span>}
+      {collapsed ? null : <span className="skin-switcher__name hidden text-[11px] font-medium uppercase tracking-wide lg:inline">{name}</span>}
     </button>
   );
 }

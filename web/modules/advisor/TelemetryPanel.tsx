@@ -86,7 +86,7 @@ const RAIL_SCROLL = 'telemetry-rail-scroll overflow-y-auto overflow-x-hidden';
 /** A section heading: a quiet label with an optional right-aligned meta value, mirroring the CLI rail. */
 function SectionHead({ label, meta }: { label: string; meta?: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-2 text-tiny uppercase tracking-wide text-text-subtle">
+    <div className="telemetry-section-head flex items-baseline justify-between gap-2 text-tiny uppercase tracking-wide text-text-subtle">
       {/* The label truncates like the meta does: it is a translated string, and at the narrow end of the
           rail an uppercase heading like "OTHER PROCESSES" is otherwise a width floor the row cannot go
           under, pushing the whole section past the column. */}

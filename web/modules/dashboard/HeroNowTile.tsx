@@ -27,19 +27,14 @@ export function HeroNowTile({ now, presence }: { now: number; presence: Presence
 
   return (
     <section className="relative isolate overflow-hidden px-1 py-5 @container @sm:px-3 @sm:py-7">
-      <div
-        className="pointer-events-none absolute inset-0 -z-10"
-        style={{
-          background:
-            'radial-gradient(circle at 78% 40%, rgb(var(--accent-rgb) / 0.1), transparent 35%),'
-            + ' linear-gradient(140deg, rgb(var(--accent-rgb) / 0.022), transparent 52%)',
-        }}
-        aria-hidden
-      />
+      {/* The wash itself is declared in dashboard-cosmos.css. It was an inline `style`, which no
+          stylesheet can override — a design that does not want an accent gradient behind its dashboard
+          had no way to say so. */}
+      <div className="dash-aura pointer-events-none absolute inset-0 -z-10" aria-hidden />
       {/* No min-height below the orbit threshold. The grid used to reserve 29rem at every width — a
           figure chosen when the whole app was rendered at ~72% — which on a phone was half a screen of
           nothing above the fold. Room is reserved only where the two-column field is actually drawn. */}
-      <div className="grid items-center gap-6 @3xl:min-h-[22rem] @3xl:grid-cols-[minmax(0,1fr)_minmax(20rem,1fr)]">
+      <div className="hero-now__field grid items-center gap-6 @3xl:min-h-[22rem] @3xl:grid-cols-[minmax(0,1fr)_minmax(20rem,1fr)]">
         <div className="flex min-w-0 flex-col gap-4">
           {presence.primary ? (
             <Link href="/chat" className="group flex items-center gap-3 rounded-2xl border border-accent/15 bg-accent/[0.04] px-4 py-3 shadow-[0_0_24px_rgb(var(--accent-rgb)_/_0.07)] transition-[border-color,background-color] hover:border-accent/40 hover:bg-accent/[0.07]">
@@ -71,7 +66,7 @@ export function HeroNowTile({ now, presence }: { now: number; presence: Presence
           <HomeComposer placeholder={t.dashboard.composerPlaceholder} actionLabel={t.dashboard.composerAction.replace('{agentName}', appName)} />
         </div>
 
-        <div className="flex flex-col justify-center @3xl:min-h-[18rem] @3xl:self-stretch">
+        <div className="hero-now__signals flex flex-col justify-center @3xl:min-h-[18rem] @3xl:self-stretch">
           <HeroCosmos now={now} state={presence.state} presenceLabel={`${appName}: ${stateLabel}`} />
         </div>
       </div>

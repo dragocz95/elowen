@@ -127,16 +127,18 @@
   border-top: 1px solid var(--color-border);
 }
 
-/* Metrics as a measurement strip: value and label on one line, wrapping instead of scrolling so a phone
-   shows all of them at once.
-   The separator moves to the LEADING edge. The base rule draws it trailing and drops it on :last-child,
-   which is correct for one row and wrong for a wrapped strip: every row but the last then ends with a
-   hairline hanging in empty space, and there is no selector for "last in its row". Drawn leading and
-   dropped on :first-child, a wrapped row instead opens flush against the hero's own left edge, where the
-   hairline lines up with the content above it. */
+/* The metrics become a SENTENCE of readings, not a band of cells. They were boxed compartments divided
+   by vertical hairlines, which is the "command grid" this design was asked to stop being: four boxes
+   under the title on every register, saying "4 users", "1 administrator", "0 projects". The facts are
+   worth keeping and the frame around each one is not, so the rules and the padding go and the strip
+   becomes a spaced row that wraps.
+   The mono goes with them. A metric's value is not always a number — the settings strip reports
+   "Running" and an em dash — and a proportional face with tabular figures keeps the digits aligned
+   without setting an English word in a typewriter. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics {
   display: flex;
   flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
   overflow: visible;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric {
@@ -144,23 +146,28 @@
   flex: 0 0 auto;
   flex-direction: row;
   align-items: baseline;
-  gap: 0.5rem;
-  padding: 0.625rem 1rem;
-  border-inline-start: 1px solid var(--color-border);
-  border-inline-end: 0;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric:first-child {
-  padding-inline-start: 0;
-  border-inline-start: 0;
+  gap: 0.375rem;
+  padding: 0;
+  border: 0;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric__value {
-  font-size: 1rem;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: normal;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric__label {
   margin-top: 0;
-  color: var(--color-text-subtle);
-  font-size: 0.6875rem;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
   white-space: nowrap;
+}
+/* The band the strip used to sit in goes too. Between the description and the section tabs there were
+   three horizontal rules within 90px of each other, none of which separated anything the reader was
+   about to compare. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__body {
+  border-top: 0;
 }
 
 /* A phone gives the masthead the least room and needs the register to start on the first screen, so the
@@ -171,8 +178,8 @@
     gap: 0.625rem;
     padding-block: 0.875rem 0.75rem;
   }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric {
-    padding: 0.5rem 0.75rem;
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics {
+    gap: 0.25rem 1rem;
   }
 }
 
@@ -304,8 +311,13 @@
 }
 /* A column name is a NAME. It was set as 10px mono at 0.1em of tracking — a treatment for a machine
    identifier, applied to the words "Created" and "Owner" — which is what made every register read as a
-   log dump. 12px, medium, sentence case, in the sans the rest of the page is set in. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header .data-table-cell {
+   log dump. 12px, medium, sentence case, in the sans the rest of the page is set in.
+   The descendant selector is load-bearing and not defensive: a SORTABLE column is a <button> inside the
+   cell carrying its own copy of the uppercase utility, so restating the cell alone left "Memory" and
+   "Category" in sentence case beside "UPDATED" and "VITALITY" in caps — the register's own header
+   disagreeing with itself, column by column. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header .data-table-cell,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header .data-table-cell :is(button, span) {
   color: var(--color-text-muted);
   font-family: var(--font-sans);
   font-size: 0.75rem;
@@ -441,6 +453,29 @@
   font-size: 0.8125rem;
   line-height: 1.5;
 }
+/* A fixed 20rem control track needs a page wide enough to hold it beside the text. Below that the row
+   stacks: what it is, then the control under it, full width. On a 45rem page a 20rem track leaves the
+   description around 15rem to wrap in, which is four words a line.
+   The range STARTS at 38.75rem because that is where the base stylesheet already collapses the record to
+   a single track (spatial-deck.css) — an open-ended query would win against that rule and put a second
+   column back on a phone. It ends at 48rem, which is where 20rem stops crowding what is beside it. */
+@container workspace-shell (38.75rem <= width < 48rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__control {
+    grid-column: 1 / -1;
+  }
+}
+
+/* A badge is a small STATE — "Up to date", "Running", "Beta". It is set in the mono face, which is the
+   treatment this design reserves for identifiers and machine output. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .badge {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+}
 
 /* The danger zone is its own card at the BOTTOM of the document, whatever order the page states its
    sections in. Destructive controls are not one section among others: they are the last thing on the
@@ -517,6 +552,146 @@
    had to be given the extra pixel back. At 48px the control measures 47px and clears the floor on its
    own, on every pointer, which is the better answer to the same problem.
    `tests/e2e/specs/studio.viewport.e2e.ts` measures it. */
+
+/* ---------------------------------------------------------------------------------------------------
+ * /dash.
+ *
+ * The dashboard was the page where the two designs disagreed most. It drew a mascot at the centre of a
+ * 20rem field, three pods hung off it at fixed angles, curved SVG filaments tying each one back to the
+ * core, and a glowing accent-ringed orb on every pod — an orrery, on the page whose job is to state
+ * four numbers. `HeroCosmos` answers this by giving the `command` profile a `grid` mode with no core,
+ * no filaments and no orbit maths, which is what leaves the pods for a stylesheet to arrange.
+ *
+ * What they become is the anatomy the rest of this design already uses: bordered cards, a muted label,
+ * a figure, a line of detail.
+ * --------------------------------------------------------------------------------------------------- */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__filaments,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__core {
+  display: none;
+}
+/* No accent wash behind the hero, and no room held open for an orbit that is not drawn. The tile
+   reserved 22rem for the field and 18rem for the column inside it — measurements for a mascot with
+   three pods circling it — which in the flat layout is 350px of empty page between the composer and the
+   first section heading. The content sets the height now. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-aura {
+  background: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-now__field,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-now__signals {
+  min-height: 0;
+}
+/* The composer's 70px accent bloom goes with it. A focused input in this design says so with its ring;
+   a second, coloured halo underneath is the ember language leaking through the one control on the page
+   the reader is most likely to be looking at. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .home-composer,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .home-composer:focus-within {
+  box-shadow: none;
+}
+/* `auto-fit` rather than a fixed count: the pod SET is not fixed either — `cron` appears only where the
+   scheduler plugin is installed — so a three-column rule would leave a hole on the instances that have
+   two. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pods {
+  position: relative;
+  inset: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod {
+  position: relative;
+  translate: none;
+  width: auto;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-document);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod:hover {
+  border-color: var(--color-border-strong);
+  transform: none;
+}
+/* A glyph, not an orb. The pod's icon carried a 2.4rem accent ring, an outer radial bloom, four
+   flickering embers and a triple box-shadow — five decorations on a 14px symbol whose whole job is to
+   say which reading this card holds. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-elevated);
+  color: var(--color-text-muted);
+  box-shadow: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb::before,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb::after {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__label {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__value {
+  font-family: var(--font-sans);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__detail {
+  font-size: 0.8125rem;
+}
+/* The alert pod keeps its meaning and loses its glow: the warning tone moves onto the border and the
+   figure, where it is still unmistakable and no longer lights up a third of the card. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod--alert {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod--alert .hero-cosmos__orb {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+  background: var(--color-elevated);
+  color: var(--color-warning);
+  box-shadow: none;
+}
+
+/* A section heading on the dashboard. `.dash-label` is 10.5px of ember-coloured mono at 0.22em of
+   tracking with a glow behind it — the design's loudest possible way to write the word "Activity". It
+   is a heading, and every other heading in this design is sentence-case sans on the page's own ink. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-label {
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-shadow: none;
+  text-transform: none;
+}
+/* "Live" beside that heading is a state, and this design writes a state as a quiet word on the muted
+   ink rather than as a 9px accent-outlined capsule. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-live {
+  padding: 0;
+  border: 0;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* Two labels elsewhere in the app carry the same treatment and the same correction: the skin switcher's
+   name in the page bar, and the telemetry rail's section heads. Both are words — "Studio Light",
+   "Context", "Other processes" — and neither is a machine identifier. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .skin-switcher__name,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .telemetry-section-head {
+  letter-spacing: normal;
+  text-transform: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .telemetry-section-head {
+  font-size: 0.75rem;
+}
 
 /* Motion is a courtesy: the transitions introduced above resolve at once for a reader who asked for
    less of it. */
