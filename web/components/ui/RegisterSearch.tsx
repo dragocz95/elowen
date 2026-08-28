@@ -36,7 +36,7 @@ export function RegisterSearch({
   const trailingPad = clearable && showCount ? 'pr-16' : clearable ? 'pr-9' : showCount ? 'pr-12' : '';
 
   return (
-    <div className={`relative flex min-w-0 flex-1 basis-40 items-center${className ? ` ${className}` : ''}`}>
+    <div className={`register-search relative flex min-w-0 flex-1 basis-40 items-center${className ? ` ${className}` : ''}`}>
       <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
       <Input
         type="search"

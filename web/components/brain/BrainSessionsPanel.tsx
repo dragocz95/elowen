@@ -197,7 +197,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <ControlSurfaceToolbar testId="brain-sessions-toolbar" className="flex-col items-stretch gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <ControlSurfaceToolbar testId="brain-sessions-toolbar" layout="split">
         {/* The heading carries the count and the help affordance; the one-line description that used to
             sit under it said what the table already shows. */}
         <div className="flex min-w-0 items-baseline gap-2">

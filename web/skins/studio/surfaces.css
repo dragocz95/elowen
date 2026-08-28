@@ -215,6 +215,12 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-register {
   padding: 0;
 }
+/* The search field stops growing at a field's width. It is declared `flex-1` so it gives a narrow
+   toolbar its room back, which is right — but on a capped 84rem page with two filters beside it that
+   made a 900px text box, and a text box that wide reads as the page rather than as a control. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-toolbar .register-search {
+  max-width: 24rem;
+}
 /* A loading, error or empty surface takes the CARD the table would have taken. Without this the state
    floats on the canvas where the register was, and a page waiting for its rows looks like a page with
    nothing on it. */

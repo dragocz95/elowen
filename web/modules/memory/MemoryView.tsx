@@ -327,7 +327,7 @@ export function MemoryView() {
           : (
           <div className="workspace-master-detail" data-detail={selectedId != null}>
           <div className="flex min-w-0 flex-col gap-4">
-            <ControlSurfaceToolbar className="flex-col items-stretch">
+            <ControlSurfaceToolbar layout="stacked">
               <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
                 <RegisterSearch
                   value={query}

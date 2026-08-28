@@ -232,7 +232,7 @@ export function ProjectsView() {
         }}
       >
         <ControlSurfaceDocument>
-          <ControlSurfaceToolbar className="flex-wrap">
+          <ControlSurfaceToolbar>
             <RegisterSearch
               value={query}
               onChange={setQuery}
