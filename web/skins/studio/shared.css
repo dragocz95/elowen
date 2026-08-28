@@ -49,7 +49,6 @@
 /* 256px expanded, ~52px folded. The column is inset from the content by a hairline, never by a shadow. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav {
   position: relative;
-  z-index: 1;
   display: flex;
   flex: none;
   flex-direction: column;
@@ -60,6 +59,19 @@
   background: var(--color-surface);
   color: var(--color-text-muted);
   transition: width var(--motion-base) var(--ease-out);
+}
+/* As a COLUMN the navigation sits one step above the content it insets from, so its hairline and its
+   active marker are never clipped by a neighbouring surface.
+
+   The drawer is deliberately excluded. As a sheet it is not part of this stylesheet's stacking at all: it
+   belongs to the app's overlay layer, and the component already carries `.overlay-layer-nav-drawer`,
+   which is what assigns `--z-nav-drawer` (app/styles/components/primitives.css). Stating a z-index for
+   every mode here would out-specify that class — the stylesheet tree is UNLAYERED, so this selector beats
+   it whatever the token says — and it put the sheet at `z-index: 1` UNDERNEATH its own scrim at 80: the
+   menu washed out, every destination stopped being hittable, and a tap meant to navigate dismissed the
+   menu instead. The layer token owns the sheet; this rule owns the column. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav:not([data-mode='drawer']) {
+  z-index: 1;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-side='left'] {
   border-right: 1px solid var(--color-border);
@@ -364,6 +376,22 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: -1px;
+}
+
+/* A pointer that is a finger needs a target it can actually hit. The rows above are drawn at a 32px
+   rhythm — comfortable to read and to click, and 12px under the floor `--touch-target` declares — and at
+   drawer width this column IS the phone's only menu, so every destination in it would be under the floor
+   at once. primitives.css already grows `.overlay-menu-item` and `.overlay-touch-target` exactly this way;
+   a row a SKIN owns has to say so itself, because the stylesheet tree is unlayered and a utility class on
+   the element could never have reached it.
+
+   Gated on the POINTER and never on the width, like every other touch rule in the app: a narrow window on
+   a laptop still has a mouse and must keep the compact rhythm rather than grow finger-sized controls. */
+@media (pointer: coarse) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle {
+    min-height: var(--touch-target);
+  }
 }
 
 /* Motion is a courtesy, never a requirement: everything above resolves to its end state at once for a

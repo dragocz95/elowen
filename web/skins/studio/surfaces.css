@@ -305,6 +305,16 @@
   font-size: 0.8125rem;
 }
 
+/* The row's open control is `position: absolute; inset: 0` (data-table.css), so its height is the row's
+   CONTENT box: a 44px row less its 1px rule leaves a 43px target, one pixel under `--touch-target`. The
+   scan rhythm a mouse reads stays exactly 44px — only a finger buys the extra pixel that puts the control
+   back on the floor, which is the same pointer-gated trade the rest of the app makes. */
+@media (pointer: coarse) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-grid {
+    --data-table-row: 2.8125rem;
+  }
+}
+
 /* Motion is a courtesy: the transitions introduced above resolve at once for a reader who asked for
    less of it. */
 @media (prefers-reduced-motion: reduce) {

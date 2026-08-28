@@ -50,10 +50,29 @@ const SkinContext = createContext<SkinContextValue | null>(null);
 
 /** Applies a choice to the live document. This is the entire mechanism: every skin's CSS is already in the
  *  page, scoped under its own `[data-skin]`, so the attribute alone decides which rules match. No fetch,
- *  no reload, no flash. */
+ *  no reload, no flash.
+ *
+ *  The attribute is not quite the whole story, because it is not the only thing painting the canvas. The
+ *  server writes an inline `background-color` onto <html> and <body> (app/layout.tsx) so the document has
+ *  the right fill BEFORE the stylesheet is parsed — and an inline style outranks the `var(--color-bg)`
+ *  rule in base.css that would otherwise follow the skin. Left in place it freezes the canvas at whatever
+ *  design the document was SERVED as: switching to studio-oled repainted every surface near-black while
+ *  <html> stayed #fafafa underneath, which shows in the overscroll fill and in the browser's own chrome.
+ *
+ *  So the switch hands the canvas back to the cascade. Deleting the inline value is the whole fix, and it
+ *  needs no second copy of any palette on the client: by the time anyone can press the switcher the
+ *  stylesheet has long since landed, so `--color-bg` is already the authority the anti-FOUC value was
+ *  standing in for. The same reasoning covers the theme colour, which is read back from the resolved token
+ *  rather than restated — the address bar and the task switcher then follow the design like everything
+ *  else, instead of reporting the one the document happened to arrive in. */
 function applySkin(choice: SkinChoice): void {
-  if (choice === BUILTIN_SKIN) document.documentElement.removeAttribute('data-skin');
-  else document.documentElement.setAttribute('data-skin', choice);
+  const root = document.documentElement;
+  if (choice === BUILTIN_SKIN) root.removeAttribute('data-skin');
+  else root.setAttribute('data-skin', choice);
+  root.style.removeProperty('background-color');
+  document.body?.style.removeProperty('background-color');
+  const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (themeColor) themeColor.content = getComputedStyle(root).backgroundColor;
 }
 
 /** `initialChoice` and `fallback` are what the SERVER rendered this document with. Starting state must
