@@ -120,7 +120,7 @@ function McpServerRow({ server, showScope, selected, onOpen }: {
             also travels as text a screen reader reads out with the row. */}
         <span className="sr-only">{label}</span>
       </C.DataTableCell>
-      <C.DataTableCell title={server.name}>
+      <C.DataTableCell lines={1} title={server.name}>
         <span className="flex w-full min-w-0 items-center gap-2">
           <span className="truncate text-sm text-text">{server.name}</span>
           {!server.enabled ? <C.Badge tone="muted">{s.statusDisabled}</C.Badge> : null}
@@ -130,15 +130,15 @@ function McpServerRow({ server, showScope, selected, onOpen }: {
         <C.Badge>{server.transport.toUpperCase()}</C.Badge>
       </C.DataTableCell>
       {showScope ? (
-        <C.DataTableCell priority="wide" className="text-xs text-text-muted">
+        <C.DataTableCell priority="wide" lines={1} className="text-xs text-text-muted">
           {scopeLabel(server.scope, s)}
         </C.DataTableCell>
       ) : null}
-      <C.DataTableCell priority="wide" className="text-xs text-text-muted">
+      <C.DataTableCell priority="wide" lines={1} className="text-xs text-text-muted">
         <span className="flex items-center gap-1.5"><Wrench size={DATA_TABLE_ICON_SIZE} aria-hidden />{server.toolCount}</span>
       </C.DataTableCell>
       {/* A failure message is far longer than the column: one line, rest on hover. */}
-      <C.DataTableCell priority="wide" title={server.lastError ?? label} className="text-xs text-text-muted">
+      <C.DataTableCell priority="wide" lines={1} title={server.lastError ?? label} className="text-xs text-text-muted">
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0">{server.lastError ? <TriangleAlert size={DATA_TABLE_ICON_SIZE} aria-hidden /> : <PlugZap size={DATA_TABLE_ICON_SIZE} aria-hidden />}</span>
           <span className={`truncate ${server.lastError ? 'text-danger' : ''}`}>{server.lastError ?? label}</span>
@@ -404,12 +404,12 @@ export function McpServersPage() {
           {/* Both this column and the one carrying the failure text state the connection. Only one of
               them can be called "Status" out loud, so the dot column's name is for assistive
               technology alone rather than a second visible header with the same word. */}
-          <C.DataTableCell header labelHidden>{s.colStatus}</C.DataTableCell>
-          <C.DataTableCell header>{s.name}</C.DataTableCell>
-          <C.DataTableCell header priority="wide">{s.transport}</C.DataTableCell>
-          {canManageInstance ? <C.DataTableCell header priority="wide">{s.scope}</C.DataTableCell> : null}
-          <C.DataTableCell header priority="wide">{s.tools}</C.DataTableCell>
-          <C.DataTableCell header priority="wide">{s.colStatus}</C.DataTableCell>
+          <C.DataTableCell header labelHidden lines={1}>{s.colStatus}</C.DataTableCell>
+          <C.DataTableCell header lines={1}>{s.name}</C.DataTableCell>
+          <C.DataTableCell header priority="wide" lines={1}>{s.transport}</C.DataTableCell>
+          {canManageInstance ? <C.DataTableCell header priority="wide" lines={1}>{s.scope}</C.DataTableCell> : null}
+          <C.DataTableCell header priority="wide" lines={1}>{s.tools}</C.DataTableCell>
+          <C.DataTableCell header priority="wide" lines={1}>{s.colStatus}</C.DataTableCell>
           {/* The chevron track carries no header: its cell is decorative. */}
         </C.DataTableRow>
         {pageItems.map((server) => (

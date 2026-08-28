@@ -82,11 +82,16 @@ const firstRow = (): HTMLElement => {
   return row;
 };
 
-/** The grid items of a row. A row that opens a record also carries the row-open button, which is an
- *  absolutely positioned overlay rather than a cell — it occupies no track and must not be counted
- *  against the template. */
+/** The grid items of a row. A row that opens a record also carries the row-open control. That control IS
+ *  a cell — `role="row"` admits nothing else, and a screen reader does not expose content that sits
+ *  outside one — but an absolutely positioned cell, and an absolutely positioned child of a grid
+ *  container is not a grid item at all. It occupies no track and must not be counted against the
+ *  template, and neither must the header's matching column name, taken out of the flow the same way. */
 const cellsOf = (row: Element): Element[] =>
-  Array.from(row.children).filter((child) => child.getAttribute('role') === 'cell' || child.getAttribute('role') === 'columnheader');
+  Array.from(row.children).filter((child) =>
+    (child.getAttribute('role') === 'cell' || child.getAttribute('role') === 'columnheader')
+    && !child.classList.contains('data-table-open-cell')
+    && !child.classList.contains('data-table-open-header'));
 
 describe('MemoryView column grid', () => {
   it('declares one track per cell, so no cell wraps onto a second row', async () => {

@@ -169,6 +169,7 @@ export const cs = {
     openTerminal: 'Otevřít terminál',
     outcomeOk: 'Úspěch',
     outcomeFail: 'Selhalo',
+    openColumn: 'Otevřít',
   },
   pagination: {
     label: 'Stránkování',

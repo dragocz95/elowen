@@ -428,9 +428,9 @@ export function MemoryView() {
                           <Checkbox checked={allSelected} />
                         </button>
                       </DataTableCell>
-                      <DataTableCell header>{t.page.memory}</DataTableCell>
-                      <DataTableCell header priority="wide">{t.memory.categoryFilter}</DataTableCell>
-                      <DataTableCell header priority="wide">{t.memory.filterKind}</DataTableCell>
+                      <DataTableCell header lines={1}>{t.page.memory}</DataTableCell>
+                      <DataTableCell header priority="wide" lines={1}>{t.memory.categoryFilter}</DataTableCell>
+                      <DataTableCell header priority="wide" lines={1}>{t.memory.filterKind}</DataTableCell>
                       <DataTableSortCell priority="wide" active={sortKey === 'vitality'} direction={sortDirection} onSort={() => changeSort('vitality')}>
                         {t.memory.fieldVitality}
                       </DataTableSortCell>
@@ -444,7 +444,7 @@ export function MemoryView() {
                         {t.memory.usedAt}
                       </DataTableSortCell>
                       {/* The trailing chevron track: an affordance, not a column, so its header is empty. */}
-                      <DataTableCell header aria-hidden>{null}</DataTableCell>
+                      <DataTableCell header aria-hidden lines={1}>{null}</DataTableCell>
                     </DataTableRow>
 
                     {layout === 'grouped' ? (
@@ -598,11 +598,11 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
           <Checkbox checked={selected} />
         </button>
       </DataTableCell>
-      <DataTableCell title={memory.body} className="flex items-center gap-2">
+      <DataTableCell lines={1} title={memory.body} className="flex items-center gap-2">
         <span className="truncate text-sm text-text">{memory.body}</span>
         {memory.status !== 'active' ? <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge> : null}
       </DataTableCell>
-      <DataTableCell priority="wide" className="truncate text-xs text-text-muted">
+      <DataTableCell priority="wide" lines={1} className="truncate text-xs text-text-muted">
         {category ? (
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0" style={{ color: categorySwatch(category.color) }}><CategoryIcon name={category.icon} size={12} /></span>
@@ -610,17 +610,17 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
           </span>
         ) : <span className="italic text-text-muted/65">{t.memory.categoryUncategorized}</span>}
       </DataTableCell>
-      <DataTableCell priority="wide" className="truncate font-mono text-xs text-text-muted">{memory.kind || '—'}</DataTableCell>
-      <DataTableCell priority="wide" className="whitespace-nowrap text-xs">
+      <DataTableCell priority="wide" lines={1} className="truncate font-mono text-xs text-text-muted">{memory.kind || '—'}</DataTableCell>
+      <DataTableCell priority="wide" lines={1} className="whitespace-nowrap text-xs">
         <VitalityCell value={memory.vitality} />
       </DataTableCell>
-      <DataTableCell priority="wide" className="font-mono text-xs text-text-muted">
+      <DataTableCell priority="wide" lines={1} className="font-mono text-xs text-text-muted">
         <span className="flex items-center gap-1"><Gauge size={12} aria-hidden />{memory.importance}/5</span>
       </DataTableCell>
-      <DataTableCell priority="wide" title={updated.title} className="whitespace-nowrap text-xs text-text-muted">
+      <DataTableCell priority="wide" lines={1} title={updated.title} className="whitespace-nowrap text-xs text-text-muted">
         <span className="flex items-center gap-1.5"><Clock size={12} aria-hidden />{updated.label}</span>
       </DataTableCell>
-      <DataTableCell priority="wide" title={used.title} className="whitespace-nowrap text-xs text-text-muted">
+      <DataTableCell priority="wide" lines={1} title={used.title} className="whitespace-nowrap text-xs text-text-muted">
         <span className="flex items-center gap-1.5" data-testid="memory-used-cell">
           <Activity size={12} aria-hidden />
           <span className={usedMs == null ? 'text-text-muted/60' : undefined}>{used.label}</span>

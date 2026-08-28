@@ -157,10 +157,10 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
       {filtered.length === 0 ? <C.EmptyState title={s.emptyWorkspaces} icon={FolderGit2} /> : (
         <C.DataTable ariaLabel={s.tableLabel} columns="minmax(14rem,1.2fr) minmax(9rem,.7fr) minmax(14rem,1fr) minmax(13rem,1fr) 1.25rem" compactColumns="minmax(0,1fr) 1.25rem">
           <C.DataTableRow header>
-            <C.DataTableCell header>{s.columnWorkspace}</C.DataTableCell>
-            <C.DataTableCell header priority="wide">{s.columnProject}</C.DataTableCell>
-            <C.DataTableCell header priority="wide">{s.columnBranch}</C.DataTableCell>
-            <C.DataTableCell header priority="wide">{s.columnState}</C.DataTableCell>
+            <C.DataTableCell header lines={1}>{s.columnWorkspace}</C.DataTableCell>
+            <C.DataTableCell header priority="wide" lines={1}>{s.columnProject}</C.DataTableCell>
+            <C.DataTableCell header priority="wide" lines={1}>{s.columnBranch}</C.DataTableCell>
+            <C.DataTableCell header priority="wide" lines={1}>{s.columnState}</C.DataTableCell>
             {/* The chevron track carries no header: its cell is decorative. */}
           </C.DataTableRow>
           {filtered.map((workspace) => {
@@ -184,8 +184,8 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
                     <div className="mt-2 sm:hidden">{stateBadges(workspace)}</div>
                   </div>
                 </C.DataTableCell>
-                <C.DataTableCell priority="wide" title={projectName} className="text-xs text-text-muted">{projectName}</C.DataTableCell>
-                <C.DataTableCell priority="wide" title={workspace.branch} className="font-mono text-xs text-text-muted">{workspace.branch}</C.DataTableCell>
+                <C.DataTableCell priority="wide" lines={1} title={projectName} className="text-xs text-text-muted">{projectName}</C.DataTableCell>
+                <C.DataTableCell priority="wide" lines={1} title={workspace.branch} className="font-mono text-xs text-text-muted">{workspace.branch}</C.DataTableCell>
                 <C.DataTableCell priority="wide" lines="auto">{stateBadges(workspace)}</C.DataTableCell>
                 <C.DataTableChevronCell />
               </C.DataTableRow>

@@ -307,17 +307,17 @@ function McpServerRow({ server, showScope, selected, onOpen }) {
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-2 w-2 rounded-full ${statusDot(server)}`, "aria-hidden": true }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "sr-only", children: label })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { title: server.name, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex w-full min-w-0 items-center gap-2", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { lines: 1, title: server.name, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex w-full min-w-0 items-center gap-2", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "truncate text-sm text-text", children: server.name }),
           !server.enabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { tone: "muted", children: s.statusDisabled }) : null
         ] }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: "auto", className: "whitespace-nowrap", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { children: server.transport.toUpperCase() }) }),
-        showScope ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", className: "text-xs text-text-muted", children: scopeLabel(server.scope, s) }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", className: "text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex items-center gap-1.5", children: [
+        showScope ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, className: "text-xs text-text-muted", children: scopeLabel(server.scope, s) }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, className: "text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex items-center gap-1.5", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: DATA_TABLE_ICON_SIZE, "aria-hidden": true }),
           server.toolCount
         ] }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", title: server.lastError ?? label, className: "text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex min-w-0 items-center gap-1.5", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, title: server.lastError ?? label, className: "text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex min-w-0 items-center gap-1.5", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "shrink-0", children: server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(TriangleAlert, { size: DATA_TABLE_ICON_SIZE, "aria-hidden": true }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PlugZap, { size: DATA_TABLE_ICON_SIZE, "aria-hidden": true }) }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `truncate ${server.lastError ? "text-danger" : ""}`, children: server.lastError ?? label })
         ] }) }),
@@ -527,12 +527,12 @@ function McpServersPage() {
         compactColumns: "2rem minmax(0,1fr) 1.25rem",
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.DataTableRow, { header: true, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, labelHidden: true, children: s.colStatus }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, children: s.name }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.transport }),
-            canManageInstance ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.scope }) : null,
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.tools }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.colStatus })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, labelHidden: true, lines: 1, children: s.colStatus }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, lines: 1, children: s.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", lines: 1, children: s.transport }),
+            canManageInstance ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", lines: 1, children: s.scope }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", lines: 1, children: s.tools }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", lines: 1, children: s.colStatus })
           ] }),
           pageItems.map((server) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             McpServerRow,

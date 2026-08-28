@@ -250,7 +250,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
               <DataTableSortCell priority="wide" active={sort === 'updated'} direction={direction} onSort={() => sortBy('updated')}>{t.sessionsPanel.colUpdated}</DataTableSortCell>
               {/* The actions column has no name to print, but it is still a cell: `role="presentation"`
                   would leave a non-cell child inside role="row", which is invalid. */}
-              <DataTableCell header><span className="sr-only">{t.common.actions}</span></DataTableCell>
+              <DataTableCell header lines={1}><span className="sr-only">{t.common.actions}</span></DataTableCell>
             </DataTableRow>
             {pageRows.map((s) => {
               // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
@@ -271,13 +271,15 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                 : userById.get(s.lastWriterId) ?? { id: s.lastWriterId, username: s.lastWriterLabel || String(s.lastWriterId) };
               return (
                 <DataTableRow key={s.id} interactive className="group" onContextMenu={(event) => openRowContextMenu(event, s)}>
-                  <DataTableCell priority="wide">
+                  <DataTableCell priority="wide" lines={1}>
                     <span className="flex min-w-0 items-center gap-1.5" title={s.model}>
                       <ModelIcon name={s.model} size={14} />
                       <span className="truncate text-xs text-text-muted">{s.model}</span>
                     </span>
                   </DataTableCell>
-                  <DataTableCell>
+                  {/* The title IS the row's control here, so the cell keeps its focus ring and its own
+                      layout instead of being clipped; the label inside truncates on its own. */}
+                  <DataTableCell lines="auto">
                     <button
                       type="button"
                       onClick={() => { openBrainSession(s.id, continuable); afterOpen?.(); }}
@@ -292,7 +294,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                       {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
                     </button>
                   </DataTableCell>
-                  <DataTableCell priority="wide">
+                  <DataTableCell priority="wide" lines={1}>
                     {/* The account row when it is known (it carries the uploaded picture); otherwise the
                         name the session itself reported, which still yields a monogram. */}
                     {/* On a SHARED room the person who writes is the useful answer, and it is NOT the
@@ -315,11 +317,11 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                       </span>
                     ) : null}
                   </DataTableCell>
-                  <DataTableCell priority="wide" className="text-right font-mono text-tiny text-text-muted">
+                  <DataTableCell priority="wide" lines={1} className="text-right font-mono text-tiny text-text-muted">
                     {s.tokens != null ? formatTokens(s.tokens) : ''}
                   </DataTableCell>
-                  <DataTableCell priority="wide" className="font-mono text-tiny text-text-muted">{localDateTime(s.updated_at, locale, false)}</DataTableCell>
-                  <DataTableCell>
+                  <DataTableCell priority="wide" lines={1} className="font-mono text-tiny text-text-muted">{localDateTime(s.updated_at, locale, false)}</DataTableCell>
+                  <DataTableCell lines="auto">
                     <ActionMenu
                       label={`${title}: ${t.common.actions}`}
                       items={rowActions(s)}

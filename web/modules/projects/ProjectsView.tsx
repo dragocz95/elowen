@@ -254,12 +254,12 @@ export function ProjectsView() {
                   ) : (
                     <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(14rem,1.2fr) 3rem 1.25rem" compactColumns="minmax(0,1fr) 3rem 1.25rem" data-testid="projects-register">
                       <DataTableRow header>
-                        <DataTableCell header>{t.projects.columnProject}</DataTableCell>
-                        <DataTableCell header priority="wide">{t.projects.columnPath}</DataTableCell>
-                        <DataTableCell header priority="wide">{t.projects.columnSummary}</DataTableCell>
-                        {/* The chevron track carries no header: its cell is decorative, so a fifth
-                            column name would be one more than the rows actually expose. */}
-                        <DataTableCell header labelHidden>{t.common.actions}</DataTableCell>
+                        <DataTableCell header lines={1}>{t.projects.columnProject}</DataTableCell>
+                        <DataTableCell header priority="wide" lines={1}>{t.projects.columnPath}</DataTableCell>
+                        <DataTableCell header priority="wide" lines={1}>{t.projects.columnSummary}</DataTableCell>
+                        {/* The chevron track carries no header of its own: the cell is decorative, and the
+                            column the row's open control lives in is named by DataTableRow itself. */}
+                        <DataTableCell header labelHidden lines={1}>{t.common.actions}</DataTableCell>
                       </DataTableRow>
                       {filteredProjects.map((project) => {
                         const active = selectedId === project.id;
@@ -286,13 +286,13 @@ export function ProjectsView() {
                             {/* The path is the cell's title rather than a second stacked line: a register
                                 whose rows measure one height is what makes it scannable, and the path has
                                 its own column plus the detail rail one tap away. */}
-                            <DataTableCell title={project.path} className="flex items-center gap-3">
+                            <DataTableCell lines={1} title={project.path} className="flex items-center gap-3">
                               <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated/60">
                                 <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-text-muted" />
                               </span>
                               <span className="min-w-0 truncate text-sm font-semibold text-text transition-colors group-hover:text-accent">{project.slug}</span>
                             </DataTableCell>
-                            <DataTableCell priority="wide" title={project.path} className="font-mono text-xs text-text-muted"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
+                            <DataTableCell priority="wide" lines={1} title={project.path} className="font-mono text-xs text-text-muted"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
                             <DataTableCell priority="wide" lines="auto"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
                             <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()}>
                               <ActionMenu

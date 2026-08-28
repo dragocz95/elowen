@@ -239,14 +239,14 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                 compactColumns="minmax(0,1fr) 3rem 1.25rem"
               >
                 <DataTableRow header>
-                  <DataTableCell header>{t.assetEditor.colName}</DataTableCell>
-                  <DataTableCell header priority="wide">{t.assetEditor.colDescription}</DataTableCell>
-                  {ownership ? <DataTableCell header priority="wide">{ownership.header}</DataTableCell> : null}
-                  <DataTableCell header priority="wide" role="presentation" aria-hidden>{null}</DataTableCell>
-                  <DataTableCell header priority="wide" role="presentation" aria-hidden>{null}</DataTableCell>
-                  <DataTableCell header labelHidden>{t.common.actions}</DataTableCell>
+                  <DataTableCell header lines={1}>{t.assetEditor.colName}</DataTableCell>
+                  <DataTableCell header priority="wide" lines={1}>{t.assetEditor.colDescription}</DataTableCell>
+                  {ownership ? <DataTableCell header priority="wide" lines={1}>{ownership.header}</DataTableCell> : null}
+                  <DataTableCell header priority="wide" lines={1} role="presentation" aria-hidden>{null}</DataTableCell>
+                  <DataTableCell header priority="wide" lines={1} role="presentation" aria-hidden>{null}</DataTableCell>
+                  <DataTableCell header labelHidden lines={1}>{t.common.actions}</DataTableCell>
                   {/* The trailing chevron track: an affordance, not a column, so its header is empty. */}
-                  <DataTableCell header aria-hidden>{null}</DataTableCell>
+                  <DataTableCell header aria-hidden lines={1}>{null}</DataTableCell>
                 </DataTableRow>
                 {pageItems.map((item) => {
                   // Two different questions, deliberately kept apart: WHERE the entry came from (drives the
@@ -259,14 +259,14 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   const isOpen = editing !== null && assetKey(editing) === assetKey(item);
                   const cells = (
                     <>
-                      <DataTableCell className="font-mono text-sm text-text">{item.name}</DataTableCell>
+                      <DataTableCell lines={1} className="font-mono text-sm text-text">{item.name}</DataTableCell>
                       {/* Preview, not wrap: a description is a sentence and would push every other row
                           out of alignment; the full text is on hover. */}
-                      <DataTableCell priority="wide" title={item.description} className="text-xs text-text-muted">
+                      <DataTableCell priority="wide" lines={1} title={item.description} className="text-xs text-text-muted">
                         {item.description || '—'}
                       </DataTableCell>
                       {ownership ? (
-                        <DataTableCell priority="wide" title={ownership.label(item)} className="text-xs text-text-muted">
+                        <DataTableCell priority="wide" lines={1} title={ownership.label(item)} className="text-xs text-text-muted">
                           {ownership.label(item)}
                         </DataTableCell>
                       ) : null}
@@ -274,7 +274,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                           a "manual only" marker) sit side by side and clip at the column edge. Wrapping them
                           was what made this register measure 27px, 41px and 59px row by row while every
                           other one holds a single rhythm — a badge is a marker, not a reason to grow a row. */}
-                      <DataTableCell priority="wide" className="flex items-center gap-1.5">
+                      <DataTableCell priority="wide" lines={1} className="flex items-center gap-1.5">
                         <Badge tone={isUser ? 'accent' : 'default'}>{isUser ? labels.badgeUser : labels.badgeBuiltin}</Badge>
                         {renderBadges?.(item)}
                       </DataTableCell>
@@ -288,7 +288,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                       </DataTableCell>
                       {/* A built-in entry does not open, so it gets the track without the affordance —
                           a chevron on a row nothing happens to is a promise the register cannot keep. */}
-                      {editable ? <DataTableChevronCell /> : <DataTableCell aria-hidden>{null}</DataTableCell>}
+                      {editable ? <DataTableChevronCell /> : <DataTableCell aria-hidden lines="auto">{null}</DataTableCell>}
                     </>
                   );
                   // `onOpen` and `openLabel` are one structurally typed pair, so the two cases are two

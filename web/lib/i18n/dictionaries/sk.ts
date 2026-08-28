@@ -169,6 +169,7 @@ export const sk = {
     openTerminal: 'Otvoriť terminál',
     outcomeOk: 'Úspech',
     outcomeFail: 'Zlyhalo',
+    openColumn: 'Otvoriť',
   },
   pagination: {
     label: 'Stránkovanie',

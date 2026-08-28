@@ -196,12 +196,13 @@ export function UsersView() {
                 {filteredUsers.length === 0 ? <ControlSurfaceState><EmptyState title={t.users.noMatches} icon={Search} /></ControlSurfaceState> : (
                   <DataTable ariaLabel={t.users.tableLabel} columns="minmax(13rem,1.2fr) minmax(10rem,1fr) 8rem 10rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 3rem 1.25rem" data-testid="users-register">
                     <DataTableRow header>
-                      <DataTableCell header>{t.users.user}</DataTableCell>
-                      <DataTableCell header priority="wide">{t.users.username}</DataTableCell>
-                      <DataTableCell header priority="wide">{t.users.role}</DataTableCell>
-                      <DataTableCell header priority="wide">{t.users.createdAt}</DataTableCell>
-                      {/* The chevron track carries no header: its cell is decorative. */}
-                      <DataTableCell header labelHidden>{t.common.actions}</DataTableCell>
+                      <DataTableCell header lines={1}>{t.users.user}</DataTableCell>
+                      <DataTableCell header priority="wide" lines={1}>{t.users.username}</DataTableCell>
+                      <DataTableCell header priority="wide" lines={1}>{t.users.role}</DataTableCell>
+                      <DataTableCell header priority="wide" lines={1}>{t.users.createdAt}</DataTableCell>
+                      {/* The chevron track carries no header: its cell is decorative, and the column the
+                          row's open control lives in is named by DataTableRow itself. */}
+                      <DataTableCell header labelHidden lines={1}>{t.common.actions}</DataTableCell>
                     </DataTableRow>
                     {filteredUsers.map((user) => {
                       const active = selected?.id === user.id;
@@ -216,10 +217,10 @@ export function UsersView() {
                           openLabel={t.users.openUser.replace('{name}', displayName)}
                           onContextMenu={(event) => openCtxMenu(event, user)}
                         >
-                          <DataTableCell title={displayName} className="flex items-center gap-3"><Avatar user={user} size={32} /><span className="min-w-0 truncate text-sm font-medium text-text group-hover:text-accent">{displayName}</span></DataTableCell>
-                          <DataTableCell priority="wide" title={`@${user.username}`} className="font-mono text-xs text-text-muted">@{user.username}</DataTableCell>
-                          <DataTableCell priority="wide">{user.is_admin ? <Badge tone="accent"><ShieldCheck size={10} className="mr-1" aria-hidden />{t.users.admin}</Badge> : <span className="text-xs text-text-muted">{t.users.member}</span>}</DataTableCell>
-                          <DataTableCell priority="wide" className="text-xs text-text-muted">{localDateTime(user.created_at, locale, false)}</DataTableCell>
+                          <DataTableCell lines={1} title={displayName} className="flex items-center gap-3"><Avatar user={user} size={32} /><span className="min-w-0 truncate text-sm font-medium text-text group-hover:text-accent">{displayName}</span></DataTableCell>
+                          <DataTableCell priority="wide" lines={1} title={`@${user.username}`} className="font-mono text-xs text-text-muted">@{user.username}</DataTableCell>
+                          <DataTableCell priority="wide" lines={1}>{user.is_admin ? <Badge tone="accent"><ShieldCheck size={10} className="mr-1" aria-hidden />{t.users.admin}</Badge> : <span className="text-xs text-text-muted">{t.users.member}</span>}</DataTableCell>
+                          <DataTableCell priority="wide" lines={1} className="text-xs text-text-muted">{localDateTime(user.created_at, locale, false)}</DataTableCell>
                           <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><ActionMenu label={`${user.username}: ${t.common.actions}`} items={userActions(user)} trigger={<MoreHorizontal size={16} aria-hidden />} triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted opacity-60 hover:bg-elevated hover:text-text group-hover:opacity-100" /></DataTableCell>
                           <DataTableChevronCell />
                         </DataTableRow>

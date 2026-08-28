@@ -35,10 +35,15 @@
   z-index: var(--z-sticky);
 }
 
-/* One line per cell is the default, clipped at the column edge with an ellipsis — that is what keeps
-   every row the same height. `clip` rather than `hidden`, plus a clip margin, so a focus ring on a
+/* One line per cell is the register rhythm, clipped at the column edge with an ellipsis — that is what
+   keeps every row the same height. `clip` rather than `hidden`, plus a clip margin, so a focus ring on a
    control inside the cell stays visible while the text still ellipsizes. A cell that genuinely needs to
-   breathe opts out with lines="auto", on a row marked height="tall" when it needs the space. */
+   breathe asks for lines="auto", on a row marked height="tall" when it needs the space.
+
+   Note this rule is why lines="auto" is the component's DEFAULT even though `1` is the rhythm: the sheet
+   is imported unlayered, so `white-space: nowrap` here beats any wrapping utility a caller passes, and a
+   bundle compiled against an older API version could not have known to opt out. Every in-tree caller
+   states `lines` explicitly instead, enforced by tests/contract/dataTableLines.test.ts. */
 .data-table-cell[data-lines='1'] {
   white-space: nowrap;
   overflow: clip;
@@ -56,12 +61,37 @@
 /* Row activation is a real button stretched over the row: one tab stop, native Enter/Space, and a SHORT
    accessible name supplied by the caller — the row's own text is not one (a memory body ran past 3000
    characters). It is painted below any cell that holds its own control, so an action button is hit and
-   fired on its own instead of the overlay swallowing the click. */
+   fired on its own instead of the overlay swallowing the click.
+
+   The button lives inside a cell of its own, because `role="row"` admits nothing but cells and a screen
+   reader's browse mode does not expose content outside one — the label would simply never be announced.
+   That cell is ABSOLUTELY POSITIONED, which is what keeps the change invisible to every layout: an
+   absolutely positioned child of a grid container is not a grid item, so it claims no track and no
+   column template moves. It covers the row, so it must not swallow pointer events of its own; only the
+   button inside it takes them. An openable register also gives its non-openable rows the same (empty)
+   cell, so every row in it agrees with the header on the column count. */
+.data-table-open-cell {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
 .data-table-row-open {
   position: absolute;
   inset: 0;
   z-index: 0;
   border-radius: var(--radius-sm);
+  pointer-events: auto;
+}
+
+/* The header's half of that column. Its name exists for assistive technology only — the column paints as
+   the trailing chevron — so it is taken out of the flow the same way and hidden from the eye. */
+.data-table-open-header {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 .data-table-row-open:focus-visible {
   outline: 2px solid var(--color-accent);
