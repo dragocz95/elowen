@@ -96,6 +96,52 @@ test('Studio renders under its own stylesheet, not the operator default', async 
   expect(canvas.toLowerCase()).toBe('#fafafa');
 });
 
+test('Studio workspaces fill an ultrawide desk instead of becoming a centred card', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await useSkin(app, seed, 'studio-light');
+  await app.setViewportSize({ width: 1920, height: 900 });
+  await openStudio(app, '/account');
+
+  const geometry = await app.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>('.workspace-shell')!;
+    const box = shell.getBoundingClientRect();
+    return { width: box.width, rightGap: innerWidth - box.right };
+  });
+  // 1920px minus Studio's 256px navigation leaves 1664px. Only the shell gutters belong inside that
+  // region; a global content cap must not shrink the workspace to a centred 1344px column again.
+  expect(geometry.width).toBeGreaterThan(1_600);
+  // Chrome reserves the classic vertical-scrollbar gutter inside the viewport on this Linux runner.
+  expect(geometry.rightGap).toBeLessThanOrEqual(16);
+});
+
+test('section tabs scroll horizontally without exposing native scrollbars', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await useSkin(app, seed, 'studio-oled');
+  await app.setViewportSize({ width: 390, height: 844 });
+  await openStudio(app, '/account');
+
+  const tabs = await app.locator('.workspace-shell__tabs').evaluate((el) => {
+    const style = getComputedStyle(el);
+    const webkitScrollbar = getComputedStyle(el, '::-webkit-scrollbar');
+    return {
+      overflowX: style.overflowX,
+      overflowY: style.overflowY,
+      scrollbarWidth: style.scrollbarWidth,
+      webkitDisplay: webkitScrollbar.display,
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+      clientHeight: el.clientHeight,
+      scrollHeight: el.scrollHeight,
+    };
+  });
+  expect(tabs.overflowX).toBe('auto');
+  expect(tabs.overflowY).toBe('hidden');
+  expect(tabs.scrollbarWidth).toBe('none');
+  expect(tabs.webkitDisplay).toBe('none');
+  expect(tabs.scrollWidth).toBeGreaterThan(tabs.clientWidth);
+  expect(tabs.scrollHeight).toBeLessThanOrEqual(tabs.clientHeight + 1);
+});
+
 test('nothing on a Studio page is laid out wider than the 320px it has', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-light');

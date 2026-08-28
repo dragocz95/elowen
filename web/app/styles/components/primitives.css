@@ -163,6 +163,12 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
   padding-left: 0;
 }
 
+/* Single-line segmented controls remain touch-scrollable without showing native chrome. This must live
+   outside Tailwind's utility layer: the global scrollbar rule in base.css is also unlayered and would win
+   over an arbitrary utility regardless of specificity. */
+.segmented[data-nowrap='true'] { scrollbar-width: none; }
+.segmented[data-nowrap='true']::-webkit-scrollbar { display: none; }
+
 /* A pointer that is a finger needs a target it can actually hit. Applied only for a coarse pointer, so
    a mouse keeps the compact rhythm these controls are drawn at. `.overlay-menu-item` is the dense menu
    row, which only needs the height; `.overlay-touch-target` is the small square control — a close

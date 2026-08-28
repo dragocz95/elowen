@@ -37,7 +37,7 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
   // Either way the track stays inside its container: it wraps, or it scrolls. It never overflows and
   // gets clipped by the surface, which is what a bare `flex-nowrap` did in a narrow toolbar.
   const wrap = nowrap
-    ? 'max-w-full flex-nowrap overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
+    ? 'max-w-full flex-nowrap overflow-x-auto overflow-y-hidden overscroll-x-contain'
     : 'max-w-full flex-wrap';
   const selectedIndex = options.findIndex((option) => option.value === value);
   const tabbableIndex = selectedIndex >= 0 ? selectedIndex : 0;
@@ -56,7 +56,13 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
     // `segmented` / `segmented__option` / `segmented__count` are named for the same reason the toolbar
     // and the field are: this control is one of the handful a DESIGN has to be able to restate, and a
     // stylesheet has nothing to hold on to otherwise. The utilities below stay the built-in reading.
-    <div role="radiogroup" aria-label={ariaLabel} data-variant={variant} className={`segmented inline-flex ${wrap} ${variant === 'line' ? 'gap-4 border-b border-border/80' : 'gap-0.5 rounded-md border border-border bg-surface p-0.5'} ${className ?? ''}`}>
+    <div
+      role="radiogroup"
+      aria-label={ariaLabel}
+      data-variant={variant}
+      data-nowrap={nowrap ? 'true' : undefined}
+      className={`segmented inline-flex ${wrap} ${variant === 'line' ? 'gap-4 border-b border-border/80' : 'gap-0.5 rounded-md border border-border bg-surface p-0.5'} ${className ?? ''}`}
+    >
       {options.map((o, index) => {
         const active = o.value === value;
         const Icon = o.icon;
