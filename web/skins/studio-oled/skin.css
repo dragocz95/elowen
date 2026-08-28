@@ -15,24 +15,24 @@
   /* True black canvas — an OLED panel renders it as unlit pixels, which is the point. The surfaces above
      it step up in near-invisible increments so the hairline borders, not the fills, carry the structure. */
   --color-bg: #000000;
-  --color-document: #050505;
-  --color-surface: #070707;
-  --color-elevated: #111113;
-  --color-overlay: #17171a;
-  --color-border: #27272a;
-  --color-border-strong: #3f3f46;
+  --color-document: #0d0d0d;
+  --color-surface: #171717;
+  --color-elevated: #212121;
+  --color-overlay: #2f2f2f;
+  --color-border: #2f2f2f;
+  --color-border-strong: #424242;
 
   /* The navigation column. On a true-black design "one step quieter than the content" is the unlit
      canvas itself: the content's cards step UP from black, so a column that stays at black is the
      recessive surface, and its rule — one step stronger than a content hairline — is what separates it.
      Measured: subtle text 5.35:1 on the column, 4.57:1 on the row fill. */
   --color-sidebar: #000000;
-  --color-sidebar-accent: #141417;
-  --color-sidebar-border: #232327;
+  --color-sidebar-accent: #212121;
+  --color-sidebar-border: #2f2f2f;
 
-  --color-text: #fafafa;
-  --color-text-muted: #a1a1aa;
-  --color-text-subtle: #7e7e87;
+  --color-text: #ffffff;
+  --color-text-muted: #b4b4b4;
+  --color-text-subtle: #8e8e8e;
 
   /* Signal blue, one step brighter than the light variant because it sits on black. */
   --color-accent: #3291ff;
@@ -42,6 +42,17 @@
   /* No ember in Studio: the heat ramp is repainted onto the signal blue. */
   --color-ember: #6cb2ff;
   --color-ember-bright: #b9d8ff;
+
+  /* ChatGPT-like conversation semantics. The canvas stays full-width; only the thread is measured. */
+  --studio-chat-thread: 48rem;
+  --studio-chat-user-bg: #173e76;
+  --studio-chat-user-text: #f6fafe;
+  --studio-chat-composer: #212121;
+  --studio-chat-code: #212121;
+  --studio-chat-composer-radius: 28px;
+  --studio-chat-user-radius: 22px;
+  --font-sans: -apple-system-body, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-display: var(--font-sans);
 
   /* Status fills bright enough to carry near-black ink (--color-on-status): danger 5.42:1, success
      10.60:1, warning 9.01:1, info 6.44:1. Each is also legible as TEXT on --color-elevated — danger

@@ -525,7 +525,7 @@ function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen
   const settled = turn.role === 'elowen' ? turn.durationMs != null : Boolean(turn.createdAt);
   if (!settled) return null;
   return (
-    <div data-testid="chat-turn-meta" className="mt-1 flex items-center gap-2 text-[10px] leading-none text-text-muted/70">
+    <div data-testid="chat-turn-meta" className="chat-turn-meta mt-1 flex items-center gap-2 text-[10px] leading-none text-text-muted/70">
       {turn.createdAt ? <time dateTime={turn.createdAt}>{localDateTime(turn.createdAt, locale, false)}</time> : null}
       {turn.role === 'elowen' && turn.model ? (
         <span data-testid="chat-turn-model" className="inline-flex min-w-0 items-center gap-1" title={turn.model}>
@@ -583,10 +583,10 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   const you = turn.role === 'you';
   const roleAttr = you ? 'you' : 'assistant';
   const body = turn.role === 'you'
-    ? <>
-        {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-text ${full ? 'my-1.5' : ''}`}>{turn.text}</div> : null}
+    ? <div className="chat-user-message">
+        {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-text ${full ? '' : 'my-1.5'}`}>{turn.text}</div> : null}
         {turn.images?.length ? <Attachments images={turn.images} full={full} /> : null}
-      </>
+      </div>
     : <>{turn.segments.map((seg, i) => (seg.kind === 'text'
         ? <TextSegment key={i} text={seg.text} className={full ? 'my-1.5' : ''} />
         : seg.kind === 'reasoning'
@@ -601,13 +601,13 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
 
   if (full) {
     return (
-      <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className={`grid grid-cols-[16px_1fr] gap-x-3 ${showRole ? 'mt-6 first:mt-0' : ''}`}>
+      <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className={`chat-turn chat-turn--${roleAttr} grid grid-cols-[16px_1fr] gap-x-3 ${showRole ? 'mt-6 first:mt-0' : ''}`}>
         {showRole ? (
-          <span aria-hidden className={`mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-accent ring-4 ring-accent/15' : 'bg-text-muted'}`} />
-        ) : <span aria-hidden />}
-        <div className="min-w-0">
-          {showRole ? <div className={`mb-0.5 text-xs font-semibold ${you ? 'text-accent' : 'text-text-muted'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
-          <div className="flex min-w-0 flex-col">{body}</div>
+          <span aria-hidden className={`chat-turn__marker mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-accent ring-4 ring-accent/15' : 'bg-text-muted'}`} />
+        ) : <span aria-hidden className="chat-turn__marker" />}
+        <div className="chat-turn__column min-w-0">
+          {showRole ? <div className={`chat-turn__role mb-0.5 text-xs font-semibold ${you ? 'text-accent' : 'text-text-muted'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
+          <div className="chat-turn__body flex min-w-0 flex-col">{body}</div>
           <MessageMeta turn={turn} />
         </div>
       </div>

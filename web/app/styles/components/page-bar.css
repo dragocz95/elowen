@@ -38,6 +38,12 @@
   }
 }
 
+/* The contextual peer strip is a real part of the bar, not a second sidebar. It stays one line, gives way
+   before global actions and hides its native scrollbar when a narrow desktop has to pan it. */
+.top-bar__context-nav { scrollbar-width: none; }
+.top-bar__context-nav::-webkit-scrollbar { display: none; }
+.top-bar__context-link { display: inline-flex; align-items: center; }
+
 /* The trail must give way before the actions do: it is the one part of the row that can be read from
    the page itself, and every step inside it truncates rather than wrapping. */
 .page-bar__breadcrumb { min-width: 0; overflow: hidden; font-size: 0.8125rem; }

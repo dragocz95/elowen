@@ -79,11 +79,17 @@ describe('switching to a command-profile skin', () => {
     // localStorage stays the client's source of truth for the choice, so a reader who picked Studio
     // arrives with it stored and the document already rendered in it.
     localStorage.setItem('elowen-skin', 'studio-light');
-    render(
+    const { container } = render(
       <Shell skinSeed={{ choice: 'studio-light', allowed: ALLOWED, fallback: 'midnight' }}><span>page-body</span></Shell>,
     );
     expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
     expect(screen.queryByTestId('future-navigation')).toBeNull();
+    const contextNav = container.querySelector('.top-bar__context-nav');
+    expect(contextNav).not.toBeNull();
+    expect(contextNav).toHaveAttribute('aria-label', 'Contextual navigation');
+    expect(contextNav).toHaveClass('min-[768px]:flex');
+    expect(Array.from(contextNav!.querySelectorAll('a')).map((link) => link.textContent)).toEqual(['Home', 'Chat', 'Projects', 'Memory']);
+    expect(contextNav!.querySelector('[aria-current="page"]')?.textContent).toBe('Home');
   });
 
   it('follows the skin the DOCUMENT wears, not the account choice, when the operator set a default nobody picked', async () => {

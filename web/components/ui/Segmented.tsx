@@ -1,5 +1,5 @@
 'use client';
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface SegmentedOption {
@@ -48,6 +48,10 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
       : 'gap-0.5 rounded-md border border-border bg-surface p-0.5';
   const selectedIndex = options.findIndex((option) => option.value === value);
   const tabbableIndex = selectedIndex >= 0 ? selectedIndex : 0;
+  useEffect(() => {
+    if (!nowrap || selectedIndex < 0) return;
+    buttonRefs.current[selectedIndex]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [nowrap, selectedIndex]);
   const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     let next: number | null = null;
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % options.length;

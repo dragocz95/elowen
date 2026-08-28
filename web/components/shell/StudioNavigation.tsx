@@ -138,6 +138,9 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
    *  sidebar is usable at all. */
   const destination = (entry: NavEntry, onContextMenu?: (event: React.MouseEvent) => void, body?: React.ReactNode) => {
     const active = entryIsActive(entry, pathname);
+    // A multi-page world's desktop row points at its default page while the TopBar carries the exact peer.
+    // Keep the visual section highlight, but do not claim that default link is the current page elsewhere.
+    const currentPage = active && ((entry.subItems?.length ?? 0) <= 1 || entry.href === pathname);
     const Icon = entry.icon;
     // A row with a custom body carries a face and a display name. Those are for the eye: the entry's
     // own label is what the row IS, and it is also what the arrangement menu addresses it by, so a row
@@ -149,7 +152,7 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
         href={entry.href ?? '#'}
         className="studio-nav__item"
         data-active={active || undefined}
-        aria-current={active ? 'page' : undefined}
+        aria-current={currentPage ? 'page' : undefined}
         aria-label={named ? entry.label : undefined}
         title={entry.label}
         onContextMenu={onContextMenu}
@@ -238,7 +241,9 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
             const pages = groupPages(entry);
             const key = entry.id ?? entry.label;
             const onEntryMenu = entryMenu(entry);
-            if (!pages) return <div key={key}>{destination(entry, onEntryMenu)}</div>;
+            // Desktop/rail stays primary-only; peer pages move into the shared TopBar. The mobile drawer
+            // keeps the nested destinations because that header strip is intentionally hidden there.
+            if (!pages || !drawer) return <div key={key}>{destination(entry, onEntryMenu)}</div>;
 
             const active = entryIsActive(entry, pathname);
             // A page inherits its world's icon when it brings none, so the row is never iconless in the

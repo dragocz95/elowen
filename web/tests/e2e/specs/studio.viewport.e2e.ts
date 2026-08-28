@@ -114,22 +114,83 @@ test('Studio workspaces fill an ultrawide desk instead of becoming a centred car
   expect(geometry.rightGap).toBeLessThanOrEqual(16);
 });
 
-test('every sectioned Studio page uses a secondary sidebar and one mobile selector', async ({ app, seed }, testInfo) => {
+test('Studio OLED uses ChatGPT conversation geometry and turn styling', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await seed.messages([
+    { id: 'u1', role: 'user', text: 'Please check the deployment status.' },
+    { id: 'a1', role: 'assistant', text: 'The deployment is healthy.', segments: [{ kind: 'text', text: 'The deployment is healthy.' }] },
+  ]);
+  await useSkin(app, seed, 'studio-oled');
+  await app.setViewportSize({ width: 1920, height: 900 });
+  await openStudio(app, '/chat');
+  await expect(app.locator('[data-variant="full"] [data-testid="chat-transcript"]')).toBeVisible();
+  await expect(app.locator('[data-role="you"] .chat-user-message')).toBeVisible();
+  await expect(app.locator('[data-role="assistant"] .chat-markdown')).toBeVisible();
+
+  const geometry = await app.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>('[data-variant="full"]')!.getBoundingClientRect();
+    const transcriptElement = document.querySelector<HTMLElement>('[data-variant="full"] [data-testid="chat-transcript"]')!;
+    const transcript = transcriptElement.getBoundingClientRect();
+    const composerElement = document.querySelector<HTMLElement>('[data-variant="full"] .chat-composer')!;
+    const composer = composerElement.getBoundingClientRect();
+    const user = document.querySelector<HTMLElement>('[data-role="you"] .chat-user-message')!;
+    const assistantTurn = document.querySelector<HTMLElement>('[data-role="assistant"]')!.getBoundingClientRect();
+    const assistant = document.querySelector<HTMLElement>('[data-role="assistant"] .chat-markdown')!;
+    const userStyle = getComputedStyle(user);
+    const assistantStyle = getComputedStyle(assistant);
+    const composerStyle = getComputedStyle(composerElement);
+    return {
+      surfaceWidth: surface.width,
+      transcriptWidth: transcript.width,
+      threadWidth: assistantTurn.width,
+      composerWidth: composer.width,
+      left: transcript.left - surface.left,
+      right: surface.right - transcript.right,
+      composerLeft: composer.left - surface.left,
+      composerRight: surface.right - composer.right,
+      userBackground: userStyle.backgroundColor,
+      userRadius: userStyle.borderRadius,
+      userMaxWidth: userStyle.maxInlineSize,
+      assistantFontSize: assistantStyle.fontSize,
+      assistantLineHeight: assistantStyle.lineHeight,
+      assistantFontFamily: assistantStyle.fontFamily,
+      composerBackground: composerStyle.backgroundColor,
+      composerRadius: composerStyle.borderRadius,
+    };
+  });
+  expect(geometry.surfaceWidth).toBeGreaterThan(1_100);
+  expect(geometry.transcriptWidth).toBeGreaterThan(geometry.threadWidth);
+  expect(geometry.threadWidth).toBeCloseTo(768, 0);
+  expect(geometry.composerWidth).toBeCloseTo(768, 0);
+  expect(Math.abs(geometry.left - geometry.right)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.composerLeft - geometry.composerRight)).toBeLessThanOrEqual(1);
+  expect(geometry.userBackground).toBe('rgb(23, 62, 118)');
+  expect(geometry.userRadius).toBe('22px');
+  expect(geometry.userMaxWidth).toBe('70%');
+  expect(geometry.assistantFontSize).toBe('16px');
+  expect(geometry.assistantLineHeight).toBe('26px');
+  expect(geometry.assistantFontFamily).toContain('BlinkMacSystemFont');
+  expect(geometry.composerBackground).toBe('rgb(33, 33, 33)');
+  expect(geometry.composerRadius).toBe('28px');
+});
+
+test('every sectioned Studio page uses one compact horizontal submenu at every width', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-oled');
   await app.setViewportSize({ width: 1440, height: 900 });
   await openStudio(app, '/account');
 
-  await expect(app.locator('.workspace-shell__section-sidebar')).toBeVisible();
-  await expect(app.locator('.workspace-shell__section-sidebar [role="radiogroup"]')).toHaveAttribute('aria-orientation', 'vertical');
-  await expect(app.locator('.workspace-shell__section-mobile')).toBeHidden();
-  await expect(app.locator('.workspace-shell__tabs')).toHaveCount(0);
+  const submenu = app.locator('.workspace-shell__section-navigation [role="radiogroup"]');
+  await expect(submenu).toBeVisible();
+  await expect(submenu).toHaveAttribute('aria-orientation', 'horizontal');
+  await expect(submenu).toHaveAttribute('data-nowrap', 'true');
+  await expect(app.locator('.workspace-shell__section-sidebar, .workspace-shell__section-mobile')).toHaveCount(0);
 
   await app.setViewportSize({ width: 390, height: 844 });
   await openStudio(app, '/account');
-  await expect(app.locator('.workspace-shell__section-sidebar')).toBeHidden();
-  await expect(app.locator('.workspace-shell__section-mobile')).toBeVisible();
-  await expect(app.locator('.workspace-shell__section-mobile [role="combobox"]')).toBeVisible();
+  await expect(submenu).toBeVisible();
+  await expect(submenu).toHaveAttribute('aria-orientation', 'horizontal');
+  await expect(app.locator('.workspace-shell__section-navigation [role="combobox"]')).toHaveCount(0);
 });
 
 test('nothing on a Studio page is laid out wider than the 320px it has', async ({ app, seed }, testInfo) => {
@@ -328,6 +389,27 @@ test('every Studio navigation row is a real touch target on a coarse pointer', a
     const toggles = await page.evaluate(() => [...document.querySelectorAll('.studio-nav__group-toggle')]
       .map((el) => Math.round(el.getBoundingClientRect().height)));
     for (const h of toggles) expect(h, 'a group header is a touch target').toBeGreaterThanOrEqual(TOUCH_TARGET);
+  } finally {
+    await context.close();
+  }
+});
+
+test('Studio chat composer buttons keep the touch floor on a short coarse-pointer screen', async ({ browser, seed }, testInfo) => {
+  authedOnly(testInfo);
+  const { context, page } = await studioTouchPage(browser, seed, 'studio-oled', { width: 740, height: 360 });
+  try {
+    await openStudio(page, '/chat');
+    const controls = page.locator('.chat-composer > button');
+    await expect(controls.first()).toBeVisible();
+    const sizes = await controls.evaluateAll((buttons) => buttons.map((button) => {
+      const box = button.getBoundingClientRect();
+      return { width: Math.round(box.width), height: Math.round(box.height) };
+    }));
+    expect(sizes.length, 'the composer exposes attach and send/stop controls').toBeGreaterThanOrEqual(2);
+    for (const size of sizes) {
+      expect(size.width, 'a composer button is wide enough to tap').toBeGreaterThanOrEqual(TOUCH_TARGET);
+      expect(size.height, 'a composer button is tall enough to tap').toBeGreaterThanOrEqual(TOUCH_TARGET);
+    }
   } finally {
     await context.close();
   }

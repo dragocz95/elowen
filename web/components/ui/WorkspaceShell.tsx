@@ -4,7 +4,6 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { useShellProfile } from '../../lib/shellProfile';
 import { Segmented } from './Segmented';
-import { SelectMenu } from './SelectMenu';
 import { WorkspaceHero, type WorkspaceHeroProps } from './WorkspaceHero';
 
 export interface SpatialDeckSection {
@@ -84,43 +83,24 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   );
 }
 
-/** One section model, two responsive presentations: a Vercel-style secondary sidebar while there is
- *  room, and a compact select on narrow screens. Both write through the caller's single `onChange`; pages
- *  never decide which presentation they use and plugin decks cannot drift from host settings. */
+/** One section model, one presentation at every width: the compact rounded submenu used by Shadcn Admin.
+ *  On a phone it stays horizontal and scrollable rather than changing control type, so the reader learns
+ *  one section grammar and every page/plugin continues writing through the same `onChange`. */
 function SectionNavigation({ sections, value, onChange, ariaLabel }: WorkspaceShellNavigation) {
-  const options = sections.map((section) => ({
-    value: section.id,
-    label: section.label,
-    icon: section.icon,
-    count: section.count,
-  }));
   return (
-    <div className="workspace-shell__section-navigation">
-      <aside className="workspace-shell__section-sidebar" aria-label={ariaLabel}>
-        <Segmented
-          variant="menu"
-          aria-label={ariaLabel}
-          value={value}
-          onChange={onChange}
-          options={options}
-        />
-      </aside>
-      <div className="workspace-shell__section-mobile">
-        <SelectMenu
-          value={value}
-          onChange={onChange}
-          label={ariaLabel}
-          options={sections.map((section) => {
-            const Icon = section.icon;
-            return {
-              value: section.id,
-              label: section.count === undefined ? section.label : `${section.label} (${section.count})`,
-              icon: <Icon size={15} aria-hidden />,
-            };
-          })}
-        />
-      </div>
-    </div>
+    <nav className="workspace-shell__section-navigation" aria-label={ariaLabel}>
+      <Segmented
+        aria-label={ariaLabel}
+        value={value}
+        onChange={onChange}
+        nowrap
+        options={sections.map((section) => ({
+          value: section.id,
+          label: section.label,
+          count: section.count,
+        }))}
+      />
+    </nav>
   );
 }
 
@@ -167,14 +147,10 @@ export function WorkspaceShell({ variant = 'register', hero, navigation, childre
 
   if (commandSections) {
     return (
-      <div className={`workspace-shell ${className}`.trim()} data-variant={variant} data-section-layout="sidebar">
-        <div className="workspace-shell__section-layout">
-          <SectionNavigation {...navigation} />
-          <div className="workspace-shell__section-main">
-            <WorkspaceHero {...hero} />
-            {content}
-          </div>
-        </div>
+      <div className={`workspace-shell ${className}`.trim()} data-variant={variant} data-section-layout="submenu">
+        <WorkspaceHero {...hero} />
+        <SectionNavigation {...navigation} />
+        {content}
       </div>
     );
   }

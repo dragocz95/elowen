@@ -23,8 +23,8 @@
  * wash, `backdrop-filter: none` against a `backdrop-blur-xl`. Four rules undoing four rules is not a
  * design decision, it is a fight, and whichever side is edited next the two drift apart.
  * The bar is now a typed variant of the component (`TopBar variant="bar"`), chosen from the shell
- * profile, so the markup that ships IS the bar: 48px, sticky, one rule, a breadcrumb on the left and
- * ghost controls on the right. Nothing is left here to override.
+ * profile, so the markup that ships IS the bar: 48px, sticky, one rule, contextual peer links on the
+ * left and ghost controls on the right. Nothing is left here to override.
  *
  * The gutter is the one page-frame value Studio still states, because it is a NUMBER rather than an
  * arrangement: 24px, once, on the shell's own inset — and the shell wrapper's 8px is given back so the
@@ -72,8 +72,8 @@
 }
 
 /* The eyebrow does not paint. It named the reader's location — "Usage telemetry", "Account directory" —
-   in 9px uppercase mono over the title, which is exactly what the page bar's breadcrumb now says one
-   row above, in sentence case, as real navigation. Two answers to "where am I" a centimetre apart is one
+   in 9px uppercase mono over the title, while the page bar now carries the actionable peer destinations
+   one row above. Two answers to "where am I" a centimetre apart is one
    too many, and the eyebrow is the one that cannot be clicked. It stays in the DOM because a page
    states it as a prop and Studio forks no page. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__eyebrow {
@@ -339,71 +339,43 @@
   font-size: 0.875rem;
 }
 
-/* Every sectioned Studio page uses the same secondary navigation: a quiet Vercel-style sidebar while
-   there is room, and one compact select below tablet width. The active section title then belongs to the
-   right column, where it reads as the page heading instead of duplicating a horizontal tab label. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-layout {
-  display: grid;
-  grid-template-columns: minmax(12.5rem, 14rem) minmax(0, 1fr);
-  gap: 2rem;
-  align-items: start;
-}
+/* One local submenu at every width, matching Shadcn Admin's compact tabs below the page heading. The
+   caller still owns one section model; only the shell decides its shared presentation. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation {
   min-width: 0;
-  min-height: calc(100dvh - 3rem);
-  padding: 1.5rem 1.25rem 3rem 0;
-  border-right: 1px solid var(--color-border);
+  overflow: hidden;
+  padding: 0 0 1rem;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar {
-  position: sticky;
-  top: 4rem;
-  max-height: calc(100dvh - 5rem);
-  overflow-y: auto;
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented {
+  width: fit-content;
+  max-width: 100%;
+  gap: 0;
+  padding: 3px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--color-elevated);
   scrollbar-width: none;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar::-webkit-scrollbar {
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented::-webkit-scrollbar {
   display: none;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar .segmented {
-  width: 100%;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar .segmented__option {
-  height: 2.5rem;
-  border-radius: var(--radius-sm);
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__option {
+  height: 1.875rem;
+  padding-inline: 0.625rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
   color: var(--color-text-muted);
   font-size: 0.875rem;
-  font-weight: 450;
+  font-weight: 500;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar .segmented__option[aria-checked='true'] {
-  background: var(--color-sidebar-accent);
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__option[aria-checked='true'] {
+  border-color: color-mix(in srgb, var(--color-text) 15%, transparent);
+  background: color-mix(in srgb, var(--color-text) 4.5%, transparent);
   color: var(--color-text);
-  font-weight: 550;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-mobile {
-  display: none;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-main {
-  min-width: 0;
-}
-
-@media (max-width: 63.999rem) {
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-layout {
-    display: block;
-  }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation {
-    min-height: 0;
-    padding: 1rem 0 0;
-    border-right: 0;
-  }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar {
-    display: none;
-  }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-mobile {
-    position: relative;
-    z-index: 1;
-    display: block;
-    max-width: 28rem;
-  }
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__count {
+  color: inherit;
+  opacity: 0.65;
 }
 
 /* State is a change of ground and nothing else — two neutral steps of the same ink, never a tint. The

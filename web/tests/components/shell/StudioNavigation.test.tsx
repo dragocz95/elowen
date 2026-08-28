@@ -89,40 +89,42 @@ describe('StudioNavigation destinations', () => {
 });
 
 describe('StudioNavigation grouping', () => {
-  it('groups a multi-page world under one disclosure, and leaves a single-page world a plain link', () => {
+  it('keeps the desktop sidebar primary-only, linking a multi-page world through its default page', () => {
     mount();
-    const group = screen.getByRole('button', { name: 'Work' });
-    expect(group).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/p/work/board');
-    expect(screen.getByRole('link', { name: 'Timeline' })).toHaveAttribute('href', '/p/work/timeline');
-    // A world naming one page of its own is a destination, not a group with a single child in it.
-    expect(screen.queryByRole('button', { name: 'Projects' })).toBeNull();
-  });
-
-  it('folds a group shut, hiding its pages', () => {
-    mount();
-    fireEvent.click(screen.getByRole('button', { name: 'Work' }));
-    expect(screen.getByRole('button', { name: 'Work' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Work' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Work' })).toHaveAttribute('href', '/p/work/board');
     expect(screen.queryByRole('link', { name: 'Board' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Timeline' })).toBeNull();
   });
 
-  it('keeps the page you are standing on visible when its group is folded shut', () => {
-    // The one case a disclosure must not get wrong: closing the group the reader is INSIDE would take the
-    // current destination out of the menu they navigate with, leaving nothing marked as where they are.
+  it('keeps the complete nested navigation in the mobile drawer', () => {
+    mount({ drawer: true, drawerOpen: true, onDrawerClose: vi.fn() });
+    const group = screen.getByRole('button', { name: 'Work' });
+    expect(group).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/p/work/board');
+    expect(screen.getByRole('link', { name: 'Timeline' })).toHaveAttribute('href', '/p/work/timeline');
+    fireEvent.click(group);
+    expect(group).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('link', { name: 'Board' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Timeline' })).toBeNull();
+  });
+
+  it('keeps the active drawer page visible when its group is folded shut', () => {
     currentPath.value = '/p/work/timeline';
-    mount();
+    mount({ drawer: true, drawerOpen: true, onDrawerClose: vi.fn() });
     fireEvent.click(screen.getByRole('button', { name: 'Work' }));
     expect(screen.getByRole('link', { name: 'Timeline' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('link', { name: 'Board' })).toBeNull();
   });
 
-  it('never folds a group in the icon column, where every page stays one click away', () => {
+  it('keeps the compact desktop sidebar primary-only as well', () => {
     currentPath.value = '/p/work/timeline';
     mount({ compact: true });
     expect(screen.queryByRole('button', { name: 'Work' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Board' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Timeline' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Work' })).toHaveAttribute('data-active', 'true');
+    expect(screen.getByRole('link', { name: 'Work' })).not.toHaveAttribute('aria-current');
+    expect(screen.queryByRole('link', { name: 'Board' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Timeline' })).toBeNull();
   });
 });
 
