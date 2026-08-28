@@ -9,8 +9,10 @@
 // Every case here stands for a defect that was found by driving the compiled skin in Chrome:
 //  - every row of the navigation column measured 32px on a coarse pointer, and at drawer width that
 //    column IS the phone's only menu, so the whole menu was under the touch floor at once;
-//  - the register's open control measured 43px, one pixel under it, because Studio tightens the row to
-//    44px and the control is `inset: 0` inside the row's 1px rule;
+//  - the register's open control measured 43px, one pixel under it, back when Studio tightened the row
+//    to 44px and the control is `inset: 0` inside the row's 1px rule. The rhythm is 48px now, so the
+//    control clears the floor on its own — the assertion stays because it is the floor that matters,
+//    not the rhythm that happens to satisfy it;
 //  - the hero mascot had to disappear from the working pages WITHOUT the shared component being forked,
 //    which is a rule only a rendered document can confirm.
 // The overflow and sidebar-geometry cases carry no known defect: they are the two properties the whole
@@ -33,7 +35,7 @@ const TOUCH_TARGET = 44;
 
 /** Studio's two columns, from `skins/studio/shared.css`: `width: 16rem` expanded, `3rem` folded — the
  *  folded width being exactly one 40px row plus the body's 2 × 4px inset, so a folded destination is the
- *  same square the expanded one opens from. */
+ *  same square the expanded one opens from. Restated as numbers because a test measures a box. */
 const NAV_FULL = 256;
 const NAV_RAIL = 48;
 
@@ -155,7 +157,7 @@ test('nothing on a Studio page is laid out wider than the 320px it has', async (
   }
 });
 
-test('the Studio column is 256px, folds to 52px, and becomes a sheet on a phone', async ({ app, seed }, testInfo) => {
+test('the Studio column is 256px, folds to 48px, and becomes a sheet on a phone', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-light');
   const nav = app.locator('[data-testid="studio-navigation"]');
@@ -278,9 +280,10 @@ test('a destination in the Studio nav sheet can actually be tapped', async ({ br
 
 test('a Studio register row can be opened with a finger', async ({ browser, seed }, testInfo) => {
   authedOnly(testInfo);
-  // Studio tightens the register to a 44px rhythm. The row's open control is `position: absolute;
-  // inset: 0` inside it, so it inherits the row's CONTENT box — 44px less the 1px rule left a 43px
-  // target, one pixel under the floor, on every register in the app.
+  // The row's open control is `position: absolute; inset: 0` inside the row, so it inherits the row's
+  // CONTENT box. At the 44px rhythm Studio used to set, that box measured 43px — one pixel under the
+  // floor, on every register in the app. At 48px it measures 47px, which is why the pointer-gated bump
+  // that used to buy back the pixel is gone.
   // The account directory belongs to the onboarding lane and is empty outside it, so the register has to
   // be given rows or it lays out its empty state and there is no control to measure.
   await seed.response('users', Array.from({ length: 6 }, (_, i) => ({
