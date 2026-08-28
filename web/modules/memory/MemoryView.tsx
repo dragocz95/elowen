@@ -610,7 +610,10 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
           </span>
         ) : <span className="italic text-text-muted/65">{t.memory.categoryUncategorized}</span>}
       </DataTableCell>
-      <DataTableCell priority="wide" lines={1} className="truncate font-mono text-xs text-text-muted">{memory.kind || '—'}</DataTableCell>
+      {/* The kind is a WORD the reader picks from a menu — "fact", "preference" — and not an identifier,
+          so it is set in the row's own face. The mono face is wider per character and truncated it to
+          "preferen…" on every second row of the register. */}
+      <DataTableCell priority="wide" lines={1} className="truncate text-xs text-text-muted">{memory.kind || '—'}</DataTableCell>
       <DataTableCell priority="wide" lines={1} className="whitespace-nowrap text-xs">
         <VitalityCell value={memory.vitality} />
       </DataTableCell>
