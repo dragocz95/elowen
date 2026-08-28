@@ -35,7 +35,7 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
             type="button"
             onClick={onMenuClick}
             aria-label={t.common.toggleSidebar}
-            className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-bg/55 text-text-muted backdrop-blur-md transition-colors hover:border-accent/40 hover:text-accent"
+            className="top-bar__menu mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-bg/55 text-text-muted backdrop-blur-md transition-colors hover:border-accent/40 hover:text-accent"
           >
             <Menu size={19} aria-hidden />
           </button>
@@ -54,7 +54,11 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
         ) : null}
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-bg/45 p-1 backdrop-blur-xl">
+      {/* The action cluster and the hamburger are named — `top-bar__*` — because they are the only chrome
+          on every page of the app and a skin has to be able to restate them. The utilities below are the
+          built-in design's own reading of them and stay exactly as they were; a skin overrides from its
+          stylesheet, which is unlayered and therefore outranks all of this. */}
+      <div className="top-bar__actions ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-bg/45 p-1 backdrop-blur-xl">
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
@@ -82,7 +86,7 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
       <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
         <Link
           href="/account"
-          className="ml-0.5 flex items-center rounded-full ring-accent/30 transition-[opacity,box-shadow] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2"
+          className="top-bar__identity ml-0.5 flex items-center rounded-full ring-accent/30 transition-[opacity,box-shadow] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2"
           title={me.data?.user ? (me.data.user.name || me.data.user.username) : t.common.daemon}
         >
           {me.data?.user ? (

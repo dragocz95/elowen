@@ -8,9 +8,10 @@
  * reading `skins/<id>/skin.css` and nothing else, so a token declared in the shared stylesheet would be
  * invisible to the WCAG gate and the gate would silently measure the built-in ember palette instead.
  *
- * Every value here is measured, not eyeballed: all twelve text/surface pairs clear WCAG AA (4.5:1) and
- * the three text steps stay ordered. The tightest pair is --color-text-subtle on --color-elevated at
- * 4.59:1, which is why the third step is #6E6E77 rather than something lighter. */
+ * Every value here is measured, not eyeballed: all fifteen text/surface pairs clear WCAG AA (4.5:1) and
+ * the three text steps stay ordered. The tightest pair is --color-text-subtle on the derived
+ * --color-surface-sticky at 4.70:1, which is why the third step is #6A6A73 rather than something
+ * lighter. */
 
 :root[data-skin='studio-light'] {
   /* A light document. The browser has to be told, or form controls, scrollbars and the caret keep
@@ -27,11 +28,22 @@
   --color-border-strong: #d4d4d8;
 
   /* Ink. --color-text-muted is #52525b rather than the lighter grey a light UI reaches for by reflex:
-     #71717a measures 4.40:1 on --color-elevated and fails AA outright. Measured on --color-elevated,
-     the worst surface here: text 18.10:1, muted 7.04:1, subtle 4.59:1. */
+     #71717a measures 4.40:1 on --color-elevated and fails AA outright.
+     --color-text-subtle is measured against the WORST surface a light design has, which is not
+     --color-elevated but --color-surface-sticky: that token is derived (94% document + 6% ink) and
+     resolves here to #f0f0f0, lighter than #f4f4f5, and it is what the register's sticky header is
+     painted with. #6e6e77 measured 4.43:1 there — below AA on 10px uppercase mono. #6a6a73 clears it.
+     Measured: on --color-surface-sticky text 17.46:1, muted 6.78:1, subtle 4.70:1; on
+     --color-elevated text 18.10:1, muted 7.04:1, subtle 4.87:1. */
   --color-text: #09090b;
   --color-text-muted: #52525b;
-  --color-text-subtle: #6e6e77;
+  --color-text-subtle: #6a6a73;
+
+  /* The overlay veil. The inherited token mixes --color-bg, which on this canvas is near-white: at 70%
+     over a near-white page it darkened nothing and left a dialog floating on a hairline. On a light
+     design the veil has to come from the INK instead, which is also what keeps it following a repaint.
+     At 50% the page reads 3.68:1 darker and a white dialog stands 3.84:1 off it. */
+  --color-scrim: color-mix(in srgb, var(--color-text) 50%, transparent);
 
   /* Signal blue. #0070f3 is the design's blue, but as body text it measures 4.14:1 on --color-elevated,
      so the base accent is one step darker (4.70:1) and #0070f3 becomes the hot/hover step — the ramp

@@ -15,6 +15,43 @@
  */
 
 /* ---------------------------------------------------------------------------------------------------
+ * The page bar (components/shell/TopBar.tsx).
+ *
+ * The one piece of chrome on every route, and the last thing still speaking ember: a pill-shaped,
+ * blurred cluster of pill-shaped buttons over a translucent canvas wash. None of it survives the
+ * translation — `rounded-full` is 999px and no token reaches it, so Studio's 6/8/12 scale never applied,
+ * and `bg-bg/45` is a near-white wash on a near-white page, i.e. nothing at all.
+ * Studio draws it the way it draws every other container: one hairline, one opaque surface, no blur.
+ * --------------------------------------------------------------------------------------------------- */
+
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__actions {
+  gap: 0.125rem;
+  padding: 0.1875rem;
+  border-color: var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  backdrop-filter: none;
+}
+/* Every control inside the cluster follows the same radius — except the identity link, which frames a
+   circular avatar and would otherwise put a rounded-rectangle focus ring around a disc. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__actions :is(a, button):not(.top-bar__identity) {
+  border-radius: var(--radius-sm);
+}
+/* The sheet's opener. The accent is spent on state in this design, never on a hover, so it reads as the
+   neutral wash every other control uses. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__menu {
+  border-color: var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  backdrop-filter: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__menu:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-elevated);
+  color: var(--color-text);
+}
+
+/* ---------------------------------------------------------------------------------------------------
  * The masthead (components/ui/WorkspaceHero.tsx).
  *
  * Every route composes WorkspaceShell, which hard-mounts the hero, so Studio cannot simply not render
@@ -93,8 +130,13 @@
   border-top: 1px solid var(--color-border);
 }
 
-/* Metrics as a measurement strip: value and label on one line, separated by the hairlines the base rule
-   already draws, wrapping instead of scrolling so a phone shows all of them at once. */
+/* Metrics as a measurement strip: value and label on one line, wrapping instead of scrolling so a phone
+   shows all of them at once.
+   The separator moves to the LEADING edge. The base rule draws it trailing and drops it on :last-child,
+   which is correct for one row and wrong for a wrapped strip: every row but the last then ends with a
+   hairline hanging in empty space, and there is no selector for "last in its row". Drawn leading and
+   dropped on :first-child, a wrapped row instead opens flush against the hero's own left edge, where the
+   hairline lines up with the content above it. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics {
   display: flex;
   flex-wrap: wrap;
@@ -107,9 +149,12 @@
   align-items: baseline;
   gap: 0.5rem;
   padding: 0.625rem 1rem;
+  border-inline-start: 1px solid var(--color-border);
+  border-inline-end: 0;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric:first-child {
   padding-inline-start: 0;
+  border-inline-start: 0;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric__value {
   font-size: 1rem;
@@ -192,7 +237,11 @@
 
 /* The sticky header stays OPAQUE — rows scroll under it. --color-surface-sticky is derived from
    --color-document, so it follows the variant instead of being a fixed tint: on the light canvas it
-   resolves to a solid paper grey, on OLED to a solid near-black. */
+   resolves to a solid paper grey (#f0f0f0), on OLED to a solid near-black (#141414).
+   Being derived, it is LIGHTER than --color-elevated on the light variant, which makes it that palette's
+   worst surface rather than the one the token block was tuned against — the column names are 10px
+   uppercase mono, so nothing here is large text and the whole ramp has to clear 4.5:1 on it. Both skins
+   state their measurement against this token, and tests/lib/designTokens.test.ts now measures it. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header {
   border-bottom-color: var(--color-border-strong);
   background: var(--color-surface-sticky);
@@ -303,6 +352,31 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-menu-item {
   border-radius: var(--radius-sm);
   font-size: 0.8125rem;
+}
+
+/* The scrim. `.overlay-layer-modal` IS the backdrop in this app — every consumer is a `fixed inset-0`
+   layer that paints the veil on itself (Modal, the command palette, the advisor's blocking layer) — so
+   the layer is where the veil belongs.
+   The consumers spell it `bg-bg/70`, which is right on a design whose canvas is black and paints
+   NOTHING on one whose canvas is near-white: 70% of #fafafa over #fafafa left the dialog on a 1.27:1
+   hairline with no darkening behind it at all. The utility is untouched — Ember and midnight keep their
+   scrim exactly — and this rule, being unlayered, replaces it for Studio with a veil derived per variant
+   from --color-scrim (measured on light: the page reads 3.68:1 darker, a white dialog stands 3.84:1 off
+   the veil). */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-layer-modal {
+  background: var(--color-scrim);
+}
+
+/* Floating menus. `.overlay-surface` above carries the raised shadow, but a menu is not one of those —
+   it is a bare panel on `.overlay-layer-menu` — and on the light variant its fill measured 1.05:1
+   against the page it floats over, with a 1.22:1 border: a menu that visually merged with the page
+   behind it. It needs the same two things any floating thing needs, a stronger edge and a shadow.
+   `SelectMenu` and `ProjectFilterPills` already asked for the raised shadow through a utility and are
+   simply re-stated here; `ContextMenu`, `ActionMenu`, `LanguageSwitcher` and `HelpTip` are the ones
+   that gain it. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-layer-menu {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-raised);
 }
 
 /* The row's open control is `position: absolute; inset: 0` (data-table.css), so its height is the row's

@@ -104,10 +104,14 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'][data-open] {
   transform: none;
 }
+/* --color-scrim, not a mix of --color-bg: on the light variant the canvas IS near-white, so 70% of it
+   over a near-white page darkened nothing and the sheet had no backdrop to slide over. The token is
+   declared per variant (tokens.css, overridden in studio-light/skin.css) precisely so this one rule can
+   be right on both. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__scrim {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  background: var(--color-scrim);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--motion-base) var(--ease-out);
@@ -149,6 +153,17 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__brand {
   justify-content: center;
   padding-inline: 0;
+}
+/* Only the sheet carries a close control, and it is absolutely positioned into this header's top-right
+   corner — 44x44 on a coarse pointer, which is every pointer that gets a sheet. The status beacon sits
+   at that same right edge (`margin-left: auto` below) with its textual label rendered, so the two
+   overlapped by ~40px and the close button landed on top of the one live element in the design.
+   The brand gives way rather than the status moving: at 320px of sheet the status is the only thing in
+   this header that says whether the daemon is answering, and the rail's trick of parking it at the
+   bottom edge would put it two hundred pixels from the mark it belongs to. 0.5rem inset + 44px control
+   + 0.5rem of air = 3.5rem. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'] .studio-nav__brand {
+  padding-inline-end: 3.5rem;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-mark {
   flex: none;
@@ -269,7 +284,10 @@
   color: var(--color-accent);
 }
 /* The signal edge. Drawn on the column's own inner edge so a row's marker lines up with every other
-   row's, whichever depth it sits at. */
+   row's, whichever depth it sits at. The marker is positioned against the ROW, so a page inside a group
+   has to give back the 1.5rem indent that row carries or its marker stands 24px inside the others —
+   which is the one thing a marker on a shared edge must not do. The rail folds that indent away and its
+   markers are already flush, so the correction is stated only where the indent exists. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active]::before {
   content: '';
   position: absolute;
@@ -279,6 +297,9 @@
   width: 2px;
   border-radius: 1px;
   background: var(--color-accent);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav:not([data-mode='rail']) .studio-nav__item[data-depth='1'][data-active]::before {
+  left: -1.875rem;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-icon {
   display: grid;

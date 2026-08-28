@@ -92,20 +92,64 @@ test('Studio renders under its own stylesheet, not the operator default', async 
   expect(canvas.toLowerCase()).toBe('#fafafa');
 });
 
-test('no Studio page scrolls sideways at 320px', async ({ app, seed }, testInfo) => {
+test('nothing on a Studio page is laid out wider than the 320px it has', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-light');
   await app.setViewportSize({ width: 320, height: 700 });
   for (const route of ['/dash', '/chat', REGISTER, '/projects', '/users', '/account', '/settings']) {
-    await app.goto(route);
-    await expect(app.locator('h1')).toBeVisible();
-    const overflow = await app.evaluate(() => {
-      const de = document.documentElement;
-      return { scrollWidth: de.scrollWidth, clientWidth: de.clientWidth };
+    // `openStudio`, not `goto`: every other case in this file goes through it because a cold route under
+    // `next dev` can be served as the operator default, and this one measuring Ember would pass for the
+    // wrong reason — silently, since Ember has no horizontal overflow at 320px either.
+    await openStudio(app, route);
+    // And wait for the shell to have MEASURED this width. The navigation mode comes from a resize
+    // observer over the content region, so between hydration and the first measurement the column is
+    // still 256px wide and <main> is a 54px sliver — every box in the page overhangs it, and a
+    // per-element assertion would report that transient state as an overflow on every route.
+    await expect(app.locator('[data-testid="studio-navigation"]')).toHaveAttribute('data-mode', 'drawer');
+    // `documentElement.scrollWidth` on its own proves almost nothing here: base.css sets
+    // `body { overflow: hidden }`, so the document never grows a horizontal scrollbar whatever happens
+    // inside it. Overflow in this app shows up as CLIPPING instead, so the measurement is per element:
+    // the right edge of every laid-out box against the client width of the first ancestor that would
+    // CLIP it. A scrollable ancestor (`auto`/`scroll`) is deliberately not a failure — content wider
+    // than a horizontal scroller is still reachable — but content past a `hidden`/`clip` edge, or past
+    // the viewport, is simply gone.
+    const spills = await app.evaluate(() => {
+      /** The ancestor that would CUT this element off, or null when the nearest ancestor governing the
+       *  inline axis scrolls instead — content wider than a scroller is reachable, not lost. With no
+       *  such ancestor the bound is the viewport, which body's `overflow: hidden` makes a clip too. */
+      const clipper = (el: Element): Element | null => {
+        // A fixed element is positioned against the viewport, so no ancestor's overflow governs it.
+        if (getComputedStyle(el).position === 'fixed') return document.documentElement;
+        for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+          const overflowX = getComputedStyle(node).overflowX;
+          if (overflowX === 'auto' || overflowX === 'scroll') return null;
+          if (overflowX === 'hidden' || overflowX === 'clip') return node;
+        }
+        return document.documentElement;
+      };
+      const describe = (el: Element) =>
+        `${el.tagName.toLowerCase()}.${el.className.toString().trim().split(/\s+/)[0] ?? ''}`;
+      const offenders: string[] = [];
+      for (const el of document.body.querySelectorAll('*')) {
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        const box = el.getBoundingClientRect();
+        if (box.width === 0 || box.height === 0) continue;
+        const container = clipper(el);
+        if (!container) continue;
+        // `clientWidth` is the PADDING box, while the rect's left edge is the BORDER box, so the
+        // container's own left border has to be added back or every bordered card reads one pixel short.
+        const edge = container.getBoundingClientRect().left
+          + parseFloat(getComputedStyle(container).borderLeftWidth)
+          + container.clientWidth;
+        // Half a pixel of slack: sub-pixel layout rounds a flush edge either way.
+        if (box.right <= edge + 0.5) continue;
+        offenders.push(`${describe(el)} right=${Math.round(box.right)} clipped at ${Math.round(edge)} by ${describe(container)}`);
+        if (offenders.length === 5) break;
+      }
+      return offenders;
     });
-    // A horizontal document scrollbar at the narrowest supported width means something was laid out to a
-    // width nobody has. A skin restyles the shell itself, so this cannot be inherited from the core spec.
-    expect(overflow.scrollWidth, `${route} overflows horizontally at 320px in Studio`).toBeLessThanOrEqual(overflow.clientWidth);
+    expect(spills, `${route} lays out content past its container at 320px in Studio`).toEqual([]);
   }
 });
 

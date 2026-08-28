@@ -42,11 +42,67 @@ const splitSelectorList = (selector: string): string[] => {
 
 /** Every selector fragment in a stylesheet, comments stripped and selector lists flattened. One parser
  *  for both guards below — the per-skin one and the shared-stylesheet one — so the false alarm above
- *  stays fixed in exactly one place. */
-const selectorFragments = (css: string): string[] =>
-  [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(^|\})\s*([^@{}]+)\{/g)]
-    .flatMap((m) => splitSelectorList(m[2]!.trim()))
-    .map((part) => part.trim());
+ *  stays fixed in exactly one place.
+ *
+ *  Brace-counting rather than a regex, deliberately. The regex this replaced anchored each selector on
+ *  the `}` that closed the previous rule, so the FIRST rule inside every `@media` / `@container` block —
+ *  which is preceded by `{` — was never extracted and never checked. Nothing had slipped through it yet,
+ *  but a guard whose whole purpose is stopping a skin from leaking into every other design cannot have a
+ *  shape of rule it silently cannot see. */
+const selectorFragments = (css: string): string[] => {
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const fragments: string[] = [];
+  let prelude = '';
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i]!;
+    // Quoted text is copied through whole: a selector's `[data-skin='x']` must survive intact, and a
+    // brace inside a string is not a block boundary.
+    if (ch === '"' || ch === "'") {
+      const end = source.indexOf(ch, i + 1);
+      const close = end === -1 ? source.length : end;
+      prelude += source.slice(i, close + 1);
+      i = close;
+      continue;
+    }
+    if (ch === '{') {
+      const head = prelude.trim();
+      // An at-rule prelude (`@media (...)`) is a condition, not a selector; the rules inside it are
+      // reached on their own next time round. A declaration block cannot contain `{`, so anything else
+      // arriving here is a selector list.
+      if (head && !head.startsWith('@')) fragments.push(...splitSelectorList(head).map((part) => part.trim()));
+      prelude = '';
+      continue;
+    }
+    if (ch === '}') { prelude = ''; continue; }
+    prelude += ch;
+  }
+  return fragments;
+};
+
+describe('the scope guards can see every rule they claim to check', () => {
+  // The extractor IS the guard: a rule it does not return is a rule nothing below checks, and the leak
+  // it exists to catch would ship green. The first rule inside an at-rule block is the case the previous
+  // regex could not reach.
+  it('extracts the first rule inside an at-rule block, and every rule after it', () => {
+    const css = `
+      @media (pointer: coarse) {
+        .leaked-first { min-height: 44px; }
+        :root[data-skin='x'] .second { min-height: 44px; }
+      }
+      :root[data-skin='x'] .top-level { color: red; }
+    `;
+    expect(selectorFragments(css)).toEqual(['.leaked-first', ":root[data-skin='x'] .second", ":root[data-skin='x'] .top-level"]);
+  });
+
+  it('keeps a selector list whole through :is(), and ignores comments and declarations', () => {
+    const css = `
+      /* .commented-out { } */
+      :root:is([data-skin='a'], [data-skin='b']) .one,
+      :root[data-skin='a'] .two { content: '}'; background: url("a{b"); }
+    `;
+    expect(selectorFragments(css)).toEqual([":root:is([data-skin='a'], [data-skin='b']) .one", ":root[data-skin='a'] .two"]);
+  });
+});
 
 describe('activeSkin', () => {
   afterEach(() => vi.unstubAllEnvs());

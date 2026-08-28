@@ -53,8 +53,11 @@ export function ContextMenu({ state, onClose }: { state: ContextMenuState; onClo
       ref={ref}
       onDismiss={() => onClose()}
       onMouseDown={(e) => e.stopPropagation()}
-      className="overlay-layer-menu fixed min-w-44 rounded-lg border border-border bg-elevated py-1 text-xs text-text"
-      style={{ left: pos.x, top: pos.y, boxShadow: 'var(--shadow-card)' }}
+      // The shadow is a utility rather than an inline style — the same spelling SelectMenu uses — so a
+      // skin can restyle it. Inline styles outrank every stylesheet, and this panel's depth is exactly
+      // the kind of thing a design has to be able to change; only the measured position stays inline.
+      className="overlay-layer-menu fixed min-w-44 rounded-lg border border-border bg-elevated py-1 text-xs text-text shadow-[var(--shadow-card)]"
+      style={{ left: pos.x, top: pos.y }}
     >
       {state.items.map((item, i) => <MenuRow key={i} entry={item} index={i} onClose={onClose} />)}
     </MenuSurface>,

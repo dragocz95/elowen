@@ -54,8 +54,72 @@ function contrast(a: string, b: string): number {
 }
 
 const TEXT_TOKENS = ['--color-text', '--color-text-muted', '--color-text-subtle'] as const;
-const SURFACE_TOKENS = ['--color-bg', '--color-document', '--color-surface', '--color-elevated'] as const;
+/** Every ground the text ramp is actually painted on. `--color-surface-sticky` is DERIVED rather than
+ *  declared (tokens.css mixes 6% ink into the document surface) and is the ground of every sticky table
+ *  header and toolbar in the app — and because it is derived it can be lighter than --color-elevated,
+ *  which is the surface each palette was tuned against. Studio's light variant shipped a header at
+ *  4.43:1 that way and no gate saw it, because this list stopped at the four declared surfaces. */
+const SURFACE_TOKENS = ['--color-bg', '--color-document', '--color-surface', '--color-elevated', '--color-surface-sticky'] as const;
 const AA_NORMAL_TEXT = 4.5;
+
+/** Mix two `#rrggbb` colours the way `color-mix(in srgb, …)` does: a linear interpolation of the
+ *  gamma-encoded channels, `weight` being the share of the first colour. */
+function mixSrgb(a: string, b: string, weight: number): string {
+  const channels = (hex: string) => {
+    const h = hex.replace('#', '');
+    const full = h.length === 3 ? [...h].map((c) => c + c).join('') : h;
+    return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  };
+  const [from, to] = [channels(a), channels(b)];
+  return `#${from.map((v, i) => Math.round(v * weight + to[i]! * (1 - weight)).toString(16).padStart(2, '0')).join('')}`;
+}
+
+const HEX_COLOUR = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
+
+/** A token's value as a literal colour, following `var()` chains and evaluating the one derivation the
+ *  palettes use. Without this a derived surface could not be measured at all, and "cannot measure" is
+ *  how an unreadable pair ships: the header above is exactly that case. */
+function resolveColour(value: string, tokens: Record<string, string>, depth = 0): string | null {
+  const raw = value.trim();
+  if (HEX_COLOUR.test(raw)) return raw;
+  if (depth > 8) return null;
+  const reference = /^var\(\s*(--[a-z0-9-]+)\s*\)$/i.exec(raw);
+  if (reference) {
+    const next = tokens[reference[1]!];
+    return next === undefined ? null : resolveColour(next, tokens, depth + 1);
+  }
+  const mix = /^color-mix\(\s*in\s+srgb\s*,\s*(.+?)\s+([\d.]+)%\s*,\s*(.+?)(?:\s+[\d.]+%)?\s*\)$/i.exec(raw);
+  if (mix) {
+    const [from, to] = [resolveColour(mix[1]!, tokens, depth + 1), resolveColour(mix[3]!, tokens, depth + 1)];
+    return from && to ? mixSrgb(from, to, Number(mix[2]) / 100) : null;
+  }
+  return null;
+}
+
+/** Text/ground pairs that are below AA TODAY, each with the reason it is not fixed here. A ledger in the
+ *  idiom this file already uses for hardcoded colours, and pinned in both directions: an entry whose
+ *  ratio has since been fixed fails as a stale entry, and a pair that is not listed has to pass. So the
+ *  list can only shrink, and adding to it is a visible act rather than a quiet one.
+ *
+ *  Both entries are the same defect, found by adding --color-surface-sticky to the surfaces above: the
+ *  derived sticky ground is LIGHTER than --color-elevated, which is the surface both of these palettes
+ *  state their measurement against, so the third text step lands just under AA on it. Neither palette is
+ *  this branch's to repaint — Studio must leave the built-in design and midnight pixel-identical — and
+ *  the correction is a two-unit darkening of one token in each. */
+const KNOWN_BELOW_AA: { design: string; text: string; surface: string; reason: string }[] = [
+  {
+    design: 'default',
+    text: '--color-text-subtle',
+    surface: '--color-surface-sticky',
+    reason: 'TODO(contrast): #827974 on the derived sticky ground (#121111) is 4.43:1. tokens.css claims 4.57:1 as its worst case, which was measured before --color-surface-sticky existed; darkening the token repaints the built-in design and belongs to its own change.',
+  },
+  {
+    design: 'midnight',
+    text: '--color-text-subtle',
+    surface: '--color-surface-sticky',
+    reason: 'TODO(contrast): #77808f on the derived sticky ground (#15181e) is 4.46:1, for the same reason as the built-in design above — the skin was tuned against --color-elevated, which the derived surface is lighter than.',
+  },
+];
 
 /** The palette a design actually renders with: the base tokens, with a skin's overrides applied on top.
  *  A skin that overrides only the surfaces still has to keep the INHERITED text readable on them, which
@@ -67,18 +131,28 @@ function palette(skin: string | null): Record<string, string> {
 function assertReadable(design: string, tokens: Record<string, string>) {
   const hex = (token: string) => {
     const value = tokens[token];
-    // The contrast gate needs a resolvable colour. A computed value (color-mix, a var() chain) cannot be
-    // evaluated here, so a design that reaches for one on a text or surface token must be told loudly
-    // rather than silently skipped — a skipped check is how an unreadable palette ships.
+    // The contrast gate needs a resolvable colour. A value it cannot evaluate must be told loudly rather
+    // than silently skipped — a skipped check is how an unreadable palette ships.
     expect(value, `${design}: ${token} is not defined`).toBeTruthy();
-    expect(value, `${design}: ${token} must be a literal hex colour so contrast can be verified, got "${value}"`)
+    const resolved = resolveColour(value!, tokens);
+    expect(resolved, `${design}: ${token} must resolve to a literal colour so contrast can be verified, got "${value}"`)
       .toMatch(/^#[0-9a-f]{3}([0-9a-f]{3})?$/i);
-    return value!;
+    return resolved!;
   };
 
   for (const text of TEXT_TOKENS) {
     for (const surface of SURFACE_TOKENS) {
       const ratio = contrast(hex(text), hex(surface));
+      const known = KNOWN_BELOW_AA.find((e) => e.design === design && e.text === text && e.surface === surface);
+      if (known) {
+        // The other direction of the ledger: once the pair clears AA its entry is stale, and a stale
+        // exemption is how a list like this stops meaning anything.
+        expect(
+          ratio,
+          `${design}: ${text} on ${surface} is now ${ratio.toFixed(2)}:1 — delete its KNOWN_BELOW_AA entry`,
+        ).toBeLessThan(AA_NORMAL_TEXT);
+        continue;
+      }
       expect(
         ratio,
         `${design}: ${text} on ${surface} is ${ratio.toFixed(2)}:1, below WCAG AA (${AA_NORMAL_TEXT}:1)`,
@@ -96,6 +170,28 @@ function assertReadable(design: string, tokens: Record<string, string>) {
 }
 
 describe('text contrast', () => {
+  it('resolves a derived surface rather than skipping it', () => {
+    // The resolver is load-bearing: if it silently returned null for a `color-mix` the gate would fail
+    // loudly, but if it returned the wrong colour the gate would measure a surface nobody renders.
+    expect(resolveColour('#abc', {})).toBe('#abc');
+    expect(resolveColour('var(--a)', { '--a': '#123456' })).toBe('#123456');
+    expect(resolveColour('color-mix(in srgb, var(--doc) 94%, var(--ink) 6%)', { '--doc': '#ffffff', '--ink': '#09090b' })).toBe('#f0f0f0');
+    expect(resolveColour('color-mix(in srgb, #000000 50%, #ffffff)', {})).toBe('#808080');
+    expect(resolveColour('var(--missing)', {})).toBeNull();
+    // And the surface it was added for really is derived in every design, i.e. the check below is not
+    // quietly measuring a literal somebody declared.
+    expect(baseTokens['--color-surface-sticky']).toContain('color-mix');
+  });
+
+  it('records only real, still-failing pairs in the ledger', () => {
+    for (const entry of KNOWN_BELOW_AA) {
+      expect(['default', ...SKINS], `${entry.design} is not a design`).toContain(entry.design);
+      expect(TEXT_TOKENS as readonly string[], `${entry.text} is not a text token`).toContain(entry.text);
+      expect(SURFACE_TOKENS as readonly string[], `${entry.surface} is not a surface token`).toContain(entry.surface);
+      expect(entry.reason, `${entry.design}/${entry.text} must say why it is not fixed`).toMatch(/^TODO\(contrast\): /);
+    }
+  });
+
   it('the built-in design keeps every text step at WCAG AA on every surface', () => {
     assertReadable('default', palette(null));
   });

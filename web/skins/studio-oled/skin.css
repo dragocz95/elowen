@@ -5,7 +5,11 @@
  * token moved into the shared stylesheet would leave the WCAG gate measuring the built-in palette.
  *
  * Measured on --color-elevated, the lightest surface and therefore the worst case here: text 18.07:1,
- * muted 7.36:1, subtle 4.69:1. */
+ * muted 7.36:1, subtle 4.69:1. The derived --color-surface-sticky resolves to #141414 and is the next
+ * worst: text 17.65:1, muted 7.19:1, subtle 4.58:1.
+ *
+ * There is no --color-scrim here: the inherited token mixes --color-bg, and on this canvas that IS the
+ * darkest colour the design owns, so the veil already darkens. studio-light has to override it. */
 
 :root[data-skin='studio-oled'] {
   /* True black canvas — an OLED panel renders it as unlit pixels, which is the point. The surfaces above

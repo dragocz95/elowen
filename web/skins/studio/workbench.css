@@ -34,7 +34,14 @@
   --studio-chat-measure: 60rem;
 }
 
+/* `inline-size: 100%` is load-bearing, not belt-and-braces. Every row wearing this class is a flex item
+   in the conversation column, and an auto inline margin CANCELS the stretch that would otherwise give it
+   the column's width: the row then sizes to its own content instead. The sticky conversation bar has
+   five fixed 32px controls in it, so at 320px it laid itself out 339px wide and half of it was clipped
+   away by <main>. A definite width restores the stretch and still leaves the auto margins something to
+   centre once the cap binds. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-gutter {
+  inline-size: 100%;
   max-inline-size: var(--studio-chat-measure);
   margin-inline: auto;
 }

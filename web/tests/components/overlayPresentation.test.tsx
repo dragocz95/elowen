@@ -48,6 +48,10 @@ describe('the whole-tree guards below actually have a tree to walk', () => {
     expect('max-h-[50vh]').toMatch(/\d(?:\.\d+)?vh\b/);
     expect('max-h-[50dvh]').not.toMatch(/\d(?:\.\d+)?vh\b/);
     expect([...'fixed z-[60] inset-0 z-30'.matchAll(/(?<![\w-])-?z-(?:\[(\d+)\]|(\d+))(?![\w.-])/g)]).toHaveLength(2);
+    // The stylesheet half of the same guard, including the skins tree it now reads.
+    expect(STYLESHEETS.some(([path]) => path.startsWith(join('skins', 'studio')))).toBe(true);
+    expect([...'.a { z-index: 90; }'.matchAll(/z-index:\s*(\d+)/g)]).toHaveLength(1);
+    expect([...'.a { z-index: var(--z-menu); }'.matchAll(/z-index:\s*(\d+)/g)]).toHaveLength(0);
   });
 });
 
@@ -158,6 +162,17 @@ describe('overlay geometry', () => {
         if (Number(bracketed ?? plain) >= OVERLAY_SCALE_FLOOR) offenders.push(`${path}: ${match}`);
       }
       for (const [match, value] of source.matchAll(/zIndex:\s*(\d+)/g)) {
+        if (Number(value) >= OVERLAY_SCALE_FLOOR) offenders.push(`${path}: ${match}`);
+      }
+    }
+    // Stylesheets too, and the skins among them. A skin is CODE with full reach over the app, and it is
+    // where this exact defect already shipped once: `.studio-nav` claimed `z-index: 1` for every mode,
+    // out-specified the `.overlay-layer-nav-drawer` class that assigns --z-nav-drawer (80), and put the
+    // phone's whole menu underneath its own scrim. A skin writing `z-index: 90` instead would have been
+    // just as invisible to a guard that only reads .tsx. Below the floor a rule is ordering its own
+    // children inside a stacking context it created, which stays out of this as it does above.
+    for (const [path, source] of STYLESHEETS) {
+      for (const [match, value] of source.matchAll(/z-index:\s*(\d+)/g)) {
         if (Number(value) >= OVERLAY_SCALE_FLOOR) offenders.push(`${path}: ${match}`);
       }
     }

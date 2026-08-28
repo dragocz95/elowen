@@ -115,6 +115,13 @@
 
   /* Minimum hit area for an interactive control on a touch pointer (WCAG 2.5.8 / platform guidance). */
   --touch-target: 44px;
+
+  /* The veil an open overlay lays over the page behind it. A scrim has to DARKEN, whatever the canvas
+     is: derived from --color-bg it disappears on any light design — 70% of near-white over near-white
+     separates nothing — so a design whose canvas is not the darkest thing it owns states its own veil
+     here instead. The default is the mix the app's hand-written scrims already spell out, so the token
+     means the same thing everywhere it is read. */
+  --color-scrim: color-mix(in srgb, var(--color-bg) 70%, transparent);
 }
 
 /* A phone is held at arm's length and read at a glance, so the two smallest text tokens grow on small
