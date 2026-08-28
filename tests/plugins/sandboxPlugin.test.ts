@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ import type { Policy } from '../../src/plugins/policy.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 import { bubblewrapProbe, migrateLegacyHomes } from '../../plugins/sandbox/lib/execution.mjs';
 import { processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
+import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const log = { info() {}, warn() {}, error() {} };
@@ -224,6 +225,75 @@ describe('sandbox plugin workspaces', () => {
     execFileSync('ln', ['-s', outside, join(workspace.path, 'escape')]);
     const result = await runAs(registry, workspace.path, 1, 'brain-link', 'SandboxCommit', { projectId: 1, paths: ['escape/secret.txt'], message: 'escape' });
     expect(result.content[0]!.text).toMatch(/escapes workspace/);
+  });
+
+  it('resolves workspace refs by account/project and holds removal with a delegation lease', async () => {
+    const { registry, projectPath } = await setup();
+    const created = await runAs(registry, projectPath, 1, 'brain-ref', 'SandboxCreateWorkspace', { projectId: 1, label: 'Ref', baseRef: 'main' });
+    const workspace = created.details.workspace;
+    const control = registry.control('sandbox')!;
+    expect(control.resolveWorkspace({
+      accountUserId: 1,
+      workspace: { workspaceId: workspace.id, projectId: 1 },
+      accessibleProjectIds: [1],
+    })).toMatchObject({ accountUserId: 1, workspaceId: workspace.id, projectId: 1, path: workspace.path });
+    expect(() => control.resolveWorkspace({
+      accountUserId: 2,
+      workspace: { workspaceId: workspace.id, projectId: 1 },
+      accessibleProjectIds: [1],
+    })).toThrow('workspace not found');
+    expect(() => control.resolveWorkspace({
+      accountUserId: 1,
+      workspace: { workspaceId: workspace.id, projectId: 1 },
+      accessibleProjectIds: [],
+    })).toThrow('outside the delegated scope');
+
+    const lease = control.acquireDelegationLease({ accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 } });
+    const blocked = await runAs(registry, workspace.path, 1, 'brain-ref', 'SandboxRemoveWorkspace', { workspaceId: workspace.id });
+    expect(blocked.content[0]!.text).toContain('active process');
+    await lease.release();
+  });
+
+  it('rejects a workspace root replaced by a symlink', async () => {
+    const { registry, projectPath } = await setup();
+    const created = await runAs(registry, projectPath, 1, 'brain-ref-link', 'SandboxCreateWorkspace', { projectId: 1, label: 'Ref link', baseRef: 'main' });
+    const workspace = created.details.workspace;
+    const outside = mkdtempSync(join(tmpdir(), 'elowen-workspace-outside-'));
+    roots.push(outside);
+    rmSync(workspace.path, { recursive: true, force: true });
+    symlinkSync(outside, workspace.path);
+    expect(() => registry.control('sandbox')!.resolveWorkspace({
+      accountUserId: 1,
+      workspace: { workspaceId: workspace.id, projectId: 1 },
+      accessibleProjectIds: [1],
+    })).toThrow('missing or unsafe');
+  });
+
+  it('forces an admin workspace child into a short confined guest root and hides the worktree git pointer', async () => {
+    const { registry, projectPath, dataRoot } = await setup(['sandbox', 'terminal', 'files'], false);
+    const created = await runAs(registry, projectPath, 1, 'brain-confined', 'SandboxCreateWorkspace', { projectId: 1, label: 'Confined', baseRef: 'main' });
+    const workspace = created.details.workspace;
+    writeFileSync(join(dataRoot, 'sandbox', 'users', '1', 'home', 'shared-secret'), 'private');
+    const pathView = createWorkspacePathView({ accountUserId: 1, workspaceId: workspace.id, projectId: 1, path: workspace.path });
+    const result = await runWithPolicy(adminPolicy, () => tool(registry, 'Bash').execute('t', {
+      command: 'pwd; printf scoped > scoped.txt; cat scoped.txt; cat .git; test ! -e /home/elowen/shared-secret; echo home-isolated; test ! -e /root/host-secret',
+    }), {
+      identity: operator(3), contributionUserId: 1, sessionId: 'brain-confined-child',
+      workDir: workspace.path, pathView,
+    });
+    expect(result.content[0]!.text).toContain('/workspace');
+    expect(result.content[0]!.text).toContain('scoped');
+    expect(result.content[0]!.text).toContain('gitdir: /run/elowen-git-unavailable');
+    expect(result.content[0]!.text).toContain('home-isolated');
+    expect(result.content[0]!.text).not.toContain(workspace.path);
+    expect(readFileSync(join(workspace.path, 'scoped.txt'), 'utf8')).toBe('scoped');
+    const status = await runWithPolicy(adminPolicy, () => tool(registry, 'GitStatus').execute('g', { path: '.' }), {
+      identity: operator(3), contributionUserId: 1, sessionId: 'brain-confined-child',
+      workDir: workspace.path, pathView,
+    });
+    expect(status.content[0]!.text).toContain('root .');
+    expect(status.content[0]!.text).toContain('scoped.txt');
+    expect(JSON.stringify(status)).not.toContain(workspace.path);
   });
 });
 

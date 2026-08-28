@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { Type } from 'typebox';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { LiveSessionSpawner } from '../../src/brain/service/spawner.js';
+import { LiveSessionSpawner, workspaceToolDefinition } from '../../src/brain/service/spawner.js';
 import { inMemoryModelRuntime, type BrainRuntimeConfig } from '../../src/brain/providers.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
@@ -22,12 +22,12 @@ beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 
 const policy: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 
-function addTool(registry: PluginRegistry, owner: string, name: string): void {
+function addTool(registry: PluginRegistry, owner: string, name: string, hostFilesystem = false, workspaceSafe = false): void {
   const ctx = registry.contextFor(owner, {}, { info() {}, warn() {}, error() {} });
   ctx.registerTool(defineTool({
     name, label: name, description: `${name} operation`, parameters: Type.Object({}),
     execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: {} }),
-  }));
+  }), hostFilesystem || workspaceSafe ? { ...(hostFilesystem ? { hostFilesystem: true } : {}), ...(workspaceSafe ? { workspaceSafe: true } : {}) } : undefined);
 }
 
 /** A registry holding `count` bridged MCP tools. */
@@ -76,9 +76,10 @@ function makeSpawner(
   });
   return {
     create,
-    spawn: () => spawner.spawn({
+    spawn: (extra: Record<string, unknown> = {}) => spawner.spawn({
       sessionId: 'sess-1', ownerUserId: 1, selection: {}, policy,
       autoCompact: false,
+      ...extra,
     }),
   };
 }
@@ -266,5 +267,65 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     const spec = create.mock.calls.at(-1)?.[0] as { toolSearch?: unknown; hostedToolSearch?: string };
     expect(spec.toolSearch).toBeUndefined();
     expect(spec.hostedToolSearch).toBe('anthropic');
+  });
+});
+
+describe('workspace-scoped tool composition', () => {
+  it('fails closed for unsupported LSP/Codebase/Sandbox tools but keeps network MCP tools', () => {
+    const tool = (name: string) => ({ name, description: `${name} tool`, parameters: { type: 'object', properties: {} } });
+    expect(workspaceToolDefinition(tool('LspDiagnostics'))).toBeUndefined();
+    expect(workspaceToolDefinition(tool('CodebaseSearch'))).toBeUndefined();
+    expect(workspaceToolDefinition(tool('SandboxListWorkspaces'))).toBeUndefined();
+    expect(workspaceToolDefinition(tool('mcp__azure__storage'))?.name).toBe('mcp__azure__storage');
+  });
+
+  it('admits only positively workspace-safe plugin tools and always omits host-filesystem tools', async () => {
+    const registry = new PluginRegistry();
+    addTool(registry, 'mcp', 'mcp__localfs__read', true);
+    addTool(registry, 'mcp', 'mcp__undeclared__tool');
+    addTool(registry, 'mcp', 'mcp__azure__storage', false, true);
+    addTool(registry, 'mcp', 'mcp__collision__tool', false, true);
+    addTool(registry, 'mcp', 'mcp__collision__tool');
+    const { spawn, create } = makeSpawner(registry);
+    await spawn({
+      pathView: {
+        kind: 'workspace', workspace: { workspaceId: 'ws', projectId: 1 }, root: '/workspace-host',
+        resolve: (path: string) => path, display: (path: string) => path, stateKey: (path: string) => path,
+        sanitize: (text: string) => text,
+      },
+      clientCwd: '/workspace-host',
+    });
+    expect(factoryToolNames(create)).not.toContain('mcp__localfs__read');
+    expect(factoryToolNames(create)).not.toContain('mcp__undeclared__tool');
+    expect(factoryToolNames(create)).toContain('mcp__azure__storage');
+    expect(factoryToolNames(create)).not.toContain('mcp__collision__tool');
+  });
+
+  it('withholds host-side file and workflow-path tools while retaining constrained GitStatus', async () => {
+    const registry = new PluginRegistry();
+    addTool(registry, 'files', 'Read');
+    addTool(registry, 'files', 'GitStatus', false, true);
+    addTool(registry, 'subagent', 'WorkflowStart', true, true);
+    const { spawn, create } = makeSpawner(registry);
+    await spawn({
+      pathView: {
+        kind: 'workspace', workspace: { workspaceId: 'ws', projectId: 1 }, root: '/workspace-host',
+        resolve: (path: string) => path, display: (path: string) => path, stateKey: (path: string) => path,
+        sanitize: (text: string) => text,
+      },
+      clientCwd: '/workspace-host',
+    });
+    expect(factoryToolNames(create)).not.toContain('Read');
+    expect(factoryToolNames(create)).not.toContain('WorkflowStart');
+    expect(factoryToolNames(create)).toContain('GitStatus');
+  });
+
+  it('rewrites filesystem schemas to logical relative paths', () => {
+    const read = workspaceToolDefinition({
+      name: 'Read', description: 'The path must be absolute.',
+      parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path' } } },
+    });
+    expect(read?.description).toContain('relative to the assigned workspace');
+    expect((read?.parameters as any).properties.path.description).toContain('Workspace-relative');
   });
 });

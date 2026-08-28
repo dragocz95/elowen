@@ -1,8 +1,8 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { initSandboxDb, reconcileStaleLeases } from './lib/db.mjs';
+import { createExecutionLease, initSandboxDb, reconcileStaleLeases } from './lib/db.mjs';
 import {
-  bubblewrapProbe, createExecutionService, migrateLegacyHomes, removeUserData,
+  bubblewrapProbe, createExecutionService, ensureUserHome, migrateLegacyHomes, removeUserData,
 } from './lib/execution.mjs';
 import { createWorkspaceService } from './lib/workspaces.mjs';
 import { registerSandboxApi } from './lib/api.mjs';
@@ -55,6 +55,20 @@ export async function register(ctx) {
       const accountUserId = accountId();
       return accountUserId === null ? [] : workspaces.workspaceRoots({ accountUserId, projectIds });
     },
+    resolveWorkspace: (input) => workspaces.resolveWorkspace(input),
+    acquireDelegationLease: (input) => {
+      const binding = workspaces.resolveWorkspace({
+        ...input,
+        accessibleProjectIds: [input.workspace.projectId],
+      });
+      const generation = ensureUserHome(dataDir, binding.accountUserId).generation;
+      return createExecutionLease(db, {
+        accountUserId: binding.accountUserId,
+        workspaceId: binding.workspaceId,
+        homeGeneration: generation,
+        kind: 'terminal',
+      });
+    },
     // Explicit account, for consumers with no ambient scope to read (background services have neither an
     // identity nor a session). Deliberately does NOT re-check project access: the caller names the account
     // and must apply its own tenancy rule, exactly as it must for the project paths it already resolves.
@@ -74,7 +88,34 @@ export async function register(ctx) {
         baseRef: workspace.baseRef,
       } : null;
     },
-    prepareExecution: (input) => execution.prepare(input),
+    prepareExecution: (input) => {
+      if (!input.workspace) return execution.prepare(input);
+      const accountUserId = accountId();
+      if (accountUserId === null) throw new Error('a linked Elowen account is required');
+      const binding = workspaces.resolveWorkspace({
+        accountUserId,
+        workspace: input.workspace,
+        accessibleProjectIds: accessibleProjects(),
+      });
+      const workspace = workspaces.workspaceById(binding.workspaceId);
+      if (!workspace) throw new Error('workspace not found');
+      return execution.prepare(input, { workspace, accountUserId });
+    },
+    gitStatus: async (input) => {
+      const binding = workspaces.resolveWorkspace({
+        accountUserId: input.accountUserId,
+        workspace: input.workspace,
+        accessibleProjectIds: [input.workspace.projectId],
+      });
+      const workspace = workspaces.workspaceById(binding.workspaceId);
+      if (!workspace) throw new Error('workspace not found');
+      const state = await workspaces.statusFor(workspace, { accountUserId: input.accountUserId });
+      if (!state.isRepo || !state.status) throw new Error('workspace is not a Git repository');
+      return {
+        branch: state.status.head || workspace.branch,
+        lines: state.files.map((file) => `${file.code} ${file.path}`),
+      };
+    },
   });
 
   ctx.registerTool(defineTool({

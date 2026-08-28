@@ -37,6 +37,11 @@
     "Glob",
     "Grep"
   ],
+  "capabilities": {
+    "reads": [
+      "controls"
+    ]
+  },
   "configSchema": [
     {
       "key": "sec_limits",

@@ -264,6 +264,12 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           (name) => registry.control(name),
           opts.deleteEvents);
         await mod.register(ctx);
+        if (manifest.workspaceSafe === true) {
+          for (const tool of staging.tools) {
+            staging.workspaceSafeTools.add(tool.name);
+            staging.workspaceUnsafeTools.delete(tool.name);
+          }
+        }
         const registeredPlatforms = new Set(staging.platforms.map((platform) => platform.name));
         for (const fragment of loadPlatformPrompts(pluginDir, manifest, opts.logger)) {
           if (!registeredPlatforms.has(fragment.platform)) {
