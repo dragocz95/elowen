@@ -13,8 +13,7 @@
  *    whichever variant is on. tests/lib/designTokens.test.ts.
  */
 
-/* Studio has no ember atmosphere: the canvas is flat, and the hairline grid carries the depth the radial
-   washes used to. */
+/* Studio has no ember atmosphere: the canvas is flat and the structure is carried by hairlines. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) body {
   background-image: none;
 }
@@ -30,6 +29,14 @@
   background: var(--color-border);
 }
 
+/* The reading measure. `--content-max` is the single width authority for the shell (tokens.css), and the
+   built-in design's fluid 90–118rem is a canvas measure: it lets a register stretch across a 2560px desk
+   at whatever density the window happens to give it. Studio reads as a dashboard instead, where the
+   content column is a fixed working width and the extra desk is margin. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) {
+  --content-max: 84rem;
+}
+
 /* ---------------------------------------------------------------------------------------------------
  * The Studio navigation column (components/shell/StudioNavigation.tsx).
  *
@@ -41,12 +48,19 @@
  * It is only ever mounted under a `command` shell profile, i.e. only while one of these two stylesheets
  * is on the document, so this file is its whole presentation rather than an override of one.
  *
+ * The anatomy is a sidebar, not a command grid. What the first attempt drew — a ruled background grid
+ * behind the rows, a live status beacon in the header, an accent bar down the active row, uppercase mono
+ * group headers and a footer split by a second rule — was decoration standing in for hierarchy. All of it
+ * is gone. What is left is the arrangement the rows themselves make: one quiet ground, one rule per
+ * region, a neutral fill under the row you are on, and sentence-case labels at one weight step apart.
+ *
  * The Ember rail's own styling (app/styles/components/nav-orbit.css) cannot bleed into it: the component
  * renders no `.orbit-node`, no `.spatial-scroll-cue` and no <EmberFall/>, so there is nothing for those
  * rules to match. The ember canvas is hidden above in any case, for the surfaces that DO mount it.
  * --------------------------------------------------------------------------------------------------- */
 
-/* 256px expanded, ~52px folded. The column is inset from the content by a hairline, never by a shadow. */
+/* 256px expanded, 48px folded to icons. The column is inset from the content by a hairline, never by a
+   shadow, and sits on its own ground — one step quieter than the content beside it. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav {
   position: relative;
   display: flex;
@@ -56,12 +70,12 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: var(--color-surface);
+  background: var(--color-sidebar);
   color: var(--color-text-muted);
   transition: width var(--motion-base) var(--ease-out);
 }
 /* As a COLUMN the navigation sits one step above the content it insets from, so its hairline and its
-   active marker are never clipped by a neighbouring surface.
+   active row are never clipped by a neighbouring surface.
 
    The drawer is deliberately excluded. As a sheet it is not part of this stylesheet's stacking at all: it
    belongs to the app's overlay layer, and the component already carries `.overlay-layer-nav-drawer`,
@@ -74,13 +88,15 @@
   z-index: 1;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-side='left'] {
-  border-right: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-sidebar-border);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-side='right'] {
-  border-left: 1px solid var(--color-border);
+  border-left: 1px solid var(--color-sidebar-border);
 }
+/* The icon column is exactly the row's own height plus the body's inset: 40px of row inside 2 × 4px of
+   padding. Nothing is centred by eye — a folded row is the same square the expanded row opens from. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] {
-  width: 3.25rem;
+  width: 3rem;
 }
 
 /* The offcanvas sheet. It stops short of the full width on purpose: the strip of backdrop left showing is
@@ -88,7 +104,7 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'] {
   position: fixed;
   inset-block: 0;
-  width: min(20rem, 85vw);
+  width: min(18rem, 85vw);
   height: auto;
   box-shadow: var(--shadow-raised);
   transition: transform var(--motion-slow) var(--ease-out);
@@ -122,8 +138,8 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close {
   position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
+  top: 0.25rem;
+  right: 0.25rem;
   z-index: 2;
   display: grid;
   place-items: center;
@@ -132,43 +148,37 @@
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close:hover {
-  background: var(--color-elevated);
+  background: var(--color-sidebar-accent);
   color: var(--color-text);
 }
 
-/* Sticky brand header: the mark, the product name and the live status beacon. It does not scroll with the
-   destinations — in a studio the thing that says which system you are driving stays put. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+/* The header: one 40px row holding the product mark, its name and the fold control. It carries the
+   column's ONLY top rule and nothing live — a status beacon here was a coloured dot repeating what the
+   app already says when a request fails, and it was the loudest pixel in a design whose whole argument
+   is that nothing should be. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__header {
   display: flex;
   flex: none;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.75rem;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface);
+  height: 2.5rem;
+  padding-inline: 0.5rem;
+  border-bottom: 1px solid var(--color-sidebar-border);
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__brand {
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__header {
   justify-content: center;
   padding-inline: 0;
 }
-/* Only the sheet carries a close control, and it is absolutely positioned into this header's top-right
-   corner — 44x44 on a coarse pointer, which is every pointer that gets a sheet. The status beacon sits
-   at that same right edge (`margin-left: auto` below) with its textual label rendered, so the two
-   overlapped by ~40px and the close button landed on top of the one live element in the design.
-   The brand gives way rather than the status moving: at 320px of sheet the status is the only thing in
-   this header that says whether the daemon is answering, and the rail's trick of parking it at the
-   bottom edge would put it two hundred pixels from the mark it belongs to. 0.5rem inset + 44px control
-   + 0.5rem of air = 3.5rem. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'] .studio-nav__brand {
-  padding-inline-end: 3.5rem;
+/* Only the sheet carries a close control, and it is absolutely positioned into this header's trailing
+   corner — 44×44 on a coarse pointer, which is every pointer that gets a sheet. The header gives way
+   rather than the control moving: 0.25rem inset + 44px control + 0.25rem of air = 3rem. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'] .studio-nav__header {
+  padding-inline-end: 3rem;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-mark {
   flex: none;
-  width: 1.375rem;
-  height: 1.375rem;
+  width: 1.25rem;
+  height: 1.25rem;
   object-fit: contain;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-name {
@@ -181,61 +191,55 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* The beacon is the design's one live element: a dot that states, at a glance and without being asked,
-   whether the daemon behind the studio is answering. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__status {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 0.5625rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__status {
-  position: absolute;
-  right: 0.5rem;
-  bottom: 0.375rem;
-  margin: 0;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__beacon {
+/* The build, beside the name it belongs to rather than parked at the bottom of the menu. It is metadata,
+   so it is the one place in this column that stays monospaced — a version string is data. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__version {
   flex: none;
-  width: 0.375rem;
-  height: 0.375rem;
-  border-radius: 50%;
-  background: var(--color-text-subtle);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__status[data-state='online'] .studio-nav__beacon {
-  background: var(--color-success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 18%, transparent);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__status[data-state='offline'] .studio-nav__beacon {
-  background: var(--color-danger);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-danger) 18%, transparent);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__status-text {
   color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
 }
 
-/* The scrolling destination body, carrying the hairline command grid: a ruled ground the rows sit on,
-   which is where Studio's depth comes from now that there is no ember wash behind the menu. */
+/* Every control the column draws for itself rather than for a destination: the fold trigger and the
+   menu opener. Ghost by default, a neutral fill under the pointer, never the accent. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__trigger {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-inline-start: auto;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-subtle);
+  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__trigger:hover {
+  background: var(--color-sidebar-accent);
+  color: var(--color-text);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__trigger {
+  margin-inline-start: 0;
+}
+
+/* The scrolling destination body. A plain ground: the rows are the structure, and a ruled grid behind
+   them was texture standing in for one. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__body {
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0.5rem 0.375rem;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  background-image: repeating-linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--color-border) 55%, transparent) 0 1px,
-    transparent 1px 1.75rem
-  );
   opacity: 0;
   transition: opacity var(--motion-base) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__body {
+  padding-inline: 0.25rem;
+  scrollbar-gutter: auto;
 }
 /* Until the arrangement is known the menu would paint in registry order and visibly re-sort itself, on
    every page load. It stays in the DOM throughout — a keyboard and a screen reader get the menu either
@@ -244,68 +248,47 @@
   opacity: 1;
 }
 
-/* One destination row. Active reads as calm neutral plus the signal accent — a filled ground, an accent
-   glyph and an accent edge — rather than as a coloured block. */
+/* One destination row: 40px, a 16px glyph, a sentence-case label. Active is a change of GROUND and one
+   weight step — no accent bar down the edge, no coloured text. The bar was the design's loudest element
+   and it was drawn on the column's inner edge, which meant every nested row needed a correction rule to
+   line its own marker up with the others. A fill needs no such correction because it is the row. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 0.5rem;
   min-width: 0;
-  padding: 0.375rem 0.5rem;
+  height: 2.5rem;
+  padding-inline: 0.5rem;
   border-radius: var(--radius-sm);
   color: var(--color-text-muted);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.25rem;
   text-decoration: none;
   transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item {
   justify-content: center;
+  width: 2.5rem;
   padding-inline: 0;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-depth='1'] {
-  margin-left: 1.5rem;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item[data-depth='1'] {
-  margin-left: 0;
-  opacity: 0.72;
-}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item:hover {
-  background: var(--color-elevated);
+  background: var(--color-sidebar-accent);
   color: var(--color-text);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active] {
-  background: var(--color-elevated);
+  background: var(--color-sidebar-accent);
   color: var(--color-text);
   font-weight: 500;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active] .studio-nav__item-icon {
-  color: var(--color-accent);
-}
-/* The signal edge. Drawn on the column's own inner edge so a row's marker lines up with every other
-   row's, whichever depth it sits at. The marker is positioned against the ROW, so a page inside a group
-   has to give back the 1.5rem indent that row carries or its marker stands 24px inside the others —
-   which is the one thing a marker on a shared edge must not do. The rail folds that indent away and its
-   markers are already flush, so the correction is stated only where the indent exists. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active]::before {
-  content: '';
-  position: absolute;
-  top: 0.3125rem;
-  bottom: 0.3125rem;
-  left: -0.375rem;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--color-accent);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav:not([data-mode='rail']) .studio-nav__item[data-depth='1'][data-active]::before {
-  left: -1.875rem;
+  color: var(--color-text);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-icon {
   display: grid;
   flex: none;
   place-items: center;
-  width: 1.25rem;
+  width: 1rem;
+  height: 1rem;
   color: var(--color-text-subtle);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-label {
@@ -314,103 +297,140 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A row that replaces its glyph-and-label pair with something of its own — today only the account row,
+   which draws a face and two lines of identity. It keeps the row's own rhythm rather than inventing a
+   second one. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-body {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item-body {
+  flex: none;
+}
 
-/* A group: a disclosure header over its pages. The header is not a link — every page of the group,
+/* A group: a sentence-case header over its pages. The header is not a link — every page of the group,
    including the one the world's own address points at, is a row inside it. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group {
-  margin-block: 0.125rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   width: 100%;
-  padding: 0.375rem 0.5rem;
+  height: 2rem;
+  padding-inline: 0.5rem;
   border-radius: var(--radius-sm);
   color: var(--color-text-subtle);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  font-weight: 500;
   text-align: left;
-  text-transform: uppercase;
   transition: color var(--motion-fast) var(--ease-out);
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle:hover {
-  color: var(--color-text);
-}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle:hover,
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle[data-active] {
   color: var(--color-text);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__chevron {
   margin-left: auto;
+  color: var(--color-text-subtle);
   transform: rotate(90deg);
   transition: transform var(--motion-fast) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group[data-closed] .studio-nav__chevron {
   transform: none;
 }
-
-/* Account and administration. The fold control and the version sit with them: the studio's own controls,
-   kept away from the destinations. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__footer {
-  flex: none;
-  padding: 0.375rem;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-surface);
+/* The pages of a group, held together by ONE rule down their leading edge. The rule replaces the
+   per-row indent the accent bar needed: it says "these belong to the header above" once, for the whole
+   block, instead of every row saying it again 24px in. The icon column has no room for it and folds the
+   group flat, so only the indent and the rule are withheld there — the stack itself is the same. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__footer-actions {
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav:not([data-mode='rail']) .studio-nav__group-items {
+  margin-inline-start: 1rem;
+  padding-inline-start: 0.5rem;
+  border-inline-start: 1px solid var(--color-sidebar-border);
+}
+
+/* Account and administration. ONE rule separates them from the destinations — the previous footer drew a
+   second rule inside itself for its own controls, so the bottom of the column read as two footers. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__footer {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.5rem;
+  border-top: 1px solid var(--color-sidebar-border);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__footer {
+  align-items: center;
+  padding-inline: 0.25rem;
+}
+/* The account row is the sidebar's user block: an avatar, the signed-in name over the account it is, and
+   the menu that reaches whatever the reader has hidden. It is one row, not a card. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user {
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  padding: 0.25rem 0.125rem 0;
-  margin-top: 0.25rem;
-  border-top: 1px solid var(--color-border);
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__footer-actions {
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user .studio-nav__item {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 3rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user-identity {
+  display: flex;
+  min-width: 0;
   flex-direction: column;
+  gap: 0.0625rem;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__action {
-  display: grid;
-  place-items: center;
-  padding: 0.25rem;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-subtle);
-  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__action:hover {
-  background: var(--color-elevated);
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user-name {
+  overflow: hidden;
   color: var(--color-text);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__version {
-  margin-left: auto;
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user-meta {
+  overflow: hidden;
   color: var(--color-text-subtle);
-  font-family: var(--font-mono);
-  font-size: 0.5625rem;
-  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Focus stays visible on every control the column owns — the rows are custom-painted, so the browser's
    own outline is the only thing saying where the keyboard is. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item:focus-visible,
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle:focus-visible,
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__action:focus-visible,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__trigger:focus-visible,
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: -1px;
 }
 
-/* A pointer that is a finger needs a target it can actually hit. The rows above are drawn at a 32px
-   rhythm — comfortable to read and to click, and 12px under the floor `--touch-target` declares — and at
-   drawer width this column IS the phone's only menu, so every destination in it would be under the floor
-   at once. primitives.css already grows `.overlay-menu-item` and `.overlay-touch-target` exactly this way;
-   a row a SKIN owns has to say so itself, because the stylesheet tree is unlayered and a utility class on
-   the element could never have reached it.
+/* A pointer that is a finger needs a target it can actually hit. The rows above are drawn at 40px —
+   right for a mouse, 4px under the floor `--touch-target` declares — and at drawer width this column IS
+   the phone's only menu, so every destination in it would be under the floor at once. primitives.css
+   already grows `.overlay-menu-item` and `.overlay-touch-target` exactly this way; a row a SKIN owns has
+   to say so itself, because the stylesheet tree is unlayered and a utility class on the element could
+   never have reached it.
 
    Gated on the POINTER and never on the width, like every other touch rule in the app: a narrow window on
    a laptop still has a mouse and must keep the compact rhythm rather than grow finger-sized controls. */
 @media (pointer: coarse) {
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle {
+    height: var(--touch-target);
     min-height: var(--touch-target);
   }
 }
@@ -424,7 +444,7 @@
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__chevron,
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__action,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__trigger,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close {
     transition-duration: 1ms;
   }

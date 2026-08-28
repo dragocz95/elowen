@@ -22,6 +22,14 @@
   --color-border: #27272a;
   --color-border-strong: #3f3f46;
 
+  /* The navigation column. On a true-black design "one step quieter than the content" is the unlit
+     canvas itself: the content's cards step UP from black, so a column that stays at black is the
+     recessive surface, and its rule — one step stronger than a content hairline — is what separates it.
+     Measured: subtle text 5.35:1 on the column, 4.57:1 on the row fill. */
+  --color-sidebar: #000000;
+  --color-sidebar-accent: #141417;
+  --color-sidebar-border: #232327;
+
   --color-text: #fafafa;
   --color-text-muted: #a1a1aa;
   --color-text-subtle: #7e7e87;

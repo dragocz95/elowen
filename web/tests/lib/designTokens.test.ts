@@ -58,8 +58,13 @@ const TEXT_TOKENS = ['--color-text', '--color-text-muted', '--color-text-subtle'
  *  declared (tokens.css mixes 6% ink into the document surface) and is the ground of every sticky table
  *  header and toolbar in the app — and because it is derived it can be lighter than --color-elevated,
  *  which is the surface each palette was tuned against. Studio's light variant shipped a header at
- *  4.43:1 that way and no gate saw it, because this list stopped at the four declared surfaces. */
-const SURFACE_TOKENS = ['--color-bg', '--color-document', '--color-surface', '--color-elevated', '--color-surface-sticky'] as const;
+ *  4.43:1 that way and no gate saw it, because this list stopped at the four declared surfaces.
+ *
+ *  `--color-sidebar` and `--color-sidebar-accent` are here for the same reason: the primary navigation
+ *  is a whole region of the app painted on grounds a design may set independently of its content
+ *  surfaces, and its rows carry the muted and subtle steps. A skin is free to make the column quieter
+ *  than the page — it must not make the menu unreadable doing so. */
+const SURFACE_TOKENS = ['--color-bg', '--color-document', '--color-surface', '--color-elevated', '--color-surface-sticky', '--color-sidebar', '--color-sidebar-accent'] as const;
 const AA_NORMAL_TEXT = 4.5;
 
 /** Mix two `#rrggbb` colours the way `color-mix(in srgb, …)` does: a linear interpolation of the

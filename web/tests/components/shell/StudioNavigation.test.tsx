@@ -62,16 +62,29 @@ describe('StudioNavigation destinations', () => {
     expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
   });
 
-  it('names a destination only where its label is off screen: aria-label folded, title expanded', () => {
+  it('names a destination in both modes, and keeps a tooltip on the icon column', () => {
     const expanded = mount();
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('title', 'Home');
     expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-label');
     expanded.unmount();
 
     mount({ compact: true });
-    // The icon column drops the label text, so the accessible name has to come from the attribute.
+    // The icon column drops the label text, so the accessible name has to come from the attribute — and
+    // the tooltip has to stay: an unlabelled 16px glyph with nothing on hover is a guess, which is what
+    // makes an icon sidebar unusable rather than compact.
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-label', 'Home');
-    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('title');
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('title', 'Home');
+  });
+
+  it('draws the account entry as the signed-in user, still named by what the entry is', () => {
+    // The row shows a face and a display name, but it is still the `account` entry: the arrangement
+    // menu addresses it by that name, and announcing the person twice instead would make the one row
+    // that leads to your own settings the hardest one to find by name.
+    mount();
+    const account = screen.getByRole('link', { name: 'Account' });
+    expect(account).toHaveAttribute('href', '/account');
+    expect(account).toHaveAttribute('aria-label', 'Account');
+    expect(account.textContent).toContain('admin');
   });
 });
 

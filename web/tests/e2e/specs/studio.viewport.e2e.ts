@@ -31,9 +31,11 @@ const REGISTER = '/memory';
  *  number because a test asserts against a measured box, not against the token. */
 const TOUCH_TARGET = 44;
 
-/** Studio's two columns, from `skins/studio/shared.css`: `width: 16rem` expanded, `3.25rem` folded. */
+/** Studio's two columns, from `skins/studio/shared.css`: `width: 16rem` expanded, `3rem` folded — the
+ *  folded width being exactly one 40px row plus the body's 2 × 4px inset, so a folded destination is the
+ *  same square the expanded one opens from. */
 const NAV_FULL = 256;
-const NAV_RAIL = 52;
+const NAV_RAIL = 48;
 
 /** Put a context into a Studio skin.
  *

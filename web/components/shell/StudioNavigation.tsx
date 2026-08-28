@@ -5,8 +5,9 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, MoreHorizontal, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 import { useBrand } from '../../lib/brand';
-import { useHealth } from '../../lib/queries';
+import { useHealth, useMe } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
+import { Avatar } from '../ui/Avatar';
 import { useShellNavigation } from './useShellNavigation';
 import { useNavCustomization } from './NavCustomization';
 import { navOrderIndex } from './navOrder';
@@ -19,7 +20,12 @@ import { useNavDrawerFocus } from '../ui/focusCycle';
  *  They stay ordinary customizable entries — the same context menu hides, restores and reorders them —
  *  only the region they are drawn in differs. That is why the surface order handed to the customization
  *  hook below is body-then-footer: it is the sequence the reader actually sees. */
-const FOOTER_ENTRY_IDS = ['account', 'settings', 'users'];
+const FOOTER_ENTRY_IDS = ['settings', 'users', 'account'];
+
+/** The account entry, drawn as the sidebar's user block rather than as another destination row. It is
+ *  still the same entry from the same model — it is hidden, restored and reordered exactly like the
+ *  others — so this is a presentation rule and not a second source of navigation. */
+const USER_ENTRY_ID = 'account';
 
 const isFooterEntry = (entry: NavEntry): boolean => entry.id !== undefined && FOOTER_ENTRY_IDS.includes(entry.id);
 
@@ -45,10 +51,10 @@ function isCollapseShortcut(event: KeyboardEvent): boolean {
   return event.code === 'Backslash' || event.key === '\\';
 }
 
-/** Studio's command-grid navigation: an inset column with a sticky brand header, a scrolling grouped
- *  body and an account/administration footer. It renders the SAME navigation model the spatial rail does
- *  — one registry, one arrangement, one active-route rule — in the flat, dense presentation the Studio
- *  design asks for.
+/** Studio's navigation column: a header naming the product, a scrolling grouped body of destinations and
+ *  a footer holding administration and the signed-in account. It renders the SAME navigation model the
+ *  spatial rail does — one registry, one arrangement, one active-route rule — in the flat, dense
+ *  presentation the Studio design asks for.
  *
  *  Every dimension, hairline and state colour lives in `web/skins/studio/shared.css`; this component only
  *  states WHAT it is (`studio-nav__*` classes) and WHAT STATE it is in (`data-*` attributes). Nothing
@@ -66,6 +72,7 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
   const { t } = useTranslation();
   const { appName, iconSrc } = useBrand();
   const health = useHealth();
+  const me = useMe();
   const { worlds, allWorlds, layout, layoutReady } = useShellNavigation();
 
   // An untouched menu keeps the shared default sequence, which carries meaning of its own (where you
@@ -75,7 +82,12 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
     ? [...worlds].sort((a, b) => navOrderIndex(a.href) - navOrderIndex(b.href))
     : worlds), [worlds, layout.order.length]);
   const bodyEntries = useMemo(() => sequence.filter((entry) => !isFooterEntry(entry)), [sequence]);
+  // The footer's own order is fixed rather than inherited: the user block is the last thing in the
+  // column whatever the arrangement says, because it is the anchor the reader reaches for, not a
+  // destination competing with the others. Hiding and restoring still work on every one of them.
   const footerEntries = useMemo(() => sequence.filter(isFooterEntry), [sequence]);
+  const userEntry = footerEntries.find((entry) => entry.id === USER_ENTRY_ID);
+  const adminEntries = footerEntries.filter((entry) => entry.id !== USER_ENTRY_ID);
   // THIS surface's own visible order, which is what the first edit seeds the stored order from. Handing
   // over the rail's order instead would reshuffle the sidebar the moment anything was hidden or moved.
   const displayOrder = useMemo(
@@ -115,32 +127,46 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
 
   const hidden = drawer && !drawerOpen;
   const mode = drawer ? 'drawer' : compact ? 'rail' : 'full';
-  const status = health.isError || health.data?.ok === false ? 'offline' : health.data ? 'online' : 'checking';
-  const statusLabel = status === 'online' ? t.nav.statusOnline : status === 'offline' ? t.nav.statusOffline : t.nav.statusChecking;
   const collapseLabel = compact ? t.common.expandNav : t.common.collapseNav;
+  const user = me.data?.user;
 
-  /** One destination row, at either depth. Only the icon column drops its label text — the sheet is a
-   *  full-width panel and keeps it — so `aria-label` names the row exactly where the label is NOT on
-   *  screen, and `title` carries the full text exactly where it is, keeping a truncated label readable. */
-  const destination = (entry: NavEntry, depth: 0 | 1, onContextMenu?: (event: React.MouseEvent) => void) => {
+  /** One destination row, at either depth.
+   *
+   *  The label text is dropped only in the icon column, so `aria-label` names the row exactly where the
+   *  text is NOT on screen. `title` is on BOTH: expanded it keeps a truncated label readable, folded it
+   *  is the tooltip that says what an unlabelled 16px glyph leads to — which is the whole reason an icon
+   *  sidebar is usable at all. */
+  const destination = (entry: NavEntry, onContextMenu?: (event: React.MouseEvent) => void, body?: React.ReactNode) => {
     const active = entryIsActive(entry, pathname);
     const Icon = entry.icon;
+    // A row with a custom body carries a face and a display name. Those are for the eye: the entry's
+    // own label is what the row IS, and it is also what the arrangement menu addresses it by, so a row
+    // that replaces its body is named by its attribute — exactly like a folded row whose text is off
+    // screen. Otherwise the account row would announce itself as the signed-in person's name twice.
+    const named = compact || body !== undefined;
     return (
       <Link
         href={entry.href ?? '#'}
         className="studio-nav__item"
-        data-depth={depth}
         data-active={active || undefined}
         aria-current={active ? 'page' : undefined}
-        aria-label={compact ? entry.label : undefined}
-        title={compact ? undefined : entry.label}
+        aria-label={named ? entry.label : undefined}
+        title={entry.label}
         onContextMenu={onContextMenu}
       >
-        <span className="studio-nav__item-icon" aria-hidden><Icon size={16} strokeWidth={1.6} /></span>
-        {compact ? null : <span className="studio-nav__item-label">{entry.label}</span>}
+        {body !== undefined ? <span className="studio-nav__item-body" aria-hidden>{body}</span> : (
+          <>
+            <span className="studio-nav__item-icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span>
+            {compact ? null : <span className="studio-nav__item-label">{entry.label}</span>}
+          </>
+        )}
       </Link>
     );
   };
+
+  const entryMenu = (entry: NavEntry) => (entry.id
+    ? (event: React.MouseEvent) => customization.onEntryContextMenu(event, entry)
+    : customization.onSurfaceContextMenu);
 
   return (
     <>
@@ -184,23 +210,35 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
           </button>
         ) : null}
 
-        <header className="studio-nav__brand">
-          <img className="studio-nav__brand-mark" src={iconSrc} alt="" width={22} height={22} />
+        <header className="studio-nav__header">
+          <img className="studio-nav__brand-mark" src={iconSrc} alt="" width={20} height={20} />
           {compact ? null : <span className="studio-nav__brand-name">{appName}</span>}
-          <span className="studio-nav__status" role="status" data-state={status} aria-label={statusLabel} title={statusLabel}>
-            <span className="studio-nav__beacon" aria-hidden />
-            {compact ? null : <span className="studio-nav__status-text" aria-hidden>{statusLabel}</span>}
-          </span>
+          {/* The build, beside the name it belongs to. Nothing else in this header is live: a status dot
+              here repeated what a failing request already says, in the loudest colour the design owns. */}
+          {compact || !health.data?.version ? null : (
+            <span className="studio-nav__version">{`v${health.data.version}`}</span>
+          )}
+          {onToggleCollapse ? (
+            <button
+              type="button"
+              className="studio-nav__trigger overlay-touch-target"
+              data-testid="studio-nav-collapse"
+              aria-label={collapseLabel}
+              title={`${collapseLabel} · ${t.nav.collapseShortcut}`}
+              aria-keyshortcuts="Control+Backslash Meta+Backslash"
+              onClick={onToggleCollapse}
+            >
+              {compact ? <PanelLeftOpen size={16} aria-hidden /> : <PanelLeftClose size={16} aria-hidden />}
+            </button>
+          ) : null}
         </header>
 
         <div className="studio-nav__body">
           {bodyEntries.map((entry) => {
             const pages = groupPages(entry);
             const key = entry.id ?? entry.label;
-            const onEntryMenu = entry.id
-              ? (event: React.MouseEvent) => customization.onEntryContextMenu(event, entry)
-              : customization.onSurfaceContextMenu;
-            if (!pages) return <div key={key} className="studio-nav__row">{destination(entry, 0, onEntryMenu)}</div>;
+            const onEntryMenu = entryMenu(entry);
+            if (!pages) return <div key={key}>{destination(entry, onEntryMenu)}</div>;
 
             const active = entryIsActive(entry, pathname);
             // A page inherits its world's icon when it brings none, so the row is never iconless in the
@@ -224,14 +262,14 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
                     onClick={() => toggleGroup(key)}
                     onContextMenu={onEntryMenu}
                   >
-                    <span className="studio-nav__item-icon" aria-hidden><Icon size={16} strokeWidth={1.6} /></span>
+                    <span className="studio-nav__item-icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span>
                     <span className="studio-nav__item-label">{entry.label}</span>
-                    <ChevronRight className="studio-nav__chevron" size={13} aria-hidden />
+                    <ChevronRight className="studio-nav__chevron" size={14} aria-hidden />
                   </button>
                 )}
                 <div className="studio-nav__group-items">
                   {shown.map((item) => (
-                    <div key={item.id} className="studio-nav__row">{destination(page(item), 1, onEntryMenu)}</div>
+                    <div key={item.id}>{destination(page(item), onEntryMenu)}</div>
                   ))}
                 </div>
               </div>
@@ -240,19 +278,31 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
         </div>
 
         <footer className="studio-nav__footer">
-          {footerEntries.map((entry) => (
-            <div key={entry.id ?? entry.label} className="studio-nav__row">
-              {destination(entry, 0, entry.id
-                ? (event: React.MouseEvent) => customization.onEntryContextMenu(event, entry)
-                : customization.onSurfaceContextMenu)}
-            </div>
+          {adminEntries.map((entry) => (
+            <div key={entry.id ?? entry.label}>{destination(entry, entryMenu(entry))}</div>
           ))}
-          <div className="studio-nav__footer-actions">
-            {/* The keyboard's way into the menu the right-click opens. It has to exist independently of
-                the entries: hide them all and there is nothing left to open a menu ON. */}
+          {/* The user block, plus the keyboard's way into the menu the right-click opens. That control
+              has to exist independently of the entries: hide them all and there is nothing left to open
+              a menu ON. */}
+          <div className="studio-nav__user">
+            {userEntry ? destination(userEntry, entryMenu(userEntry), (
+              <>
+                {/* The avatar replaces the entry's glyph in BOTH modes: folded, a face is what makes the
+                    bottom of an icon column readable as "you" rather than as one more destination. */}
+                {user
+                  ? <Avatar user={user} size={24} />
+                  : <span className="studio-nav__item-icon"><userEntry.icon size={16} strokeWidth={1.75} /></span>}
+                {compact ? null : (
+                  <span className="studio-nav__user-identity">
+                    <span className="studio-nav__user-name">{user ? (user.name || user.username) : t.common.daemon}</span>
+                    {user?.name ? <span className="studio-nav__user-meta">{user.username}</span> : null}
+                  </span>
+                )}
+              </>
+            )) : null}
             <button
               type="button"
-              className="studio-nav__action overlay-touch-target"
+              className="studio-nav__trigger overlay-touch-target"
               aria-label={t.nav.showHidden}
               title={t.nav.showHidden}
               onClick={(event) => {
@@ -260,24 +310,8 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
                 customization.openSurfaceMenu(box.left + box.width / 2, box.top);
               }}
             >
-              <MoreHorizontal size={14} aria-hidden />
+              <MoreHorizontal size={16} aria-hidden />
             </button>
-            {onToggleCollapse ? (
-              <button
-                type="button"
-                className="studio-nav__action overlay-touch-target"
-                data-testid="studio-nav-collapse"
-                aria-label={collapseLabel}
-                title={`${collapseLabel} · ${t.nav.collapseShortcut}`}
-                aria-keyshortcuts="Control+Backslash Meta+Backslash"
-                onClick={onToggleCollapse}
-              >
-                {compact ? <PanelLeftOpen size={14} aria-hidden /> : <PanelLeftClose size={14} aria-hidden />}
-              </button>
-            ) : null}
-            {compact ? null : (
-              <span className="studio-nav__version">{health.data?.version ? `v${health.data.version}` : '—'}</span>
-            )}
           </div>
         </footer>
       </nav>

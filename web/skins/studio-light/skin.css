@@ -27,6 +27,14 @@
   --color-border: #e4e4e7;
   --color-border-strong: #d4d4d8;
 
+  /* The navigation column, one step quieter than the canvas it insets from, with its own row fill and
+     its own rule. It is deliberately NOT --color-elevated: that step belongs to the content cards and
+     moves with them, and a sidebar row taking the card fill made the menu read as a stack of cards.
+     Measured: subtle text 5.00:1 on the column, 4.54:1 on the row fill — both clear AA. */
+  --color-sidebar: #f7f7f8;
+  --color-sidebar-accent: #ececef;
+  --color-sidebar-border: #e6e6e9;
+
   /* Ink. --color-text-muted is #52525b rather than the lighter grey a light UI reaches for by reflex:
      #71717a measures 4.40:1 on --color-elevated and fails AA outright.
      --color-text-subtle is measured against the WORST surface a light design has, which is not

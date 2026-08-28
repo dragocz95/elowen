@@ -6,12 +6,9 @@ export const en = {
     showHidden: 'Show hidden',
     hiddenCount: 'Hidden ({count})',
     restoreDefaults: 'Restore default order',
-    // The Studio shell's live status beacon and the keys that fold its sidebar. The shortcut is written
-    // out rather than detected per platform: a title that differs between the server render and the
-    // client would be a hydration mismatch, and both key names fit in one label.
-    statusOnline: 'System online',
-    statusOffline: 'System unreachable',
-    statusChecking: 'Checking system status',
+    // The keys that fold the Studio sidebar. Written out rather than detected per platform: a title that
+    // differs between the server render and the client would be a hydration mismatch, and both key names
+    // fit in one label.
     collapseShortcut: 'Ctrl / ⌘ + \\',
     home: 'Home',
     chat: 'Chat',
