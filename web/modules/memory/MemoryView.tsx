@@ -642,7 +642,10 @@ function VitalityCell({ value }: { value: number }) {
   const tone = vitalityTone(value);
   return (
     <span className="flex items-center gap-1.5" title={`${pct}/100`}>
-      <span className="h-1.5 w-10 overflow-hidden rounded-full bg-elevated" aria-hidden>
+      {/* `data-table-meter` names the bar as what it is: a graphic beside a figure that already states
+          the same value. A design that reads its registers as tables rather than as dashboards drops
+          the graphic and keeps the number, and it needs something to address. */}
+      <span className="data-table-meter h-1.5 w-10 overflow-hidden rounded-full bg-elevated" aria-hidden>
         <span className={`block h-full rounded-full ${VITALITY_BAR_BG[tone]}`} style={{ width: `${pct}%` }} />
       </span>
       <span className="font-mono tabular-nums text-text-muted">{pct}</span>

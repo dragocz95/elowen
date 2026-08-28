@@ -24,10 +24,11 @@
   display: none;
 }
 
-/* The section rail reads as a ruled line rather than a glowing track. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .spatial-section-rail__track::before {
-  background: var(--color-border);
-}
+/* The section rail is not restyled here any more, because it is not rendered. It is 8.2rem of orbit
+   nodes with glowing rings, an ember-flicker animation and a gradient track — a second navigation
+   shouting over the first — and recolouring its track was papering over that. Under a `command` shell
+   profile `WorkspaceShell` mounts the shared `Segmented` in its `line` variant instead: the same
+   radiogroup, the same roving tab stop, the same caller-owned selection, drawn as tabs. */
 
 /* The reading measure. `--content-max` is the single width authority for the shell (tokens.css), and the
    built-in design's fluid 90–118rem is a canvas measure: it lets a register stretch across a 2560px desk

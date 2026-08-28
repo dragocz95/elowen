@@ -4,13 +4,16 @@ import { Loader2 } from 'lucide-react';
 import { Button } from './Button';
 import { useTranslation } from '../../lib/i18n';
 
+/** "There is nothing here", said once. The parts are named — `empty-state__*` — for the same reason the
+ *  field and the toolbar are: this block appears inside every register in the app, so a design has to be
+ *  able to restate it without every module passing a prop about how it should look. */
 export function EmptyState({ title, description, icon: Icon, action }: { title: string; description?: string; icon?: LucideIcon; action?: ReactNode }) {
   return (
-    <div className="flex animate-fade-up flex-col items-center justify-center gap-3 py-14 text-center">
-      {Icon ? <Icon size={28} strokeWidth={1.25} className="text-text-muted/40" aria-hidden /> : null}
+    <div className="empty-state flex animate-fade-up flex-col items-center justify-center gap-3 py-14 text-center">
+      {Icon ? <Icon size={28} strokeWidth={1.25} className="empty-state__icon text-text-muted/40" aria-hidden /> : null}
       <div className="flex flex-col gap-1">
-        <p className="text-sm uppercase tracking-wide text-text">{title}</p>
-        {description && <p className="text-xs text-text-muted">{description}</p>}
+        <p className="empty-state__title text-sm uppercase tracking-wide text-text">{title}</p>
+        {description && <p className="empty-state__description text-xs text-text-muted">{description}</p>}
       </div>
       {action}
     </div>

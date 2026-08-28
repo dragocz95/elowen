@@ -2,7 +2,15 @@
 import { useRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
 
-export interface SegmentedOption { value: string; label: string; icon?: LucideIcon }
+export interface SegmentedOption {
+  value: string;
+  label: string;
+  icon?: LucideIcon;
+  /** How many records the option leads to. Rendered as a quiet suffix and folded into the accessible
+   *  name, so a section that carries a figure keeps it when the control is used as a page's section
+   *  navigation — the presentation this replaced showed one and dropping it would lose information. */
+  count?: number;
+}
 
 /** A connected segmented switch: one bordered track holding the options, the active one lifted with an
  *  accent fill. Single source of truth for single-choice toggles (mode, filters, type, priority,
@@ -43,7 +51,10 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
     buttonRefs.current[next]?.focus();
   };
   return (
-    <div role="radiogroup" aria-label={ariaLabel} className={`inline-flex ${wrap} ${variant === 'line' ? 'gap-4 border-b border-border/80' : 'gap-0.5 rounded-md border border-border bg-surface p-0.5'} ${className ?? ''}`}>
+    // `segmented` / `segmented__option` / `segmented__count` are named for the same reason the toolbar
+    // and the field are: this control is one of the handful a DESIGN has to be able to restate, and a
+    // stylesheet has nothing to hold on to otherwise. The utilities below stay the built-in reading.
+    <div role="radiogroup" aria-label={ariaLabel} data-variant={variant} className={`segmented inline-flex ${wrap} ${variant === 'line' ? 'gap-4 border-b border-border/80' : 'gap-0.5 rounded-md border border-border bg-surface p-0.5'} ${className ?? ''}`}>
       {options.map((o, index) => {
         const active = o.value === value;
         const Icon = o.icon;
@@ -53,18 +64,19 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
             type="button"
             role="radio"
             aria-checked={active}
-            aria-label={o.label}
+            aria-label={o.count === undefined ? o.label : `${o.label} ${o.count}`}
             tabIndex={index === tabbableIndex ? 0 : -1}
             ref={(node) => { buttonRefs.current[index] = node; }}
             onClick={() => onChange(o.value)}
             onKeyDown={(event) => move(event, index)}
-            className={`inline-flex shrink-0 items-center gap-1.5 text-xs font-medium transition-colors pointer-coarse:min-h-[var(--touch-target)] ${pad} ${variant === 'line'
+            className={`segmented__option inline-flex shrink-0 items-center gap-1.5 text-xs font-medium transition-colors pointer-coarse:min-h-[var(--touch-target)] ${pad} ${variant === 'line'
               ? `-mb-px border-b-2 ${active ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text'}`
               : `rounded ${active ? 'bg-accent/15 text-accent' : 'text-text-muted hover:bg-elevated hover:text-text'}`}`}
             style={{ transitionDuration: 'var(--motion-fast)' }}
           >
             {Icon ? <Icon size={13} aria-hidden /> : null}
             {o.label}
+            {o.count === undefined ? null : <span className="segmented__count text-text-subtle" aria-hidden>{o.count}</span>}
           </button>
         );
       })}
