@@ -84,12 +84,9 @@ describe('switching to a command-profile skin', () => {
     );
     expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
     expect(screen.queryByTestId('future-navigation')).toBeNull();
-    const contextNav = container.querySelector('.top-bar__context-nav');
-    expect(contextNav).not.toBeNull();
-    expect(contextNav).toHaveAttribute('aria-label', 'Contextual navigation');
-    expect(contextNav).toHaveClass('min-[768px]:flex');
-    expect(Array.from(contextNav!.querySelectorAll('a')).map((link) => link.textContent)).toEqual(['Home', 'Chat', 'Projects', 'Memory']);
-    expect(contextNav!.querySelector('[aria-current="page"]')?.textContent).toBe('Home');
+    expect(container.querySelector('.top-bar__context-nav')).toBeNull();
+    expect(screen.getByTestId('page-top-bar-host')).toBeInTheDocument();
+    expect(screen.getByTestId('page-top-bar-host')).toBeEmptyDOMElement();
   });
 
   it('follows the skin the DOCUMENT wears, not the account choice, when the operator set a default nobody picked', async () => {

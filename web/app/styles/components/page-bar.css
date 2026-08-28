@@ -38,11 +38,26 @@
   }
 }
 
-/* The contextual peer strip is a real part of the bar, not a second sidebar. It stays one line, gives way
-   before global actions and hides its native scrollbar when a narrow desktop has to pan it. */
-.top-bar__context-nav { scrollbar-width: none; }
-.top-bar__context-nav::-webkit-scrollbar { display: none; }
-.top-bar__context-link { display: inline-flex; align-items: center; }
+/* Route-owned controls portal into this single strip. It gives way before global actions and keeps every
+   page's state in the page component rather than rebuilding controls in the shell. */
+.top-bar__page-slot { scrollbar-width: none; }
+.top-bar__page-slot::-webkit-scrollbar { display: none; }
+.top-bar__page-slot > * { min-width: 0; flex: 1 1 auto; }
+.top-bar__page-slot .chat-page-toolbar {
+  position: static;
+  z-index: auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+.top-bar__page-slot .chat-page-toolbar__fade { display: none; }
+.chat-page-toolbar__overflow { display: none; }
+@media (min-width: 768px) and (max-width: 1150px) {
+  .top-bar__page-slot .chat-page-toolbar__wide-controls { display: none; }
+  .top-bar__page-slot .chat-page-toolbar__overflow { display: block; }
+}
 
 /* The trail must give way before the actions do: it is the one part of the row that can be read from
    the page itself, and every step inside it truncates rather than wrapping. */

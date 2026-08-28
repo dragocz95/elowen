@@ -35,6 +35,7 @@ import { formatBytes, formatTokens, formatCost, formatDuration, localDateTime } 
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { isBackgroundProcessCardId } from '../../lib/processScope';
+import { PageTopBarPortal } from '../../lib/pageHeader';
 import {
   DEFAULT_COMPOSE_MARKER_MS,
   DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS,
@@ -861,6 +862,28 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   // enough (and avoids re-firing on the controller's per-render identity churn).
   useEffect(() => { ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Entering the full chat route always opens at the newest turn. The shell <main> survives route changes,
+  // so its old scrollTop must not become chat state. Keep following real transcript resizes while the reader
+  // remains pinned; delayed markdown, images and the toolbar portal then cannot leave the first paint halfway
+  // up the conversation. Scrolling up flips `atBottomRef` below and immediately disables this pin.
+  useLayoutEffect(() => {
+    if (variant !== 'full') return;
+    atBottomRef.current = true;
+    const pinNewest = () => {
+      const scroller = getScroller();
+      if (scroller && atBottomRef.current) scroller.scrollTo({ top: scroller.scrollHeight });
+    };
+    pinNewest();
+    const frame = window.requestAnimationFrame(pinNewest);
+    const transcript = scrollRef.current;
+    const observer = transcript && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(pinNewest) : null;
+    if (transcript) observer?.observe(transcript);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [variant, getScroller]);
+
   // Opening another conversation is an explicit request to see that conversation's newest message. Reset
   // every scroll/prepend guard before its snapshot lands; otherwise a chat opened while the previous one
   // was scrolled up inherited `atBottom=false` and rendered at the old page offset.
@@ -980,9 +1003,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           <ChatHistoryRail variant="dropdown" open={pickerOpen} onClose={() => setPickerOpen(false)} />
         </div>
       ) : (
-        <div className="chat-gutter sticky top-0 z-10 flex shrink-0 items-center gap-1.5 bg-bg py-2">
-          {/* No hairline under the sticky bar — a soft fade separates it from the scrolling transcript. */}
-          <div aria-hidden className="pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-bg to-transparent" />
+        <PageTopBarPortal localOnPhone>
+        <div className="chat-gutter chat-page-toolbar sticky top-0 z-10 flex min-w-0 shrink-0 items-center gap-1.5 bg-bg py-2">
+          {/* On phones this remains the local sticky chat bar. Desktop portals the same controls into the
+              shell's top rule, where the page toolbar belongs. */}
+          <div aria-hidden className="chat-page-toolbar__fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-bg to-transparent" />
           {onOpenHistory ? (
             <button
               type="button"
@@ -999,11 +1024,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               stay inline. The pill is a security indicator (plan/workflow), so it also shows inline on
               desktop and, when non-build, inside the ⋯ menu on mobile. */}
           {mobile === false ? (
-            <>
+            <div className="chat-page-toolbar__wide-controls flex shrink-0 items-center gap-1.5">
               <WorkModePill mode={workMode} full />
               <ProjectPicker variant="full" />
               <ModelPicker variant="full" />
-            </>
+            </div>
           ) : null}
           {/* The reasoning button stays inline at EVERY width. It is the one control here that gets
               changed mid-conversation rather than set once, and two taps through ⋯ for something that
@@ -1034,15 +1059,18 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           >
             <Plus size={18} aria-hidden />
           </button>
-          {/* Desktop keeps the model/mode/thoughts controls inline above; a phone folds them behind ⋯. */}
-          {mobile === true ? (
-            <BarOverflowMenu
-              workMode={workMode}
-              hasTodos={todoCards.length > 0}
-              onOpenTodos={() => setTodosOpen(true)}
-            />
+          {/* Phones and narrow desktops fold the wide pickers behind ⋯; roomy desktops keep them inline. */}
+          {mobile !== undefined ? (
+            <div className={mobile ? '' : 'chat-page-toolbar__overflow'}>
+              <BarOverflowMenu
+                workMode={workMode}
+                hasTodos={todoCards.length > 0}
+                onOpenTodos={() => setTodosOpen(true)}
+              />
+            </div>
           ) : null}
         </div>
+        </PageTopBarPortal>
       )}
 
       {/* Messages. The full /chat variant flows full-width and lets the page scroll (no inner scroll box);

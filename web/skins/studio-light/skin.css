@@ -65,8 +65,7 @@
   --color-ember: #4c8dff;
   --color-ember-bright: #93b8ff;
 
-  /* The Studio chat has one geometry in both variants; only its semantic colours invert. */
-  --studio-chat-thread: 48rem;
+  /* The Studio chat uses shared full-width geometry; only its semantic colours invert. */
   --studio-chat-user-bg: #0068e1;
   --studio-chat-user-text: #ffffff;
   --studio-chat-composer: #f4f4f5;

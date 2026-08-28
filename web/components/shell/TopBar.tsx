@@ -5,21 +5,19 @@ import { ChevronRight, LogOut, Menu, Search, User } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useMe } from '../../lib/queries';
 import { useSignOut } from '../../lib/mutations';
-import { usePageHeader } from '../../lib/pageHeader';
+import { PageTopBarHost, usePageHeader } from '../../lib/pageHeader';
 import { navigationWorldForPath } from '../../modules/registry';
 import { Avatar } from '../ui/Avatar';
 import { LanguageSwitcher } from '../ui/LanguageSwitcher';
 import { SkinSwitcher } from '../ui/SkinSwitcher';
 import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
-import { entryIsActive, type NavEntry } from './navEntry';
-import { useShellNavigation } from './useShellNavigation';
 
 /** How the page's chrome claims its room.
  *
  *  `floating` is the built-in design's: no bar at all, a frameless masthead with the location set large
  *  and the universal actions gathered into a blurred pill floating over the canvas.
- *  `bar` is the dashboard reading: a 48px sticky rule across the top of the scroller, contextual peer
- *  navigation on the left and the same actions on the right as plain ghost controls.
+ *  `bar` is the dashboard reading: a 48px sticky rule across the top of the scroller, the current page's
+ *  own controls on the left and the universal actions on the right as plain ghost controls.
  *
  *  It is a typed property of the SHELL, chosen once from `shellProfileFor()` — never a skin id read here,
  *  and never a utility class fighting an unlayered stylesheet for the same layout. */
@@ -45,7 +43,6 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
   const me = useMe();
   const pathname = usePathname();
   const pageHeader = usePageHeader();
-  const { worlds } = useShellNavigation();
   const { signOut, isPending: signingOut } = useSignOut();
   const { title, count, icon: Icon } = pageHeader?.header ?? {};
   const world = navigationWorldForPath(pathname);
@@ -55,13 +52,6 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
       ? t.nav.system
       : undefined;
   const bar = variant === 'bar';
-  const activeEntry = worlds.find((entry) => entryIsActive(entry, pathname));
-  const primaryEntries = worlds.filter((entry) => ['home', 'chat', 'projects', 'memory'].includes(entry.id ?? ''));
-  // A multi-page plugin/world gets its own peers in the header. Ordinary core pages use the compact set of
-  // primary destinations, derived from the same customized navigation model as the sidebar.
-  const barEntries: NavEntry[] = activeEntry?.subItems && activeEntry.subItems.length > 1
-    ? activeEntry.subItems.map((entry) => ({ ...entry, icon: entry.icon ?? activeEntry.icon }))
-    : primaryEntries;
 
   // The two variants differ in what the row IS — a floating cluster over the canvas versus a ruled bar
   // that content scrolls under — so the geometry is chosen here rather than patched on afterwards.
@@ -89,25 +79,9 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
             <Menu size={bar ? 17 : 19} aria-hidden />
           </button>
         ) : null}
-        {/* Studio's slim header carries peer navigation, sourced from the same model as the sidebar. It is
-            hidden on phones, where the drawer remains the complete primary + nested navigation surface. */}
-        {bar && barEntries.length > 0 ? (
-          <nav className="top-bar__context-nav hidden min-w-0 flex-1 items-center gap-4 overflow-x-auto min-[768px]:flex" aria-label={t.common.contextNav}>
-            {barEntries.map((entry) => {
-              const active = entryIsActive(entry, pathname);
-              return (
-                <Link
-                  key={entry.id ?? entry.href ?? entry.label}
-                  href={entry.href ?? '#'}
-                  aria-current={active ? 'page' : undefined}
-                  className={`top-bar__context-link shrink-0 text-sm font-medium transition-colors ${active ? 'text-text' : 'text-text-muted hover:text-text'}`}
-                >
-                  {entry.label}
-                </Link>
-              );
-            })}
-          </nav>
-        ) : null}
+        {/* Route-specific controls live in the page that owns their state and portal into this slot. The
+            sidebar remains the only global navigation; this bar is the current page's own toolbar. */}
+        {bar ? <PageTopBarHost className="top-bar__page-slot flex min-w-0 flex-1 items-center empty:hidden" /> : null}
         {!bar && showLocation ? (
           <>
             {Icon && onMenuClick ? <span className="mt-1.5 hidden h-9 w-9 shrink-0 place-items-center rounded-full border border-accent/20 bg-accent/[0.07] text-accent sm:grid"><Icon size={17} strokeWidth={1.5} aria-hidden /></span> : null}
@@ -127,7 +101,7 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
           not a stylesheet's: a skin that had to un-pill this cluster from outside was overriding four
           declarations to undo four others. */}
       <div className={bar
-        ? 'top-bar__actions ml-auto flex shrink-0 items-center gap-0.5'
+        ? 'top-bar__actions ml-auto flex shrink-0 items-center gap-0.5 max-[767px]:hidden'
         : 'top-bar__actions ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-bg/45 p-1 backdrop-blur-xl'}>
         <button
           type="button"

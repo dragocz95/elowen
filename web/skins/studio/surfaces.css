@@ -23,8 +23,8 @@
  * wash, `backdrop-filter: none` against a `backdrop-blur-xl`. Four rules undoing four rules is not a
  * design decision, it is a fight, and whichever side is edited next the two drift apart.
  * The bar is now a typed variant of the component (`TopBar variant="bar"`), chosen from the shell
- * profile, so the markup that ships IS the bar: 48px, sticky, one rule, contextual peer links on the
- * left and ghost controls on the right. Nothing is left here to override.
+ * profile, so the markup that ships IS the bar: 48px, sticky, one rule, route-owned controls on the left
+ * and global ghost controls on the right. Nothing is left here to override.
  *
  * The gutter is the one page-frame value Studio still states, because it is a NUMBER rather than an
  * arrangement: 24px, once, on the shell's own inset — and the shell wrapper's 8px is given back so the
@@ -72,8 +72,8 @@
 }
 
 /* The eyebrow does not paint. It named the reader's location — "Usage telemetry", "Account directory" —
-   in 9px uppercase mono over the title, while the page bar now carries the actionable peer destinations
-   one row above. Two answers to "where am I" a centimetre apart is one
+   in 9px uppercase mono over the title, while the page's own controls now occupy the top rule one row
+   above. Two answers to "where am I" a centimetre apart is one
    too many, and the eyebrow is the one that cannot be clicked. It stays in the DOM because a page
    states it as a prop and Studio forks no page. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__eyebrow {
@@ -339,38 +339,46 @@
   font-size: 0.875rem;
 }
 
-/* One local submenu at every width, matching Shadcn Admin's compact tabs below the page heading. The
-   caller still owns one section model; only the shell decides its shared presentation. */
+/* Page sections are plain tabs in the shell's top rule at every width, never a second pill-shaped control
+   below the heading. The track scrolls horizontally when a phone cannot fit every label. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation {
   min-width: 0;
   overflow: hidden;
   padding: 0 0 1rem;
 }
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__page-slot .workspace-shell__section-navigation {
+  height: 3rem;
+  padding: 0;
+}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented {
   width: fit-content;
   max-width: 100%;
-  gap: 0;
-  padding: 3px;
+  gap: 1rem;
+  padding: 0;
   border: 0;
-  border-radius: 10px;
-  background: var(--color-elevated);
+  border-radius: 0;
+  background: transparent;
   scrollbar-width: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented::-webkit-scrollbar {
   display: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__option {
-  height: 1.875rem;
-  padding-inline: 0.625rem;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  height: 2.25rem;
+  padding-inline: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   color: var(--color-text-muted);
   font-size: 0.875rem;
   font-weight: 500;
 }
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__page-slot .workspace-shell__section-navigation .segmented__option {
+  height: 3rem;
+}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__option[aria-checked='true'] {
-  border-color: color-mix(in srgb, var(--color-text) 15%, transparent);
-  background: color-mix(in srgb, var(--color-text) 4.5%, transparent);
+  border-bottom-color: var(--color-text);
+  background: transparent;
   color: var(--color-text);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__count {

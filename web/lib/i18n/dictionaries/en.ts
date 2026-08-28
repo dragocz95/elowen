@@ -148,7 +148,6 @@ export const en = {
     kill: 'Kill',
     appName: '{productName}',
     primaryNav: 'Primary',
-    contextNav: 'Contextual navigation',
     breadcrumb: 'Breadcrumb',
     expand: 'Expand',
     collapse: 'Collapse',

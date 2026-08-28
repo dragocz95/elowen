@@ -43,8 +43,7 @@
   --color-ember: #6cb2ff;
   --color-ember-bright: #b9d8ff;
 
-  /* ChatGPT-like conversation semantics. The canvas stays full-width; only the thread is measured. */
-  --studio-chat-thread: 48rem;
+  /* ChatGPT-like conversation semantics on the full-width working surface. */
   --studio-chat-user-bg: #173e76;
   --studio-chat-user-text: #f6fafe;
   --studio-chat-composer: #212121;

@@ -14,18 +14,14 @@
 /* ---------------------------------------------------------------------------------------------------
  * /chat.
  *
- * The canvas and telemetry layout fill the shell, while the conversation itself is a deliberate reading
- * column: ChatGPT's 48rem thread, shared by the sticky controls, transcript and composer. Keeping the cap
- * on `.chat-gutter` rather than on the route lets the telemetry rail remain docked at the window edge.
+ * The canvas, conversation and telemetry layout all fill the shell. The transcript and composer share the
+ * ordinary page gutter and stay left-aligned; no hidden reading cap recentres the working surface.
  * --------------------------------------------------------------------------------------------------- */
 
-/* Every row takes the available width until the shared thread measure binds, then centres. `chat-gutter`
-   owns the app-wide 24px inset, so its outer cap includes both insets and leaves the visible conversation
-   and composer at the declared 48rem rather than silently narrowing them to 45rem. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-gutter {
   inline-size: 100%;
-  max-inline-size: calc(var(--studio-chat-thread) + 2 * var(--shell-gutter));
-  margin-inline: auto;
+  max-inline-size: none;
+  margin-inline: 0;
 }
 
 /* The conversation header. It keeps the page's real <h1> and its live stats — both are the document's,

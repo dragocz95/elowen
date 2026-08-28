@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { useShellProfile } from '../../lib/shellProfile';
+import { PageTopBarPortal } from '../../lib/pageHeader';
 import { Segmented } from './Segmented';
 import { WorkspaceHero, type WorkspaceHeroProps } from './WorkspaceHero';
 
@@ -88,19 +89,22 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
  *  one section grammar and every page/plugin continues writing through the same `onChange`. */
 function SectionNavigation({ sections, value, onChange, ariaLabel }: WorkspaceShellNavigation) {
   return (
-    <nav className="workspace-shell__section-navigation" aria-label={ariaLabel}>
-      <Segmented
-        aria-label={ariaLabel}
-        value={value}
-        onChange={onChange}
-        nowrap
-        options={sections.map((section) => ({
-          value: section.id,
-          label: section.label,
-          count: section.count,
-        }))}
-      />
-    </nav>
+    <PageTopBarPortal>
+      <nav className="workspace-shell__section-navigation min-w-0" aria-label={ariaLabel}>
+        <Segmented
+          aria-label={ariaLabel}
+          value={value}
+          onChange={onChange}
+          variant="line"
+          nowrap
+          options={sections.map((section) => ({
+            value: section.id,
+            label: section.label,
+            count: section.count,
+          }))}
+        />
+      </nav>
+    </PageTopBarPortal>
   );
 }
 

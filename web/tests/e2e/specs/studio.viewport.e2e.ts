@@ -114,7 +114,7 @@ test('Studio workspaces fill an ultrawide desk instead of becoming a centred car
   expect(geometry.rightGap).toBeLessThanOrEqual(16);
 });
 
-test('Studio OLED uses ChatGPT conversation geometry and turn styling', async ({ app, seed }, testInfo) => {
+test('Studio OLED keeps the chat full-width, left-aligned and in its own top bar', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await seed.messages([
     { id: 'u1', role: 'user', text: 'Please check the deployment status.' },
@@ -126,6 +126,8 @@ test('Studio OLED uses ChatGPT conversation geometry and turn styling', async ({
   await expect(app.locator('[data-variant="full"] [data-testid="chat-transcript"]')).toBeVisible();
   await expect(app.locator('[data-role="you"] .chat-user-message')).toBeVisible();
   await expect(app.locator('[data-role="assistant"] .chat-markdown')).toBeVisible();
+  await expect(app.locator('[data-testid="page-top-bar-host"] .chat-page-toolbar')).toBeVisible();
+  await expect(app.locator('.top-bar__context-nav')).toHaveCount(0);
 
   const geometry = await app.evaluate(() => {
     const surface = document.querySelector<HTMLElement>('[data-variant="full"]')!.getBoundingClientRect();
@@ -159,11 +161,12 @@ test('Studio OLED uses ChatGPT conversation geometry and turn styling', async ({
     };
   });
   expect(geometry.surfaceWidth).toBeGreaterThan(1_100);
-  expect(geometry.transcriptWidth).toBeGreaterThan(geometry.threadWidth);
-  expect(geometry.threadWidth).toBeCloseTo(768, 0);
-  expect(geometry.composerWidth).toBeCloseTo(768, 0);
-  expect(Math.abs(geometry.left - geometry.right)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.composerLeft - geometry.composerRight)).toBeLessThanOrEqual(1);
+  expect(geometry.transcriptWidth).toBeCloseTo(geometry.surfaceWidth, 0);
+  expect(geometry.threadWidth).toBeGreaterThan(geometry.surfaceWidth - 50);
+  expect(geometry.composerWidth).toBeGreaterThan(geometry.surfaceWidth - 50);
+  expect(Math.abs(geometry.left)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.right)).toBeLessThanOrEqual(1);
+  expect(geometry.composerLeft).toBeCloseTo(geometry.composerRight, 0);
   expect(geometry.userBackground).toBe('rgb(23, 62, 118)');
   expect(geometry.userRadius).toBe('22px');
   expect(geometry.userMaxWidth).toBe('70%');
@@ -172,18 +175,62 @@ test('Studio OLED uses ChatGPT conversation geometry and turn styling', async ({
   expect(geometry.assistantFontFamily).toContain('BlinkMacSystemFont');
   expect(geometry.composerBackground).toBe('rgb(33, 33, 33)');
   expect(geometry.composerRadius).toBe('28px');
+
+  await app.setViewportSize({ width: 900, height: 800 });
+  await expect(app.locator('.chat-page-toolbar__wide-controls')).toBeHidden();
+  await expect(app.locator('.chat-page-toolbar__overflow')).toBeVisible();
+  const narrowBar = await app.evaluate(() => {
+    const toolbar = document.querySelector<HTMLElement>('.chat-page-toolbar')!.getBoundingClientRect();
+    const actions = document.querySelector<HTMLElement>('.top-bar__actions')!.getBoundingClientRect();
+    return { toolbarRight: toolbar.right, actionsLeft: actions.left };
+  });
+  expect(narrowBar.toolbarRight).toBeLessThanOrEqual(narrowBar.actionsLeft + 1);
 });
 
-test('every sectioned Studio page uses one compact horizontal submenu at every width', async ({ app, seed }, testInfo) => {
+test('returning from Home opens the full chat at its newest turn', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await seed.messages(Array.from({ length: 35 }, (_, index) => [
+    { id: `u-${index}`, role: 'user' as const, text: `Question ${index}` },
+    { id: `a-${index}`, role: 'assistant' as const, text: `Answer ${index}`, segments: [{ kind: 'text' as const, text: `Answer ${index}` }] },
+  ]).flat());
+  await useSkin(app, seed, 'studio-oled');
+  await app.setViewportSize({ width: 1440, height: 800 });
+  await openStudio(app, '/chat');
+  await expect(app.getByText('Answer 34')).toBeVisible();
+
+  await app.locator('main').evaluate((main) => { main.scrollTop = 0; });
+  await app.getByRole('link', { name: 'Home', exact: true }).click();
+  await expect(app).toHaveURL(/\/dash$/);
+  await app.getByRole('link', { name: 'Chat', exact: true }).click();
+  await expect(app).toHaveURL(/\/chat$/);
+  await expect(app.getByText('Answer 34')).toBeVisible();
+
+  const bottomGap = await app.locator('main').evaluate((main) => main.scrollHeight - main.scrollTop - main.clientHeight);
+  expect(bottomGap).toBeLessThanOrEqual(2);
+});
+
+test('sectioned Studio pages keep plain tabs in the top bar at every width', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-oled');
   await app.setViewportSize({ width: 1440, height: 900 });
   await openStudio(app, '/account');
 
-  const submenu = app.locator('.workspace-shell__section-navigation [role="radiogroup"]');
+  const submenu = app.locator('.top-bar__page-slot .workspace-shell__section-navigation [role="radiogroup"]');
   await expect(submenu).toBeVisible();
   await expect(submenu).toHaveAttribute('aria-orientation', 'horizontal');
   await expect(submenu).toHaveAttribute('data-nowrap', 'true');
+  await expect(submenu).toHaveAttribute('data-variant', 'line');
+  const desktopStyle = await submenu.evaluate((element) => {
+    const active = element.querySelector<HTMLElement>('[aria-checked="true"]')!;
+    return {
+      background: getComputedStyle(element).backgroundColor,
+      radius: getComputedStyle(element).borderRadius,
+      activeBorder: getComputedStyle(active).borderBottomStyle,
+    };
+  });
+  expect(desktopStyle.background).toBe('rgba(0, 0, 0, 0)');
+  expect(desktopStyle.radius).toBe('0px');
+  expect(desktopStyle.activeBorder).toBe('solid');
   await expect(app.locator('.workspace-shell__section-sidebar, .workspace-shell__section-mobile')).toHaveCount(0);
 
   await app.setViewportSize({ width: 390, height: 844 });
@@ -399,6 +446,9 @@ test('Studio chat composer buttons keep the touch floor on a short coarse-pointe
   const { context, page } = await studioTouchPage(browser, seed, 'studio-oled', { width: 740, height: 360 });
   try {
     await openStudio(page, '/chat');
+    const toolbar = page.locator('.chat-page-toolbar');
+    await expect(toolbar).toBeVisible();
+    expect(await toolbar.evaluate((element) => element.closest('.top-bar__page-slot') === null)).toBe(true);
     const controls = page.locator('.chat-composer > button');
     await expect(controls.first()).toBeVisible();
     const sizes = await controls.evaluateAll((buttons) => buttons.map((button) => {

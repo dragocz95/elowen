@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
-import { PageHeaderProvider, usePageHeader } from '../../lib/pageHeader';
+import { PageHeaderProvider, PageTopBarHost, PageTopBarPortal, usePageHeader } from '../../lib/pageHeader';
 import { createWrapper } from '../test-utils';
 
 afterEach(() => { document.title = ''; localStorage.clear(); });
@@ -51,6 +51,20 @@ describe('ModuleHeader — publishing the page name', () => {
     const before = document.head.querySelectorAll('title').length;
     renderHeader(<ModuleHeader title="Memory" />);
     expect(document.head.querySelectorAll('title').length).toBe(before);
+  });
+});
+
+describe('page top-bar portal', () => {
+  it('moves route-owned controls into the shell host on desktop', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(
+      <Wrapper><PageHeaderProvider>
+        <PageTopBarHost />
+        <PageTopBarPortal><button type="button">Route control</button></PageTopBarPortal>
+      </PageHeaderProvider></Wrapper>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('page-top-bar-host')).toContainElement(screen.getByRole('button', { name: 'Route control' })));
   });
 });
 
