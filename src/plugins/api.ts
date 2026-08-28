@@ -467,7 +467,12 @@ export interface PluginElowenCli {
 }
 
 /** Read-only user view handed through host stores — identity only, no secrets, no mutation. */
-export interface PluginUserView { id: number; username: string; isAdmin: boolean }
+/** An account as a plugin sees it. `name` and `avatar` are here so a plugin surface can render a person
+ *  the way the rest of the application does — the shared Avatar component takes exactly this shape and
+ *  mints its own signed image link, so a plugin that only knew the username had no way to draw a face and
+ *  fell back to a monogram for everyone. `avatar` is the stored FILENAME, empty when none was uploaded;
+ *  it is a presence flag to the client, never a path it should build a URL from. */
+export interface PluginUserView { id: number; username: string; name: string; avatar: string; isAdmin: boolean }
 
 export interface PluginExternalUserInput {
   provider: string;

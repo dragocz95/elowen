@@ -1,7 +1,7 @@
 import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
-import type { PluginHostPush } from '../plugins/api.js';
+import type { PluginHostPush, PluginUserView } from '../plugins/api.js';
 import { runWithContributionUser } from '../plugins/policyContext.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
@@ -76,6 +76,13 @@ import { trustedPublicWebUrl } from '../shared/publicWebUrl.js';
 import { WORKFLOW_ADD_NODES_RPC, type WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
 const log = logger('daemon');
+
+/** The ONE account → plugin-view mapping. Six host seams hand accounts to plugins, and when each wrote
+ *  the object literal itself they disagreed: some passed the display name as `username`, none passed the
+ *  avatar at all, so a plugin page drew monograms for people who had uploaded a photo. */
+function asPluginUser(u: { id: number; username: string; name?: string; avatar?: string; is_admin?: number | boolean }): PluginUserView {
+  return { id: u.id, username: u.username, name: u.name ?? '', avatar: u.avatar ?? '', isAdmin: !!u.is_admin };
+}
 
 /** Compact, human-readable one-liner for a bus event — the daemon's activity trail in the log file. */
 function describeEvent(e: { type: string }): string { return e.type; }
@@ -275,8 +282,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     if (!descriptor) return null;
     const value = descriptor.normalize(platformUserId);
     if (!value) return null;
-    const asLinked = (u: { id: number; name: string; username: string; is_admin?: number | boolean } | undefined | null) =>
-      u ? { id: u.id, name: u.name || u.username, username: u.username, admin: !!u.is_admin } : null;
+    const asLinked = (u: { id: number; name: string; username: string; avatar?: string; is_admin?: number | boolean } | undefined | null) =>
+      u ? { id: u.id, name: u.name || u.username, username: u.username, avatar: u.avatar ?? '', admin: !!u.is_admin } : null;
     const explicitId = userSettings.userIdBySetting(descriptor.linkSettingKey, value);
     const explicit = asLinked(explicitId != null ? users.get(explicitId) : undefined);
     if (explicit) return explicit;
@@ -522,7 +529,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           },
           userProjects: { canAccess: (userId, projectId) => userProjects.canAccess(userId, projectId) },
           usersRead: {
-            list: () => users.list().map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
+            list: () => users.list().map(asPluginUser),
             isAdmin: (id) => users.isAdmin(id),
             allowedExecs: (id) => users.list().find((u) => u.id === id)?.allowed_execs ?? null,
             mayUsePlugin: (id, plugin) => {
@@ -536,11 +543,11 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         externalUsers: {
           resolvePlatformUser: (platform, platformUserId, verifiedEmail) => {
             const user = resolvePlatformUser(platform, platformUserId, verifiedEmail);
-            return user ? { id: user.id, username: user.username || user.name, isAdmin: user.admin } : null;
+            return user ? asPluginUser({ ...user, username: user.username || user.name, is_admin: user.admin }) : null;
           },
           resolve: (provider, tenantId, subjectId) => {
             const user = users.externalIdentity(provider, tenantId, subjectId);
-            return user ? { id: user.id, username: user.username, isAdmin: user.is_admin } : null;
+            return user ? asPluginUser(user) : null;
           },
           describe: (provider, tenantId, subjectId) => {
             const binding = users.describeExternalIdentity(provider, tenantId, subjectId);
@@ -548,7 +555,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
               provider: binding.provider,
               tenantId: binding.tenantId,
               subjectId: binding.subjectId,
-              user: { id: binding.user.id, username: binding.user.username, isAdmin: binding.user.is_admin },
+              user: asPluginUser(binding.user),
               linkedAt: binding.linkedAt,
             } : null;
           },
@@ -556,7 +563,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             const result = users.linkExternalIdentity(input);
             return {
               created: result.created,
-              user: { id: result.user.id, username: result.user.username, isAdmin: result.user.is_admin },
+              user: asPluginUser(result.user),
             };
           },
           linkExisting: (input) => {
@@ -565,7 +572,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
               provider: binding.provider,
               tenantId: binding.tenantId,
               subjectId: binding.subjectId,
-              user: { id: binding.user.id, username: binding.user.username, isAdmin: binding.user.is_admin },
+              user: asPluginUser(binding.user),
               linkedAt: binding.linkedAt,
             };
           },
