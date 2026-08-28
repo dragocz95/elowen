@@ -837,8 +837,10 @@ export class ChannelSessionService {
           // else in the room. An unlinked sender carries no account, so the owner still stands. Every
           // one of those settings is read from this single id inside the spawner; resolving even one of
           // them here would be the second opinion that let the threshold drift from the model.
-          // A delegated child has no writer of its own and inherits its parent's — see parentSettingsUserId.
-          settingsUserId: opts.writerUserId ?? this.parentSettingsUserId(parentSessionId) ?? ownerUserId,
+          // A delegated child has no writer of its own. New children carry the parent's composing account
+          // durably; the live-parent lookup remains only for legacy rows minted before that field existed.
+          settingsUserId: opts.writerUserId ?? delegated?.scope.settingsUserId
+            ?? this.parentSettingsUserId(parentSessionId) ?? ownerUserId,
           // Only a DELEGATED child names one. An ordinary room deliberately composes the instance set and
           // announces the writer's per turn: PI's skill set is fixed for the life of a session, so
           // composing it from whoever spoke first would leave that person's private skills expandable for
@@ -1104,7 +1106,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',
@@ -1412,7 +1414,7 @@ export class ChannelSessionService {
   /** Live status of a channel session (model + whether a turn is in flight + context usage) for a platform
    *  `/status` (and `/stop`) slash. Null when the channel has no live session yet (never spawned, or
    *  LRU-evicted). Read-only — no lock needed. */
-  status(channelId: string): { provider?: string; model: string; streaming: boolean; usage: BrainUsage; fast: boolean; fastAvailable: boolean } | null {
+  status(channelId: string): { provider?: string; model: string; streaming: boolean; usage: BrainUsage; fastAvailable: boolean } | null {
     const ch = this.d.registry.channelGet(channelId);
     return ch ? {
       provider: ch.providerId,
@@ -1421,7 +1423,6 @@ export class ChannelSessionService {
       // tracked descendant is still running so the channel can cancel the whole tree.
       streaming: ch.session.isStreaming || this.d.registry.hasActiveChildren(ch.sessionId),
       usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId),
-      fast: this.d.fastMode?.(ch.settingsUserId) === true,
       fastAvailable: ch.fastAvailable,
     } : null;
   }

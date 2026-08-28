@@ -251,6 +251,8 @@ export class PlatformOrchestrator {
               // Host-stamped on the delegating turn (pathGuard.currentAccess), so the child records the
               // identity that actually spawned it. Absent leaves the child unpromotable, never wider.
               ...(typeof src.access.principal === 'string' ? { spawnedBy: src.access.principal } : {}),
+              ...(Number.isSafeInteger(src.access.settingsUserId) && src.access.settingsUserId! > 0
+                ? { settingsUserId: src.access.settingsUserId } : {}),
               ...(Number.isSafeInteger(src.access.contributionUserId) && src.access.contributionUserId! > 0
                 ? { contributionUserId: src.access.contributionUserId } : {}),
               ...(workspaceBinding ? { workspaceRef: bindingRef(workspaceBinding) } : {}),
@@ -258,7 +260,8 @@ export class PlatformOrchestrator {
             if (!rawScope) throw new Error('invalid delegated access');
             // The account running the child can only make the captured scope narrower. Persist this union
             // too, so a later settings change that re-enables a tool never widens an already-delegated run.
-            const spawnerAuthority = this.d.toolAuthorityFor?.(sessionOwner);
+            const authorityUserId = rawScope.settingsUserId ?? rawScope.contributionUserId ?? sessionOwner;
+            const spawnerAuthority = this.d.toolAuthorityFor?.(authorityUserId);
             const delegatedAccess = withDelegatedDeniedTools(rawScope, spawnerAuthority?.deny ?? []);
             // Validated above for the owner lookup; re-checked here so the request below carries the
             // non-optional parent it actually has.

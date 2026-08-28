@@ -744,6 +744,22 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent.toolPolicy).toEqual({ allow: new Set(['Read']) });
   });
 
+  it('reads the current grant from the captured settings account, not the room owner', async () => {
+    const authorityIds: number[] = [];
+    const sent = await runTypedDelegate({
+      admin: false, owner: false, projectIds: [3], parentSessionId: 'brain-owner',
+      agentType: 'explore', toolPolicy: { allow: ['Read', 'Grep'] }, permissionBoundary: null,
+      settingsUserId: 3, contributionUserId: 3,
+    }, (userId) => {
+      authorityIds.push(userId);
+      return { allow: new Set(['Read']) };
+    });
+
+    expect(authorityIds).toEqual([3]);
+    expect(sent.delegatedAccess).toMatchObject({ settingsUserId: 3, contributionUserId: 3 });
+    expect(sent.toolPolicy).toEqual({ allow: new Set(['Read']) });
+  });
+
   it('a bare read_only delegation (no type) takes the same host-side read-only path', async () => {
     // read_only without a subagent_type: the host applies READ_ONLY_AGENT_TOOLS + the minted boundary, so a
     // generic read-only child now gets read-only shell too — one read-only definition, no plugin toolset.

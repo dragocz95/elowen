@@ -292,6 +292,8 @@ export interface SessionSource {
     /** The principal running the delegating turn (see turnPrincipal), recorded on the child's durable scope
      *  so only that same identity can ever promote it out of read-only. */
     principal?: string;
+    /** Account whose model, prompt, compaction and Fast preferences composed the delegating turn. */
+    settingsUserId?: number | null;
     /** Account whose personal contributions, HOME and Sandbox workspaces the delegated child inherits. It is
      * host-resolved from the current turn, not guessed from the durable room owner. */
     contributionUserId?: number | null;
@@ -758,7 +760,7 @@ export interface ChannelRef { platform: string; channelId: string; threadId?: st
 export interface PlatformControlApi {
   /** Live model, whether a turn is in flight, and context usage of the channel's session — or null when
    *  nothing is spawned. */
-  status(ref: ChannelRef): { provider?: string; model: string; streaming: boolean; usage: { tokens: number | null; contextWindow: number; percent: number | null }; fast: boolean; fastAvailable: boolean } | null;
+  status(ref: ChannelRef): { provider?: string; model: string; streaming: boolean; usage: { tokens: number | null; contextWindow: number; percent: number | null }; fastAvailable: boolean } | null;
   /** Abort the channel's in-flight turn (no-op when idle). */
   abort(ref: ChannelRef): Promise<void>;
   /** Compact the channel session's context; resolves to `{ usage, compacted }` (null if no session).
@@ -1373,7 +1375,7 @@ export interface PluginContext {
    *  toolPolicy carries exact allow+deny sets, and permissionBoundary carries the effective unattended
    *  granular-rule context so a child inherits exactly the caller's scope. `readOnly` is stamped by the
    *  host when the caller's turn is PLANNING — forward it untouched; never clear it. */
-  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; contributionUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef };
+  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef };
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;

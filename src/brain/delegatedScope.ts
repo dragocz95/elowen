@@ -37,6 +37,9 @@ export interface DelegatedExecutionScope {
    *  it later: a shared channel gives every member the same parent session, so the session guard alone
    *  would let one member promote another member's sub-agent. Absent = unknown ⇒ unpromotable. */
   spawnedBy?: string;
+  /** Account whose model, prompt, compaction and Fast preferences compose the child. Optional only for
+   * legacy rows; new children capture it so eviction or runner execution never falls back to the row owner. */
+  settingsUserId?: number;
   /** Account whose owner-scoped contributions, HOME and Sandbox workspaces the child inherits. Optional for
    * legacy rows; absence fails closed to instance contributions/base Project roots rather than guessing the
    * durable session owner. */
@@ -147,6 +150,11 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     spawnedBy = value.spawnedBy.trim();
     if (!spawnedBy || spawnedBy.length > MAX_PRINCIPAL_CHARS) return undefined;
   }
+  let settingsUserId: number | undefined;
+  if (own(value, 'settingsUserId')) {
+    if (!Number.isSafeInteger(value.settingsUserId) || (value.settingsUserId as number) <= 0) return undefined;
+    settingsUserId = value.settingsUserId as number;
+  }
   let contributionUserId: number | undefined;
   if (own(value, 'contributionUserId')) {
     if (!Number.isSafeInteger(value.contributionUserId) || (value.contributionUserId as number) <= 0) return undefined;
@@ -174,6 +182,7 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     ...(promptAppend ? { promptAppend } : {}),
     ...(readOnlyOrigin ? { readOnlyOrigin } : {}),
     ...(spawnedBy ? { spawnedBy } : {}),
+    ...(settingsUserId !== undefined ? { settingsUserId } : {}),
     ...(contributionUserId !== undefined ? { contributionUserId } : {}),
     ...(workspaceRef ? { workspaceRef } : {}),
   };
@@ -225,6 +234,8 @@ export interface DelegatingTurnAccess {
   planMode?: boolean;
   /** Who is running this turn (see turnPrincipal). Absent when the turn carries no identity. */
   principal?: string;
+  /** Account whose personal settings compose this turn. */
+  settingsUserId?: number | null;
   /** Account whose owner-scoped contributions and Sandbox state this turn carries. */
   contributionUserId?: number | null;
   /** Present only inside a child already narrowed to an explicitly assigned Sandbox workspace. */
@@ -258,6 +269,9 @@ export function scopeExceedsCurrentAccess(
     if (lost.length) return `it is scoped to project(s) ${lost.join(', ')}, which this conversation no longer has`;
   }
   if (scope.owner && !access.owner) return 'it carries owner authority and this conversation does not';
+  if (scope.settingsUserId !== undefined && scope.settingsUserId !== access.settingsUserId) {
+    return 'it belongs to a different account settings context than the current turn';
+  }
   if (scope.contributionUserId !== undefined && scope.contributionUserId !== access.contributionUserId) {
     return 'it belongs to a different account contributor than the current turn';
   }
@@ -336,6 +350,7 @@ export function promoteDelegatedScope(
     ...(access.toolPolicy ? { toolPolicy: access.toolPolicy } : {}),
     ...(scope.promptAppend ? { promptAppend: scope.promptAppend } : {}),
     spawnedBy: scope.spawnedBy,
+    ...(scope.settingsUserId !== undefined ? { settingsUserId: scope.settingsUserId } : {}),
     ...(scope.contributionUserId !== undefined ? { contributionUserId: scope.contributionUserId } : {}),
     ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
   });

@@ -149,6 +149,28 @@ describe('a room composes its session from the writer, not from whoever opened i
     expect(t.spawn.mock.calls[2]![0]).not.toHaveProperty('fast'); // child reads account 3 live on every request
   });
 
+  it('keeps the captured settings account after the parent live session is evicted', async () => {
+    const t = setup();
+
+    await t.turn(2, 'Michal opens the room');
+    t.registry.channelDispose('discord-room');
+    await t.turn(3, 'Sabina asks something'); // room owned by 2, composed for 3
+    t.registry.channelDispose('discord-room'); // runner/restart can no longer consult parentLive
+
+    await t.svc.send({
+      channelId: 'subagent-sub-durable',
+      ownerUserId: 2,
+      parentSessionId: t.sessionId,
+      policy: t.policy,
+      delegatedAccess: { ...SCOPE, settingsUserId: 3, contributionUserId: 3 },
+      trusted: SCOPE.admin,
+      identity: { platform: 'subagent', userId: 'subagent', admin: true, owner: true },
+    } as never, 'resume after eviction');
+
+    expect(t.settingsIdOf(2)).toBe(3);
+    expect(t.registry.channelGet('subagent-sub-durable')?.settingsUserId).toBe(3);
+  });
+
   it('resets the rooms that RENDER an account’s instructions, not the ones it opened', async () => {
     const t = setup();
 
