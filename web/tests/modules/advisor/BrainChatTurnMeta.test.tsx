@@ -30,10 +30,11 @@ class FakeES {
   }
 }
 
-const TOOL_ROUND = (id: string, name: string, detail: string, createdAt: string, durationMs?: number) => ({
+const TOOL_ROUND = (id: string, name: string, detail: string, createdAt: string, durationMs?: number, model?: string) => ({
   role: 'assistant' as const, id, text: '', createdAt,
   segments: [{ kind: 'tool' as const, name, id: `${id}-call`, detail }],
   ...(durationMs != null ? { durationMs } : {}),
+  ...(model ? { model } : {}),
 });
 
 // One user message and ONE agent turn spent over four tool rounds. Only the last row closes the turn.
@@ -42,7 +43,7 @@ const HISTORY = [
   TOOL_ROUND('a1', 'Bash', 'git status', '2026-08-22T09:15:01.000Z'),
   TOOL_ROUND('a2', 'Read', 'registry.json', '2026-08-22T09:15:04.000Z'),
   TOOL_ROUND('a3', 'Edit', 'registry.json', '2026-08-22T09:15:09.000Z'),
-  TOOL_ROUND('a4', 'Bash', 'git commit', '2026-08-22T09:15:12.000Z', 31_000),
+  TOOL_ROUND('a4', 'Bash', 'git commit', '2026-08-22T09:15:12.000Z', 31_000, 'claude-opus-5'),
 ];
 
 const server = setupServer(
@@ -89,6 +90,9 @@ describe('settled turn metadata', () => {
     const turns = screen.getAllByTestId('chat-turn');
     expect(turns.at(-1)!.contains(metas[0]!)).toBe(true);
     expect(metas[0]!.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-22T09:15:12.000Z');
+    const model = screen.getByTestId('chat-turn-model');
+    expect(model).toHaveTextContent('claude-opus-5');
+    expect(model.querySelector('img, svg')).not.toBeNull();
   });
 
   it('leaves the intermediate tool rounds unstamped', async () => {

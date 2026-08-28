@@ -35,13 +35,13 @@ describe('web fromSnapshot: a reconnect frame rebuilds the whole transcript', ()
         { type: 'card', card: { id: 'c1', title: 'x' } },
         { type: 'text', delta: 'done thinking' },
         { type: 'queue', items: [] },
-        { type: 'idle', durationMs: 83_000, completedAt: '2026-08-21T14:00:00.000Z' },
+        { type: 'idle', model: 'claude-opus-5', durationMs: 83_000, completedAt: '2026-08-21T14:00:00.000Z' },
       ],
     });
     expect(view.thinking).toBe(false);
     const last = view.turns.at(-1);
     expect(last).toMatchObject({
-      role: 'elowen', streaming: false, durationMs: 83_000, createdAt: '2026-08-21T14:00:00.000Z',
+      role: 'elowen', streaming: false, model: 'claude-opus-5', durationMs: 83_000, createdAt: '2026-08-21T14:00:00.000Z',
     });
   });
 });

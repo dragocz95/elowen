@@ -17,6 +17,7 @@ import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { ModelIcon } from '../../components/ui/ModelIcon';
 import { AskQuestionCard } from './AskQuestionCard';
 import { AgentsTable } from './AgentsTable';
 import { StatsModal } from './StatsModal';
@@ -526,6 +527,12 @@ function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen
   return (
     <div data-testid="chat-turn-meta" className="mt-1 flex items-center gap-2 text-[10px] leading-none text-text-muted/70">
       {turn.createdAt ? <time dateTime={turn.createdAt}>{localDateTime(turn.createdAt, locale, false)}</time> : null}
+      {turn.role === 'elowen' && turn.model ? (
+        <span data-testid="chat-turn-model" className="inline-flex min-w-0 items-center gap-1" title={turn.model}>
+          <ModelIcon name={turn.model} size={10} />
+          <span className="max-w-48 truncate">{brainModelQualifiedLabel(turn.model)}</span>
+        </span>
+      ) : null}
       {turn.role === 'elowen' && turn.durationMs != null ? (
         <span className="inline-flex items-center gap-1" title={t.brainChat.turnDuration}>
           <Clock3 size={10} aria-hidden />
