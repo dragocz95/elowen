@@ -48,6 +48,7 @@
       "empty": "Zatiaľ nie je nastavený žiadny MCP server.",
       "emptySearch": "Filtru nezodpovedá žiadny server",
       "searchPlaceholder": "Hľadať server…",
+      "searchClear": "Zrušiť hľadanie serverov",
       "filterAll": "Všetko",
       "openServer": "Otvoriť server {name}",
       "loadError": "MCP servery sa nepodarilo načítať.",

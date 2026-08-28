@@ -28,9 +28,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// ../../../../../../../../elowen/packages/plugin-ui-kit/shims/react.cjs
+// packages/plugin-ui-kit/shims/react.cjs
 var require_react = __commonJS({
-  "../../../../../../../../elowen/packages/plugin-ui-kit/shims/react.cjs"(exports, module) {
+  "packages/plugin-ui-kit/shims/react.cjs"(exports, module) {
     "use strict";
     var runtime2 = typeof window !== "undefined" ? window.ElowenUiRuntime : void 0;
     if (!runtime2) throw new Error("elowen-plugin-ui-kit: window.ElowenUiRuntime is missing \u2014 plugin bundles only run inside the Elowen web app");
@@ -38,9 +38,9 @@ var require_react = __commonJS({
   }
 });
 
-// ../../../../../../../../elowen/packages/plugin-ui-kit/shims/jsx-runtime.cjs
+// packages/plugin-ui-kit/shims/jsx-runtime.cjs
 var require_jsx_runtime = __commonJS({
-  "../../../../../../../../elowen/packages/plugin-ui-kit/shims/jsx-runtime.cjs"(exports, module) {
+  "packages/plugin-ui-kit/shims/jsx-runtime.cjs"(exports, module) {
     "use strict";
     var runtime2 = typeof window !== "undefined" ? window.ElowenUiRuntime : void 0;
     if (!runtime2) throw new Error("elowen-plugin-ui-kit: window.ElowenUiRuntime is missing \u2014 plugin bundles only run inside the Elowen web app");
@@ -570,8 +570,18 @@ function McpServersPage() {
       },
       children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceDocument, { children: loadError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceState, { tone: "danger", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ErrorState, { message: s.loadError, onRetry: () => void load() }) }) : loading || !data ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceState, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.LoadingState, { variant: "cards" }) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 flex-col gap-4", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceToolbar, { className: "flex-col items-stretch", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 flex-wrap items-center gap-2 py-3", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.RegisterSearch, { value: query, onChange: setQuery, placeholder: s.searchPlaceholder, label: s.searchPlaceholder }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceToolbar, { layout: "stacked", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 flex-wrap items-center gap-2 py-3", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              C.RegisterSearch,
+              {
+                value: query,
+                onChange: setQuery,
+                placeholder: s.searchPlaceholder,
+                label: s.searchPlaceholder,
+                onClear: () => setQuery(""),
+                clearLabel: s.searchClear
+              }
+            ),
             canManageInstance ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               C.Segmented,
               {

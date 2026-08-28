@@ -123,6 +123,30 @@ describe('MCP page load states', () => {
     expect(screen.getByText('connect ECONNREFUSED')).toBeInTheDocument();
     expect(screen.queryByText(strings.loadError!)).not.toBeInTheDocument();
   });
+
+  it('uses the same stacked register toolbar band as the Memory page', async () => {
+    msw.use(http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [server], instance: [remote], canManageInstance: true })));
+    mount();
+    const search = await screen.findByRole('searchbox', { name: strings.searchPlaceholder });
+    const toolbar = search.closest('.control-surface-toolbar');
+    const band = search.closest('.register-search')?.parentElement;
+
+    expect(toolbar).toHaveAttribute('data-layout', 'stacked');
+    expect(band).not.toBeNull();
+    expect(band).toContainElement(screen.getByRole('radiogroup', { name: strings.scope }));
+  });
+
+  it('clears a populated register search through the shared search control', async () => {
+    msw.use(http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [server], instance: [remote], canManageInstance: true })));
+    mount();
+    const search = await screen.findByRole('searchbox', { name: strings.searchPlaceholder });
+    fireEvent.change(search, { target: { value: 'github' } });
+    expect(screen.queryByText('docs')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: strings.searchClear }));
+    expect(search).toHaveValue('');
+    expect(screen.getByText('docs')).toBeInTheDocument();
+  });
 });
 
 // Changing the scope is a MOVE on the daemon, not a field on the PATCH: PATCH resolves the server in the

@@ -1,6 +1,6 @@
 {
   "name": "mcp",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "apiVersion": "1",
   "description": "Connect external MCP servers to the assistant’s tools.",
   "entry": "index.mjs",
@@ -47,6 +47,7 @@
       "empty": "No MCP server configured yet.",
       "emptySearch": "No server matches the filter",
       "searchPlaceholder": "Search servers…",
+      "searchClear": "Clear the server search",
       "filterAll": "All",
       "openServer": "Open server {name}",
       "loadError": "Could not load MCP servers.",

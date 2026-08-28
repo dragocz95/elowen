@@ -453,9 +453,16 @@ export function McpServersPage() {
           : loading || !data ? <C.ControlSurfaceState><C.LoadingState variant="cards" /></C.ControlSurfaceState>
           : (
             <div className="flex min-w-0 flex-col gap-4">
-              <C.ControlSurfaceToolbar className="flex-col items-stretch">
+              <C.ControlSurfaceToolbar layout="stacked">
                 <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
-                  <C.RegisterSearch value={query} onChange={setQuery} placeholder={s.searchPlaceholder} label={s.searchPlaceholder} />
+                  <C.RegisterSearch
+                    value={query}
+                    onChange={setQuery}
+                    placeholder={s.searchPlaceholder}
+                    label={s.searchPlaceholder}
+                    onClear={() => setQuery('')}
+                    clearLabel={s.searchClear}
+                  />
                   {/* Only the instance owner ever sees more than one ownership scope, so only he is
                       offered the filter that narrows to one. */}
                   {canManageInstance ? (
