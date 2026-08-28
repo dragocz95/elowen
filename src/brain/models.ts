@@ -1,8 +1,9 @@
 import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { trimTrailingSlash } from '../shared/url.js';
 import type { BrainProviderEntry, BrainRuntimeConfig } from './providers.js';
-import { buildBrainRegistry, inMemoryModelRuntime, registryProviderName, resolveBrainModel, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW } from './providers.js';
+import { buildBrainRegistry, inMemoryModelRuntime, openAiApiFor, registryProviderName, resolveBrainModel, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW } from './providers.js';
 import { inferredModelCapabilities, modelCapabilities } from './modelCapabilities.js';
+import { resolveFastModeRoute } from './fastMode.js';
 
 /** One pickable model for the account UI dropdown, grouped by the provider entry it runs through.
  *  `source` marks how the provider authenticates (OAuth account / API key / relay fallback).
@@ -18,7 +19,7 @@ export interface BrainModelOption {
   /** PI-canonical reasoning ids plus provider-facing display labels (e.g. xhigh → ultra). */
   reasoningLevels?: string[];
   reasoningLabels?: Record<string, string>;
-  /** Whether ChatGPT OAuth priority processing can be selected for this model. */
+  /** Whether this configured provider route and model support Fast mode. */
   fastAvailable?: boolean;
   /** The exact provider/model resolveBrainModel() chooses when no per-user/channel override exists. */
   default?: boolean;
@@ -130,6 +131,10 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
       const capabilities = resolved
         ? modelCapabilities(resolved)
         : inferredModelCapabilities(registryProviderName(p), e.id);
+      const fastModel = resolved ?? (p.type === 'openai'
+        ? { id: e.id, provider: registryProviderName(p), api: openAiApiFor(p) }
+        : undefined);
+      const fastAvailable = fastModel ? resolveFastModeRoute(p, fastModel) !== undefined : false;
       return {
         provider: p.id, providerLabel: p.label, model: e.id,
         source: p.origin ?? 'api-key' as const,
@@ -139,7 +144,7 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
           reasoningLevels: capabilities.levels,
           reasoningLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
         } : {}),
-        ...(capabilities.fast ? { fastAvailable: true } : {}),
+        ...(fastAvailable ? { fastAvailable: true } : {}),
         ...(p.id === defaultProvider && e.id === defaultModel ? { default: true } : {}),
       };
     };

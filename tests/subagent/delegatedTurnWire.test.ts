@@ -131,10 +131,13 @@ describe('the delegated-turn wire payload', () => {
         .toBe(Number.MAX_SAFE_INTEGER);
     });
 
-    it('keeps `fast` tri-state: absent is not false', () => {
+    it('never carries a Fast snapshot into fresh, runner or resumed child sessions', () => {
       expect(parseDelegatedTurnRequest(request())).not.toHaveProperty('fast');
       expect(delegatedChannelSendOpts(request(), deps)).not.toHaveProperty('fast');
-      expect(parseDelegatedTurnRequest({ ...request(), fast: false })?.fast).toBe(false);
+      // A durable request written by an older build may still contain the field. It is accepted for resume,
+      // but deliberately ignored so the runner reads the contribution account's live preference instead.
+      expect(parseDelegatedTurnRequest({ ...request(), fast: true })).not.toHaveProperty('fast');
+      expect(delegatedChannelSendOpts(parseDelegatedTurnRequest({ ...request(), fast: true })!, deps)).not.toHaveProperty('fast');
     });
   });
 });

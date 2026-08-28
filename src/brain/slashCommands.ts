@@ -91,9 +91,8 @@ export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   // `picker` (rendering) + `session-control` (execution): the chooser is drawn per surface, but listing and
   // binding are daemon operations on the CHANNEL session (PlatformControlApi.listContext/bindContext).
   { name: 'context', description: 'Continue this channel in one of your conversations', kind: 'picker', execution: 'session-control', surfaces: [...PLATFORM_SURFACES] },
-  // `on`/`off` is the value set every surface honours (the CLI's extra local `status` read is CLI chrome,
-  // not part of the contract). Bare `/fast` toggles.
-  { name: 'fast', description: 'Toggle OpenAI OAuth priority processing', kind: 'action', execution: 'session-control', argument: { kind: 'enum', values: ['on', 'off'] }, surfaces: ['cli', 'web', ...PLATFORM_SURFACES] },
+  // Bare `/fast` atomically toggles the invoking account; explicit on/off/status are portable everywhere.
+  { name: 'fast', description: 'Set the account Fast preference', kind: 'action', execution: 'session-control', argument: { kind: 'enum', values: ['on', 'off', 'status'] }, surfaces: ['cli', 'web', ...PLATFORM_SURFACES] },
   // Every surface wires its own picker: the CLI TUI's overlay, a native /reasoning command on Discord,
   // WhatsApp, Telegram and Teams, and the web dock's ReasoningModal. The CLI/web-only `show` behaviour is
   // not a cross-surface argument, and effort levels come from the active model, so no portable enum exists.

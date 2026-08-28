@@ -88,27 +88,24 @@ export async function runControlCommand(cmd, b) {
       return true;
     }
     case 'fast': {
-      if (!isAdmin()) { await reply(msg.controlForbidden); return true; }
       const a = String(b.arg ?? '').toLowerCase();
-      if (a && a !== 'on' && a !== 'off') { if (msg.fastUsage) await reply(msg.fastUsage); return true; }
-      const saved = state.get(stateId).fast === true;
-      const wanted = a === 'on' ? true : a === 'off' ? false : !saved;
+      if (a && a !== 'on' && a !== 'off' && a !== 'status') { if (msg.fastUsage) await reply(msg.fastUsage); return true; }
       const active = await b.activeModel();
-      // Validate the selected catalog model before touching a possibly stale live session, which may
-      // still be running the previous model until the next message rebuilds it.
-      if (!active?.fastAvailable) {
-        if (wanted) { await reply(msg.fastUnavailable); return true; }
-        // A stale persisted `fast:true` must remain switchable off after moving to a non-OAuth model.
-        state.patch(stateId, { fast: false });
-        await reply(msg.fastSet(false));
+      const senderPlatformId = typeof b.senderPlatformId === 'string' ? b.senderPlatformId : '';
+      if (a === 'status') {
+        const result = senderPlatformId ? (ctl?.fastStatus?.(ref, senderPlatformId) ?? null) : null;
+        if (!result) { await reply(msg.fastAccountRequired ?? msg.controlForbidden); return true; }
+        await reply(msg.fastStatus ? msg.fastStatus(result.fast, active?.fastAvailable === true) : msg.fastSet(result.fast));
         return true;
       }
-      const live = ctl?.status?.(ref) ?? null;
-      const liveMatchesSelection = live?.provider === active.provider && live.model === active.model;
-      const result = liveMatchesSelection ? (ctl?.setFast(ref, wanted) ?? null) : null;
-      if (result && !result.fastAvailable) { await reply(msg.fastUnavailable); return true; }
-      state.patch(stateId, { fast: wanted });
-      await reply(msg.fastSet(wanted));
+      const wanted = a === 'on' ? true : a === 'off' ? false : undefined;
+      const result = senderPlatformId ? (ctl?.setAccountFast?.(ref, senderPlatformId, wanted) ?? null) : null;
+      if (!result) { await reply(msg.fastAccountRequired ?? msg.controlForbidden); return true; }
+      if (result.fast && active?.fastAvailable !== true && msg.fastSetUnsupported) {
+        await reply(msg.fastSetUnsupported(true));
+      } else {
+        await reply(msg.fastSet(result.fast));
+      }
       return true;
     }
     case 'stop': case 'stats': case 'compact': {

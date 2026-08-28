@@ -146,6 +146,7 @@ describe('a room composes its session from the writer, not from whoever opened i
 
     expect(t.settingsIdOf(2)).toBe(3);
     expect(t.registry.channelGet('subagent-sub-1')?.settingsUserId).toBe(3);
+    expect(t.spawn.mock.calls[2]![0]).not.toHaveProperty('fast'); // child reads account 3 live on every request
   });
 
   it('resets the rooms that RENDER an account’s instructions, not the ones it opened', async () => {

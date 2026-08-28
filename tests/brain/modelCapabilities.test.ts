@@ -102,7 +102,6 @@ describe('descriptorCapabilities — models.dev catalog', () => {
   it('keeps Codex OAuth on its own rule — ChatGPT is not a models.dev endpoint', () => {
     const codex = descriptorCapabilities('openai-codex', 'gpt-5.6');
     expect(codex.reasoning).toBe(true);
-    expect(codex.fast).toBe(true);
     expect(codex.labels).toEqual({ xhigh: 'ultra' });
     expect(inferredModelCapabilities('openai-codex', 'gpt-5.6').levels)
       .toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);

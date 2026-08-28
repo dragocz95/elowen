@@ -748,8 +748,12 @@ export interface PlatformControlApi {
    *  `compacted:false` is a benign no-op (nothing to compact yet), not an error — only a real compaction
    *  failure rejects, so the caller can tell "no session" from "nothing to do" from a genuine error. */
   compact(ref: ChannelRef): Promise<{ usage: { tokens: number | null; contextWindow: number; percent: number | null }; compacted: boolean; message?: string } | null>;
-  /** Set/toggle ChatGPT OAuth priority processing for this channel. */
+  /** Legacy conversation-local Fast control. Retained for API-v1 adapters; without sender identity it fails closed. */
   setFast(ref: ChannelRef, on?: boolean): { fast: boolean; fastAvailable: boolean } | null;
+  /** Read the invoking linked account's durable Fast preference. Added by shared API v3. */
+  fastStatus?(ref: ChannelRef, senderPlatformId: string): { fast: boolean; fastAvailable: boolean } | null;
+  /** Set/toggle the invoking linked account's durable Fast preference. Added by shared API v3. */
+  setAccountFast?(ref: ChannelRef, senderPlatformId: string, on?: boolean): { fast: boolean; fastAvailable: boolean } | null;
   /** Admin-only daemon restart (attributed to the instance operator); rejects when restart isn't
    *  available on this deployment. The caller is responsible for its own admin gate. */
   restart(): Promise<void>;

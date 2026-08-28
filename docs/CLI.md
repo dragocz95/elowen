@@ -75,7 +75,7 @@ The following built-in commands are available to the CLI when their required plu
 | `/delete` | Pick and confirm deletion of a conversation. |
 | `/model [id]` | Pick a model or switch directly by id. |
 | `/reasoning [level]` | Pick or set a model-supported reasoning level. `/reasoning show` toggles Thought rows. |
-| `/fast [on\|off]` | Toggle OpenAI OAuth priority processing or set it explicitly. |
+| `/fast [on\|off\|status]` | Set or inspect your durable account Fast preference. Unsupported current routes keep the preference but receive no Fast wire field. |
 | `/plan` | Use plan mode for subsequent turns. |
 | `/build` | Use build mode for subsequent turns. |
 | `/workflow` | Use workflow mode for subsequent turns. |

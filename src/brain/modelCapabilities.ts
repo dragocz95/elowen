@@ -11,13 +11,10 @@ export interface ModelCapabilityView {
   reasoning: boolean;
   levels: ModelThinkingLevel[];
   labels: Partial<Record<ModelThinkingLevel, string>>;
-  /** ChatGPT OAuth's priority service tier (`service_tier: "priority"`). */
-  fast: boolean;
 }
 
-/** Mutable, session-local request switches read by the provider hook for every model round-trip. */
+/** Session request profile for provider-specific payload transforms other than route-owned Fast mode. */
 export interface ProviderRequestProfile {
-  fast: boolean;
   /** The provider entry's configured sampling temperature, or absent to send no temperature at all.
    *  Absent is the default and must stay that way: a model that accepts only its own default (Kimi K3,
    *  Claude Opus 4.7+) rejects the request outright rather than clamping. */
@@ -54,8 +51,7 @@ export function qwenThinkingWire(baseUrl: string, model: string): boolean {
 /** Pure payload projection used by the provider request hook (kept exportable for a no-network contract
  *  test). Returns the SAME object when nothing applies, so the caller can skip patching entirely. */
 export function applyProviderRequestProfile(payload: Record<string, unknown>, profile: ProviderRequestProfile): Record<string, unknown> {
-  const withTier = profile.fast ? { ...payload, service_tier: 'priority' } : payload;
-  const withTemperature = profile.temperature !== undefined ? { ...withTier, temperature: profile.temperature } : withTier;
+  const withTemperature = profile.temperature !== undefined ? { ...payload, temperature: profile.temperature } : payload;
   const budget = profile.qwenThinking && typeof withTemperature.reasoning_effort === 'string'
     ? QWEN_THINKING_BUDGETS[withTemperature.reasoning_effort]
     : undefined;
@@ -81,7 +77,6 @@ type DescriptorPatch = {
   reasoning: boolean;
   thinkingLevelMap?: ThinkingLevelMap;
   labels?: Partial<Record<ModelThinkingLevel, string>>;
-  fast?: boolean;
 };
 
 export const CANONICAL_THINKING_LEVELS: readonly ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -364,7 +359,6 @@ export function descriptorCapabilities(provider: string, model: string): Descrip
         max: supportsMax ? 'max' : null,
       },
       labels: { xhigh: 'ultra' },
-      fast: provider === 'openai-codex',
     };
   }
 
@@ -448,7 +442,7 @@ export function inferredModelCapabilities(provider: string, model: string): Mode
         return level === 'xhigh' || level === 'max' ? mapped !== undefined : true;
       })
     : [];
-  return { reasoning: rule.reasoning, levels, labels: rule.labels ?? {}, fast: rule.fast === true };
+  return { reasoning: rule.reasoning, levels, labels: rule.labels ?? {} };
 }
 
 /** Read-only capability view for a fully resolved model descriptor. */
@@ -459,7 +453,6 @@ export function modelCapabilities(model: Model<Api>): ModelCapabilityView {
     reasoning,
     levels: reasoning ? getSupportedThinkingLevels(model) : [],
     labels: inferred.labels,
-    fast: model.provider === 'openai-codex' && model.api === 'openai-codex-responses' && !NON_REASONING.test(model.id),
   };
 }
 

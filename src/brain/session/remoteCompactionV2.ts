@@ -129,6 +129,8 @@ export interface CompactionRequestInput {
    *  supported by the backend and is transitive — a blob minted from a history that already held one
    *  still answers for the facts behind it — so the chain is passed through rather than dropped. */
   previousBlob?: string;
+  /** ChatGPT Fast mode uses the same priority service tier on remote compaction requests. */
+  fast?: boolean;
 }
 
 /**
@@ -157,6 +159,7 @@ export function buildCompactionRequestBody(input: CompactionRequestInput): Recor
     model: input.model.id,
     store: false,
     stream: true,
+    ...(input.fast ? { service_tier: 'priority' } : {}),
     instructions: input.systemPrompt || 'You are a helpful assistant.',
     input: items,
     text: { verbosity: 'low' },
@@ -361,6 +364,8 @@ export interface RemoteCompactionV2Deps {
   systemPrompt: () => string;
   /** The ChatGPT OAuth bearer, resolved (and refreshed) through the runtime the same way a turn does. */
   token: () => Promise<string | undefined>;
+  /** Durable account preference evaluated live for this actual Codex request route. */
+  fast?: () => boolean;
   fetchImpl?: typeof fetch;
   capture?: RemoteCompactionCapture;
   /** Verified stale-blob retry signal for request-attempt correlation. */
@@ -407,6 +412,7 @@ export function createRemoteCompactionV2(deps: RemoteCompactionV2Deps): RemoteCo
             messages: convertToLlm([...preparation.messagesToSummarize, ...preparation.turnPrefixMessages]),
             // A blob the provider already refused would only make this request fail the same way.
             ...(previous && !isRejected(previous.blob) ? { previousBlob: previous.blob } : {}),
+            ...(deps.fast?.() === true ? { fast: true } : {}),
             token,
             signal: event.signal,
             ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),

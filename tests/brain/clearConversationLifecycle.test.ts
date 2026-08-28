@@ -35,7 +35,7 @@ function live(spec: LiveSpec = {}): LiveBrain {
     providerId: 'openai',
     model: spec.model ?? 'gpt-5.5',
     thinkingLevel: 'high',
-    requestProfile: { fast: true },
+    requestProfile: {},
     fastAvailable: true,
     thinkingLabels: {},
     workDir: '/srv/project',
@@ -121,9 +121,9 @@ describe('ConversationLifecycle.clearConversation', () => {
       sessionId: SESSION,
       selection: { provider: 'openai', model: 'gpt-5.5' },
       clientCwd: '/srv/project',
-      fast: true,
       thinkingLevel: 'high',
     }));
+    expect(spawn.mock.calls[0]![0]).not.toHaveProperty('fast');
     expect(sessions.get(SESSION)).toBe(fresh);
     // Deliberately NOT carried: a cleared context has no "earlier in this conversation" to point at, so
     // the respawn must keep the spawner's own blank state rather than `original`'s plan/oriented/reminder.

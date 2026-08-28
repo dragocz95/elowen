@@ -36,6 +36,7 @@ import { createAnthropicHostedToolReplay, type AnthropicHostedToolReplay } from 
 import type { HostedToolSearchProvider } from './hostedToolSearch.js';
 import { logger } from '../../shared/logger.js';
 import { ProviderRequestRecorder } from './providerRequestRecorder.js';
+import { wrapFastModeRuntime, type FastModeRoute } from '../fastMode.js';
 import { recoverMalformedToolCalls } from './malformedToolCallRecovery.js';
 
 let missingBoundaryCompactionWarned = false;
@@ -94,8 +95,10 @@ export interface SessionSpec {
   hostedToolSearch?: HostedToolSearchProvider;
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
-  /** Mutable provider switches (currently ChatGPT OAuth Fast) read before every request. */
+  /** Provider payload transforms such as configured temperature and Qwen thinking budgets. */
   requestProfile?: ProviderRequestProfile;
+  /** Durable account Fast preference + actual request-route resolver, sampled for every model call. */
+  fastMode?: { enabled: () => boolean; routeFor: (model: Model<Api>) => FastModeRoute | undefined };
   /** PI's built-in auto-compaction: on/off. When on, PI summarizes the context on its own once it fills
    *  past `autoCompactAtPct` — no separate trigger in our turn loop. */
   autoCompact: boolean;
@@ -324,10 +327,8 @@ function kimiHeaderProbe(pi: ExtensionAPI): void {
   });
 }
 
-/** The session's request switches: ChatGPT OAuth Fast mode (OpenAI's priority service tier) and the
- *  provider entry's configured temperature. The state object is deliberately mutable: `/fast` changes it
- *  live and this hook reads the newest value on every model round-trip. With no switch active the
- *  projection returns its input unchanged and we patch nothing at all. */
+/** Provider-entry payload transforms other than Fast. Fast wraps ModelRuntime instead, because only that
+ *  seam receives the actual model for chat, fallback compaction and retries. */
 function providerRequestProfile(profile: ProviderRequestProfile): (pi: ExtensionAPI) => void {
   return (pi) => {
     pi.on('before_provider_request', (event) => {
@@ -499,9 +500,14 @@ export class BrainSessionFactory {
     });
     // A few factory unit tests inject a createSession stub and deliberately omit a runtime; production
     // SessionSpec always carries one. Preserve that test seam rather than proxying an undefined sentinel.
-    const captureRuntime = spec.runtime && typeof spec.runtime === 'object'
+    // Fast is the OUTER wrapper: its onPayload runs before the inner recorder opens the attempt, so provider
+    // diagnostics capture the exact body that leaves the process, including service_tier/speed.
+    const recordedRuntime = spec.runtime && typeof spec.runtime === 'object'
       ? requestRecorder.wrapRuntime(recoverMalformedToolCalls(spec.runtime))
       : spec.runtime;
+    const captureRuntime = recordedRuntime && spec.fastMode
+      ? wrapFastModeRuntime(recordedRuntime, spec.fastMode.enabled, spec.fastMode.routeFor)
+      : recordedRuntime;
     const remoteCompaction: RemoteCompactionV2 | undefined = spec.model.provider === 'openai-codex'
       ? createRemoteCompactionV2({
         enabled: remoteCompactionUsable,
@@ -510,6 +516,7 @@ export class BrainSessionFactory {
         // The same resolve-and-refresh path a normal turn takes, so a token that expired mid-conversation
         // is renewed here rather than turning into a silent compaction failure.
         token: async () => bearerFromAuth((await spec.runtime.getAuth(spec.model))?.auth),
+        fast: () => spec.fastMode?.enabled() === true && spec.fastMode.routeFor(spec.model) !== undefined,
         capture: {
           start: (model, payload) => requestRecorder.startRemoteCompaction(model, payload),
           response: (requestId, status) => requestRecorder.markRemoteCompactionResponse(requestId, status),

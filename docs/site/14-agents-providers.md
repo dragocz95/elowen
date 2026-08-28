@@ -106,7 +106,7 @@ In the CLI:
 /reasoning show         # show or hide Thought rows in the transcript
 ```
 
-`/fast` enables ChatGPT OAuth priority processing only when the selected model and account support it:
+`/fast` sets one durable preference for the account:
 
 ```text
 /fast
@@ -115,7 +115,7 @@ In the CLI:
 /fast status
 ```
 
-Unsupported levels and unsupported fast mode are rejected instead of being sent as speculative provider parameters.
+The preference remains enabled across unsupported models. Elowen sends a Fast wire option only when the actual request route and model explicitly support it (OpenAI/Codex/Azure priority service tier or Anthropic Fast mode).
 
 ## Vision and compaction models
 

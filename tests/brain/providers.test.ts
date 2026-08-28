@@ -1,9 +1,10 @@
-import { beforeEach, describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor, inMemoryModelRuntime, OAUTH_BUILTIN } from '../../src/brain/providers.js';
 import { applyProviderRequestProfile, modelCapabilities, qwenThinkingWire } from '../../src/brain/modelCapabilities.js';
+import { applyFastModePayload, fastModeCostModel, fastModeHeaders, fastModeRequestOptions, resolveFastModeRoute } from '../../src/brain/fastMode.js';
 import type { BrainRuntimeConfig } from '../../src/brain/providers.js';
 
 // A fresh runtime per test: buildBrainRegistry re-registers the openai-codex provider, and that copy-forward
@@ -285,20 +286,112 @@ describe('brain providers', () => {
       .toEqual(['low', 'medium', 'high']);
   });
 
-  it('marks Fast available only on OpenAI Codex OAuth response models', () => {
-    const oauth: BrainRuntimeConfig = {
-      providers: [{ id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '', models: ['gpt-5.5'], apiKey: null }],
-    };
-    const m = resolveBrainModel(buildBrainRegistry(oauth, runtime), oauth);
-    expect(modelCapabilities(m).fast).toBe(true);
-    const regular = resolveBrainModel(buildBrainRegistry(cfg, runtime), cfg);
-    expect(modelCapabilities(regular).fast).toBe(false);
+  it('models Fast from the actual provider route, not from credential provenance alone', () => {
+    const cases: { entry: BrainRuntimeConfig['providers'][number]; supported: string[]; unsupported: string[]; source: string }[] = [
+      {
+        entry: { id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '', models: ['gpt-5.5', 'gpt-5.3-codex-spark'], apiKey: null },
+        supported: ['gpt-5.5'], unsupported: ['gpt-5.3-codex-spark'], source: 'openai-codex-oauth',
+      },
+      {
+        entry: { id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.6-sol', 'gpt-5.5'], apiKey: 'sk' },
+        supported: ['gpt-5.6-sol'], unsupported: ['gpt-5.5'], source: 'openai-api',
+      },
+      {
+        entry: { id: 'azure', label: 'Azure', type: 'openai', api: 'openai-responses', baseUrl: 'https://example.openai.azure.com/openai/v1', models: ['gpt-5.5', 'gpt-4o'], apiKey: 'azure-key' },
+        supported: ['gpt-5.5'], unsupported: ['gpt-4o'], source: 'azure-openai',
+      },
+      {
+        entry: { id: 'anthropic', label: 'Anthropic', type: 'anthropic', baseUrl: 'https://api.anthropic.com', models: ['claude-opus-5', 'claude-sonnet-5'], apiKey: 'ant' },
+        supported: ['claude-opus-5'], unsupported: ['claude-sonnet-5'], source: 'anthropic-api',
+      },
+    ];
+
+    for (const testCase of cases) {
+      const local: BrainRuntimeConfig = { providers: [testCase.entry] };
+      const registry = buildBrainRegistry(local, runtime);
+      for (const modelId of testCase.supported) {
+        const model = resolveBrainModel(registry, local, { provider: testCase.entry.id, model: modelId });
+        expect(resolveFastModeRoute(testCase.entry, model)?.source, `${testCase.entry.id}/${modelId}`).toBe(testCase.source);
+      }
+      for (const modelId of testCase.unsupported) {
+        const model = resolveBrainModel(registry, local, { provider: testCase.entry.id, model: modelId });
+        expect(resolveFastModeRoute(testCase.entry, model), `${testCase.entry.id}/${modelId}`).toBeUndefined();
+      }
+    }
+
+    const relay: BrainRuntimeConfig = { providers: [{
+      id: 'relay', label: 'Relay', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://relay.example.test/v1', models: ['gpt-5.6-sol'], apiKey: 'relay-key',
+    }] };
+    const relayModel = resolveBrainModel(buildBrainRegistry(relay, runtime), relay);
+    expect(resolveFastModeRoute(relay.providers[0]!, relayModel)).toBeUndefined();
+
+    for (const entry of [
+      { id: 'openai-port', label: 'OpenAI port', type: 'openai' as const, api: 'openai-responses' as const, baseUrl: 'https://api.openai.com:8443/v1', models: ['gpt-5.6-sol'], apiKey: 'k' },
+      { id: 'anthropic-port', label: 'Anthropic port', type: 'anthropic' as const, baseUrl: 'https://api.anthropic.com:8443', models: ['claude-opus-5'], apiKey: 'k' },
+    ]) {
+      const config: BrainRuntimeConfig = { providers: [entry] };
+      const model = resolveBrainModel(buildBrainRegistry(config, runtime), config);
+      expect(resolveFastModeRoute(entry, model), entry.id).toBeUndefined();
+    }
   });
 
-  it('projects Fast onto the official priority service tier without mutating normal payloads', () => {
-    const payload = { model: 'gpt-5.5', input: [] };
-    expect(applyProviderRequestProfile(payload, { fast: true })).toEqual({ ...payload, service_tier: 'priority' });
-    expect(applyProviderRequestProfile(payload, { fast: false })).toBe(payload);
+  it('projects the exact Fast wire only for a supported route', () => {
+    const openAiPayload = { model: 'gpt-5.6-sol', input: [] };
+    const openAiRoute = { provider: 'openai', source: 'openai-api', serviceTier: 'priority' } as const;
+    expect(applyFastModePayload(openAiPayload, openAiRoute)).toEqual({ ...openAiPayload, service_tier: 'priority' });
+    expect(fastModeHeaders(openAiRoute)).toEqual({});
+
+    const anthropicPayload = { model: 'claude-opus-5', messages: [] };
+    const anthropicRoute = { provider: 'anthropic', source: 'anthropic-api', speed: 'fast', beta: 'fast-mode-2026-02-01' } as const;
+    expect(applyFastModePayload(anthropicPayload, anthropicRoute)).toEqual({ ...anthropicPayload, speed: 'fast' });
+    expect(fastModeHeaders(anthropicRoute)).toEqual({ 'anthropic-beta': 'fast-mode-2026-02-01' });
+    const priced = fastModeCostModel({ cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 } } as never, anthropicRoute);
+    expect(priced.cost).toEqual({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 });
+  });
+
+  it('samples the account preference and actual request model for every provider call', async () => {
+    const official: BrainRuntimeConfig = { providers: [{
+      id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1',
+      models: ['gpt-5.6-sol', 'gpt-5.5'], apiKey: 'sk',
+    }] };
+    const registry = buildBrainRegistry(official, runtime);
+    const supported = resolveBrainModel(registry, official, { model: 'gpt-5.6-sol' });
+    const fallback = resolveBrainModel(registry, official, { model: 'gpt-5.5' });
+    let enabled = false;
+    const options = { onPayload: (payload: unknown) => ({ ...(payload as object), original: true }) };
+    const routeFor = (model: typeof supported) => resolveFastModeRoute(official.providers[0]!, model);
+
+    const off = fastModeRequestOptions(options, supported, () => enabled, routeFor);
+    expect(await off.onPayload?.({ model: supported.id }, supported)).toEqual({ model: supported.id, original: true });
+
+    enabled = true;
+    const on = fastModeRequestOptions(options, supported, () => enabled, routeFor);
+    expect(await on.onPayload?.({ model: supported.id }, supported)).toEqual({ model: supported.id, original: true, service_tier: 'priority' });
+
+    const unsupported = fastModeRequestOptions(options, fallback, () => enabled, routeFor);
+    expect(await unsupported.onPayload?.({ model: fallback.id }, fallback)).toEqual({ model: fallback.id, original: true });
+    expect(unsupported.headers).toBeUndefined();
+
+    const anthropicConfig: BrainRuntimeConfig = { providers: [{
+      id: 'anthropic', label: 'Anthropic', type: 'anthropic', baseUrl: 'https://api.anthropic.com',
+      models: ['claude-opus-5'], apiKey: 'sk-ant',
+    }] };
+    const anthropicModel = resolveBrainModel(buildBrainRegistry(anthropicConfig, runtime), anthropicConfig);
+    const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('anthropic-beta'))
+        .toBe('fine-grained-tool-streaming-2025-05-14,fast-mode-2026-02-01');
+      return new Response('{}', { status: 200 });
+    });
+    const anthropic = fastModeRequestOptions(
+      { fetch: fetchImpl as never }, anthropicModel, () => true,
+      (model) => resolveFastModeRoute(anthropicConfig.providers[0]!, model),
+    );
+    expect(anthropic.headers).toBeUndefined();
+    await anthropic.fetch?.('https://api.anthropic.com/v1/messages', {
+      headers: { 'anthropic-beta': 'fine-grained-tool-streaming-2025-05-14' },
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   describe('temperature projection', () => {
@@ -309,19 +402,19 @@ describe('brain providers', () => {
       // without a temperature must reach the wire exactly as PI built it. Models like Kimi K3 reject any
       // value but their default, so "absent" is the only safe default and `undefined` would not do — it
       // would still serialize the key.
-      expect(applyProviderRequestProfile(payload, { fast: false })).toBe(payload);
-      expect('temperature' in applyProviderRequestProfile(payload, { fast: false })).toBe(false);
+      expect(applyProviderRequestProfile(payload, {})).toBe(payload);
+      expect('temperature' in applyProviderRequestProfile(payload, {})).toBe(false);
     });
 
     it('passes a configured temperature through, including 0', () => {
-      expect(applyProviderRequestProfile(payload, { fast: false, temperature: 0.7 })).toEqual({ ...payload, temperature: 0.7 });
+      expect(applyProviderRequestProfile(payload, { temperature: 0.7 })).toEqual({ ...payload, temperature: 0.7 });
       // 0 is a real setting, not "unset" — a falsy check here would silently drop it.
-      expect(applyProviderRequestProfile(payload, { fast: false, temperature: 0 })).toEqual({ ...payload, temperature: 0 });
+      expect(applyProviderRequestProfile(payload, { temperature: 0 })).toEqual({ ...payload, temperature: 0 });
     });
 
-    it('composes with Fast rather than replacing it', () => {
-      expect(applyProviderRequestProfile(payload, { fast: true, temperature: 1.5 }))
-        .toEqual({ ...payload, service_tier: 'priority', temperature: 1.5 });
+    it('keeps temperature independent from route-owned Fast mode', () => {
+      expect(applyProviderRequestProfile(payload, { temperature: 1.5 }))
+        .toEqual({ ...payload, temperature: 1.5 });
     });
   });
 
@@ -331,7 +424,7 @@ describe('brain providers', () => {
     it('rewrites the selected effort into enable_thinking + thinking_budget and lifts the cap above it', () => {
       // DashScope 400s unless the completion cap is STRICTLY greater than thinking_budget, so the
       // projection lifts pi-ai's answer-sized cap by the budget (base 8192 + budget).
-      expect(applyProviderRequestProfile({ ...payload, max_completion_tokens: 8192 }, { fast: false, qwenThinking: true }))
+      expect(applyProviderRequestProfile({ ...payload, max_completion_tokens: 8192 }, { qwenThinking: true }))
         .toEqual({ model: 'qwen3.7-max', messages: [], enable_thinking: true, thinking_budget: 8192, max_completion_tokens: 16384 });
     });
 
@@ -339,7 +432,7 @@ describe('brain providers', () => {
       // The exact production 400: budget 16384 vs pi's cap 8192. Lifted to 8192 + 16384.
       const high = applyProviderRequestProfile(
         { model: 'qwen3.7-max', messages: [], reasoning_effort: 'high', max_completion_tokens: 8192 },
-        { fast: false, qwenThinking: true },
+        { qwenThinking: true },
       );
       expect(high).toEqual({ model: 'qwen3.7-max', messages: [], enable_thinking: true, thinking_budget: 16384, max_completion_tokens: 24576 });
       expect(high.max_completion_tokens as number).toBeGreaterThan(high.thinking_budget as number);
@@ -348,7 +441,7 @@ describe('brain providers', () => {
     it('low effort lifts the cap by the small budget', () => {
       expect(applyProviderRequestProfile(
         { model: 'qwen3.7-max', messages: [], reasoning_effort: 'low', max_completion_tokens: 8192 },
-        { fast: false, qwenThinking: true },
+        { qwenThinking: true },
       )).toEqual({ model: 'qwen3.7-max', messages: [], enable_thinking: true, thinking_budget: 2048, max_completion_tokens: 10240 });
     });
 
@@ -356,30 +449,30 @@ describe('brain providers', () => {
       // compat.maxTokensField made it max_tokens → that field is raised, no stray twin appears.
       expect(applyProviderRequestProfile(
         { model: 'qwen3.7-max', messages: [], reasoning_effort: 'medium', max_tokens: 4096 },
-        { fast: false, qwenThinking: true },
+        { qwenThinking: true },
       )).toEqual({ model: 'qwen3.7-max', messages: [], enable_thinking: true, thinking_budget: 8192, max_tokens: 12288 });
       // No cap on the wire at all → default answer allowance + budget.
-      expect(applyProviderRequestProfile(payload, { fast: false, qwenThinking: true }))
+      expect(applyProviderRequestProfile(payload, { qwenThinking: true }))
         .toEqual({ model: 'qwen3.7-max', messages: [], enable_thinking: true, thinking_budget: 8192, max_completion_tokens: 16384 });
     });
 
     it('adds nothing when no effort is selected — the endpoint default stays', () => {
       // Identity, not a copy: an explicit `enable_thinking: false` would 400 on thinking-only models.
       const noEffort = { model: 'qwen3.7-max', messages: [] };
-      expect(applyProviderRequestProfile(noEffort, { fast: false, qwenThinking: true })).toBe(noEffort);
+      expect(applyProviderRequestProfile(noEffort, { qwenThinking: true })).toBe(noEffort);
     });
 
     it('keeps the OpenAI reasoning_effort shape for profiles without the Qwen flag (regression)', () => {
-      expect(applyProviderRequestProfile(payload, { fast: false })).toBe(payload);
+      expect(applyProviderRequestProfile(payload, {})).toBe(payload);
       // The cap lift is qwenThinking-only: an OpenAI-style payload keeps its cap byte-for-byte.
       const openai = { model: 'gpt-5.5', messages: [], reasoning_effort: 'high', max_completion_tokens: 8192 };
-      expect(applyProviderRequestProfile(openai, { fast: false })).toBe(openai);
-      expect(applyProviderRequestProfile(openai, { fast: true, temperature: 0.5 }))
-        .toEqual({ ...openai, service_tier: 'priority', temperature: 0.5 });
+      expect(applyProviderRequestProfile(openai, {})).toBe(openai);
+      expect(applyProviderRequestProfile(openai, { temperature: 0.5 }))
+        .toEqual({ ...openai, temperature: 0.5 });
     });
 
     it('composes with a configured temperature', () => {
-      expect(applyProviderRequestProfile(payload, { fast: false, temperature: 0.7, qwenThinking: true }))
+      expect(applyProviderRequestProfile(payload, { temperature: 0.7, qwenThinking: true }))
         .toEqual({ model: 'qwen3.7-max', messages: [], temperature: 0.7, enable_thinking: true, thinking_budget: 8192, max_completion_tokens: 16384 });
     });
 

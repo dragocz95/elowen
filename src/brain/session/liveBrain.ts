@@ -75,7 +75,7 @@ export interface LiveBrain {
    *  the rate-limits route polls for the active conversation. */
   provider: string;
   thinkingLevel?: string;
-  /** Resolved provider capabilities + live request switches used by `/fast` and status surfaces. */
+  /** Provider payload transforms such as configured temperature and Qwen thinking budgets. */
   requestProfile: ProviderRequestProfile;
   fastAvailable: boolean;
   thinkingLabels: Record<string, string>;
@@ -116,14 +116,11 @@ export interface LiveBrain {
   planSafeToolNames: Set<string>;
   /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */
   visionFallback?: boolean;
-  /** Exact session-scoped profile to restore after the temporary vision fallback. This cannot be
-   *  re-derived from Account settings: the user may have selected a different provider/model, reasoning
-   *  level or Fast state just for this conversation. */
+  /** Exact session-scoped model profile to restore after the temporary vision fallback. */
   visionFallbackReturn?: {
     provider?: string;
     model: string;
     thinkingLevel?: string;
-    fast: boolean;
   };
   /** SESSION-scoped YOLO override (the CLI `/yolo` command): true/false wins over the user's persisted
    *  default for this live session only. Deliberately NOT carried across respawns (model switch,
@@ -270,8 +267,6 @@ export interface SpawnOpts {
   scheduled?: boolean;
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
-  /** Initial Fast state for platform sessions; ignored when the resolved model cannot use it. */
-  fast?: boolean;
   /** Durable parent conversation for delegated sessions (usage attribution + history navigation). */
   parentSessionId?: string;
   /** Immutable execution boundary minted by the delegating turn and checked on every child respawn. */

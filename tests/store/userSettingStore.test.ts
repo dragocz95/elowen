@@ -6,13 +6,13 @@ import { PLATFORM_IDENTITIES } from '../../src/shared/platformIdentity.js';
 describe('UserSettingStore', () => {
   it('defaults CLI settings when nothing is stored', () => {
     const s = new UserSettingStore(openDb(':memory:'));
-    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false });
+    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false });
   });
 
   it('round-trips model + autoCompact + threshold via the typed helper', () => {
     const s = new UserSettingStore(openDb(':memory:'));
-    s.setCliSettings(1, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: true });
-    expect(s.cliSettings(1)).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: true });
+    s.setCliSettings(1, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: true, fastMode: false });
+    expect(s.cliSettings(1)).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: true, fastMode: false });
   });
 
   it('round-trips per-model auto-compact thresholds, clamps them, drops invalid entries, and clears', () => {
@@ -48,7 +48,7 @@ describe('UserSettingStore', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     expect(s.cliSettings(1).autoRecall).toBe(true);
     expect(s.cliSettings(1).autoSave).toBe(false);
-    s.setCliSettings(1, { autoRecall: false, autoSave: true });
+    s.setCliSettings(1, { autoRecall: false, autoSave: true, fastMode: false });
     expect(s.cliSettings(1).autoRecall).toBe(false);
     expect(s.cliSettings(1).autoSave).toBe(true);
     // A partial patch touching only autoRecall leaves autoSave as previously stored — and the stored
@@ -70,7 +70,7 @@ describe('UserSettingStore', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     s.setCliSettings(1, { model: 'm', autoCompact: false });
     s.setCliSettings(1, { model: 'n' });
-    expect(s.cliSettings(1)).toEqual({ model: 'n', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false });
+    expect(s.cliSettings(1)).toEqual({ model: 'n', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false });
   });
 
   it('isolates settings per user', () => {
@@ -79,6 +79,28 @@ describe('UserSettingStore', () => {
     s.setCliSettings(2, { model: 'b' });
     expect(s.cliSettings(1).model).toBe('a');
     expect(s.cliSettings(2).model).toBe('b');
+  });
+
+  it('keeps Fast as one durable per-user preference with an atomic toggle', () => {
+    const db = openDb(':memory:');
+    const first = new UserSettingStore(db);
+    expect(first.fastMode(1)).toBe(false);
+    expect(first.fastMode(2)).toBe(false);
+    expect(first.fastMode(0)).toBe(false);
+    expect(first.setFastMode(0, true)).toBe(false);
+    expect(first.toggleFastMode(0)).toBe(false);
+
+    expect(first.setFastMode(1, true)).toBe(true);
+    expect(first.fastMode(1)).toBe(true);
+    expect(first.fastMode(2)).toBe(false);
+
+    expect(first.toggleFastMode(1)).toBe(false);
+    expect(first.toggleFastMode(2)).toBe(true);
+
+    // A fresh store over the same database sees the same account values: no live-session copy is involved.
+    const rehydrated = new UserSettingStore(db);
+    expect(rehydrated.fastMode(1)).toBe(false);
+    expect(rehydrated.fastMode(2)).toBe(true);
   });
 
   it('round-trips project model preferences per user and ignores a corrupt map', () => {
@@ -95,7 +117,7 @@ describe('UserSettingStore', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     s.setCliSettings(1, { model: 'a', autoCompact: true });
     s.removeForUser(1);
-    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false });
+    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false });
   });
 
   it('terminal settings default, round-trip, merge, and survive a corrupt blob', () => {

@@ -11,7 +11,7 @@ import { PLATFORM_IDENTITIES, platformIdentity, type PlatformIdentityDescriptor,
  *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph).
  *  The platform link fields are DERIVED from the identity descriptors, so a new platform gets its
  *  setting field, its validation and its account-view input from one declaration. */
-export interface CliSettings extends Record<PlatformLinkKey, string> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean }
+export interface CliSettings extends Record<PlatformLinkKey, string> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; fastMode: boolean }
 export interface ProjectModelPreference { provider: string; model: string }
 // autoRecall/autoLiveRecall default to true so upgrading users keep the prior always-on memory behaviour.
 // autoCompact is on because the alternative is a conversation that dies at the context limit instead of
@@ -22,7 +22,7 @@ export interface ProjectModelPreference { provider: string; model: string }
 // resets the level to empty whenever the active model does not offer it, which would then loop against a
 // default that model cannot honour. The level belongs per model, not in the fallback.
 const emptyLinks = Object.fromEntries(PLATFORM_IDENTITIES.map((d) => [d.linkSettingKey, ''])) as Record<PlatformLinkKey, string>;
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', ...emptyLinks, autoRecall: true, autoLiveRecall: true, autoSave: false };
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', ...emptyLinks, autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false };
 
 /** The defaults a caller with no settings store falls back to. Exported so nobody has to re-list the
  *  fields — a hand-written copy is exactly how `telegramUserId` went missing from the account view. */
@@ -118,6 +118,30 @@ export class UserSettingStore {
     this.db.prepare('DELETE FROM user_settings WHERE user_id = ?').run(userId);
   }
 
+  /** Durable Fast preference. Invalid/accountless identities fail closed. */
+  fastMode(userId: number): boolean {
+    return Number.isSafeInteger(userId) && userId > 0 && this.get(userId, 'fastMode') === 'true';
+  }
+
+  setFastMode(userId: number, on: boolean): boolean {
+    if (!Number.isSafeInteger(userId) || userId <= 0) return false;
+    this.set(userId, 'fastMode', String(on));
+    return on;
+  }
+
+  /** One SQLite statement: two concurrent toggles cannot both read the same stale value. */
+  toggleFastMode(userId: number): boolean {
+    if (!Number.isSafeInteger(userId) || userId <= 0) return false;
+    const row = this.db.prepare(
+      `INSERT INTO user_settings (user_id, key, value) VALUES (?, 'fastMode', 'true')
+       ON CONFLICT(user_id, key) DO UPDATE SET
+         value = CASE user_settings.value WHEN 'true' THEN 'false' ELSE 'true' END,
+         updated_at = datetime('now')
+       RETURNING value`
+    ).get(userId) as { value: string } | undefined;
+    return row?.value === 'true';
+  }
+
   /** The user's CLI/brain settings, with defaults filled in. */
   cliSettings(userId: number): CliSettings {
     const all = this.getAll(userId);
@@ -138,6 +162,7 @@ export class UserSettingStore {
       autoRecall: all.autoRecall !== undefined ? all.autoRecall === 'true' : CLI_DEFAULTS.autoRecall,
       autoLiveRecall: all.autoLiveRecall !== undefined ? all.autoLiveRecall === 'true' : CLI_DEFAULTS.autoLiveRecall,
       autoSave: all.autoSave !== undefined ? all.autoSave === 'true' : CLI_DEFAULTS.autoSave,
+      fastMode: all.fastMode !== undefined ? all.fastMode === 'true' : CLI_DEFAULTS.fastMode,
     };
   }
 
@@ -166,6 +191,7 @@ export class UserSettingStore {
       if (patch.autoRecall !== undefined) this.set(userId, 'autoRecall', String(patch.autoRecall));
       if (patch.autoLiveRecall !== undefined) this.set(userId, 'autoLiveRecall', String(patch.autoLiveRecall));
       if (patch.autoSave !== undefined) this.set(userId, 'autoSave', String(patch.autoSave));
+      if (patch.fastMode !== undefined) this.set(userId, 'fastMode', String(patch.fastMode));
       if (patch.advisorStyle !== undefined && isAdvisorStyle(patch.advisorStyle)) this.set(userId, 'advisorStyle', patch.advisorStyle);
       // Global agent instructions. The persisted key stays `personalityBody` for downgrade compatibility;
       // the API exposes the semantic `userInstructions` name. Empty is a valid clear operation.
