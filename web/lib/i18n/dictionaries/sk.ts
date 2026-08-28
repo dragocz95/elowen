@@ -142,6 +142,7 @@ export const sk = {
     actions: 'Akcie',
     success: 'Úspech',
     error: 'Chyba',
+    requiredField: 'Povinné',
     send: 'Odoslať',
     kill: 'Ukončiť',
     appName: '{productName}',

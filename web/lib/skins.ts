@@ -66,7 +66,7 @@ function skinsInFamily(family: SkinFamily): SkinName[] {
  *  directory name, which tests/lib/skins.test.ts can check without being told anything; a shared file has
  *  no such name, so the set of ids it is allowed to target has to be stated somewhere the guard can read. */
 const SHARED_STYLESHEET_PATHS = {
-  studio: ['studio/shared.css'],
+  studio: ['studio/shared.css', 'studio/surfaces.css', 'studio/workbench.css'],
 } as const satisfies Partial<Record<SkinFamily, readonly string[]>>;
 
 export interface SkinFamilySheets {

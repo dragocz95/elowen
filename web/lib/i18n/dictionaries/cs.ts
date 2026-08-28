@@ -142,6 +142,7 @@ export const cs = {
     actions: 'Akce',
     success: 'Úspěch',
     error: 'Chyba',
+    requiredField: 'Povinné',
     send: 'Odeslat',
     kill: 'Ukončit',
     appName: '{productName}',

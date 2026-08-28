@@ -15,3 +15,5 @@
  * target every member of the family and no skin outside it, this @import must appear exactly once, and
  * its structural rules must hold no colour literal — the same gates a skin.css passes. */
 @import "./studio/shared.css";
+@import "./studio/surfaces.css";
+@import "./studio/workbench.css";

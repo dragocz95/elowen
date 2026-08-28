@@ -145,6 +145,8 @@ export const en = {
     actions: 'Actions',
     success: 'Success',
     error: 'Error',
+    /** Read out with the label of a required field. The asterisk beside the label is decoration. */
+    requiredField: 'Required',
     send: 'Send',
     kill: 'Kill',
     appName: '{productName}',
