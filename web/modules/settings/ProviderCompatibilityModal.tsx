@@ -28,6 +28,14 @@ export interface ProviderCompatibilityValue {
   temperature: string;
 }
 
+/** Number of effective deviations from the conservative profile. Defaults that happen to be true (the
+ *  streaming usage total) are not custom settings merely because their switch is on. */
+export function providerCompatibilityCustomCount(value: ProviderCompatibilityValue): number {
+  const capabilityChanges = (Object.keys(DEFAULT_PROVIDER_COMPATIBILITY) as (keyof BrainProviderCompatibility)[])
+    .filter((key) => value.compatibility[key] !== DEFAULT_PROVIDER_COMPATIBILITY[key]).length;
+  return capabilityChanges + (value.temperature.trim() ? 1 : 0);
+}
+
 function SettingRow({ icon: Icon, label, hint, control, children }: {
   icon: typeof Activity;
   label: string;
