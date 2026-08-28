@@ -31,7 +31,7 @@ type SkinFamily = 'midnight' | 'studio';
 /** Which navigation/shell presentation a design mounts. This is a property of the SHELL, not of a skin:
  *  `spatial` is the layered, ambient shell the app has always rendered, `command` is the flat command-grid
  *  presentation Studio asks for. Two skins of the same family necessarily share one. */
-type ShellProfile = 'spatial' | 'command';
+export type ShellProfile = 'spatial' | 'command';
 
 /** The dictionary key holding a skin's human name. Skins are named in `common.skinNames` rather than by
  *  their id: an id is a directory and an attribute value, and `studio-oled` is not a name to show anyone. */
@@ -106,6 +106,16 @@ export const SKIN_CHOICES: readonly SkinChoice[] = [BUILTIN_SKIN, ...SKINS];
 export function skinDisplayName(t: LocaleDict, choice: SkinChoice | null): string {
   if (!choice || choice === BUILTIN_SKIN) return t.common.skinBuiltIn;
   return t.common.skinNames[SKIN_DEFINITIONS[choice].nameKey];
+}
+
+/** Which shell presentation a design asks the app to mount. The built-in design is not a skin and has no
+ *  definition, so it — and "no skin at all" — resolve to the shell the app has always rendered.
+ *
+ *  This is the ONE place the mapping lives: the shell reads a profile, never a skin id, so recognising a
+ *  design by name cannot start spreading through the component tree. */
+export function shellProfileFor(skin: SkinChoice | null | undefined): ShellProfile {
+  if (!skin || skin === BUILTIN_SKIN) return 'spatial';
+  return SKIN_DEFINITIONS[skin].shellProfile;
 }
 
 export const isSkinChoice = (value: string | null | undefined): value is SkinChoice =>

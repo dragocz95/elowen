@@ -29,3 +29,354 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .spatial-section-rail__track::before {
   background: var(--color-border);
 }
+
+/* ---------------------------------------------------------------------------------------------------
+ * The Studio navigation column (components/shell/StudioNavigation.tsx).
+ *
+ * That component paints NOTHING: it states what each part is (`studio-nav__*`) and what state it is in
+ * (`data-mode`, `data-open`, `data-active`, `data-closed`, `data-ready`, `data-depth`). Every dimension,
+ * hairline and state colour is here, which is why none of it is expressed in utility classes — an
+ * unlayered skin rule would have to out-specify each one, and the two would drift apart on every edit.
+ *
+ * It is only ever mounted under a `command` shell profile, i.e. only while one of these two stylesheets
+ * is on the document, so this file is its whole presentation rather than an override of one.
+ *
+ * The Ember rail's own styling (app/styles/components/nav-orbit.css) cannot bleed into it: the component
+ * renders no `.orbit-node`, no `.spatial-scroll-cue` and no <EmberFall/>, so there is nothing for those
+ * rules to match. The ember canvas is hidden above in any case, for the surfaces that DO mount it.
+ * --------------------------------------------------------------------------------------------------- */
+
+/* 256px expanded, ~52px folded. The column is inset from the content by a hairline, never by a shadow. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 16rem;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  transition: width var(--motion-base) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-side='left'] {
+  border-right: 1px solid var(--color-border);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-side='right'] {
+  border-left: 1px solid var(--color-border);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] {
+  width: 3.25rem;
+}
+
+/* The offcanvas sheet. It stops short of the full width on purpose: the strip of backdrop left showing is
+   both the signal that this is a layer over the page and a second target that dismisses it. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'] {
+  position: fixed;
+  inset-block: 0;
+  width: min(20rem, 85vw);
+  height: auto;
+  box-shadow: var(--shadow-raised);
+  transition: transform var(--motion-slow) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'][data-side='left'] {
+  left: 0;
+  transform: translateX(-100%);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'][data-side='right'] {
+  right: 0;
+  transform: translateX(100%);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'][data-open] {
+  transform: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__scrim {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__scrim[data-open] {
+  opacity: 1;
+  pointer-events: auto;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-subtle);
+  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close:hover {
+  background: var(--color-elevated);
+  color: var(--color-text);
+}
+
+/* Sticky brand header: the mark, the product name and the live status beacon. It does not scroll with the
+   destinations — in a studio the thing that says which system you are driving stays put. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__brand {
+  justify-content: center;
+  padding-inline: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-mark {
+  flex: none;
+  width: 1.375rem;
+  height: 1.375rem;
+  object-fit: contain;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The beacon is the design's one live element: a dot that states, at a glance and without being asked,
+   whether the daemon behind the studio is answering. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__status {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__status {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.375rem;
+  margin: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__beacon {
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--color-text-subtle);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__status[data-state='online'] .studio-nav__beacon {
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 18%, transparent);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__status[data-state='offline'] .studio-nav__beacon {
+  background: var(--color-danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-danger) 18%, transparent);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__status-text {
+  color: var(--color-text-subtle);
+}
+
+/* The scrolling destination body, carrying the hairline command grid: a ruled ground the rows sit on,
+   which is where Studio's depth comes from now that there is no ember wash behind the menu. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0.5rem 0.375rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--color-border) 55%, transparent) 0 1px,
+    transparent 1px 1.75rem
+  );
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+/* Until the arrangement is known the menu would paint in registry order and visibly re-sort itself, on
+   every page load. It stays in the DOM throughout — a keyboard and a screen reader get the menu either
+   way — and only the paint waits. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-ready] .studio-nav__body {
+  opacity: 1;
+}
+
+/* One destination row. Active reads as calm neutral plus the signal accent — a filled ground, an accent
+   glyph and an accent edge — rather than as a coloured block. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.375rem 0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  text-decoration: none;
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item {
+  justify-content: center;
+  padding-inline: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-depth='1'] {
+  margin-left: 1.5rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item[data-depth='1'] {
+  margin-left: 0;
+  opacity: 0.72;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item:hover {
+  background: var(--color-elevated);
+  color: var(--color-text);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active] {
+  background: var(--color-elevated);
+  color: var(--color-text);
+  font-weight: 500;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active] .studio-nav__item-icon {
+  color: var(--color-accent);
+}
+/* The signal edge. Drawn on the column's own inner edge so a row's marker lines up with every other
+   row's, whichever depth it sits at. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active]::before {
+  content: '';
+  position: absolute;
+  top: 0.3125rem;
+  bottom: 0.3125rem;
+  left: -0.375rem;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.25rem;
+  color: var(--color-text-subtle);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A group: a disclosure header over its pages. The header is not a link — every page of the group,
+   including the one the world's own address points at, is a row inside it. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group {
+  margin-block: 0.125rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-subtle);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle:hover {
+  color: var(--color-text);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle[data-active] {
+  color: var(--color-text);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__chevron {
+  margin-left: auto;
+  transform: rotate(90deg);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group[data-closed] .studio-nav__chevron {
+  transform: none;
+}
+
+/* Account and administration. The fold control and the version sit with them: the studio's own controls,
+   kept away from the destinations. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__footer {
+  flex: none;
+  padding: 0.375rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.125rem 0;
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--color-border);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__footer-actions {
+  flex-direction: column;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__action {
+  display: grid;
+  place-items: center;
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-subtle);
+  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__action:hover {
+  background: var(--color-elevated);
+  color: var(--color-text);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__version {
+  margin-left: auto;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  letter-spacing: 0.12em;
+}
+
+/* Focus stays visible on every control the column owns — the rows are custom-painted, so the browser's
+   own outline is the only thing saying where the keyboard is. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item:focus-visible,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle:focus-visible,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__action:focus-visible,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+/* Motion is a courtesy, never a requirement: everything above resolves to its end state at once for a
+   reader who asked for less of it. */
+@media (prefers-reduced-motion: reduce) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__scrim,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__body,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__chevron,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__action,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close {
+    transition-duration: 1ms;
+  }
+}

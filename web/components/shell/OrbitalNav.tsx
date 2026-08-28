@@ -12,32 +12,18 @@ import { CollapseHandle } from './CollapseHandle';
 import { EmberFall } from './EmberFall';
 import { useElementHeight } from '../../lib/useElementWidth';
 import { entryIsActive, type NavEntry } from './navEntry';
+import { NAV_ROUTE_ORDER, navOrderIndex } from './navOrder';
 
-/** Top to bottom: where you land, then project context and automation, then administration.
- *  This is only the untouched default; a user's own arrangement overrides it entirely. Unknown plugin
- *  worlds stay dynamic and fall after the named platform integrations rather than being special-cased. */
-const SPATIAL_ROUTE_ORDER = [
-  '/dash', '/chat',
-  '/projects', '/p/editor',
-  '/p/subagent', '/p/cronjob', '/p/skills',
-  '/memory', '/p/stats',
-  '/account', '/users', '/settings',
-];
-/** Where an entry parks on the axis. Prefix matching lets a plugin's nested pages share its slot; an
- *  unmatched dynamic plugin falls after the administration block. */
-function spatialOrderIndex(href: string | undefined): number {
-  if (!href) return Number.MAX_SAFE_INTEGER;
-  const index = SPATIAL_ROUTE_ORDER.findIndex((route) => href === route || href.startsWith(`${route}/`));
-  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
-}
 /** Whether the axis names this page by its own address rather than through its world. That is what
  *  decides which worlds the rail opens up: a world whose pages have their own slots contributes those
  *  pages (the work register, the board, the timeline, the spend stats each own one), and every other
  *  world contributes its face. The order above is the single place that says so — before, the two
  *  expanded worlds were hardcoded by id here, which stopped being expressible the moment a world could
- *  arrive from a plugin. */
+ *  arrive from a plugin. It is the RAIL's rule — a grouped presentation renders a world's pages beneath
+ *  the world instead of flattening them onto one axis — so it stays private here while the order it reads
+ *  is shared. */
 function isAxisPage(href: string | undefined): boolean {
-  return href !== undefined && SPATIAL_ROUTE_ORDER.includes(href);
+  return href !== undefined && NAV_ROUTE_ORDER.includes(href);
 }
 
 /** A rail destination plus the world it came from, which is the unit the navigation layout addresses. */
@@ -138,7 +124,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         : [world];
       return entries.map((entry) => ({ ...entry, worldId: world.id, worldIndex }));
     });
-    const axisRank = (entry: RailEntry) => spatialOrderIndex(entry.href);
+    const axisRank = (entry: RailEntry) => navOrderIndex(entry.href);
     // An untouched menu keeps the spatial axis, which carries meaning of its own (where you land, the
     // work, what it runs on, administration). Once the user has arranged the menu, their order wins.
     if (layout.order.length === 0) return all.sort((a, b) => axisRank(a) - axisRank(b));
@@ -148,7 +134,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
   // The sequence of worlds as the rail presents them, which is what an edit must build the stored order
   // from — otherwise the first hide or move would re-sort the rail into registry order under the user.
   const railWorldOrder = useMemo(() => [...worlds]
-    .sort((a, b) => spatialOrderIndex(a.href) - spatialOrderIndex(b.href))
+    .sort((a, b) => navOrderIndex(a.href) - navOrderIndex(b.href))
     .flatMap((world) => (world.id ? [world.id] : [])), [worlds]);
   // Until the arrangement is known the rail would paint in registry order and then visibly re-sort
   // itself, on every single page load. Showing nothing for that one frame is the honest option: the

@@ -6,13 +6,14 @@ import { useMobileViewport } from '../../lib/useMobile';
 import { NAV_COLUMN_MIN_WIDTH, NAV_FULL_MIN_WIDTH } from '../../lib/breakpoints';
 import { Providers, type PluginUiSeed, type MeSeed } from '../../app/providers';
 import { LanguageProvider, type Locale } from '../../lib/i18n';
-import { SkinProvider } from '../../lib/skinContext';
-import type { SkinChoice, SkinName } from '../../lib/skins';
+import { SkinProvider, useSkin } from '../../lib/skinContext';
+import { shellProfileFor, type SkinChoice, type SkinName } from '../../lib/skins';
 import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand';
 import { ToastProvider, resolveToastDuration } from '../ui/Toast';
 import { useConfig } from '../../lib/queries';
 import { LoginGate } from '../auth/LoginGate';
 import { OrbitalNav } from './OrbitalNav';
+import { StudioNavigation } from './StudioNavigation';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
 import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
@@ -56,8 +57,24 @@ export function resolveNav(regionW: number, pin: NavPin): { mode: NavMode; pinna
   return { mode: pin, pinnable: true };
 }
 
+/** What both navigations take, so the seam below is a straight swap and the shell cannot hand one of them
+ *  a state the other never sees. */
+interface ShellNavProps {
+  compact: boolean;
+  side: 'left' | 'right';
+  drawer: boolean;
+  drawerOpen: boolean;
+  onDrawerClose: () => void;
+  onToggleCollapse?: () => void;
+}
+
 function ShellLayout({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Which navigation the active DESIGN asks for. Read from the skin the document is wearing, not from the
+  // account's stored choice: an operator who sets ELOWEN_SKIN without offering it in the allow-list gives
+  // everyone that design with nothing chosen, and reading the choice would then mount the spatial rail
+  // inside the Studio stylesheet.
+  const { skin } = useSkin();
   const dock = useDockState();
   const docked = dock.state.open;
   // On /chat the ChatView is the sole chat host: the floating launcher is suppressed (the dock may still
@@ -107,19 +124,31 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // survive — so narrowing again, without ever touching the menu, would slide it back out on its own.
   useEffect(() => { if (mode !== 'drawer') setDrawerOpen(false); }, [mode]);
 
-  // One menu at every width. A phone gets the same rail, in its full labelled form, slid in over the
+  // One menu at every width. A phone gets the same menu, in its full labelled form, slid in over the
   // content; wider windows give it a column of its own. Collapsing is offered only where the pin is
   // what decides, and never in the drawer, where there is no column to narrow.
-  const navigation = (
-    <OrbitalNav
-      compact={mode === 'rail'}
-      side={dockLeft ? 'right' : 'left'}
-      drawer={mode === 'drawer'}
-      drawerOpen={drawerOpen}
-      onDrawerClose={() => setDrawerOpen(false)}
-      onToggleCollapse={pinnable ? () => setPin(pin === 'rail' ? 'full' : 'rail') : undefined}
-    />
-  );
+  const navProps: ShellNavProps = {
+    compact: mode === 'rail',
+    side: dockLeft ? 'right' : 'left',
+    drawer: mode === 'drawer',
+    drawerOpen,
+    onDrawerClose: () => setDrawerOpen(false),
+    onToggleCollapse: pinnable ? () => setPin(pin === 'rail' ? 'full' : 'rail') : undefined,
+  };
+  // THE ONLY THING A SHELL PROFILE SWAPS. Everything else below — the brain-chat provider, the viewport
+  // box, <main> and its scroll position, the route content, the command palette, the advisor launcher —
+  // is owned by this one component and mounts exactly once, whatever design is on.
+  //
+  // Branching any higher up (`{studio ? <StudioLayout/> : <ShellLayout/>}`) would make React see two
+  // different component types and unmount that whole subtree on a skin switch. The cost is not cosmetic:
+  // BrainChatProvider exists to be ONE mount above the route content and every advisor panel, so its SSE
+  // stream, transcript and composer draft survive dock toggles and route changes — remounting it drops a
+  // live conversation, along with the scroll position, any open modal and every in-flight form on the
+  // page. The two navigations therefore take the same props from the same state, and the swapped subtree
+  // holds nothing but its own disposable presentation state.
+  const navigation = shellProfileFor(skin) === 'command'
+    ? <StudioNavigation {...navProps} />
+    : <OrbitalNav {...navProps} />;
   const content = (
     <div className="flex min-w-0 flex-1 flex-col">
       {/* NOTE: no `container-type` here on purpose — it would make <main> a containing block for

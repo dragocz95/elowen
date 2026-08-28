@@ -7,6 +7,7 @@ import {
   currentSkinChoice,
   isSkinChoice,
   nextSkinChoice,
+  resolveSkin,
   type SkinChoice,
   type SkinName,
 } from './skins';
@@ -33,6 +34,12 @@ interface SkinContextValue {
   /** The account's current choice, or null when the visible design is the operator's default and that
    *  default is not itself one of the offered choices. */
   choice: SkinChoice | null;
+  /** The skin the document is actually WEARING — exactly what `data-skin` says, or null for the built-in
+   *  design. It is not the same thing as `choice`: an operator who sets ELOWEN_SKIN without offering it
+   *  in the allow-list gives everyone that design with nothing chosen, so `choice` is null while the
+   *  document carries the attribute. Anything deciding what to RENDER for the active design has to read
+   *  this one — reading `choice` would mount the built-in shell inside another design's stylesheet. */
+  skin: SkinName | null;
   /** What may be picked. Empty means the instance has not enabled switching at all. */
   allowed: SkinChoice[];
   /** Advance to the next allowed choice — the switcher's whole interaction. */
@@ -101,12 +108,15 @@ export function SkinProvider({
     writeSkinCookie(next);
   }, [allowed, choice]);
 
-  const value = useMemo(() => ({ choice, allowed, cycle }), [choice, allowed, cycle]);
+  // The same resolution the SERVER ran to decide the attribute (app/layout.tsx), so the two cannot
+  // disagree about which design is on screen.
+  const skin = useMemo(() => resolveSkin(choice, allowed, fallback), [choice, allowed, fallback]);
+  const value = useMemo(() => ({ choice, skin, allowed, cycle }), [choice, skin, allowed, cycle]);
   return <SkinContext.Provider value={value}>{children}</SkinContext.Provider>;
 }
 
 /** Tolerates a missing provider (bare component tests, isolated mounts) by reporting nothing to switch —
  *  the switcher then renders nothing, which is also what an instance with switching disabled does. */
 export function useSkin(): SkinContextValue {
-  return useContext(SkinContext) ?? { choice: null, allowed: [], cycle: () => {} };
+  return useContext(SkinContext) ?? { choice: null, skin: null, allowed: [], cycle: () => {} };
 }
