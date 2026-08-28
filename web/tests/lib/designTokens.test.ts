@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
-import { SKINS } from '../../lib/skins';
+import { SKINS, SKIN_FAMILY_SHEETS } from '../../lib/skins';
 
 // The design system's numeric invariants. Every other token test in the repo checks that a token EXISTS
 // or that two files agree on its text; none of them checks what the values actually do on screen. These
@@ -16,6 +16,8 @@ import { SKINS } from '../../lib/skins';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const tokensCss = readFileSync(join(root, 'app', 'styles', 'tokens.css'), 'utf-8');
 const skinCss = (skin: string) => readFileSync(join(root, 'skins', skin, 'skin.css'), 'utf-8');
+const sharedCss = (sheet: string) => readFileSync(join(root, 'skins', sheet), 'utf-8');
+const SHARED_STYLESHEETS = SKIN_FAMILY_SHEETS.flatMap((entry) => [...entry.sharedStylesheets]);
 
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 
@@ -132,11 +134,22 @@ describe('no hardcoded colour outside the token layer', () => {
   // exists to prevent. A structural rule must reach for `var(--color-*)`.
   const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\s*\(/gi;
 
+  /** Colour literals in everything but the custom-property declarations: those ARE the token layer and a
+   *  literal is what they are for. */
+  const structuralLiterals = (css: string): string[] => {
+    const structural = stripComments(css).replace(/--[a-z0-9-]+\s*:[^;}]+[;]?/gi, '');
+    return [...structural.matchAll(COLOUR_LITERAL)].map((m) => m[0]);
+  };
+
   it.each([...SKINS])('skin "%s" uses tokens, not literals, in its structural rules', (skin) => {
-    // Drop custom-property declarations: those ARE the token layer and a literal is what they are for.
-    const structural = stripComments(skinCss(skin)).replace(/--[a-z0-9-]+\s*:[^;}]+[;]?/gi, '');
-    expect([...structural.matchAll(COLOUR_LITERAL)].map((m) => m[0]), `hardcoded colour in ${skin}/skin.css`)
-      .toEqual([]);
+    expect(structuralLiterals(skinCss(skin)), `hardcoded colour in ${skin}/skin.css`).toEqual([]);
+  });
+
+  // A family's shared stylesheet is structure by definition — it carries no token block at all, because a
+  // token there would be frozen against whichever variant is on. It needs the same check for the same
+  // reason, and it is not a SKINS entry so the check above never sees it.
+  it.each(SHARED_STYLESHEETS)('shared stylesheet "%s" uses tokens, not literals', (sheet) => {
+    expect(structuralLiterals(sharedCss(sheet)), `hardcoded colour in skins/${sheet}`).toEqual([]);
   });
 });
 
@@ -227,8 +240,7 @@ describe('the host component tree paints from tokens, not from literals', () => 
     { path: 'modules/settings/providers.tsx', reason: 'Third-party provider brand identity colours.' },
     { path: 'components/ui/Avatar.tsx', reason: 'The monogram sits on a fixed eight-colour identity palette that deliberately ignores the skin, so its ink has to be equally fixed.' },
     { path: 'modules/memory/memoryMeta.ts', reason: 'The category swatch is a fixed ten-colour identity ramp, the same kind of palette as Avatar: it identifies a category rather than styling it, so the skin must not move it.' },
-    { path: 'app/layout.tsx', reason: 'The anti-FOUC paint: the root background and themeColor land before any stylesheet, so no token exists yet.' },
-    { path: 'app/styles/base.css', reason: 'The same anti-FOUC paint on <html>, held with the root element rather than in the cascade below it.' },
+    { path: 'app/layout.tsx', reason: 'The anti-FOUC paint: the per-skin root background, color-scheme and themeColor land before any stylesheet, so no token exists yet. It is the only copy — base.css no longer holds one.' },
   ];
 
   /** Literals that are plain debt, not exemptions — a ledger, in the idiom of `coreCssOwnership.test.ts`.

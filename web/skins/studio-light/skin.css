@@ -1,0 +1,82 @@
+/* "studio-light" — the light variant of the Studio design.
+ *
+ * Studio is a professional operating studio for working with AI: high information signal, calm geometry,
+ * precise tables, hairline structure. It ships as TWO skins sharing ONE design; everything structural
+ * lives in ../studio/shared.css and everything that differs is the token block below.
+ *
+ * The token block MUST stay in this file. tests/lib/designTokens.test.ts resolves a skin's palette by
+ * reading `skins/<id>/skin.css` and nothing else, so a token declared in the shared stylesheet would be
+ * invisible to the WCAG gate and the gate would silently measure the built-in ember palette instead.
+ *
+ * Every value here is measured, not eyeballed: all twelve text/surface pairs clear WCAG AA (4.5:1) and
+ * the three text steps stay ordered. The tightest pair is --color-text-subtle on --color-elevated at
+ * 4.59:1, which is why the third step is #6E6E77 rather than something lighter. */
+
+:root[data-skin='studio-light'] {
+  /* A light document. The browser has to be told, or form controls, scrollbars and the caret keep
+     rendering in the dark scheme the base document declares. */
+  color-scheme: light;
+
+  /* Paper canvas, white cards, one muted step for anything recessed. */
+  --color-bg: #fafafa;
+  --color-document: #ffffff;
+  --color-surface: #ffffff;
+  --color-elevated: #f4f4f5;
+  --color-overlay: #ffffff;
+  --color-border: #e4e4e7;
+  --color-border-strong: #d4d4d8;
+
+  /* Ink. --color-text-muted is #52525b rather than the lighter grey a light UI reaches for by reflex:
+     #71717a measures 4.40:1 on --color-elevated and fails AA outright. Measured on --color-elevated,
+     the worst surface here: text 18.10:1, muted 7.04:1, subtle 4.59:1. */
+  --color-text: #09090b;
+  --color-text-muted: #52525b;
+  --color-text-subtle: #6e6e77;
+
+  /* Signal blue. #0070f3 is the design's blue, but as body text it measures 4.14:1 on --color-elevated,
+     so the base accent is one step darker (4.70:1) and #0070f3 becomes the hot/hover step — the ramp
+     keeps the intended colour and links stay readable. */
+  --color-accent: #0068e1;
+  --color-accent-hot: #0070f3;
+  --accent-rgb: 0 104 225;
+
+  /* Studio has no ember. The two-stop ramp those tokens carry is repainted onto the signal blue so
+     charts and heat scales stay coherent instead of glowing orange inside a blue design. */
+  --color-ember: #4c8dff;
+  --color-ember-bright: #93b8ff;
+
+  /* Status fills. --color-on-status is the ink that sits ON one of them, and on a light design it has to
+     be white rather than near-black: white measures 5.26:1 on danger, 5.28:1 on success, 5.02:1 on
+     warning, 5.64:1 on info and 6.32:1 on cancelled. Each fill is also dark enough to serve as TEXT on
+     --color-elevated (danger 4.79:1, success 4.81:1, warning 4.57:1, info 5.13:1, cancelled 5.75:1). */
+  --color-danger: #ce2b1e;
+  --color-error: #ce2b1e;
+  --color-success: #0a7c42;
+  --color-approve: #0a7c42;
+  --color-warning: #b45309;
+  --color-info: #0761d9;
+  --color-cancelled: #5f5f68;
+  --color-on-status: #ffffff;
+
+  /* 6 / 8 / 12. Nothing rounder: a studio reads as drawn, not as a set of pills. */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 12px;
+  --radius-2xl: 12px;
+
+  /* Depth comes from hairlines, not from shadow. What is left is the minimum needed to lift a menu or a
+     dialog off the page. */
+  --shadow-card: 0 1px 2px rgb(9 9 11 / 0.05);
+  --shadow-raised: 0 8px 24px rgb(9 9 11 / 0.08);
+  --shadow-ember: none;
+  --glow-active: 0 0 0 1px rgb(var(--accent-rgb) / 0.45);
+  --glow-soft: none;
+  --hairline: 1px solid rgb(9 9 11 / 0.08);
+
+  /* Motion is a 120-180ms opacity/translate and nothing else. */
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 180ms;
+}

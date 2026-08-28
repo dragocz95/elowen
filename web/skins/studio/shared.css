@@ -1,0 +1,31 @@
+/* Structure shared by BOTH Studio skins.
+ *
+ * `studio-light` and `studio-oled` are one design in two palettes, so every structural rule belongs here
+ * exactly once and each skin.css carries only its token block. This file is imported from
+ * ../index.css — once, not from each skin — so the rules ship a single time.
+ *
+ * Two constraints hold at all times, and both are enforced — this file is declared in lib/skins.ts as the
+ * `studio` family's shared stylesheet, which is how the guards find it despite it not being a skin:
+ *  - Every selector must be scoped to the family, mentioning no id outside it, and every member must be
+ *    targeted somewhere in the file. An unscoped rule would leak into every instance built from this repo
+ *    whatever design it actually runs. tests/lib/skins.test.ts.
+ *  - No colour literal. Colours belong in the two token blocks; a literal here would be frozen against
+ *    whichever variant is on. tests/lib/designTokens.test.ts.
+ */
+
+/* Studio has no ember atmosphere: the canvas is flat, and the hairline grid carries the depth the radial
+   washes used to. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) body {
+  background-image: none;
+}
+
+/* The decorative organics belong to the ember identity, not to this one. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-beam,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .ember-fall {
+  display: none;
+}
+
+/* The section rail reads as a ruled line rather than a glowing track. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .spatial-section-rail__track::before {
+  background: var(--color-border);
+}

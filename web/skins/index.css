@@ -3,3 +3,15 @@
  * build; each one scopes every rule under `:root[data-skin='<name>']`, so on an instance without that
  * skin active none of its rules match and the built-in ember design renders untouched. */
 @import "./midnight/skin.css";
+@import "./studio-light/skin.css";
+@import "./studio-oled/skin.css";
+/* Studio is ONE design in two palettes: the structure both variants share is imported once, here, rather
+ * than from each skin.css, so the rules are not emitted twice. It is not a skin of its own and carries no
+ * tokens — each variant's token block stays in its own skin.css, which is the file the contrast gate in
+ * tests/lib/designTokens.test.ts resolves a palette from.
+ *
+ * A shared file has no directory name to be scoped by, so it is declared as a family stylesheet in
+ * lib/skins.ts (SKIN_FAMILY_SHEETS). That declaration is what lets the guards read it: its selectors must
+ * target every member of the family and no skin outside it, this @import must appear exactly once, and
+ * its structural rules must hold no colour literal — the same gates a skin.css passes. */
+@import "./studio/shared.css";

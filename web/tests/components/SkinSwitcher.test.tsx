@@ -70,6 +70,15 @@ describe('SkinSwitcher', () => {
     return waitFor(() => expect(screen.getByRole('button')).toBeTruthy());
   });
 
+  it('shows the skin its human name, never its id', () => {
+    // The id is a directory name and a `data-skin` value. Rendering it verbatim put "midnight" — and
+    // would have put "studio-oled" — in the top bar as if it were a product name.
+    mount([BUILTIN_SKIN, 'midnight'], BUILTIN_SKIN);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Skin: Midnight');
+    expect(screen.getByText('Midnight')).toBeTruthy();
+  });
+
   it('remembers the choice where both the client and the next server render can find it', () => {
     mount([BUILTIN_SKIN, 'midnight'], BUILTIN_SKIN);
     fireEvent.click(screen.getByRole('button'));

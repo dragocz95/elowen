@@ -150,6 +150,11 @@ export const sk = {
     skin: 'Vzhľad',
     skinBuiltIn: 'Predvolený',
     skinCycle: 'kliknutím prepnete',
+    skinNames: {
+      midnight: 'Midnight',
+      studioLight: 'Studio Light',
+      studioOled: 'Studio OLED',
+    },
     logout: 'Odhlásiť sa',
     language: 'Jazyk',
     theme: 'Motív',

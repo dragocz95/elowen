@@ -150,6 +150,11 @@ export const cs = {
     skin: 'Vzhled',
     skinBuiltIn: 'Výchozí',
     skinCycle: 'kliknutím přepnete',
+    skinNames: {
+      midnight: 'Midnight',
+      studioLight: 'Studio Light',
+      studioOled: 'Studio OLED',
+    },
     logout: 'Odhlásit se',
     language: 'Jazyk',
     theme: 'Motiv',

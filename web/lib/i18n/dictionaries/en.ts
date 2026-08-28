@@ -150,6 +150,13 @@ export const en = {
     skin: 'Skin',
     skinBuiltIn: 'Default',
     skinCycle: 'click to switch',
+    // Human names for the compiled skins, keyed by SkinDefinition.nameKey. These are product names and
+    // stay identical in every locale.
+    skinNames: {
+      midnight: 'Midnight',
+      studioLight: 'Studio Light',
+      studioOled: 'Studio OLED',
+    },
     logout: 'Sign out',
     language: 'Language',
     theme: 'Theme',

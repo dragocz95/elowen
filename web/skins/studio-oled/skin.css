@@ -1,0 +1,65 @@
+/* "studio-oled" — the true-black variant of the Studio design.
+ *
+ * Same design as studio-light, same structure (../studio/shared.css), inverted ink. The token block MUST
+ * stay in this file: tests/lib/designTokens.test.ts reads `skins/<id>/skin.css` and nothing else, so a
+ * token moved into the shared stylesheet would leave the WCAG gate measuring the built-in palette.
+ *
+ * Measured on --color-elevated, the lightest surface and therefore the worst case here: text 18.07:1,
+ * muted 7.36:1, subtle 4.69:1. */
+
+:root[data-skin='studio-oled'] {
+  /* True black canvas — an OLED panel renders it as unlit pixels, which is the point. The surfaces above
+     it step up in near-invisible increments so the hairline borders, not the fills, carry the structure. */
+  --color-bg: #000000;
+  --color-document: #050505;
+  --color-surface: #070707;
+  --color-elevated: #111113;
+  --color-overlay: #17171a;
+  --color-border: #27272a;
+  --color-border-strong: #3f3f46;
+
+  --color-text: #fafafa;
+  --color-text-muted: #a1a1aa;
+  --color-text-subtle: #7e7e87;
+
+  /* Signal blue, one step brighter than the light variant because it sits on black. */
+  --color-accent: #3291ff;
+  --color-accent-hot: #66abff;
+  --accent-rgb: 50 145 255;
+
+  /* No ember in Studio: the heat ramp is repainted onto the signal blue. */
+  --color-ember: #6cb2ff;
+  --color-ember-bright: #b9d8ff;
+
+  /* Status fills bright enough to carry near-black ink (--color-on-status): danger 5.42:1, success
+     10.60:1, warning 9.01:1, info 6.44:1. Each is also legible as TEXT on --color-elevated — danger
+     5.02:1 is the tightest. */
+  --color-danger: #f04438;
+  --color-error: #f04438;
+  --color-success: #34d399;
+  --color-approve: #34d399;
+  --color-warning: #f5a524;
+  --color-info: #3291ff;
+  --color-cancelled: #8a8a94;
+  --color-on-status: #050505;
+
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 12px;
+  --radius-2xl: 12px;
+
+  /* Depth comes from hairlines. On true black a light shadow is invisible and a dark one is a no-op, so
+     only the raised surfaces keep one at all. */
+  --shadow-card: none;
+  --shadow-raised: 0 16px 48px rgb(0 0 0 / 0.6);
+  --shadow-ember: none;
+  --glow-active: 0 0 0 1px rgb(var(--accent-rgb) / 0.5);
+  --glow-soft: none;
+  --hairline: 1px solid rgb(250 250 250 / 0.08);
+
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 180ms;
+}

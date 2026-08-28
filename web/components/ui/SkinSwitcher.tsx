@@ -1,7 +1,7 @@
 'use client';
 import { Palette } from 'lucide-react';
 import { useSkin } from '../../lib/skinContext';
-import { BUILTIN_SKIN } from '../../lib/skins';
+import { skinDisplayName } from '../../lib/skins';
 import { useTranslation } from '../../lib/i18n';
 
 /** Cycles the interface through the skins the instance allows. Deliberately a single button and not a
@@ -17,7 +17,7 @@ export function SkinSwitcher({ collapsed = false }: { collapsed?: boolean }) {
 
   if (allowed.length < 2) return null;
 
-  const name = choice === BUILTIN_SKIN ? t.common.skinBuiltIn : choice ?? t.common.skinBuiltIn;
+  const name = skinDisplayName(t, choice);
   const label = `${t.common.skin}: ${name}`;
 
   return (
