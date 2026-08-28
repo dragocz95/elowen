@@ -298,6 +298,47 @@ describe('sandbox execution HOME and leases', () => {
       .rejects.toThrow(/outside the current account/);
   });
 
+  it('prepares execution for a background service that names its own account and roots', async () => {
+    // No policy, no identity, no session: exactly what registerService and registerInterval run with.
+    // Without the explicit form such a caller cannot prepare anything at all, because the ambient
+    // lookup answers with no account and no roots.
+    const { registry, db } = await setup();
+    const owned = temp('service-root');
+    const prepared = await registry.control('sandbox')!.prepareExecution(
+      { command: { type: 'shell', command: 'pwd' }, cwd: owned, leaseKind: 'sites' },
+      { accountUserId: 1, roots: [owned] },
+    );
+    expect(prepared.cwd).toBe(realPathWithin(owned, [owned]));
+    expect(db.prepare("SELECT kind FROM p_sandbox_execution_leases WHERE id = ?").get(prepared.lease.id))
+      .toEqual({ kind: 'sites' });
+    await prepared.lease.release();
+  });
+
+  it('never hands a plugin unconfined execution, even inside an operator turn', async () => {
+    // `owner` selects DIRECT execution: no bubblewrap, and the daemon's whole environment passed to the
+    // child. It follows from who is driving the turn and must never follow from what a plugin asked
+    // for — otherwise a plugin's background work is a way to launder the operator's own reach.
+    const probe = bubblewrapProbe();
+    if (!probe.available) return;
+    const { registry, projectPath } = await setup();
+    const prepared = await runWithPolicy(adminPolicy, () => registry.control('sandbox')!.prepareExecution(
+      { command: { type: 'shell', command: 'pwd' }, cwd: projectPath, leaseKind: 'sites' },
+      { accountUserId: 1, roots: [projectPath] },
+    ), { identity: operator(3), contributionUserId: 3, sessionId: 'brain-service-owner', workDir: projectPath });
+    expect(prepared.mode).toBe('confined');
+    await prepared.lease.release();
+  });
+
+  it('still confines an explicit request to the roots it named', async () => {
+    const { registry } = await setup();
+    const owned = temp('service-owned');
+    const elsewhere = temp('service-elsewhere');
+    await expect(registry.control('sandbox')!.prepareExecution(
+      { command: { type: 'shell', command: 'pwd' }, cwd: elsewhere, leaseKind: 'sites' },
+      { accountUserId: 1, roots: [owned] },
+    )).rejects.toThrow(/outside the current account/);
+  });
+
   it('keeps the lease until a foreground shell descendant exits', async () => {
     const { registry, db, projectPath } = await setup(['sandbox', 'terminal']);
     const running = runAs(registry, projectPath, 1, 'brain-descendant', 'Bash', { command: 'sleep 0.4 >/dev/null 2>&1 &' });

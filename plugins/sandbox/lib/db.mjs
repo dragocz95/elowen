@@ -67,6 +67,38 @@ export function initSandboxDb(ctx) {
         );
       `);
     },
+  }, {
+    version: 2,
+    // A supervised background runtime is a third kind of held execution, and the original CHECK named
+    // only the two that existed. SQLite cannot widen a CHECK in place, so the table is rebuilt: the
+    // rows are live leases of processes that may still be running, which is exactly why they are copied
+    // across rather than dropped and left to expire.
+    up(m) {
+      m.exec(`
+        CREATE TABLE p_sandbox_execution_leases_v2 (
+          id TEXT PRIMARY KEY,
+          user_id INTEGER,
+          workspace_id TEXT,
+          home_generation INTEGER,
+          outer_pid INTEGER NOT NULL,
+          runner_identity TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('terminal', 'github', 'sites')),
+          heartbeat_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO p_sandbox_execution_leases_v2
+          SELECT id, user_id, workspace_id, home_generation, outer_pid, runner_identity, kind,
+                 heartbeat_at, expires_at, created_at
+          FROM p_sandbox_execution_leases;
+        DROP TABLE p_sandbox_execution_leases;
+        ALTER TABLE p_sandbox_execution_leases_v2 RENAME TO p_sandbox_execution_leases;
+        CREATE INDEX IF NOT EXISTS p_sandbox_execution_leases_user
+          ON p_sandbox_execution_leases(user_id, home_generation, expires_at);
+        CREATE INDEX IF NOT EXISTS p_sandbox_execution_leases_workspace
+          ON p_sandbox_execution_leases(workspace_id, expires_at);
+      `);
+    },
   }]);
   return db;
 }

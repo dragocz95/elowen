@@ -996,11 +996,25 @@ export interface SandboxControl {
    *  only honest way to say whose workspaces are meant. Omitting `projectIds` means every project. */
   workspacesFor(input: { userId: number; projectIds?: readonly number[] }): SandboxWorkspace[];
   activeWorkspace(input: { sessionId: string; projectId: number }): SandboxWorkspace | null;
-  prepareExecution(input: {
-    command: SandboxExecutionCommand;
-    cwd: string;
-    leaseKind: 'terminal' | 'github';
-  }): SandboxPreparedExecution | Promise<SandboxPreparedExecution>;
+  prepareExecution(
+    input: {
+      command: SandboxExecutionCommand;
+      cwd: string;
+      leaseKind: 'terminal' | 'github' | 'sites';
+    },
+    /** For a caller with NO ambient turn to read — a background service has neither an identity nor a
+     *  set of allowed roots. Naming both explicitly is the only honest way to say whose HOME the child
+     *  gets and which directories it may see, and the caller owns the tenancy rule for what it names,
+     *  exactly as it does for `workspacesFor`.
+     *
+     *  There is deliberately no way to ask for UNCONFINED execution: an explicit request is always run
+     *  under bubblewrap, whoever makes it. Direct execution follows from who is driving the turn, and a
+     *  plugin asking for it would be asking for the daemon's whole environment. */
+    options?: {
+      accountUserId: number | null;
+      roots: readonly string[];
+    },
+  ): SandboxPreparedExecution | Promise<SandboxPreparedExecution>;
 }
 
 /** Options a Microsoft Graph call accepts, mirroring the delegated client the Teams plugin already owns. */

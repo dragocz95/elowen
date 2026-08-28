@@ -208,7 +208,14 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
 
     let mode;
     let launch;
-    if (owner || (accountUserId !== null && ctx.config.confineNonOperators === false)) {
+    // `forceConfined` is what a plugin's background work asks for, and it overrides BOTH shortcuts into
+    // direct execution — the operator turn it may happen to run inside, and the instance-wide
+    // `confineNonOperators: false`. Neither is a statement about the plugin: the first is about who is
+    // driving the turn, the second about the interactive shells this operator runs on their own machine.
+    // A long-lived process a plugin supervises is neither, so it either gets a namespace or it does not
+    // start — refusing is the honest answer, silently running it with the daemon's whole environment is
+    // not.
+    if (!options.forceConfined && (owner || (accountUserId !== null && ctx.config.confineNonOperators === false))) {
       mode = 'direct';
       launch = input.command.type === 'shell'
         ? { type: 'shell', command: input.command.command, env: cleanHostEnv(home) }

@@ -74,7 +74,23 @@ export async function register(ctx) {
         baseRef: workspace.baseRef,
       } : null;
     },
-    prepareExecution: (input) => execution.prepare(input),
+    // A background service has no ambient turn to read: no identity, no session, no allowed roots. It
+    // must therefore name the account and the directories itself, exactly as `workspacesFor` lets it
+    // name the account — and, exactly as there, the caller owns the tenancy rule for what it named.
+    //
+    // What it may NOT name is `owner`. That flag is what selects DIRECT execution: no bubblewrap and
+    // the daemon's whole environment handed to the child. It is a property of who is driving the turn,
+    // never of what a plugin asks for, so an explicit request is always confined. `skipHomeLock` stays
+    // internal too: the lease has to be minted under the HOME lock or a reset can race a launch.
+    prepareExecution: (input, options) => execution.prepare(
+      input,
+      options === undefined ? undefined : {
+        accountUserId: options.accountUserId,
+        roots: options.roots,
+        owner: false,
+        forceConfined: true,
+      },
+    ),
   });
 
   ctx.registerTool(defineTool({
