@@ -242,8 +242,16 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   <DataTableCell header lines={1}>{t.assetEditor.colName}</DataTableCell>
                   <DataTableCell header priority="wide" lines={1}>{t.assetEditor.colDescription}</DataTableCell>
                   {ownership ? <DataTableCell header priority="wide" lines={1}>{ownership.header}</DataTableCell> : null}
-                  <DataTableCell header priority="wide" lines={1} role="presentation" aria-hidden>{null}</DataTableCell>
-                  <DataTableCell header priority="wide" lines={1} role="presentation" aria-hidden>{null}</DataTableCell>
+                  {/* These two columns paint as a badge and as a caller-supplied control, so neither wants
+                      a visible name — but both carry content that IS exposed (the source badge is read
+                      out, the row control is operable). A `presentation`/`aria-hidden` header therefore
+                      left the header row one column SHORT of every body row: the badge and the control
+                      were announced in columns that had no name at all. `labelHidden` is the pair for
+                      that case — named for assistive technology, silent on screen — and it is what keeps
+                      the two rows agreeing on their column count. A column is only hidden on BOTH sides
+                      (see the chevron below), never on one. */}
+                  <DataTableCell header priority="wide" labelHidden lines={1}>{t.assetEditor.colSource}</DataTableCell>
+                  <DataTableCell header priority="wide" labelHidden lines={1}>{t.assetEditor.colOptions}</DataTableCell>
                   <DataTableCell header labelHidden lines={1}>{t.common.actions}</DataTableCell>
                   {/* The trailing chevron track: an affordance, not a column, so its header is empty. */}
                   <DataTableCell header aria-hidden lines={1}>{null}</DataTableCell>

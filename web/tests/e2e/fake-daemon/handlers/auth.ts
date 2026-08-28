@@ -7,6 +7,7 @@
 import type { Hono } from 'hono';
 import { ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_TOKEN, TOKEN_TTL_DAYS, adminUser } from '../../seed/fixtures.ts';
 import { needsSetup, addUser, listUsers } from '../setup.ts';
+import { getResponse } from '../overrides.ts';
 
 /** True when the request carries the admin bearer the BFF injects from the session cookie. */
 function isAuthed(authorization: string | undefined): boolean {
@@ -32,7 +33,12 @@ export function registerAuthRoutes(app: Hono): void {
 
   // The onboarding directory + bootstrap-admin create, open during setup (no users yet) like the real
   // route. Creating the first user flips `needsSetup` false — the moment auth re-engages upstream.
-  app.get('/users', (c) => c.json(listUsers()));
+  //
+  // `listUsers()` only ever holds what the ONBOARDING lane created, so outside that lane the directory
+  // is empty and `/users` renders its empty state — which left the users register, one of the app's core
+  // registers, measured by nothing that runs a layout engine. A spec that needs the register laid out
+  // seeds a directory with `seed.response('users', [...])`; the default is unchanged.
+  app.get('/users', (c) => c.json(getResponse('users', listUsers())));
   app.post('/users', async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { username?: unknown };
     const username = typeof body.username === 'string' ? body.username : '';

@@ -15,6 +15,9 @@ export type OverrideKey =
   | 'tasks/ready'
   | 'missions'
   | 'projects'
+  // The account directory. `listUsers()` belongs to the onboarding lane and is empty outside it, so a
+  // spec that needs the users register to lay out rather than render its empty state seeds one here.
+  | 'users'
   | 'brain/status'
   | 'brain/sessions'
   | 'brain/models'

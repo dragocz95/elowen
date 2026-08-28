@@ -245,6 +245,62 @@ test('a plugin fullscreen surface is a takeover, not a hand-rolled overlay', asy
   }
 });
 
+/** The narrowest a register's identity column may resolve to before the value that names the row stops
+ *  being readable. /memory gets 118px and /projects 102px at 320px with the three-track compact template
+ *  every core register uses, so this floor is well under the standard rather than a description of it. */
+const IDENTITY_COLUMN_FLOOR = 72;
+
+test("a plugin register still shows what names its rows at 320px", async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  // /p/stats declared a four-track compact template — `2rem minmax(0,1fr) 7rem 1.25rem`. At 320px the row
+  // has 194px of usable width and those fixed tracks plus the three gaps demand 200px, so the `1fr` track
+  // resolved to 0px: the MODEL NAME, the identity of the row, was not rendered at all. /p/cronjob had the
+  // same shape and resolved its name column to 34px, about three characters. Both are the pager defect in
+  // another place — laid out, painted, and useless — and both are invisible to every assertion that only
+  // checks that the page does not scroll sideways, because the grid absorbs the overflow silently.
+  //
+  // The measurement is of the CELL, not of the template string: a compact template that declares more
+  // tracks than the row has visible cells misaligns silently, and that shows up here as the wrong cell
+  // being measured or a starved one.
+  const armed = await seed.realPlugins();
+  const plugins = [...CORE_PLUGINS, ...REGISTRY_PLUGINS.filter((p) => p !== 'editor')].filter((p) => armed.includes(p));
+  expect(plugins, 'no plugin bundle was reachable — the fixture served nothing to measure').not.toHaveLength(0);
+
+  for (const width of [320, 390]) {
+    await app.setViewportSize({ width, height: 800 });
+    for (const plugin of plugins) {
+      await openPluginRegister(app, plugin);
+      const measured = await app.evaluate(() => {
+        const row = document.querySelector('[role="table"] [role="row"]:not(.data-table-header)');
+        if (!row) return null;
+        const cells = [...row.querySelectorAll<HTMLElement>('[role="cell"]')]
+          // The row-open cell is absolutely positioned over the whole row and claims no track.
+          .filter((cell) => !cell.classList.contains('data-table-open-cell'))
+          .filter((cell) => getComputedStyle(cell).display !== 'none');
+        // The identity is the first visible cell that actually prints something — a leading dot or glyph
+        // column carries no text of its own, and screen-reader-only text is not what the eye reads.
+        const identity = cells.find((cell) => {
+          const copy = cell.cloneNode(true) as HTMLElement;
+          copy.querySelectorAll('.sr-only').forEach((hidden) => hidden.remove());
+          return (copy.textContent ?? '').trim() !== '';
+        });
+        return {
+          tracks: getComputedStyle(row).gridTemplateColumns,
+          cells: cells.length,
+          identity: identity ? Math.round(identity.getBoundingClientRect().width) : null,
+        };
+      });
+      expect(measured, `/p/${plugin} has a register row to measure at ${width}px`).not.toBeNull();
+      // A template with more tracks than visible cells is the misalignment this contract forbids.
+      expect(measured!.tracks.split(' ').length, `/p/${plugin} declares one compact track per visible cell at ${width}px (${measured!.tracks})`)
+        .toBe(measured!.cells);
+      expect(measured!.identity, `/p/${plugin} prints the value that names its rows at ${width}px`).not.toBeNull();
+      expect(measured!.identity!, `/p/${plugin} identity column at ${width}px (tracks: ${measured!.tracks})`)
+        .toBeGreaterThanOrEqual(IDENTITY_COLUMN_FLOOR);
+    }
+  }
+});
+
 test('every plugin page is unscaled, unscrolled sideways, and names itself once', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   // The same three invariants `viewport.e2e.ts` holds for the core pages. A plugin page is reached

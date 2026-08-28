@@ -1709,6 +1709,10 @@ export const en = {
     filterBuiltin: 'Built-in',
     colName: 'Name',
     colDescription: 'Description',
+    // Named for assistive technology only: these two columns paint as a badge and as a row control, so
+    // the header stays silent on screen while the column still has a name to announce content against.
+    colSource: 'Source',
+    colOptions: 'Options',
     openRow: 'Open entry: {name}',
   },
   pluginUi: {

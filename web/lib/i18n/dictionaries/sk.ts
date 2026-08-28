@@ -1695,6 +1695,8 @@ export const sk = {
     filterBuiltin: 'Vstavané',
     colName: 'Názov',
     colDescription: 'Popis',
+    colSource: 'Zdroj',
+    colOptions: 'Možnosti',
     openRow: 'Otvoriť položku: {name}',
   },
   pluginUi: {

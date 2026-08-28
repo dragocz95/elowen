@@ -1701,6 +1701,8 @@ export const cs = {
     filterBuiltin: 'Vestavěné',
     colName: 'Název',
     colDescription: 'Popis',
+    colSource: 'Zdroj',
+    colOptions: 'Možnosti',
     openRow: 'Otevřít položku: {name}',
   },
   pluginUi: {
