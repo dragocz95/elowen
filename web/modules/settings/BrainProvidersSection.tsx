@@ -20,7 +20,7 @@ import { useUpdateConfig, useSaveBrainProviders, useBrainOauthDisconnect } from 
 import { elowenClient } from '../../lib/elowenClient';
 import type { BrainProvider, BrainProviderCompatibility, BrainProviderType, OAuthFlowState, ElowenConfig } from '../../lib/types';
 import { SettingsGroup, SettingsRow, SettingsState } from '../../components/ui/SettingsSurface';
-import { DEFAULT_PROVIDER_COMPATIBILITY, ProviderCompatibilityModal } from './ProviderCompatibilityModal';
+import { DEFAULT_PROVIDER_COMPATIBILITY, ProviderCompatibilityModal, providerCompatibilityCustomCount } from './ProviderCompatibilityModal';
 import { DomainFavicon } from './providers';
 
 // UI-only icon slug per OAuth type. The daemon exposes the SUPPORTED type set (the keys of
@@ -227,11 +227,10 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
   const selectedModels = d.models.split('\n').map((m) => m.trim()).filter(Boolean);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [compatibilityOpen, setCompatibilityOpen] = useState(false);
-  const enabledCapabilities = Object.entries(d.compatibility)
-    .filter(([key, enabled]) => key !== 'maxTokensField' && enabled === true).length;
-  const customCompatibilityCount = enabledCapabilities
-    + (d.temperature.trim() ? 1 : 0)
-    + (d.compatibility.maxTokensField === DEFAULT_PROVIDER_COMPATIBILITY.maxTokensField ? 0 : 1);
+  const customCompatibilityCount = providerCompatibilityCustomCount({
+    compatibility: d.compatibility,
+    temperature: d.temperature,
+  });
   const compatibilitySummary = customCompatibilityCount === 0
     ? t.brain.compatibility.safeDefaults
     : t.brain.compatibility.customSummary.replace('{n}', String(customCompatibilityCount));

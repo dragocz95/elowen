@@ -4,6 +4,7 @@ import { LanguageProvider } from '../../../lib/i18n';
 import {
   DEFAULT_PROVIDER_COMPATIBILITY,
   ProviderCompatibilityModal,
+  providerCompatibilityCustomCount,
   type ProviderCompatibilityValue,
 } from '../../../modules/settings/ProviderCompatibilityModal';
 
@@ -24,6 +25,14 @@ function renderModal(value = initial()) {
 }
 
 describe('ProviderCompatibilityModal', () => {
+  it('does not count enabled safe defaults as custom settings', () => {
+    expect(providerCompatibilityCustomCount(initial())).toBe(0);
+    expect(providerCompatibilityCustomCount(initial({ compatibility: {
+      ...DEFAULT_PROVIDER_COMPATIBILITY,
+      supportsLongCacheRetention: true,
+    } }))).toBe(1);
+  });
+
   it('starts from the conservative endpoint profile', () => {
     renderModal();
     expect(screen.getByText('Conservative by default')).toBeInTheDocument();
