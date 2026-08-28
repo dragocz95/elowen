@@ -29,7 +29,7 @@ import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 import { ChoiceField } from '../../components/ui/ChoiceField';
-import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { WorkspaceLeadScope, WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
@@ -59,10 +59,12 @@ function AccountPanel({ id, active, visited, children }: {
 }) {
   if (id !== active && !visited.has(id)) return null;
   return (
-    <Activity mode={id === active ? 'visible' : 'hidden'}>
-      {/* No frame of its own: the section cards inside carry the chrome, exactly as on /settings. */}
-      <MotionReveal data-account-panel={id}>{children}</MotionReveal>
-    </Activity>
+    <WorkspaceLeadScope active={id === active}>
+      <Activity mode={id === active ? 'visible' : 'hidden'}>
+        {/* No frame of its own: the section cards inside carry the chrome, exactly as on /settings. */}
+        <MotionReveal data-account-panel={id}>{children}</MotionReveal>
+      </Activity>
+    </WorkspaceLeadScope>
   );
 }
 

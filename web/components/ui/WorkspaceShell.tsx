@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
 import { useShellProfile } from '../../lib/shellProfile';
 import { PageTopBarPortal } from '../../lib/pageHeader';
@@ -84,9 +85,60 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   );
 }
 
-/** One section model, one presentation at every width: the compact rounded submenu used by Shadcn Admin.
- *  On a phone it stays horizontal and scrollable rather than changing control type, so the reader learns
- *  one section grammar and every page/plugin continues writing through the same `onChange`. */
+interface WorkspaceLeadContextValue {
+  host: HTMLElement | null;
+  ownerId: string | null;
+  claim: (id: string) => void;
+  release: (id: string) => void;
+  setHost: (host: HTMLElement | null) => void;
+}
+
+const WorkspaceLeadContext = createContext<WorkspaceLeadContextValue | null>(null);
+const WorkspaceLeadActiveContext = createContext(true);
+
+/** Retained settings/account panels stay mounted while hidden. This scope keeps their toolbars from
+ * escaping through the portal and lets only the currently visible panel compete for the page lead. */
+export function WorkspaceLeadScope({ active, children }: { active: boolean; children: ReactNode }) {
+  return <WorkspaceLeadActiveContext.Provider value={active}>{children}</WorkspaceLeadActiveContext.Provider>;
+}
+
+function WorkspaceLeadProvider({ children }: { children: ReactNode }) {
+  const [host, setHostState] = useState<HTMLElement | null>(null);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const claim = useCallback((id: string) => setOwnerId((current) => current ?? id), []);
+  const release = useCallback((id: string) => setOwnerId((current) => current === id ? null : current), []);
+  const setHost = useCallback((node: HTMLElement | null) => setHostState(node), []);
+  const value = useMemo(() => ({ host, ownerId, claim, release, setHost }), [host, ownerId, claim, release, setHost]);
+  return <WorkspaceLeadContext.Provider value={value}>{children}</WorkspaceLeadContext.Provider>;
+}
+
+function WorkspaceLeadHost() {
+  const setHost = useContext(WorkspaceLeadContext)?.setHost;
+  return <div ref={setHost} className="workspace-hero__lead" data-testid="workspace-lead-host" />;
+}
+
+/** The first mounted page-level toolbar claims the one lead position immediately above the title. A later
+ * nested toolbar stays where it belongs; if the owner unmounts (for example, switching Settings sections),
+ * the next mounted toolbar can claim the slot without every caller coordinating identities. */
+export function WorkspaceLeadPortal({ children }: { children: ReactNode }) {
+  const id = useId();
+  const context = useContext(WorkspaceLeadContext);
+  const active = useContext(WorkspaceLeadActiveContext);
+  const host = context?.host;
+  const ownerId = context?.ownerId;
+  const claim = context?.claim;
+  const release = context?.release;
+  useLayoutEffect(() => {
+    if (active && ownerId == null) claim?.(id);
+    else if (!active && ownerId === id) release?.(id);
+  }, [active, id, ownerId, claim, release]);
+  useEffect(() => () => release?.(id), [id, release]);
+  if (!active || !host || ownerId !== id) return <>{children}</>;
+  return createPortal(children, host);
+}
+
+/** One section model, one presentation at every width: a quiet underline track in the shell top bar. On a
+ * phone it stays horizontal and scrollable rather than changing control type. */
 function SectionNavigation({ sections, value, onChange, ariaLabel }: WorkspaceShellNavigation) {
   return (
     <PageTopBarPortal>
@@ -137,9 +189,9 @@ export interface WorkspaceShellProps {
  *  SpatialWorkspaceLayout / SpatialControlDeck / CompactWorkspaceHeader names are thin aliases onto it
  *  so the bundles that call them by name keep working unchanged. */
 export function WorkspaceShell({ variant = 'register', hero, navigation, children, className = '' }: WorkspaceShellProps) {
-  // WHICH section navigation, from the shell profile and nothing else. A page states its sections; it
-  // never chooses a sidebar, rail or mobile selector, so host and plugin pages stay one pattern.
-  const commandSections = useShellProfile() === 'command' && navigation;
+  // WHICH page anatomy, from the shell profile and nothing else. A page states data and controls; it never
+  // chooses a sidebar, toolbar location or mobile selector, so host and plugin pages stay one pattern.
+  const commandProfile = useShellProfile() === 'command';
   const content = (
     <section
       className="workspace-shell__content spatial-content-surface"
@@ -149,13 +201,15 @@ export function WorkspaceShell({ variant = 'register', hero, navigation, childre
     </section>
   );
 
-  if (commandSections) {
+  if (commandProfile) {
     return (
-      <div className={`workspace-shell ${className}`.trim()} data-variant={variant} data-section-layout="submenu">
-        <WorkspaceHero {...hero} />
-        <SectionNavigation {...navigation} />
-        {content}
-      </div>
+      <WorkspaceLeadProvider>
+        <div className={`workspace-shell ${className}`.trim()} data-variant={variant} data-section-layout={navigation ? 'submenu' : undefined}>
+          <WorkspaceHero {...hero} lead={<WorkspaceLeadHost />} />
+          {navigation ? <SectionNavigation {...navigation} /> : null}
+          {content}
+        </div>
+      </WorkspaceLeadProvider>
     );
   }
 

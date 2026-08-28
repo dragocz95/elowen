@@ -22,11 +22,13 @@ export interface WorkspaceHeroProps {
   /** The decorative mascot panel. `false` (the default) is the compact title block a single working
    *  surface wants; a state renders the panel and makes the hero the full register opening. */
   mascot?: SpatialMascotState | false;
-  /** WorkspaceMetric children. Supplying them opens the metric row under the title block. */
+  /** WorkspaceMetric children. Supplying them opens the metric row around the title block. */
   metrics?: ReactNode;
+  /** Shell-owned page filters promoted above the title in command-profile layouts. */
+  lead?: ReactNode;
 }
 
-export function WorkspaceHero({ eyebrow, title, count, description, status, action, icon: Icon, mascot = false, metrics }: WorkspaceHeroProps) {
+export function WorkspaceHero({ eyebrow, title, count, description, status, action, icon: Icon, mascot = false, metrics, lead }: WorkspaceHeroProps) {
   const hasMascot = mascot !== false;
   const hasBody = hasMascot || metrics != null;
   const hasActions = status != null || action != null;
@@ -52,6 +54,7 @@ export function WorkspaceHero({ eyebrow, title, count, description, status, acti
           </div>
         ) : null}
       </header>
+      {lead}
       {hasBody ? (
         <div className="workspace-hero__body">
           {hasMascot ? (

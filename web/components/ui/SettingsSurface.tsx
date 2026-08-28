@@ -2,6 +2,7 @@
 import { Children, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { HelpTip } from './HelpTip';
+import { WorkspaceLeadPortal } from './WorkspaceShell';
 
 type SettingsTone = 'default' | 'danger';
 type SettingsDensity = 'comfortable' | 'compact';
@@ -107,8 +108,9 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, st
   );
 }
 
-export function SettingsToolbar({ children }: { children: ReactNode }) {
-  return <div className="control-surface-toolbar settings-toolbar">{children}</div>;
+export function SettingsToolbar({ children, promote = true }: { children: ReactNode; promote?: boolean }) {
+  const toolbar = <div className="control-surface-toolbar settings-toolbar">{children}</div>;
+  return promote ? <WorkspaceLeadPortal>{toolbar}</WorkspaceLeadPortal> : toolbar;
 }
 
 export function SettingsState({ children, tone = 'default' }: { children: ReactNode; tone?: SettingsTone }) {

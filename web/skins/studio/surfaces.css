@@ -48,11 +48,32 @@
  * the metrics as an inline strip is the whole change, with no page forked to do it.
  * --------------------------------------------------------------------------------------------------- */
 
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero {
+  display: flex;
+  flex-direction: column;
+}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__head {
+  order: 2;
+  display: grid;
   min-height: 0;
-  align-items: flex-start;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
   gap: 0.75rem;
-  padding-block: 1.25rem 1rem;
+  padding-block: 0.75rem 1.25rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead {
+  order: 1;
+  min-width: 0;
+  padding-block: 0.75rem 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead:empty {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead .control-surface-toolbar {
+  position: static;
+  padding: 0;
+  border-radius: 0;
+  background: none;
 }
 
 /* The page's glyph reads as a drawn mark rather than a lit disc: a hairline square on the neutral ink,
@@ -101,7 +122,15 @@
   line-height: 1.5;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions {
+  width: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  justify-self: end;
   gap: 0.5rem;
+  margin-inline-start: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions > :not(.workspace-hero__status) {
+  flex: 0 1 auto;
 }
 /* The "ready"/"synchronized" pill does not paint either. Three registers pass one — a green dot with a
    glow and a word confirming that a page which has just rendered its rows did in fact load them — and
@@ -125,8 +154,10 @@
    horizontal rules within 90px of each other, none of which separated anything the reader was about to
    compare. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__body {
+  order: 0;
   display: block;
   min-height: 0;
+  padding-block: 1rem 0.25rem;
   border-top: 0;
 }
 
@@ -166,16 +197,44 @@
   font-size: 0.8125rem;
   white-space: nowrap;
 }
-/* A phone gives the masthead the least room and needs the register to start on the first screen, so the
-   rhythm above — which is already compact — tightens once more. The query is on the HERO's container,
-   like every other rule about this block: the same hero sits beside a pinned dock at a wide window. */
+/* Studio keeps page actions on the title edge instead of inheriting the spatial shell's full-width,
+   stretched button row. The phone uses one deliberate second row when text actions cannot fit beside the
+   heading; they remain right-aligned and keep their intrinsic width. */
+@container workspace-hero (width < 48rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions {
+    width: auto;
+    justify-content: flex-end;
+    margin-inline-start: 0;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions > :not(.workspace-hero__status) {
+    flex: 0 1 auto;
+  }
+}
 @container workspace-hero (width < 34rem) {
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__head {
+    grid-template-columns: auto minmax(0, 1fr);
     gap: 0.625rem;
-    padding-block: 0.875rem 0.75rem;
+    padding-block: 0.75rem 1rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__body {
+    padding-top: 0.75rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead {
+    padding-top: 0.625rem;
   }
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics {
-    gap: 0.25rem 1rem;
+    flex-wrap: nowrap;
+    gap: 1rem;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics::-webkit-scrollbar {
+    display: none;
   }
 }
 

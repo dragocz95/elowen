@@ -240,6 +240,51 @@ test('sectioned Studio pages keep plain tabs in the top bar at every width', asy
   await expect(app.locator('.workspace-shell__section-navigation [role="combobox"]')).toHaveCount(0);
 });
 
+test('Studio pages share metrics, filters, title and actions in one calm order', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await useSkin(app, seed, 'studio-oled');
+  await app.setViewportSize({ width: 1440, height: 900 });
+  await openStudio(app, REGISTER);
+  const memoryToolbar = app.locator('.workspace-hero__lead .control-surface-toolbar');
+  await expect(memoryToolbar).toBeVisible();
+  const desktopOrder = await app.evaluate(() => {
+    const body = document.querySelector<HTMLElement>('.workspace-hero__body')!.getBoundingClientRect();
+    const lead = document.querySelector<HTMLElement>('.workspace-hero__lead')!.getBoundingClientRect();
+    const head = document.querySelector<HTMLElement>('.workspace-hero__head')!.getBoundingClientRect();
+    const actions = document.querySelector<HTMLElement>('.workspace-hero__actions')!.getBoundingClientRect();
+    return { bodyTop: body.top, leadTop: lead.top, headTop: head.top, actionsRight: actions.right, headRight: head.right };
+  });
+  expect(desktopOrder.bodyTop).toBeLessThan(desktopOrder.leadTop);
+  expect(desktopOrder.leadTop).toBeLessThan(desktopOrder.headTop);
+  expect(desktopOrder.actionsRight).toBeLessThanOrEqual(desktopOrder.headRight + 1);
+
+  await app.setViewportSize({ width: 390, height: 844 });
+  await openStudio(app, '/settings?cat=models');
+  await expect(app.getByRole('heading', { level: 1, name: 'Models' })).toBeVisible();
+  await expect(app.locator('.workspace-hero__lead .settings-toolbar input[type="search"]')).toBeVisible();
+  await expect(app.locator('.workspace-hero__body')).toHaveCount(0);
+  await expect(app.locator('.workspace-hero__actions button')).toHaveCount(0);
+  const mobileOrder = await app.evaluate(() => {
+    const lead = document.querySelector<HTMLElement>('.workspace-hero__lead')!.getBoundingClientRect();
+    const head = document.querySelector<HTMLElement>('.workspace-hero__head')!.getBoundingClientRect();
+    return { leadTop: lead.top, headTop: head.top };
+  });
+  expect(mobileOrder.leadTop).toBeLessThan(mobileOrder.headTop);
+
+  await app.getByRole('radio', { name: 'System' }).click();
+  await expect(app.getByRole('heading', { level: 1, name: 'System' })).toBeVisible();
+  await expect(app.locator('.workspace-hero__lead .settings-toolbar')).toHaveCount(0);
+  await expect(app.locator('.workspace-hero__body')).toBeVisible();
+  await expect(app.locator('.workspace-hero__actions button')).toHaveCount(2);
+  const mobileActions = await app.evaluate(() => {
+    const actions = document.querySelector<HTMLElement>('.workspace-hero__actions')!.getBoundingClientRect();
+    const head = document.querySelector<HTMLElement>('.workspace-hero__head')!.getBoundingClientRect();
+    return { actionsRight: actions.right, headRight: head.right, actionsTop: actions.top, headTop: head.top };
+  });
+  expect(mobileActions.actionsRight).toBeLessThanOrEqual(mobileActions.headRight + 1);
+  expect(mobileActions.actionsTop).toBeGreaterThanOrEqual(mobileActions.headTop);
+});
+
 test('nothing on a Studio page is laid out wider than the 320px it has', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-light');

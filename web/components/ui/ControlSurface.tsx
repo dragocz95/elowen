@@ -1,4 +1,6 @@
+'use client';
 import type { HTMLAttributes, ReactNode } from 'react';
+import { WorkspaceLeadPortal } from './WorkspaceShell';
 
 export function ControlSurfaceDocument({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <section data-control-surface className={`control-surface-document ${className}`}>{children}</section>;
@@ -21,13 +23,16 @@ export function ControlSurfaceDocument({ children, className = '' }: { children:
  *  of the layout lives, and a design that wants to retune one has something to address. */
 export type ControlSurfaceToolbarLayout = 'inline' | 'split' | 'stacked';
 
-export function ControlSurfaceToolbar({ children, layout = 'inline', className = '', testId }: {
+export function ControlSurfaceToolbar({ children, layout = 'inline', className = '', testId, promote = true }: {
   children: ReactNode;
   layout?: ControlSurfaceToolbarLayout;
   className?: string;
   testId?: string;
+  /** Promote the page's primary filters above its title. Nested informational toolbars opt out. */
+  promote?: boolean;
 }) {
-  return <div className={`control-surface-toolbar ${className}`} data-layout={layout} data-testid={testId}>{children}</div>;
+  const toolbar = <div className={`control-surface-toolbar ${className}`} data-layout={layout} data-testid={testId}>{children}</div>;
+  return promote ? <WorkspaceLeadPortal>{toolbar}</WorkspaceLeadPortal> : toolbar;
 }
 
 export function ControlSurfaceRegister({ children, className = '', ...rest }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {

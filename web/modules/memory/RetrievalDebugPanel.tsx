@@ -41,7 +41,7 @@ export function RetrievalDebugPanel() {
 
   return (
     <div className="flex flex-col">
-      <ControlSurfaceToolbar>
+      <ControlSurfaceToolbar promote={false}>
         <div className="flex flex-col gap-1">
         <h2 className="text-base font-semibold text-text">{t.memory.retrievalHeading}</h2>
         <p className="text-xs text-text-muted">{t.memory.retrievalIntro}</p>

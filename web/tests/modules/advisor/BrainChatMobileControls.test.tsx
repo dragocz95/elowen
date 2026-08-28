@@ -85,13 +85,13 @@ describe('conversation bar controls', () => {
     expect(popover.textContent).not.toContain('Reasoning');
   });
 
-  it('keeps the desktop controls inline off a phone', async () => {
+  it('keeps the wide controls inline and reserves a CSS-gated overflow fallback off a phone', async () => {
     setViewport(false);
     renderSurface();
 
     expect(await screen.findByTestId('chat-thoughts-toggle')).toBeInTheDocument();
     expect(await screen.findByTestId('chat-model-picker')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'More options' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'More options' }).closest('.chat-page-toolbar__overflow')).not.toBeNull();
   });
 
   it('closes the ⋯ popover on Escape', async () => {

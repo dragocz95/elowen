@@ -34,8 +34,8 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
-import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
-import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
+import { WorkspaceLeadScope, WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { WorkspaceMetric, type WorkspaceHeroProps } from '../../components/ui/WorkspaceHero';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../components/ui/SettingsSurface';
 import { SkinsRow } from '../../modules/settings/SkinsRow';
@@ -92,11 +92,13 @@ function SettingsPanel({ id, active, visited, children }: {
 }) {
   if (id !== active && !visited.has(id)) return null;
   return (
-    <Activity mode={id === active ? 'visible' : 'hidden'}>
-      <MotionReveal data-settings-panel={id} data-constellation={ORBITAL_CATEGORIES.has(id) ? '' : undefined}>
-        <SettingsDocument>{children}</SettingsDocument>
-      </MotionReveal>
-    </Activity>
+    <WorkspaceLeadScope active={id === active}>
+      <Activity mode={id === active ? 'visible' : 'hidden'}>
+        <MotionReveal data-settings-panel={id} data-constellation={ORBITAL_CATEGORIES.has(id) ? '' : undefined}>
+          <SettingsDocument>{children}</SettingsDocument>
+        </MotionReveal>
+      </Activity>
+    </WorkspaceLeadScope>
   );
 }
 
@@ -378,8 +380,10 @@ export default function SettingsPage() {
     title: activeSection.label,
     description: activeSection.description,
     status: <AutoSaveStatus status={activeFeedback.status} onRetry={activeFeedback.retry} />,
-    mascot: (system.isError ? 'error' : systemRestart.isPending ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
-    action: (
+    // Instance health and restart actions belong to System. Repeating them over Models, Plugins or Memory
+    // made every mobile section open with unrelated controls before its own content.
+    mascot: category === 'system' ? (system.isError ? 'error' : systemRestart.isPending ? 'saving' : 'idle') as 'error' | 'saving' | 'idle' : false,
+    action: category === 'system' ? (
       <>
         <Button icon={RotateCcw} disabled={systemRestart.isPending} onClick={() => setRestartTarget('daemon')}>
           {t.settings.restartDaemon}
@@ -388,16 +392,16 @@ export default function SettingsPage() {
           {t.settings.restartWeb}
         </Button>
       </>
-    ),
-    metrics: (
+    ) : undefined,
+    metrics: category === 'system' ? (
       <>
         <WorkspaceMetric label={t.settings.version.replace('{productName}', brand.appName)} value={<span className="font-mono">{system.data?.version ?? '—'}</span>} icon={Sparkles} />
         <WorkspaceMetric label={t.settings.serviceDaemon} value={system.isError ? t.settings.serviceDown : t.settings.serviceUp} icon={Server} />
         <WorkspaceMetric label={t.settings.diagnosticMemory} value={diagnostics ? `${Math.round((diagnostics.memoryUsedBytes / diagnostics.memoryTotalBytes) * 100)} %` : '—'} icon={MemoryStick} />
         <WorkspaceMetric label={t.settings.diagnosticUptime} value={diagnostics ? formatUptime(diagnostics.uptimeSeconds) : '—'} icon={Timer} />
       </>
-    ),
-  };
+    ) : undefined,
+  } satisfies WorkspaceHeroProps;
 
   return (
     <ModuleShell moduleId="settings">
@@ -711,7 +715,7 @@ export default function SettingsPage() {
         <SettingsPanel id="brain" active={category} visited={visitedCategories}>
           
             {/* Cross-link to the model catalog (enable / context-window per model) — the Models section. */}
-            <SettingsToolbar>
+            <SettingsToolbar promote={false}>
               <button type="button" onClick={() => setCategory('models')} className="font-medium text-accent hover:underline">
                 {t.settings.brainModelsLink}
               </button>
