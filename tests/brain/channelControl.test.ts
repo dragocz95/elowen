@@ -45,7 +45,6 @@ describe('ChannelSessionService — channel-scoped slash control (stop/status/co
       model: 'kimi',
       streaming: true,
       usage: { tokens: 1200, contextWindow: 8000, percent: 15, totalTokens: 0, cost: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, outputTps: null },
-      fast: false,
       fastAvailable: false,
     });
     expect(svc.status('discord-unknown#0')).toBeNull();
