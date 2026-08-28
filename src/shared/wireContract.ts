@@ -337,6 +337,20 @@ export interface MemoryVitalityHistory {
   now: string;
 }
 
+/** Optional OpenAI Chat Completions extensions supported by one custom endpoint. Elowen defaults
+ *  every custom endpoint to the conservative request shape; the operator explicitly enables only the
+ *  extensions its provider documents. This is a daemon↔web DTO, while the runtime maps it onto pi-ai's
+ *  internal compatibility descriptor. */
+export interface BrainProviderCompatibility {
+  supportsDeveloperRole: boolean;
+  supportsLongCacheRetention: boolean;
+  supportsUsageInStreaming: boolean;
+  supportsStrictMode: boolean;
+  supportsStore: boolean;
+  supportsReasoningEffort: boolean;
+  maxTokensField: 'max_tokens' | 'max_completion_tokens';
+}
+
 /** Operator-tunable brain limits (Settings → Elowen AI → Limits): each a whole number the daemon clamps
  *  to a sane range. Served inside `ElowenConfig.brain.limits` and PATCHed back as a partial. */
 export interface BrainLimits {

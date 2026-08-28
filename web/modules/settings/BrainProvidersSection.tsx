@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ListChecks, EyeOff, Server, ShieldCheck } from 'lucide-react';
+import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ChevronRight, ListChecks, EyeOff, Server, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -18,8 +18,9 @@ import { useBrainOauthStatus, useBrainRateLimitsAll } from '../../lib/queries';
 import { OAuthUsageRail } from './OAuthUsageRail';
 import { useUpdateConfig, useSaveBrainProviders, useBrainOauthDisconnect } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
-import type { BrainProvider, BrainProviderType, OAuthFlowState, ElowenConfig } from '../../lib/types';
+import type { BrainProvider, BrainProviderCompatibility, BrainProviderType, OAuthFlowState, ElowenConfig } from '../../lib/types';
 import { SettingsGroup, SettingsRow, SettingsState } from './SettingsSurface';
+import { DEFAULT_PROVIDER_COMPATIBILITY, ProviderCompatibilityModal } from './ProviderCompatibilityModal';
 import { DomainFavicon } from './providers';
 
 // UI-only icon slug per OAuth type. The daemon exposes the SUPPORTED type set (the keys of
@@ -61,8 +62,20 @@ function isAzureResponsesProvider(provider: BrainProvider): boolean {
 
 // `temperature` is a string because the field is free text: '' means "send none", which is a distinct,
 // meaningful state rather than a missing value, and 0 is a legitimate setting.
-type Draft = { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string; apiKey: string; api: '' | 'openai-completions' | 'openai-responses'; temperature: string };
-const emptyDraft = (): Draft => ({ id: '', label: '', type: 'openai', baseUrl: '', models: '', apiKey: '', api: '', temperature: '' });
+type Draft = {
+  id: string; label: string; type: BrainProviderType; baseUrl: string; models: string; apiKey: string;
+  api: '' | 'openai-completions' | 'openai-responses'; temperature: string;
+  compatibility: BrainProviderCompatibility;
+};
+const emptyDraft = (): Draft => ({
+  id: '', label: '', type: 'openai', baseUrl: '', models: '', apiKey: '', api: '', temperature: '',
+  compatibility: DEFAULT_PROVIDER_COMPATIBILITY,
+});
+function draftUsesResponses(draft: Pick<Draft, 'api' | 'baseUrl'>): boolean {
+  if (draft.api) return draft.api === 'openai-responses';
+  try { return new URL(draft.baseUrl).hostname === 'api.openai.com'; }
+  catch { return false; }
+}
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
 
 /** How a connect dialog ended. Cancelling is a deliberate user action, not a failure, so it stays
@@ -213,8 +226,18 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
   }, [d.type, d.baseUrl, d.apiKey, d.id, isNew]);
   const selectedModels = d.models.split('\n').map((m) => m.trim()).filter(Boolean);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [compatibilityOpen, setCompatibilityOpen] = useState(false);
+  const enabledCapabilities = Object.entries(d.compatibility)
+    .filter(([key, enabled]) => key !== 'maxTokensField' && enabled === true).length;
+  const customCompatibilityCount = enabledCapabilities
+    + (d.temperature.trim() ? 1 : 0)
+    + (d.compatibility.maxTokensField === DEFAULT_PROVIDER_COMPATIBILITY.maxTokensField ? 0 : 1);
+  const compatibilitySummary = customCompatibilityCount === 0
+    ? t.brain.compatibility.safeDefaults
+    : t.brain.compatibility.customSummary.replace('{n}', String(customCompatibilityCount));
 
   return (
+    <>
     <Modal title={isNew ? t.brain.addProvider : t.brain.editProvider} icon={Server} size="md" onClose={onClose}>
       <ModalBody gap={4}>
         <Field label={t.brain.providerLabel}>
@@ -251,17 +274,34 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
             />
           </Field>
         ) : null}
-        <Field label={t.brain.temperature} hint={t.brain.temperatureHint}>
-          <Input
-            type="number"
-            min={0}
-            max={2}
-            step={0.1}
-            value={d.temperature}
-            onChange={(e) => setD({ ...d, temperature: e.target.value })}
-            placeholder={t.brain.temperaturePlaceholder}
-          />
-        </Field>
+        {d.type === 'openai' && !draftUsesResponses(d) ? (
+          <button
+            type="button"
+            onClick={() => setCompatibilityOpen(true)}
+            className="group flex w-full items-center gap-3 rounded-lg border border-border bg-bg px-3.5 py-3 text-left transition-colors hover:border-accent/40 hover:bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-elevated text-text-muted transition-colors group-hover:text-accent">
+              <SlidersHorizontal size={17} aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium text-text">{t.brain.compatibility.title}</span>
+              <span className="mt-0.5 block text-xs text-text-muted">{compatibilitySummary}</span>
+            </span>
+            <ChevronRight size={16} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent" aria-hidden />
+          </button>
+        ) : (
+          <Field label={t.brain.temperature} hint={t.brain.temperatureHint}>
+            <Input
+              type="number"
+              min={0}
+              max={2}
+              step={0.1}
+              value={d.temperature}
+              onChange={(e) => setD({ ...d, temperature: e.target.value })}
+              placeholder={t.brain.temperaturePlaceholder}
+            />
+          </Field>
+        )}
         <Field label={t.brain.models} hint={Array.isArray(probed) ? t.brain.modelsHintPicker : d.type === 'openai' ? t.brain.modelsHintAuto : t.brain.modelsHint}>
           {probed === 'loading' ? (
             <LoadingState />
@@ -301,6 +341,17 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
         <Button variant="accent" icon={Check} disabled={!valid} onClick={() => onSave({ ...d, id })}>{t.common.save}</Button>
       </ModalFooter>
     </Modal>
+    {compatibilityOpen ? (
+      <ProviderCompatibilityModal
+        value={{ compatibility: d.compatibility, temperature: d.temperature }}
+        onClose={() => setCompatibilityOpen(false)}
+        onSave={(next) => {
+          setD((current) => ({ ...current, compatibility: next.compatibility, temperature: next.temperature }));
+          setCompatibilityOpen(false);
+        }}
+      />
+    ) : null}
+    </>
   );
 }
 
@@ -386,6 +437,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
       id: d.id, label: d.label.trim(), type: d.type, baseUrl: d.baseUrl.trim(),
       models: d.models.split('\n').map((m) => m.trim()).filter(Boolean),
       ...(d.type === 'openai' && d.api ? { api: d.api } : {}),
+      ...(d.type === 'openai' ? { compatibility: d.compatibility } : {}),
       ...(d.apiKey.trim() ? { apiKey: d.apiKey.trim() } : {}),
       ...(temperature ? { temperature: parsed } : {}),
     };
@@ -522,7 +574,11 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
                         {verifyingProvider === p.id ? t.brain.hostedSearchVerifying : t.brain.hostedSearchVerify}
                       </Button>
                     ) : null}
-                    <Button variant="ghost" icon={Pencil} aria-label={`${t.brain.editProvider}: ${p.label}`} onClick={() => setModal({ id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, models: p.models.join('\n'), apiKey: '', api: p.api ?? '', temperature: p.temperature === undefined ? '' : String(p.temperature) })} />
+                    <Button variant="ghost" icon={Pencil} aria-label={`${t.brain.editProvider}: ${p.label}`} onClick={() => setModal({
+                      id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, models: p.models.join('\n'),
+                      apiKey: '', api: p.api ?? '', temperature: p.temperature === undefined ? '' : String(p.temperature),
+                      compatibility: p.compatibility ?? DEFAULT_PROVIDER_COMPATIBILITY,
+                    })} />
                     <Button variant="ghost" icon={Trash2} aria-label={`${t.brain.removeProvider}: ${p.label}`} onClick={() => setRemoveTarget(p.id)} />
                     </>
                   )}

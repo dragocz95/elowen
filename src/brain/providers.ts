@@ -5,7 +5,8 @@ import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { BRAIN_REGISTRY_PROVIDER_PREFIX } from '../shared/execs.js';
 import { trimTrailingSlash } from '../shared/url.js';
 import { installOpenRouterMeter } from './openrouterMeter.js';
-import type { BrainProviderType, BrainProviderApi } from '../store/configStore.js';
+import { DEFAULT_OPENAI_COMPATIBILITY, type BrainProviderType, type BrainProviderApi } from '../store/configStore.js';
+import type { BrainProviderCompatibility } from '../shared/wireContract.js';
 import { catalogModelCost, catalogModelVision, descriptorCapabilities } from './modelCapabilities.js';
 
 /** One brain model provider, daemon-side (API key included). `openai`/`anthropic` register a custom
@@ -20,6 +21,9 @@ export interface BrainProviderEntry {
   /** Wire-API override for `openai`-type entries (Responses vs Chat Completions). Absent → auto,
    *  see {@link openAiApiFor}. */
   api?: BrainProviderApi;
+  /** Explicit Chat Completions capabilities. Custom endpoints default to the conservative block; the
+   *  runtime maps these product-level controls onto pi-ai's provider compatibility descriptor. */
+  compatibility?: BrainProviderCompatibility;
   /** How this entry authenticates — drives the picker's provenance badge (OAuth account vs API key vs
    *  relay endpoint). Set by `brainConfigFromElowen`; absent reads as 'api-key'. */
   origin?: 'api-key' | 'oauth' | 'relay';
@@ -173,14 +177,14 @@ export const DEFAULT_CONTEXT_WINDOW = 200_000;
  *  still accepts it), so Chat-Completions entries pin it rather than gamble. Same conservatism as
  *  `openAiApiFor` keeping relays on Chat Completions, and `modelCapabilities` withholding a speculative
  *  `reasoning_effort`. The official OpenAI endpoint is unaffected: it registers as `openai-responses`. */
-const RELAY_SAFE_COMPAT = { supportsDeveloperRole: false } as const;
-
-/** Whether a provider entry needs the relay-safe compat above. Asked here by EVERY caller that registers
- *  a provider, because registerProvider REPLACES the provider on the shared runtime — a caller computing
- *  this differently would strip `system`-role safety for every session on that provider, not just its
- *  own. Only plain Chat-Completions entries need it; `openai-responses` and Anthropic do not. */
-function relaySafeCompatFor(entry: Pick<BrainProviderEntry, 'type' | 'api' | 'baseUrl'>): typeof RELAY_SAFE_COMPAT | undefined {
-  return entry.type === 'openai' && openAiApiFor(entry) === 'openai-completions' ? RELAY_SAFE_COMPAT : undefined;
+/** Compatibility is explicit for every custom Chat Completions endpoint. The safe baseline avoids
+ *  provider-specific OpenAI extensions; an operator may opt into each documented capability in Settings.
+ *  Responses and Anthropic use their own wire contracts and keep pi-ai's native compatibility handling. */
+function openAiCompatibilityFor(
+  entry: Pick<BrainProviderEntry, 'type' | 'api' | 'baseUrl' | 'compatibility'>,
+): Model<Api>['compat'] | undefined {
+  if (entry.type !== 'openai' || openAiApiFor(entry) !== 'openai-completions') return undefined;
+  return { ...DEFAULT_OPENAI_COMPATIBILITY, ...entry.compatibility };
 }
 
 function modelEntry(provider: string, id: string, contextWindow?: number, compat?: Model<Api>['compat']) {
@@ -239,7 +243,7 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, runtime: ModelRuntim
   for (const p of cfg.providers) {
     if (p.type === 'openai') {
       const api = openAiApiFor(p);
-      const compat = relaySafeCompatFor(p);
+      const compat = openAiCompatibilityFor(p);
       registry.registerProvider(registryProviderName(p), {
         name: p.label,
         api,
@@ -333,8 +337,8 @@ function resolveEntryModel(
   if (entry.type === 'openai' || entry.type === 'anthropic') {
     // Not in the advertised list — register it ad hoc so a hand-typed model id still works. The compat
     // comes from the same helper buildBrainRegistry uses, so the two registration paths cannot decide it
-    // differently (see relaySafeCompatFor for why that would reach beyond this session).
-    const compat = relaySafeCompatFor(entry);
+    // differently (the shared registry makes a mismatch affect every session on this provider).
+    const compat = openAiCompatibilityFor(entry);
     registry.registerProvider(providerName, {
       name: entry.label,
       api: entry.type === 'openai' ? openAiApiFor(entry) : 'anthropic-messages',

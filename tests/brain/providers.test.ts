@@ -162,10 +162,35 @@ describe('brain providers', () => {
     const reg = buildBrainRegistry(relay, runtime);
     const reasoner = resolveBrainModel(reg, relay, { provider: 'relay', model: 'oe-deepseek-v4-flash' });
     expect(reasoner.reasoning).toBe(true); // the trigger: only reasoning models take the developer path
-    expect(reasoner.compat?.supportsDeveloperRole).toBe(false);
+    expect(reasoner.compat).toMatchObject({
+      supportsDeveloperRole: false,
+      supportsLongCacheRetention: false,
+      supportsUsageInStreaming: true,
+      supportsStrictMode: false,
+      supportsStore: false,
+      supportsReasoningEffort: false,
+      maxTokensField: 'max_completion_tokens',
+    });
     // Pinned for every model on the entry, so enabling reasoning on one later can't resurrect the 400.
     const chat = resolveBrainModel(reg, relay, { provider: 'relay', model: 'plain-chat-model' });
     expect(chat.compat?.supportsDeveloperRole).toBe(false);
+  });
+
+  it('honours explicit compatibility capabilities for an endpoint that implements OpenAI extensions', () => {
+    const provider: BrainRuntimeConfig = { providers: [{
+      id: 'extended', label: 'Extended', type: 'openai', baseUrl: 'https://extended.example.test/v1',
+      models: ['model'], apiKey: 'k', compatibility: {
+        supportsDeveloperRole: true,
+        supportsLongCacheRetention: true,
+        supportsUsageInStreaming: false,
+        supportsStrictMode: true,
+        supportsStore: true,
+        supportsReasoningEffort: true,
+        maxTokensField: 'max_tokens',
+      },
+    }] };
+    const model = resolveBrainModel(buildBrainRegistry(provider, runtime), provider, { provider: 'extended', model: 'model' });
+    expect(model.compat).toMatchObject(provider.providers[0]!.compatibility!);
   });
 
   it('leaves the official OpenAI endpoint on its native developer-role semantics', () => {
