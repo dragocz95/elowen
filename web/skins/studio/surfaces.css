@@ -15,50 +15,37 @@
  */
 
 /* ---------------------------------------------------------------------------------------------------
- * The page bar (components/shell/TopBar.tsx).
+ * The page frame.
  *
- * The one piece of chrome on every route, and the last thing still speaking ember: a pill-shaped,
- * blurred cluster of pill-shaped buttons over a translucent canvas wash. None of it survives the
- * translation — `rounded-full` is 999px and no token reaches it, so Studio's 6/8/12 scale never applied,
- * and `bg-bg/45` is a near-white wash on a near-white page, i.e. nothing at all.
- * Studio draws it the way it draws every other container: one hairline, one opaque surface, no blur.
+ * The page bar is no longer restated here. It used to be: the built-in design's chrome is a pill-shaped,
+ * blurred cluster of pill-shaped buttons floating over the canvas, and this file undid it declaration by
+ * declaration — a border-radius against a `rounded-full`, an opaque background against a `bg-bg/45`
+ * wash, `backdrop-filter: none` against a `backdrop-blur-xl`. Four rules undoing four rules is not a
+ * design decision, it is a fight, and whichever side is edited next the two drift apart.
+ * The bar is now a typed variant of the component (`TopBar variant="bar"`), chosen from the shell
+ * profile, so the markup that ships IS the bar: 48px, sticky, one rule, a breadcrumb on the left and
+ * ghost controls on the right. Nothing is left here to override.
+ *
+ * The gutter is the one page-frame value Studio still states, because it is a NUMBER rather than an
+ * arrangement: 24px, once, on the shell's own inset — and the shell wrapper's 8px is given back so the
+ * page has one gutter rather than the sum of two.
  * --------------------------------------------------------------------------------------------------- */
 
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__actions {
-  gap: 0.125rem;
-  padding: 0.1875rem;
-  border-color: var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface);
-  backdrop-filter: none;
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) {
+  --shell-gutter: 1.5rem;
 }
-/* Every control inside the cluster follows the same radius — except the identity link, which frames a
-   circular avatar and would otherwise put a rounded-rectangle focus ring around a disc. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__actions :is(a, button):not(.top-bar__identity) {
-  border-radius: var(--radius-sm);
-}
-/* The sheet's opener. The accent is spent on state in this design, never on a hover, so it reads as the
-   neutral wash every other control uses. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__menu {
-  border-color: var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  backdrop-filter: none;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__menu:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-elevated);
-  color: var(--color-text);
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-content {
+  padding-inline: 0;
 }
 
 /* ---------------------------------------------------------------------------------------------------
  * The masthead (components/ui/WorkspaceHero.tsx).
  *
  * Every route composes WorkspaceShell, which hard-mounts the hero, so Studio cannot simply not render
- * one — and would not want to: the eyebrow, title, description and actions ARE the masthead it wants.
- * What it does not want is the furniture around them. The hero already renders each part as its own
- * element and pages already pass them as props, so compacting the rhythm, dropping the decorative panel
- * and reading the metrics as an inline strip is the whole change, with no page forked to do it.
+ * one — and would not want to: the title, description and actions ARE the masthead it wants. What it
+ * does not want is the furniture around them. The hero already renders each part as its own element and
+ * pages already pass them as props, so compacting the rhythm, dropping the decorative panel and reading
+ * the metrics as an inline strip is the whole change, with no page forked to do it.
  * --------------------------------------------------------------------------------------------------- */
 
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__head {
@@ -84,35 +71,45 @@
   height: 0.875rem;
 }
 
-/* The eyebrow is a breadcrumb, not a banner: mono, subtle, and never the accent — in this design the
-   accent means "live" and is spent on state, not on decoration. */
+/* The eyebrow does not paint. It named the reader's location — "Usage telemetry", "Account directory" —
+   in 9px uppercase mono over the title, which is exactly what the page bar's breadcrumb now says one
+   row above, in sentence case, as real navigation. Two answers to "where am I" a centimetre apart is one
+   too many, and the eyebrow is the one that cannot be clicked. It stays in the DOM because a page
+   states it as a prop and Studio forks no page. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__eyebrow {
-  margin-bottom: 0.25rem;
-  color: var(--color-text-subtle);
-  font-size: 0.5625rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+  display: none;
 }
+/* 24px at 600. A fixed size rather than a fluid clamp: this title sits under a breadcrumb inside a
+   capped column, so there is no window width it needs to grow into, and a heading that changes size
+   with the dock is a heading that never quite matches the one on the page beside it. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero h1 {
-  font-size: clamp(1.125rem, 0.95rem + 0.75cqi, 1.5rem);
+  font-size: 1.5rem;
   font-weight: 600;
   letter-spacing: -0.02em;
-  line-height: 1.2;
+  line-height: 1.25;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__count {
   color: var(--color-text-subtle);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
 }
 /* Full-width page, capped MEASURE: --content-max stays the single width authority for the shell, and
    this is a reading limit on one paragraph, in characters, which is a different thing. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__description {
-  max-width: min(100%, 62ch);
+  max-width: min(100%, 68ch);
   margin-top: 0.375rem;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions {
   gap: 0.5rem;
+}
+/* The "ready"/"synchronized" pill does not paint either. Three registers pass one — a green dot with a
+   glow and a word confirming that a page which has just rendered its rows did in fact load them — and
+   it is the only element in the masthead that says nothing the reader cannot already see. It is a page
+   prop like the eyebrow, so it is withheld here rather than removed from three modules; the dashboard's
+   status slot carries a CLOCK, which is a real fact, and is deliberately untouched. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-status {
+  display: none;
 }
 
 /* The decorative panel belongs to the ember identity. It stays in the DOM — a page states its mascot as
@@ -239,22 +236,26 @@
    --color-document, so it follows the variant instead of being a fixed tint: on the light canvas it
    resolves to a solid paper grey (#f0f0f0), on OLED to a solid near-black (#141414).
    Being derived, it is LIGHTER than --color-elevated on the light variant, which makes it that palette's
-   worst surface rather than the one the token block was tuned against — the column names are 10px
-   uppercase mono, so nothing here is large text and the whole ramp has to clear 4.5:1 on it. Both skins
-   state their measurement against this token, and tests/lib/designTokens.test.ts now measures it. */
+   worst surface rather than the one the token block was tuned against, so the whole text ramp has to
+   clear 4.5:1 on it. Both skins state their measurement against this token, and
+   tests/lib/designTokens.test.ts measures it. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header {
-  border-bottom-color: var(--color-border-strong);
+  border-bottom-color: var(--color-border);
   background: var(--color-surface-sticky);
 }
+/* A column name is a NAME. It was set as 10px mono at 0.1em of tracking — a treatment for a machine
+   identifier, applied to the words "Created" and "Owner" — which is what made every register read as a
+   log dump. 12px, medium, sentence case, in the sans the rest of the page is set in. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header .data-table-cell {
-  color: var(--color-text-subtle);
-  font-family: var(--font-mono);
-  font-size: 0.625rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
   font-weight: 500;
-  letter-spacing: 0.1em;
+  letter-spacing: normal;
+  text-transform: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-cell {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 
 /* State is a change of ground, never a coloured block: a neutral wash under the pointer, the signal
@@ -273,16 +274,21 @@
  * the element so every design gets one; these rules are Studio's reading of it.
  * --------------------------------------------------------------------------------------------------- */
 
+/* A field label names the thing you are about to type into, so it is set like a label and not like a
+   category header: 14px medium in full ink, sentence case. The base carries `uppercase tracking-wide` as
+   utilities on the element, which this rule outranks (the stylesheet tree is unlayered) — hence the
+   explicit `none`/`normal` rather than simply not saying anything. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .field__label {
-  color: var(--color-text-subtle);
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .field__description {
-  max-width: min(100%, 62ch);
+  max-width: min(100%, 68ch);
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .field__error {
   color: var(--color-danger);

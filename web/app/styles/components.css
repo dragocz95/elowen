@@ -9,6 +9,7 @@
 @import "./components/chat.css";
 @import "./components/data-table.css";
 @import "./components/spatial-deck.css";
+@import "./components/page-bar.css";
 @import "./components/workspace-shell.css";
 @import "./components/control-surface.css";
 @import "./components/workspace-hero.css";

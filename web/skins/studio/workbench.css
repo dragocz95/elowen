@@ -86,6 +86,15 @@
   gap: 0.35rem;
   padding: 0;
 }
+/* And the statistic's NAME reads as a name. chat.css sets it 9.6px uppercase at 0.08em — a caption
+   treatment that turns "messages" into a label on a dial. Studio spends monospace on data alone, and
+   nothing on decoration. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-hero__metrics .workspace-metric__label {
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
 
 /* The transcript keeps the top fade clear of the first turn and hands the rest of the height to the
    conversation. */

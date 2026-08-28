@@ -144,6 +144,7 @@ export const cs = {
     kill: 'Ukončit',
     appName: '{productName}',
     primaryNav: 'Hlavní',
+    breadcrumb: 'Drobečková navigace',
     expand: 'Rozbalit',
     collapse: 'Sbalit',
     collapseNav: 'Sbalit navigaci na ikony',

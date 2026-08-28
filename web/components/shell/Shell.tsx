@@ -146,7 +146,8 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // live conversation, along with the scroll position, any open modal and every in-flight form on the
   // page. The two navigations therefore take the same props from the same state, and the swapped subtree
   // holds nothing but its own disposable presentation state.
-  const navigation = shellProfileFor(skin) === 'command'
+  const profile = shellProfileFor(skin);
+  const navigation = profile === 'command'
     ? <StudioNavigation {...navProps} />
     : <OrbitalNav {...navProps} />;
   const content = (
@@ -182,16 +183,24 @@ function ShellLayout({ children }: { children: ReactNode }) {
               query the hook runs — reopening exactly the gap with no bar and no back link that this
               suppression exists to avoid. */}
           <div className={onChat ? 'max-[767px]:hidden' : undefined}>
+            {/* WHICH page chrome, decided from the shell profile and nothing else — the same seam the
+                navigation is swapped on, so a design's frame and its menu can never disagree, and no
+                component below has to recognise a skin by name. `command` gets the ruled 48px bar with a
+                breadcrumb; the built-in design keeps its frameless floating cluster. */}
             <TopBar
               onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
               showLocation={false}
+              variant={profile === 'command' ? 'bar' : 'floating'}
             />
           </div>
           {/* The launcher floats over the bottom-right corner of this scroller, so the last thing on a
               page must not end underneath it. The clearance is the same `--fab-clearance` the toast dock
               composes (styles/components/primitives.css), and it is spent only while the launcher is
               actually mounted — the condition below is the same one that renders it. */}
-          <div className="px-2" style={{ paddingBottom: launcherVisible ? 'var(--fab-clearance)' : '2rem' }}>
+          {/* Named so a design can state its own gutter here. The 8px inset is the built-in design's:
+              it sits OUTSIDE `.workspace-shell`, which carries `--shell-gutter` of its own, so the two
+              add up and a design wanting one exact gutter has to be able to reach this one. */}
+          <div className="shell-content px-2" style={{ paddingBottom: launcherVisible ? 'var(--fab-clearance)' : '2rem' }}>
             <RouteTransition>{children}</RouteTransition>
           </div>
         </div>

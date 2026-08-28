@@ -148,6 +148,7 @@ export const en = {
     kill: 'Kill',
     appName: '{productName}',
     primaryNav: 'Primary',
+    breadcrumb: 'Breadcrumb',
     expand: 'Expand',
     collapse: 'Collapse',
     collapseNav: 'Collapse navigation to icons',

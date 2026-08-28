@@ -144,6 +144,7 @@ export const sk = {
     kill: 'Ukončiť',
     appName: '{productName}',
     primaryNav: 'Hlavné',
+    breadcrumb: 'Navigačná cesta',
     expand: 'Rozbaliť',
     collapse: 'Zbaliť',
     collapseNav: 'Zbaliť navigáciu na ikony',
