@@ -29,6 +29,8 @@ export interface BrainProvider {
   models: string[];
   /** Wire API for `openai`-type entries. Absent = auto (api.openai.com → Responses, else Completions). */
   api?: 'openai-completions' | 'openai-responses';
+  /** Explicit Chat Completions capabilities. Present on every OpenAI-compatible provider returned by the daemon. */
+  compatibility?: BrainProviderCompatibility;
   apiKeySet: boolean;
   /** Sampling temperature. Absent = the field is not sent and the model's own default applies. */
   temperature?: number;
@@ -69,7 +71,7 @@ export interface BrainSearchHit { sessionId: string; sessionTitle: string; role:
 import type {
   ToolOutputView, BrainWorkflowView, BrainMessageView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainStreamControl,
   BrainWorkMode, BrainPendingPlan,
-  User, BrainLimits, RuntimeConfig as WireRuntimeConfig, RuntimeLimits, ToolDeferralOverrides, BrainUsage, MemoryRow, MemoryCategoryRow, MemoryEventRow, BrainGoalState,
+  User, BrainLimits, BrainProviderCompatibility, RuntimeConfig as WireRuntimeConfig, RuntimeLimits, ToolDeferralOverrides, BrainUsage, MemoryRow, MemoryCategoryRow, MemoryEventRow, BrainGoalState,
   MemoryVitalityHistory,
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
@@ -78,7 +80,7 @@ import type {
 } from '../../src/shared/wireContract.js';
 export type { PlatformLinkKey, PlatformSurface };
 // `BrainStreamControl` is only referenced by the snapshot frame below, so it is imported but not re-exported.
-export type { ToolOutputView, BrainWorkflowView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, RuntimeLimits, BrainUsage, CommitFileChange, CommitLogEntry };
+export type { ToolOutputView, BrainWorkflowView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, BrainProviderCompatibility, RuntimeLimits, BrainUsage, CommitFileChange, CommitLogEntry };
 export type {
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,

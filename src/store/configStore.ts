@@ -3,7 +3,7 @@ import { stripControlChars } from '../shared/text.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, execRefSpec, isAllowedExec, parseExecRef } from '../shared/execs.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../shared/hostedToolSearchProtocol.js';
-import { type BrainLimits, type HostedToolSearchCapabilities, type HostedToolSearchCapability, type RuntimeConfig, type RuntimeLimits, type ToolDeferralOverrides } from '../shared/wireContract.js';
+import { type BrainLimits, type BrainProviderCompatibility, type HostedToolSearchCapabilities, type HostedToolSearchCapability, type RuntimeConfig, type RuntimeLimits, type ToolDeferralOverrides } from '../shared/wireContract.js';
 import { DEFAULT_MEMORY_RETENTION, type MemoryRetentionConfig } from '../brain/memoryVitality.js';
 
 // The brain-limits shape is the daemon↔web wire contract (Settings → Elowen AI → Limits) — defined
@@ -107,6 +107,18 @@ export type BrainProviderType = 'openai' | 'anthropic' | 'oauth-anthropic' | 'oa
  *  ubiquitous Chat Completions. */
 export type BrainProviderApi = 'openai-completions' | 'openai-responses';
 
+/** Safe baseline for an arbitrary OpenAI-compatible Chat Completions endpoint. Optional OpenAI
+ *  extensions are fail-closed: the operator enables only what that endpoint documents. */
+export const DEFAULT_OPENAI_COMPATIBILITY: BrainProviderCompatibility = {
+  supportsDeveloperRole: false,
+  supportsLongCacheRetention: false,
+  supportsUsageInStreaming: true,
+  supportsStrictMode: false,
+  supportsStore: false,
+  supportsReasoningEffort: false,
+  maxTokensField: 'max_completion_tokens',
+};
+
 interface BrainProviderPublic {
   id: string;
   label: string;
@@ -115,6 +127,7 @@ interface BrainProviderPublic {
   /** Models offered in the picker. For `openai` providers an empty list means "auto-fetch /models". */
   models: string[];
   api?: BrainProviderApi;
+  compatibility?: BrainProviderCompatibility;
   apiKeySet: boolean;
   /** Not a secret — the operator set it and needs to see it back. See BrainProviderStored.temperature. */
   temperature?: number;
@@ -123,11 +136,30 @@ interface BrainProviderPublic {
 interface BrainProviderStored {
   id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[];
   api?: BrainProviderApi;
+  compatibility?: BrainProviderCompatibility;
   apiKey: string | null;
   /** Sampling temperature for this endpoint. Absent → the field is never sent and the model's own default
    *  applies, which is the only safe default: some models accept nothing else (Kimi K3 answers
    *  `only 1 is allowed for this model`, Claude Opus 4.7+ rejects non-default values too). */
   temperature?: number;
+}
+
+/** A malformed capability falls back independently to the conservative baseline. One typo must not
+ *  silently enable a different OpenAI extension, and unknown fields never reach the provider runtime. */
+function sanitizeOpenAiCompatibility(input: unknown): BrainProviderCompatibility {
+  const value = input && typeof input === 'object' ? input as Partial<Record<keyof BrainProviderCompatibility, unknown>> : {};
+  const flag = (key: Exclude<keyof BrainProviderCompatibility, 'maxTokensField'>): boolean =>
+    typeof value[key] === 'boolean' ? value[key] : DEFAULT_OPENAI_COMPATIBILITY[key];
+  return {
+    supportsDeveloperRole: flag('supportsDeveloperRole'),
+    supportsLongCacheRetention: flag('supportsLongCacheRetention'),
+    supportsUsageInStreaming: flag('supportsUsageInStreaming'),
+    supportsStrictMode: flag('supportsStrictMode'),
+    supportsStore: flag('supportsStore'),
+    supportsReasoningEffort: flag('supportsReasoningEffort'),
+    maxTokensField: value.maxTokensField === 'max_tokens' || value.maxTokensField === 'max_completion_tokens'
+      ? value.maxTokensField : DEFAULT_OPENAI_COMPATIBILITY.maxTokensField,
+  };
 }
 
 /** Keep only well-formed brain provider entries; drop anything with a missing id/type so a loose PUT
@@ -153,8 +185,10 @@ function sanitizeBrainProviders(input: unknown): BrainProviderStored[] {
       type: p.type as BrainProviderType,
       baseUrl: typeof p.baseUrl === 'string' ? p.baseUrl : '',
       models: Array.isArray(p.models) ? p.models.filter((m): m is string => typeof m === 'string' && !!m) : [],
-      // Wire-API override is only meaningful for openai-type entries; anything else drops to auto.
+      // Wire-API and compatibility settings are meaningful only for OpenAI-type entries. Compatibility
+      // is stored as a fully-resolved block, so the runtime and UI never infer different defaults.
       ...(p.type === 'openai' && (p.api === 'openai-responses' || p.api === 'openai-completions') ? { api: p.api } : {}),
+      ...(p.type === 'openai' ? { compatibility: sanitizeOpenAiCompatibility(p.compatibility) } : {}),
       // Out-of-range or non-finite drops the field entirely rather than clamping: sending a temperature we
       // invented is worse than sending none, since "none" is a valid, working request everywhere.
       ...(typeof p.temperature === 'number' && Number.isFinite(p.temperature) && p.temperature >= 0 && p.temperature <= 2
@@ -1189,7 +1223,7 @@ export class ConfigStore {
   categorizationConfig(): CategorizationBlock { return this.read().categorization; }
 
   /** Daemon-side brain provider list including plaintext API keys. Never routed to any client. */
-  brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; api?: BrainProviderApi; apiKey: string | null }[] {
+  brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; api?: BrainProviderApi; compatibility?: BrainProviderCompatibility; apiKey: string | null; temperature?: number }[] {
     return this.read().brain.providers;
   }
 

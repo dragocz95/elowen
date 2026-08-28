@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
-import { ConfigStore } from '../../src/store/configStore.js';
+import { ConfigStore, DEFAULT_OPENAI_COMPATIBILITY } from '../../src/store/configStore.js';
 
 const entry = { id: 'relay', label: 'CoreSynth', type: 'openai', baseUrl: 'https://ai.example/v1', models: ['m1'], apiKey: 'sek' };
 
@@ -14,7 +14,10 @@ describe('ConfigStore brain providers', () => {
     const cs = new ConfigStore(openDb(':memory:'));
     cs.update({ brain: { providers: [entry] } });
     expect(cs.get().brain.providers).toEqual([
-      { id: 'relay', label: 'CoreSynth', type: 'openai', baseUrl: 'https://ai.example/v1', models: ['m1'], apiKeySet: true },
+      {
+        id: 'relay', label: 'CoreSynth', type: 'openai', baseUrl: 'https://ai.example/v1', models: ['m1'],
+        compatibility: DEFAULT_OPENAI_COMPATIBILITY, apiKeySet: true,
+      },
     ]);
     expect(JSON.stringify(cs.get())).not.toContain('sek');
     expect(cs.brainProviders()[0]?.apiKey).toBe('sek');
@@ -232,6 +235,51 @@ describe('brain provider wire-API (api) round-trip', () => {
     const cs = new ConfigStore(openDb(':memory:'));
     cs.update({ brain: { providers: [{ id: 'kimi-coding', label: 'Kimi account', type: 'oauth-kimi', baseUrl: '', models: [], apiKey: null }] } });
     expect(cs.get().brain.providers.map((p) => p.type)).toEqual(['oauth-kimi']);
+  });
+
+  describe('OpenAI compatibility', () => {
+    it('defaults custom endpoints to the conservative request shape', () => {
+      const cs = new ConfigStore(openDb(':memory:'));
+      cs.update({ brain: { providers: [entry] } });
+      expect(cs.brainProviders()[0]?.compatibility).toEqual(DEFAULT_OPENAI_COMPATIBILITY);
+    });
+
+    it('round-trips explicit capabilities and sanitizes invalid fields independently', () => {
+      const cs = new ConfigStore(openDb(':memory:'));
+      cs.update({ brain: { providers: [{ ...entry, compatibility: {
+        supportsDeveloperRole: true,
+        supportsLongCacheRetention: true,
+        supportsUsageInStreaming: false,
+        supportsStrictMode: true,
+        supportsStore: true,
+        supportsReasoningEffort: true,
+        maxTokensField: 'max_tokens',
+        ignored: true,
+      } }] } });
+      expect(cs.brainProviders()[0]?.compatibility).toEqual({
+        supportsDeveloperRole: true,
+        supportsLongCacheRetention: true,
+        supportsUsageInStreaming: false,
+        supportsStrictMode: true,
+        supportsStore: true,
+        supportsReasoningEffort: true,
+        maxTokensField: 'max_tokens',
+      });
+
+      cs.update({ brain: { providers: [{ ...entry, compatibility: {
+        supportsDeveloperRole: 'yes', maxTokensField: 'wrong',
+      } }] } });
+      expect(cs.brainProviders()[0]?.compatibility).toEqual(DEFAULT_OPENAI_COMPATIBILITY);
+    });
+
+    it('drops compatibility settings from non-OpenAI providers', () => {
+      const cs = new ConfigStore(openDb(':memory:'));
+      cs.update({ brain: { providers: [{
+        id: 'ant', label: 'Anthropic', type: 'anthropic', baseUrl: '', models: ['claude'],
+        compatibility: { ...DEFAULT_OPENAI_COMPATIBILITY, supportsLongCacheRetention: true },
+      }] } });
+      expect(cs.brainProviders()[0]).not.toHaveProperty('compatibility');
+    });
   });
 
   describe('temperature', () => {
