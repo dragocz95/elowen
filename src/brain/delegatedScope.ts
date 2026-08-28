@@ -4,6 +4,7 @@ import {
   type NoninteractivePermissionBoundary,
 } from './toolPermissions.js';
 import { buildReadOnlyBoundary } from './agents/readOnlyBoundary.js';
+import type { SandboxWorkspaceRef } from '../plugins/workspaceTypes.js';
 
 /**
  * The immutable execution boundary minted for a delegated child.  A child is a durable conversation:
@@ -40,6 +41,9 @@ export interface DelegatedExecutionScope {
    * legacy rows; absence fails closed to instance contributions/base Project roots rather than guessing the
    * durable session owner. */
   contributionUserId?: number;
+  /** Explicit Sandbox worktree assigned by the delegating turn. The durable scope stores only this
+   * ownership tuple; every process resolves the canonical host path through Sandbox immediately before use. */
+  workspaceRef?: SandboxWorkspaceRef;
 }
 
 const MAX_PROJECT_IDS = 10_000;
@@ -148,6 +152,18 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     if (!Number.isSafeInteger(value.contributionUserId) || (value.contributionUserId as number) <= 0) return undefined;
     contributionUserId = value.contributionUserId as number;
   }
+  let workspaceRef: SandboxWorkspaceRef | undefined;
+  if (own(value, 'workspaceRef')) {
+    const rawWorkspace = value.workspaceRef;
+    if (!rawWorkspace || typeof rawWorkspace !== 'object' || Array.isArray(rawWorkspace)) return undefined;
+    const workspace = rawWorkspace as Record<string, unknown>;
+    if (typeof workspace.workspaceId !== 'string' || !workspace.workspaceId.trim()
+      || workspace.workspaceId.length > 128
+      || !Number.isSafeInteger(workspace.projectId) || (workspace.projectId as number) <= 0) return undefined;
+    workspaceRef = { workspaceId: workspace.workspaceId.trim(), projectId: workspace.projectId as number };
+    if (!value.admin && !canonicalProjectIds.includes(workspaceRef.projectId)) return undefined;
+    if (contributionUserId === undefined) return undefined;
+  }
 
   return {
     admin: value.admin,
@@ -159,6 +175,7 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     ...(readOnlyOrigin ? { readOnlyOrigin } : {}),
     ...(spawnedBy ? { spawnedBy } : {}),
     ...(contributionUserId !== undefined ? { contributionUserId } : {}),
+    ...(workspaceRef ? { workspaceRef } : {}),
   };
 }
 
@@ -210,6 +227,8 @@ export interface DelegatingTurnAccess {
   principal?: string;
   /** Account whose owner-scoped contributions and Sandbox state this turn carries. */
   contributionUserId?: number | null;
+  /** Present only inside a child already narrowed to an explicitly assigned Sandbox workspace. */
+  workspaceRef?: SandboxWorkspaceRef;
 }
 
 /** Whether a PERSISTED child scope grants more than the delegating turn holds right now — returns the
@@ -241,6 +260,13 @@ export function scopeExceedsCurrentAccess(
   if (scope.owner && !access.owner) return 'it carries owner authority and this conversation does not';
   if (scope.contributionUserId !== undefined && scope.contributionUserId !== access.contributionUserId) {
     return 'it belongs to a different account contributor than the current turn';
+  }
+  if (access.workspaceRef) {
+    if (!scope.workspaceRef) return 'it is not confined to this turn’s Sandbox workspace';
+    if (scope.workspaceRef.workspaceId !== access.workspaceRef.workspaceId
+      || scope.workspaceRef.projectId !== access.workspaceRef.projectId) {
+      return 'it is confined to a different Sandbox workspace';
+    }
   }
   const callerAllow = access.toolPolicy?.allow;
   if (callerAllow) {
@@ -311,6 +337,7 @@ export function promoteDelegatedScope(
     ...(scope.promptAppend ? { promptAppend: scope.promptAppend } : {}),
     spawnedBy: scope.spawnedBy,
     ...(scope.contributionUserId !== undefined ? { contributionUserId: scope.contributionUserId } : {}),
+    ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
   });
   if (!promoted) return { error: 'the resulting access could not be validated' };
   return { scope: promoted };

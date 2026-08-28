@@ -135,6 +135,10 @@ export interface PluginManifest {
    *  `DiscordListChannels` reads and `DiscordDeleteChannel` does not — so a pattern here would be a way to
    *  hand plan mode a destructive tool by accident. Undeclared = treated as mutating (fail closed). */
   planSafe?: string[];
+  /** Positive declaration that every tool from this plugin is safe inside an exact workspace PathView.
+   *  Omitted means tools are withheld from workspace-scoped delegated agents. A mixed plugin must instead
+   *  opt in individual tools through registerTool({ workspaceSafe: true }). */
+  workspaceSafe?: boolean;
   /** Tools deferred into ToolSearch by default. Entries are exact tool names or `prefix*` patterns for
    *  dynamic surfaces; patterns expand only to tools currently registered by this same plugin, never to
    *  another plugin's tools. */
@@ -284,6 +288,7 @@ const ManifestSchema = Type.Object({
   icons: Type.Optional(Type.Record(Type.String(), Type.String())),
   showOutput: Type.Optional(Type.Array(Type.String())),
   planSafe: Type.Optional(Type.Array(Type.String())),
+  workspaceSafe: Type.Optional(Type.Boolean()),
   deferLoading: Type.Optional(Type.Array(Type.String())),
   icon: Type.Optional(Type.String()),
   configSchema: Type.Optional(Type.Array(ConfigFieldSchema)),

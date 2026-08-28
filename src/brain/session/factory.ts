@@ -38,6 +38,8 @@ import { logger } from '../../shared/logger.js';
 import { ProviderRequestRecorder } from './providerRequestRecorder.js';
 import { wrapFastModeRuntime, type FastModeRoute } from '../fastMode.js';
 import { recoverMalformedToolCalls } from './malformedToolCallRecovery.js';
+import { realPathWithin } from '../../plugins/pathGuard.js';
+import { relative, sep } from 'node:path';
 
 let missingBoundaryCompactionWarned = false;
 
@@ -73,6 +75,12 @@ export interface SessionSpec {
    *  chosen compaction model or a provider's stable default. Undefined → compact on the session model. */
   compactionFallbackModel?: Model<Api>;
   cwd: string;
+  /** Logical cwd rendered into PI's static prompt; runtime/resource cwd remains the canonical host path. */
+  displayCwd?: string;
+  /** Exact root allowed to contribute project context files. */
+  contextRoot?: string;
+  /** Exact host-path scrubber applied to the complete provider payload (history, tool results and prompt). */
+  sanitizePaths?: (text: string) => string;
   systemPrompt: string;
   /** Chunks appended after the system prompt (plugin fragments, role prompts). */
   appendSystemPrompt: string[];
@@ -163,6 +171,9 @@ export interface BrainResourceLoaderOptions {
   skills?: Skill[];
   prompts?: PromptTemplate[];
   contextFiles?: boolean;
+  contextRoot?: string;
+  displayCwd?: string;
+  sanitizePaths?: (text: string) => string;
   codexReasoningFix?: boolean;
   /** Log the NAMES of the response headers Kimi returns, to learn whether it exposes a rate-limit/quota
    *  signal (the CLI rail already renders one for ChatGPT). A measurement step, not a feature. */
@@ -340,6 +351,57 @@ function providerRequestProfile(profile: ProviderRequestProfile): (pi: Extension
   };
 }
 
+function sanitizePayloadValue(value: unknown, sanitize: (text: string) => string): unknown {
+  if (typeof value === 'string') return sanitize(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizePayloadValue(item, sanitize));
+  if (!value || typeof value !== 'object' || value instanceof Uint8Array) return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => [key, sanitizePayloadValue(item, sanitize)]));
+}
+
+export function providerPathScrubber(sanitize: (text: string) => string): (pi: ExtensionAPI) => void {
+  return (pi) => {
+    pi.on('before_provider_request', (event) => {
+      const next = sanitizePayloadValue(event.payload, sanitize) as typeof event.payload;
+      return next === event.payload ? undefined : next;
+    });
+  };
+}
+
+function logicalContextPath(path: string, root: string): string {
+  const resolved = realPathWithin(path, [root]);
+  if (!resolved) return '';
+  const rel = relative(root, resolved).split(sep).join('/');
+  return rel || '.';
+}
+
+/** PI currently uses one cwd for runtime services and the final static prompt line. Elowen needs the real
+ * worktree for resource discovery while exposing only a logical cwd to a workspace-scoped child, so rebuild
+ * the documented custom-prompt shape from PI's structured options instead of patching prompt text. */
+export function logicalPromptCwd(displayCwd: string, contextRoot?: string): (pi: ExtensionAPI) => void {
+  return (pi) => {
+    pi.on('before_agent_start', (event) => {
+      const options = event.systemPromptOptions;
+      if (!options.customPrompt) throw new Error('logical prompt cwd requires an explicit custom system prompt');
+      let prompt = options.customPrompt;
+      if (options.appendSystemPrompt) prompt += `\n\n${options.appendSystemPrompt}`;
+      const contextFiles = contextRoot
+        ? (options.contextFiles ?? []).map((file) => ({ ...file, path: logicalContextPath(file.path, contextRoot) }))
+          .filter((file) => file.path)
+        : options.contextFiles ?? [];
+      if (contextFiles.length > 0) {
+        prompt += '\n\n<project_context>\n\nProject-specific instructions and guidelines:\n\n';
+        for (const file of contextFiles) {
+          prompt += `<project_instructions path="${file.path}">\n${file.content}\n</project_instructions>\n\n`;
+        }
+        prompt += '</project_context>\n';
+      }
+      prompt += `\nCurrent working directory: ${displayCwd.replaceAll('\\', '/')}\n`;
+      return { systemPrompt: prompt };
+    });
+  };
+}
+
 /** Default resource loader: carries the composed system prompt, appends the extra chunks after it,
  *  and disables most disk discovery — the brain is a lean, in-process agent. `noExtensions` skips only
  *  DISCOVERED extensions; the inline factories below still load. Context files are OWNER-ONLY opt-in
@@ -363,10 +425,16 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
     // feeds PI our in-memory plugin templates, which it exposes as `/name` slash commands and expands
     // ($1/$@/$ARGUMENTS/${N:-default}) itself in prompt()/steer()/followUp() — no daemon-side expansion.
     promptsOverride: () => ({ prompts, diagnostics: [] }),
+    ...(o.contextRoot ? {
+      agentsFilesOverride: (base) => ({
+        agentsFiles: base.agentsFiles.filter((file) => realPathWithin(file.path, [o.contextRoot!]) !== null),
+      }),
+    } : {}),
     // No longer conditional: the marker sanitizer below has to run on every session, so there is always
     // at least one inline extension to load.
     ...{
       extensionFactories: [
+        ...(o.displayCwd ? [logicalPromptCwd(o.displayCwd, o.contextRoot)] : []),
         ...(o.codexReasoningFix ? [codexReasoningSummary] : []),
         ...(o.remoteCompactionExtension ? [o.remoteCompactionExtension] : []),
         // Unconditional: a session that CANNOT use a stored blob is the one that would otherwise send it
@@ -393,6 +461,7 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         // canonically (markers stripped), so the order does not change what it reports — it keeps the
         // snapshot honest about what this code did or did not touch.
         ...(o.cacheBreakpoints ? [installCacheBreakpoints] : []),
+        ...(o.sanitizePaths ? [providerPathScrubber(o.sanitizePaths)] : []),
       ],
     },
   });
@@ -528,6 +597,9 @@ export class BrainSessionFactory {
     const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({
       cwd: spec.cwd, systemPrompt: spec.systemPrompt, appendSystemPrompt: spec.appendSystemPrompt,
       skills: spec.skills, prompts: spec.promptTemplates, contextFiles: spec.contextFiles,
+      ...(spec.displayCwd ? { displayCwd: spec.displayCwd } : {}),
+      ...(spec.contextRoot ? { contextRoot: spec.contextRoot } : {}),
+      ...(spec.sanitizePaths ? { sanitizePaths: spec.sanitizePaths } : {}),
       codexReasoningFix: spec.model.provider === 'openai-codex',
       kimiHeaderProbe: spec.model.provider === 'kimi-coding',
       compactionModelRouteExtension: compactionModelRoute?.extension,

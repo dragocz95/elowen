@@ -7,7 +7,9 @@ import {
   compactionKeepRecentTokens,
   compactionReserveTokens,
   estimateFixedCostTokens,
+  logicalPromptCwd,
   postCompactionCeiling,
+  providerPathScrubber,
   resolveAutoCompactPct,
 } from '../../src/brain/session/factory.js';
 import { openDb } from '../../src/store/db.js';
@@ -17,6 +19,44 @@ import { CLEAR_MIN_BYTES } from '../../src/brain/session/toolResultClearing.js';
 
 let dirs: string[] = [];
 afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
+
+describe('workspace logical prompt cwd', () => {
+  it('rebuilds PI structured prompt options without the host workspace prefix', () => {
+    const hostRoot = '/var/www/.config/elowen/plugins-data/sandbox/users/1/workspaces/ws_secret';
+    let handler: ((event: any) => { systemPrompt?: string } | undefined) | undefined;
+    logicalPromptCwd('.', hostRoot)({
+      on: (name: string, fn: typeof handler) => { if (name === 'before_agent_start') handler = fn; },
+    } as any);
+    const result = handler?.({
+      systemPromptOptions: {
+        cwd: hostRoot,
+        customPrompt: 'You are Elowen.',
+        appendSystemPrompt: 'Scoped instructions.',
+        contextFiles: [{ path: `${hostRoot}/AGENTS.md`, content: 'workspace rules' }],
+        selectedTools: ['Read'],
+      },
+    });
+    expect(result?.systemPrompt).toContain('<project_instructions path="AGENTS.md">');
+    expect(result?.systemPrompt).toContain('Current working directory: .');
+    expect(result?.systemPrompt).not.toContain(hostRoot);
+  });
+
+  it('scrubs host roots from history and tool results in the final provider payload', () => {
+    const hostRoot = '/var/www/private/worktree';
+    let handler: ((event: any) => unknown) | undefined;
+    providerPathScrubber((text) => text.split(hostRoot).join('.'))({
+      on: (name: string, fn: typeof handler) => { if (name === 'before_provider_request') handler = fn; },
+    } as any);
+    const payload = handler?.({
+      payload: {
+        instructions: `cwd ${hostRoot}`,
+        input: [{ role: 'tool', content: [{ type: 'text', text: `read ${hostRoot}/src/a.ts` }] }],
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain(hostRoot);
+    expect(JSON.stringify(payload)).toContain('./src/a.ts');
+  });
+});
 
 describe('per-model auto-compact threshold', () => {
   it('uses the per-model override when set, else the global default', () => {

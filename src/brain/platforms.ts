@@ -1,6 +1,6 @@
 import type { PluginRegistry } from '../plugins/registry.js';
 import { decodeNotificationDestination, encodeNotificationDestination } from '../plugins/destinations.js';
-import type { ChannelRef, ServiceNotice } from '../plugins/api.js';
+import type { ChannelRef, KnownControls, ServiceNotice } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import { narrowToolAllowList, type ToolPolicy, type TurnIdentity } from '../plugins/policyContext.js';
 import type { IdentityResolver } from './identity.js';
@@ -19,6 +19,7 @@ import type { DelegatedTurnRequest } from './delegatedTurn.js';
 import { resolveAgentTools, READ_ONLY_AGENT_TOOLS, type AgentDef } from './agents/agentRegistry.js';
 import { renderAgentPrompt } from './agents/agentPrompt.js';
 import { buildReadOnlyBoundary, resolveReadOnlyOrigin } from './agents/readOnlyBoundary.js';
+import { bindingRef, resolveDelegatedWorkspace } from './workspaceScope.js';
 
 export interface PlatformOrchestratorDeps {
   /** The daemon-wide plugin registry resolver (undefined when plugins aren't wired). */
@@ -49,6 +50,7 @@ export interface PlatformOrchestratorDeps {
    *  through this orchestrator's `run` handle (the Delegate tool and a workflow node alike), so this is
    *  the one place that decides between running it on this event loop and handing it to the runner. */
   dispatch: { send(request: DelegatedTurnRequest, text: string, onEvent?: (e: BrainEvent) => void): Promise<string> };
+  sandbox?: () => KnownControls['sandbox'] | undefined;
   /** Admin daemon restart for a platform `/restart` slash. Lazily resolved: the handler is built after
    *  the brain (it needs systemd + the marker path), so this returns undefined until it's wired. */
   restart?: () => ((byUserId: number) => Promise<void>) | undefined;
@@ -221,6 +223,16 @@ export class PlatformOrchestrator {
             // the least diagnosable failure this path can produce. Log whatever had to be cut, since the
             // child only learns it from a marker inside its own prompt.
             const packed = packDelegatedPromptAppend(promptAppend);
+            const workspaceBinding = resolveDelegatedWorkspace(
+              this.d.sandbox?.(),
+              {
+                admin: src.access.admin === true,
+                projectIds: src.access.projectIds ?? [],
+                contributionUserId: src.access.contributionUserId,
+                workspaceRef: src.access.workspaceRef,
+              },
+              src.access.workspaceId,
+            );
             if (packed.truncated || packed.dropped) {
               log?.info(`delegated prompt did not fit the scope budget: ${packed.truncated} section(s) shortened, `
                 + `${packed.dropped} dropped (channel ${keyOf(src)})`);
@@ -241,6 +253,7 @@ export class PlatformOrchestrator {
               ...(typeof src.access.principal === 'string' ? { spawnedBy: src.access.principal } : {}),
               ...(Number.isSafeInteger(src.access.contributionUserId) && src.access.contributionUserId! > 0
                 ? { contributionUserId: src.access.contributionUserId } : {}),
+              ...(workspaceBinding ? { workspaceRef: bindingRef(workspaceBinding) } : {}),
             });
             if (!rawScope) throw new Error('invalid delegated access');
             // The account running the child can only make the captured scope narrower. Persist this union
@@ -272,7 +285,7 @@ export class PlatformOrchestrator {
               ...(src.access.thinkingLevel !== undefined ? { thinkingLevel: src.access.thinkingLevel } : {}),
               // A delegated child inherits the delegating turn's working directory so its tools run in —
               // and it advertises — the SAME project as the parent, not the daemon's `/`.
-              ...(src.access.cwd !== undefined ? { clientCwd: src.access.cwd } : {}),
+              ...(!workspaceBinding && src.access.cwd !== undefined ? { clientCwd: src.access.cwd } : {}),
               // Surface-tuned idle cutoff (the delegate plugin pins it so a child's transcript is never
               // rolled over mid-delegation).
               ...(src.access.sessionIdleMs !== undefined ? { idleRolloverMs: src.access.sessionIdleMs } : {}),

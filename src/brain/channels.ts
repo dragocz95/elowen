@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainStore } from '../store/brainStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
-import type { KnownControls, PlatformHistory, PlatformHistoryMessage } from '../plugins/api.js';
+import type { KnownControls, PlatformHistory, PlatformHistoryMessage, SandboxExecutionLease } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity, ToolPolicy } from '../plugins/policyContext.js';
 import type { PlatformSenderAttribution } from './identity.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
+import { createWorkspacePathView, type WorkspacePathView } from '../plugins/pathView.js';
 import {
   delegatedToolPolicy,
   normalizeDelegatedExecutionScope,
@@ -558,6 +559,7 @@ export class ChannelSessionService {
   private delegatedExecution(opts: ChannelSendOpts, sessionId: string): {
     scope: DelegatedExecutionScope;
     toolPolicy: ToolPolicy | undefined;
+    pathView?: WorkspacePathView;
   } {
     const scope = normalizeDelegatedExecutionScope(opts.delegatedAccess);
     if (!scope || !opts.identity || opts.writerUserId !== undefined
@@ -580,9 +582,28 @@ export class ChannelSessionService {
     // its current grant intersects — so it cannot swap the inherited allow/deny shape while the child is
     // idle. Dropping the caller's allow here is what made the account grant a per-path accident: the
     // careful intersection every caller computes was discarded and rebuilt from the frozen scope alone.
+    let pathView: WorkspacePathView | undefined;
+    if (scope.workspaceRef) {
+      const sandbox = this.d.sandbox?.();
+      if (!sandbox || scope.contributionUserId === undefined) throw new Error('delegated workspace unavailable');
+      const binding = sandbox.resolveWorkspace({
+        accountUserId: scope.contributionUserId,
+        workspace: scope.workspaceRef,
+        accessibleProjectIds: scope.admin ? 'all' : scope.projectIds,
+      });
+      const scopedProjectIds = scope.admin
+        ? this.d.projects?.list().map((project) => project.id) ?? []
+        : scope.projectIds;
+      const hiddenPrefixes = [
+        ...(this.d.projects?.list().filter((project) => scopedProjectIds.includes(project.id)).map((project) => project.path) ?? []),
+        ...sandbox.workspacesFor({ userId: scope.contributionUserId, projectIds: scopedProjectIds }).map((workspace) => workspace.path),
+      ];
+      pathView = createWorkspacePathView(binding, hiddenPrefixes);
+    }
     return {
       scope,
       toolPolicy: delegatedToolPolicy(scope, opts.toolPolicy?.deny ?? [], opts.toolPolicy?.allow),
+      ...(pathView ? { pathView } : {}),
     };
   }
 
@@ -693,6 +714,8 @@ export class ChannelSessionService {
       this.d.registry.isParentAborting(parentSessionId) || this.d.registry.hasPendingAbort(sessionId)
     );
     let delegatedCall = false;
+    let delegationLease: SandboxExecutionLease | undefined;
+    let delegationLeaseHeartbeat: ReturnType<typeof setInterval> | undefined;
     // Armed by a turn that actually produced an answer and consumed once by settleTurn below, mirroring
     // the owner surface: a turn that threw leaves it undefined, which is how a failed exchange stays out
     // of the writer's memory. The writer stamp and the drain are NOT gated on it — see the settle.
@@ -701,16 +724,26 @@ export class ChannelSessionService {
     // turn (that turn is still live, so nothing may dispose it) and false if the steer attempt itself
     // threw, which is the same situation seen from the failing side.
     let ranOwnTurn = false;
+    let admitted = false;
+    try {
     if (parentSessionId) {
       if (this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
       const parent = this.d.store.getSession(parentSessionId);
       if (!parent || parent.user_id !== opts.ownerUserId || parent.id === sessionId) throw new Error('invalid parent session');
+      if (delegated?.scope.workspaceRef) {
+        const sandbox = this.d.sandbox?.();
+        const accountUserId = delegated.scope.contributionUserId;
+        if (!sandbox || accountUserId === undefined) throw new Error('delegated workspace unavailable');
+        delegationLease = sandbox.acquireDelegationLease({ accountUserId, workspace: delegated.scope.workspaceRef });
+        delegationLeaseHeartbeat = setInterval(() => { void delegationLease?.heartbeat(); }, 5_000);
+        delegationLeaseHeartbeat.unref?.();
+      }
       // Register before the first async boundary. A background delegate may be stopped immediately after
       // its tool returns, before spawn has emitted the child's `session` progress event.
       this.beginDelegatedCall(parentSessionId, sessionId);
       delegatedCall = true;
     }
-    try {
+    admitted = true;
     const steered = await this.trySteerIntoRunningTurn(opts, turnText, senderText, delegationAborted);
     if (steered === null) ranOwnTurn = true;
     const reply = steered !== null ? steered : await this.d.registry.withLock(sessionId, async () => {
@@ -821,7 +854,8 @@ export class ChannelSessionService {
             : {}),
           // A delegated child inherits its parent's working directory (set only for subagent sends); an
           // ordinary platform channel leaves this undefined and resolves its cwd from the policy root.
-          clientCwd: opts.clientCwd,
+          clientCwd: delegated?.pathView?.root ?? opts.clientCwd,
+          ...(delegated?.pathView ? { pathView: delegated.pathView } : {}),
         });
         if (carriedOrientation !== undefined) ch.orientedForCompaction = carriedOrientation;
         if (this.d.registry.consumePendingAbort(sessionId)) {
@@ -969,15 +1003,18 @@ export class ChannelSessionService {
         // Resolve from THIS writer and THIS turn. `ch.workDir` is only the static spawn cwd (often the room
         // opener's Project); validating it through the current Policy first makes another writer fall back to
         // their own Project, then Sandbox may select that account's active workspace.
-        const baseWorkDir = turnWorkDir(opts.policy, opts.clientCwd ?? ch.workDir, this.d.projectPath);
-        const effectiveWorkDir = effectiveTurnWorkDir({
-          policy: opts.policy,
-          baseWorkDir,
-          accountUserId: turnContributionUserId,
-          sessionId,
-          projects: this.d.projects,
-          sandbox: this.d.sandbox?.(),
-        });
+        const baseWorkDir = delegated?.pathView?.root
+          ?? turnWorkDir(opts.policy, opts.clientCwd ?? ch.workDir, this.d.projectPath);
+        const effectiveWorkDir = delegated?.pathView
+          ? { baseWorkDir, workDir: delegated.pathView.root, workspace: null }
+          : effectiveTurnWorkDir({
+              policy: opts.policy,
+              baseWorkDir,
+              accountUserId: turnContributionUserId,
+              sessionId,
+              projects: this.d.projects,
+              sandbox: this.d.sandbox?.(),
+            });
         const workspaceReminder = workDirReorientation(ch.workDir, effectiveWorkDir.workDir);
         try {
           // …and, in a room, narrowed to the tools this writer OWNS as well as the ones they were granted.
@@ -1067,7 +1104,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',
@@ -1180,18 +1217,23 @@ export class ChannelSessionService {
       // A message STEERED into somebody else's running turn omits the curator (that turn curates its own
       // exchange) and the drain (that turn is still running, so nothing may dispose it yet), while the
       // writer stamp still lands: the person did write here.
-      settleTurn({
-        sessionId,
-        ...(curate ? { curate } : {}),
-        ...(!opts.internalSystem && opts.writerUserId != null
-          ? { lastWriter: { store: this.d.store, userId: opts.writerUserId } }
-          : {}),
-        // Its absence here is why a CreateSkill issued from Discord wrote a skill to disk and then silently
-        // never applied it: the owner surface drained the request and no room ever did.
-        ...(ranOwnTurn && this.d.drainPluginReload ? { drainPluginReload: this.d.drainPluginReload } : {}),
-        // `notify` is owner-only and therefore absent: the room already received this answer.
-      });
-      if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId);
+      try {
+        if (admitted) settleTurn({
+          sessionId,
+          ...(curate ? { curate } : {}),
+          ...(!opts.internalSystem && opts.writerUserId != null
+            ? { lastWriter: { store: this.d.store, userId: opts.writerUserId } }
+            : {}),
+          // Its absence here is why a CreateSkill issued from Discord wrote a skill to disk and then silently
+          // never applied it: the owner surface drained the request and no room ever did.
+          ...(ranOwnTurn && this.d.drainPluginReload ? { drainPluginReload: this.d.drainPluginReload } : {}),
+          // `notify` is owner-only and therefore absent: the room already received this answer.
+        });
+      } finally {
+        if (delegationLeaseHeartbeat) clearInterval(delegationLeaseHeartbeat);
+        try { await delegationLease?.release(); }
+        finally { if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId); }
+      }
     }
   }
 

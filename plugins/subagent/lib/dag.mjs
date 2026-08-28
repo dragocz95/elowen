@@ -59,6 +59,8 @@ function normalizeNode(raw, knownIds) {
   if (raw.read_only === true || raw.readOnly === true) node.readOnly = true;
   const subagentType = str(raw.subagent_type);
   if (subagentType) node.subagentType = subagentType;
+  const workspaceId = str(raw.workspaceId);
+  if (workspaceId) node.workspaceId = workspaceId;
   return { node };
 }
 

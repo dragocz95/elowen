@@ -4,6 +4,7 @@
   "apiVersion": "1",
   "description": "Search the web with WebSearch and fetch pages as readable text with WebFetch.",
   "entry": "index.mjs",
+  "workspaceSafe": true,
   "provides": {
     "tools": [
       "WebSearch",

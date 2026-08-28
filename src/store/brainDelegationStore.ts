@@ -139,6 +139,14 @@ const MAX_WORKFLOW_DETAIL_CHARS = 500;
 // Terminal result/error previews (engine clips to SNAPSHOT_RESULT_PREVIEW + a truncation marker).
 const MAX_WORKFLOW_RESULT_CHARS = 600;
 
+function normalizeWorkflowWorkspaceRef(raw: unknown): { workspaceId: string; projectId: number } | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.workspaceId !== 'string' || !value.workspaceId || value.workspaceId.length > 128) return undefined;
+  if (!Number.isSafeInteger(value.projectId) || (value.projectId as number) <= 0) return undefined;
+  return { workspaceId: value.workspaceId, projectId: value.projectId as number };
+}
+
 /** One node of a persisted DAG. Rejects rather than coerces: a malformed node means the snapshot came
  *  from something other than the engine, and guessing its intent would put fiction on the user's screen. */
 function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
@@ -157,6 +165,8 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
   if (o.startedAt !== undefined && (typeof o.startedAt !== 'number' || !Number.isSafeInteger(o.startedAt) || o.startedAt < 0)) return undefined;
   if (o.result !== undefined && typeof o.result !== 'string') return undefined;
   if (o.error !== undefined && typeof o.error !== 'string') return undefined;
+  const workspaceRef = o.workspaceRef === undefined ? undefined : normalizeWorkflowWorkspaceRef(o.workspaceRef);
+  if (o.workspaceRef !== undefined && !workspaceRef) return undefined;
   return {
     id: o.id,
     task: bounded(o.task, MAX_WORKFLOW_TASK_CHARS),
@@ -170,6 +180,7 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
     ...(typeof o.startedAt === 'number' ? { startedAt: o.startedAt } : {}),
     ...(typeof o.result === 'string' ? { result: bounded(o.result, MAX_WORKFLOW_RESULT_CHARS) } : {}),
     ...(typeof o.error === 'string' ? { error: bounded(o.error, MAX_WORKFLOW_RESULT_CHARS) } : {}),
+    ...(workspaceRef ? { workspaceRef } : {}),
   };
 }
 
@@ -184,6 +195,8 @@ function normalizeWorkflowState(raw: unknown): BrainWorkflowRun | undefined {
   if (o.status !== 'running' && o.status !== 'done' && o.status !== 'error' && o.status !== 'cancelled') return undefined;
   if (o.title !== undefined && typeof o.title !== 'string') return undefined;
   if (o.background !== undefined && typeof o.background !== 'boolean') return undefined;
+  const workspaceRef = o.workspaceRef === undefined ? undefined : normalizeWorkflowWorkspaceRef(o.workspaceRef);
+  if (o.workspaceRef !== undefined && !workspaceRef) return undefined;
   if (!Array.isArray(o.nodes) || o.nodes.length > MAX_WORKFLOW_NODES) return undefined;
   const nodes: WorkflowNode[] = [];
   const seen = new Set<string>();
@@ -203,6 +216,7 @@ function normalizeWorkflowState(raw: unknown): BrainWorkflowRun | undefined {
     // Dropping it here silently turned that sparing into dead code, so any stop/detach on the origin
     // conversation killed every node of a running background workflow.
     ...(o.background === true ? { background: true } : {}),
+    ...(workspaceRef ? { workspaceRef } : {}),
     nodes,
   };
 }

@@ -70,8 +70,11 @@ const startLeaseHeartbeat = (lease) => {
 class BgProcess {
   constructor(id, command, cwd, outputCap, onClose, prepared) {
     this.id = id;
-    this.command = command;
-    this.cwd = cwd;
+    this.cwd = prepared.displayCwd ?? cwd;
+    this.spawnCwd = prepared.cwd ?? cwd;
+    this.sanitizeOutput = prepared.sanitizeOutput ?? ((text) => String(text));
+    this.workspaceScoped = !!prepared.workspace;
+    this.command = this.sanitizeOutput(command);
     this.output = '';
     this.readOffset = 0;
     this.exitCode = null;
@@ -87,7 +90,7 @@ class BgProcess {
     try {
       // `detached: true` puts the child shell in its own process group, so kill() reaps the shell and all
       // descendants rather than orphaning a dev server or watcher.
-      this.child = spawn(launch.command, { cwd, shell: true, env: launch.env, detached: true });
+      this.child = spawn(launch.command, { cwd: this.spawnCwd, shell: true, env: launch.env, detached: true });
     } catch (error) {
       void this.releaseLease();
       throw error;
@@ -131,8 +134,11 @@ class BgProcess {
 class ForegroundRun {
   constructor(id, command, cwd, outputCap, timeoutMs, prepared) {
     this.id = id;
-    this.command = command;
-    this.cwd = cwd;
+    this.cwd = prepared.displayCwd ?? cwd;
+    this.spawnCwd = prepared.cwd ?? cwd;
+    this.sanitizeOutput = prepared.sanitizeOutput ?? ((text) => String(text));
+    this.workspaceScoped = !!prepared.workspace;
+    this.command = this.sanitizeOutput(command);
     this.startedAt = new Date().toISOString();
     this.output = '';
     this.readOffset = 0;
@@ -177,7 +183,8 @@ class ForegroundRun {
       const now = Date.now();
       if (now - lastEmit < PROGRESS_THROTTLE_MS) return;
       lastEmit = now;
-      onProgress(this.output.length > PROGRESS_TAIL ? this.output.slice(this.output.length - PROGRESS_TAIL) : this.output);
+      const visible = this.sanitizeOutput(this.output);
+      onProgress(visible.length > PROGRESS_TAIL ? visible.slice(visible.length - PROGRESS_TAIL) : visible);
     };
     const onData = (d) => {
       this.output += this._decoder.write(d);
@@ -199,7 +206,7 @@ class ForegroundRun {
         };
         try {
           this.child = spawn(this.launch.command, {
-            cwd: this.cwd, shell: true, env: this.launch.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+            cwd: this.spawnCwd, shell: true, env: this.launch.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
           });
         } catch (error) {
           finish(error);
@@ -214,7 +221,7 @@ class ForegroundRun {
         });
       });
     } catch (error) {
-      this.spawnError = error instanceof Error ? error.message : String(error);
+      this.spawnError = this.sanitizeOutput(error instanceof Error ? error.message : String(error));
       killProcessGroup(this.child);
     } finally {
       if (this._timer) { clearTimeout(this._timer); this._timer = null; }
@@ -263,9 +270,14 @@ export function register(ctx) {
     id, command: bg.command, cwd: bg.cwd, startedAt: bg.startedAt,
     accountUserId, sessionId, workspaceId, homeGeneration, completionMode,
     running: () => bg.running, exitCode: () => bg.exitCode,
-    readAll: () => bg.output,
+    readAll: () => bg.sanitizeOutput(bg.output),
     readNew: (all) => {
-      const text = all ? bg.output : bg.output.slice(bg.readOffset);
+      // A host prefix may be split across process chunks or the incremental cursor. Workspace-scoped output
+      // is therefore sanitized as one complete buffer before it is exposed; repeating prior output is safer
+      // than returning a cross-boundary fragment that reconstructs a host path.
+      const text = bg.workspaceScoped
+        ? bg.sanitizeOutput(bg.output)
+        : bg.sanitizeOutput(all ? bg.output : bg.output.slice(bg.readOffset));
       bg.readOffset = bg.output.length;
       return text;
     },
@@ -305,22 +317,30 @@ export function register(ctx) {
 
   // Default cwd is host-resolved (ctx.defaultCwd): the session's bound project path when there is one,
   // re-established every run — an explicit `cwd` from one call never carries into the next.
-  const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? ctx.defaultCwd());
+  const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? (ctx.currentAccess().workspaceRef ? '.' : ctx.defaultCwd()));
 
   /** Resolve the live Sandbox owner for every command. A disabled/missing owner never becomes an implicit
    * host-shell grant: only a true instance operator gets the explicit compatibility fallback. */
   const prepareLaunch = async (command, cwd) => {
+    const access = ctx.currentAccess();
     const sandbox = ctx.control('sandbox');
-    if (sandbox) return sandbox.prepareExecution({ command: { type: 'shell', command }, cwd, leaseKind: 'terminal' });
-    if (ctx.currentAccess().owner !== true) {
+    if (sandbox) return sandbox.prepareExecution({
+      command: { type: 'shell', command }, cwd, leaseKind: 'terminal',
+      ...(access.workspaceRef ? { workspace: access.workspaceRef } : {}),
+    });
+    if (access.workspaceRef) {
+      throw new Error('the shell is unavailable because exact workspace confinement requires the Sandbox plugin');
+    }
+    if (access.owner !== true) {
       throw new Error('the shell is unavailable because the Sandbox plugin is disabled or failed to load; non-operator commands cannot run directly on the host');
     }
     const home = process.env.HOME || '/';
     const env = Object.fromEntries(Object.entries(process.env).filter((entry) => typeof entry[1] === 'string'));
     env.HOME = home;
     return {
-      mode: 'direct', cwd, home, roots: ctx.allowedRoots(), launch: { type: 'shell', command, env }, workspace: null,
+      mode: 'direct', cwd, displayCwd: cwd, home, roots: ctx.allowedRoots(), launch: { type: 'shell', command, env }, workspace: null,
       lease: { id: `terminal-direct-${Date.now()}`, accountUserId: currentAccountUserId(), workspaceId: null, homeGeneration: null, heartbeat() {}, release() {} },
+      sanitizeOutput: (text) => String(text),
     };
   };
 
@@ -392,7 +412,7 @@ export function register(ctx) {
             foregroundRuns.delete(id);
             if (handle) { handle.completionMode = 'job'; ctx.processes.register(handle); }
             emitProcCard(fgSession, foregroundAccountUserId);
-            return ok(`Moved to background as process ${id}: ${p.command}\n(cwd: ${cwd})\nStill running with no time limit; use ProcessOutput("${id}") to check on it.`);
+            return ok(`Moved to background as process ${id}: ${run.command}\n(cwd: ${run.cwd})\nStill running with no time limit; use ProcessOutput("${id}") to check on it.`);
           }
           // Foreground completion: drop the registry entry WITHOUT a nudge, exactly as a non-backgrounded
           // command produced no lingering process before this change.
@@ -407,7 +427,7 @@ export function register(ctx) {
           // The `[exit N]` marker inside the text is framing for the MODEL; the display path reads the
           // exit code structurally from details (tone + status chip), so report it there as well. A
           // killed run has no exit code (null) and its note already says why.
-          const res = ok(formatRunResult(p.command, cwd, run.output, run.exitCode, note, outputCap));
+          const res = ok(formatRunResult(run.command, run.cwd, run.sanitizeOutput(run.output), run.exitCode, note, outputCap));
           if (typeof run.exitCode === 'number') res.details.exitCode = run.exitCode;
           return res;
         }
@@ -429,7 +449,7 @@ export function register(ctx) {
         const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId, accountUserId); ctx.processes.markExited(id); }, await prepareLaunch(p.command, cwd));
         ctx.processes.register(handleFor(id, bg, accountUserId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job', bg.workspaceId, bg.homeGeneration));
         emitProcCard();
-        return ok(`Started background process ${id}: ${p.command}\n(cwd: ${cwd})\nUse ProcessOutput("${id}") to check on it.`);
+        return ok(`Started background process ${id}: ${bg.command}\n(cwd: ${bg.cwd})\nUse ProcessOutput("${id}") to check on it.`);
       } catch (e) { return fail(e); }
     },
   }));

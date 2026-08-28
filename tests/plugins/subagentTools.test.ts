@@ -143,6 +143,36 @@ describe('delegate — the access handed to the child', () => {
     expect(seen.access?.thinkingLevel).toBeUndefined();
   });
 
+  it('publishes workspaceId and forwards an explicit assignment without inheriting host cwd', async () => {
+    const definition = reg.tools.find((tool) => tool.name === 'Delegate') as unknown as {
+      parameters: { properties: Record<string, unknown> };
+    };
+    expect(definition.parameters.properties).toHaveProperty('workspaceId');
+    const tool = reg.tools.find((candidate) => candidate.name === 'Delegate')!;
+    await runWithPolicy(adminPolicy, () => (tool as unknown as { execute(id: string, p: unknown): Promise<unknown> })
+      .execute('call', { task: 'scoped', workspaceId: 'ws_explicit' }), {
+      identity: owner, sessionId: 'brain-1', workDir: '/var/www/project', contributionUserId: 1,
+    });
+    expect(seen.access?.workspaceId).toBe('ws_explicit');
+    expect(seen.access?.cwd).toBeUndefined();
+  });
+
+  it('inherits only an already explicit workspace scope for nested delegation', async () => {
+    const tool = reg.tools.find((candidate) => candidate.name === 'Delegate')!;
+    await runWithPolicy(adminPolicy, () => (tool as unknown as { execute(id: string, p: unknown): Promise<unknown> })
+      .execute('call', { task: 'nested' }), {
+      identity: owner, sessionId: 'brain-child', contributionUserId: 1, workDir: '/host/ws',
+      pathView: {
+        kind: 'workspace', workspace: { workspaceId: 'ws_parent', projectId: 3 }, root: '/host/ws',
+        resolve: (path: string) => path, display: (path: string) => path, stateKey: (path: string) => path,
+        sanitize: (text: string) => text,
+      },
+    });
+    expect(seen.access?.workspaceRef).toEqual({ workspaceId: 'ws_parent', projectId: 3 });
+    expect(seen.access?.workspaceId).toBeUndefined();
+    expect(seen.access?.cwd).toBeUndefined();
+  });
+
   it('flags read_only as the host-side read-only MODE, not a plugin toolset', async () => {
     // The plugin no longer materializes a read-only allow-list; it forwards the mode and the host applies
     // the READ_ONLY_AGENT_TOOLS preset + minted boundary (so the child gets read-only shell too).

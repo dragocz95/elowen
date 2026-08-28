@@ -139,6 +139,21 @@ describe('the delegated-turn wire payload', () => {
       expect(parseDelegatedTurnRequest({ ...request(), fast: true })).not.toHaveProperty('fast');
       expect(delegatedChannelSendOpts(parseDelegatedTurnRequest({ ...request(), fast: true })!, deps)).not.toHaveProperty('fast');
     });
+
+    it('carries only a durable workspace ref for a scoped child and refuses a host cwd beside it', () => {
+      const scoped = {
+        ...request(),
+        delegatedAccess: {
+          ...request().delegatedAccess,
+          workspaceRef: { workspaceId: 'ws_123', projectId: 3 },
+        },
+        clientCwd: undefined,
+      };
+      const parsed = parseDelegatedTurnRequest(JSON.parse(JSON.stringify(scoped)));
+      expect(parsed?.delegatedAccess.workspaceRef).toEqual({ workspaceId: 'ws_123', projectId: 3 });
+      expect(parsed).not.toHaveProperty('clientCwd');
+      expect(parseDelegatedTurnRequest({ ...scoped, clientCwd: '/host/workspace' })).toBeUndefined();
+    });
   });
 });
 
