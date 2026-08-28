@@ -309,6 +309,10 @@ describe('sandbox execution HOME and leases', () => {
       { accountUserId: 1, roots: [owned] },
     );
     expect(prepared.cwd).toBe(realPathWithin(owned, [owned]));
+    // setup() leaves confineNonOperators false, which is the instance-wide shortcut into direct
+    // execution. An explicit request must ignore it, so asserting the mode here is the point of the
+    // test rather than a detail of it.
+    expect(prepared.mode).toBe('confined');
     expect(db.prepare("SELECT kind FROM p_sandbox_execution_leases WHERE id = ?").get(prepared.lease.id))
       .toEqual({ kind: 'sites' });
     await prepared.lease.release();
@@ -318,13 +322,20 @@ describe('sandbox execution HOME and leases', () => {
     // `owner` selects DIRECT execution: no bubblewrap, and the daemon's whole environment passed to the
     // child. It follows from who is driving the turn and must never follow from what a plugin asked
     // for — otherwise a plugin's background work is a way to launder the operator's own reach.
+    // Not skipped when bubblewrap is missing: the guarantee under test is "confined or nothing", so a
+    // host that cannot confine must make the call FAIL rather than quietly hand back direct execution.
     const probe = bubblewrapProbe();
-    if (!probe.available) return;
     const { registry, projectPath } = await setup();
-    const prepared = await runWithPolicy(adminPolicy, () => registry.control('sandbox')!.prepareExecution(
+    const prepare = () => runWithPolicy(adminPolicy, () => registry.control('sandbox')!.prepareExecution(
       { command: { type: 'shell', command: 'pwd' }, cwd: projectPath, leaseKind: 'sites' },
       { accountUserId: 1, roots: [projectPath] },
     ), { identity: operator(3), contributionUserId: 3, sessionId: 'brain-service-owner', workDir: projectPath });
+
+    if (!probe.available) {
+      await expect(prepare()).rejects.toThrow(/confined execution is unavailable/);
+      return;
+    }
+    const prepared = await prepare();
     expect(prepared.mode).toBe('confined');
     await prepared.lease.release();
   });
