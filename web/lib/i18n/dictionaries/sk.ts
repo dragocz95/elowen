@@ -191,7 +191,6 @@ export const sk = {
   auth: {
     signIn: 'Prihlásiť sa',
     signInDescription: 'Prihláste sa do svojho účtu {app}.',
-    signInWithMicrosoft: 'Prihlásiť sa cez Microsoft',
     or: 'alebo',
     orContinueWith: 'Alebo pokračujte cez',
     microsoft: 'Microsoft',

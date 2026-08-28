@@ -203,7 +203,6 @@ export const en = {
   auth: {
     signIn: 'Sign in',
     signInDescription: 'Sign in to your {app} account.',
-    signInWithMicrosoft: 'Sign in with Microsoft',
     or: 'or',
     orContinueWith: 'Or continue with',
     microsoft: 'Microsoft',
