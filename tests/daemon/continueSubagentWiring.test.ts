@@ -33,12 +33,12 @@ const CHILD = 'brain-ch-subagent-sub-dlg-abc';
  *  seeded straight into the store (the owner-turn spawn is not part of this chain) and
  *  `channelService.send` is stubbed at the same seam brainService.test.ts uses — everything from the
  *  bridge's core call down to the send opts is the REAL implementation. */
-function setup() {
+function setup(scope: DelegatedExecutionScope = SCOPE, sandbox?: Record<string, unknown>) {
   const store = new BrainStore(openDb(':memory:'));
   store.createSession({ id: PARENT, userId: 1, model: 'm' });
   store.createSession({
     id: CHILD, userId: 1, model: 'k3', provider: 'kimi-coding',
-    parentSessionId: PARENT, delegatedAccess: SCOPE,
+    parentSessionId: PARENT, delegatedAccess: scope,
   });
   const deps: BrainDeps = {
     store,
@@ -47,6 +47,7 @@ function setup() {
     config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] },
     prompts: { render: () => '' },
     url: 'http://x',
+    ...(sandbox ? { plugins: { peek: () => ({ control: (name: string) => name === 'sandbox' ? sandbox : undefined }) } as never } : {}),
   };
   const svc = new BrainService(deps);
   const send = vi.fn(async () => 'the sub-agent answered');
@@ -158,6 +159,32 @@ describe('DelegateContinue wiring — plugin tool to the brain core', () => {
     // This child records no read-only origin (it is the plain scope every other case here uses), so the
     // request is refused rather than granted — the fail-closed default for anything unmarked.
     expect(res.content[0]?.text).toMatch(/cannot give that sub-agent write access/);
+  });
+
+  it('attaches a legacy child to workspaceId once and persists only the durable ref', async () => {
+    const scope: DelegatedExecutionScope = {
+      admin: true, projectIds: [], owner: true, permissionBoundary: null, contributionUserId: 1,
+    };
+    const sandbox = {
+      workspacesFor: () => [{ workspaceId: 'ws_attach', projectId: 3, path: '/host/ws', label: 'w', branch: 'b', baseRef: 'main' }],
+      resolveWorkspace: () => ({ accountUserId: 1, workspaceId: 'ws_attach', projectId: 3, path: '/host/ws' }),
+    };
+    const { store, svc, send } = setup(scope, sandbox);
+    const reg = await loadRegistry(store, svc);
+    const tool = reg.tools.find((candidate) => candidate.name === 'DelegateContinue');
+    if (!tool) throw new Error('DelegateContinue tool is not registered');
+    const executor = tool as unknown as { execute(id: string, p: unknown): Promise<{ content: { text: string }[] }> };
+    const definition = tool as unknown as { parameters: { properties: Record<string, unknown> } };
+    expect(definition.parameters.properties).toHaveProperty('workspaceId');
+
+    await runWithPolicy(adminPolicy, () => executor.execute('call-workspace', {
+      id: CHILD, message: 'continue in the worktree', workspaceId: 'ws_attach',
+    }), { identity: owner, sessionId: PARENT, contributionUserId: 1 });
+
+    expect(store.delegatedAccessFor(CHILD)?.workspaceRef).toEqual({ workspaceId: 'ws_attach', projectId: 3 });
+    const [opts] = send.mock.calls[0] as unknown as [{ delegatedAccess: DelegatedExecutionScope }];
+    expect(opts.delegatedAccess.workspaceRef).toEqual({ workspaceId: 'ws_attach', projectId: 3 });
+    expect(JSON.stringify(opts.delegatedAccess)).not.toContain('/host/ws');
   });
 
   it('continues on the child\'s recorded row model when the tool passes none', async () => {

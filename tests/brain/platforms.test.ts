@@ -149,6 +149,35 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent?.identity?.elowenUserId).toBeUndefined();
   });
 
+  it('mints only a durable workspace ref and never forwards the resolved host path to dispatch', async () => {
+    let request: DelegatedTurnRequest | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'subagent', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const resolver = linkedResolver(false);
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      identity: resolver,
+      channels: { sessionOwnerUserId: () => 1 } as never,
+      sandbox: () => ({
+        workspacesFor: () => [{ workspaceId: 'ws_explicit', projectId: 3, path: '/host/secret/ws', label: 'w', branch: 'b', baseRef: 'main' }],
+        resolveWorkspace: () => ({ accountUserId: 1, workspaceId: 'ws_explicit', projectId: 3, path: '/host/secret/ws' }),
+      }) as never,
+      dispatch: { send: async (value) => { request = value; return 'ok'; } },
+    });
+    await orch.startAll();
+    await handler!({
+      platform: 'subagent', userId: 'subagent', channelId: 'sub-workspace', roleIds: [],
+      access: {
+        admin: true, projectIds: [], parentSessionId: 'brain-1', permissionBoundary: null,
+        contributionUserId: 1, workspaceId: 'ws_explicit', cwd: '/host/parent',
+      },
+    } as never, 'inspect');
+    expect(request?.delegatedAccess.workspaceRef).toEqual({ workspaceId: 'ws_explicit', projectId: 3 });
+    expect(request).not.toHaveProperty('clientCwd');
+    expect(JSON.stringify(request)).not.toContain('/host/secret/ws');
+  });
+
   // A shared room is anchored on the operator because it has no single author, so the owner column alone
   // reported a colleague's Teams room as the operator's own conversation. The writer is recorded per turn
   // instead of being derived on read, which would mean scanning the message table for every listing.

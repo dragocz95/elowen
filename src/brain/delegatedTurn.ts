@@ -86,7 +86,7 @@ export function delegatedChannelSendOpts(
     ...(req.fast !== undefined ? { fast: req.fast } : {}),
     parentSessionId: req.parentSessionId,
     delegatedAccess: scope,
-    ...(req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
+    ...(scope.workspaceRef ? {} : req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
     ...(req.idleRolloverMs !== undefined ? { idleRolloverMs: req.idleRolloverMs } : {}),
     // The captured scope stays authoritative; the spawning account's CURRENT grant intersects it, exactly
     // as the drill-in continuation path does. Without this the forked runner and every first spawn were
@@ -201,6 +201,7 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
   if (v.thinkingLevel !== undefined && typeof v.thinkingLevel !== 'string') return undefined;
   if (v.fast !== undefined && typeof v.fast !== 'boolean') return undefined;
   if (v.clientCwd !== undefined && typeof v.clientCwd !== 'string') return undefined;
+  if (scope.workspaceRef && v.clientCwd !== undefined) return undefined;
   // JSON has no Infinity: the plugin already pins its "never roll over" value to MAX_SAFE_INTEGER for
   // exactly this reason, so anything non-finite arriving here is corruption, not a legitimate sentinel.
   if (v.idleRolloverMs !== undefined && (typeof v.idleRolloverMs !== 'number' || !Number.isFinite(v.idleRolloverMs))) return undefined;

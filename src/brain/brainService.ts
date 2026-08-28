@@ -387,6 +387,7 @@ export class BrainService {
     this.delegated = new DelegatedSessionService({
       store: d.store, sessions: this.sessions, channelService: this.channelService, identity: this.identity,
       users: d.users, policyForProjects: d.policyForProjects,
+      sandbox: () => d.plugins?.peek()?.control('sandbox'),
       // A daemon-side delegated send (an owner drill-in, a DelegateContinue, a durable result delivery)
       // rehydrates the child from SQLite HERE, so the runner must not still be holding a live record for
       // it. Asking first is what keeps one child session from being live in two processes at once.
@@ -408,6 +409,7 @@ export class BrainService {
       identity: this.identity,
       channels: this.channelService,
       dispatch: this.subagents,
+      sandbox: () => d.plugins?.peek()?.control('sandbox'),
       restart: () => this.restartHandler,
       // Owner-chat origin work only. Direct platform origins are deliberately intercepted by
       // PlatformOrchestrator and run through ChannelSessionService + the outbound adapter; routing a
@@ -571,8 +573,13 @@ export class BrainService {
       if (wf.attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) {
         reason = 'it kept getting interrupted by repeated daemon restarts';
       } else if (control) {
+        const trustedNodeWorkspaceRefs = Object.fromEntries(wf.state.nodes
+          .filter((node) => node.workspaceRef)
+          .map((node) => [node.id, node.workspaceRef!]));
         const outcome = await control.resumeInterrupted({
           workflowId: wf.workflowId, parentSessionId: wf.parentSessionId, toolCallId: wf.toolCallId,
+          ...(wf.state.workspaceRef ? { trustedWorkspaceRef: wf.state.workspaceRef } : {}),
+          ...(Object.keys(trustedNodeWorkspaceRefs).length ? { trustedNodeWorkspaceRefs } : {}),
           hooks: {
             emit: (update) => { this.d.store.upsertWorkflowRun(wf.parentSessionId, update); },
             complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
@@ -882,6 +889,28 @@ export class BrainService {
     if (!this.d.users.get(row.user_id)) return { ok: false, reason: 'the origin user no longer exists' };
     const policy = this.d.policy?.(row.user_id);
     const settings = this.d.permissions?.(row.user_id);
+    const contributionUserId = scope.contributionUserId;
+    if (contributionUserId !== undefined && !this.d.users.get(contributionUserId)) {
+      return { ok: false, reason: 'the journaled contribution account no longer exists' };
+    }
+    if (scope.workspaceRef) {
+      const sandbox = this.d.plugins?.peek()?.control('sandbox');
+      if (!sandbox || contributionUserId === undefined) {
+        return { ok: false, reason: 'the journaled Sandbox workspace cannot be resolved' };
+      }
+      const contributionPolicy = this.d.policy?.(contributionUserId);
+      try {
+        sandbox.resolveWorkspace({
+          accountUserId: contributionUserId,
+          workspace: scope.workspaceRef,
+          accessibleProjectIds: contributionPolicy?.allowedProjectIds === 'all'
+            ? 'all'
+            : contributionPolicy ? [...contributionPolicy.allowedProjectIds] : [],
+        });
+      } catch (error) {
+        return { ok: false, reason: `the journaled Sandbox workspace is unavailable: ${error instanceof Error ? error.message : String(error)}` };
+      }
+    }
     const access: DelegatingTurnAccess = {
       admin: policy?.allowedProjectIds === 'all',
       projectIds: !policy || policy.allowedProjectIds === 'all' ? [] : [...policy.allowedProjectIds],
@@ -891,6 +920,8 @@ export class BrainService {
       permissionBoundary: settings
         ? noninteractivePermissionBoundary({ ruleset: buildPermissionRuleset(settings), yolo: false, unattendedAsks: settings.unattendedAsks })
         : null,
+      ...(contributionUserId !== undefined ? { contributionUserId } : {}),
+      ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
     };
     const exceeds = scopeExceedsCurrentAccess(scope, access);
     return exceeds ? { ok: false, reason: `the journaled boundary exceeds the origin's current authority: ${exceeds}` } : { ok: true };
@@ -1483,8 +1514,9 @@ export class BrainService {
     onEvent?: (e: SubagentProgressEvent) => void,
     model?: string,
     promote?: boolean,
+    workspaceId?: string,
   ): Promise<DelegatedContinueResult> {
-    return this.delegated.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote);
+    return this.delegated.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote, workspaceId);
   }
 
   /** Run one user turn — see BrainTurnRunner.send. `display` is the client's clean rendering of the

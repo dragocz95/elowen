@@ -5,7 +5,7 @@ import { toolAuthorityForUser } from '../brainDeps.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ChannelSessionService } from '../channels.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
-import { delegatedToolPolicy, promoteDelegatedScope, scopeExceedsCurrentAccess } from '../delegatedScope.js';
+import { delegatedToolPolicy, normalizeDelegatedExecutionScope, promoteDelegatedScope, scopeExceedsCurrentAccess } from '../delegatedScope.js';
 import type { BrainEvent } from '../events.js';
 import type { IdentityResolver } from '../identity.js';
 import { extractText } from '../messageView.js';
@@ -13,9 +13,10 @@ import type { BrainModelSelection } from '../providers.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import { channelIdOf, isSubagentSession, subagentSessionId } from '../sessionId.js';
-import type { DelegatedContinueResult, SubagentProgressEvent } from '../../plugins/api.js';
+import type { DelegatedContinueResult, KnownControls, SubagentProgressEvent } from '../../plugins/api.js';
 import type { RecoveryOutcome } from '../recovery/types.js';
 import { logger } from '../../shared/logger.js';
+import { bindingRef, resolveDelegatedWorkspace } from '../workspaceScope.js';
 
 /** Parse a `provider/model` spec into a brain model selection. Splits on the FIRST slash only — model
  *  ids themselves may contain slashes (e.g. `ai-coresynth-io/deepseek/deepseek-v4-flash`), so a naive
@@ -95,6 +96,7 @@ interface DelegatedSessionDeps {
   identity: IdentityResolver;
   users: BrainDeps['users'];
   policyForProjects?: BrainDeps['policyForProjects'];
+  sandbox?: () => KnownControls['sandbox'] | undefined;
   /** Ask the sub-agent runner to drop its live record for a child before this process rehydrates it.
    *  Every send below runs the turn HERE, so a record still held over there would leave one session live
    *  in two processes at once. Absent (no runner) ⇒ there is nothing to release. */
@@ -417,13 +419,38 @@ export class DelegatedSessionService {
     onEvent?: (e: SubagentProgressEvent) => void,
     model?: string,
     promote?: boolean,
+    workspaceId?: string,
   ): Promise<DelegatedContinueResult> {
     const row = this.d.store.getSession(childSessionId);
     if (!row || row.parent_session_id !== parentSessionId || !isSubagentSession(childSessionId)) {
       throw new Error('unknown sub-agent for this conversation');
     }
-    const scope = this.d.store.delegatedAccessFor(childSessionId);
+    let scope = this.d.store.delegatedAccessFor(childSessionId);
     if (!scope) throw new Error('delegated access unavailable');
+    const requestedWorkspaceId = typeof workspaceId === 'string' ? workspaceId.trim() : '';
+    let workspaceAttached = false;
+    if (requestedWorkspaceId) {
+      const binding = resolveDelegatedWorkspace(this.d.sandbox?.(), access, requestedWorkspaceId);
+      if (!binding) throw new Error('workspace not found in the current project scope');
+      const workspaceRef = bindingRef(binding);
+      if (scope.workspaceRef) {
+        if (scope.workspaceRef.workspaceId !== workspaceRef.workspaceId
+          || scope.workspaceRef.projectId !== workspaceRef.projectId) {
+          throw new Error('cannot continue that sub-agent in a different Sandbox workspace');
+        }
+      } else {
+        if (this.d.sessions.isActiveChild(childSessionId)) {
+          throw new Error('that sub-agent has a turn in flight and cannot be attached to a workspace until it finishes');
+        }
+        const attached = normalizeDelegatedExecutionScope({ ...scope, workspaceRef });
+        if (!attached) throw new Error('cannot attach that sub-agent to the requested Sandbox workspace');
+        if (!this.d.store.promoteDelegatedAccess(childSessionId, scope, attached)) {
+          throw new Error('that sub-agent’s access changed while the workspace was being attached — try again');
+        }
+        scope = attached;
+        workspaceAttached = true;
+      }
+    }
     const exceeds = scopeExceedsCurrentAccess(scope, access);
     if (exceeds) throw new Error(`cannot continue that sub-agent: ${exceeds}`);
     // Promotion is decided and PERSISTED before anything is delivered, and only for an idle child: a
@@ -465,7 +492,7 @@ export class DelegatedSessionService {
       // A live PI session bakes its tool definitions in at construction, so the promoted scope would sit
       // in the database doing nothing until the channel happened to be evicted. Respawn it — the same
       // dispose-and-rebuild a model switch performs, and the transcript rehydrates from SQLite unchanged.
-      ...(promote ? { rebuildSession: true } : {}),
+      ...(promote || workspaceAttached ? { rebuildSession: true } : {}),
       // The plugin's callback contract is the narrow progress shape, while the child's stream is the full
       // BrainEvent set — narrow every event at this boundary so the value matches the declared contract.
       ...(onEvent ? { onEvent: (e: BrainEvent) => onEvent(narrowSubagentProgress(e)) } : {}),

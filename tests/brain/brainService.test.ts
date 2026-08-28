@@ -3525,6 +3525,8 @@ describe('BrainService', () => {
       workspaceRoots: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace }],
       workspacesFor: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }],
       activeWorkspace: () => ({ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
+      resolveWorkspace: async () => ({ ref: { workspaceId: 'ws-owner', projectId: 7 }, path: workspace, accountId: 1, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
+      acquireDelegationLease: async () => ({ heartbeat: () => {}, release: () => {} }),
       prepareExecution: async () => ({}),
     } satisfies KnownControls['sandbox'] as never);
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);

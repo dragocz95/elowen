@@ -402,7 +402,8 @@ export function register(ctx) {
       'By default the call BLOCKS and returns the sub-agent\'s final result. Set background=true for an independent side-quest: it returns a job id immediately and the result is delivered to you in a NEW turn — do other work meanwhile, then end your turn. You are woken when it lands, so never poll DelegateStatus in a loop.',
       'To launch several independent sub-agents, put multiple delegate calls in ONE response so they run concurrently; do not serialize them. Once you have delegated a search, do not also run it yourself.',
       'Use read_only=true when the sub-agent only needs to look (explore, search, report) — it then gets read-only TOOLS (no Write/Edit) plus a shell clamped to non-destructive commands, and cannot delegate further. The shell clamp is a guardrail, not a sandbox: redirection and `sed -i` are permitted, so the child can still write files the daemon user can reach; what it cannot run is rm/mv/chmod, git commit/push/reset, npm, systemctl, kill, curl/wget/ssh or sudo. Use `tools` to hand it an exact toolset. Either way you can only ever narrow what you already hold.',
-      'The sub-agent inherits your model; pass `model` only when the user explicitly asked for a different one. Its final message comes back to you, not to the user — relay what matters. A sub-agent that already ran is NOT gone: its transcript is kept, so before delegating something that builds on earlier work, check DelegateList and send that sub-agent a follow-up with DelegateContinue instead — it resumes with its full context, where a fresh one would have to rediscover everything.'
+      'Pass workspaceId to explicitly confine the child to one Git Sandbox worktree as its logical filesystem root. The child then uses short relative paths and cannot use the parent’s wider filesystem access. An active parent workspace is not inherited unless the parent is itself an explicitly workspace-scoped child.'
+      + ' The sub-agent inherits your model; pass `model` only when the user explicitly asked for a different one. Its final message comes back to you, not to the user — relay what matters. A sub-agent that already ran is NOT gone: its transcript is kept, so before delegating something that builds on earlier work, check DelegateList and send that sub-agent a follow-up with DelegateContinue instead — it resumes with its full context, where a fresh one would have to rediscover everything.'
       + agentTypeLine,
     ].join(' '),
     parameters: Type.Object({
@@ -428,6 +429,10 @@ export function register(ctx) {
       })),
       subagent_type: Type.Optional(Type.String({
         description: 'Run the sub-agent as a named TYPE (see the list in this tool\'s description) — it supplies the role prompt and toolset. Omit for a generic sub-agent. The type governs the toolset (a read-only type already includes the non-destructive shell clamp), so read_only is redundant with it; an explicit `tools` list still narrows further on top.',
+      })),
+      workspaceId: Type.Optional(Type.String({
+        minLength: 1,
+        description: 'Explicit Sandbox workspace id. The child sees only that worktree and uses workspace-relative paths. Omit for legacy project-scope behavior; a normal parent\'s active workspace is never inherited implicitly.',
       })),
     }),
     execute: async (id, p) => {
@@ -483,7 +488,8 @@ export function register(ctx) {
         ...(toolPolicy ? { toolPolicy } : {}),
         model,
         parentSessionId: ctx.currentSessionId(),
-        ...(parentCwd ? { cwd: parentCwd } : {}),
+        ...(!p.workspaceId && !parentAccess.workspaceRef && parentCwd ? { cwd: parentCwd } : {}),
+        ...(p.workspaceId ? { workspaceId: p.workspaceId } : {}),
         ...(thinkingLevel ? { thinkingLevel } : {}),
         // The delegate transcript belongs to THIS delegation and to no earlier one — never roll it over
         // into a fresh session mid-flight (rolloverDue never fires for a real elapsed time below this
@@ -908,6 +914,10 @@ export function register(ctx) {
           + 'explicitly asked to switch. A sub-agent whose turn is still running cannot switch model; a '
           + 'follow-up carrying one is refused while it runs.',
       })),
+      workspaceId: Type.Optional(Type.String({
+        minLength: 1,
+        description: 'Workspace id to verify or attach. It must match a scoped child; a legacy child may be attached once, after which it cannot switch workspaces.',
+      })),
       write_access: Type.Optional(Type.Boolean({
         description: 'Lift a sub-agent you started with read_only=true out of read-only mode: it continues '
           + 'with its full context AND the tools and permissions YOU hold right now, for this and every '
@@ -972,7 +982,7 @@ export function register(ctx) {
       // running turn" and "run an idle turn" by reading the very registry this row writes to (a `running`
       // update registers the child as live), so raising it first made every idle continuation see ITSELF
       // as the running child. continueSubagent runs all its guards synchronously before its first await.
-      const continuation = ctx.continueSubagent(childSessionId, message, onEvent, model || undefined, p.write_access === true);
+      const continuation = ctx.continueSubagent(childSessionId, message, onEvent, model || undefined, p.write_access === true, p.workspaceId);
       const runContinuation = async () => {
         try {
           push('running');

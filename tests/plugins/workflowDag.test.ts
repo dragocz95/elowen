@@ -11,7 +11,7 @@ const { validateWorkflowNodes, mergeWorkflowNodes, readyNodeIds } = await import
   readyNodeIds(nodes: WfNode[], statusById: Record<string, string>): string[];
 };
 
-interface WfNode { id: string; task: string; deps: string[]; model?: string; tools?: string[]; readOnly?: boolean }
+interface WfNode { id: string; task: string; deps: string[]; model?: string; tools?: string[]; readOnly?: boolean; workspaceId?: string }
 
 describe('validateWorkflowNodes', () => {
   it('normalizes a simple linear DAG', () => {
@@ -26,12 +26,12 @@ describe('validateWorkflowNodes', () => {
     ]);
   });
 
-  it('carries optional model, tools and read_only through', () => {
+  it('carries optional model, tools, read_only and workspaceId through', () => {
     const r = validateWorkflowNodes([
-      { id: 'a', task: 'explore', model: 'openai/gpt-5.5', tools: ['Read'], read_only: true },
+      { id: 'a', task: 'explore', model: 'openai/gpt-5.5', tools: ['Read'], read_only: true, workspaceId: 'ws_node' },
     ]);
     expect(r.nodes?.[0]).toEqual({
-      id: 'a', task: 'explore', deps: [], model: 'openai/gpt-5.5', tools: ['Read'], readOnly: true,
+      id: 'a', task: 'explore', deps: [], model: 'openai/gpt-5.5', tools: ['Read'], readOnly: true, workspaceId: 'ws_node',
     });
   });
 

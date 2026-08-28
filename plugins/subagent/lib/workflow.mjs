@@ -75,6 +75,8 @@ const delegableAccess = (access) => ({
   } : {}),
   permissionBoundary: access.permissionBoundary,
   ...(access.readOnly ? { readOnly: true } : {}),
+  ...(access.contributionUserId != null ? { contributionUserId: access.contributionUserId } : {}),
+  ...(access.workspaceRef ? { workspaceRef: { ...access.workspaceRef } } : {}),
 });
 // Some models (seen: Qwen max preview) double-escape non-ASCII in tool-call JSON, so the parsed title
 // still carries literal backslash-u sequences ("Docs \u2014 write" instead of "Docs — write"). The title
@@ -133,6 +135,7 @@ const NODE_SHAPE = Type.Object({
   read_only: Type.Optional(Type.Boolean({ description: 'Give this node read-only tools and the non-destructive shell clamp (explore/report, no delegation). The clamp denies destructive commands; it does not prevent writing a file through redirection.' })),
   tools: Type.Optional(Type.Array(Type.String(), { description: 'Give this node EXACTLY these tools (names from your own toolset). Narrows only.' })),
   subagent_type: Type.Optional(Type.String({ description: 'Run this node as a named sub-agent TYPE (from the delegate tool\'s type list) — it supplies the role prompt and toolset (a read-only type already includes the non-destructive shell clamp). Omit for a generic node.' })),
+  workspaceId: Type.Optional(Type.String({ minLength: 1, description: 'Explicit Sandbox workspace for this node. It may only preserve or narrow the effective parent workspace scope.' })),
 });
 
 /** Register the workflow tools on the subagent plugin. `getRun` returns the host channel handler once
@@ -142,6 +145,43 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   /** id -> workflow. In-memory only (mirrors delegate's `jobs`): a workflow does not survive a daemon
    *  restart, and its node child sessions persist on their own. */
   const workflows = new Map();
+  const sameWorkspaceRef = (a, b) => a?.workspaceId === b?.workspaceId && a?.projectId === b?.projectId;
+  const resolveWorkspaceRef = (access, requestedWorkspaceId) => {
+    const requested = typeof requestedWorkspaceId === 'string' ? requestedWorkspaceId.trim() : '';
+    const inherited = access.workspaceRef;
+    if (!requested) return inherited ? { ...inherited } : undefined;
+    if (inherited && requested !== inherited.workspaceId) {
+      throw new Error('a workspace-scoped workflow node cannot switch to a sibling workspace');
+    }
+    const sandbox = ctx.control?.('sandbox');
+    const accountUserId = access.contributionUserId;
+    if (!sandbox || !Number.isSafeInteger(accountUserId) || accountUserId <= 0) {
+      throw new Error('Sandbox workspace scope is unavailable for this workflow');
+    }
+    const candidates = sandbox.workspacesFor({
+      userId: accountUserId,
+      ...(access.admin ? {} : { projectIds: access.projectIds }),
+    });
+    const candidate = candidates.find((workspace) => workspace.workspaceId === requested);
+    if (!candidate) throw new Error('workspace not found in the current project scope');
+    const binding = sandbox.resolveWorkspace({
+      accountUserId,
+      workspace: { workspaceId: candidate.workspaceId, projectId: candidate.projectId },
+      accessibleProjectIds: access.admin ? 'all' : access.projectIds,
+    });
+    const resolved = { workspaceId: binding.workspaceId, projectId: binding.projectId };
+    if (inherited && !sameWorkspaceRef(inherited, resolved)) {
+      throw new Error('a workspace-scoped workflow node cannot switch to a sibling workspace');
+    }
+    return resolved;
+  };
+  const resolveNodeWorkspaces = (nodes, parentAccess, defaultWorkspaceRef) => nodes.map((node) => {
+    const workspaceRef = node.workspaceId
+      ? resolveWorkspaceRef(parentAccess, node.workspaceId)
+      : defaultWorkspaceRef ?? parentAccess.workspaceRef;
+    const { workspaceId: _workspaceId, ...rest } = node;
+    return { ...rest, ...(workspaceRef ? { workspaceRef } : {}) };
+  });
 
   // Shared with delegate's background jobs, from one operator knob — see lib/retention.mjs.
   const resultRetentionMs = resolveResultRetentionMs(ctx.config);
@@ -173,7 +213,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   const writeJournal = (wf) => {
     try {
       writeFileSync(journalPath(wf.id), JSON.stringify({
-        v: 1,
+        v: 2,
         id: wf.id,
         toolCallId: wf.toolCallId,
         ...(wf.title ? { title: wf.title } : {}),
@@ -184,6 +224,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         parentAccess: wf.parentAccess ?? null,
         parentModel: wf.parentModel ?? null,
         parentCwd: wf.parentCwd ?? null,
+        workspaceRef: wf.workspaceRef ?? null,
         nodes: wf.nodes,
         nodeParentAccess: [...wf.nodeParentAccess],
         nodeParentModel: [...wf.nodeParentModel],
@@ -272,6 +313,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         task: n.task.length > SNAPSHOT_TASK_PREVIEW ? `${n.task.slice(0, SNAPSHOT_TASK_PREVIEW)}…` : n.task,
         status: s.status,
         deps: n.deps,
+        ...(n.workspaceRef ? { workspaceRef: n.workspaceRef } : {}),
         ...(s.sessionId ? { sessionId: s.sessionId } : {}),
         ...(s.detail ? { detail: s.detail } : {}),
         ...(s.tokens !== undefined ? { tokens: s.tokens } : {}),
@@ -290,7 +332,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     try {
       wf.emit({
         id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}),
-        status: wf.status, ...(wf.background ? { background: true } : {}), nodes,
+        status: wf.status, ...(wf.background ? { background: true } : {}),
+        ...(wf.workspaceRef ? { workspaceRef: wf.workspaceRef } : {}), nodes,
       });
     }
     catch (e) { ctx.logger.warn(`workflow snapshot fan-out failed: ${errorText(e)}`); }
@@ -412,7 +455,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       ...(toolPolicy ? { toolPolicy } : {}),
       model,
       parentSessionId: wf.originSessionId,
-      ...(wf.parentCwd ? { cwd: wf.parentCwd } : {}),
+      ...(!node.workspaceRef && !wf.workspaceRef && !parentAccess.workspaceRef && wf.parentCwd ? { cwd: wf.parentCwd } : {}),
+      ...(node.workspaceRef ?? wf.workspaceRef ?? parentAccess.workspaceRef
+        ? { workspaceRef: node.workspaceRef ?? wf.workspaceRef ?? parentAccess.workspaceRef }
+        : {}),
       ...(thinkingLevel ? { thinkingLevel } : {}),
       // Number.MAX_SAFE_INTEGER, not Infinity, so the value survives any JSON round-trip (Infinity would
       // serialize to null) — keeps the node transcript pinned to this workflow instead of rolling over
@@ -630,13 +676,20 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     if (sessionId !== wf.originSessionId && !childAccess) {
       throw new Error('the workflow node caller has no delegable access boundary');
     }
-    const { nodes, error } = mergeWorkflowNodes(wf.nodes, rawNodes);
+    const { nodes: validatedNodes, error } = mergeWorkflowNodes(wf.nodes, rawNodes);
     if (error) throw new Error(error);
+    const effectiveParentAccess = childAccess ?? wf.parentAccess;
+    const workspaceCeiling = wf.workspaceRef ?? effectiveParentAccess.workspaceRef;
+    if (wf.workspaceRef && effectiveParentAccess.workspaceRef && !sameWorkspaceRef(wf.workspaceRef, effectiveParentAccess.workspaceRef)) {
+      throw new Error('the workflow node caller is scoped to a different workspace');
+    }
+    const scopedParentAccess = workspaceCeiling ? { ...effectiveParentAccess, workspaceRef: workspaceCeiling } : effectiveParentAccess;
+    const nodes = resolveNodeWorkspaces(validatedNodes, scopedParentAccess, workspaceCeiling);
     for (const node of nodes) {
       wf.nodes.push(node);
       wf.state.set(node.id, freshNodeState());
       if (childAccess) {
-        wf.nodeParentAccess.set(node.id, childAccess);
+        wf.nodeParentAccess.set(node.id, scopedParentAccess);
         if (callerModel) wf.nodeParentModel.set(node.id, callerModel);
       }
     }
@@ -655,18 +708,37 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
    *  boot; the journal was captured by this same daemon from a genuine turn, and an exact match is what
    *  lets node sessions respawn at all), and the workflow is forced to BACKGROUND — the origin's blocking
    *  turn died with the restart, so the hook-provided durable sink is the only path its summary has. */
-  const resumeInterrupted = async ({ workflowId, parentSessionId, toolCallId, hooks }) => {
+  const resumeInterrupted = async ({ workflowId, parentSessionId, toolCallId, trustedWorkspaceRef, trustedNodeWorkspaceRefs, hooks }) => {
     if (!getRun()) return { resumed: false, reason: 'the delegated run handler is not connected' };
     if (workflows.has(workflowId)) return { resumed: false, reason: 'already held in memory' };
     let raw;
     try { raw = JSON.parse(readFileSync(journalPath(workflowId), 'utf8')); }
     catch (e) { return { resumed: false, reason: `no usable recovery journal (${errorText(e)})` }; }
-    if (!isRecord(raw) || raw.v !== 1 || raw.id !== workflowId || raw.toolCallId !== toolCallId
+    if (!isRecord(raw) || (raw.v !== 1 && raw.v !== 2) || raw.id !== workflowId || raw.toolCallId !== toolCallId
       || raw.originSessionId !== parentSessionId || typeof raw.originPrincipal !== 'string' || !raw.originPrincipal
       || !isRecord(raw.parentAccess) || !Array.isArray(raw.nodes) || !Array.isArray(raw.state)) {
       deleteJournal(workflowId); // mismatched/corrupt — it can never resume anything, so stop it lingering
       return { resumed: false, reason: 'recovery journal does not match the claimed workflow' };
     }
+    const journalWorkspaceRef = isRecord(raw.workspaceRef) ? raw.workspaceRef : undefined;
+    if ((trustedWorkspaceRef || journalWorkspaceRef) && !sameWorkspaceRef(trustedWorkspaceRef, journalWorkspaceRef)) {
+      deleteJournal(workflowId);
+      return { resumed: false, reason: 'the journal workspace does not match the trusted workflow snapshot' };
+    }
+    const trustedNodes = trustedNodeWorkspaceRefs ?? {};
+    for (const rawNode of raw.nodes) {
+      if (!isRecord(rawNode) || typeof rawNode.id !== 'string') {
+        deleteJournal(workflowId);
+        return { resumed: false, reason: 'the recovery journal contains a malformed workflow node' };
+      }
+      const journalRef = isRecord(rawNode.workspaceRef) ? rawNode.workspaceRef : undefined;
+      const trustedRef = trustedNodes[rawNode.id];
+      if ((trustedRef || journalRef) && !sameWorkspaceRef(trustedRef, journalRef)) {
+        deleteJournal(workflowId);
+        return { resumed: false, reason: `node "${rawNode.id}" workspace does not match the trusted workflow snapshot` };
+      }
+    }
+
     // The journal is an agent-writable file, so every boundary read from it is UNTRUSTED authority. Core
     // re-validates each one against the origin user's authority AS IT STANDS NOW; the first refusal kills
     // the whole resume (core then terminalizes with a durable notice). Never resume on a boundary this
@@ -674,10 +746,23 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     const rejectedBoundary = (() => {
       const parent = hooks.validateBoundary(raw.parentAccess);
       if (!parent.ok) return parent.reason ?? 'the journaled workflow boundary was rejected';
-      for (const entry of Array.isArray(raw.nodeParentAccess) ? raw.nodeParentAccess : []) {
+      const rawNodeAccess = Array.isArray(raw.nodeParentAccess) ? raw.nodeParentAccess : [];
+      for (const entry of rawNodeAccess) {
         if (!Array.isArray(entry) || entry.length !== 2) return 'malformed journaled node boundary';
         const node = hooks.validateBoundary(entry[1]);
         if (!node.ok) return node.reason ?? 'a journaled node boundary was rejected';
+      }
+      const nodeAccess = new Map(rawNodeAccess);
+      for (const rawNode of raw.nodes) {
+        if (!isRecord(rawNode) || typeof rawNode.id !== 'string') return 'malformed journaled workflow node';
+        const inherited = nodeAccess.get(rawNode.id) ?? raw.parentAccess;
+        if (!isRecord(inherited)) return 'malformed journaled node boundary';
+        const workspaceRef = isRecord(rawNode.workspaceRef)
+          ? rawNode.workspaceRef
+          : isRecord(raw.workspaceRef) ? raw.workspaceRef : inherited.workspaceRef;
+        if (!workspaceRef) continue;
+        const scoped = hooks.validateBoundary({ ...inherited, workspaceRef });
+        if (!scoped.ok) return scoped.reason ?? 'a journaled node workspace was rejected';
       }
       return undefined;
     })();
@@ -701,6 +786,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       parentAccess: raw.parentAccess,
       parentModel: isRecord(raw.parentModel) ? raw.parentModel : undefined,
       parentCwd: typeof raw.parentCwd === 'string' && raw.parentCwd ? raw.parentCwd : undefined,
+      workspaceRef: isRecord(raw.workspaceRef) ? raw.workspaceRef : undefined,
       emit: (update) => hooks.emit(update),
       sharedContext: typeof raw.sharedContext === 'string' && raw.sharedContext ? raw.sharedContext : undefined,
       originSessionId: parentSessionId,
@@ -815,7 +901,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     description: [
       `Run a DAG of sub-agents whose complete definition lives in a JSON file. Before calling this tool, use Write to create that file, then pass its path as nodesFile. Do not pass nodes inline. When your session has unrestricted filesystem access, write it under ${workflowDir} (it already exists) so the run leaves nothing behind in the user's project. A project-scoped session cannot write there and must use a path inside an accessible repository — which is also the right choice for a definition you want to keep and version.`,
       'The file may contain either a JSON array of node objects, or an object shaped as { title?, context?, nodes: [...], background? }. Explicit title, context, or background tool arguments override the corresponding values from the file, so one file can be reused as a template.',
-      'Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps (node ids that must finish first), model, read_only, tools, and subagent_type. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation; put everything it needs in task or shared context.',
+      'Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps, model, read_only, tools, subagent_type, and workspaceId. WorkflowStart.workspaceId sets the default explicit Sandbox workspace; a node workspaceId may only preserve or narrow its effective parent scope. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation; put everything it needs in task or shared context.',
       'Use a workflow instead of several separate delegate calls when the subtasks have an ORDER or dependency between them (gather → analyze → write), or when a later step needs earlier steps\' results. Independent nodes run in parallel, and a dependent receives its dependencies\' results as context. For fully independent tasks, plain parallel delegate calls are simpler.',
       'By default the call BLOCKS and returns every node\'s result. Set background=true (in the file or as an explicit argument) to return a handle immediately and receive the summary in a NEW turn. A node whose dependency failed is reported as skipped.',
       'If the result names failed or skipped nodes and the workflow is still held in memory, use WorkflowResume instead of starting over — it re-runs only unfinished nodes and leaves every completed node unchanged.',
@@ -825,6 +911,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       title: Type.Optional(Type.String({ description: 'Override the file\'s title. Human label shown in the CLI panel: AT MOST 4 WORDS, in the user\'s language, no trailing punctuation (the UI appends an ellipsis).' })),
       context: Type.Optional(Type.String({ description: 'Override the file\'s context. Background shared by ALL nodes (added to each node\'s cache-friendly system prefix).' })),
       background: Type.Optional(Type.Boolean({ description: 'Override the file\'s background setting. True starts asynchronously and delivers the summary in a NEW turn; false blocks until completion.' })),
+      workspaceId: Type.Optional(Type.String({ minLength: 1, description: 'Default explicit Sandbox workspace for workflow nodes. Omit for legacy project-scope behavior; active workspace bindings are not inherited implicitly.' })),
     }),
     execute: async (toolCallId, p) => {
       if (!getRun()) return ok('Error: workflows are not wired up on this server.');
@@ -836,7 +923,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         const path = ctx.assertPathAllowed(p.nodesFile);
         source = JSON.parse(readFileSync(path, 'utf8'));
       } catch (e) {
-        const message = errorText(e);
+        const message = ctx.sanitizePathOutput(errorText(e));
         if (e instanceof SyntaxError) {
           return ok(`Error: workflow file "${p.nodesFile}" contains invalid JSON (${message}). Fix the JSON syntax in the file, then call WorkflowStart again.`);
         }
@@ -856,8 +943,18 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
           return ok(`Error: workflow file "${p.nodesFile}" field "${field}" must be a ${type}. Fix or remove that field, then call WorkflowStart again.`);
         }
       }
-      const { nodes, error, index } = validateWorkflowNodes(rawNodes);
+      const { nodes: validatedNodes, error, index } = validateWorkflowNodes(rawNodes);
       if (error) return ok(`Error: workflow file "${p.nodesFile}": ${actionableNodeError(rawNodes, error, index)}.`);
+      let parentAccess = ctx.currentAccess();
+      let workspaceRef;
+      let nodes;
+      try {
+        workspaceRef = resolveWorkspaceRef(parentAccess, p.workspaceId);
+        parentAccess = workspaceRef ? { ...parentAccess, workspaceRef } : parentAccess;
+        nodes = resolveNodeWorkspaces(validatedNodes, parentAccess, workspaceRef);
+      } catch (e) {
+        return ok(`Error: ${errorText(e)}.`);
+      }
       const title = p.title !== undefined ? p.title : fileOptions.title;
       const context = p.context !== undefined ? p.context : fileOptions.context;
       const background = p.background !== undefined ? p.background : fileOptions.background;
@@ -882,11 +979,12 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         // Only dynamically child-added nodes enter these maps; originals and origin-added nodes use the parent.
         nodeParentAccess: new Map(),
         nodeParentModel: new Map(),
-        parentAccess: ctx.currentAccess(),
+        parentAccess,
         parentModel: ctx.currentModel() ?? undefined,
+        ...(workspaceRef ? { workspaceRef } : {}),
         // The origin turn's working directory, inherited by every node so a node's tools resolve against
         // the SAME project the workflow was launched in, never the daemon's `/`.
-        parentCwd: ctx.currentWorkDir?.(),
+        parentCwd: workspaceRef || parentAccess.workspaceRef ? undefined : ctx.currentWorkDir?.(),
         emit: ctx.workflowEmitter(),
         sharedContext: typeof context === 'string' && context.trim() ? context.trim() : undefined,
         originSessionId,
@@ -925,7 +1023,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // away — driveResult is the shared tail WorkflowResume reuses so both behave identically.
       return driveResult(wf, completion, background === true);
     },
-  }));
+  }), { hostFilesystem: true });
 
   ctx.registerTool(defineTool({
     name: 'WorkflowResume', label: 'Resume a workflow',
@@ -1034,6 +1132,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       + 'allow it, and they are part of the workflow\'s own result, not a separate one you collect.',
     parameters: Type.Object({
       workflowId: Type.String({ description: 'The id of the RUNNING workflow to extend — from WorkflowStart, WorkflowStatus, or the briefing of the node you are running as.' }),
+      workspaceId: Type.Optional(Type.String({ minLength: 1, description: 'Default explicit Sandbox workspace for every added node that does not declare its own workspaceId.' })),
       nodes: Type.Array(NODE_SHAPE, { description: 'The nodes to add: each with a new unique id, a self-contained task, and optional deps on existing or newly added node ids (no cycles).' }),
     }),
     // `_id` is THIS call's tool id, and this tool usually runs inside a NODE's own turn. It is
@@ -1047,10 +1146,13 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         const rpc = ctx.workflowExpansionRpc?.();
         // A runner may itself own a NESTED workflow started by one of its turns. Prefer that local DAG;
         // only an id absent from this process crosses upward to the daemon-owned parent workflow.
+        const nodes = p.workspaceId
+          ? p.nodes.map((node) => node.workspaceId ? node : { ...node, workspaceId: p.workspaceId })
+          : p.nodes;
         let result;
-        if (local) result = addNodesFromSession(p.workflowId, p.nodes, undefined, ctx.currentAccess(), ctx.currentModel());
-        else if (rpc) result = await rpc.addNodes({ workflowId: p.workflowId, nodes: p.nodes });
-        else result = addNodesFromSession(p.workflowId, p.nodes, undefined, ctx.currentAccess(), ctx.currentModel());
+        if (local) result = addNodesFromSession(p.workflowId, nodes, undefined, ctx.currentAccess(), ctx.currentModel());
+        else if (rpc) result = await rpc.addNodes({ workflowId: p.workflowId, nodes });
+        else result = addNodesFromSession(p.workflowId, nodes, undefined, ctx.currentAccess(), ctx.currentModel());
         return ok(`Added ${result.added.length} node(s) to workflow ${p.workflowId}: ${result.added.join(', ')}.`);
       } catch (e) {
         return ok(`Error: ${errorText(e)}.`);
