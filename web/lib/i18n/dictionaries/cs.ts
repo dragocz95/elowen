@@ -190,8 +190,11 @@ export const cs = {
   },
   auth: {
     signIn: 'Přihlásit se',
+    signInDescription: 'Přihlaste se ke svému účtu {app}.',
     signInWithMicrosoft: 'Přihlásit se přes Microsoft',
     or: 'nebo',
+    orContinueWith: 'Nebo pokračujte přes',
+    microsoft: 'Microsoft',
     usernamePlaceholder: 'Uživatelské jméno',
     passwordPlaceholder: 'Heslo',
     ssoErrors: {

@@ -339,25 +339,71 @@
   font-size: 0.875rem;
 }
 
-/* The section tabs (components/ui/WorkspaceShell.tsx mounts the shared `Segmented` in its `line`
-   variant here). The shared control is `inline-flex`, so its bottom rule stopped at the last tab and
-   the row read as an underlined phrase rather than as a tab strip. Spanning the column is what makes
-   the rule a page division, which is the whole point of the `line` variant.
-   The active tab is marked in the page's own ink rather than in the accent. On a design where the
-   accent means "something is happening here", spending it on "you are on this tab" — a fact the reader
-   just caused — makes the loudest colour the most common one. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__tabs {
-  display: flex;
-  gap: 1.25rem;
-  margin-bottom: 1.25rem;
+/* Every sectioned Studio page uses the same secondary navigation: a quiet Vercel-style sidebar while
+   there is room, and one compact select below tablet width. The active section title then belongs to the
+   right column, where it reads as the page heading instead of duplicating a horizontal tab label. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-layout {
+  display: grid;
+  grid-template-columns: minmax(12.5rem, 14rem) minmax(0, 1fr);
+  gap: 2rem;
+  align-items: start;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__tabs .segmented__option {
-  height: 2.25rem;
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation {
+  min-width: 0;
+  min-height: calc(100dvh - 3rem);
+  padding: 1.5rem 1.25rem 3rem 0;
+  border-right: 1px solid var(--color-border);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar {
+  position: sticky;
+  top: 4rem;
+  max-height: calc(100dvh - 5rem);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar::-webkit-scrollbar {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar .segmented {
+  width: 100%;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar .segmented__option {
+  height: 2.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
   font-size: 0.875rem;
+  font-weight: 450;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__tabs .segmented__option[aria-checked='true'] {
-  border-bottom-color: var(--color-text);
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar .segmented__option[aria-checked='true'] {
+  background: var(--color-sidebar-accent);
   color: var(--color-text);
+  font-weight: 550;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-mobile {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-main {
+  min-width: 0;
+}
+
+@media (max-width: 63.999rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-layout {
+    display: block;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation {
+    min-height: 0;
+    padding: 1rem 0 0;
+    border-right: 0;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-sidebar {
+    display: none;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-mobile {
+    position: relative;
+    z-index: 1;
+    display: block;
+    max-width: 28rem;
+  }
 }
 
 /* State is a change of ground and nothing else — two neutral steps of the same ink, never a tint. The

@@ -3,6 +3,7 @@
 // which PREPENDS the older page exactly once (no duplication) and clears the sentinel once the cursor
 // reaches null (nextBefore === null).
 import { test, expect, ChatPage } from '../fixtures/index.ts';
+import { DAEMON_URL } from '../fixtures/env.ts';
 import type { BrainMessage } from '../../../lib/types.ts';
 
 // The provider fetches the newest HISTORY_PAGE (50) turns first; a source larger than that leaves an
@@ -38,4 +39,27 @@ test('@smoke P0-5 scrolling to the top lazy-loads older history once, then retir
   await chat.scrollToTopForOlder();
   await expect(chat.turns()).toHaveCount(TOTAL);
   await expect(chat.turns().filter({ hasText: 'Msg 0 (you)' })).toHaveCount(1);
+});
+
+test('opening a chat and growing its composer keep the newest message in view', async ({ app, seed }) => {
+  await seed.messages(seedTurns);
+  const chat = new ChatPage(app);
+  await chat.goto();
+  await expect(chat.lastTurn()).toContainText('Msg 59 (elowen)');
+
+  const bottomGap = () => app.locator('main').evaluate((main) => main.scrollHeight - main.scrollTop - main.clientHeight);
+  // The dock's bottom safe-area padding intentionally leaves a small non-zero gap.
+  await expect.poll(bottomGap, { message: 'the opened conversation did not start at its newest message' }).toBeLessThan(32);
+
+  await chat.composer.fill(Array.from({ length: 8 }, (_, i) => `Wrapped line ${i + 1}`).join('\n'));
+  await expect.poll(bottomGap, { message: 'growing the composer moved the newest message out of view' }).toBeLessThan(32);
+
+  await app.getByRole('button', { name: /Conversation history|Historie konverzací/i }).click();
+  await app.getByRole('button', { name: 'Second conversation' }).click();
+  await expect.poll(async () => {
+    const response = await app.request.get(`${DAEMON_URL}/__test/streams?session=brain-2`);
+    const body = await response.json() as { streams: unknown[] };
+    return body.streams.length;
+  }, { message: 'the selected conversation never became the active stream' }).toBeGreaterThan(0);
+  await expect.poll(bottomGap, { message: 'switching conversations kept the previous scroll offset' }).toBeLessThan(32);
 });

@@ -4,6 +4,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { useShellProfile } from '../../lib/shellProfile';
 import { Segmented } from './Segmented';
+import { SelectMenu } from './SelectMenu';
 import { WorkspaceHero, type WorkspaceHeroProps } from './WorkspaceHero';
 
 export interface SpatialDeckSection {
@@ -83,27 +84,43 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   );
 }
 
-/** The same section selector, drawn as a row of tabs.
- *
- *  It is the SHARED `Segmented` in its `line` variant rather than a second control: the two already
- *  agree on everything that matters — a radiogroup, one roving tab stop, arrow/Home/End to move, the
- *  selection owned by the caller — so this is a presentation of one control, not a fork of it. The rail
- *  above is 8.2rem of orbit nodes with glowing rings and ember flicker; on a design whose whole argument
- *  is that structure comes from arrangement, that is a second navigation shouting over the first.
- *
- *  `nowrap` on purpose: a section selector that wraps onto three lines stops being a row you scan. It
- *  scrolls horizontally instead, which is what a phone gets. */
-function SectionTabs({ sections, value, onChange, ariaLabel }: WorkspaceShellNavigation) {
+/** One section model, two responsive presentations: a Vercel-style secondary sidebar while there is
+ *  room, and a compact select on narrow screens. Both write through the caller's single `onChange`; pages
+ *  never decide which presentation they use and plugin decks cannot drift from host settings. */
+function SectionNavigation({ sections, value, onChange, ariaLabel }: WorkspaceShellNavigation) {
+  const options = sections.map((section) => ({
+    value: section.id,
+    label: section.label,
+    icon: section.icon,
+    count: section.count,
+  }));
   return (
-    <Segmented
-      className="workspace-shell__tabs"
-      variant="line"
-      nowrap
-      aria-label={ariaLabel}
-      value={value}
-      onChange={onChange}
-      options={sections.map((section) => ({ value: section.id, label: section.label, icon: section.icon, count: section.count }))}
-    />
+    <div className="workspace-shell__section-navigation">
+      <aside className="workspace-shell__section-sidebar" aria-label={ariaLabel}>
+        <Segmented
+          variant="menu"
+          aria-label={ariaLabel}
+          value={value}
+          onChange={onChange}
+          options={options}
+        />
+      </aside>
+      <div className="workspace-shell__section-mobile">
+        <SelectMenu
+          value={value}
+          onChange={onChange}
+          label={ariaLabel}
+          options={sections.map((section) => {
+            const Icon = section.icon;
+            return {
+              value: section.id,
+              label: section.count === undefined ? section.label : `${section.label} (${section.count})`,
+              icon: <Icon size={15} aria-hidden />,
+            };
+          })}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -136,22 +153,37 @@ export interface WorkspaceShellProps {
  *  SpatialWorkspaceLayout / SpatialControlDeck / CompactWorkspaceHeader names are thin aliases onto it
  *  so the bundles that call them by name keep working unchanged. */
 export function WorkspaceShell({ variant = 'register', hero, navigation, children, className = '' }: WorkspaceShellProps) {
-  // WHICH section selector, from the shell profile and nothing else — the same seam the navigation and
-  // the page bar are swapped on. A page states its sections; it never states how they are drawn.
-  const sectionsAsTabs = useShellProfile() === 'command';
+  // WHICH section navigation, from the shell profile and nothing else. A page states its sections; it
+  // never chooses a sidebar, rail or mobile selector, so host and plugin pages stay one pattern.
+  const commandSections = useShellProfile() === 'command' && navigation;
+  const content = (
+    <section
+      className="workspace-shell__content spatial-content-surface"
+      data-testid={variant === 'register' ? 'spatial-workspace-layout' : 'spatial-content-surface'}
+    >
+      {children}
+    </section>
+  );
+
+  if (commandSections) {
+    return (
+      <div className={`workspace-shell ${className}`.trim()} data-variant={variant} data-section-layout="sidebar">
+        <div className="workspace-shell__section-layout">
+          <SectionNavigation {...navigation} />
+          <div className="workspace-shell__section-main">
+            <WorkspaceHero {...hero} />
+            {content}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`workspace-shell ${className}`.trim()} data-variant={variant}>
       <WorkspaceHero {...hero} />
-      {navigation ? (sectionsAsTabs ? <SectionTabs {...navigation} /> : <SpatialSectionRail {...navigation} />) : null}
-      {/* One content region for all three variants. The test id stays variant-specific because it is
-          how each page's own suite names its surface, and `.spatial-content-surface` is the hook the
-          settings and account module stylesheets already override the padding through. */}
-      <section
-        className="workspace-shell__content spatial-content-surface"
-        data-testid={variant === 'register' ? 'spatial-workspace-layout' : 'spatial-content-surface'}
-      >
-        {children}
-      </section>
+      {navigation ? <SpatialSectionRail {...navigation} /> : null}
+      {content}
     </div>
   );
 }

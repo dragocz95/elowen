@@ -82,12 +82,11 @@ describe('resolveOverlayPresentation', () => {
     expect(resolveOverlayPresentation(0, 'roomy', 'inspect')).toBe('drawer');
   });
 
-  it('answers by function, not by depth alone, on a phone', () => {
-    // A browsing surface comes up from the thumb's edge; a working surface takes the screen.
-    expect(resolveOverlayPresentation(0, 'phone', 'inspect')).toBe('sheet');
+  it('uses the whole screen for every overlay on a phone', () => {
+    expect(resolveOverlayPresentation(0, 'phone', 'inspect')).toBe('fullscreen');
     expect(resolveOverlayPresentation(0, 'phone', 'edit')).toBe('fullscreen');
-    // Nothing nested: there is no room to show two layers, and pretending otherwise is what left a
-    // 48px strip of backdrop beside a 342px "drawer".
+    // Nothing nested: there is no room to show two layers, and a partial-height detail drawer hides the
+    // content the user just opened behind a second scroll surface.
     expect(resolveOverlayPresentation(1, 'phone', 'inspect')).toBe('fullscreen');
     expect(resolveOverlayPresentation(2, 'phone', 'edit')).toBe('fullscreen');
   });
@@ -106,14 +105,14 @@ describe('overlays resolve against the live viewport', () => {
     expect(dialog).toHaveClass('overlay-surface');
   });
 
-  it('opens the detail rail as a bottom sheet on a phone', () => {
+  it('opens the detail rail fullscreen on a phone', () => {
     asPhone();
     render(
       <WorkspaceDetailRail label="Record" closeLabel="Close" onClose={vi.fn()}><span>detail</span></WorkspaceDetailRail>,
       { wrapper: W },
     );
     const rail = screen.getByRole('dialog', { name: 'Record' });
-    expect(rail).toHaveAttribute('data-presentation', 'sheet');
+    expect(rail).toHaveAttribute('data-presentation', 'fullscreen');
     expect(rail).toHaveClass('overlay-surface');
   });
 

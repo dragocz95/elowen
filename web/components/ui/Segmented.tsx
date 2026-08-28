@@ -21,8 +21,8 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
   onChange: (value: string) => void;
   /** `sm` for tight inline rows (e.g. a manual phase line), `md` for full form fields. */
   size?: 'sm' | 'md';
-  /** `line` is the quiet settings/navigation treatment: no pill track, active underline only. */
-  variant?: 'default' | 'line';
+  /** `line` is the quiet horizontal navigation treatment; `menu` is the vertical settings/sidebar shape. */
+  variant?: 'default' | 'line' | 'menu';
   className?: string;
   /** Keep the track on one line. Pass it inside the single-line page toolbars so the header row keeps
    *  its shape instead of the control folding onto a second line. The track then SCROLLS when it runs
@@ -33,12 +33,19 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
   'aria-label'?: string;
 }) {
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const pad = size === 'sm' ? 'h-9 px-2.5' : 'h-9 px-3';
-  // Either way the track stays inside its container: it wraps, or it scrolls. It never overflows and
-  // gets clipped by the surface, which is what a bare `flex-nowrap` did in a narrow toolbar.
-  const wrap = nowrap
-    ? 'max-w-full flex-nowrap overflow-x-auto overflow-y-hidden overscroll-x-contain'
-    : 'max-w-full flex-wrap';
+  const menu = variant === 'menu';
+  const pad = menu ? 'h-10 px-2.5' : size === 'sm' ? 'h-9 px-2.5' : 'h-9 px-3';
+  // A menu is a vertical navigation list. Horizontal tracks either wrap or scroll, but never clip.
+  const wrap = menu
+    ? 'max-w-full flex-col items-stretch'
+    : nowrap
+      ? 'max-w-full flex-nowrap overflow-x-auto overflow-y-hidden overscroll-x-contain'
+      : 'max-w-full flex-wrap';
+  const track = variant === 'line'
+    ? 'gap-4 border-b border-border/80'
+    : menu
+      ? 'gap-1'
+      : 'gap-0.5 rounded-md border border-border bg-surface p-0.5';
   const selectedIndex = options.findIndex((option) => option.value === value);
   const tabbableIndex = selectedIndex >= 0 ? selectedIndex : 0;
   const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -59,9 +66,10 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
     <div
       role="radiogroup"
       aria-label={ariaLabel}
+      aria-orientation={menu ? 'vertical' : 'horizontal'}
       data-variant={variant}
       data-nowrap={nowrap ? 'true' : undefined}
-      className={`segmented inline-flex ${wrap} ${variant === 'line' ? 'gap-4 border-b border-border/80' : 'gap-0.5 rounded-md border border-border bg-surface p-0.5'} ${className ?? ''}`}
+      className={`segmented inline-flex ${wrap} ${track} ${className ?? ''}`}
     >
       {options.map((o, index) => {
         const active = o.value === value;
@@ -79,12 +87,14 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
             onKeyDown={(event) => move(event, index)}
             className={`segmented__option inline-flex shrink-0 items-center gap-1.5 text-xs font-medium transition-colors pointer-coarse:min-h-[var(--touch-target)] ${pad} ${variant === 'line'
               ? `-mb-px border-b-2 ${active ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text'}`
-              : `rounded ${active ? 'bg-accent/15 text-accent' : 'text-text-muted hover:bg-elevated hover:text-text'}`}`}
+              : menu
+                ? `w-full justify-start rounded-md ${active ? 'bg-elevated text-text' : 'text-text-muted hover:bg-elevated hover:text-text'}`
+                : `rounded ${active ? 'bg-accent/15 text-accent' : 'text-text-muted hover:bg-elevated hover:text-text'}`}`}
             style={{ transitionDuration: 'var(--motion-fast)' }}
           >
-            {Icon ? <Icon size={13} aria-hidden /> : null}
-            {o.label}
-            {o.count === undefined ? null : <span className="segmented__count text-text-subtle" aria-hidden>{o.count}</span>}
+            {Icon ? <Icon size={menu ? 16 : 13} aria-hidden /> : null}
+            <span className={menu ? 'min-w-0 flex-1 truncate text-left' : undefined}>{o.label}</span>
+            {o.count === undefined ? null : <span className={`segmented__count text-text-subtle ${menu ? 'ml-auto' : ''}`} aria-hidden>{o.count}</span>}
           </button>
         );
       })}

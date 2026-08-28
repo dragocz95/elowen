@@ -754,7 +754,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
     usage, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
-    openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, focusNonce,
+    openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, activeSessionId, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts,
     workMode, planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
     registerSurface,
@@ -807,6 +807,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const [loadingOlder, setLoadingOlder] = useState(false);
   const atBottomRef = useRef(true);
   const prevTurnsRef = useRef<ChatTurn[]>([]);
+  const previousSessionRef = useRef<string | null>(activeSessionId);
   const anchorNodeRef = useRef<HTMLElement | null>(null);
   const anchorTopRef = useRef(0);
 
@@ -851,6 +852,19 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   // a second mount (or the BRAIN_* window events) never re-runs brainStart, so a one-shot mount call is
   // enough (and avoids re-firing on the controller's per-render identity churn).
   useEffect(() => { ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Opening another conversation is an explicit request to see that conversation's newest message. Reset
+  // every scroll/prepend guard before its snapshot lands; otherwise a chat opened while the previous one
+  // was scrolled up inherited `atBottom=false` and rendered at the old page offset.
+  useLayoutEffect(() => {
+    if (!activeSessionId || activeSessionId === previousSessionRef.current) return;
+    previousSessionRef.current = activeSessionId;
+    atBottomRef.current = true;
+    prevTurnsRef.current = [];
+    anchorNodeRef.current = null;
+    const s = getScroller();
+    if (s) s.scrollTo({ top: s.scrollHeight });
+  }, [activeSessionId, getScroller]);
 
   // Position the transcript after each turns change. A lazy-load PREPEND (older turns inserted in front —
   // detected by the previous head object reappearing below index 0) holds the viewport on the same content
@@ -910,9 +924,17 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   useLayoutEffect(() => {
     const el = composerRef.current;
     if (!el) return;
+    const keepNewestVisible = atBottomRef.current;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
-  }, [input]);
+    // The full-page composer participates in the document height even though it is sticky. Grow it and
+    // restore the bottom in the same layout phase, before paint, so wrapped lines do not visibly shove the
+    // whole conversation upward one row at a time. A reader scrolled into history is left untouched.
+    if (keepNewestVisible) {
+      const s = getScroller();
+      if (s) s.scrollTo({ top: s.scrollHeight });
+    }
+  }, [input, getScroller]);
 
   const newChat = () => { setPickerOpen(false); void switchSession({ fresh: true }).catch(() => toast(t.brainChat.searchOpenError, 'error')); };
 

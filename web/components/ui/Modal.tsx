@@ -26,9 +26,9 @@ interface ModalProps {
    *  is a centered dialog wherever it is raised, and a few data-heavy surfaces want the whole
    *  viewport regardless of depth. */
   presentation?: 'auto' | 'center' | 'drawer' | 'sheet' | 'fullscreen';
-  /** What this dialog is for. Only consulted while `presentation` is `auto`, and only changes the
-   *  answer on a phone, where a surface you read wants a bottom sheet and a surface you work in wants
-   *  the screen. A dialog is an editing surface unless it says otherwise. */
+  /** What this dialog is for. Retained as semantic input to the shared presentation rule; automatic
+   *  phone overlays currently all use the full viewport. A dialog is an editing surface unless it says
+   *  otherwise. */
   intent?: OverlayIntent;
   /** Widens a drawer for content that genuinely needs the room (log tables, diagnostics). Defaults to
    *  wide for `size="lg"`, so a dialog that already declared it needs a large frame keeps that room

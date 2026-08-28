@@ -179,8 +179,8 @@ export function registerBrainRoutes(app: Hono): void {
   });
 
   // Scriptable live stream. Registers the open connection keyed by client+session; the control channel
-  // writes scripted frames into it. Honors `snapshot=1` with a minimal snapshot frame, then keeps the
-  // connection open (heartbeat comments) until the client disconnects.
+  // writes scripted frames into it. Honors `snapshot=1` with the same paginated history shape the real
+  // daemon sends, then keeps the connection open (heartbeat comments) until the client disconnects.
   app.get('/brain/stream', (c) => {
     const session = c.req.query('session');
     const client = c.req.query('client');
@@ -196,7 +196,19 @@ export function registerBrainRoutes(app: Hono): void {
       const detach = (): void => unregisterStream(open);
       c.req.raw.signal.addEventListener('abort', detach, { once: true });
       if (snapshot && session) {
-        await stream.writeSSE({ event: 'snapshot', data: JSON.stringify({ cursor: 0 }), id: '0' });
+        const markers = markersBySession.get(session) ?? [];
+        const source = markers.length ? [...getMessages(brainMessages), ...markers] : getMessages(brainMessages);
+        const requested = Number(c.req.query('history'));
+        const limit = Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : 50;
+        const page = messagesPage(source, limit);
+        await stream.writeSSE({
+          event: 'snapshot',
+          data: JSON.stringify({
+            type: 'snapshot', sessionId: session, history: page.items, events: [],
+            hasMore: page.hasMore, nextBefore: page.nextBefore,
+          }),
+          id: '0',
+        });
       }
       // Comment flush so the SSE channel connects through the BFF proxy on a quiet system.
       await stream.write(': connected\n\n');

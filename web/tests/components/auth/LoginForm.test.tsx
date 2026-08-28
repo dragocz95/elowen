@@ -27,10 +27,12 @@ function renderLoginForm(onAuthed = () => {}) {
 }
 
 describe('LoginForm', () => {
-  it('uses the shared control surface without app-workspace identity chrome', () => {
+  it('renders a focused shadcn-style login card with the active brand logo', () => {
     server.use(http.get('*/api/auth/sso/providers', () => HttpResponse.json([])));
     const { container } = renderLoginForm();
-    expect(container.querySelectorAll('[data-control-surface]')).toHaveLength(1);
+    expect(container.querySelector('.login-card')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Elowen' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
     expect(container.querySelector('.spatial-mascot')).toBeNull();
   });
 
@@ -57,7 +59,8 @@ describe('LoginForm', () => {
     window.history.replaceState({}, '', '/dash?tab=one');
     server.use(http.get('*/api/auth/sso/providers', () => HttpResponse.json([{ id: 'msteams', label: 'Microsoft' }])));
     renderLoginForm();
-    const link = await screen.findByRole('link', { name: /Microsoft/i });
+    const link = await screen.findByRole('link', { name: 'Microsoft' });
+    expect(screen.getByText('Or continue with')).toBeInTheDocument();
     expect(link).toHaveAttribute('href', '/api/auth/sso/microsoft/start?next=%2Fdash%3Ftab%3Done');
   });
 

@@ -21,8 +21,8 @@ export function OverlayDepthProvider({ children }: { children: ReactNode }) {
 
 /** What the overlay is FOR, which is the only thing a call site knows that the rule below cannot work
  *  out for itself. `inspect` is a browsing surface you read and dismiss — a detail rail, a record card.
- *  `edit` is a surface you work IN and commit or cancel, so it must not share the screen with anything.
- *  The distinction only changes the answer on a phone, where the two genuinely want different shapes. */
+ *  `edit` is a surface you work IN and commit or cancel. The distinction is retained for call-site intent
+ *  and future presentation rules; both shapes take the full screen on a phone. */
 export type OverlayIntent = 'inspect' | 'edit';
 
 /** How much room the window has. `phone` is the same breakpoint the stylesheets use — see
@@ -38,9 +38,8 @@ export type OverlayPresentation = 'drawer' | 'center' | 'sheet' | 'fullscreen';
  *      only ever a step taken FROM an already-open drawer.
  *    - On a phone neither of those exists. A drawer that leaves a 48px strip of backdrop is not a
  *      layer, it is a broken layout, and a centered window inside a 390px viewport is a desktop dialog
- *      that happens to be small. So a browsing surface comes up as a bottom sheet, a focused editing
- *      surface takes the screen, and anything opened FROM either one takes the screen as well — there
- *      is no room to show two layers at once and pretending otherwise is what produced the strip.
+ *      that happens to be small. Every automatic overlay therefore takes the full screen — there is no
+ *      room to show two layers at once, and a partial-height sheet hides half the surface just opened.
  *
  *  Resolved at render time so a control cannot pick the wrong one and no call site has to remember the
  *  rule. `resolveOverlayPresentation(depth)` still answers the desktop question on its own, which is
@@ -48,9 +47,9 @@ export type OverlayPresentation = 'drawer' | 'center' | 'sheet' | 'fullscreen';
 export function resolveOverlayPresentation(
   depth: number,
   viewport: OverlayViewport = 'roomy',
-  intent: OverlayIntent = 'edit',
+  _intent: OverlayIntent = 'edit',
 ): OverlayPresentation {
-  if (viewport === 'phone') return depth === 0 && intent === 'inspect' ? 'sheet' : 'fullscreen';
+  if (viewport === 'phone') return 'fullscreen';
   return depth === 0 ? 'drawer' : 'center';
 }
 

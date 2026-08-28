@@ -39,4 +39,10 @@ describe('Segmented', () => {
     expect(screen.getByRole('radiogroup')).toHaveAttribute('data-nowrap', 'true');
     expect(screen.getByRole('radiogroup')).toHaveClass('overflow-x-auto', 'overflow-y-hidden');
   });
+  it('offers a vertical menu variant for secondary section navigation', () => {
+    render(<Segmented variant="menu" options={opts} value="b" onChange={() => {}} />);
+    expect(screen.getByRole('radiogroup')).toHaveAttribute('aria-orientation', 'vertical');
+    expect(screen.getByRole('radiogroup')).toHaveClass('flex-col', 'items-stretch');
+    expect(screen.getByRole('radio', { name: 'B' })).toHaveClass('w-full', 'bg-elevated');
+  });
 });
