@@ -211,7 +211,7 @@ describe('PluginRegistry', () => {
     it('carries a declared `argument` and omits the key entirely when there is none', () => {
       const reg = new PluginRegistry();
       const cmds = reg.contextFor('ops', {}, noopLog).chatCommands('discord');
-      expect(cmds.find((c) => c.name === 'fast')?.argument).toEqual({ kind: 'enum', values: ['on', 'off'] });
+      expect(cmds.find((c) => c.name === 'fast')?.argument).toEqual({ kind: 'enum', values: ['on', 'off', 'status'] });
       expect(cmds.find((c) => c.name === 'compact')).not.toHaveProperty('argument');
     });
 

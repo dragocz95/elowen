@@ -567,7 +567,7 @@ export async function runHeadless(
         const value = arg.toLowerCase();
         if (value === 'status') {
           const s = await c.status();
-          outResult(`fast: ${s.fastAvailable ? (s.fast ? 'on' : 'off') : 'unavailable'}`, {
+          outResult(`fast: ${s.fast ? 'on' : 'off'}${s.fastAvailable ? '' : ' (current model unsupported)'}`, {
             fast: s.fast ?? false, fastAvailable: s.fastAvailable ?? false,
           });
           finish(0);
@@ -577,7 +577,7 @@ export async function runHeadless(
           io.stderr('/fast accepts on, off, status, or no argument (toggle).\n'); finish(2); break;
         }
         const r = await c.setFast(value === 'on' ? true : value === 'off' ? false : undefined);
-        outResult(`fast: ${r.fast ? 'on' : 'off'}`, r); finish(0); break;
+        outResult(`fast: ${r.fast ? 'on' : 'off'}${r.fastAvailable ? '' : ' (current model unsupported)'}`, r); finish(0); break;
       }
       case 'help': io.stdout(`${USAGE}\n`); finish(0); break;
       case 'resume': io.stderr('use --resume <id> (or --list to see ids) in headless mode.\n'); finish(2); break;

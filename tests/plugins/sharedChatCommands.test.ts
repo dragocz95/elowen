@@ -8,7 +8,10 @@ const MSG = {
   controlForbidden: 'FORBIDDEN',
   fastUsage: 'USAGE',
   fastUnavailable: 'FAST_NA',
+  fastAccountRequired: 'FAST_ACCOUNT',
   fastSet: (on: boolean) => (on ? 'FAST_ON' : 'FAST_OFF'),
+  fastSetUnsupported: (on: boolean) => (on ? 'FAST_ON_UNSUPPORTED' : 'FAST_OFF'),
+  fastStatus: (on: boolean, supported: boolean) => `FAST_STATUS_${on ? 'ON' : 'OFF'}_${supported ? 'SUPPORTED' : 'UNSUPPORTED'}`,
   noSession: 'NO_SESSION',
   nothingRunning: 'NOTHING_RUNNING',
   stopped: 'STOPPED',
@@ -34,7 +37,7 @@ function binding(over: Record<string, unknown> = {}) {
     replies, state,
     b: {
       msg: MSG, reply: (t: string) => { replies.push(t); }, isAdmin: () => over.admin !== false,
-      state, stateId: 'X', ctl: over.ctl, ref: 'ref', arg: over.arg,
+      state, stateId: 'X', ctl: over.ctl, ref: 'ref', arg: over.arg, senderPlatformId: 'sender-1',
       activeModel: async () => over.active ?? null,
       ...(over.binding as object ?? {}),
     },
@@ -186,12 +189,23 @@ describe('shared control-command core', () => {
     expect(noCtl.replies).toEqual(['RESTART_NA']);
   });
 
-  it('gates control commands behind the admin check', async () => {
-    for (const [cmd, expected] of [['stop', 'FORBIDDEN'], ['restart', 'RESTART_FORBIDDEN'], ['fast', 'FORBIDDEN']] as const) {
+  it('keeps administrative controls gated without treating Fast as a permission', async () => {
+    for (const [cmd, expected] of [['stop', 'FORBIDDEN'], ['restart', 'RESTART_FORBIDDEN']] as const) {
       const { b, replies } = binding({ admin: false, ctl: {} });
       await runControlCommand(cmd, b);
       expect(replies).toEqual([expected]);
     }
+
+    let sender = '';
+    const fast = binding({
+      admin: false,
+      arg: 'on',
+      active: { fastAvailable: true },
+      ctl: { setAccountFast: (_ref: string, senderPlatformId: string) => { sender = senderPlatformId; return { fast: true, fastAvailable: true }; } },
+    });
+    await runControlCommand('fast', fast.b);
+    expect(sender).toBe('sender-1');
+    expect(fast.replies).toEqual(['FAST_ON']);
   });
 
   /** A surface that has not published `/fast` never reaches this core at all — the derived control set
@@ -218,27 +232,46 @@ describe('shared control-command core', () => {
     expect(replies).toEqual(['USAGE']);
   });
 
-  it('/fast on a non-OAuth model refuses to turn on but still switches off a stale flag', async () => {
-    const on = binding({ arg: 'on', active: { fastAvailable: false } });
+  it('/fast keeps the account preference enabled when the selected route is unsupported', async () => {
+    let setFastArg: boolean | undefined;
+    const on = binding({
+      arg: 'on', active: { fastAvailable: false },
+      ctl: { setAccountFast: (_ref: string, _sender: string, wanted?: boolean) => { setFastArg = wanted; return { fast: true, fastAvailable: false }; } },
+    });
     await runControlCommand('fast', on.b);
-    expect(on.replies).toEqual(['FAST_NA']);
-
-    const off = binding({ arg: 'off', active: { fastAvailable: false }, stateInit: { fast: true } });
-    await runControlCommand('fast', off.b);
-    expect(off.replies).toEqual(['FAST_OFF']);
-    expect(off.state._store.X.fast).toBe(false);
+    expect(setFastArg).toBe(true);
+    expect(on.replies).toEqual(['FAST_ON_UNSUPPORTED']);
+    expect(on.state._store.X.fast).toBeUndefined();
   });
 
-  it('/fast applies to the live session only when it matches the selected model', async () => {
-    let setFastArg: boolean | null = null;
-    const active = { fastAvailable: true, provider: 'openai', model: 'gpt-5' };
-    const b = binding({
-      arg: 'on', active,
-      ctl: { status: () => ({ provider: 'openai', model: 'gpt-5' }), setFast: (_r: string, w: boolean) => { setFastArg = w; return { fastAvailable: true }; } },
+  it('/fast toggle, explicit forms and status use the linked account value, not conversation state', async () => {
+    let stored = false;
+    const ctl = {
+      fastStatus: () => ({ fast: stored, fastAvailable: true }),
+      setAccountFast: (_ref: string, _sender: string, wanted?: boolean) => {
+        stored = wanted ?? !stored;
+        return { fast: stored, fastAvailable: true };
+      },
+    };
+    const toggle = binding({ active: { fastAvailable: true }, ctl });
+    await runControlCommand('fast', toggle.b);
+    expect(toggle.replies).toEqual(['FAST_ON']);
+
+    const off = binding({ arg: 'off', active: { fastAvailable: true }, ctl });
+    await runControlCommand('fast', off.b);
+    expect(off.replies).toEqual(['FAST_OFF']);
+
+    const status = binding({ arg: 'status', active: { fastAvailable: true }, ctl });
+    await runControlCommand('fast', status.b);
+    expect(status.replies).toEqual(['FAST_STATUS_OFF_SUPPORTED']);
+  });
+
+  it('/fast fails closed for an unlinked sender', async () => {
+    const unlinked = binding({
+      arg: 'on', active: { fastAvailable: true },
+      ctl: { setAccountFast: () => null },
     });
-    await runControlCommand('fast', b.b);
-    expect(setFastArg).toBe(true);
-    expect(b.state._store.X.fast).toBe(true);
-    expect(b.replies).toEqual(['FAST_ON']);
+    await runControlCommand('fast', unlinked.b);
+    expect(unlinked.replies).toEqual(['FAST_ACCOUNT']);
   });
 });

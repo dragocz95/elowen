@@ -815,8 +815,8 @@ describe('brain routes', () => {
     expect((await app.request('/brain/fast', post(amyTok, {}))).status).toBe(200);
   });
 
-  it('toggles Fast for the bound session through both action routes', async () => {
-    const { app, amyTok, brain } = setup();
+  it('toggles the authenticated account Fast preference through both action routes', async () => {
+    const { app, adminTok, amyTok, brain } = setup();
     const direct = await app.request('/brain/fast', post(amyTok, { on: true, session: 'brain-child' }));
     expect(direct.status).toBe(200);
     expect(await direct.json()).toEqual({ fast: true, fastAvailable: true });
@@ -826,6 +826,9 @@ describe('brain routes', () => {
     expect(command.status).toBe(200);
     expect((await command.json() as { message: string }).message).toBe('Fast mode disabled.');
     expect(brain.fastCalls.at(-1)).toEqual({ id: 2, on: false, session: 'brain-child' });
+
+    await app.request('/brain/fast', post(adminTok, { on: true, session: 'brain-admin' }));
+    expect(brain.fastCalls.at(-1)).toEqual({ id: 1, on: true, session: 'brain-admin' });
   });
 
   // `/clear` is a server-dispatched ACTION: every surface reaches it through this one endpoint, so the

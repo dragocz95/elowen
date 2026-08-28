@@ -670,6 +670,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         hookAudit,
         policy: (userId) => resolvePolicy({ userProjects, projects, supplementalPaths: sandboxWorkspaceRoots }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
+        fastMode: (userId) => userSettings.fastMode(userId),
+        setFastMode: (userId, on) => on === undefined ? userSettings.toggleFastMode(userId) : userSettings.setFastMode(userId, on),
         projectModelPreference: (userId, projectRoot) => userSettings.projectModelPreference(userId, projectRoot),
         setProjectModelPreference: (userId, projectRoot, selection) => { userSettings.setProjectModelPreference(userId, projectRoot, selection); },
         // Granular tool permissions (allow/ask/deny rules + the persisted YOLO default) and the

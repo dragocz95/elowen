@@ -116,6 +116,43 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent?.identity).toMatchObject({ elowenUserId: 2, admin: false, owner: false, conversation: 'shared' });
   });
 
+  it('reads and writes Fast for the invoking linked account, with per-user isolation', async () => {
+    let control: PlatformControlApi | undefined;
+    const fast = new Map<number, boolean>();
+    const identity = new IdentityResolver({
+      platformOwner: () => 1,
+      resolvePlatformUser: (_platform, platformUserId) => platformUserId === 'D2'
+        ? { id: 2, name: 'Amy', admin: false }
+        : platformUserId === 'D3' ? { id: 3, name: 'Bob', admin: false } : null,
+      users,
+    });
+    const adapter = {
+      name: 'discord', listen: () => {}, connect: async () => {},
+      control: (api: PlatformControlApi) => { control = api; },
+    };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      identity,
+      fastMode: (userId) => fast.get(userId) === true,
+      setFastMode: (userId, on) => {
+        const next = on ?? !(fast.get(userId) === true);
+        fast.set(userId, next);
+        return next;
+      },
+      channels: { status: () => ({ fastAvailable: true }) } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+    const ref = { platform: 'discord', channelId: 'c1' };
+
+    expect(control!.setAccountFast!(ref, 'D2', true)).toEqual({ fast: true, fastAvailable: true });
+    expect(control!.fastStatus!(ref, 'D2')).toEqual({ fast: true, fastAvailable: true });
+    expect(control!.fastStatus!(ref, 'D3')).toEqual({ fast: false, fastAvailable: true });
+    expect(control!.setAccountFast!(ref, 'D3')).toEqual({ fast: true, fastAvailable: true });
+    expect(control!.setAccountFast!(ref, 'unknown', true)).toBeNull();
+  });
+
   it('anchors a delegated child to its non-owner parent account, never the platform owner', async () => {
     let sent: ChannelSendOpts | undefined;
     let handler: ((src: never, text: string) => Promise<unknown>) | undefined;

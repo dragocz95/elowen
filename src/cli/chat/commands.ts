@@ -370,18 +370,15 @@ export function wireSubmit(
         case 'fast': {
           const arg = command.arg?.trim().toLowerCase();
           if (arg === 'status') {
-            rt.notice = rt.fastAvailable
-              ? color.dim(`fast mode ${rt.fastOn ? 'on' : 'off'}`)
-              : color.dim('fast mode is not available for this model/account');
+            rt.notice = color.dim(`fast mode ${rt.fastOn ? 'on' : 'off'}${rt.fastAvailable ? '' : ' · current model unsupported'}`);
             render();
             return;
           }
           if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /fast · /fast on · /fast off · /fast status'); render(); return; }
-          if (!rt.fastAvailable) { rt.notice = color.dim('fast mode is not available for this model/account'); render(); return; }
           runSession(() => client.setFast(arg === 'on' ? true : arg === 'off' ? false : undefined), (r) => {
               rt.fastOn = r.fast;
               rt.fastAvailable = r.fastAvailable;
-              rt.notice = color.dim(`fast mode ${r.fast ? 'on' : 'off'}`);
+              rt.notice = color.dim(`fast mode ${r.fast ? 'on' : 'off'}${r.fastAvailable ? '' : ' · current model unsupported'}`);
               render();
             }, fail);
           return;

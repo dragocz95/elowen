@@ -413,7 +413,7 @@ describe('slash command registry', () => {
     });
 
     it('declares arguments only where every surface accepts the same values', () => {
-      expect(findCommand('fast')?.argument).toEqual({ kind: 'enum', values: ['on', 'off'] });
+      expect(findCommand('fast')?.argument).toEqual({ kind: 'enum', values: ['on', 'off', 'status'] });
       // Platform compact parses text but runControlCommand currently drops it before ctl.compact(ref).
       expect(findCommand('compact')?.argument).toBeUndefined();
       // `show` is CLI/web-only; platform /reasoning opens its picker and ignores the text argument.

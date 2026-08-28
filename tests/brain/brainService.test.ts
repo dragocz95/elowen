@@ -2154,21 +2154,42 @@ describe('BrainService', () => {
     expect(markers().map((e) => e.detail)).toEqual(['max']);
   });
 
-  it('toggles Fast only for OpenAI OAuth and reports the live request profile', async () => {
+  it('persists Fast per account and every already-live conversation reads the new value', async () => {
     const d = fakeDeps();
     d.config = { providers: [{ id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex' as const, baseUrl: '', models: ['gpt-5.5'], apiKey: null }] };
+    let storedFast = false;
+    Object.assign(d, {
+      fastMode: () => storedFast,
+      setFastMode: (_userId: number, on?: boolean) => (storedFast = on ?? !storedFast),
+    });
+    const svc = new BrainService(d as never);
+    const first = await svc.start(1);
+    const second = await svc.start(1, { fresh: true });
+    const spawns = d.createSession.mock.calls.length;
+
+    expect(svc.status(1, first.sessionId)).toMatchObject({ fast: false, fastAvailable: true });
+    expect(svc.status(1, second.sessionId)).toMatchObject({ fast: false, fastAvailable: true });
+    expect(svc.setFast(1, true, first.sessionId)).toEqual({ fast: true, fastAvailable: true });
+    expect(svc.status(1, first.sessionId).fast).toBe(true);
+    expect(svc.status(1, second.sessionId).fast).toBe(true);
+    expect(d.createSession).toHaveBeenCalledTimes(spawns); // no respawn or session-local copy
+    expect(svc.setFast(1, undefined, second.sessionId).fast).toBe(false);
+    expect(svc.status(1, first.sessionId).fast).toBe(false);
+
+    await expect(svc.setThinkingLevel(1, 'ultra', second.sessionId)).resolves.toEqual({ thinkingLevel: 'xhigh' });
+  });
+
+  it('keeps Fast enabled when the current route is unsupported', async () => {
+    const d = fakeDeps();
+    let storedFast = false;
+    Object.assign(d, {
+      fastMode: () => storedFast,
+      setFastMode: (_userId: number, on?: boolean) => (storedFast = on ?? !storedFast),
+    });
     const svc = new BrainService(d as never);
     await svc.start(1);
-    expect(svc.status(1)).toMatchObject({ fast: false, fastAvailable: true });
-    expect(svc.setFast(1, true)).toEqual({ fast: true, fastAvailable: true });
-    expect(svc.status(1).fast).toBe(true);
-    expect(svc.setFast(1).fast).toBe(false);
-    await expect(svc.setThinkingLevel(1, 'ultra')).resolves.toEqual({ thinkingLevel: 'xhigh' });
-
-    const regular = fakeDeps();
-    const regularSvc = new BrainService(regular as never);
-    await regularSvc.start(1);
-    expect(() => regularSvc.setFast(1, true)).toThrow(/OpenAI OAuth/);
+    expect(svc.setFast(1, true)).toEqual({ fast: true, fastAvailable: false });
+    expect(svc.status(1)).toMatchObject({ fast: true, fastAvailable: false });
   });
 
   it('maps the thinking + retry + compaction PI events to reasoning/notice brain events', async () => {

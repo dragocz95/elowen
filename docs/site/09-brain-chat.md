@@ -49,7 +49,7 @@ The command menu is generated from the daemon's command catalog, so the availabl
 | `/compact` | Summarize the conversation now | Web, CLI, chat platforms |
 | `/model` | Choose a different AI model | Web, CLI, chat platforms |
 | `/reasoning` | Choose the reasoning effort supported by the active model | Web, CLI, chat platforms |
-| `/fast` | Toggle OpenAI OAuth priority processing when supported | Web, CLI, chat platforms |
+| `/fast` | Set the durable account Fast preference | Web, CLI, chat platforms |
 | `/plan` | Plan the approach before editing | Web, CLI |
 | `/build` | Implement changes with tools | Web, CLI |
 | `/workflow` | Orchestrate the task as a DAG of sub-agents | Web, CLI |
@@ -101,7 +101,7 @@ Changing the model keeps the conversation and switches the live session to the n
 
 Reasoning controls are model-specific. Elowen only shows levels the active model and provider support; an unknown custom model does not receive a guessed reasoning parameter. Set the level in the model picker or with `/reasoning`. The effective level is saved to your account settings.
 
-`/fast` enables OpenAI OAuth priority processing only for compatible Codex models. It is rejected for unsupported providers or models rather than being silently ignored.
+`/fast` stores one preference on the account. Every existing or new conversation and sub-agent reads it before each provider request. A route that does not support Fast keeps the preference enabled but receives no Fast wire field.
 
 ### Vision fallback
 

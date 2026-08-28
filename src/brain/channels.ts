@@ -132,7 +132,6 @@ export interface PlatformTurnResumeEnvelope {
   deniedTools?: string[];
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
-  fast?: boolean;
   idleRolloverMs?: number;
   /** Opaque outbound destination — present only for verified direct chats, exactly as on the live turn. */
   deliveryTarget?: string;
@@ -183,7 +182,6 @@ export function normalizePlatformTurnEnvelope(raw: unknown): PlatformTurnResumeE
   if (model !== undefined && (typeof model !== 'object' || model === null
     || !isOptionalString(model.provider) || !isOptionalString(model.model))) return null;
   if (!isOptionalString(e.thinkingLevel)) return null;
-  if (e.fast !== undefined && typeof e.fast !== 'boolean') return null;
   if (e.idleRolloverMs !== undefined && !(typeof e.idleRolloverMs === 'number' && Number.isFinite(e.idleRolloverMs))) return null;
   if (!isOptionalString(e.deliveryTarget) || !isOptionalString(e.historyPlatform)) return null;
   if (typeof e.promptCommand !== 'boolean') return null;
@@ -216,7 +214,6 @@ export function normalizePlatformTurnEnvelope(raw: unknown): PlatformTurnResumeE
       ...(model.model !== undefined ? { model: model.model as string } : {}),
     } } : {}),
     ...(e.thinkingLevel !== undefined ? { thinkingLevel: e.thinkingLevel } : {}),
-    ...(e.fast !== undefined ? { fast: e.fast } : {}),
     ...(e.idleRolloverMs !== undefined ? { idleRolloverMs: e.idleRolloverMs } : {}),
     ...(e.deliveryTarget !== undefined ? { deliveryTarget: e.deliveryTarget } : {}),
     ...(e.historyPlatform !== undefined ? { historyPlatform: e.historyPlatform } : {}),
@@ -371,7 +368,6 @@ export interface ChannelSendOpts {
   scheduled?: boolean;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
-  fast?: boolean;
   /** Durable parent for delegated sessions; never accepted from ordinary external adapters. */
   parentSessionId?: string;
   /** Immutable policy/identity boundary minted by the delegating turn. Required for a child send. */
@@ -440,6 +436,8 @@ export interface ChannelServiceDeps {
    *  Absent ⇒ always admits. */
   admitsNewWork?(): boolean;
   store: BrainStore;
+  /** Durable account Fast preference for status only; provider requests use the spawner's live getter. */
+  fastMode?: (userId: number) => boolean;
   /** The same store-backed registry owner chat uses, so channel/sub-agent cards survive replay cleanup. */
   cards: CardRegistry;
   /** `granted_plugins` is needed as well as the display fields: the per-turn skills announcement runs the
@@ -799,7 +797,6 @@ export class ChannelSessionService {
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*
           scheduled: opts.scheduled, // timer-driven turn → focused `scheduled` system prompt instead of the coding base
           thinkingLevel: opts.thinkingLevel,
-          fast: opts.fast,
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           // …at the WRITER'S personal settings, not the room opener's. A room is owned by whoever opened
           // it, which is bookkeeping only, so composing the session from that account meant one
@@ -832,16 +829,17 @@ export class ChannelSessionService {
           throw new Error('delegation aborted');
         }
       }
-      // Fast is a mutable request profile, so a platform toggle applies without rebuilding the session.
-      if (opts.fast !== undefined) {
-        if (opts.fast && !ch.fastAvailable) throw new Error('Fast mode is available only for OpenAI OAuth models');
-        ch.requestProfile.fast = ch.fastAvailable && opts.fast;
-      }
       // Stamp the 1:1-vs-shared flag on EVERY platform message, not only when this turn happened to spawn
       // the session: a conversation that was already live (or whose row predates the column) would
       // otherwise never learn what it is, and a private DM would keep behaving like a shared room forever.
       if (opts.direct !== undefined) this.d.store.setDirect(sessionId, opts.direct);
       this.d.registry.channelTouch(opts.channelId, ch); // (re-)insert → Map order doubles as LRU order
+      // Provider calls before the prompt (cold-start compaction) already belong to THIS turn, so stamp
+      // the verified writer before any of them. The inner finally clears both fields after settlement;
+      // out-of-band compaction therefore fails closed instead of borrowing the previous room writer.
+      ch.turnSender = opts.identity?.userId; // whose turn this is → mid-run injection only steers same-sender messages in
+      ch.turnWriterUserId = opts.writerUserId ?? null;
+      try {
       // First turn after this room's prompt cache expired: shrink the context BEFORE the provider
       // re-caches it. Owner chat has had this since the idle sweep was retired; a room did not, even
       // though a room — a cron channel that keeps one conversation for weeks — is where the expensive
@@ -852,11 +850,9 @@ export class ChannelSessionService {
         { store: this.d.store, sessions: this.d.registry, elicitation: this.d.elicitation ?? { pendingForSession: () => null } },
         ch,
       );
-      ch.turnSender = opts.identity?.userId; // whose turn this is → mid-run injection only steers same-sender messages in
       // Same rule for mid-turn recall as for the turn-start block below: the verified sender's memories,
       // nobody's when they are unlinked. Never the channel owner's — that would surface their memories
       // into a stranger's turn in a shared room.
-      ch.turnWriterUserId = opts.writerUserId ?? null;
       // WHOSE personal skills this turn may load — announced below and authorised by the same value on the
       // turn scope, so the model is never told about a skill a tool will then refuse to open for it.
       //
@@ -1137,7 +1133,6 @@ export class ChannelSessionService {
             ...(opts.model.model !== undefined ? { model: opts.model.model } : {}),
           } } : {}),
           ...(opts.thinkingLevel !== undefined ? { thinkingLevel: opts.thinkingLevel } : {}),
-          ...(opts.fast !== undefined ? { fast: opts.fast } : {}),
           // `Infinity` (cron's "never roll over") does not survive JSON — omitted, like unset.
           ...(opts.idleRolloverMs !== undefined && Number.isFinite(opts.idleRolloverMs)
             ? { idleRolloverMs: opts.idleRolloverMs } : {}),
@@ -1159,6 +1154,10 @@ export class ChannelSessionService {
       } finally {
         // The turn settled (reply or error already back with the adapter) — nothing left to resume.
         if (resumable) this.d.store.clearPlatformTurnEnvelope(sessionId);
+      }
+      } finally {
+        ch.turnSender = undefined;
+        ch.turnWriterUserId = null;
       }
     });
     // Armed only by a turn that produced an answer, exactly as the owner surface arms it.
@@ -1380,19 +1379,9 @@ export class ChannelSessionService {
       // tracked descendant is still running so the channel can cancel the whole tree.
       streaming: ch.session.isStreaming || this.d.registry.hasActiveChildren(ch.sessionId),
       usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId),
-      fast: ch.requestProfile.fast,
+      fast: this.d.fastMode?.(ch.settingsUserId) === true,
       fastAvailable: ch.fastAvailable,
     } : null;
-  }
-
-  /** Set/toggle ChatGPT OAuth priority processing without respawning the channel session. */
-  setFast(channelId: string, on?: boolean): { fast: boolean; fastAvailable: boolean } | null {
-    const ch = this.d.registry.channelGet(channelId);
-    if (!ch) return null;
-    if (!ch.fastAvailable) return { fast: false, fastAvailable: false };
-    ch.requestProfile.fast = on ?? !ch.requestProfile.fast;
-    ch.interactedAt = Date.now();
-    return { fast: ch.requestProfile.fast, fastAvailable: true };
   }
 
   /** Abort the in-flight turn on a channel session (a platform `/stop` slash). Delegated descendants

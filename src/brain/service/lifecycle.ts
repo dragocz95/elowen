@@ -257,7 +257,7 @@ export class ConversationLifecycle {
    *  detach) the session row's stored work_dir is restored instead — the conversation's durable home —
    *  and equally never stamped. Serialized per conversation: two concurrent spawns would leak one PI
    *  session. */
-  async ensureLive(userId: number, sessionId: string, o: { provider?: string; model?: string; clientCwd?: string; spawnCwd?: string; explicitResume?: boolean; fast?: boolean; thinkingLevel?: string | null; reapplyModelPreference?: boolean } = {}): Promise<void> {
+  async ensureLive(userId: number, sessionId: string, o: { provider?: string; model?: string; clientCwd?: string; spawnCwd?: string; explicitResume?: boolean; thinkingLevel?: string | null; reapplyModelPreference?: boolean } = {}): Promise<void> {
     // A HEALTHY live conversation needs no spawn, so it must not queue on the session lock to find that
     // out: a running turn holds that lock for its full duration (turnRunner), which would leave a
     // relaunched CLI unable to resume into its own in-flight work until the turn ended or was aborted.
@@ -349,7 +349,6 @@ export class ConversationLifecycle {
         // `null` explicitly restores a session whose live reasoning level was unset; omitted keeps the
         // normal Account default. This distinction matters when returning from a temporary vision hop.
         thinkingLevel: o.thinkingLevel === null ? undefined : (o.thinkingLevel ?? userCfg?.thinkingLevel),
-        fast: o.fast,
         autoCompact: !!userCfg?.autoCompact,
         clientCwd: resolvedCwd,
       });
@@ -383,7 +382,6 @@ export class ConversationLifecycle {
     return this.serial(sessionId, async () => {
       const previous = this.d.sessions.get(sessionId);
       const prevWorkDir = previous?.workDir; // the switch must not move the session cwd
-      const prevFast = previous?.requestProfile.fast;
       // In-place respawn: the model switch rehydrates the SAME conversation, so its prompt/cadence state
       // survives — see InPlaceRespawnState. Listener ownership lives in ClientAttachments; the spawner
       // restores every genuinely attached transport for this session id on its own (see spawner.ts), so
@@ -403,7 +401,6 @@ export class ConversationLifecycle {
           ownerUserId: userId,
           selection: sel, // the explicit pick wins over the user's saved default
           policy,
-          fast: prevFast,
           autoCompact: !!userCfg?.autoCompact,
           clientCwd: prevWorkDir,
         });
@@ -523,7 +520,6 @@ export class ConversationLifecycle {
         selection: { provider: previous.providerId, model: previous.model },
         policy,
         thinkingLevel: previous.thinkingLevel ?? undefined,
-        fast: previous.requestProfile.fast,
         autoCompact: !!userCfg?.autoCompact,
         clientCwd: prevWorkDir,
       });
@@ -625,7 +621,6 @@ export class ConversationLifecycle {
           provider: b.providerId,
           model: b.model,
           thinkingLevel: b.thinkingLevel,
-          fast: b.requestProfile.fast,
         }
       : b.visionFallbackReturn;
     this.d.goals.cancelGoalContinuation(hopId);
@@ -635,9 +630,6 @@ export class ConversationLifecycle {
       await this.ensureLive(userId, hopId, {
         clientCwd,
         spawnCwd: prevWorkDir,
-        // Fast belongs to the original conversation profile. Never send priority-service metadata to a
-        // temporary fallback (which may be non-OAuth); restore the exact prior value on hop-back.
-        fast: hop.action === 'hop' ? false : returnProfile?.fast,
         ...(hop.action === 'hop'
           ? { provider: hop.provider, model: hop.model }
           : returnProfile
@@ -743,7 +735,6 @@ export class ConversationLifecycle {
     // moved on is not this restart's problem to finish; whatever replaced it owns its own lifecycle.
     if (this.d.sessions.get(sessionId) !== b) return;
     const prevWorkDir = b.workDir; // the restart must not move the session cwd
-    const prevFast = b.requestProfile.fast;
     // In-place respawn (same id) — see InPlaceRespawnState. A settings reload is the LEAST eventful
     // respawn there is (from the model's side nothing happened at all), so it must not re-deliver an
     // orientation the model already read, nor restate a mode directive it can still see. Listener
@@ -752,7 +743,7 @@ export class ConversationLifecycle {
     this.d.goals.cancelGoalContinuation(sessionId);
     this.d.sessions.dispose(sessionId);
     try {
-      await this.ensureLive(userId, sessionId, { spawnCwd: prevWorkDir, fast: prevFast, reapplyModelPreference: opts.reapplyModelPreference });
+      await this.ensureLive(userId, sessionId, { spawnCwd: prevWorkDir, reapplyModelPreference: opts.reapplyModelPreference });
     } catch (error) {
       this.d.goals.pauseForRespawnFailure(sessionId, error);
       throw error;

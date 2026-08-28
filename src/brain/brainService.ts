@@ -259,6 +259,7 @@ export class BrainService {
       get cwd() { return d.cwd; },
       get projectPath() { return d.projectPath; },
       get userSettings() { return d.userSettings; },
+      get fastMode() { return d.fastMode; },
       get activeUserInstructions() { return d.activeUserInstructions; },
       get brand() { return d.brand; },
       get maxSteps() { return d.maxSteps; },
@@ -340,10 +341,11 @@ export class BrainService {
       get createSession() { return d.createSession; },
       get cwd() { return d.cwd; },
       get policy() { return d.policy; },
+      get fastMode() { return d.fastMode; },
     });
     this.channelService = new ChannelSessionService({
       registry: this.sessions, admitsNewWork: () => !this.draining && !this.reloadingPlugins,
-      store: d.store, cards: this.cards, users: d.users,
+      store: d.store, fastMode: d.fastMode, cards: this.cards, users: d.users,
       // A file dropped into a room is written into the VERIFIED writer's project, through the same
       // decision the web upload route makes — see brain/channelAttachments.ts.
       uploads: {
@@ -405,6 +407,8 @@ export class BrainService {
       // A linked platform sender uses the same account policy and tool grant wherever they write.
       policyForUser: d.policy,
       toolAuthorityFor: (userId) => toolAuthorityForUser(d, userId),
+      fastMode: d.fastMode,
+      setFastMode: d.setFastMode,
       identity: this.identity,
       channels: this.channelService,
       dispatch: this.subagents,
@@ -1147,14 +1151,13 @@ export class BrainService {
     return { thinkingLevel: (sess.thinkingLevel as string) ?? canonical };
   }
 
-  /** Toggle ChatGPT OAuth priority processing for one live conversation. */
+  /** Set/toggle the durable account Fast preference; the target conversation supplies support context only. */
   setFast(userId: number, on?: boolean, session?: string): { fast: boolean; fastAvailable: boolean } {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
-    if (!b.fastAvailable) throw new Error('Fast mode is available only for OpenAI OAuth models');
-    b.requestProfile.fast = on ?? !b.requestProfile.fast;
-    b.interactedAt = Date.now();
-    return { fast: b.requestProfile.fast, fastAvailable: true };
+    if (!this.d.setFastMode) throw new Error('Fast mode settings are unavailable');
+    const fast = this.d.setFastMode(userId, on);
+    return { fast, fastAvailable: b.fastAvailable };
   }
 
   /** Chat-client status — of the active conversation, or of the caller's explicit `session` (a bound

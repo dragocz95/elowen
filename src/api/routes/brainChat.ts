@@ -217,8 +217,8 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   }));
 
-  // OpenAI OAuth priority service tier (`service_tier: priority`). Session-scoped and live, like YOLO;
-  // unsupported providers are rejected instead of silently pretending Fast is active.
+  // Durable per-account Fast preference. The provider request layer evaluates actual route capability live;
+  // an unsupported current model keeps the preference but receives no Fast wire field.
   app.post('/brain/fast', withBrain(async (c, brain) => {
     const { on, session } = await parseBody(c, brainToggleSchema);
     try { return c.json(brain.setFast(c.get('user').id, on, session)); }

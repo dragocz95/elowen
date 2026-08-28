@@ -41,6 +41,8 @@ export interface PlatformOrchestratorDeps {
   /** A linked user's own tool authority — the grant an admin gave that account, minus their deny-list and
    *  the tools of any grant-gated plugin they do not hold — applied for their platform turns. */
   toolAuthorityFor?: (userId: number) => ToolPolicy | undefined;
+  fastMode?: (userId: number) => boolean;
+  setFastMode?: (userId: number, on?: boolean) => boolean;
   identity: IdentityResolver;
   channels: ChannelSessionService;
   /** Where a DELEGATED turn actually executes — see SubagentDispatch. Every delegation reaches the host
@@ -268,7 +270,6 @@ export class PlatformOrchestrator {
               scheduled: src.access.scheduled === true,
               ...(src.access.model ? { model: src.access.model } : {}),
               ...(src.access.thinkingLevel !== undefined ? { thinkingLevel: src.access.thinkingLevel } : {}),
-              ...(src.access.fast !== undefined ? { fast: src.access.fast } : {}),
               // A delegated child inherits the delegating turn's working directory so its tools run in —
               // and it advertises — the SAME project as the parent, not the daemon's `/`.
               ...(src.access.cwd !== undefined ? { clientCwd: src.access.cwd } : {}),
@@ -422,7 +423,6 @@ export class PlatformOrchestrator {
             scheduled: src.access.scheduled === true,
             model: src.access.model,
             thinkingLevel: src.access.thinkingLevel,
-            fast: src.access.fast,
             // Surface-tuned idle cutoff (cron passes a shorter one; Discord omits it → host default).
             idleRolloverMs: src.access.sessionIdleMs,
             toolPolicy,
@@ -459,7 +459,25 @@ export class PlatformOrchestrator {
           status: (ref) => this.d.channels.status(keyOf(ref)),
           abort: (ref) => this.d.channels.abort(keyOf(ref)),
           compact: (ref) => this.d.channels.compact(keyOf(ref)),
-          setFast: (ref, on) => this.d.channels.setFast(keyOf(ref), on),
+          // API-v1 adapters cannot prove which account invoked the out-of-band slash, so the legacy
+          // conversation-local method fails closed instead of guessing from room/session state.
+          setFast: () => null,
+          fastStatus: (ref, senderPlatformId) => {
+            const userId = this.d.identity.platformAccountId(ref.platform, senderPlatformId);
+            if (userId === null) return null;
+            return {
+              fast: this.d.fastMode?.(userId) === true,
+              fastAvailable: this.d.channels.status(keyOf(ref))?.fastAvailable ?? false,
+            };
+          },
+          setAccountFast: (ref, senderPlatformId, on) => {
+            const userId = this.d.identity.platformAccountId(ref.platform, senderPlatformId);
+            if (userId === null || !this.d.setFastMode) return null;
+            return {
+              fast: this.d.setFastMode(userId, on),
+              fastAvailable: this.d.channels.status(keyOf(ref))?.fastAvailable ?? false,
+            };
+          },
           restart: async () => {
             const fn = this.d.restart?.();
             if (!fn) throw new Error('restart is not available on this deployment');

@@ -17,4 +17,4 @@
  *  Refusing BEFORE the import is the point: a removed export is a link-time `SyntaxError` thrown from
  *  inside `import()`, long before any version check the plugin's own code could run, and it names the
  *  missing binding rather than the mismatch that caused it. */
-export const PLUGIN_SHARED_API_VERSION = 2;
+export const PLUGIN_SHARED_API_VERSION = 3;

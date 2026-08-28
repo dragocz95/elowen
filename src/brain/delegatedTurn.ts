@@ -39,7 +39,6 @@ export interface DelegatedTurnRequest {
   scheduled: boolean;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
-  fast?: boolean;
   /** The delegating turn's working directory, inherited so the child's tools resolve relative paths
    *  against the same project the parent runs in. */
   clientCwd?: string;
@@ -81,9 +80,6 @@ export function delegatedChannelSendOpts(
     scheduled: req.scheduled,
     ...(req.model ? { model: req.model } : {}),
     ...(req.thinkingLevel !== undefined ? { thinkingLevel: req.thinkingLevel } : {}),
-    // `fast` is tri-state downstream (undefined = "leave the session's profile alone"), so an absent
-    // request field must stay absent rather than collapse to false.
-    ...(req.fast !== undefined ? { fast: req.fast } : {}),
     parentSessionId: req.parentSessionId,
     delegatedAccess: scope,
     ...(req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
@@ -199,7 +195,6 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
   if (v.accountAllow !== undefined
     && (!Array.isArray(v.accountAllow) || v.accountAllow.some((t) => typeof t !== 'string'))) return undefined;
   if (v.thinkingLevel !== undefined && typeof v.thinkingLevel !== 'string') return undefined;
-  if (v.fast !== undefined && typeof v.fast !== 'boolean') return undefined;
   if (v.clientCwd !== undefined && typeof v.clientCwd !== 'string') return undefined;
   // JSON has no Infinity: the plugin already pins its "never roll over" value to MAX_SAFE_INTEGER for
   // exactly this reason, so anything non-finite arriving here is corruption, not a legitimate sentinel.
@@ -213,7 +208,6 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
     scheduled: v.scheduled,
     ...(model ? { model } : {}),
     ...(typeof v.thinkingLevel === 'string' ? { thinkingLevel: v.thinkingLevel } : {}),
-    ...(typeof v.fast === 'boolean' ? { fast: v.fast } : {}),
     ...(typeof v.clientCwd === 'string' ? { clientCwd: v.clientCwd } : {}),
     ...(typeof v.idleRolloverMs === 'number' ? { idleRolloverMs: v.idleRolloverMs } : {}),
   };

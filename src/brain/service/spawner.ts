@@ -4,7 +4,8 @@ import type { PluginRegistry } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { logger } from '../../shared/logger.js';
 import type { BrainRuntimeConfig } from '../providers.js';
-import { buildBrainRegistry, resolveBrainModelRoute } from '../providers.js';
+import { buildBrainRegistry, registryProviderName, resolveBrainModelRoute } from '../providers.js';
+import { resolveFastModeRoute } from '../fastMode.js';
 import { isOfferableBrainModel } from '../../shared/execs.js';
 import { buildMemoryTools, BUILTIN_TOOL_DEFER_LOADING, BUILTIN_TOOL_ICONS, BUILTIN_TOOL_PLAN_SAFE } from '../tools/index.js';
 import { buildShareFileTool } from '../tools/shareFileTool.js';
@@ -14,6 +15,7 @@ import { composeSessionTools } from '../session/capabilities.js';
 import { createToolSearchHandle, toolSearchTool, formatDeferredToolsBlock, formatHostedToolCatalogBlock, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { buildPromptTemplates } from '../slashCommands.js';
 import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
+import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
 import { currentWorkDir } from '../../plugins/policyContext.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
@@ -41,6 +43,7 @@ interface SpawnerDeps {
   cwd?: string;
   projectPath?: () => string | undefined;
   userSettings?: BrainDeps['userSettings'];
+  fastMode?: BrainDeps['fastMode'];
   activeUserInstructions?: BrainDeps['activeUserInstructions'];
   brand?: BrainDeps['brand'];
   maxSteps?: () => number;
@@ -192,10 +195,11 @@ export class LiveSessionSpawner {
       settings?.autoCompactAtByModel, route.providerId, model.id, settings?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
     );
     const capabilities = modelCapabilities(model);
-    // One resolver owns OAuth, official API-key and probe-backed Azure classification. It consumes the
-    // config entry (auth + URL), never guesses from PI's registry provider name.
+    // Route capabilities consume the configured entry + exact wire model. Credential provenance alone is
+    // never enough: a compatible relay must not inherit an upstream-only Fast field.
     const providerEntry = cfg.providers.find((provider) => provider.id === route.providerId);
     if (!providerEntry) throw new Error(`brain provider '${route.providerId}' is not configured`);
+    const fastRoute = resolveFastModeRoute(providerEntry, model);
     const hostedRoute = resolveHostedToolSearchRoute(providerEntry, model, {
       toolDeferralEnabled: runtime?.toolDeferralEnabled ?? false,
       hostedToolSearch: runtime?.hostedToolSearch ?? {},
@@ -205,7 +209,6 @@ export class LiveSessionSpawner {
     // Temperature is the provider entry's own setting, read from the same route that chose the model, and
     // absent unless the operator set one — see ProviderRequestProfile on why absent must stay the default.
     const requestProfile = {
-      fast: capabilities.fast && opts.fast === true,
       // A Qwen thinking model on a DashScope endpoint takes its effort as `thinking_budget`, not
       // `reasoning_effort` — the hook rewrites each request's current effort into that wire shape.
       ...(model.reasoning && qwenThinkingWire(model.baseUrl, model.id) ? { qwenThinking: true } : {}),
@@ -446,6 +449,21 @@ export class LiveSessionSpawner {
     // the session. Safe because the channel lock serializes turns, so it cannot change under a running
     // retrieval. The rule itself lives in liveRecallUserId, where a test can pin it.
     const recallUserId = (): number | null => liveRecallUserId(sessionId, ownerUserId, live.turnWriterUserId);
+    // Fast follows the account driving THIS request. An ordinary shared/direct channel without a verified
+    // writer fails closed instead of borrowing the room owner's preference. A delegated child has no writer
+    // of its own, so it uses the contribution account captured as settingsUserId and re-reads that account in
+    // both in-process and runner execution.
+    const fastUserId = (): number | null => opts.channel
+      ? opts.parentSessionId ? settingsUserId : live.turnWriterUserId ?? null
+      : settingsUserId;
+    const fastEnabled = (): boolean => {
+      const userId = fastUserId();
+      return userId !== null && this.d.fastMode?.(userId) === true;
+    };
+    const fastRouteFor = (requestModel: Model<Api>) => {
+      const entry = cfg.providers.find((provider) => registryProviderName(provider) === requestModel.provider);
+      return entry ? resolveFastModeRoute(entry, requestModel) : undefined;
+    };
     const listeners = new Set<(e: BrainEvent) => void>();
     // Re-attach every listener ClientAttachments still has on this session id — direct subscribe()
     // subscribers and drill-in taps alike. A respawn (model switch, restart, vision hop, idle rollover,
@@ -462,6 +480,7 @@ export class LiveSessionSpawner {
       systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
       tools: allTools, toolSearch: toolSearchHandle, hostedToolSearch,
       thinkingLevel: opts.thinkingLevel, requestProfile,
+      fastMode: { enabled: fastEnabled, routeFor: fastRouteFor },
       autoCompact: opts.autoCompact, autoCompactAtPct,
       // Read per call rather than from the `runtime` snapshot above: the operator can turn provider-side
       // compaction off while a long conversation is running, and the next request must already follow it.
@@ -564,7 +583,7 @@ export class LiveSessionSpawner {
       session, sessionId, ownerUserId, settingsUserId, contributionUserId: contributionOwnerUserId,
       direct: opts.direct === true,
       model: model.id, providerId, provider: model.provider, thinkingLevel: opts.thinkingLevel,
-      requestProfile, fastAvailable: capabilities.fast,
+      requestProfile, fastAvailable: fastRoute !== undefined,
       thinkingLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
       policy: opts.policy, applyCompaction, assessColdCompaction, listeners, replay, turnContext,
       pluginToolNames: new Set(pluginTools.map((t) => t.name)),

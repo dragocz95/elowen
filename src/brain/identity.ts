@@ -41,6 +41,11 @@ export class IdentityResolver {
     });
   }
 
+  /** Resolve an out-of-band platform control to its linked account. Unknown senders fail closed. */
+  platformAccountId(platform: string, platformUserId: string): number | null {
+    return this.d.resolvePlatformUser?.(platform, platformUserId)?.id ?? null;
+  }
+
   /** The identity of a user driving their OWN authenticated Elowen chat (web dock / CLI). */
   forOwnerChat(userId: number, policy: Policy): TurnIdentity {
     return {
