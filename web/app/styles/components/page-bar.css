@@ -4,12 +4,28 @@
    Geometry belongs to the TopBar's typed variant (components/shell/TopBar.tsx), not here — this file
    holds only what a utility cannot say once for a whole subtree. */
 
-/* One radius for every control in the bar variant, stated on the container rather than on each control.
-   The controls come from five different components (the palette opener, sign-out, the skin cycle, the
-   language menu, the identity link) and three of them are shared with the floating cluster, where they
-   are correctly pill-shaped. The identity link is excluded: it frames a circular avatar and a
-   rounded-rectangle focus ring around a disc is worse than no ring at all. */
-.top-bar--bar :is(a, button):not(.top-bar__identity) { border-radius: var(--radius-sm); }
+/* ONE ghost anatomy for every control in the bar variant, stated on the container rather than on each
+   control: 32px tall, small radius, no border.
+   It has to be stated here because the controls come from five different components and only two of
+   them take their geometry from the variant. `SkinSwitcher` hardcodes `h-9 rounded-full` and
+   `LanguageSwitcher` hardcodes `h-9 rounded-md border border-border` — both correct in the floating
+   cluster they were written for, both wrong in a ruled bar, and together they made the row read as two
+   32px ghosts beside a 36px pill and a 36px boxed "EN". Reaching them from their own components would
+   mean teaching three shared controls about a variant that is not theirs; the bar is one place and says
+   it once.
+   The identity link is excluded: it frames a circular avatar, and a rounded-rectangle focus ring around
+   a disc is worse than no ring at all. */
+.top-bar--bar :is(a, button):not(.top-bar__identity) {
+  height: 2rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+/* The floor a finger needs, restated rather than left to the `pointer-coarse:` utility the hamburger
+   carries: this file is unlayered, so the height above would otherwise outrank it. 44px inside a 48px
+   bar. */
+@media (pointer: coarse) {
+  .top-bar--bar :is(a, button):not(.top-bar__identity) { height: var(--touch-target); }
+}
 
 /* The trail must give way before the actions do: it is the one part of the row that can be read from
    the page itself, and every step inside it truncates rather than wrapping. */

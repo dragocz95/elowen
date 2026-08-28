@@ -8,20 +8,22 @@
 
 /* The three arrangements the component names (components/ui/ControlSurface.tsx). They live here, beside
    the `display: flex` they modify, because this file is imported unlayered and therefore outranks any
-   utility class a caller could pass — a call site spelling `flex-col items-stretch` was writing a
-   declaration it could only win by luck, and two of them did.
-   `inline` is the rule above and needs no further statement. */
+   utility class a caller could pass. That is the reason the arrangements are named at all; it is NOT
+   true that every utility a call site passed was losing — the base rule declares neither
+   `flex-direction` nor `justify-content`, so `flex-col` and `sm:justify-between` did apply. What lost
+   was `items-stretch` and `sm:items-end`, against the `align-items: center` above.
+   `inline` is that base rule and needs no further statement. */
 .control-surface-toolbar[data-layout='split'] { align-items: flex-end; justify-content: space-between; }
 .control-surface-toolbar[data-layout='stacked'] { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0; }
 /* A band of a stacked toolbar owns its own inner rhythm; the toolbar only stacks them. */
 .control-surface-toolbar[data-layout='stacked'] > * { width: 100%; }
 
-/* Narrow container: a split toolbar has nothing to push apart any more, so it becomes a stack rather
-   than two ends fighting over one line. The container, not the viewport — the same toolbar sits inside a
-   detail rail at a full-width window. */
-@container workspace-shell (width < 34rem) {
-  .control-surface-toolbar[data-layout='split'] { flex-direction: column; align-items: stretch; gap: 0.75rem; }
-}
+/* `split` needs no narrow case of its own, and deliberately has none. It relies on the wrap the base
+   rule already declares: while both ends fit on one line there is free space for `space-between` to
+   push them apart, and the moment there is not, the trailing group moves to a line of its own. A query
+   would have been the wrong instrument anyway — the only `split` consumer is the sessions panel, which
+   `Modal` portals to <body>, so an `@container workspace-shell` condition names a container that is not
+   in its ancestry and can therefore never be true. */
 .control-surface-register { min-width: 0; padding: 1rem clamp(1.25rem, 2vw, 2rem); }
 .control-surface-state { padding: 2.5rem clamp(1.25rem, 2vw, 2rem); color: var(--color-text-muted); text-align: center; }
 .control-surface-state[data-tone='danger'] { color: var(--color-danger); }

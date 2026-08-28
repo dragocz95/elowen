@@ -25,10 +25,20 @@ import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
 export type PageBarVariant = 'floating' | 'bar';
 
 /** Page chrome: the reader's location plus the universal actions. */
-export function TopBar({ onMenuClick, showLocation = true, variant = 'floating' }: {
+export function TopBar({ onMenuClick, showLocation = true, variant = 'floating', hideOnPhone = false }: {
   onMenuClick?: () => void;
   showLocation?: boolean;
   variant?: PageBarVariant;
+  /** Withhold the whole bar below 768px. /chat carries its own conversation bar there, and stacking the
+   *  global one above it crowds the screen.
+   *
+   *  It is a property of THIS component and not a wrapper the shell puts around it, because the `bar`
+   *  variant is `position: sticky` and a sticky box is clamped to its containing block. A wrapper whose
+   *  only child is the header is exactly the header's height, which gives it a sticky range of zero: the
+   *  bar scrolled away on the first wheel click, and `.data-table-header`, which offsets itself by the
+   *  bar's 48px precisely because the bar stays, parked every register's column names 48px down with
+   *  rows scrolling visibly above them. */
+  hideOnPhone?: boolean;
 }) {
   const { t } = useTranslation();
   const me = useMe();
@@ -53,9 +63,9 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating' 
   return (
     <header
       data-testid="future-page-header"
-      className={bar
+      className={`${bar
         ? 'top-bar top-bar--bar sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-bg px-4'
-        : 'top-bar relative z-30 flex min-h-16 shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-3'}
+        : 'top-bar relative z-30 flex min-h-16 shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-3'}${hideOnPhone ? ' max-[767px]:hidden' : ''}`}
     >
       <div className={`min-w-0 items-center gap-2 ${bar || showLocation || onMenuClick ? 'flex' : 'hidden'} ${bar ? '' : 'items-start gap-3'}`}>
         {onMenuClick ? (

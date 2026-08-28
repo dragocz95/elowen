@@ -182,17 +182,19 @@ function ShellLayout({ children }: { children: ReactNode }) {
               reader whose browser font is not 16px would push the CSS boundary away from the pixel media
               query the hook runs — reopening exactly the gap with no bar and no back link that this
               suppression exists to avoid. */}
-          <div className={onChat ? 'max-[767px]:hidden' : undefined}>
-            {/* WHICH page chrome, decided from the shell profile and nothing else — the same seam the
-                navigation is swapped on, so a design's frame and its menu can never disagree, and no
-                component below has to recognise a skin by name. `command` gets the ruled 48px bar with a
-                breadcrumb; the built-in design keeps its frameless floating cluster. */}
-            <TopBar
-              onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
-              showLocation={false}
-              variant={profile === 'command' ? 'bar' : 'floating'}
-            />
-          </div>
+          {/* WHICH page chrome, decided from the shell profile and nothing else — the same seam the
+              navigation is swapped on, so a design's frame and its menu can never disagree, and no
+              component below has to recognise a skin by name. `command` gets the ruled 48px bar with a
+              breadcrumb; the built-in design keeps its frameless floating cluster.
+              The phone suppression is the component's own property rather than a wrapper around it: the
+              `bar` variant is sticky, and a wrapper holding nothing but the header IS the header's
+              height, which leaves the sticky range at zero. */}
+          <TopBar
+            onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
+            showLocation={false}
+            variant={profile === 'command' ? 'bar' : 'floating'}
+            hideOnPhone={onChat}
+          />
           {/* The launcher floats over the bottom-right corner of this scroller, so the last thing on a
               page must not end underneath it. The clearance is the same `--fab-clearance` the toast dock
               composes (styles/components/primitives.css), and it is spent only while the launcher is

@@ -163,8 +163,21 @@ export function HeroCosmos({ now, state, presenceLabel }: {
     // CSS lays out. Returning before the observer is even attached is what leaves the DOM clean enough
     // for a stylesheet to own the arrangement — the orbit path writes inline `left`/`top` onto every
     // pod, and inline styles are not something a design can override.
+    //
+    // It has to CLEAR that geometry first, not merely stop producing it. Switching skin does not remount
+    // this subtree — Shell.tsx keeps one mount across a skin change so a live conversation survives it —
+    // so arriving here from Ember's orbit means every pod still carries the `left`/`top` the last layout
+    // pass wrote. The grid rule sets `position: relative`, at which point those absolute coordinates
+    // become real offsets and the cards land off the page until a reload.
     if (flat) {
       root.dataset.mode = 'grid';
+      svg.replaceChildren();
+      for (const pod of podsLayer.querySelectorAll<HTMLElement>(':scope > .hero-cosmos__pod')) {
+        pod.style.left = '';
+        pod.style.top = '';
+        pod.style.removeProperty('--fx');
+        pod.style.removeProperty('--fy');
+      }
       return;
     }
 

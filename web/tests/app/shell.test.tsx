@@ -62,16 +62,22 @@ describe('Shell', () => {
     // /chat at all. A CSS breakpoint reads the same viewport ChatView does, and needs no measurement.
     // The value is asserted in PIXELS on purpose: Tailwind's `md` is 48rem, which drifts away from the
     // hook's pixel media query as soon as the browser font is not 16px, reopening that same gap.
+    //
+    // Asserted on the HEADER and not on a wrapper around it. The suppression used to be a <div> holding
+    // nothing but the bar, which is fatal to the `bar` variant: that one is `position: sticky`, and a
+    // sticky box is clamped to its containing block — a wrapper whose only child is the header is
+    // exactly the header's height, so the sticky range was zero and the bar scrolled away.
     pathname = '/chat';
     render(<Shell><span>page-body</span></Shell>);
     const bar = await screen.findByTestId('future-page-header');
-    expect(bar.parentElement).toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
+    expect(bar).toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
+    expect(bar.parentElement, 'no wrapper may clamp the sticky bar').not.toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
   });
 
   it('leaves the global bar unconditional off /chat', async () => {
     pathname = '/dash';
     render(<Shell><span>page-body</span></Shell>);
     const bar = await screen.findByTestId('future-page-header');
-    expect(bar.parentElement).not.toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
+    expect(bar).not.toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
   });
 });

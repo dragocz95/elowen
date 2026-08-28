@@ -42,7 +42,7 @@
  * The Studio navigation column (components/shell/StudioNavigation.tsx).
  *
  * That component paints NOTHING: it states what each part is (`studio-nav__*`) and what state it is in
- * (`data-mode`, `data-open`, `data-active`, `data-closed`, `data-ready`, `data-depth`). Every dimension,
+ * (`data-mode`, `data-open`, `data-active`, `data-closed`, `data-ready`). Every dimension,
  * hairline and state colour is here, which is why none of it is expressed in utility classes — an
  * unlayered skin rule would have to out-specify each one, and the two would drift apart on every edit.
  *
@@ -407,6 +407,27 @@
   font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The folded rail cannot hold that row SIDE BY SIDE. The column is 3rem and its footer insets 0.25rem
+   either way, which leaves a 40px track for a 40px account row plus a 4px gap plus the arrangement
+   trigger — 28px on a mouse and 44px on a finger. `.studio-nav { overflow: hidden }` then clipped
+   whatever did not fit, and the trigger is the documented last resort when the reader has hidden every
+   entry, so clipping it is how a rail becomes a dead end.
+   Stacked, both are square, centred and whole. Identity and meta are already withheld at rail width, so
+   the row has nothing left to lose by giving up its horizontal axis. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__user {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.125rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__user .studio-nav__item {
+  height: 2.5rem;
+  justify-content: center;
+  padding-inline: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__trigger {
+  width: 100%;
 }
 
 /* Focus stays visible on every control the column owns — the rows are custom-painted, so the browser's
