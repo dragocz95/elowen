@@ -477,16 +477,23 @@ describe('files plugin — Grep', () => {
     expect(detailsOf(withoutMl).matches).toBe(0); // single-line by default
   });
 
-  it('JS fallback (rg unavailable) still searches content, case-sensitively like rg', async () => {
-    const fb = tmpDir('grep-fb');
+  it('fails content searches closed when rg is unavailable but keeps filename search safe', async () => {
+    const fb = tmpDir('grep-no-rg');
     writeFileSync(join(fb, 'c.txt'), 'Needle here\nneedle there\n');
     const prevPath = process.env.PATH;
-    process.env.PATH = ''; // hide rg → the tool falls back to the bounded JS walk
+    process.env.PATH = ''; // hide rg: content must never fall back to whole-file JS reads
     try {
-      const res = await runWithPolicy(userPolicy([fb]), () => runTool(reg2, 'Grep', { path: fb, pattern: 'needle' }));
-      const out = textOf(res);
-      expect(out).toContain('needle there');
-      expect(out).not.toContain('Needle here'); // case-SENSITIVE, matching the rg path
+      const grep = await runWithPolicy(userPolicy([fb]), () => runTool(reg2, 'Grep', { path: fb, pattern: 'needle' }));
+      expect(textOf(grep)).toContain('ripgrep (rg) is required');
+      expect(detailsOf(grep).ok).toBe(false);
+
+      const content = await runWithPolicy(userPolicy([fb]), () => runTool(reg2, 'Search', { path: fb, query: 'needle' }));
+      expect(textOf(content)).toContain('ripgrep (rg) is required');
+      expect(detailsOf(content).ok).toBe(false);
+
+      const files = await runWithPolicy(userPolicy([fb]), () => runTool(reg2, 'Search', { path: fb, query: 'c.txt', mode: 'files' }));
+      expect(textOf(files)).toContain('c.txt');
+      expect(detailsOf(files).ok).toBe(true);
     } finally {
       process.env.PATH = prevPath;
     }

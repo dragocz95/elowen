@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { AGENT_CLIS, detectAgentClis, installCommand } from '../../../src/cli/install/agentClis.js';
 import { preflight, preflightBlockers } from '../../../src/cli/install/preflight.js';
 import { currentUser, userHome, ensureServiceUser } from '../../../src/cli/install/serviceUser.js';
-import { ensureSandboxSupport, ensureTerminalStreaming, planFromArgs } from '../../../src/cli/install/index.js';
+import { ensureRipgrep, ensureSandboxSupport, ensureTerminalStreaming, planFromArgs } from '../../../src/cli/install/index.js';
 import { isIpAddress } from '../../../src/cli/provision/deployment.js';
 import type { Runner, ExecResult } from '../../../src/cli/install/runner.js';
 
@@ -98,6 +98,33 @@ describe('install/preflight', () => {
     });
     expect(preflightBlockers(await preflight(base(false), 'darwin')).join(' ')).toMatch(/Homebrew/);
     expect(preflightBlockers(await preflight(base(true), 'darwin'))).toEqual([]);
+  });
+});
+
+describe('install/ensureRipgrep', () => {
+  it('installs ripgrep through the platform package manager when rg is missing', async () => {
+    const linuxCalls: { cmd: string; args: string[] }[] = [];
+    const linux = runner({
+      which: async () => null,
+      exec: async (cmd, args) => { linuxCalls.push({ cmd, args }); return { code: 0, stdout: '', stderr: '' }; },
+    });
+    await ensureRipgrep(linux, 'linux');
+    expect(linuxCalls.map((call) => `${call.cmd} ${call.args.join(' ')}`)).toContain('apt-get install -y ripgrep');
+
+    const macCalls: { cmd: string; args: string[] }[] = [];
+    const mac = runner({
+      which: async () => null,
+      exec: async (cmd, args) => { macCalls.push({ cmd, args }); return { code: 0, stdout: '', stderr: '' }; },
+    });
+    await ensureRipgrep(mac, 'darwin');
+    expect(macCalls.map((call) => `${call.cmd} ${call.args.join(' ')}`)).toContain('brew install ripgrep');
+  });
+
+  it('does nothing when rg already resolves', async () => {
+    const calls: string[] = [];
+    const present = runner({ which: async (cmd) => cmd === 'rg' ? '/usr/bin/rg' : null, exec: async (cmd) => { calls.push(cmd); return { code: 0, stdout: '', stderr: '' }; } });
+    await ensureRipgrep(present, 'linux');
+    expect(calls).toEqual([]);
   });
 });
 

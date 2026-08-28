@@ -83,6 +83,14 @@ async function loginSmokeTest(username: string, password: string): Promise<void>
 
 // ── prompt-free executors (shared by interactive + unattended) ───────────────
 
+/** Install the bounded content-search engine used by the bundled Files plugin. Search/Grep deliberately
+ * fail closed without it: the former JS fallback read arbitrary whole files into the daemon heap. */
+export async function ensureRipgrep(r: Runner, platform = process.platform): Promise<void> {
+  if (await r.which('rg')) return;
+  if (platform === 'darwin') await must(r, 'brew', ['install', 'ripgrep']);
+  else await aptInstall(r, 'ripgrep');
+}
+
 /** Best-effort: enable the real-PTY terminal stream. node-pty (an optional dependency) needs a C
  *  toolchain to compile its native addon when no prebuilt binary matches, so ensure python3/make/g++,
  *  then install node-pty into the globally-installed elowen package where the daemon loads it from.
@@ -207,6 +215,7 @@ async function provisionAdmin(answers: SetupAnswers): Promise<void> {
  *  so the caller can build the final URL (a non-fatal certbot failure leaves the site on HTTP). */
 async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> {
   if (plan.installTmux) await step('Installing tmux', () => (MAC ? must(r, 'brew', ['install', 'tmux']) : aptInstall(r, 'tmux')));
+  await step('Installing ripgrep', () => ensureRipgrep(r));
 
   // serviceUserCreated is tri-state — created by useradd / pre-existing / macOS (invoking user, N/A) —
   // and must come from the executor's own result: the plan's create-vs-existing intent is not what ran

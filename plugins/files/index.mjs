@@ -23,6 +23,8 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'web-dist', '.next', 
 const DEFAULT_GLOB_MAX = 100;
 const DEFAULT_GREP_MAX_MATCHES = 200;
 const execFileP = promisify(execFile);
+const RIPGREP_REQUIRED = 'Error: ripgrep (rg) is required for content search. Install ripgrep and retry (Ubuntu/Debian: apt install ripgrep; macOS: brew install ripgrep).';
+const commandMissing = (error) => error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
 const ok = (tool, text, details = {}) => ({
   content: [{ type: 'text', text }],
   details: { ok: true, tool, truncated: false, ...details },
@@ -562,13 +564,6 @@ function safeRegexSource(query) {
   catch { return String(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 }
 
-/** Case-SENSITIVE compiled regex for the Grep JS fallback. The rg path searches case-sensitively (no
- *  `-i`), so the fallback must too — otherwise results would differ purely by whether rg is installed. */
-function safeRegexCaseSensitive(query) {
-  try { return new RegExp(query); }
-  catch { return new RegExp(String(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); }
-}
-
 /** Whether the resolved default base is the filesystem root — the daemon's cwd is `/` under systemd, so
  *  a no-path Glob/Grep from an all-access turn would otherwise walk the whole disk. */
 const isFsRoot = (dir) => dirname(dir) === dir;
@@ -1007,33 +1002,20 @@ export function register(ctx) {
         const query = safeRegex(queryText);
         const include = globRegex(p.include);
         const lines = [];
-        let rgOk = false;
         try {
           lines.push(...await rgSearch(abs, root, queryText, p.include, mode, searchMaxMatches));
-          rgOk = true;
-        } catch {
-          // rg is optional on user machines. Fall back to a bounded JS walk when it is unavailable/errors.
-        }
-        // Only walk when rg was unavailable — a successful rg that found zero hits is a real empty result,
-        // not a reason to re-scan. Walking anyway would disagree with rg (rg honors .gitignore, the walk
-        // only SKIP_DIRS), so an otherwise-empty query could surface gitignored files on the fallback path.
-        for (const file of rgOk ? [] : walkFiles(abs)) {
-          const rel = relative(root, file) || file;
-          if (include && !include.test(rel) && !include.test(rel.split('/').at(-1) ?? rel)) continue;
-          if (mode === 'files') {
+        } catch (error) {
+          if (!commandMissing(error)) throw error;
+          // Filename matching stays safe without rg: the bounded walk reads directory entries and stats,
+          // never file contents. Content search must fail closed — reading arbitrary whole files as UTF-8
+          // is exactly how a broad /data search pulled a production SQLite database into the V8 heap.
+          if (mode === 'content') return ok('Search', RIPGREP_REQUIRED, { ok: false, path: abs, mode });
+          for (const file of walkFiles(abs)) {
+            const rel = relative(root, file) || file;
+            if (include && !include.test(rel) && !include.test(rel.split('/').at(-1) ?? rel)) continue;
             if (query.test(rel)) lines.push(rel);
             if (lines.length >= searchMaxMatches) break;
-            continue;
           }
-          let body = '';
-          try { body = readFileSync(file, 'utf-8'); } catch { continue; }
-          const fileLines = body.split('\n');
-          for (let i = 0; i < fileLines.length; i++) {
-            if (!query.test(fileLines[i])) continue;
-            lines.push(`${rel}:${i + 1}: ${fileLines[i]}`);
-            if (lines.length >= searchMaxMatches) break;
-          }
-          if (lines.length >= searchMaxMatches) break;
         }
         // Cap each hit so one minified/very long match line can't flood the result set.
         const formatted = lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text).join('\n');
@@ -1163,7 +1145,6 @@ export function register(ctx) {
         const grepMax = Math.min(Math.max(Number(ctx.config.searchMaxMatches) || DEFAULT_GREP_MAX_MATCHES, 50), 1000);
         let lines;
         let truncated = false;
-        let rgOk = false;
         try {
           const r = await rgGrep(target, root, p.pattern, {
             include: p.glob,
@@ -1177,32 +1158,9 @@ export function register(ctx) {
           });
           lines = r.lines;
           truncated = r.truncated;
-          rgOk = true;
-        } catch { /* rg unavailable — fall back below */ }
-        if (!rgOk) {
-          // Fallback: bounded JS walk for content mode only (files_with_matches/count need rg). Match rg's
-          // case-SENSITIVE semantics so results don't hinge on whether rg is installed.
-          if (outputMode !== 'content') {
-            return ok('Grep', `Error: ripgrep (rg) is required for output_mode "${outputMode}" but is not installed.`, { ok: false });
-          }
-          const query = safeRegexCaseSensitive(p.pattern);
-          const include = globRegex(p.glob);
-          const walkTarget = isDir ? target : dirname(target);
-          const found = [];
-          for (const file of isDir ? walkFiles(walkTarget) : [target]) {
-            const rel = relative(root, file) || file;
-            if (include && !include.test(rel) && !include.test(rel.split('/').at(-1) ?? rel)) continue;
-            let body = '';
-            try { body = readFileSync(file, 'utf-8'); } catch { continue; }
-            const fileLines = body.split('\n');
-            for (let i = 0; i < fileLines.length; i++) {
-              if (query.test(fileLines[i])) found.push(`${rel}:${i + 1}:${fileLines[i]}`);
-            }
-          }
-          const effHead = p.head_limit === 0 ? Infinity : (p.head_limit ?? Infinity);
-          const cap = Math.min(effHead, grepMax);
-          truncated = found.length > cap;
-          lines = found.slice(0, cap);
+        } catch (error) {
+          if (!commandMissing(error)) throw error;
+          return ok('Grep', RIPGREP_REQUIRED, { ok: false, path: root, pattern: p.pattern, outputMode });
         }
         const formatted = lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text).join('\n');
         let text = formatted || 'No matches found.';
