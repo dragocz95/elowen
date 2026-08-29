@@ -114,19 +114,27 @@ function SelectLabel({ className = '', ...props }: React.ComponentProps<typeof S
   );
 }
 
-function SelectItem({ className = '', children, ...props }: React.ComponentProps<typeof SelectPrimitive.Item>) {
+/** `icon` is a sibling of the item's text, never a child of it. `ItemText` renders one inline span whose
+ *  content Radix also mirrors into the trigger as the selected value, so a `display:flex` glyph placed
+ *  inside it becomes a block box in an inline parent and drops the label onto its own line. Passing the
+ *  glyph separately keeps the row a flex row and keeps the mirrored trigger value pure text. */
+function SelectItem({ className = '', children, icon, ...props }: React.ComponentProps<typeof SelectPrimitive.Item> & { icon?: React.ReactNode }) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
         'relative flex w-full min-w-0 cursor-default select-none items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm outline-none transition-colors',
-        'text-text data-[highlighted]:bg-elevated data-[state=checked]:bg-accent/10 data-[state=checked]:text-accent',
+        // `elevated` is the token a hovered row would normally take, but in this design it sits 6/255
+        // above `surface` — which is what the menu panel itself is painted with — so the highlight was
+        // applied and invisible. `overlay` is the next step up and the first one that actually reads.
+        'text-text data-[highlighted]:bg-overlay data-[state=checked]:bg-accent/10 data-[state=checked]:text-accent',
         'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
         className,
       )}
       {...props}
     >
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {icon}
+      <SelectPrimitive.ItemText className="min-w-0 flex-1 truncate">{children}</SelectPrimitive.ItemText>
       <SelectPrimitive.ItemIndicator asChild>
         <Check size={15} aria-hidden className="ml-auto shrink-0 text-accent" />
       </SelectPrimitive.ItemIndicator>
