@@ -290,13 +290,13 @@
  * primitives the bundle mounts. Those are the ones below.
  * --------------------------------------------------------------------------------------------------- */
 
-/* The workbench sits on the studio canvas, like the shell content behind it, rather than on a raised
-   panel — a surface that fills the screen is not floating above anything. Written against the takeover's
-   own class so it out-specifies surfaces.css's `--color-popover` ground for every OTHER overlay, which
-   IS raised and keeps it. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-surface.workspace-takeover {
-  background: var(--color-background);
-}
+/* There is no takeover background rule here any more, and that is a removal rather than an omission.
+   "A surface that fills the screen is not floating above anything, so it sits on the canvas" is not a
+   Studio decision — it is true of a takeover under any palette — and it now lives with the rest of the
+   overlay paint, in `.overlay-surface.workspace-takeover[data-elowen-takeover][data-presentation='fullscreen']`
+   (app/styles/components/primitives.css), which carries the specificity to hold it against the
+   `.overlay-surface` ground in surfaces.css. A copy here would have been a second owner of a value both
+   files already agreed on. */
 
 /* The takeover's own header row — the back control, the title and the surface's toolbar. It has no class
    of its own, so it is addressed as the first child of a container whose two children the host component

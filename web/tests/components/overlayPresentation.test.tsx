@@ -123,6 +123,92 @@ describe('overlays resolve against the live viewport', () => {
   });
 });
 
+/** The overlay SHELLS — every component that renders a dialog surface or the layer under one. The guard
+ *  below reads their shipped source, so the list is the boundary it defends: a new one added without
+ *  being named here is simply not checked. */
+const OVERLAY_SHELLS = [
+  join('components', 'ui', 'Modal.tsx'),
+  join('components', 'ui', 'ConfirmDialog.tsx'),
+  join('components', 'ui', 'WorkspaceTakeover.tsx'),
+  join('components', 'ui', 'WorkspacePrimitives.tsx'),
+  join('components', 'shell', 'CommandPalette.tsx'),
+  join('components', 'ui', 'shadcn', 'dialog.tsx'),
+  join('components', 'ui', 'shadcn', 'alert-dialog.tsx'),
+];
+
+/** Source with comments stripped: these files document the very defects they replace, by name, and a
+ *  guard that reads prose fails on its own rationale. */
+function shipped(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
+}
+
+describe('one owner paints every overlay surface', () => {
+  it('carries .overlay-surface on every presentation the dialog primitive can render', () => {
+    // The class is what primitives.css paints and what dresses the two phone presentations, so a
+    // presentation that does not carry it has to restate the same material at its call site — which is
+    // exactly how the drawer ended up on `--color-document` with a hand-rolled cast shadow while the
+    // centered window beside it took `--color-card` and `--shadow-raised`.
+    for (const presentation of ['center', 'drawer', 'sheet', 'fullscreen'] as const) {
+      const { unmount } = render(
+        <Modal title={`Surface ${presentation}`} presentation={presentation} onClose={vi.fn()}><span>body</span></Modal>,
+        { wrapper: W },
+      );
+      const dialog = screen.getByRole('dialog', { name: `Surface ${presentation}` });
+      expect(dialog, `${presentation} must be made of the shared overlay material`).toHaveClass('overlay-surface');
+      expect(dialog).toHaveAttribute('data-presentation', presentation);
+      unmount();
+    }
+  });
+
+  it('states the background, border colour and shadow once, in primitives.css, on canonical tokens', () => {
+    const rule = /(?:^|\n)\.overlay-surface\s*\{([^}]*)\}/.exec(primitivesCss);
+    expect(rule, 'primitives.css owns what an overlay is made of').not.toBeNull();
+    expect(rule![1]).toMatch(/background:\s*var\(--color-popover\)/);
+    expect(rule![1]).toMatch(/border-color:\s*var\(--color-border\)/);
+    expect(rule![1]).toMatch(/box-shadow:\s*var\(--shadow-raised\)/);
+    // Retired vocabulary must not come back through the one rule that dresses everything.
+    expect(rule![1]).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
+
+  it('leaves no overlay shell painting a surface of its own', () => {
+    // The mutation this pins: reintroducing surface paint at any one of the shells re-splits an owner
+    // the whole foundation exists to keep single. A layer's scrim is NOT surface paint and is
+    // deliberately not matched — `bg-[var(--color-scrim)]` in dialog.tsx is the veil, not the panel.
+    const SURFACE_PAINT = /\bbg-card\b|\bbg-popover\b|boxShadow|shadow-\[|--color-document|(?:^|[\s;{])background:/;
+    const offenders: string[] = [];
+    for (const path of OVERLAY_SHELLS) {
+      const source = shipped(readFileSync(join(WEB, path), 'utf-8'));
+      const hit = SURFACE_PAINT.exec(source);
+      if (hit) offenders.push(`${path}: ${hit[0].trim()}`);
+    }
+    expect(offenders, 'overlay paint belongs to .overlay-surface in primitives.css').toEqual([]);
+  });
+
+  it('keeps the takeover on the document canvas with enough specificity to hold it', () => {
+    // A surface that IS the page does not float above anything, so it is the one exception to the
+    // popover ground. It was a skin's rule (skins/studio/workbench.css) while the ground was a skin's
+    // rule too; now that the ground is canonical the exception has to be, and it needs a fourth
+    // condition to out-specify the `.overlay-surface` block a skin still carries.
+    const rule = /\.overlay-surface\.workspace-takeover\[data-elowen-takeover\]\[data-presentation='fullscreen'\]\s*\{([^}]*)\}/.exec(primitivesCss);
+    expect(rule, 'the takeover ground belongs with the rest of the overlay paint').not.toBeNull();
+    expect(rule![1]).toMatch(/background:\s*var\(--color-background\)/);
+  });
+});
+
+describe('overlay layer band', () => {
+  it('puts a browsing surface on the drawer band and an editing dialog on the modal band', () => {
+    // --z-drawer (90) sits under --z-modal (100) so that a dialog raised FROM a detail rail paints over
+    // the rail it came from by the shared scale, rather than by whichever of the two <body> children
+    // happened to be appended last.
+    const { unmount } = render(<Modal title="Record" intent="inspect" onClose={vi.fn()}><span>read</span></Modal>, { wrapper: W });
+    expect(screen.getByRole('dialog', { name: 'Record' }).parentElement).toHaveClass('overlay-layer-drawer');
+    unmount();
+
+    render(<Modal title="Rule" onClose={vi.fn()}><span>edit</span></Modal>, { wrapper: W });
+    expect(screen.getByRole('dialog', { name: 'Rule' }).parentElement).toHaveClass('overlay-layer-modal');
+  });
+});
+
 describe('overlay geometry', () => {
   it('measures every vertical length in dvh, everywhere', () => {
     // vh is the LARGE viewport height on a mobile browser: with the toolbar shown it is taller than the

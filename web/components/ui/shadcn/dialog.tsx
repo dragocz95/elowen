@@ -35,10 +35,16 @@ function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>)
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
 }
 
-/** The layer an overlay paints on: the scrim, the app's modal z-index band, and the box that positions
- *  the surface. `presentation` is this app's own variant axis — resolved from overlay depth and viewport
- *  by `overlayDepth.tsx`, never chosen at a call site. */
-const dialogOverlayVariants = cva('overlay-layer-modal fixed inset-0 flex bg-[var(--color-scrim)]', {
+/** The layer an overlay paints on: the scrim, a z-index band from the shared scale, and the box that
+ *  positions the surface.
+ *
+ *  Both variant axes are this app's own. `presentation` is resolved from overlay depth and viewport by
+ *  `overlayDepth.tsx` and is never chosen at a call site. `layer` follows the overlay's INTENT: a
+ *  surface you read and dismiss — a detail rail, a record card — belongs to the drawer band, and an
+ *  editing dialog belongs to the modal band above it, so a dialog raised from a rail paints over the
+ *  rail it came from rather than fighting it for DOM order. `Modal.tsx` derives it; nothing else picks
+ *  it by hand. */
+const dialogOverlayVariants = cva('fixed inset-0 flex bg-[var(--color-scrim)]', {
   variants: {
     presentation: {
       center: 'items-center justify-center',
@@ -49,22 +55,30 @@ const dialogOverlayVariants = cva('overlay-layer-modal fixed inset-0 flex bg-[va
       sheet: 'items-stretch justify-stretch p-0',
       fullscreen: 'items-stretch justify-stretch p-0',
     },
+    // The classes assign --z-drawer and --z-modal from tokens.css (app/styles/components/primitives.css);
+    // no overlay in this app may name a band with a literal.
+    layer: {
+      drawer: 'overlay-layer-drawer',
+      modal: 'overlay-layer-modal',
+    },
   },
-  defaultVariants: { presentation: 'center' },
+  defaultVariants: { presentation: 'center', layer: 'modal' },
 });
 
 type DialogPresentation = NonNullable<VariantProps<typeof dialogOverlayVariants>['presentation']>;
+type DialogLayer = NonNullable<VariantProps<typeof dialogOverlayVariants>['layer']>;
 
 function DialogOverlay({
   className = '',
   presentation = 'center',
+  layer = 'modal',
   style,
   ...props
-}: React.ComponentProps<'div'> & { presentation?: DialogPresentation }) {
+}: React.ComponentProps<'div'> & { presentation?: DialogPresentation; layer?: DialogLayer }) {
   return (
     <div
       data-slot="dialog-overlay"
-      className={cn(dialogOverlayVariants({ presentation }), className)}
+      className={cn(dialogOverlayVariants({ presentation, layer }), className)}
       style={{
         // Radix's modal content sets `pointer-events: none` on <body> so that nothing outside it can be
         // pressed, and re-enables them on itself. This layer is a child of <body> and would inherit the
@@ -92,15 +106,22 @@ function DialogOverlay({
  *  `width` the room a drawer takes; the two size axes are compound rather than free because a drawer has
  *  no use for `max-w-lg` and a centered window has no use for a drawer width.
  *
+ *  `.overlay-surface` is in the BASE, on every presentation, and that is the whole point of it: it is
+ *  what `app/styles/components/primitives.css` paints (background, border colour, raised shadow) and
+ *  what dresses the two phone presentations geometrically. Carried by only some of the four, as it was,
+ *  the ones left out had to restate the same material at their call sites — which is how a drawer ended
+ *  up a different colour from the window it opens into. The variants below own the shape and nothing
+ *  else: border WIDTH and which edges are drawn is geometry; the colour of that border is not.
+ *
  *  dvh throughout: a mobile browser's collapsing toolbar makes `vh` taller than the screen actually is,
  *  which put the footer of every one of these under the browser chrome. */
-const dialogSurfaceVariants = cva('flex flex-col focus:outline-none', {
+const dialogSurfaceVariants = cva('overlay-surface flex flex-col focus:outline-none', {
   variants: {
     presentation: {
-      center: 'animate-pop-in rounded-lg border border-border bg-card',
-      drawer: 'animate-drawer-in h-full rounded-l-lg border-l border-border',
-      sheet: 'overlay-surface min-h-0 w-full',
-      fullscreen: 'overlay-surface animate-pop-in relative min-h-0 w-full border border-border bg-card',
+      center: 'animate-pop-in rounded-lg border',
+      drawer: 'animate-drawer-in h-full rounded-l-lg border-l',
+      sheet: 'min-h-0 w-full',
+      fullscreen: 'animate-pop-in relative min-h-0 w-full border',
     },
     size: { sm: '', md: '', lg: '', xl: '' },
     width: { default: '', wide: '' },

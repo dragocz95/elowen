@@ -1,13 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { OverlayDepthProvider, useOverlayPresentation } from './overlayDepth';
-import { createPortal } from 'react-dom';
+import { type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { SpatialWorkspaceHero, WorkspaceHero, WorkspaceMetric, type SpatialWorkspaceHeroProps } from './WorkspaceHero';
 import { WorkspaceShell, type SpatialDeckSection } from './WorkspaceShell';
-import { focusOverlaySurface, useOverlayIsolation } from './overlayStack';
-import { Dialog, DialogContent } from './shadcn/dialog';
+import { Modal, ModalBody } from './Modal';
 
 // The hero, its metric and the page shell live in their own modules so the control deck can mount them
 // without an import cycle back through this one. Only the two names existing callers already reach by
@@ -63,70 +60,34 @@ export function SpatialWorkspaceLayout({ hero, navigation, children, className =
   );
 }
 
-/** The master/detail rail: a surface you open to READ a record, not to work in one. That is what
- *  `intent="inspect"` says, and it is the whole difference on a phone — the rail comes up as a bottom
- *  sheet there, where the desktop side rail would leave a useless strip of backdrop beside it. The
- *  geometry of each presentation lives in `.overlay-surface[data-presentation]`.
+/** The master/detail rail: a surface you open to READ a record, not to work in one.
  *
- *  On the shadcn `Dialog` (Radix) for the same split `Modal.tsx` documents: Radix owns the dialog role,
- *  the focus trap, Escape and the layer order among several open overlays; the app keeps the overlay
- *  stack's `inert` isolation, the focus it puts in and gives back, and the backdrop press. */
+ *  It is `Modal` with `intent="inspect"`, and nothing else. It used to be a second dialog
+ *  implementation — its own portal, its own overlay-stack registration, its own Radix `DialogContent`,
+ *  its own backdrop, header, close control and scroll body, and its own paint and geometry in
+ *  `app/styles/components/workspace-detail.css`. Two implementations of one thing is two of everything
+ *  that can be got wrong, and they had already diverged: the rail dismissed on `mousedown` where the
+ *  dialog required a press that BEGAN on the backdrop (so releasing a drag from inside the rail onto the
+ *  backdrop closed it), and it painted itself `--color-document` with a hand-rolled cast shadow where
+ *  the dialog took the shared raised material.
+ *
+ *  Everything the name promised survives the collapse, because `Modal` already owned all of it: the
+ *  portal to <body>, the overlay stack's `inert` isolation and scroll lock, the focus it puts in and
+ *  gives back, the `OverlayDepthProvider` that makes anything opened from inside the rail resolve one
+ *  level deeper, and the full-screen presentation on a phone — where a side rail would leave a useless
+ *  strip of backdrop beside it.
+ *
+ *  What `intent="inspect"` buys is the z-band: a browsing surface sits on the drawer band, below the
+ *  modal band an editing dialog raised FROM it takes. `drawerWidth="default"` is the rail's own width
+ *  (`min(38rem, calc(100vw - 3rem))`), stated because `Modal` widens a drawer for `size="lg"`.
+ *
+ *  Kept as a named component rather than folded into call sites: eleven plugin bundles across two
+ *  repositories mount it through the plugin UI runtime, and the plugin API version is a compatibility
+ *  ceiling that cannot express a removal. */
 export function WorkspaceDetailRail({ label, closeLabel, onClose, children }: { label: string; closeLabel: string; onClose: () => void; children: ReactNode }) {
-  const drawer = useRef<HTMLDivElement>(null);
-  const layer = useRef<HTMLDivElement>(null);
-  const [portal, setPortal] = useState<HTMLElement | null>(null);
-  const presentation = useOverlayPresentation('inspect');
-
-  useEffect(() => setPortal(document.body), []);
-  const { restoreFocus } = useOverlayIsolation({ enabled: portal != null, rootRef: layer });
-
-  if (!portal) return null;
-  return createPortal(
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <div
-        ref={layer}
-        className="overlay-layer-drawer workspace-detail-layer"
-        // Radix's modal content sets `pointer-events: none` on <body> and re-enables them on itself;
-        // this layer would inherit the block and the backdrop below would stop answering the press that
-        // dismisses the rail. Opting back in is what `DialogOverlay` does for the same reason.
-        style={{ pointerEvents: 'auto' }}
-      >
-        <div data-testid="workspace-detail-backdrop" className="workspace-detail-backdrop" aria-hidden onMouseDown={onClose} />
-        <DialogContent
-          ref={drawer}
-          // The rail's shape is its own (`.workspace-detail-rail`, workspace-detail.css) and the
-          // resolved presentation dresses it through `.overlay-surface[data-presentation]`, so the
-          // primitive's geometry variants are declined rather than merged over the top of it.
-          presentation={null}
-          data-presentation={presentation}
-          className="overlay-surface workspace-detail-rail workspace-detail-drawer"
-          aria-label={label}
-          // The rail has no description slot; without this Radix points `aria-describedby` at an id
-          // nothing in the tree carries.
-          aria-describedby={undefined}
-          // The backdrop above already owns dismissal, and it is the only owner that knows a nested
-          // overlay's backdrop must not close its parent.
-          onInteractOutside={(event) => event.preventDefault()}
-          // Focus policy stays the app's: the surface (or whatever asked for `[data-autofocus]`) on the
-          // way in, the opener on the way out — Radix would take the first control and then hand focus
-          // to a trigger that does not exist.
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            if (drawer.current) focusOverlaySurface(drawer.current);
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            restoreFocus();
-          }}
-        >
-          <header className="workspace-detail-rail__header">
-            <span>{label}</span>
-            <button type="button" onClick={onClose} aria-label={closeLabel} className="overlay-touch-target workspace-detail-rail__close">×</button>
-          </header>
-          <div className="workspace-detail-rail__body"><OverlayDepthProvider>{children}</OverlayDepthProvider></div>
-        </DialogContent>
-      </div>
-    </Dialog>,
-    portal,
+  return (
+    <Modal title={label} closeLabel={closeLabel} onClose={onClose} intent="inspect" size="md" drawerWidth="default">
+      <ModalBody>{children}</ModalBody>
+    </Modal>
   );
 }

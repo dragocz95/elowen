@@ -3,6 +3,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Plus } from 'lucide-react';
 import { SpatialWorkspaceHero, SpatialWorkspaceLayout, WorkspaceDetailRail, WorkspaceMetric } from '../../../components/ui/WorkspacePrimitives';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../../components/ui/ControlSurface';
+import { LanguageProvider } from '../../../lib/i18n';
+
+/** The detail rail is `Modal` now, and `Modal` reads the app's translations for the header it draws —
+ *  the same provider every other overlay test mounts under, and the same one the plugin UI runtime
+ *  already required of every bundle that mounts `Modal` from it. */
+function W({ children }: { children: React.ReactNode }) { return <LanguageProvider>{children}</LanguageProvider>; }
 
 describe('SpatialWorkspaceHero', () => {
   it('composes one mascot, identity, status, primary action and metrics', () => {
@@ -63,27 +69,61 @@ describe('SpatialWorkspaceHero', () => {
     expect(screen.getByTestId('spatial-workspace-layout')).toContainElement(screen.getByText('Register'));
   });
 
-  it('renders details as an overlay drawer and closes from Escape or the backdrop', () => {
+  it('opens the detail rail on the shared overlay foundation rather than a second drawer of its own', () => {
+    render(
+      <WorkspaceDetailRail label="Task detail" closeLabel="Close detail" onClose={vi.fn()}>
+        Detail body
+      </WorkspaceDetailRail>,
+      { wrapper: W },
+    );
+
+    const rail = screen.getByRole('dialog', { name: 'Task detail' });
+    // The whole point of the collapse: this is `Modal` with `intent="inspect"`, so the rail is made of
+    // the same material and the same geometry as every other overlay. It used to be a second
+    // implementation with its own surface class, backdrop element and paint in workspace-detail.css —
+    // which is how it ended up a different colour from the dialog it opens into.
+    expect(rail).toHaveClass('overlay-surface');
+    expect(rail).toHaveAttribute('data-presentation', 'drawer');
+    expect(rail).toHaveClass('animate-drawer-in');
+    // A browsing surface keeps the first-level drawer width; `Modal` widens a drawer only for `size="lg"`.
+    expect(rail).toHaveClass('w-[min(38rem,calc(100vw-3rem))]');
+    // And `intent="inspect"` is what puts it on the drawer z-band, below the modal band an editing
+    // dialog raised FROM it takes.
+    expect(rail.parentElement).toHaveClass('overlay-layer-drawer');
+    // The caller's own close label still names the shared header's control.
+    expect(screen.getByRole('button', { name: 'Close detail' })).toBeInTheDocument();
+    // The body is the one scroll region every overlay uses, containment included: a flick past the last
+    // row must not chain into whatever scrolls behind the rail.
+    expect(screen.getByText('Detail body')).toHaveClass('overflow-y-auto', 'overscroll-contain');
+  });
+
+  it('dismisses on Escape and on a press that began on the backdrop, but not on a drag released over it', () => {
     const onClose = vi.fn();
-    const { rerender } = render(
+    render(
       <WorkspaceDetailRail label="Task detail" closeLabel="Close" onClose={onClose}>
-        Detail body
+        <button type="button">Drawer action</button>
       </WorkspaceDetailRail>,
+      { wrapper: W },
     );
+    const rail = screen.getByRole('dialog', { name: 'Task detail' });
+    const backdrop = rail.parentElement!;
 
-    expect(screen.getByRole('dialog', { name: 'Task detail' })).toHaveClass('workspace-detail-drawer');
-    expect(screen.getByTestId('workspace-detail-backdrop')).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: 'Escape' });
+    // A `click` fires on the common ancestor of the press and the release, so a press that starts on a
+    // control inside the rail and ends anywhere else arrives at the backdrop with
+    // `target === currentTarget`. The rail used to close on a bare `mousedown` and had no way to tell
+    // the two apart; it now inherits the dialog's press-began-on-the-backdrop rule.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Drawer action' }));
+    fireEvent.click(backdrop);
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
     expect(onClose).toHaveBeenCalledTimes(1);
 
-    onClose.mockClear();
-    rerender(
-      <WorkspaceDetailRail label="Task detail" closeLabel="Close" onClose={onClose}>
-        Detail body
-      </WorkspaceDetailRail>,
-    );
-    fireEvent.mouseDown(screen.getByTestId('workspace-detail-backdrop'));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    // Radix listens for Escape on the document, which is where a real keypress arrives after bubbling
+    // out of whatever had focus.
+    fireEvent.keyDown(rail, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 
   it('moves focus into the drawer, isolates the app root and restores focus on unmount', async () => {
@@ -95,6 +135,7 @@ describe('SpatialWorkspaceHero', () => {
       <WorkspaceDetailRail label="Task detail" closeLabel="Close" onClose={() => {}}>
         <button type="button">Drawer action</button>
       </WorkspaceDetailRail>,
+      { wrapper: W },
     );
 
     expect(screen.getByRole('dialog', { name: 'Task detail' })).toHaveFocus();

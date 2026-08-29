@@ -27,10 +27,15 @@ interface ModalProps {
    *  is a centered dialog wherever it is raised, and a few data-heavy surfaces want the whole
    *  viewport regardless of depth. */
   presentation?: 'auto' | 'center' | 'drawer' | 'sheet' | 'fullscreen';
-  /** What this dialog is for. Retained as semantic input to the shared presentation rule; automatic
-   *  phone overlays currently all use the full viewport. A dialog is an editing surface unless it says
+  /** What this dialog is for, and the only thing a call site knows that the rules cannot work out for
+   *  themselves. It picks the z-band — `inspect` is a browsing surface on the drawer band, `edit` is a
+   *  working surface on the modal band above it — and feeds the shared presentation rule, whose phone
+   *  answer is currently the full viewport either way. A dialog is an editing surface unless it says
    *  otherwise. */
   intent?: OverlayIntent;
+  /** Accessible name of the header's close control. Defaults to the app's own "Close"; passed only by
+   *  callers that already hold a translated label of their own. */
+  closeLabel?: string;
   /** Widens a drawer for content that genuinely needs the room (log tables, diagnostics). Defaults to
    *  wide for `size="lg"`, so a dialog that already declared it needs a large frame keeps that room
    *  when it renders as a drawer instead. Ignored by the other presentations, which take `size`. */
@@ -55,10 +60,15 @@ interface ModalProps {
  *   - the backdrop press, which must stop at the backdrop it was aimed at so a nested dialog cannot also
  *     close its parent. Radix's own outside-press dismissal is turned off for that reason, rather than
  *     left running as a second way to close the same dialog. */
-export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', drawerWidth }: ModalProps) {
+export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', drawerWidth, closeLabel }: ModalProps) {
   const wide = (drawerWidth ?? (size === 'lg' ? 'wide' : 'default')) === 'wide';
   const automatic = useOverlayPresentation(intent);
   const resolved = presentation === 'auto' ? automatic : presentation;
+  // Which z-band the whole overlay sits in, and the one thing `intent` decides on its own. A browsing
+  // surface takes the drawer band and an editing dialog the modal band above it, so a dialog raised FROM
+  // a detail rail paints over that rail by the shared scale rather than by whichever of the two happened
+  // to be appended to <body> last.
+  const layer = intent === 'inspect' ? 'drawer' : 'modal';
   const { t } = useTranslation();
   const titleId = useId();
   const descriptionId = useId();
@@ -82,6 +92,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
       <DialogOverlay
         ref={overlayRef}
         presentation={resolved}
+        layer={layer}
         // A backdrop dismissal has to be a press that BEGAN on the backdrop, not merely a click event
         // whose target happens to be it. `click` fires on the common ancestor of the press and the
         // release, so a press that starts on a control and ends anywhere else still arrives here with
@@ -123,16 +134,6 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
             event.preventDefault();
             restoreFocus();
           }}
-          // Drawers and sheets share the workspace detail rail's near-black document tone, not the
-          // lighter surface tone of centered windows.
-          style={resolved === 'drawer'
-            // The cast shadow is the page's own canvas at 72%, not a literal black: --color-background is what a
-            // skin moves when it moves the document's darkest tone, and a frozen black under a pale skin
-            // is a smudge rather than depth.
-            ? { background: 'var(--color-document)', boxShadow: '-2rem 0 5rem color-mix(in srgb, var(--color-background) 72%, transparent)' }
-            : resolved === 'sheet'
-              ? { background: 'var(--color-document)' }
-              : { boxShadow: 'var(--shadow-raised)' }}
           onClick={(e) => e.stopPropagation()}
         >
           <DialogHeader
@@ -142,7 +143,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
             descriptionId={descriptionId}
             icon={Icon}
             actions={headerActions}
-            closeLabel={t.common.close}
+            closeLabel={closeLabel ?? t.common.close}
             onClose={onClose}
           />
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -164,10 +165,17 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
  *  scroll, and any child carrying `overflow-hidden` (a bordered list, a table frame) silently eats
  *  the rows that no longer fit. On the phone's fullscreen Tasks overlay that clipped 1785px of a
  *  2429px list and squashed the filter input from 36px to 23px. Content in a scrolling region keeps
- *  its natural height; the region scrolls. */
+ *  its natural height; the region scrolls.
+ *
+ *  `overscroll-contain` stops the scroll CHAINING at the ends of that region: without it, a flick past
+ *  the last row hands the remaining momentum to whatever scrolls underneath — the page behind the
+ *  overlay, or on a touch device the browser's own pull-to-refresh. The overlay stack already locks
+ *  `body` while an overlay is up, which is why the page rarely moved; a drawer opened over another
+ *  scrolling surface had no such protection, and the detail rail carried this containment in its own
+ *  stylesheet precisely because it needed it. It belongs to the one scroll region every overlay uses. */
 export function ModalBody({ children, gap = 5 }: { children: ReactNode; gap?: 4 | 5 | 6 }) {
   const gapClass = gap === 4 ? 'gap-4' : gap === 6 ? 'gap-6' : 'gap-5';
-  return <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto p-5 ${gapClass} [&>*]:shrink-0`}>{children}</div>;
+  return <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-5 ${gapClass} [&>*]:shrink-0`}>{children}</div>;
 }
 
 /** Pinned action row at the bottom of a modal, divided from the scrollable body. An optional `status`

@@ -3,9 +3,10 @@
 .cmd-orbit { position: fixed; inset: 0; display: flex; flex-direction: column; pointer-events: none; padding: 1rem; padding-top: max(1rem, var(--safe-top)); padding-bottom: max(1rem, var(--safe-bottom)); padding-left: max(1rem, var(--safe-left)); padding-right: max(1rem, var(--safe-right)); }
 .cmd-orbit:focus { outline: none; }
 .cmd-orbit__hint { margin: 0 3rem 0 0; font-size: 0.75rem; color: var(--color-muted-foreground); }
-/* The one close affordance the app draws everywhere else (cf. .workspace-detail-rail__close): a 1.8rem
-   square at the muted step. It used to be declared at 2.75rem — the touch floor written into the resting
-   size — which made the palette's close visibly larger than every other close in the interface.
+/* The one close affordance the app draws everywhere else (cf. the shared dialog header's close control
+   in components/ui/shadcn/dialog.tsx): a small square at the muted step. It used to be declared at
+   2.75rem — the touch floor written into the resting size — which made the palette's close visibly
+   larger than every other close in the interface.
    The finger floor is applied where it belongs, on a coarse pointer only, and it comes from the shared
    `.overlay-touch-target` the button also carries (styles/components/primitives.css) rather than from a
    second copy of the same media query here. */
