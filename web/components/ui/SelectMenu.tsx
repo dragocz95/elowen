@@ -42,7 +42,7 @@ export function SelectMenu<T extends string>({ id, value, onChange, options, lab
           <SelectItem
             key={option.value}
             value={option.value}
-            icon={option.icon ? <span className="flex shrink-0 text-text-muted" aria-hidden>{option.icon}</span> : null}
+            icon={option.icon ? <span className="flex shrink-0 text-muted-foreground" aria-hidden>{option.icon}</span> : null}
           >
             {option.label}
           </SelectItem>

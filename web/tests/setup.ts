@@ -48,6 +48,20 @@ if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
+// Radix `Avatar` renders its image only once loading has SUCCEEDED, which it decides from
+// `image.complete && image.naturalWidth > 0` — and jsdom never fetches a resource, so both stay false
+// forever and every avatar in every test falls back to its monogram. The behaviour under test is right
+// (a broken URL should degrade to initials rather than a blank square); what is missing is a browser.
+// Treating "has a src" as "loaded" restores the distinction the component actually branches on, and
+// leaves a src-less avatar correctly reported as not loaded.
+if (typeof HTMLImageElement !== 'undefined') {
+  const loaded = function (this: HTMLImageElement) { return Boolean(this.getAttribute('src')); };
+  const naturalSize = function (this: HTMLImageElement) { return this.getAttribute('src') ? 1 : 0; };
+  Object.defineProperty(HTMLImageElement.prototype, 'complete', { configurable: true, get: loaded });
+  Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { configurable: true, get: naturalSize });
+  Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { configurable: true, get: naturalSize });
+}
+
 // jsdom does not implement window.matchMedia — provide a stub that defaults to
 // non-mobile (matches: false) so existing tests are unaffected.
 if (typeof window !== 'undefined' && !window.matchMedia) {
