@@ -82,7 +82,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
             aria-label={t.common.toggleSidebar}
             className={bar
               ? 'top-bar__menu -ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]'
-              : 'top-bar__menu mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-bg/55 text-text-muted backdrop-blur-md transition-colors hover:border-accent/40 hover:text-accent'}
+              : 'top-bar__menu mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-bg/55 text-text-muted backdrop-blur-md transition-colors hover:border-primary/40 hover:text-primary'}
           >
             <Menu size={bar ? 18 : 19} strokeWidth={bar ? 1.5 : 2} aria-hidden />
           </button>
@@ -112,9 +112,9 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
         ) : null}
         {!bar && showLocation ? (
           <>
-            {Icon && onMenuClick ? <span className="mt-1.5 hidden h-9 w-9 shrink-0 place-items-center rounded-full border border-accent/20 bg-accent/[0.07] text-accent sm:grid"><Icon size={17} strokeWidth={1.5} aria-hidden /></span> : null}
+            {Icon && onMenuClick ? <span className="mt-1.5 hidden h-9 w-9 shrink-0 place-items-center rounded-full border border-primary/20 bg-primary/[0.07] text-primary sm:grid"><Icon size={17} strokeWidth={1.5} aria-hidden /></span> : null}
             <div className="flex min-w-0 flex-col gap-1">
-              {context ? <span className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-[.16em] text-accent/75">{context}{context && title ? <ChevronRight size={11} aria-hidden /> : null}</span> : null}
+              {context ? <span className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-[.16em] text-primary/75">{context}{context && title ? <ChevronRight size={11} aria-hidden /> : null}</span> : null}
               <div className="flex min-w-0 items-baseline gap-3">
                 {title ? <h1 className="truncate font-display text-2xl font-semibold tracking-[-0.035em] text-text">{title}</h1> : null}
                 {count !== undefined ? <span className="shrink-0 font-mono text-xs text-text-muted">{count}</span> : null}
@@ -171,7 +171,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
       <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
         <Link
           href="/account"
-          className="top-bar__identity ml-0.5 flex items-center rounded-full ring-accent/30 transition-[opacity,box-shadow] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2"
+          className="top-bar__identity ml-0.5 flex items-center rounded-full ring-primary/30 transition-[opacity,box-shadow] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2"
           title={me.data?.user ? (me.data.user.name || me.data.user.username) : t.common.daemon}
         >
           {me.data?.user ? (

@@ -13,7 +13,7 @@ function windowLabel(minutes: number | null, weekly: string, windowWord: string)
 /** Usage is pressure: the fill shifts accent → warning (70 %) → danger (90 %), matching the CLI meter.
  *  Shared with the chat telemetry panel's context meter so every usage bar reads the same. */
 export function usageFillClass(pct: number): string {
-  return pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-accent';
+  return pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-primary';
 }
 
 function resetLabel(resetsAt: number | null): string {

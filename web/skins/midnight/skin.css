@@ -18,15 +18,15 @@
   --color-overlay: #161c28;
   --color-border: #1e2634;
   --color-border-strong: #2c3648;
-  --color-accent: #38bdf8;
-  --color-accent-hot: #7dd3fc;
+  --color-primary: #38bdf8;
+  --color-primary-hot: #7dd3fc;
   --color-ember: #a5e3ff;
   --color-text: #eef2f7;
   --color-text-muted: #8b95a5;
   /* Held at >= 4.5:1 against this skin's OWN surfaces, which are lighter than the ember ones — 4.59:1
      on --color-elevated (#10151f) — and clearly under --color-text-muted (6.04:1 there). */
   --color-text-subtle: #77808f;
-  --accent-rgb: 56 189 248;
+  --primary-rgb: 56 189 248;
 
   /* Square, flat, engineering-drawing look: no rounding, no glow — hairlines carry the structure. */
   --radius-sm: 0;
@@ -36,7 +36,7 @@
   --radius-xl: 0;
   --radius-2xl: 0;
   --shadow-ember: none;
-  --glow-active: 0 0 0 1px rgb(var(--accent-rgb) / 0.55);
+  --glow-active: 0 0 0 1px rgb(var(--primary-rgb) / 0.55);
   --glow-soft: none;
   --shadow-card: none;
   --shadow-raised: 0 18px 48px rgb(0 0 0 / 0.5);

@@ -290,7 +290,7 @@ export function ProjectsView() {
                               <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated/60">
                                 <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-text-muted" />
                               </span>
-                              <span className="min-w-0 truncate text-sm font-semibold text-text transition-colors group-hover:text-accent">{project.slug}</span>
+                              <span className="min-w-0 truncate text-sm font-semibold text-text transition-colors group-hover:text-primary">{project.slug}</span>
                             </DataTableCell>
                             <DataTableCell priority="wide" lines={1} title={project.path} className="font-mono text-xs text-text-muted"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
                             <DataTableCell priority="wide" lines="auto"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
@@ -299,7 +299,7 @@ export function ProjectsView() {
                                 label={`${project.slug}: ${t.common.actions}`}
                                 items={projectActions(project)}
                                 trigger={<MoreHorizontal size={16} aria-hidden />}
-                                triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-elevated hover:text-text group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                                triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-elevated hover:text-text group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
                               />
                             </DataTableCell>
                             <DataTableChevronCell />
@@ -323,7 +323,7 @@ export function ProjectsView() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 py-3">
-                      {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-text"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
+                      {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-text"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
                       {isAdmin ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}
                     </div>
 
@@ -338,7 +338,7 @@ export function ProjectsView() {
                             <Badge tone="accent"><GitBranch size={11} className="mr-1" aria-hidden />{git.data.status.branch}</Badge>
                             {git.data.status.clean
                               ? <Badge tone="success"><CheckCircle2 size={11} className="mr-1" aria-hidden />{t.projects.clean}</Badge>
-                              : editorEnabled ? <button type="button" onClick={openWorking} title={t.projects.viewChanges} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"><Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge></button>
+                              : editorEnabled ? <button type="button" onClick={openWorking} title={t.projects.viewChanges} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"><Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge></button>
                               : <Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge>}
                             {git.data.status.ahead > 0 ? <Badge tone="accent"><ArrowUp size={11} className="mr-0.5" aria-hidden />{git.data.status.ahead}</Badge> : null}
                             {git.data.status.behind > 0 ? <Badge tone="muted"><ArrowDown size={11} className="mr-0.5" aria-hidden />{git.data.status.behind}</Badge> : null}
@@ -359,11 +359,11 @@ export function ProjectsView() {
                           <EntityList>
                             {git.data.commits.map((commit) => (
                               <EntityRow key={commit.hash} interactive={false} className="py-0">
-                                {editorEnabled ? <button type="button" onClick={() => openEditor(commit.hash)} title={t.projects.viewCommit} className="flex w-full min-w-0 flex-col gap-1 px-1 py-3 text-left transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70">
-                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-accent">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
+                                {editorEnabled ? <button type="button" onClick={() => openEditor(commit.hash)} title={t.projects.viewCommit} className="flex w-full min-w-0 flex-col gap-1 px-1 py-3 text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70">
+                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-primary">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
                                   <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
                                 </button> : <div className="flex min-w-0 flex-col gap-1 px-1 py-3">
-                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-accent">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
+                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-primary">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
                                   <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
                                 </div>}
                               </EntityRow>
@@ -397,7 +397,7 @@ export function ProjectsView() {
               )}
             </Field>
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none" />
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-primary focus:outline-none" />
             </Field>
           </ModalBody>
           <ModalFooter>
@@ -432,7 +432,7 @@ export function ProjectsView() {
               {(control) => <Input value={editPath} onChange={(e) => setEditPath(e.target.value)} className="font-mono text-xs" {...control} />}
             </Field>
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
-              <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none" />
+              <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-primary focus:outline-none" />
             </Field>
 
           </ModalBody>

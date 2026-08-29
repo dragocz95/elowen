@@ -147,7 +147,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
             placeholder={t.memory.categoryDescriptionPlaceholder}
-            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
+            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
           />
         </Field>
         <Field label={t.memory.categoryProject}>
@@ -202,7 +202,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
                   aria-label={n}
                   aria-pressed={icon === n}
                   title={n}
-                  className={`flex aspect-square items-center justify-center rounded-md border transition-colors ${icon === n ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface text-text-muted hover:border-text-muted hover:text-text'}`}
+                  className={`flex aspect-square items-center justify-center rounded-md border transition-colors ${icon === n ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-surface text-text-muted hover:border-text-muted hover:text-text'}`}
                 >
                   <CategoryIcon name={n} size={16} />
                 </button>
@@ -212,7 +212,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
               type="button"
               onClick={suggestIcon}
               disabled={!name.trim() || suggesting}
-              className="inline-flex w-fit items-center gap-1 text-[11px] font-medium text-accent hover:underline disabled:opacity-40 disabled:no-underline"
+              className="inline-flex w-fit items-center gap-1 text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:no-underline"
             >
               {t.memory.categoryIconSuggest}
             </button>

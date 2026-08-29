@@ -6,11 +6,11 @@
   position: absolute;
   z-index: -1;
   inset: -9px;
-  border: 1px solid rgb(var(--accent-rgb) / 0.2);
+  border: 1px solid rgb(var(--primary-rgb) / 0.2);
   border-radius: 9999px;
   opacity: 0;
   transform: scale(0.72) rotate(-24deg);
-  box-shadow: 0 0 24px rgb(var(--accent-rgb) / 0.14), inset 0 0 16px rgb(var(--accent-rgb) / 0.05);
+  box-shadow: 0 0 24px rgb(var(--primary-rgb) / 0.14), inset 0 0 16px rgb(var(--primary-rgb) / 0.05);
   transition: opacity var(--motion-base) var(--ease-out), transform var(--motion-slow) var(--ease-out);
 }
 .group:hover .orbit-node::before,
@@ -22,13 +22,13 @@
    blurred aura, flickering ember dots) so both menus read as one design language. The hover-trace
    ring is re-purposed as the aura on the active node — same pseudo-element, section-rail visuals. */
 .orbit-node-active {
-  background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), var(--color-document) 68%);
-  box-shadow: 0 0 0 6px var(--color-bg), var(--glow-active), inset 0 0 20px rgb(var(--accent-rgb) / 0.09);
+  background: radial-gradient(circle, rgb(var(--primary-rgb) / 0.14), var(--color-document) 68%);
+  box-shadow: 0 0 0 6px var(--color-bg), var(--glow-active), inset 0 0 20px rgb(var(--primary-rgb) / 0.09);
 }
 .orbit-node-active::before {
   inset: -1.35rem;
   border: 0;
-  background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%);
+  background: radial-gradient(ellipse at 50% 66%, rgb(var(--primary-rgb) / 0.28), rgb(var(--primary-rgb) / 0.08) 34%, transparent 69%);
   filter: blur(5px);
   box-shadow: none;
   opacity: 0.78;
@@ -42,7 +42,7 @@
   height: 0.16rem;
   border-radius: 50%;
   background: var(--color-ember);
-  box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 color-mix(in srgb, var(--color-ember) 48%, transparent), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 color-mix(in srgb, var(--color-ember) 42%, transparent);
+  box-shadow: -1.15rem -0.15rem 0 rgb(var(--primary-rgb) / 0.58), 1.25rem 0.35rem 0 color-mix(in srgb, var(--color-ember) 48%, transparent), -0.45rem -1.22rem 0 rgb(var(--primary-rgb) / 0.5), 0.65rem -1.05rem 0 color-mix(in srgb, var(--color-ember) 42%, transparent);
   opacity: 0.7;
 }
 html[data-effects='full'] .orbit-node-active::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; }

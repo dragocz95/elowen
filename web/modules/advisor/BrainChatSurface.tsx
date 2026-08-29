@@ -192,7 +192,7 @@ export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
         <ul className="flex flex-col gap-0.5">
           {shown.map((titem, i) => (
             <li key={i} className="flex items-start gap-1.5">
-              <span className={`shrink-0 ${titem.status === 'completed' ? 'text-success' : titem.status === 'in_progress' ? 'text-accent' : 'text-text-muted'}`}>
+              <span className={`shrink-0 ${titem.status === 'completed' ? 'text-success' : titem.status === 'in_progress' ? 'text-primary' : 'text-text-muted'}`}>
                 {titem.status === 'completed' ? '✔' : titem.status === 'in_progress' ? '◐' : '○'}
               </span>
               <span className={titem.status === 'completed' ? 'text-text-muted line-through' : 'text-text'}>
@@ -459,7 +459,7 @@ function AttachmentThumb({ image }: { image: BrainMessageImage }) {
       target="_blank"
       rel="noreferrer"
       title={t.brainChat.attachmentOpen}
-      className="block overflow-hidden rounded-lg border border-border transition-colors hover:border-accent"
+      className="block overflow-hidden rounded-lg border border-border transition-colors hover:border-primary"
     >
       <img
         src={`/api${image.url}`}
@@ -605,10 +605,10 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
     return (
       <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className={`chat-turn chat-turn--${roleAttr} grid grid-cols-[16px_1fr] gap-x-3 ${showRole ? 'mt-6 first:mt-0' : ''}`}>
         {showRole ? (
-          <span aria-hidden className={`chat-turn__marker mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-accent ring-4 ring-accent/15' : 'bg-text-muted'}`} />
+          <span aria-hidden className={`chat-turn__marker mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-primary ring-4 ring-primary/15' : 'bg-text-muted'}`} />
         ) : <span aria-hidden className="chat-turn__marker" />}
         <div className="chat-turn__column min-w-0">
-          {showRole ? <div className={`chat-turn__role mb-0.5 text-xs font-semibold ${you ? 'text-accent' : 'text-text-muted'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
+          {showRole ? <div className={`chat-turn__role mb-0.5 text-xs font-semibold ${you ? 'text-primary' : 'text-text-muted'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
           <div className="chat-turn__body flex min-w-0 flex-col">{body}</div>
           <MessageMeta turn={turn} />
         </div>
@@ -619,7 +619,7 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   if (you) {
     return (
       <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 flex max-w-full flex-col items-end self-end">
-        <div className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
+        <div className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-text">
           {turn.role === 'you' ? turn.text : null}
           {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
         </div>
@@ -660,7 +660,7 @@ function WorkModePill({ mode, full }: { mode: BrainWorkMode; full?: boolean }) {
     <span
       data-testid="chat-work-mode"
       title={t.brainChat.workModeLabel}
-      className={`shrink-0 rounded-md border border-accent/40 bg-accent/10 px-1.5 font-medium uppercase tracking-wide text-accent ${full ? 'py-0.5 text-tiny' : 'py-px text-[0.625rem]'}`}
+      className={`shrink-0 rounded-md border border-primary/40 bg-primary/10 px-1.5 font-medium uppercase tracking-wide text-primary ${full ? 'py-0.5 text-tiny' : 'py-px text-[0.625rem]'}`}
     >
       <span className="sr-only">{t.brainChat.workModeLabel}: </span>{t.brainChat.workMode[mode]}
     </span>
@@ -1395,8 +1395,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
       {!readOnly && queued.length > 0 ? (
         <div className={`flex flex-col gap-1 py-2 ${variant === 'full' ? 'chat-gutter' : 'px-3'}`}>
           {queued.map((q) => (
-            <div key={q.id} className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/5 px-2 py-1 text-tiny">
-              <span className="shrink-0 rounded bg-accent/20 px-1.5 py-0.5 font-medium uppercase tracking-wide text-accent">{t.brainChat.queued}</span>
+            <div key={q.id} className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-tiny">
+              <span className="shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-medium uppercase tracking-wide text-primary">{t.brainChat.queued}</span>
               <span className="min-w-0 flex-1 truncate text-text-muted">{q.text}</span>
               <button
                 type="button"
@@ -1439,7 +1439,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
                   type="button"
                   onMouseDown={(e) => { e.preventDefault(); it.run(); }}
                   onMouseEnter={() => setSlashIdx(i)}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${i === slashSel ? 'bg-accent/15 text-text' : 'text-text-muted'}`}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${i === slashSel ? 'bg-primary/15 text-text' : 'text-text-muted'}`}
                 >
                   <span className="shrink-0 font-mono">{it.label}</span>
                   {it.desc && <span className="truncate text-tiny opacity-60">{it.desc}</span>}
@@ -1502,7 +1502,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           className={`max-h-[min(10rem,22dvh)] flex-1 resize-none text-sm text-text placeholder:text-text-muted ${
             variant === 'full'
               ? 'bg-transparent px-2 py-2 focus:outline-none'
-              : 'rounded-lg border border-border bg-bg px-3 py-2 focus:border-accent'
+              : 'rounded-lg border border-border bg-bg px-3 py-2 focus:border-primary'
           }`}
         />
         {busy ? (
@@ -1513,8 +1513,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             aria-label={t.brainChat.stop}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors ${
               variant === 'full'
-                ? 'rounded-xl bg-accent text-text hover:bg-accent-hot'
-                : 'rounded-lg border border-accent bg-accent/15 text-accent hover:bg-accent/25'
+                ? 'rounded-xl bg-primary text-text hover:bg-primary-hot'
+                : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
             }`}
           >
             <Square size={14} fill="currentColor" aria-hidden />
@@ -1527,8 +1527,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             aria-label={t.brainChat.send}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${
               variant === 'full'
-                ? 'rounded-xl bg-accent text-text hover:bg-accent-hot'
-                : 'rounded-lg border border-accent bg-accent/15 text-accent hover:bg-accent/25'
+                ? 'rounded-xl bg-primary text-text hover:bg-primary-hot'
+                : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
             }`}
           >
             <Send size={16} aria-hidden />

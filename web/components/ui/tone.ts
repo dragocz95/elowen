@@ -4,7 +4,7 @@ export type Tone = 'default' | 'accent' | 'muted' | 'danger' | 'success' | 'warn
  *  (timeline, event stream, dashboard signals) so a palette change lives in one place. */
 export const TONE_TEXT: Record<Tone, string> = {
   default: 'text-text-muted',
-  accent: 'text-accent',
+  accent: 'text-primary',
   muted: 'text-text-muted',
   danger: 'text-danger',
   success: 'text-success',

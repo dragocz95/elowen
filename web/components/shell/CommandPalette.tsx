@@ -18,7 +18,7 @@ function Highlight({ text, q }: { text: string; q: string }) {
   if (!q) return <>{text}</>;
   const i = text.toLowerCase().indexOf(q.toLowerCase());
   if (i < 0) return <>{text}</>;
-  return <>{text.slice(0, i)}<span className="text-accent">{text.slice(i, i + q.length)}</span>{text.slice(i + q.length)}</>;
+  return <>{text.slice(0, i)}<span className="text-primary">{text.slice(i, i + q.length)}</span>{text.slice(i + q.length)}</>;
 }
 
 /** The open palette. Deliberately a component of its own, mounted only while the palette is open, for two

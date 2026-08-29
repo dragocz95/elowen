@@ -124,7 +124,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
         <div className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-3">
           {Icon ? (
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
-              <Icon size={18} className="text-accent" aria-hidden />
+              <Icon size={18} className="text-primary" aria-hidden />
             </span>
           ) : null}
           <div className="min-w-0 flex-1">

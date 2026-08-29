@@ -112,7 +112,7 @@ export function DataTableRow({ children, header = false, selected = false, inter
       data-row-height={header ? undefined : height}
       // `.data-table-header` carries the sticky positioning itself; a `sticky` utility here would be
       // overridden by `.data-table-grid`'s own `position: relative` (see data-table.css).
-      className={`data-table-grid items-center gap-x-3 border-b border-border/70 px-4 last:border-b-0 ${header ? 'data-table-header' : `${interactive || onOpen ? 'interactive-row' : ''}`} ${selected ? 'bg-accent/[0.055]' : ''} ${className}`}
+      className={`data-table-grid items-center gap-x-3 border-b border-border/70 px-4 last:border-b-0 ${header ? 'data-table-header' : `${interactive || onOpen ? 'interactive-row' : ''}`} ${selected ? 'bg-primary/[0.055]' : ''} ${className}`}
       {...rest}
     >
       {children}
@@ -174,11 +174,11 @@ export function DataTableSortCell({ children, active, direction, onSort, priorit
       <button
         type="button"
         onClick={onSort}
-        className={`group/sort -mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 ${align === 'end' ? 'justify-end' : ''} ${active ? 'text-text' : 'text-text-muted hover:text-text'}`}
+        className={`group/sort -mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${align === 'end' ? 'justify-end' : ''} ${active ? 'text-text' : 'text-text-muted hover:text-text'}`}
       >
         <span className="truncate">{children}</span>
         {/* The neutral arrow stays laid out but invisible, so a header does not shift when hovered. */}
-        <Arrow size={DATA_TABLE_ICON_SIZE} aria-hidden className={`shrink-0 ${active ? 'text-accent' : 'opacity-0 transition-opacity group-hover/sort:opacity-60'}`} />
+        <Arrow size={DATA_TABLE_ICON_SIZE} aria-hidden className={`shrink-0 ${active ? 'text-primary' : 'opacity-0 transition-opacity group-hover/sort:opacity-60'}`} />
       </button>
     </DataTableCell>
   );

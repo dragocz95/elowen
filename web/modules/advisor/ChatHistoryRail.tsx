@@ -18,7 +18,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
   return (
     <>
       {text.slice(0, at)}
-      <mark className="rounded-sm bg-accent/30 px-0.5 text-text">{text.slice(at, at + query.length)}</mark>
+      <mark className="rounded-sm bg-primary/30 px-0.5 text-text">{text.slice(at, at + query.length)}</mark>
       {text.slice(at + query.length)}
     </>
   );
@@ -216,7 +216,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                 onBlur={() => void commitRename(s.id)}
                 aria-label={t.chat.renamePlaceholder}
                 placeholder={t.chat.renamePlaceholder}
-                className="m-1 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text focus:border-accent focus:outline-none"
+                className="m-1 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text focus:border-primary focus:outline-none"
               />
             ) : (
               <>

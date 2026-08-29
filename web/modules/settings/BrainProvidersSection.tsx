@@ -124,12 +124,12 @@ function OAuthConnectDialog({ flow: initial, onDone }: { flow: OAuthFlowState; o
     <Modal title={t.brain.connectTitle} icon={Link2} size="md" onClose={() => onDone('cancelled')}>
       <ModalBody gap={4}>
         {flow.authUrl ? (
-          <a href={flow.authUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 break-all rounded-md border border-accent/40 bg-accent/10 p-3 text-xs text-accent hover:bg-accent/20">
+          <a href={flow.authUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 break-all rounded-md border border-primary/40 bg-primary/10 p-3 text-xs text-primary hover:bg-primary/20">
             <ExternalLink size={14} className="shrink-0" aria-hidden />{flow.authUrl}
           </a>
         ) : <p className="text-xs text-text-muted">{t.brain.connectStarting}</p>}
         {flow.userCode ? (
-          <p className="text-sm text-text">{t.brain.connectUserCode}: <span className="font-mono text-lg font-semibold tracking-widest text-accent">{flow.userCode}</span></p>
+          <p className="text-sm text-text">{t.brain.connectUserCode}: <span className="font-mono text-lg font-semibold tracking-widest text-primary">{flow.userCode}</span></p>
         ) : null}
         {flow.instructions ? <p className="text-xs leading-relaxed text-text-muted">{flow.instructions}</p> : null}
         {flow.needsInput ? (
@@ -286,16 +286,16 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
           <button
             type="button"
             onClick={() => setCompatibilityOpen(true)}
-            className="group flex w-full items-center gap-3 rounded-lg border border-border bg-bg px-3.5 py-3 text-left transition-colors hover:border-accent/40 hover:bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="group flex w-full items-center gap-3 rounded-lg border border-border bg-bg px-3.5 py-3 text-left transition-colors hover:border-primary/40 hover:bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-elevated text-text-muted transition-colors group-hover:text-accent">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-elevated text-text-muted transition-colors group-hover:text-primary">
               <SlidersHorizontal size={17} aria-hidden />
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium text-text">{t.brain.compatibility.title}</span>
               <span className="mt-0.5 block text-xs text-text-muted">{compatibilitySummary}</span>
             </span>
-            <ChevronRight size={16} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent" aria-hidden />
+            <ChevronRight size={16} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-primary" aria-hidden />
           </button>
         ) : (
           <Field label={t.brain.temperature} hint={t.brain.temperatureHint}>
@@ -342,7 +342,7 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
               value={d.models}
               onChange={(e) => setD({ ...d, models: e.target.value })}
               rows={3}
-              className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent"
+              className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-primary"
               placeholder={'claude-opus-4-8\nollama/kimi-k2.7-code'}
             />
           )}
@@ -493,7 +493,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
           <ActionMenu
             align="right"
             label={t.brain.addAccount}
-            triggerClassName="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-accent"
+            triggerClassName="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-primary"
             trigger={<Plus size={15} aria-hidden />}
             items={restorableOauth.map((type) => ({ label: typeLabel(type), iconNode: <ModelIcon name={OAUTH_ICON[type] ?? type} size={15} />, onSelect: () => showOauth(type) }))}
           />
@@ -545,7 +545,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
             onClick={() => setModal(emptyDraft())}
             aria-label={t.brain.addProvider}
             title={t.brain.addProvider}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-accent"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-primary"
           >
             <Plus size={15} aria-hidden />
           </button>

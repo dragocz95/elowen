@@ -637,7 +637,7 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
 /** Vitality bar + score for one row. The bar's colour mirrors the tone scale used for lifecycle badges:
  *  danger near the auto-retention floor, success when healthy. */
 const VITALITY_BAR_BG: Record<Tone, string> = {
-  default: 'bg-text-muted', accent: 'bg-accent', muted: 'bg-text-muted',
+  default: 'bg-text-muted', accent: 'bg-primary', muted: 'bg-text-muted',
   danger: 'bg-danger', success: 'bg-success', warning: 'bg-warning',
 };
 function VitalityCell({ value }: { value: number }) {
@@ -702,7 +702,7 @@ function CreateMemoryModal({ onClose, onCreated }: { onClose: () => void; onCrea
             rows={5}
             autoFocus
             placeholder={t.memory.fieldBodyPlaceholder}
-            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
+            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
           />
         </Field>
         <Field label={t.memory.fieldKind}>
@@ -756,7 +756,7 @@ function MergeMemoryModal({ sources, onClose, onMerged }: { sources: Memory[]; o
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={7}
-            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
+            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
           />
         </Field>
       </ModalBody>

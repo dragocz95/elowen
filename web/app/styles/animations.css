@@ -32,7 +32,7 @@
 
 @keyframes flow-pulse {
   0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 42%, transparent); }
+  50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 42%, transparent); }
 }
 
 .animate-fade-up { animation: fade-up var(--motion-slow) var(--ease-out) both; }

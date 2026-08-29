@@ -92,7 +92,7 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
                     {t.brain.retention[field.key]}
                     <HelpTip>{t.brain.retention[`${field.key}Hint`]}</HelpTip>
                   </span>
-                  <span className="shrink-0 font-mono text-sm tabular-nums text-accent">{valueLabel}</span>
+                  <span className="shrink-0 font-mono text-sm tabular-nums text-primary">{valueLabel}</span>
                 </div>
                 <Slider
                   value={value}
@@ -127,7 +127,7 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
                     {t.brain.retention.halfLifeLevel.replace('{n}', String(level))}
                     {level === 1 ? <HelpTip>{t.brain.retention.halfLifeHint}</HelpTip> : null}
                   </span>
-                  <span className="shrink-0 font-mono text-sm tabular-nums text-accent">{valueLabel}</span>
+                  <span className="shrink-0 font-mono text-sm tabular-nums text-primary">{valueLabel}</span>
                 </div>
                 <Slider
                   value={value}

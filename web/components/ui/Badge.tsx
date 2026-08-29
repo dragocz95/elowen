@@ -3,7 +3,7 @@ import type { Tone } from './tone';
 
 const TONES: Record<Tone, string> = {
   default: 'border-border bg-elevated text-text-muted',
-  accent: 'border-accent/40 bg-accent/10 text-accent',
+  accent: 'border-primary/40 bg-primary/10 text-primary',
   muted: 'border-border bg-elevated text-text-muted',
   danger: 'border-danger/40 bg-danger/10 text-danger',
   success: 'border-success/40 bg-success/10 text-success',

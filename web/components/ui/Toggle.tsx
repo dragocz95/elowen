@@ -8,7 +8,7 @@ export function Toggle({ checked, onChange, label, disabled = false }: { checked
       aria-label={label}
       disabled={disabled}
       onClick={() => !disabled && onChange(!checked)}
-      className={`inline-flex h-5 w-9 items-center rounded-full border border-border px-0.5 transition-colors ${checked ? 'bg-accent' : 'bg-elevated'} ${disabled ? 'opacity-40' : 'cursor-pointer'}`}
+      className={`inline-flex h-5 w-9 items-center rounded-full border border-border px-0.5 transition-colors ${checked ? 'bg-primary' : 'bg-elevated'} ${disabled ? 'opacity-40' : 'cursor-pointer'}`}
       style={{ transitionDuration: 'var(--motion-fast)' }}
     >
       <span

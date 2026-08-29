@@ -13,7 +13,7 @@ export function PluginHero({ name, detail, description, toolCount }: { name: str
     <section className="@container">
       <div className="flex flex-col gap-5 @2xl:flex-row @2xl:items-start">
         <div className="flex min-w-0 flex-1 gap-4">
-          <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden text-accent">{icon}</div>
+          <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden text-primary">{icon}</div>
           <div className="min-w-0 pt-1">
             <div className="flex flex-wrap items-center gap-2.5">
               <h2 className="text-2xl font-semibold tracking-[-0.025em] text-text">{detail.name}</h2>

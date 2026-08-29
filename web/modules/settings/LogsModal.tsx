@@ -187,7 +187,7 @@ export function LogsModal({ onClose }: { onClose: () => void }) {
                   disabled={!selected}
                   onClick={() => toggleLevel(level)}
                   className={`rounded-md border px-2 py-1 text-[11px] uppercase transition-colors disabled:opacity-40 ${
-                    levels.has(level) ? 'border-accent bg-elevated' : 'border-border'
+                    levels.has(level) ? 'border-primary bg-elevated' : 'border-border'
                   } ${LEVEL_CLASS[level]}`}
                 >
                   {level}

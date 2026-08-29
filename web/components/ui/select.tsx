@@ -47,8 +47,8 @@ function SelectTrigger({
         'flex h-9 w-full min-w-0 items-center gap-2 text-sm transition-[border-color,background-color,box-shadow]',
         'group focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
         variant === 'line'
-          ? 'border-b border-border bg-transparent px-1 text-text hover:border-border-strong data-[state=open]:border-accent data-[state=open]:text-accent'
-          : 'rounded-md border border-border bg-surface px-3 text-text hover:border-border-strong hover:bg-elevated data-[state=open]:border-accent/60 data-[state=open]:bg-accent/10 data-[state=open]:text-accent data-[state=open]:shadow-[0_0_0_3px_rgb(var(--accent-rgb)/0.08)]',
+          ? 'border-b border-border bg-transparent px-1 text-text hover:border-border-strong data-[state=open]:border-primary data-[state=open]:text-primary'
+          : 'rounded-md border border-border bg-surface px-3 text-text hover:border-border-strong hover:bg-elevated data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_rgb(var(--primary-rgb)/0.08)]',
         className,
       )}
       {...props}
@@ -130,7 +130,7 @@ function SelectItem({ className = '', children, icon, ...props }: React.Componen
         // built-in design separates them by 6/255 — so a surface step is a highlight that a design can
         // silently erase. A wash of `--color-text` is relative to the contrast the design already
         // guarantees, so it reads on every skin.
-        'text-text data-[highlighted]:bg-text/10 data-[state=checked]:bg-accent/10 data-[state=checked]:text-accent',
+        'text-text data-[highlighted]:bg-text/10 data-[state=checked]:bg-primary/10 data-[state=checked]:text-primary',
         'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
         className,
       )}
@@ -139,7 +139,7 @@ function SelectItem({ className = '', children, icon, ...props }: React.Componen
       {icon}
       <SelectPrimitive.ItemText className="min-w-0 flex-1 truncate">{children}</SelectPrimitive.ItemText>
       <SelectPrimitive.ItemIndicator asChild>
-        <Check size={15} aria-hidden className="ml-auto shrink-0 text-accent" />
+        <Check size={15} aria-hidden className="ml-auto shrink-0 text-primary" />
       </SelectPrimitive.ItemIndicator>
     </SelectPrimitive.Item>
   );

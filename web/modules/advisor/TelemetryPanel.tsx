@@ -237,7 +237,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
         <section className="flex flex-col gap-1" data-testid="telemetry-goal">
           <SectionHead label={t.telemetry.goal} meta={goalTurns} />
           <p className="flex items-center gap-1.5 text-tiny">
-            <Target size={11} className="shrink-0 text-accent" aria-hidden />
+            <Target size={11} className="shrink-0 text-primary" aria-hidden />
             <span className="min-w-0 truncate text-text" title={activeGoal.goal}>{activeGoal.goal}</span>
           </p>
           {subgoals ? (
@@ -261,7 +261,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           <ul className="flex flex-col gap-0.5">
             {runningWorkflows.map((wf) => (
               <li key={wf.id} className="flex items-center gap-1.5">
-                <Workflow size={11} className="shrink-0 text-accent" aria-hidden />
+                <Workflow size={11} className="shrink-0 text-primary" aria-hidden />
                 <LiveRow
                   label={workflowLabel(wf)}
                   meta={workflowProgress(wf)}
@@ -378,7 +378,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
             // already follows.
             <p className="flex items-baseline gap-1 font-mono text-tiny text-text-muted">
               <span className="shrink-0">{t.telemetry.branch}</span>
-              <span className="min-w-0 truncate text-accent" title={project.branch}>{project.branch}</span>
+              <span className="min-w-0 truncate text-primary" title={project.branch}>{project.branch}</span>
             </p>
           ) : null}
         </section>

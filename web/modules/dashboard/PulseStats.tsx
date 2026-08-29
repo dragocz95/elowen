@@ -76,7 +76,7 @@ export function PulseStats({ data, t }: { data: PulseResponse; t: LocaleDict }) 
       <StatCard
         label={t.dashboard.pulseRunningAgents}
         value={String(totals.runningAgents)}
-        colour="var(--color-accent)"
+        colour="var(--color-primary)"
         footnote={totals.runningAgents > 0 ? t.dashboard.pulseAgentsBusy : t.dashboard.pulseAgentsIdle}
       />
       <StatCard

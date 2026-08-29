@@ -90,10 +90,10 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
             onClick={() => onChange(o.value)}
             onKeyDown={(event) => move(event, index)}
             className={`segmented__option inline-flex shrink-0 items-center gap-1.5 text-xs font-medium transition-colors pointer-coarse:min-h-[var(--touch-target)] ${pad} ${variant === 'line'
-              ? `-mb-px border-b-2 ${active ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text'}`
+              ? `-mb-px border-b-2 ${active ? 'border-primary text-primary' : 'border-transparent text-text-muted hover:text-text'}`
               : menu
                 ? `w-full justify-start rounded-md ${active ? 'bg-elevated text-text' : 'text-text-muted hover:bg-elevated hover:text-text'}`
-                : `rounded ${active ? 'bg-accent/15 text-accent' : 'text-text-muted hover:bg-elevated hover:text-text'}`}`}
+                : `rounded ${active ? 'bg-primary/15 text-primary' : 'text-text-muted hover:bg-elevated hover:text-text'}`}`}
             style={{ transitionDuration: 'var(--motion-fast)' }}
           >
             {Icon ? <Icon size={menu ? 16 : 13} aria-hidden /> : null}

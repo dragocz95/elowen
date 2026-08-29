@@ -446,7 +446,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         // menu away from the keyboard and from a screen reader for a whole round trip on a first visit
         // — a menu in registry order beats no menu at all, and the gate exists to avoid showing a
         // re-sort, not to withhold navigation. `tests/app/navPrefetch.test.tsx` pins that first paint.
-        className={`absolute inset-x-0 bottom-[4.5rem] top-0 ${layoutReady ? 'opacity-100' : 'opacity-0'} before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-accent/45 before:to-accent/10`}
+        className={`absolute inset-x-0 bottom-[4.5rem] top-0 ${layoutReady ? 'opacity-100' : 'opacity-0'} before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-primary/45 before:to-primary/10`}
         style={{ ['--rail-axis' as string]: axis }}
       >
         {routeEntries.map((entry, index) => {
@@ -501,7 +501,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                 // A resting destination is drawn as a 2.25rem node, which is under the 44px a finger
                 // needs. The node keeps its size; the row it sits in grows to the floor around it, and
                 // MIN_SPACING keeps two such rows from overlapping once the axis tightens.
-                className={`overlay-touch-target group flex items-center gap-2 whitespace-nowrap ${active ? 'text-accent' : 'text-text-muted hover:text-text'}`}
+                className={`overlay-touch-target group flex items-center gap-2 whitespace-nowrap ${active ? 'text-primary' : 'text-text-muted hover:text-text'}`}
                 title={compact ? undefined : entry.label}
               >
                 {/* The icon column is twice `axis`, because `axis` is where the spine is drawn. The node
@@ -510,7 +510,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                     rather than as the same one with its names hidden. */}
                 <span className="flex w-[4rem] shrink-0 justify-center" aria-hidden>
                   <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-bg transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
-                    ? 'orbit-node-active border-accent h-[3.75rem] w-[3.75rem]'
+                    ? 'orbit-node-active border-primary h-[3.75rem] w-[3.75rem]'
                     : 'border-border-strong/80 h-[2.25rem] w-[2.25rem]'}`}>
                     <Icon size={active ? 20 : 15} strokeWidth={1.45} />
                   </span>
@@ -536,8 +536,8 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           {scrollRange > 0 ? (
             <div className="spatial-scroll-cue mb-2 flex flex-col items-center font-mono text-[8px] font-semibold tracking-[.24em] text-text-muted/45" aria-hidden>
               {!compact ? <span>SCROLL</span> : null}
-              <span className="mt-1 h-3 w-px bg-gradient-to-b from-accent/45 to-transparent" />
-              <ChevronDown size={11} className="-mt-0.5 text-accent/55" />
+              <span className="mt-1 h-3 w-px bg-gradient-to-b from-primary/45 to-transparent" />
+              <ChevronDown size={11} className="-mt-0.5 text-primary/55" />
             </div>
           ) : null}
           {!compact ? (

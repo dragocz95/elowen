@@ -31,7 +31,7 @@ describe('Segmented', () => {
   it('offers a quiet underline variant for settings navigation', () => {
     render(<Segmented variant="line" options={opts} value="b" onChange={() => {}} />);
     expect(screen.getByRole('radiogroup')).toHaveClass('border-b');
-    expect(screen.getByRole('radio', { name: 'B' })).toHaveClass('border-accent');
+    expect(screen.getByRole('radio', { name: 'B' })).toHaveClass('border-primary');
     expect(screen.getByRole('radio', { name: 'A' })).toHaveClass('border-transparent');
   });
   it('marks nowrap tabs for horizontal scrolling without a vertical overflow axis', () => {

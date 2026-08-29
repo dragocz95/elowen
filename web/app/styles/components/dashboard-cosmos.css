@@ -36,11 +36,11 @@
 .hero-cosmos__pods { position: absolute; inset: 0; }
 .hero-cosmos__pod { position: absolute; translate: -50% -50%; display: flex; align-items: flex-start; gap: 0.6rem; width: 11.5rem; padding: 0.55rem 0.6rem; border-radius: 1rem; transition: transform var(--motion-base) var(--ease-out); }
 .hero-cosmos__pod:hover, .hero-cosmos__pod:focus-visible { transform: translateY(-3px); }
-.hero-cosmos__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.14), var(--color-document) 68%); color: var(--color-accent); box-shadow: 0 0 0 4px var(--color-bg), var(--glow-active), inset 0 0 14px rgb(var(--accent-rgb) / 0.08); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out); }
-.hero-cosmos__orb::before { content: ''; position: absolute; inset: -1rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
-.hero-cosmos__orb::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(var(--accent-rgb) / 0.58), 1.25rem 0.35rem 0 color-mix(in srgb, var(--color-ember) 48%, transparent), -0.45rem -1.22rem 0 rgb(var(--accent-rgb) / 0.5), 0.65rem -1.05rem 0 color-mix(in srgb, var(--color-ember) 42%, transparent); opacity: 0.7; }
+.hero-cosmos__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 1px solid var(--color-primary); background: radial-gradient(circle, rgb(var(--primary-rgb) / 0.14), var(--color-document) 68%); color: var(--color-primary); box-shadow: 0 0 0 4px var(--color-bg), var(--glow-active), inset 0 0 14px rgb(var(--primary-rgb) / 0.08); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out); }
+.hero-cosmos__orb::before { content: ''; position: absolute; inset: -1rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--primary-rgb) / 0.28), rgb(var(--primary-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
+.hero-cosmos__orb::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(var(--primary-rgb) / 0.58), 1.25rem 0.35rem 0 color-mix(in srgb, var(--color-ember) 48%, transparent), -0.45rem -1.22rem 0 rgb(var(--primary-rgb) / 0.5), 0.65rem -1.05rem 0 color-mix(in srgb, var(--color-ember) 42%, transparent); opacity: 0.7; }
 html[data-effects='full'] .hero-cosmos__orb::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; animation-delay: calc(var(--i, 0) * -0.45s); }
-.hero-cosmos__pod:hover .hero-cosmos__orb, .hero-cosmos__pod:focus-visible .hero-cosmos__orb { box-shadow: 0 0 0 4px var(--color-bg), var(--glow-active), 0 0 30px rgb(var(--accent-rgb) / 0.4), inset 0 0 14px rgb(var(--accent-rgb) / 0.12); }
+.hero-cosmos__pod:hover .hero-cosmos__orb, .hero-cosmos__pod:focus-visible .hero-cosmos__orb { box-shadow: 0 0 0 4px var(--color-bg), var(--glow-active), 0 0 30px rgb(var(--primary-rgb) / 0.4), inset 0 0 14px rgb(var(--primary-rgb) / 0.12); }
 .hero-cosmos__body { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 0.1rem; }
 .hero-cosmos__label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-muted); }
 .hero-cosmos__value { min-width: 3ch; font-family: var(--font-mono); font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-text); }
@@ -61,23 +61,23 @@ html[data-effects='full'] .hero-cosmos__orb::after { animation: spatial-ember-fl
    the being returns with the orbit, where it has a field to be the core of. */
 .hero-cosmos[data-mode='stack'] .hero-cosmos__core { display: none; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__pods { position: relative; inset: auto; display: flex; flex-direction: column; gap: 0.25rem; }
-.hero-cosmos[data-mode='stack'] .hero-cosmos__pods::before { content: ''; position: absolute; top: 0.3rem; bottom: 0.3rem; left: 1.35rem; width: 2px; translate: -50% 0; background: linear-gradient(180deg, transparent, rgb(var(--accent-rgb) / 0.26) 7%, rgb(var(--accent-rgb) / 0.26) 90%, transparent); filter: blur(1px); }
+.hero-cosmos[data-mode='stack'] .hero-cosmos__pods::before { content: ''; position: absolute; top: 0.3rem; bottom: 0.3rem; left: 1.35rem; width: 2px; translate: -50% 0; background: linear-gradient(180deg, transparent, rgb(var(--primary-rgb) / 0.26) 7%, rgb(var(--primary-rgb) / 0.26) 90%, transparent); filter: blur(1px); }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__pod { position: relative; translate: none; width: 100%; align-items: center; padding: 0.45rem 0.25rem; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__pod:hover { transform: none; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__orb { width: 2.2rem; height: 2.2rem; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__body { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 0.6rem; }
 /* The dashboard composer's resting and focused glow. Here rather than on the element because both
    shadows compose color-mix(), and the commas inside it cannot survive a Tailwind arbitrary value. */
-.home-composer { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 4%, transparent), 0 18px 70px rgb(var(--accent-rgb) / 0.08); }
-.home-composer:focus-within { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 5%, transparent), 0 20px 80px rgb(var(--accent-rgb) / 0.14); }
+.home-composer { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 4%, transparent), 0 18px 70px rgb(var(--primary-rgb) / 0.08); }
+.home-composer:focus-within { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 5%, transparent), 0 20px 80px rgb(var(--primary-rgb) / 0.14); }
 
 /* The accent wash behind the dashboard hero (HeroNowTile.tsx renders the layer). Here rather than as an
    inline style on the element: an inline background is the one declaration a stylesheet cannot answer,
    and a design that wants a flat dashboard has to be able to say so. */
-.dash-aura { background: radial-gradient(circle at 78% 40%, rgb(var(--accent-rgb) / 0.1), transparent 35%), linear-gradient(140deg, rgb(var(--accent-rgb) / 0.022), transparent 52%); }
+.dash-aura { background: radial-gradient(circle at 78% 40%, rgb(var(--primary-rgb) / 0.1), transparent 35%), linear-gradient(140deg, rgb(var(--primary-rgb) / 0.022), transparent 52%); }
 
-.dash-label { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 650; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(var(--accent-rgb) / 0.5); }
-.dash-beam { background: linear-gradient(180deg, rgb(var(--accent-rgb) / 0.3), rgb(var(--accent-rgb) / 0.12) 70%, transparent); }
+.dash-label { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 650; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(var(--primary-rgb) / 0.5); }
+.dash-beam { background: linear-gradient(180deg, rgb(var(--primary-rgb) / 0.3), rgb(var(--primary-rgb) / 0.12) 70%, transparent); }
 /* The trunk: one continuous filament flowing from the mascot's core down into the journal spine,
    docking every activity event and task on the way (JournalTrunk.tsx draws it). While it is drawn,
    the per-row beam segments hide — the trunk IS the spine. */

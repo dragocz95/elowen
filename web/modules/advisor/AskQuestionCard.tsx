@@ -14,11 +14,11 @@ function Radio({ checked }: { checked: boolean }) {
   return (
     <span
       className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
-        checked ? 'border-accent' : 'border-border-strong bg-surface'
+        checked ? 'border-primary' : 'border-border-strong bg-surface'
       }`}
       aria-hidden
     >
-      <span className={`h-2 w-2 rounded-full bg-accent transition-transform duration-150 ${checked ? 'scale-100' : 'scale-0'}`} />
+      <span className={`h-2 w-2 rounded-full bg-primary transition-transform duration-150 ${checked ? 'scale-100' : 'scale-0'}`} />
     </span>
   );
 }
@@ -76,8 +76,8 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
 
   const approval = kind === 'approval';
   return (
-    <div className={`flex flex-col gap-3 rounded-lg border p-3 ${approval ? 'border-warning/50 bg-warning/5' : 'border-accent/40 bg-accent/5'}`}>
-      <p className={`text-tiny font-medium uppercase tracking-wide ${approval ? 'text-warning' : 'text-accent'}`}>
+    <div className={`flex flex-col gap-3 rounded-lg border p-3 ${approval ? 'border-warning/50 bg-warning/5' : 'border-primary/40 bg-primary/5'}`}>
+      <p className={`text-tiny font-medium uppercase tracking-wide ${approval ? 'text-warning' : 'text-primary'}`}>
         {approval ? t.brainChat.approvalWaiting : t.brainChat.askWaiting}
       </p>
       {questions.map((q, qi) => {
@@ -118,7 +118,7 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
                   onClick={() => toggle(qi, op.label, q.multiSelect)}
                   onMouseEnter={hasPreview ? () => setFocused((cur) => ({ ...cur, [qi]: oi })) : undefined}
                   onFocus={hasPreview ? () => setFocused((cur) => ({ ...cur, [qi]: oi })) : undefined}
-                  className={`flex items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/10 disabled:opacity-60 ${on ? 'bg-accent/10' : ''}`}
+                  className={`flex items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-primary/10 disabled:opacity-60 ${on ? 'bg-primary/10' : ''}`}
                 >
                   {q.multiSelect ? <Checkbox checked={on} className="mt-0.5" /> : <Radio checked={on} />}
                   <span className="flex min-w-0 flex-col">
@@ -133,7 +133,7 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
                 type="button"
                 disabled={pending}
                 onClick={() => setOtherOpen((cur) => ({ ...cur, [qi]: !cur[qi] }))}
-                className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/10 disabled:opacity-60 ${otherOpen[qi] ? 'bg-accent/10' : ''}`}
+                className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-primary/10 disabled:opacity-60 ${otherOpen[qi] ? 'bg-primary/10' : ''}`}
               >
                 <Pencil size={14} className="shrink-0 text-text-muted" />
                 <span className="text-sm text-text">{t.brainChat.askOther}</span>

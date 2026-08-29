@@ -129,7 +129,7 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
               aria-selected={project.id === current?.id}
               onClick={() => void move(project)}
               className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-bg ${
-                project.id === current?.id ? 'text-accent' : 'text-text'
+                project.id === current?.id ? 'text-primary' : 'text-text'
               }`}
             >
               <ProjectIcon project={project} size={14} />

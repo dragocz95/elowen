@@ -34,7 +34,7 @@ export function SelectMenu<T extends string>({ id, value, onChange, options, lab
   return (
     <Select value={value} onValueChange={(next) => onChange(next as T)}>
       <SelectTrigger id={id} aria-label={label} variant={variant} className={className}>
-        {selected?.icon ? <span className="flex shrink-0 text-accent" aria-hidden>{selected.icon}</span> : null}
+        {selected?.icon ? <span className="flex shrink-0 text-primary" aria-hidden>{selected.icon}</span> : null}
         <span className="min-w-0 flex-1 truncate text-left">{selected?.label ?? ''}</span>
       </SelectTrigger>
       <SelectContent aria-label={label}>

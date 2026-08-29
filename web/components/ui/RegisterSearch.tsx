@@ -58,7 +58,7 @@ export function RegisterSearch({
             type="button"
             aria-label={clearLabel}
             onClick={onClear}
-            className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]"
+            className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]"
           >
             <X size={14} aria-hidden />
           </button>

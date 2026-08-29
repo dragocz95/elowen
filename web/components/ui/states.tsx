@@ -112,7 +112,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
   const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-      <p className="text-sm text-accent">{message}</p>
+      <p className="text-sm text-primary">{message}</p>
       {onRetry && <Button onClick={onRetry}>{t.common.retry}</Button>}
     </div>
   );

@@ -23,13 +23,13 @@
   width: 2.8rem;
   height: 2.8rem;
   flex: none;
-  border: 1px solid rgb(var(--accent-rgb) / 0.2);
+  border: 1px solid rgb(var(--primary-rgb) / 0.2);
   border-radius: 50%;
-  color: var(--color-accent);
-  background: rgb(var(--accent-rgb) / 0.035);
+  color: var(--color-primary);
+  background: rgb(var(--primary-rgb) / 0.035);
 }
 .workspace-hero__titles { min-width: 0; flex: 1 1 auto; }
-.workspace-hero__eyebrow { margin-bottom: 0.35rem; font-family: var(--font-mono); color: var(--color-accent); font-size: 0.62rem; font-weight: 650; letter-spacing: 0.16em; text-transform: uppercase; }
+.workspace-hero__eyebrow { margin-bottom: 0.35rem; font-family: var(--font-mono); color: var(--color-primary); font-size: 0.62rem; font-weight: 650; letter-spacing: 0.16em; text-transform: uppercase; }
 .workspace-hero__headline { display: flex; min-width: 0; align-items: baseline; gap: 0.75rem; }
 /* Sized against the hero, not the window: the title has to shrink when a dock narrows the region even
    though the viewport never changed. */
@@ -42,7 +42,7 @@
 .workspace-hero__body { display: grid; min-height: 12rem; grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 1.28fr); border-top: var(--hairline); }
 /* Metrics without a mascot: the row takes the whole width and stops pretending to be a hero panel. */
 .workspace-hero:not(:has(.workspace-hero__mascot)) .workspace-hero__body { min-height: 0; grid-template-columns: minmax(0, 1fr); }
-.workspace-hero__mascot { position: relative; min-width: 0; overflow: hidden; border-inline-end: var(--hairline); background: radial-gradient(circle at 46% 54%, rgb(var(--accent-rgb) / 0.11), transparent 62%); pointer-events: none; }
+.workspace-hero__mascot { position: relative; min-width: 0; overflow: hidden; border-inline-end: var(--hairline); background: radial-gradient(circle at 46% 54%, rgb(var(--primary-rgb) / 0.11), transparent 62%); pointer-events: none; }
 .workspace-hero__mascot .spatial-mascot { width: min(100%, 20rem); margin-inline: auto; transform: scale(0.82); transform-origin: center; }
 .workspace-hero__metrics { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); align-items: stretch; }
 

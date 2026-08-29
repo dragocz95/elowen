@@ -77,7 +77,7 @@ export function ModelOptionList({ filter = '', onPick }: { filter?: string; onPi
                 className={`flex w-full flex-col gap-0.5 px-3 py-1.5 text-left transition-colors hover:bg-bg ${active ? 'text-text' : 'text-text-muted'}`}
               >
                 <span className="flex items-center gap-1.5">
-                  {active ? <Check size={12} className="shrink-0 text-accent" aria-label={t.brainChat.modelActive} /> : <span className="w-3 shrink-0" aria-hidden />}
+                  {active ? <Check size={12} className="shrink-0 text-primary" aria-label={t.brainChat.modelActive} /> : <span className="w-3 shrink-0" aria-hidden />}
                   <ModelIcon name={m.model} size={14} />
                   <span className="truncate font-mono text-sm">{m.model}</span>
                 </span>

@@ -89,7 +89,7 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                       ? 'var(--color-danger)'
                       : pct != null && pct >= 70
                         ? 'var(--color-warning)'
-                        : 'var(--color-accent)',
+                        : 'var(--color-primary)',
                   }}
                 />
               </div>
@@ -238,8 +238,8 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                           // The heat ramp end to end: accent → ember → the pale ember stop. All three
                           // are tokens, so the bar follows a repaint instead of staying orange under a
                           // skin that moved the accent out from under it.
-                          background: 'linear-gradient(90deg, var(--color-accent), var(--color-ember), var(--color-ember-bright))',
-                          boxShadow: '0 0 6px rgb(var(--accent-rgb) / 0.3)',
+                          background: 'linear-gradient(90deg, var(--color-primary), var(--color-ember), var(--color-ember-bright))',
+                          boxShadow: '0 0 6px rgb(var(--primary-rgb) / 0.3)',
                         }}
                       />
                     </div>
@@ -342,7 +342,7 @@ function ContextBar({ label, tokens, percent, muted }: { label: string; tokens: 
       <div className="relative h-2 flex-1 overflow-hidden rounded-full border border-border bg-elevated">
         <div
           className="h-full rounded-full transition-all"
-          style={{ width: `${Math.min(100, Math.max(0, percent))}%`, background: muted ? 'var(--color-border)' : 'var(--color-accent)' }}
+          style={{ width: `${Math.min(100, Math.max(0, percent))}%`, background: muted ? 'var(--color-border)' : 'var(--color-primary)' }}
         />
       </div>
       <span className="w-14 text-right font-mono text-xs tabular-nums text-text">{formatTokens(tokens)}</span>

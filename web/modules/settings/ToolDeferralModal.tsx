@@ -178,7 +178,7 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
           <SettingsRow label={t.brain.toolLoading.threshold} description={t.brain.toolLoading.thresholdHint} icon={Search}>
             <div className="flex w-48 items-center gap-3">
               <Slider value={draft.threshold} min={1} max={100} step={1} onChange={(threshold) => setDraft((current) => ({ ...current, threshold }))} aria-label={t.brain.toolLoading.threshold} />
-              <span className="w-7 text-right font-mono text-sm tabular-nums text-accent">{draft.threshold}</span>
+              <span className="w-7 text-right font-mono text-sm tabular-nums text-primary">{draft.threshold}</span>
             </div>
           </SettingsRow>
         </SettingsGroup>

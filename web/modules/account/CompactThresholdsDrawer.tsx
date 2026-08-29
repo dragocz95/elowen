@@ -32,7 +32,7 @@ export function CompactThresholdsDrawer({ models, thresholds, defaultPct, onDefa
         <div className="mb-5 border-b border-border pb-5">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-text">{t.cli.autoCompactAt}</span>
-            <span className="font-mono text-sm tabular-nums text-accent">{defaultPct}%</span>
+            <span className="font-mono text-sm tabular-nums text-primary">{defaultPct}%</span>
           </div>
           <Slider value={defaultPct} min={30} max={95} step={5} onChange={onDefaultChange} aria-label={t.cli.autoCompactAt} className="mt-3" />
         </div>
@@ -50,7 +50,7 @@ export function CompactThresholdsDrawer({ models, thresholds, defaultPct, onDefa
                   <span className="block truncate text-sm font-medium text-text">{m.model}</span>
                   <span className="block truncate font-mono text-[11px] text-text-muted">{formatTokens(m.contextWindow)} · {m.providerLabel}</span>
                 </div>
-                <span className={`shrink-0 font-mono text-sm tabular-nums ${override != null ? 'text-accent' : 'text-text-muted'}`}>
+                <span className={`shrink-0 font-mono text-sm tabular-nums ${override != null ? 'text-primary' : 'text-text-muted'}`}>
                   {override != null ? `${pct}%` : t.cli.compactByModelDefault}
                 </span>
                 {override != null ? (

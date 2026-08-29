@@ -18,7 +18,7 @@ export function EntityRow({ children, selected = false, busy = false, interactiv
       role="listitem"
       data-state={state}
       aria-busy={busy || undefined}
-      className={`${interactive ? 'interactive-row' : ''} min-w-0 px-4 py-3.5 ${selected ? 'bg-accent/[0.055]' : ''} ${busy ? 'opacity-70' : ''} ${className}`}
+      className={`${interactive ? 'interactive-row' : ''} min-w-0 px-4 py-3.5 ${selected ? 'bg-primary/[0.055]' : ''} ${busy ? 'opacity-70' : ''} ${className}`}
       {...rest}
     >
       {children}

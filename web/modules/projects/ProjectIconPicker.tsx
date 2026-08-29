@@ -73,7 +73,7 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
                       onDoubleClick={() => apply(path)}
                       title={path}
                       aria-pressed={on}
-                      className={`flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors ${on ? 'border-accent bg-accent/[0.08]' : 'border-border bg-surface hover:border-border-strong hover:bg-elevated'}`}
+                      className={`flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors ${on ? 'border-primary bg-primary/[0.08]' : 'border-border bg-surface hover:border-border-strong hover:bg-elevated'}`}
                     >
                       <span className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-md border border-border bg-bg">
                         <ProjectIcon project={{ id: project.id, icon: path }} size={40} />

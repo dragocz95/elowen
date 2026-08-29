@@ -56,9 +56,9 @@
   /* Signal blue. #0070f3 is the design's blue, but as body text it measures 4.14:1 on --color-elevated,
      so the base accent is one step darker (4.70:1) and #0070f3 becomes the hot/hover step — the ramp
      keeps the intended colour and links stay readable. */
-  --color-accent: #0068e1;
-  --color-accent-hot: #0070f3;
-  --accent-rgb: 0 104 225;
+  --color-primary: #0068e1;
+  --color-primary-hot: #0070f3;
+  --primary-rgb: 0 104 225;
 
   /* Studio has no ember. The two-stop ramp those tokens carry is repainted onto the signal blue so
      charts and heat scales stay coherent instead of glowing orange inside a blue design. */
@@ -142,7 +142,7 @@
   --shadow-card: 0 1px 2px rgb(9 9 11 / 0.05);
   --shadow-raised: 0 8px 24px rgb(9 9 11 / 0.08);
   --shadow-ember: none;
-  --glow-active: 0 0 0 1px rgb(var(--accent-rgb) / 0.45);
+  --glow-active: 0 0 0 1px rgb(var(--primary-rgb) / 0.45);
   --glow-soft: none;
   --hairline: 1px solid rgb(9 9 11 / 0.08);
 

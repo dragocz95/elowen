@@ -10,7 +10,7 @@ import {
 } from './brainLayout';
 
 /** Neutral synapse tint for uncategorized / color-less categories — the app accent (a calm blue). */
-const ACCENT_BLUE = 'var(--color-accent)';
+const ACCENT_BLUE = 'var(--color-primary)';
 
 /** Curved Bézier between two points, bowed slightly perpendicular so edges read as soft synapses rather
  *  than a straight web. Coordinates are viewBox percent (preserveAspectRatio="none" maps them to the box). */
@@ -183,9 +183,9 @@ function CoreNodeView({ label, x, y, lit, active, onSelect }: { label: string; x
       className="group absolute z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5 transition-opacity"
       style={{ left: `${x}%`, top: `${y}%`, opacity: lit ? 1 : 0.22 }}
     >
-      <span className="brain-disc relative flex h-16 w-16 items-center justify-center rounded-full border border-accent/50">
+      <span className="brain-disc relative flex h-16 w-16 items-center justify-center rounded-full border border-primary/50">
         <span aria-hidden className="brain-core-pulse absolute inset-0 rounded-full" />
-        <span aria-hidden className="absolute -inset-2 rounded-full" style={{ boxShadow: `0 0 34px 8px color-mix(in srgb, var(--color-accent) ${active ? 60 : 38}%, transparent)` }} />
+        <span aria-hidden className="absolute -inset-2 rounded-full" style={{ boxShadow: `0 0 34px 8px color-mix(in srgb, var(--color-primary) ${active ? 60 : 38}%, transparent)` }} />
       </span>
       <span className={`brain-chip rounded-md px-2 py-0.5 text-[11px] font-semibold tracking-wide transition-opacity ${active ? 'opacity-100' : 'opacity-85'}`}>
         {label}
@@ -270,7 +270,7 @@ function DetailStrip({ node, onSelectMemory }: { node: BrainNode | null; onSelec
 
   if (node.kind === 'core') {
     return (
-      <DetailCard accent="var(--color-accent)" label={t.memory.brainCore} icon={Brain}>
+      <DetailCard accent="var(--color-primary)" label={t.memory.brainCore} icon={Brain}>
         <p className="text-sm leading-relaxed text-text-muted">{t.memory.brainCoreDesc}</p>
         <div className="mt-3 flex items-center gap-1.5 text-xs text-text-muted">
           <Layers size={13} aria-hidden />
@@ -308,7 +308,7 @@ function DetailStrip({ node, onSelectMemory }: { node: BrainNode | null; onSelec
         <button
           type="button"
           onClick={() => onSelectMemory(m.id)}
-          className="mt-3 text-xs font-medium text-accent underline-offset-2 hover:underline"
+          className="mt-3 text-xs font-medium text-primary underline-offset-2 hover:underline"
         >
           {t.memory.edit}
         </button>
@@ -372,7 +372,7 @@ function BrainStyles() {
       }
       @keyframes brain-core { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.16); opacity: 0.12; } }
       .brain-core-pulse {
-        background: radial-gradient(circle, color-mix(in srgb, var(--color-accent) 45%, transparent) 0%, transparent 70%);
+        background: radial-gradient(circle, color-mix(in srgb, var(--color-primary) 45%, transparent) 0%, transparent 70%);
         animation: brain-core 3.4s ease-in-out infinite;
       }
       @keyframes brain-fiber { 0%, 100% { opacity: 0.06; } 50% { opacity: 0.16; } }

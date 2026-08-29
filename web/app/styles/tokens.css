@@ -1,5 +1,5 @@
 @theme {
-  /* OLED Ember: true black canvas, warm near-black surfaces, one unmistakable Elowen accent. */
+  /* OLED Ember: true black canvas, warm near-black surfaces, one unmistakable Elowen ember. */
   --color-bg: #000000;
   --color-document: #030303;
   --color-surface: #070707;
@@ -12,10 +12,10 @@
   --color-surface-sticky: color-mix(in srgb, var(--color-document) 94%, var(--color-text) 6%);
   --color-border: #242424;
   --color-border-strong: #363636;
-  --color-accent: #ff5236;
-  --color-accent-hot: #ff735c;
+  --color-primary: #ff5236;
+  --color-primary-hot: #ff735c;
   --color-ember: #ff9a62;
-  /* The pale end of the ember ramp — the far stop of a heat gradient, where the accent is the near one.
+  /* The pale end of the ember ramp — the far stop of a heat gradient, where the primary is the near one.
      It is a token so a repaint moves the whole ramp; a literal in a chart would stay orange. */
   --color-ember-bright: #ffd09a;
 
@@ -39,12 +39,62 @@
   /* Two CATEGORICAL tones. Unlike the semantic five above they say nothing about state — they exist so a
      legend or a role swatch can stay distinguishable from its neighbours without borrowing "danger" or
      "success" and implying something it does not mean. They are literals rather than derivations of the
-     accent precisely because their job is to be UNLIKE it; a skin that repaints the palette moves these
+     primary precisely because their job is to be UNLIKE it; a skin that repaints the palette moves these
      two with it. */
   --color-tone-violet: #a78bfa;
   --color-tone-magenta: #f472b6;
 
-  /* Organic but disciplined: compact controls, roomier panels, never pill-shaped by default. */
+  /* ─── shadcn/ui token vocabulary ────────────────────────────────────────────────────────────────
+     The app's design system IS shadcn/ui, so these are the names components are written against; the
+     palette names above are what a SKIN paints. Both resolve to the same colours, which is what lets a
+     skin repaint the app without knowing a single component.
+
+     Read the pairing rule before adding one: a base token names a SURFACE and its `-foreground` names
+     the text and icons that sit on it. `bg-primary text-primary-foreground` is therefore always legible,
+     and a component that takes a fill without its foreground is a contrast bug waiting for a skin.
+
+     Two mappings are not obvious and both were chosen deliberately:
+
+     `--color-primary` is the brand ember. shadcn reserves `accent` for the INTERACTIVE surface — hover,
+     highlight, the selected row — so the brand cannot live there; a component copied from the shadcn
+     docs uses `bg-accent` for hover, and had the ember kept that name every hovered row in the app would
+     have turned orange.
+
+     `--color-accent` is a wash of the foreground rather than a step up the surface ramp. A surface step
+     is a highlight a design is free to erase: studio-oled paints surface, elevated and overlay with one
+     card fill, and the built-in design separates them by 6/255 — in both, a hover expressed as a surface
+     step is invisible. A skin may collapse the surface ramp; it may not lower text contrast, so a wash
+     of the text colour reads on every design by construction. */
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-text);
+  --color-card: var(--color-surface);
+  --color-card-foreground: var(--color-text);
+  --color-popover: var(--color-overlay);
+  --color-popover-foreground: var(--color-text);
+  --color-primary-foreground: var(--color-on-status);
+  --color-secondary: var(--color-elevated);
+  --color-secondary-foreground: var(--color-text);
+  --color-muted: var(--color-elevated);
+  --color-muted-foreground: var(--color-text-muted);
+  --color-accent: color-mix(in srgb, var(--color-text) 10%, transparent);
+  --color-accent-foreground: var(--color-text);
+  --color-destructive: var(--color-danger);
+  --color-destructive-foreground: var(--color-on-status);
+  /* Form-control edges are the app's ordinary border. shadcn separates `input` from `border` so a design
+     can make fields louder than cards; ours does not, and an alias says that on purpose rather than by
+     omission — a skin that wants the distinction overrides this one token. */
+  --color-input: var(--color-border);
+  --color-ring: var(--color-primary);
+  /* The categorical series. Charts read these and never a literal, so a repaint moves the whole set. */
+  --color-chart-1: var(--color-primary);
+  --color-chart-2: var(--color-ember);
+  --color-chart-3: var(--color-ember-bright);
+  --color-chart-4: var(--color-tone-violet);
+  --color-chart-5: var(--color-tone-magenta);
+
+  /* Organic but disciplined: compact controls, roomier panels, never pill-shaped by default.
+     This scale ALREADY carries shadcn's names, so components use `rounded-sm|md|lg|xl|2xl` directly and
+     must never reach for `rounded-[var(--radius)]` — that would bypass the scale and pin one size. */
   --radius-sm: 0.375rem;
   --radius: 0.5rem;
   --radius-md: 0.625rem;
@@ -60,14 +110,14 @@
   --text-caption: 0.6875rem;
   --text-tiny: 0.5625rem;
 
-  /* The accent as a bare R G B triple, so shadow/glow tokens can compose alpha variants — and so a
+  /* The primary as a bare R G B triple, so shadow/glow tokens can compose alpha variants — and so a
      white-label theme can retint them by overriding this ONE variable instead of every baked shadow. */
-  --accent-rgb: 255 82 54;
+  --primary-rgb: 255 82 54;
   --shadow-card: 0 1px 0 rgb(255 255 255 / 0.025), 0 14px 40px rgb(0 0 0 / 0.2);
   --shadow-raised: 0 1px 0 rgb(255 255 255 / 0.04), 0 22px 64px rgb(0 0 0 / 0.48);
-  --shadow-ember: 0 16px 48px rgb(var(--accent-rgb) / 0.14);
-  --glow-active: 0 0 0 1px rgb(var(--accent-rgb) / 0.3), 0 0 24px rgb(var(--accent-rgb) / 0.22), 0 0 64px rgb(var(--accent-rgb) / 0.12);
-  --glow-soft: 0 0 44px rgb(var(--accent-rgb) / 0.1);
+  --shadow-ember: 0 16px 48px rgb(var(--primary-rgb) / 0.14);
+  --glow-active: 0 0 0 1px rgb(var(--primary-rgb) / 0.3), 0 0 24px rgb(var(--primary-rgb) / 0.22), 0 0 64px rgb(var(--primary-rgb) / 0.12);
+  --glow-soft: 0 0 44px rgb(var(--primary-rgb) / 0.1);
   --hairline: 1px solid rgb(255 255 255 / 0.075);
 
   --motion-instant: 80ms;

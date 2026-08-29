@@ -28,7 +28,7 @@ export function EmberFall() {
 
     const token = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     const warmTone = token('--color-ember');
-    const hotTone = token('--color-accent');
+    const hotTone = token('--color-primary');
 
     interface Ember { x: number; y: number; r: number; fall: number; sway: number; phase: number; opacity: number; warm: boolean }
     let embers: Ember[] = [];

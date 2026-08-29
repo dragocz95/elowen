@@ -23,10 +23,10 @@ export function ReasoningScale({ options, value, onChange, ariaLabel }: {
               aria-label={option.label}
               aria-pressed={active}
               onClick={() => onChange(option.value)}
-              className={`group flex min-w-0 flex-col items-center gap-2 text-[9px] transition-colors sm:text-[10px] ${active ? 'text-accent' : 'text-text-muted hover:text-text'}`}
+              className={`group flex min-w-0 flex-col items-center gap-2 text-[9px] transition-colors sm:text-[10px] ${active ? 'text-primary' : 'text-text-muted hover:text-text'}`}
             >
               <span className="w-full whitespace-nowrap text-center text-[8px] sm:text-[9px]" title={option.label}>{option.label}</span>
-              <span className={`block rounded-full transition-[width,height,background-color,box-shadow] ${active ? 'h-3.5 w-3.5 bg-accent shadow-[0_0_18px_rgb(255_82_54_/_0.8)]' : 'h-2.5 w-2.5 bg-text-subtle group-hover:bg-text-muted'}`} aria-hidden />
+              <span className={`block rounded-full transition-[width,height,background-color,box-shadow] ${active ? 'h-3.5 w-3.5 bg-primary shadow-[0_0_18px_rgb(255_82_54_/_0.8)]' : 'h-2.5 w-2.5 bg-text-subtle group-hover:bg-text-muted'}`} aria-hidden />
             </button>
           );
         })}

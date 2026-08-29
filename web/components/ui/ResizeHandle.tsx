@@ -77,7 +77,7 @@ export function ResizeHandle({ orientation, onDelta, onEnd, onReset, className, 
       onPointerMove={onPointerMove}
       onPointerUp={end}
       onLostPointerCapture={end}
-      className={`shrink-0 select-none bg-border transition-colors hover:bg-accent active:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${base} ${className ?? ''}`}
+      className={`shrink-0 select-none bg-border transition-colors hover:bg-primary active:bg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${base} ${className ?? ''}`}
     />
   );
 }

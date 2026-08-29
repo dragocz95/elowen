@@ -59,12 +59,17 @@ export type ThemeAssetFile = (typeof THEME_ASSET_FILES)[number];
 export type ThemeAssetSlot = 'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot' | 'cliMascot';
 
 /** The design-token suffixes a theme may override — exactly the `--color-*` names in the web's
- *  tokens.css `@theme` block, plus `accent-rgb` (the `R G B` triple the shadow/glow tokens compose
+ *  tokens.css `@theme` block, plus `primary-rgb` (the `R G B` triple the shadow/glow tokens compose
  *  with). A contract test keeps this list a subset of tokens.css so a theme can never invent a token
- *  the UI does not consume. */
+ *  the UI does not consume.
+ *
+ *  The brand colour is `primary`, not `accent`. The web adopted the shadcn/ui token vocabulary, where
+ *  `accent` names the hover/highlight SURFACE and `primary` names the brand — keeping the old spelling
+ *  here would have let a white-label config repaint every hovered row in the brand colour. A theme.json
+ *  still carrying `accent` is rejected by name rather than silently ignored. */
 export const THEME_COLOR_KEYS = [
   'bg', 'document', 'surface', 'elevated', 'overlay', 'border', 'border-strong',
-  'accent', 'accent-hot', 'ember', 'accent-rgb',
+  'primary', 'primary-hot', 'ember', 'primary-rgb',
   'text', 'text-muted', 'text-subtle',
   'danger', 'success', 'warning', 'error', 'info', 'approve', 'cancelled',
 ] as const;
@@ -73,7 +78,7 @@ const COLOR_KEY_SET = new Set<string>(THEME_COLOR_KEYS);
 /** Hex colors only — the value lands inside a server-rendered `<style>` block, so the grammar is kept
  *  too narrow to ever close the declaration or smuggle another one in. */
 const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
-/** `accent-rgb` is a bare `R G B` triple (composed into `rgb(<triple> / a)` by the token definitions). */
+/** `primary-rgb` is a bare `R G B` triple (composed into `rgb(<triple> / a)` by the token definitions). */
 const RGB_TRIPLE_RE = /^\d{1,3} \d{1,3} \d{1,3}$/;
 /** Font stacks are free-ish text but still CSS-embedded: names, quotes, commas, hyphens — no braces,
  *  no semicolons, no url()/expression() material. */
@@ -161,10 +166,10 @@ export function sanitizeThemeManifest(raw: unknown): ThemeManifest {
     for (const [key, value] of Object.entries(raw.colors)) {
       if (!COLOR_KEY_SET.has(key)) throw new Error(`unknown color key "${key}"`);
       if (typeof value !== 'string') throw new Error(`color "${key}" must be a string`);
-      const ok = key === 'accent-rgb'
+      const ok = key === 'primary-rgb'
         ? RGB_TRIPLE_RE.test(value) && value.split(' ').every((n) => Number(n) <= 255)
         : HEX_COLOR_RE.test(value);
-      if (!ok) throw new Error(`color "${key}" must be ${key === 'accent-rgb' ? 'an "R G B" triple (0-255 each)' : 'a hex color'}`);
+      if (!ok) throw new Error(`color "${key}" must be ${key === 'primary-rgb' ? 'an "R G B" triple (0-255 each)' : 'a hex color'}`);
       colors[key] = value;
     }
   }

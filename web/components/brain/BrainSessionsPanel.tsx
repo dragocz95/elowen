@@ -286,9 +286,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                       onClick={() => { openBrainSession(s.id, continuable); afterOpen?.(); }}
                       title={label}
                       aria-label={`${label}: ${title}`}
-                      className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                      className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
                     >
-                      <span className="truncate text-sm text-text transition-colors group-hover:text-accent">{title}</span>
+                      <span className="truncate text-sm text-text transition-colors group-hover:text-primary">{title}</span>
                       {/* WHERE the conversation happened. A web chat carries no mark — it is the norm
                           here and labelling every row would be noise. */}
                       {s.platform ? <PlatformIcon platform={s.platform} /> : null}
@@ -327,7 +327,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                       label={`${title}: ${t.common.actions}`}
                       items={rowActions(s)}
                       trigger={<MoreHorizontal size={16} aria-hidden />}
-                      triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                      triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
                     />
                   </DataTableCell>
                 </DataTableRow>

@@ -217,7 +217,7 @@ export function UsersView() {
                           openLabel={t.users.openUser.replace('{name}', displayName)}
                           onContextMenu={(event) => openCtxMenu(event, user)}
                         >
-                          <DataTableCell lines={1} title={displayName} className="flex items-center gap-3"><Avatar user={user} size={32} /><span className="min-w-0 truncate text-sm font-medium text-text group-hover:text-accent">{displayName}</span></DataTableCell>
+                          <DataTableCell lines={1} title={displayName} className="flex items-center gap-3"><Avatar user={user} size={32} /><span className="min-w-0 truncate text-sm font-medium text-text group-hover:text-primary">{displayName}</span></DataTableCell>
                           <DataTableCell priority="wide" lines={1} title={`@${user.username}`} className="font-mono text-xs text-text-muted">@{user.username}</DataTableCell>
                           <DataTableCell priority="wide" lines={1}>{user.is_admin ? <Badge tone="accent"><ShieldCheck size={10} className="mr-1" aria-hidden />{t.users.admin}</Badge> : <span className="text-xs text-text-muted">{t.users.member}</span>}</DataTableCell>
                           <DataTableCell priority="wide" lines={1} className="text-xs text-text-muted">{localDateTime(user.created_at, locale, false)}</DataTableCell>

@@ -16,7 +16,7 @@
   padding-block: 1rem 0.9rem;
   padding-inline: max(var(--shell-gutter), var(--safe-left)) max(var(--shell-gutter), var(--safe-right));
 }
-.chat-hero__icon { display: grid; width: 2.7rem; height: 2.7rem; flex: none; place-items: center; border: 1px solid rgb(var(--accent-rgb) / 0.2); border-radius: 50%; color: var(--color-accent); background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.1), transparent 68%); box-shadow: var(--glow-soft); }
+.chat-hero__icon { display: grid; width: 2.7rem; height: 2.7rem; flex: none; place-items: center; border: 1px solid rgb(var(--primary-rgb) / 0.2); border-radius: 50%; color: var(--color-primary); background: radial-gradient(circle, rgb(var(--primary-rgb) / 0.1), transparent 68%); box-shadow: var(--glow-soft); }
 .chat-hero__body { display: flex; min-width: 0; flex-direction: column; gap: 0.4rem; }
 /* Sized against the hero, not the window. The old `0.4vw` term was written while the whole app rendered
    at a 70-75% CSS zoom; on a native 1024-1900px desktop it produced a heading barely larger than the

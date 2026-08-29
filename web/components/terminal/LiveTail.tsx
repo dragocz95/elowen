@@ -70,7 +70,7 @@ export function LiveTail({ name, lines = 20, heightClass = 'max-h-80', onExpand 
         onClick={onExpand}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onExpand(); } }}
         title={t.common.openTerminal}
-        className="block w-full cursor-pointer rounded-md border border-border bg-bg p-3 transition-colors hover:border-accent/60 focus:border-accent focus:outline-none"
+        className="block w-full cursor-pointer rounded-md border border-border bg-bg p-3 transition-colors hover:border-primary/60 focus:border-primary focus:outline-none"
       >
         {pane}
       </div>

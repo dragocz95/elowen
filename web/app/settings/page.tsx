@@ -55,7 +55,7 @@ const SystemDiagnostics = nextDynamic(
   { ssr: false, loading: () => <LoadingState variant="block" height="h-[150px]" /> },
 );
 
-const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
+const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-primary';
 
 function formatMemory(used: number, total: number): string {
   const gb = (value: number) => `${(value / 1_000_000_000).toFixed(1)} GB`;
@@ -519,7 +519,7 @@ export default function SettingsPage() {
                               onClick={() => setCtxFor({ model: m.model, key: winKey, effective: m.contextWindow })}
                               title={`${t.brain.contextWindowEdit} · ${formatTokens(override ?? m.contextWindow)}`}
                               aria-label={`${t.brain.contextWindowEdit}: ${m.model}`}
-                              className={`settings-model-row__context inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-accent' : 'text-text-muted hover:text-text'}`}
+                              className={`settings-model-row__context inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-primary' : 'text-text-muted hover:text-text'}`}
                             >
                               <Gauge size={12} aria-hidden />
                               {formatTokens(override ?? m.contextWindow)}
@@ -602,7 +602,7 @@ export default function SettingsPage() {
                         {updateBadge}
                       </button>
                       {system.data?.updateAvailable ? (
-                        <button type="button" className="spatial-inline-action text-accent" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
+                        <button type="button" className="spatial-inline-action text-primary" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
                           onSuccess: () => toast(t.settings.updateStarted),
                           onError: (e) => toast(String(e), 'error'),
                         })}>{systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}<RefreshCw size={13} className={systemUpdate.isPending ? 'animate-spin' : ''} aria-hidden /></button>
@@ -716,7 +716,7 @@ export default function SettingsPage() {
           
             {/* Cross-link to the model catalog (enable / context-window per model) — the Models section. */}
             <SettingsToolbar promote={false}>
-              <button type="button" onClick={() => setCategory('models')} className="font-medium text-accent hover:underline">
+              <button type="button" onClick={() => setCategory('models')} className="font-medium text-primary hover:underline">
                 {t.settings.brainModelsLink}
               </button>
             </SettingsToolbar>

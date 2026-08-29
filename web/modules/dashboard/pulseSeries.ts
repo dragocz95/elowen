@@ -6,7 +6,7 @@ export const HOURS = 24;
  *  skin, where the accent is not Elowen's ember. Beyond five people the colours repeat — deliberately,
  *  because a sixth hue that still reads as distinct on a dark surface does not exist for free. */
 const SERIES = [
-  'var(--color-accent)',
+  'var(--color-primary)',
   'var(--color-info)',
   'var(--color-success)',
   'var(--color-warning)',

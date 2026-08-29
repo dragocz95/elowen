@@ -118,7 +118,7 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, presen
                     {t.brain.runtime[field.key]}
                     <HelpTip>{t.brain.runtime[`${field.key}Hint`]}</HelpTip>
                   </span>
-                  <span className="shrink-0 font-mono text-sm tabular-nums text-accent">{valueLabel}</span>
+                  <span className="shrink-0 font-mono text-sm tabular-nums text-primary">{valueLabel}</span>
                 </div>
                 <Slider
                   value={value}

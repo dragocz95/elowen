@@ -10,7 +10,7 @@ import { TimeSeriesChart } from '../../../components/ui/TimeSeriesChart';
  *  library out of the page, and the formatting contract the caller owns. */
 
 const series = [
-  { key: 'tokens', label: 'Tokens', colour: 'var(--color-accent)', variant: 'bar' as const, axis: 'left' as const, format: (v: number) => `${v}t` },
+  { key: 'tokens', label: 'Tokens', colour: 'var(--color-primary)', variant: 'bar' as const, axis: 'left' as const, format: (v: number) => `${v}t` },
   { key: 'cost', label: 'Cost', colour: 'var(--color-warning)', variant: 'line' as const, axis: 'right' as const, format: (v: number) => `$${v}` },
 ];
 

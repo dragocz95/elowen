@@ -58,7 +58,7 @@ export function DateRangeFilter({ value, onChange, compact = false, presets = DE
                 type="button"
                 onClick={() => pickPreset(p)}
                 aria-pressed={value.preset === p}
-                className={`flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${value.preset === p ? 'bg-accent/[0.1] font-medium text-accent' : 'text-text hover:bg-elevated'}`}
+                className={`flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${value.preset === p ? 'bg-primary/[0.1] font-medium text-primary' : 'text-text hover:bg-elevated'}`}
               >
                 {presetLabel[p]}
               </button>

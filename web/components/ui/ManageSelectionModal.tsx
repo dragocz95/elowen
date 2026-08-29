@@ -67,7 +67,7 @@ type ManageSelectionModalProps = ManageSelectionEditableProps | ManageSelectionR
 const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 const BADGE_TONES = {
-  accent: 'border-accent/40 bg-accent/15 text-accent',
+  accent: 'border-primary/40 bg-primary/15 text-primary',
   muted: 'border-border bg-elevated text-text-muted',
 } as const;
 
@@ -77,7 +77,7 @@ function RadioDot({ checked }: { checked: boolean }) {
     <span
       aria-hidden
       className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
-        checked ? 'border-accent bg-accent' : 'border-border-strong bg-surface'
+        checked ? 'border-primary bg-primary' : 'border-border-strong bg-surface'
       }`}
     >
       <span
@@ -123,7 +123,7 @@ function Row({ item, on, single, readOnly, onToggle }: {
       aria-pressed={on}
       title={item.disabled ? item.disabledHint : undefined}
       className={`flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
-        on ? 'border-accent/50 bg-accent/15 text-text' : 'border-border text-text hover:bg-elevated'
+        on ? 'border-primary/50 bg-primary/15 text-text' : 'border-border text-text hover:bg-elevated'
       } ${item.disabled ? 'cursor-not-allowed opacity-50' : ''}`}
     >
       {content}
@@ -211,10 +211,10 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t.managePicker.searchPlaceholder}
               aria-label={t.managePicker.searchPlaceholder}
-              className="w-full rounded-md border border-border bg-surface py-1.5 pl-8 pr-2.5 text-xs text-text outline-none transition-colors focus:border-accent"
+              className="w-full rounded-md border border-border bg-surface py-1.5 pl-8 pr-2.5 text-xs text-text outline-none transition-colors focus:border-primary"
             />
           </div>
-          <span className="shrink-0 rounded-md border border-accent/40 bg-accent/15 px-2 py-1 text-[11px] font-medium text-accent">
+          <span className="shrink-0 rounded-md border border-primary/40 bg-primary/15 px-2 py-1 text-[11px] font-medium text-primary">
             {readOnly
               ? countText(items.length)
               : single ? chosenLabel : t.managePicker.selectedCount.replace('{n}', String(local.size))}

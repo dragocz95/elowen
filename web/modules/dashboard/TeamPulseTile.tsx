@@ -42,7 +42,7 @@ export function TeamPulseTile() {
         <div className="flex items-center gap-2">
           <h2 id="dashboard-pulse" className="dash-label">{t.dashboard.pulse}</h2>
           {/* Live because the tile is SSE-driven, not because anything polls. */}
-          <span className="dash-live rounded-full border border-accent/40 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-accent">
+          <span className="dash-live rounded-full border border-primary/40 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-primary">
             {t.dashboard.live}
           </span>
         </div>

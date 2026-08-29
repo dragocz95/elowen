@@ -22,12 +22,12 @@ body {
   overflow: hidden;
   overscroll-behavior: none;
   background-image:
-    radial-gradient(circle at 71% -20%, rgb(var(--accent-rgb) / 0.03), transparent 34rem),
-    radial-gradient(circle at 10% 112%, rgb(var(--accent-rgb) / 0.014), transparent 30rem);
+    radial-gradient(circle at 71% -20%, rgb(var(--primary-rgb) / 0.03), transparent 34rem),
+    radial-gradient(circle at 10% 112%, rgb(var(--primary-rgb) / 0.014), transparent 30rem);
   background-attachment: fixed;
 }
 
-::selection { color: var(--color-text); background: rgb(var(--accent-rgb) / 0.34); }
+::selection { color: var(--color-text); background: rgb(var(--primary-rgb) / 0.34); }
 
 h1, h2, h3, h4, h5, h6, .font-display {
   font-family: var(--font-display);
@@ -47,7 +47,7 @@ select:focus-visible,
 [role="radio"]:focus-visible,
 [role="checkbox"]:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px var(--color-bg), 0 0 0 3px color-mix(in srgb, var(--color-accent) 78%, white 22%);
+  box-shadow: 0 0 0 1px var(--color-bg), 0 0 0 3px color-mix(in srgb, var(--color-primary) 78%, white 22%);
 }
 
 * {

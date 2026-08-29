@@ -8,7 +8,7 @@
  * catalog, a model page, the playground and the docs shell) rather than eyeballed — surfaces, hairlines,
  * ink ramp and status colours are theirs 1:1. The ONE substitution is the accent: their volt green
  * (#c8ff00) is a brand mark and ours is the mascot's ember, so every accent fill, focus ring, active
- * state and link resolves through --accent-rgb instead.
+ * state and link resolves through --primary-rgb instead.
  *
  * Measured on --color-surface-sticky, which derives to #121719 and is the lightest ground the ink ramp
  * is painted on: text 17.63:1, muted 7.14:1, subtle 4.81:1.
@@ -47,9 +47,9 @@
 
   /* The substitution: ember where OpenRouter is volt. Same role in the design — fills, focus rings,
      active tabs, links — and the same near-black ink laid on top of it (6.24:1 on the fill). */
-  --color-accent: #ff5236;
-  --color-accent-hot: #ff735c;
-  --accent-rgb: 255 82 54;
+  --color-primary: #ff5236;
+  --color-primary-hot: #ff735c;
+  --primary-rgb: 255 82 54;
 
   --color-ember: #ff9a62;
   --color-ember-bright: #ffd09a;
@@ -119,7 +119,7 @@
   --shadow-card: none;
   --shadow-raised: 0 16px 48px rgb(0 0 0 / 0.6);
   --shadow-ember: none;
-  --glow-active: 0 0 0 1px rgb(var(--accent-rgb) / 0.5);
+  --glow-active: 0 0 0 1px rgb(var(--primary-rgb) / 0.5);
   --glow-soft: none;
   --hairline: 1px solid rgb(252 252 254 / 0.08);
 

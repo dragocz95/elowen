@@ -32,13 +32,13 @@ function DiscordPreview({ detail, values }: { detail: PluginDetail; values: Reco
   ) : <span className="mt-1 block truncate text-[10px] text-text">✓ 42/42</span>;
   const bubble = (name: string, status: string, withOutput = false) => (
     <div data-testid="discord-tool-bubble" className={previewBox}>
-      <div className="flex items-center gap-2 font-mono text-[11px] text-text-muted"><Wrench size={12} className="text-accent" aria-hidden /><span>{name}</span><span className="ml-auto">{status}</span></div>
+      <div className="flex items-center gap-2 font-mono text-[11px] text-text-muted"><Wrench size={12} className="text-primary" aria-hidden /><span>{name}</span><span className="ml-auto">{status}</span></div>
       {withOutput ? outputPreview : null}
     </div>
   );
   const toolPanel = tools === 'off' ? (
     <div className={previewBox}>
-      <div className="mb-1 flex items-center gap-2 text-xs font-medium text-text"><Wrench size={13} className="text-accent" aria-hidden />{t.pluginDetail.previewToolActivity}</div>
+      <div className="mb-1 flex items-center gap-2 text-xs font-medium text-text"><Wrench size={13} className="text-primary" aria-hidden />{t.pluginDetail.previewToolActivity}</div>
       <span className="text-xs text-text-muted">{t.pluginDetail.previewHidden}</span>
     </div>
   ) : perTool ? (
@@ -48,7 +48,7 @@ function DiscordPreview({ detail, values }: { detail: PluginDetail; values: Reco
     </div>
   ) : (
     <div data-testid="discord-tool-bubble" className={previewBox}>
-      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-text"><Wrench size={13} className="text-accent" aria-hidden />{t.pluginDetail.previewToolActivity}</div>
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-text"><Wrench size={13} className="text-primary" aria-hidden />{t.pluginDetail.previewToolActivity}</div>
       <div className="flex flex-col gap-1.5 font-mono text-[11px] text-text-muted">
         <span className="flex justify-between gap-2"><span>Bash</span><span>{t.pluginDetail.previewRunning}</span></span>
         {outputPreview}
@@ -61,7 +61,7 @@ function DiscordPreview({ detail, values }: { detail: PluginDetail; values: Reco
       <div data-testid="discord-preview-layout" className="grid grid-cols-1 gap-2.5 @lg:grid-cols-[minmax(0,1.35fr)_minmax(0,.65fr)] @lg:items-stretch">
         {toolPanel}
         <div className={`${previewBox} text-xs leading-relaxed text-text`}>
-          <span className="mb-1 block font-medium text-accent">{agentName}</span>
+          <span className="mb-1 block font-medium text-primary">{agentName}</span>
           {answer === 'live' ? t.pluginDetail.previewStreamingAnswer : t.pluginDetail.previewFinalAnswer}
         </div>
       </div>
@@ -89,7 +89,7 @@ function CronPreview({ detail, values }: { detail: PluginDetail; values: Record<
   const attempts = Number(valueOf(detail, values, 'retryAttempts') ?? 2);
   return (
     <div className="rounded-lg border border-border/70 bg-text/[0.02] p-3">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-text"><Clock3 size={15} className="text-accent" aria-hidden />{t.pluginDetail.previewScheduler}</div>
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-text"><Clock3 size={15} className="text-primary" aria-hidden />{t.pluginDetail.previewScheduler}</div>
       <dl className="grid grid-cols-2 gap-2 text-xs">
         <dt className="text-text-muted">{t.pluginDetail.previewCheckEvery}</dt><dd className="text-right font-mono text-text">{tick}s</dd>
         <dt className="text-text-muted">{t.pluginDetail.previewAttempts}</dt><dd className="text-right font-mono text-text">{attempts}</dd>
@@ -139,11 +139,11 @@ export function PluginLivePreview({ detail, values, fieldLabel }: {
   else if (name === 'whatsapp') body = <WhatsAppPreview detail={detail} values={values} />;
   else if (name === 'cronjob') body = <CronPreview detail={detail} values={values} />;
   else if (name === 'terminal') body = <TerminalPreview detail={detail} values={values} />;
-  else if (name.includes('personality')) body = <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-text/[0.02] p-3 text-sm text-text"><Bot size={15} className="text-accent" aria-hidden />{t.pluginDetail.previewPersonality}</div>;
+  else if (name.includes('personality')) body = <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-text/[0.02] p-3 text-sm text-text"><Bot size={15} className="text-primary" aria-hidden />{t.pluginDetail.previewPersonality}</div>;
   else body = <GenericPreview detail={detail} values={values} fieldLabel={fieldLabel} />;
   return (
     <section aria-label={t.pluginDetail.livePreview} className="rounded-[var(--radius-lg)] border border-text/[0.075] bg-text/[0.012] p-4">
-      <header className="mb-4 flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-sm font-medium text-text"><MessageCircle size={15} className="text-accent" aria-hidden />{t.pluginDetail.livePreview}</span><span className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.08em] text-success"><Check size={11} aria-hidden />{t.pluginDetail.previewLive}</span></header>
+      <header className="mb-4 flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-sm font-medium text-text"><MessageCircle size={15} className="text-primary" aria-hidden />{t.pluginDetail.livePreview}</span><span className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.08em] text-success"><Check size={11} aria-hidden />{t.pluginDetail.previewLive}</span></header>
       {body}
     </section>
   );

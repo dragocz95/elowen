@@ -72,7 +72,7 @@ export function ModelModal({ initial, existingExecs, activeProviders, onClose, o
                   type="button"
                   onClick={() => setProvider(id)}
                   aria-pressed={active}
-                  className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 transition-colors ${active ? 'border-accent bg-accent/[0.07]' : 'border-border bg-surface hover:border-border-strong'}`}
+                  className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 transition-colors ${active ? 'border-primary bg-primary/[0.07]' : 'border-border bg-surface hover:border-border-strong'}`}
                 >
                   {meta
                     /* eslint-disable-next-line @next/next/no-img-element */

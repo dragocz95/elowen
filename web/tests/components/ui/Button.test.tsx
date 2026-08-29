@@ -14,7 +14,7 @@ describe('Button', () => {
   it('applies the accent variant class', () => {
     render(<Button variant="accent">Go</Button>);
     const button = screen.getByRole('button', { name: 'Go' });
-    expect(button.className).toContain('bg-accent');
+    expect(button.className).toContain('bg-primary');
     expect(button.className).toContain('text-bg');
     expect(button.className).not.toContain('text-white');
   });

@@ -294,7 +294,7 @@ function Sparkline({ days }: { days: { day: string; tokens: number }[] }) {
   return (
     <SharedSparkline
       values={days.map((day) => day.tokens)}
-      colour="var(--color-accent)"
+      colour="var(--color-primary)"
       variant="bar"
       highlightLast
       className="mt-1.5 h-5 w-full"
