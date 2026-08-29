@@ -176,7 +176,7 @@ test('the rows of a register share one height', async ({ page }, testInfo) => {
   expect([...new Set(heights)], 'every standard row is the same height').toHaveLength(1);
 });
 
-test('no control surface toolbar overflows its own box', async ({ page }, testInfo) => {
+test('no page toolbar overflows its own box', async ({ page }, testInfo) => {
   authedOnly(testInfo);
   // /p/skills clipped the last Segmented option by 15px at 320px, because the toolbar was a fixed-width
   // row in a box narrower than itself. A toolbar either fits or scrolls; it never hides a control.
@@ -187,12 +187,12 @@ test('no control surface toolbar overflows its own box', async ({ page }, testIn
       // The toolbar has to be measured on a SETTLED surface. Measured while the register is still
       // loading, the surface is briefly a fraction of its final width and every toolbar in it reads as
       // overflowing — a race that fails as loudly as a real defect and means nothing.
-      await expect(page.locator('.control-surface-toolbar').first()).toBeVisible();
+      await expect(page.locator('.page-toolbar__row').first()).toBeVisible();
       // Polled, not sampled once: the surface reaches its real width only after the shell's container
       // query resolves, and a toolbar measured before that reads as overflowing a 92px surface. The
       // assertion is about the SETTLED layout, so a genuine overflow still fails — it just never clears.
       await expect.poll(async () => page.evaluate(() =>
-        [...document.querySelectorAll<HTMLElement>('.control-surface-toolbar')]
+        [...document.querySelectorAll<HTMLElement>('.page-toolbar__row')]
           .filter((bar) => bar.scrollWidth > bar.clientWidth + 1 && !/auto|scroll/.test(getComputedStyle(bar).overflowX))
           .map((bar) => `${bar.className} ${bar.scrollWidth}>${bar.clientWidth}`)),
       `${route} at ${width}px`).toEqual([]);
@@ -313,7 +313,7 @@ test('the phone task overlay scrolls to its last task under a pinned header', as
     await expect(page.locator('[data-variant="full"]')).toBeVisible();
 
     // The phone folds the wide controls behind ⋯; the task manager it opens is the same modal as /tasks.
-    await page.locator('[data-variant="full"]').locator('button[aria-expanded]').last().click();
+    await page.getByRole('button', { name: /^(More options|Další možnosti|Ďalšie možnosti)$/ }).click();
     await page.locator('[data-chat-popover]').getByRole('button', { name: /^(Tasks|Úkoly|Úlohy)$/ }).click();
 
     const dialog = page.locator('[data-elowen-modal]');

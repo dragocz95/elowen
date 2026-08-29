@@ -439,7 +439,7 @@ export function McpServersPage() {
       <C.DataTable
         ariaLabel={s.title}
         columns={canManageInstance ? '2rem minmax(0,1fr) 6rem 7rem 5rem minmax(0,10rem) 1.25rem' : '2rem minmax(0,1fr) 6rem 5rem minmax(0,10rem) 1.25rem'}
-        compactColumns="2rem minmax(0,1fr) 1.25rem"
+        compactColumns="2rem minmax(0,1fr)"
       >
         <C.DataTableRow header>
           {/* Both this column and the one carrying the failure text state the connection. Only one of

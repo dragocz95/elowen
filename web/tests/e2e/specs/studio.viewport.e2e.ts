@@ -126,14 +126,14 @@ test('Studio matches the reference typography, toolbar and settings density', as
   expect(pageStyle.spacing).toBe('-0.15px');
   expect(pageStyle.family).toContain('Geist');
 
-  const toolbar = app.locator('.page-toolbar__slot .control-surface-toolbar');
+  const toolbar = app.locator('.page-toolbar__row');
   await expect(toolbar).toBeVisible();
   const controlHeights = await toolbar
     .locator('input, button, [role="combobox"], select')
     .evaluateAll((controls) => controls.filter((control) => (control as HTMLElement).offsetParent !== null)
       .map((control) => Math.round(control.getBoundingClientRect().height)));
-  expect(controlHeights.length).toBeGreaterThan(2);
-  expect([...new Set(controlHeights)]).toEqual([40]);
+  expect(controlHeights, 'Memory keeps search and the condensed Filters trigger in the toolbar row').toHaveLength(2);
+  expect([...new Set(controlHeights)]).toEqual([36]);
 
   await openStudio(app, '/settings?cat=brain');
   const split = app.locator('.settings-group__body[data-columns="2"]').first();
@@ -314,7 +314,7 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
   // The canonical order: what the page IS, then its live figures, then the controls that narrow it. A
   // promoted register toolbar lands in the toolbar row's slot, BELOW the title — it used to be lifted
   // above it, so every register opened on its filters and named itself second.
-  const memoryToolbar = app.locator('.page-toolbar__slot .control-surface-toolbar');
+  const memoryToolbar = app.locator('.page-toolbar');
   await expect(memoryToolbar).toBeVisible();
   const desktopOrder = await app.evaluate(() => {
     const head = document.querySelector<HTMLElement>('.workspace-hero__head')!.getBoundingClientRect();
@@ -330,8 +330,8 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
   await app.setViewportSize({ width: 390, height: 844 });
   await openStudio(app, '/settings?cat=models');
   await expect(app.getByRole('heading', { level: 1, name: 'Models' })).toBeVisible();
-  await expect(app.locator('.page-toolbar__slot .settings-toolbar input[type="search"]')).toBeVisible();
-  await expect(app.locator('.workspace-hero__metrics')).toHaveCount(0);
+  await expect(app.locator('.page-toolbar input[type="search"]')).toBeVisible();
+  await expect(app.locator('.workspace-hero__metrics')).toBeVisible();
   await expect(app.locator('.workspace-hero__actions button')).toHaveCount(0);
   const mobileOrder = await app.evaluate(() => {
     const toolbar = document.querySelector<HTMLElement>('.page-toolbar')!.getBoundingClientRect();
@@ -772,18 +772,18 @@ test('the Studio chat is centred on its own frame and its bar pickers open out o
   // The page's own controls sit above the page they belong to, not against the window's left edge.
   expect(Math.abs(frame.slotCentre - frame.capCentre)).toBeLessThanOrEqual(1);
 
-  // The regression: the bar's leading column clipped its own overflow, so a picker's listbox — anchored
+  // The regression: the bar's leading column clipped its own overflow, so a picker's Radix menu — anchored
   // under a 50px bar — was rendered, focusable and entirely invisible. `toBeVisible` cannot see that (the
   // element has a box either way), so this hit-tests the menu where the pointer would land.
   await app.locator('[data-testid="page-top-bar-host"] [data-testid="chat-model-picker"] button').click();
   const menu = await app.evaluate(() => {
-    const listbox = document.querySelector<HTMLElement>('.top-bar__page-slot [role="listbox"]');
-    if (!listbox) return null;
-    const box = listbox.getBoundingClientRect();
+    const popup = document.querySelector<HTMLElement>('.top-bar__page-slot [role="menu"]');
+    if (!popup) return null;
+    const box = popup.getBoundingClientRect();
     const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 8);
-    return { width: Math.round(box.width), height: Math.round(box.height), reachable: listbox.contains(hit) };
+    return { width: Math.round(box.width), height: Math.round(box.height), reachable: popup.contains(hit) };
   });
-  expect(menu, 'the model listbox opened').not.toBeNull();
+  expect(menu, 'the model menu opened').not.toBeNull();
   expect(menu!.width).toBeGreaterThan(0);
   expect(menu!.height).toBeGreaterThan(0);
   expect(menu!.reachable, 'the listbox is clipped away by the bar').toBe(true);
