@@ -492,6 +492,28 @@ export const en = {
     cleanupConfirmDesc: 'All tasks, missions and activity will be permanently removed and running sessions stopped. Projects, users and settings are kept.',
     cleanupDone: 'Cleaned up — removed {tasks} tasks and {missions} missions.',
     sectionsNav: 'Settings sections',
+    /** Labels for the deck hero's metric rail — the hairline strip of figures every settings section
+     *  opens with. Each names a count the section itself already holds, so the rail never reports a
+     *  number with no editor under it. */
+    metric: {
+      catalog: 'In the catalog',
+      enabled: 'Enabled',
+      custom: 'Custom models',
+      overrides: 'Context overrides',
+      accounts: 'Provider accounts',
+      connected: 'Connected',
+      aiModels: 'AI models',
+      embeddingProviders: 'Embedding providers',
+      embeddingModels: 'Embedding models',
+      categorizationModels: 'Categorization models',
+      pluginWorlds: 'Plugins with a UI',
+      pluginPages: 'Plugin pages',
+      pluginSections: 'Plugin settings',
+      logFiles: 'Log files',
+      logVolume: 'Log volume',
+      requestCapture: 'Request capture',
+      conversationCleanup: 'Conversation cleanup',
+    },
     adminOnly: 'Administrators only',
     adminOnlyDesc: 'This section is reserved for admins. Edit your own profile in My account.',
     addModel: 'Add model',

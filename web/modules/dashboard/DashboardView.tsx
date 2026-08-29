@@ -1,5 +1,6 @@
 'use client';
 import { useRef } from 'react';
+import { Coins, MessagesSquare, UserRound, Wallet } from 'lucide-react';
 import { FinishSetupBanner } from '../../components/ui/FinishSetupBanner';
 import { MotionReveal } from '../../components/ui/Motion';
 import { HeroNowTile } from './HeroNowTile';
@@ -9,6 +10,9 @@ import { TeamPulseTile } from './TeamPulseTile';
 import { useNow } from '../../lib/useNow';
 import { useTranslation } from '../../lib/i18n';
 import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
+import { usePulse } from '../../lib/queries';
+import { formatCost, formatTokens } from '../../lib/format';
 import { usePresence } from './usePresence';
 
 /** The workspace home: setup posture, who is working right now, recent activity and team presence.
@@ -24,6 +28,17 @@ export function DashboardView() {
   const nowMs = useNow();
   const { t, locale } = useTranslation();
   const presence = usePresence();
+  // The SAME request the presence hook and the pulse tile already make — one react-query key, one fetch.
+  // The rail reports the instance's headline totals for today; the tile below divides exactly these
+  // numbers per person and per channel, which is the division of labour the anatomy asks for.
+  const pulse = usePulse().data;
+  const totals = pulse?.totals;
+  // Three states, kept apart on purpose: no answer yet, a rollup that cannot price the day, and a day
+  // whose turns carried no price. Collapsing any of them into "0" would state a spend nobody measured.
+  const spendToday = totals === undefined ? '—'
+    : pulse?.spendAvailable === false ? t.dashboard.pulseSpendOff
+    : totals.cost === null ? t.dashboard.pulseUnpriced
+    : formatCost(totals.cost, 2);
 
   const date = new Date(nowMs);
   const hour = date.getHours();
@@ -54,6 +69,18 @@ export function DashboardView() {
               {date.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })}
             </span>
           </span>
+        ),
+        // The canonical divider rail: heading, then figures. Four facts about TODAY, in the order an
+        // operator reads them — how much work happened, what it moved, what it cost, and who is mid-turn
+        // right now. `presence.activeCount` is live and is not one of today's totals, which is why it
+        // comes from the presence hook rather than from `totals.activePeople` ("active at some point").
+        metrics: (
+          <>
+            <WorkspaceMetric label={t.dashboard.pulseColTurns} value={totals?.turns ?? '—'} icon={MessagesSquare} />
+            <WorkspaceMetric label={t.dashboard.pulseColTokens} value={totals ? formatTokens(totals.tokens) : '—'} icon={Coins} />
+            <WorkspaceMetric label={t.dashboard.pulseColCost} value={spendToday} icon={Wallet} />
+            <WorkspaceMetric label={t.dashboard.workingNow} value={presence.activeCount} icon={UserRound} />
+          </>
         ),
       }}
     >

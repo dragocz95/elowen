@@ -32,13 +32,23 @@
    The narrow value is set from the `workspace-shell` container, which is the right question to ask: a
    hero squeezed by a pinned advisor dock wants the tighter gap even though the window is wide. It works
    because an element is styled against its nearest ANCESTOR container, so `.workspace-hero` — itself a
-   container — is still matched against the shell around it. */
+   container — is still matched against the shell around it.
+
+   `.workspace-page__lead` is the ONE wrapper a page may put between itself and its hero: the route
+   entrance the plugin host wraps a settings section in (app/p/[plugin]/[[...rest]]/page.tsx). Without it
+   the child combinator missed, and every plugin settings page opened flush against the top bar while
+   every core page kept its 2rem. It is a named wrapper rather than a descendant combinator on purpose —
+   `.workspace-page .workspace-hero` would also pad a hero a plugin bundle mounts DEEP inside its own
+   content, which is a different hero with a different job. The wrapper declares no container of its own,
+   so the narrow query below still resolves against `.workspace-page`. */
 .workspace-shell > .workspace-hero,
-.workspace-page > .workspace-hero { padding-block-start: 2rem; }
+.workspace-page > .workspace-hero,
+.workspace-page > .workspace-page__lead > .workspace-hero { padding-block-start: 2rem; }
 
 @container workspace-shell (width < 34rem) {
   .workspace-shell > .workspace-hero,
-  .workspace-page > .workspace-hero { padding-block-start: 1rem; }
+  .workspace-page > .workspace-hero,
+  .workspace-page > .workspace-page__lead > .workspace-hero { padding-block-start: 1rem; }
 }
 
 /* The section navigation is IN THE PAGE, between the metric rail and the toolbar row — it used to portal
