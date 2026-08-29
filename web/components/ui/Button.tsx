@@ -27,18 +27,8 @@ const SHADCN_VARIANT = {
   'outline-danger': 'outline-destructive',
 } as const satisfies Record<ButtonVariant, NonNullable<Parameters<typeof buttonVariants>[0]>['variant']>;
 
-/** The size axis is the primitive's, passed through under its own names — unlike `variant`, the two
- *  vocabularies do not disagree here, so a second map would be a second thing to keep in sync for nothing.
- *  `satisfies` is what ties it to the CVA: a name that is not a real size there fails to compile. `icon`
- *  is on the list because `IconButton` composes this wrapper; it is the one size that expects no children.
- *
- *  Both axes are exported as VALUES because the gallery renders them exhaustively, and reading them off
- *  this file is the only way a name added here cannot quietly go uncovered. Declaration order is the
- *  render order there. */
-export const BUTTON_SIZES = ['sm', 'default', 'lg', 'icon'] as const satisfies readonly NonNullable<Parameters<typeof buttonVariants>[0]>['size'][];
-export type ButtonSize = (typeof BUTTON_SIZES)[number];
-
-export const BUTTON_VARIANTS = Object.keys(SHADCN_VARIANT) as ButtonVariant[];
+/** The size axis is the primitive's, passed through under its own names. */
+export type ButtonSize = NonNullable<Parameters<typeof buttonVariants>[0]>['size'];
 
 /** The button's classes without the button — for the handful of places that need the same control on an
  *  `<a>` or a `<label>`. Callers append their own overrides through `className`, and going through `cn()`
