@@ -51,7 +51,7 @@ export function cycleTabFocus(event: KeyboardEvent, container: HTMLElement): voi
 
 /** The offcanvas navigation sheet's keyboard contract, shared by both navigations.
  *
- *  A nav drawer is deliberately NOT routed through `useDialogOverlay`: that stack isolates the
+ *  A nav drawer is deliberately NOT routed through the overlay stack (`overlayStack.ts`): it isolates the
  *  background by marking every OTHER child of `document.body` inert, which only works for an overlay
  *  portalled to the body. These drawers render inside the shell tree, so their own body-level ancestor
  *  would be the node marked inert — the sheet would disable itself. What it owes instead is what a

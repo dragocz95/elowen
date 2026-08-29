@@ -43,7 +43,7 @@ interface ModalProps {
  *  and pauses the parent scope while a nested dialog is up), Escape and the layer stack that decides
  *  which of several open dialogs Escape belongs to. The hand-written equivalents used to live in
  *  `overlayStack.ts`; running both would mean two implementations answering the same Tab and moving
- *  focus twice, so this component takes `useOverlayIsolation` rather than `useDialogOverlay`.
+ *  focus twice, so this component takes `useOverlayIsolation` and nothing more.
  *
  *  WHAT THE APP STILL OWNS, because Radix has no notion of it:
  *   - the overlay stack and its `inert` isolation, which is also what keeps a rail or takeover UNDER a

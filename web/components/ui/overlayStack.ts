@@ -1,7 +1,6 @@
 'use client';
 
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import { cycleTabFocus } from './focusCycle';
 
 type OverlayEntry = { id: symbol; root: HTMLElement };
 type PriorState = { inert: boolean; ariaHidden: string | null };
@@ -133,9 +132,7 @@ export function useReturnFocus() {
  *  overlays — Radix-driven or not — is the live one; and a `Dialog` mounted without a `Dialog.Trigger`,
  *  which is every dialog in this app, leaves Radix with nothing to hand focus back to on close.
  *
- *  This is what an overlay takes once Radix owns its focus trap and Escape — `Modal`, `ConfirmDialog`,
- *  the workspace detail rail, the workspace takeover and the command orbit. `useDialogOverlay` below is
- *  the pre-Radix contract and has one caller left. */
+ *  This is what every overlay in the app takes now that Radix owns its focus trap and Escape. */
 export function useOverlayIsolation({ enabled, rootRef }: {
   enabled: boolean;
   rootRef: RefObject<HTMLElement | null>;
@@ -170,40 +167,3 @@ export function useOverlayIsolation({ enabled, rootRef }: {
   };
 }
 
-/** Shared modal/drawer lifecycle: stack ownership, background isolation, focus trap and restoration.
- *
- *  This is the pre-Radix contract, and `components/shell/CommandPalette.tsx` is the last caller — every
- *  other overlay now takes `useOverlayIsolation` and lets Radix trap focus and answer Escape, because
- *  running this trap alongside Radix's would mean two implementations answering the same Tab and moving
- *  focus twice. Delete this hook (and `focusCycle`'s use of it here) with that last caller. */
-export function useDialogOverlay({ enabled, rootRef, dialogRef, onClose }: {
-  enabled: boolean;
-  rootRef: RefObject<HTMLElement | null>;
-  dialogRef: RefObject<HTMLElement | null>;
-  onClose: () => void;
-}) {
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  const { isTopmostOverlay, restoreFocus } = useOverlayIsolation({ enabled, rootRef });
-  useEffect(() => {
-    if (!enabled || !rootRef.current || !dialogRef.current) return undefined;
-    const dialog = dialogRef.current;
-    focusOverlaySurface(dialog);
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!isTopmostOverlay()) return;
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      cycleTabFocus(event, dialog);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      restoreFocus();
-    };
-  }, [dialogRef, enabled, isTopmostOverlay, restoreFocus, rootRef]);
-}
