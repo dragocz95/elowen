@@ -1,0 +1,144 @@
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import type { PublishedSitesGatewayControl, PublishedSitesGatewayStatus } from '../plugins/api.js';
+import { SITE_GATEWAY_HELPER_PATH } from '../shared/siteGateway.js';
+const MAX_OUTPUT_BYTES = 64 * 1024;
+const HELPER_TIMEOUT_MS = 30_000;
+
+type HelperRequest =
+  | { op: 'apply'; certificatePem: string; privateKeyPem: string; gatewayToken: string }
+  | { op: 'deny' }
+  | { op: 'status' };
+
+interface HelperResponse {
+  ok: boolean;
+  active?: boolean;
+  hostnameBase?: string | null;
+  detail?: string;
+}
+
+export type SiteGatewayHelperInvoker = (request: HelperRequest) => Promise<HelperResponse>;
+
+function hostnameBase(publicWebUrl: string | null): string | null {
+  if (!publicWebUrl) return null;
+  try {
+    const url = new URL(publicWebUrl);
+    if (url.protocol !== 'https:' || !url.hostname.includes('.') || url.hostname === 'localhost') return null;
+    return `sites.${url.hostname.toLowerCase()}`;
+  } catch {
+    return null;
+  }
+}
+
+function defaultInvoker(request: HelperRequest): Promise<HelperResponse> {
+  if (!existsSync(SITE_GATEWAY_HELPER_PATH)) {
+    return Promise.reject(new Error('the site gateway helper is not installed'));
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn('sudo', ['-n', SITE_GATEWAY_HELPER_PATH], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin' },
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let outputBytes = 0;
+    let settled = false;
+
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+    };
+    const collect = (target: Buffer[], chunk: Buffer): void => {
+      outputBytes += chunk.length;
+      if (outputBytes > MAX_OUTPUT_BYTES) {
+        child.kill('SIGKILL');
+        finish(new Error('the site gateway helper produced too much output'));
+        return;
+      }
+      target.push(chunk);
+    };
+
+    child.stdout.on('data', (chunk: Buffer) => collect(stdout, chunk));
+    child.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk));
+    child.once('error', () => finish(new Error('the site gateway helper is not installed or cannot be executed')));
+    child.once('close', (code) => {
+      if (settled) return;
+      clearTimeout(timer);
+      settled = true;
+      const out = Buffer.concat(stdout).toString('utf8').trim();
+      if (code !== 0) {
+        const detail = Buffer.concat(stderr).toString('utf8').trim().slice(0, 1_000);
+        reject(new Error(detail || `the site gateway helper exited with status ${code ?? 'unknown'}`));
+        return;
+      }
+      try {
+        const parsed = JSON.parse(out) as HelperResponse;
+        if (typeof parsed.ok !== 'boolean') throw new Error('missing verdict');
+        resolve(parsed);
+      } catch {
+        reject(new Error('the site gateway helper returned an invalid response'));
+      }
+    });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish(new Error('the site gateway helper timed out'));
+    }, HELPER_TIMEOUT_MS);
+    timer.unref?.();
+    child.stdin.end(JSON.stringify(request));
+  });
+}
+
+function unavailable(detail: string): PublishedSitesGatewayStatus {
+  return { available: false, active: false, hostnameBase: null, detail };
+}
+
+/** Build the narrow control published sites receive. Hostname and system paths never come from the
+ * plugin: the hostname is derived from trusted install metadata here, while the root helper derives all
+ * paths and the loopback upstream from its own root-owned deployment record. */
+export function createPublishedSitesGatewayControl(options: {
+  publicWebUrl: string | null;
+  invoke?: SiteGatewayHelperInvoker;
+}): PublishedSitesGatewayControl {
+  const base = hostnameBase(options.publicWebUrl);
+  const invoke = options.invoke ?? defaultInvoker;
+
+  const call = async (request: HelperRequest): Promise<PublishedSitesGatewayStatus> => {
+    if (!base) return unavailable('published sites require a trusted HTTPS domain deployment');
+    try {
+      const result = await invoke(request);
+      if (!result.ok) return unavailable(result.detail || 'the site gateway helper refused the request');
+      if (result.hostnameBase !== undefined && result.hostnameBase !== base) {
+        return unavailable('the root helper is configured for a different public hostname');
+      }
+      return {
+        available: true,
+        active: result.active === true,
+        hostnameBase: base,
+        ...(result.detail ? { detail: result.detail } : {}),
+      };
+    } catch (error) {
+      return unavailable(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  return {
+    hostnameBase: () => base,
+    ensure: async ({ certificatePem, privateKeyPem, gatewayToken }) => {
+      if (!certificatePem.includes('BEGIN CERTIFICATE') || certificatePem.length > 256_000) {
+        return unavailable('the wildcard certificate is missing or too large');
+      }
+      if (!privateKeyPem.includes('BEGIN') || !privateKeyPem.includes('PRIVATE KEY') || privateKeyPem.length > 64_000) {
+        return unavailable('the wildcard private key is missing or too large');
+      }
+      if (!/^[A-Za-z0-9_-]{43,128}$/.test(gatewayToken)) {
+        return unavailable('the internal gateway token is malformed');
+      }
+      return call({ op: 'apply', certificatePem, privateKeyPem, gatewayToken });
+    },
+    deny: () => call({ op: 'deny' }),
+    status: () => call({ op: 'status' }),
+  };
+}

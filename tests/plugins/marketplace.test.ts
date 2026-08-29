@@ -531,18 +531,60 @@ describe('MarketplaceService deferred apply', () => {
 });
 
 describe('MarketplaceService.uninstall', () => {
-  it('removes the folder AND its data, disables it, and reloads', async () => {
-    const { svc, userDir, dataRoot, enabled, reload } = setup({
+  it('stops the loaded generation before removing the folder and its data', async () => {
+    const { svc, userDir, dataRoot, enabled, reload, loaded } = setup({
       registryEntries: [{ name: 'notion', version: '1.0.0' }],
       installed: [{ name: 'notion', version: '1.0.0' }],
     });
     mkdirSync(join(dataRoot, 'notion'), { recursive: true });
     writeFileSync(join(dataRoot, 'notion', 'state.json'), '{}');
-    await svc.uninstall('notion');
+    reload.mockImplementationOnce(async () => {
+      // The reload is what stops old services. Both roots must still exist while that happens.
+      expect(existsSync(join(userDir, 'notion'))).toBe(true);
+      expect(existsSync(join(dataRoot, 'notion'))).toBe(true);
+      loaded.delete('notion');
+      return 'applied';
+    });
+    await expect(svc.uninstall('notion')).resolves.toBe('applied');
     expect(existsSync(join(userDir, 'notion'))).toBe(false);
     expect(existsSync(join(dataRoot, 'notion'))).toBe(false);
     expect(enabled).not.toContain('notion');
-    expect(reload).toHaveBeenCalled();
+  });
+
+  it('keeps every byte until a deferred disable reload actually lands', async () => {
+    const { svc, userDir, dataRoot, enabled, reload, loaded } = setup({
+      registryEntries: [{ name: 'notion', version: '1.0.0' }],
+      installed: [{ name: 'notion', version: '1.0.0' }],
+    });
+    mkdirSync(join(dataRoot, 'notion'), { recursive: true });
+    writeFileSync(join(dataRoot, 'notion', 'state.json'), '{}');
+    reload.mockResolvedValueOnce('deferred');
+
+    await expect(svc.uninstall('notion')).resolves.toBe('deferred');
+    expect(enabled).not.toContain('notion');
+    expect(existsSync(join(userDir, 'notion'))).toBe(true);
+    expect(existsSync(join(dataRoot, 'notion'))).toBe(true);
+    expect(svc.pendingApplies()).toContain('notion');
+
+    loaded.delete('notion'); // the daemon's owed reload rebuilt without it
+    await svc.settleDeferredApplies();
+    expect(existsSync(join(userDir, 'notion'))).toBe(false);
+    expect(existsSync(join(dataRoot, 'notion'))).toBe(false);
+    expect(svc.pendingApplies()).not.toContain('notion');
+  });
+
+  it('restores the enabled setting and leaves data intact when the stop reload fails', async () => {
+    const { svc, userDir, dataRoot, enabled, reload } = setup({
+      registryEntries: [{ name: 'notion', version: '1.0.0' }],
+      installed: [{ name: 'notion', version: '1.0.0' }],
+    });
+    mkdirSync(join(dataRoot, 'notion'), { recursive: true });
+    reload.mockRejectedValueOnce(new Error('service would not stop'));
+
+    await expect(svc.uninstall('notion')).rejects.toThrow('service would not stop');
+    expect(enabled).toContain('notion');
+    expect(existsSync(join(userDir, 'notion'))).toBe(true);
+    expect(existsSync(join(dataRoot, 'notion'))).toBe(true);
   });
 
   it('refuses to uninstall a built-in plugin (409)', async () => {

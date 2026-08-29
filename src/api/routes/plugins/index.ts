@@ -471,8 +471,10 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (disc.source === 'user') {
       if (!d.marketplace) return c.json({ error: 'marketplace unavailable' }, 503);
       try {
-        await d.marketplace.uninstall(name);
-        return c.json({ ok: true });
+        const outcome = await d.marketplace.uninstall(name);
+        return outcome === 'deferred'
+          ? c.json({ ok: true, pending: true }, 202)
+          : c.json({ ok: true });
       } catch (e) { return marketplaceFail(c, e); }
     }
     // Bundled → soft-remove (hide + stop loading, keep files). Reversible via POST /plugins/:name/restore.

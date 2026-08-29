@@ -1,5 +1,6 @@
 /** Pure renderers for the two systemd unit files `elowen install` writes. Kept string-only and
  *  side-effect-free so they're unit-tested without touching /etc; the wizard writes + enables them. */
+import { SITE_GATEWAY_HELPER_PATH } from '../../shared/siteGateway.js';
 import { SERVICES } from '../systemd.js';
 
 export interface UnitParams {
@@ -127,12 +128,11 @@ WantedBy=timers.target
 `;
 }
 
-/** sudoers drop-in letting the unprivileged service user run — without a password — exactly the two
- *  privileged steps `elowen update` needs: restart its own units, and reinstall elowen in place. The
- *  reinstall grant is required when elowen lives in a root-owned global prefix (e.g. `/usr`) while the
- *  daemon runs as a non-root service user, where a plain `npm install -g` would hit EACCES. Both are
- *  pinned to the literal commands elowen issues (least privilege); `reinstallCmd` is the absolute,
- *  fully-resolved npm command so sudo matches it. Validated with `visudo -c` before it's trusted. */
+/** sudoers drop-in letting the unprivileged service user run — without a password — only the
+ *  privileged operations Elowen owns: restart its units, reinstall itself, and invoke the root-owned
+ *  published-sites gateway helper with NO arguments (its bounded JSON request arrives on stdin). The
+ *  helper grant is not a shell and accepts no path or command. Every command is pinned literally and the
+ *  completed file is validated with `visudo -c` before it is trusted. */
 export function elowenSudoers(user: string, reinstallCmd: string): string {
   // Built from SERVICES so the pinned restart command can't drift from what `systemctl('restart',
   // '--no-block', ...SERVICES)` actually issues (sudo matches arguments positionally). --no-block lets a
@@ -141,6 +141,7 @@ export function elowenSudoers(user: string, reinstallCmd: string): string {
   return `# Managed by elowen install — lets the ${user} service user restart its own units and self-update in place (auto-update + manual update).
 ${user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${units}, /usr/bin/systemctl is-active ${units}
 ${user} ALL=(root) NOPASSWD: ${reinstallCmd}
+${user} ALL=(root) NOPASSWD: ${SITE_GATEWAY_HELPER_PATH}
 `;
 }
 

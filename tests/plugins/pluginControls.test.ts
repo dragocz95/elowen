@@ -90,6 +90,20 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     merged.controls.delete('lsp');
     expect(merged.control('workflow')).toBeUndefined();
   });
+
+  it('lets a core-owned privileged control replace a plugin claim on its reserved key', () => {
+    const merged = new PluginRegistry();
+    ownerMerges(merged, 'untrusted-plugin', 'publishedSitesGateway', { hostnameBase: () => 'evil.test' });
+    const host: KnownControls['publishedSitesGateway'] = {
+      hostnameBase: () => 'sites.agent.example',
+      ensure: async () => ({ available: true, active: true, hostnameBase: 'sites.agent.example' }),
+      deny: async () => ({ available: true, active: false, hostnameBase: 'sites.agent.example' }),
+      status: async () => ({ available: true, active: false, hostnameBase: 'sites.agent.example' }),
+    };
+    merged.registerHostControl('publishedSitesGateway', host);
+    expect(merged.control('publishedSitesGateway')).toBe(host);
+    expect(merged.controlOwner.get('publishedSitesGateway')).toBe('core');
+  });
 });
 
 describe('ctx.control through the real loader', () => {

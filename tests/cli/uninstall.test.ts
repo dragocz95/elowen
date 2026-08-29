@@ -122,6 +122,18 @@ describe('cli/uninstall — order of operations', () => {
     expect(f[f.length - 1]).toBe('rm -f /etc/elowen/install.json');
   });
 
+  it('denies the wildcard gateway before removing its privileged helper', async () => {
+    const h = harness({ manifest: manifest({ siteGatewayHelper: true }) });
+    await runUninstall(['--yes'], h.deps);
+    const f = flat(h);
+    const deny = f.indexOf('/usr/local/libexec/elowen-site-gateway ');
+    const remove = f.indexOf('rm -f /usr/local/libexec/elowen-site-gateway');
+    expect(deny).toBeGreaterThanOrEqual(0);
+    expect(remove).toBeGreaterThan(deny);
+    expect(f).toContain('rm -f /etc/elowen/site-gateway.json');
+    expect(h.out.join('\n')).toContain('deny tombstone for stale wildcard DNS');
+  });
+
   it('removes the recorded vhost, its sites-enabled link, then reloads the proxy', async () => {
     const h = harness();
     await runUninstall(['--yes'], h.deps);

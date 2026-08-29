@@ -74,6 +74,7 @@ import { isExecAllowedForUser, isModelVisibleForUser, elowenExec } from '../shar
 import { webBaseUrl } from '../cli/installInfo.js';
 import { trustedPublicWebUrl } from '../shared/publicWebUrl.js';
 import { WORKFLOW_ADD_NODES_RPC, type WorkflowExpansionRpc } from '../subagent/hostRpc.js';
+import { createPublishedSitesGatewayControl } from '../privileged/publishedSitesGateway.js';
 
 const log = logger('daemon');
 
@@ -169,6 +170,11 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         allowKeyInitialization: opts.migrate !== false,
       });
   const canonicalPublicWebUrl = trustedPublicWebUrl(webBaseUrl());
+  // Privileged host controls exist only in the authoritative daemon. A forked runner (`migrate:false`)
+  // may load the sites tools, but it must never gain a path to sudo or mutate the machine's proxy.
+  const publishedSitesGateway = opts.migrate === false
+    ? null
+    : createPublishedSitesGatewayControl({ publicWebUrl: canonicalPublicWebUrl });
   const config = new ConfigStore(db);
   if (opts.migrate !== false) config.migrateRetiredPluginConfig();
   // Sandbox now owns Terminal's account HOME and confinement setting. Existing installs that had Terminal
@@ -607,7 +613,14 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       },
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,
-    }).then((registry) => {
+    }).then(async (registry) => {
+      if (publishedSitesGateway) {
+        registry.registerHostControl('publishedSitesGateway', publishedSitesGateway);
+        // A wildcard vhost deliberately survives as a deny tombstone. Whenever the sites owner is absent
+        // (disabled, failed to load, or uninstalled), reconcile that tombstone before this registry becomes
+        // live. No per-site nginx entry exists, so create/delete never touches the proxy.
+        if (!registry.loadedNames.has('sites')) await publishedSitesGateway.deny();
+      }
       // Snapshot the merged plugin output-show patterns so the (sync) messageView policy above reads the
       // current set — refreshed on every reload (a plugin toggle invalidates this provider), so a newly
       // enabled plugin's `showOutput` applies without a daemon restart.

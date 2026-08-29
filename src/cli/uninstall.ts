@@ -6,6 +6,7 @@ import { userHome } from './install/serviceUser.js';
 import { INSTALL_INFO_PATH, readInstallInfo, sanitizeInstallInfo, type InstallInfo } from './installInfo.js';
 import { LAUNCHD_DAEMON_LABEL, LAUNCHD_UPDATE_LABEL, LAUNCHD_WEB_LABEL, agentPlistPath } from './install/launchdUnits.js';
 import { AGENT_CLIS } from './install/agentClis.js';
+import { SITE_GATEWAY_DEPLOYMENT_PATH, SITE_GATEWAY_HELPER_PATH } from '../shared/siteGateway.js';
 
 /** One teardown action. `label` feeds the plan, the confirmation and `--dry-run`; `run` performs the
  *  mutation; `manual` is the exact command to run by hand when `run` fails — so a partially-failed
@@ -141,6 +142,25 @@ function buildPlan(deps: UninstallDeps, info: InstallInfo | null, purge: boolean
       steps.push({ label: `remove ${u.path}`, run: () => rm(deps, u.path), manual: `rm -f ${u.path}` });
     }
     steps.push({ label: 'reload systemd', run: () => execOk(deps, 'systemctl', ['daemon-reload']), manual: 'systemctl daemon-reload' });
+  }
+
+  // The wildcard gateway must fail closed before its helper is removed. The deny vhost and certificate
+  // intentionally remain as a tombstone: deleting them could make an old DNS hostname fall through to an
+  // unrelated default vhost on a machine nginx still serves for something else.
+  if (!mac && info?.artifacts?.siteGatewayHelper === true) {
+    steps.push({
+      label: 'deny published-sites wildcard gateway',
+      run: async () => {
+        const res = await deps.runner.exec(SITE_GATEWAY_HELPER_PATH, [], { input: '{"op":"deny"}\n' });
+        if (res.code !== 0 && !ALREADY_GONE.test(`${res.stdout}\n${res.stderr}`)) {
+          throw new Error(`site gateway deny failed: ${`${res.stdout}\n${res.stderr}`.trim() || res.code}`);
+        }
+      },
+      manual: `printf '%s\\n' '{"op":"deny"}' | ${SITE_GATEWAY_HELPER_PATH}`,
+    });
+    steps.push({ label: `remove ${SITE_GATEWAY_HELPER_PATH}`, run: () => rm(deps, SITE_GATEWAY_HELPER_PATH), manual: `rm -f ${SITE_GATEWAY_HELPER_PATH}` });
+    steps.push({ label: `remove ${SITE_GATEWAY_DEPLOYMENT_PATH}`, run: () => rm(deps, SITE_GATEWAY_DEPLOYMENT_PATH), manual: `rm -f ${SITE_GATEWAY_DEPLOYMENT_PATH}` });
+    kept.push('/etc/nginx/conf.d/elowen-sites-gateway.conf and /etc/elowen/sites-tls (deny tombstone for stale wildcard DNS)');
   }
 
   // Globally-installed agent CLIs — only when the record proves this install ran their `npm install -g`.

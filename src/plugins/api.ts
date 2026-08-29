@@ -1064,6 +1064,24 @@ export interface MicrosoftIdentityControl {
   driveGraphFor(elowenUserId: number): Promise<MicrosoftDriveGraph | null>;
 }
 
+export interface PublishedSitesGatewayStatus {
+  available: boolean;
+  active: boolean;
+  hostnameBase: string | null;
+  detail?: string;
+}
+
+/** Core-owned privileged boundary for the ONE wildcard gateway used by published sites. The plugin
+ * never receives a command, path, upstream or nginx fragment: core derives the hostname from trusted
+ * install metadata and the root helper owns every system path. Certificate material travels only over
+ * the helper's stdin and is never placed on a command line. */
+export interface PublishedSitesGatewayControl {
+  hostnameBase(): string | null;
+  ensure(input: { certificatePem: string; privateKeyPem: string; gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
+  deny(): Promise<PublishedSitesGatewayStatus>;
+  status(): Promise<PublishedSitesGatewayStatus>;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -1076,6 +1094,7 @@ export interface KnownControls {
   lsp: LspStateControl;
   sandbox: SandboxControl;
   microsoftIdentity: MicrosoftIdentityControl;
+  publishedSitesGateway: PublishedSitesGatewayControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`
