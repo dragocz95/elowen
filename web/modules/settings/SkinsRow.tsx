@@ -74,6 +74,11 @@ export function SkinsRow() {
             aria-haspopup="dialog"
             aria-expanded={open}
             onClick={() => setOpen(true)}
+            // The canonical hook every row picker carries. Studio's narrowest container query
+            // (skins/studio/surfaces.css) trades a trigger's inline padding for its label below 22rem,
+            // and it addresses `[data-row-picker]` — without it this one control kept full padding while
+            // every other picker in the same column gave it up, and its label truncated instead.
+            data-row-picker
             className="w-full justify-between font-normal"
           >
             <span className="min-w-0 truncate text-left">

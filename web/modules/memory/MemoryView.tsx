@@ -58,9 +58,10 @@ function memoryExcerpt(body: string): string {
   return flat.length > ROW_LABEL_MAX ? `${flat.slice(0, ROW_LABEL_MAX).trimEnd()}…` : flat;
 }
 
-/** States one toolbar filter as the discriminated union `PageFilters` requires, so a field that is
- *  narrowing the register always carries both its chip wording and its undo. Written once here because
- *  this register has five of them and the union cannot be produced by spreading a conditional object. */
+/** States one NARROWING toolbar filter as the discriminated union `PageFilters` requires, so a field
+ *  that is removing rows always carries both its chip wording and its undo. Written once here because
+ *  this register has three of them and the union cannot be produced by spreading a conditional object.
+ *  A display option is not routed through here at all — it has no active state to switch on. */
 function filterField(
   base: { id: string; label: string; control: ReactNode },
   active: boolean,
@@ -274,9 +275,10 @@ export function MemoryView() {
       icon: <span style={{ color: categorySwatch(category.color) }}><CategoryIcon name={category.icon} size={14} /></span>,
     })),
   ];
-  // Everything that narrows or reshapes the register, declared once. The toolbar derives the active
-  // count, the chips and every reset from this list, so a filter can no longer be added without also
-  // becoming visible and undoable — the hand-kept tally it replaces counted three of the five.
+  // Every control the condensed panel carries, declared once. The toolbar derives the active count, the
+  // chips and every reset from this list, so a filter can no longer be added without also becoming
+  // visible and undoable — the hand-kept tally it replaces counted three of the five. Only the first
+  // three NARROW the register and only they may report themselves active; see the note below.
   const statusChipValue = status === 'all' ? t.memory.statusAll : memoryStatusLabel(t, status);
   const categoryChipValue = CATEGORY_OPTIONS.find((option) => option.value === categoryFilter)?.label ?? categoryFilter;
   const filterFields: PageFilterField[] = [
@@ -310,26 +312,25 @@ export function MemoryView() {
       `${t.memory.categoryFilter}: ${categoryChipValue}`,
       () => setCategoryFilter('all'),
     ),
-    filterField(
-      {
-        id: 'layout',
-        label: t.memory.groupByCategory,
-        control: <Toggle checked={layout === 'grouped'} onChange={(next) => setLayout(next ? 'grouped' : 'flat')} label={t.memory.groupByCategory} />,
-      },
-      layout === 'grouped',
-      t.memory.groupByCategory,
-      () => setLayout('flat'),
-    ),
-    filterField(
-      {
-        id: 'categories',
-        label: t.memory.categoriesTitle,
-        control: <Toggle checked={showCategories} onChange={setShowCategories} label={t.memory.categoriesTitle} />,
-      },
-      showCategories,
-      t.memory.categoriesTitle,
-      () => setShowCategories(false),
-    ),
+    // The last two are DISPLAY options, not filters, and they are declared `active: false` for good.
+    // Grouping rearranges the same rows into category sections and the categories switch reveals an
+    // extra panel above the register — neither removes a single row, so neither may be counted by the
+    // Filters trigger, become a chip that claims the register is narrowed, or be undone by "Clear
+    // filters" (which would silently rearrange the page the user did not ask to rearrange). They stay
+    // inside the condensed panel because that is where the page's view controls belong; what they are
+    // NOT is part of the answer to "why am I not seeing everything".
+    {
+      id: 'layout',
+      label: t.memory.groupByCategory,
+      control: <Toggle checked={layout === 'grouped'} onChange={(next) => setLayout(next ? 'grouped' : 'flat')} label={t.memory.groupByCategory} />,
+      active: false,
+    },
+    {
+      id: 'categories',
+      label: t.memory.categoriesTitle,
+      control: <Toggle checked={showCategories} onChange={setShowCategories} label={t.memory.categoriesTitle} />,
+      active: false,
+    },
   ];
 
   const row = (m: Memory) => (

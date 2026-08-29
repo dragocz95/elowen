@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { LanguageProvider } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import { SettingsDocument, SettingsGroup } from '../../../components/ui/SettingsSurface';
@@ -11,6 +14,8 @@ vi.mock('../../../lib/mutations', () => ({ useUpdateConfig: () => ({ mutateAsync
 vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 import { SkinsRow } from '../../../modules/settings/SkinsRow';
+
+const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 const renderRow = () => render(
   <LanguageProvider>
@@ -56,6 +61,23 @@ describe('SkinsRow', () => {
 
     fireEvent.click(trigger);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  /** The trigger is a row picker, so it has to be addressable as one. Studio's narrowest container query
+   *  trades a picker's inline padding for its label, and it selects `[data-row-picker]` — a trigger that
+   *  does not carry the hook keeps its full padding while every other picker in the same column gives it
+   *  up, and truncates its own label to pay for it. The stylesheet half is asserted too, so the hook and
+   *  the rule that consumes it cannot be renamed apart. */
+  it('wears the canonical row-picker hook the narrow Studio padding addresses', () => {
+    useConfig.mockReturnValue({ data: { allowedSkins: ['studio-light'] } });
+    const { container } = renderRow();
+
+    const trigger = screen.getByRole('button', { name: en.settings.skins.manage });
+    expect(trigger).toHaveAttribute('data-row-picker');
+    expect(container.querySelector('.settings-row__control [data-row-picker]')).toBe(trigger);
+
+    const studioSurfaces = readFileSync(join(WEB, 'skins', 'studio', 'surfaces.css'), 'utf-8');
+    expect(studioSurfaces).toContain('.settings-row__trailing [data-row-picker]');
   });
 
   /** A skin name left behind by a deployment that no longer ships it must not be counted as a live pick. */

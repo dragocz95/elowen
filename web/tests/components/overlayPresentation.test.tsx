@@ -125,16 +125,49 @@ describe('overlays resolve against the live viewport', () => {
 
 /** The overlay SHELLS — every component that renders a dialog surface or the layer under one. The guard
  *  below reads their shipped source, so the list is the boundary it defends: a new one added without
- *  being named here is simply not checked. */
-const OVERLAY_SHELLS = [
-  join('components', 'ui', 'Modal.tsx'),
-  join('components', 'ui', 'ConfirmDialog.tsx'),
-  join('components', 'ui', 'WorkspaceTakeover.tsx'),
-  join('components', 'ui', 'WorkspacePrimitives.tsx'),
-  join('components', 'shell', 'CommandPalette.tsx'),
-  join('components', 'ui', 'shadcn', 'dialog.tsx'),
-  join('components', 'ui', 'shadcn', 'alert-dialog.tsx'),
+ *  being named here is simply not checked.
+ *
+ *  `surface` says how much of a file is the shell. A dedicated overlay primitive has no other job, so it
+ *  is scanned WHOLE — paint anywhere in it is paint on the overlay, whether it reaches the surface
+ *  through a class, a constant or a style prop. A feature module that merely CONTAINS a drawer is scanned
+ *  at the surface element itself, because the rest of the module legitimately paints things that are not
+ *  overlay surfaces (`ChatHistoryRail` has a per-conversation menu of its own on `bg-card`, which is a
+ *  menu and not a dialog), and a whole-file scan there would fail on paint this rule was never about.
+ *  The narrowed form still pins the mutation that matters: surface paint written at the call site. */
+const OVERLAY_SHELLS: { path: string; surface?: string }[] = [
+  { path: join('components', 'ui', 'Modal.tsx') },
+  { path: join('components', 'ui', 'ConfirmDialog.tsx') },
+  { path: join('components', 'ui', 'WorkspaceTakeover.tsx') },
+  { path: join('components', 'ui', 'WorkspacePrimitives.tsx') },
+  { path: join('components', 'shell', 'CommandPalette.tsx') },
+  { path: join('components', 'ui', 'shadcn', 'dialog.tsx') },
+  { path: join('components', 'ui', 'shadcn', 'alert-dialog.tsx') },
+  // The two drawers that mount the shadcn surface directly instead of going through `Modal`. Both used
+  // to restate `bg-card shadow-xl` on it — inert, because `.overlay-surface` rides in the variant base
+  // and primitives.css is unlayered, but a standing invitation to "fix" the colour here next time.
+  { path: join('modules', 'advisor', 'ChatHistoryRail.tsx'), surface: 'DialogContent' },
+  { path: join('modules', 'advisor', 'TelemetryPanel.tsx'), surface: 'DialogContent' },
 ];
+
+/** The opening tag of every `<Name …>` element in `source`, concatenated — its props and nothing else.
+ *  A JSX expression may contain `>` (an arrow function, a comparison), so the tag ends at the first `>`
+ *  seen outside a braced expression rather than at the first `>` at all. */
+function elementProps(source: string, name: string): string {
+  const tags: string[] = [];
+  for (const match of source.matchAll(new RegExp(`<${name}(?=[\\s/>])`, 'g'))) {
+    let depth = 0;
+    let end = match.index + match[0].length;
+    while (end < source.length) {
+      const char = source[end];
+      if (char === '{') depth += 1;
+      else if (char === '}') depth -= 1;
+      else if (char === '>' && depth === 0) break;
+      end += 1;
+    }
+    tags.push(source.slice(match.index, end));
+  }
+  return tags.join('\n');
+}
 
 /** Source with comments stripped: these files document the very defects they replace, by name, and a
  *  guard that reads prose fails on its own rationale. */
@@ -176,12 +209,28 @@ describe('one owner paints every overlay surface', () => {
     // deliberately not matched — `bg-[var(--color-scrim)]` in dialog.tsx is the veil, not the panel.
     const SURFACE_PAINT = /\bbg-card\b|\bbg-popover\b|boxShadow|shadow-\[|--color-document|(?:^|[\s;{])background:/;
     const offenders: string[] = [];
-    for (const path of OVERLAY_SHELLS) {
-      const source = shipped(readFileSync(join(WEB, path), 'utf-8'));
+    for (const { path, surface } of OVERLAY_SHELLS) {
+      const shippedSource = shipped(readFileSync(join(WEB, path), 'utf-8'));
+      const source = surface ? elementProps(shippedSource, surface) : shippedSource;
       const hit = SURFACE_PAINT.exec(source);
       if (hit) offenders.push(`${path}: ${hit[0].trim()}`);
     }
     expect(offenders, 'overlay paint belongs to .overlay-surface in primitives.css').toEqual([]);
+  });
+
+  it('scans a narrowed shell at its surface — and the narrowing still catches call-site paint', () => {
+    // A guard whose extractor silently returns nothing passes forever. This proves `elementProps` finds
+    // the drawers' surfaces at all, and that paint written on one of them is what the scan would read.
+    for (const { path, surface } of OVERLAY_SHELLS.filter((shell) => shell.surface)) {
+      const props = elementProps(shipped(readFileSync(join(WEB, path), 'utf-8')), surface!);
+      expect(props, `${path} must still render a <${surface}>`).toContain('presentation={null}');
+      expect(props, `${path}'s surface keeps its geometry`).toMatch(/className=/);
+    }
+    expect(elementProps('<DialogContent\n  className="bg-card"\n>\n<p>bg-popover</p>', 'DialogContent'))
+      .toBe('<DialogContent\n  className="bg-card"\n');
+    // An arrow function in a prop does not end the tag early, so paint written after one is still read.
+    expect(elementProps('<DialogContent onClose={() => x > 1} className="bg-card">x</DialogContent>', 'DialogContent'))
+      .toContain('bg-card');
   });
 
   it('keeps the takeover on the document canvas with enough specificity to hold it', () => {
