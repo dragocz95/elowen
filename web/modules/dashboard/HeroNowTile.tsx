@@ -26,7 +26,7 @@ export function HeroNowTile({ now, presence }: { now: number; presence: Presence
   const stateLabel = stateText(t.dashboard.presence, presence.state);
 
   return (
-    <section className="relative isolate overflow-hidden px-1 py-5 @container @sm:px-3 @sm:py-7">
+    <section className="hero-now relative isolate overflow-hidden px-1 py-5 @container @sm:px-3 @sm:py-7">
       {/* The wash itself is declared in dashboard-cosmos.css. It was an inline `style`, which no
           stylesheet can override — a design that does not want an accent gradient behind its dashboard
           had no way to say so. */}

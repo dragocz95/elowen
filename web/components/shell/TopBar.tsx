@@ -16,8 +16,9 @@ import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
  *
  *  `floating` is the built-in design's: no bar at all, a frameless masthead with the location set large
  *  and the universal actions gathered into a blurred pill floating over the canvas.
- *  `bar` is the dashboard reading: a 48px sticky rule across the top of the scroller, the current page's
- *  own controls on the left and the universal actions on the right as plain ghost controls.
+ *  `bar` is the dashboard reading: a compact sticky rule across the top of the scroller, the current page's
+ *  own controls on the left and the universal actions on the right as plain ghost controls. Its 48px base
+ *  height may be retuned by the command skin together with the sticky table-header offset.
  *
  *  It is a typed property of the SHELL, chosen once from `shellProfileFor()` — never a skin id read here,
  *  and never a utility class fighting an unlayered stylesheet for the same layout. */
@@ -35,8 +36,8 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
    *  variant is `position: sticky` and a sticky box is clamped to its containing block. A wrapper whose
    *  only child is the header is exactly the header's height, which gives it a sticky range of zero: the
    *  bar scrolled away on the first wheel click, and `.data-table-header`, which offsets itself by the
-   *  bar's 48px precisely because the bar stays, parked every register's column names 48px down with
-   *  rows scrolling visibly above them. */
+   *  active bar height precisely because the bar stays, parked every register's column names below a gap
+   *  with rows scrolling visibly above them. */
   hideOnPhone?: boolean;
 }) {
   const { t } = useTranslation();
@@ -66,7 +67,7 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
         ? 'top-bar top-bar--bar sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-bg px-4'
         : 'top-bar relative z-30 flex min-h-16 shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-3'}${hideOnPhone ? ' max-[767px]:hidden' : ''}`}
     >
-      <div className={`min-w-0 items-center gap-2 ${bar || showLocation || onMenuClick ? 'flex' : 'hidden'} ${bar ? 'flex-1' : 'items-start gap-3'}`}>
+      <div className={`top-bar__leading min-w-0 items-center gap-2 ${bar || showLocation || onMenuClick ? 'flex' : 'hidden'} ${bar ? 'flex-1' : 'items-start gap-3'}`}>
         {onMenuClick ? (
           <button
             type="button"
@@ -78,6 +79,13 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
           >
             <Menu size={bar ? 17 : 19} aria-hidden />
           </button>
+        ) : null}
+        {bar && showLocation && title ? (
+          <div className="top-bar__location flex min-w-0 shrink-0 items-center gap-2">
+            {Icon ? <Icon size={15} strokeWidth={1.75} aria-hidden /> : null}
+            <span className="truncate text-sm font-medium text-text">{title}</span>
+            {count !== undefined ? <span className="font-mono text-xs text-text-muted">{count}</span> : null}
+          </div>
         ) : null}
         {/* Route-specific controls live in the page that owns their state and portal into this slot. The
             sidebar remains the only global navigation; this bar is the current page's own toolbar. */}
@@ -96,6 +104,19 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
         ) : null}
       </div>
 
+      {bar ? (
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
+          aria-label={t.common.openCommandPalette}
+          className="top-bar__search flex h-8 min-w-0 items-center gap-2 rounded-md border border-border bg-bg px-3 text-text-muted transition-colors hover:border-border-strong hover:text-text"
+        >
+          <Search size={15} aria-hidden />
+          <span className="min-w-0 flex-1 truncate text-left text-xs">{t.common.searchCommands}</span>
+          <span className="shrink-0 font-mono text-[10px] text-text-muted/70">⌘ K</span>
+        </button>
+      ) : null}
+
       {/* The action cluster and the hamburger are named — `top-bar__*` — because they are the only chrome
           on every page of the app and a skin has to be able to reach them. Their LAYOUT is the variant's,
           not a stylesheet's: a skin that had to un-pill this cluster from outside was overriding four
@@ -103,16 +124,18 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
       <div className={bar
         ? 'top-bar__actions ml-auto flex shrink-0 items-center gap-0.5 max-[767px]:hidden'
         : 'top-bar__actions ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-bg/45 p-1 backdrop-blur-xl'}>
-        <button
-          type="button"
-          onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
-          aria-label={t.common.openCommandPalette}
-          title={t.common.openCommandPalette}
-          className={`group flex items-center gap-2 px-2.5 ${control}`}
-        >
-          <Search size={17} aria-hidden />
-          <span className="hidden font-mono text-[10px] tracking-wide text-text-muted/70 lg:inline">⌘K</span>
-        </button>
+        {!bar ? (
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
+            aria-label={t.common.openCommandPalette}
+            title={t.common.openCommandPalette}
+            className={`group flex items-center gap-2 px-2.5 ${control}`}
+          >
+            <Search size={17} aria-hidden />
+            <span className="hidden font-mono text-[10px] tracking-wide text-text-muted/70 lg:inline">⌘K</span>
+          </button>
+        ) : null}
         {/* Only when there is a session to end — the login screen has nothing to sign out of. */}
         {me.data?.user ? (
           <button

@@ -63,7 +63,7 @@ const SkinContext = createContext<SkinContextValue | null>(null);
  *  the right fill BEFORE the stylesheet is parsed — and an inline style outranks the `var(--color-bg)`
  *  rule in base.css that would otherwise follow the skin. Left in place it freezes the canvas at whatever
  *  design the document was SERVED as: switching to studio-oled repainted every surface near-black while
- *  <html> stayed #fafafa underneath, which shows in the overscroll fill and in the browser's own chrome.
+ *  <html> stayed white underneath, which shows in the overscroll fill and in the browser's own chrome.
  *
  *  So the switch hands the canvas back to the cascade. Deleting the inline value is the whole fix, and it
  *  needs no second copy of any palette on the client: by the time anyone can press the switcher the

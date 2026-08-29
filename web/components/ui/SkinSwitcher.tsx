@@ -26,7 +26,7 @@ export function SkinSwitcher({ collapsed = false }: { collapsed?: boolean }) {
       onClick={cycle}
       aria-label={label}
       title={`${label} — ${t.common.skinCycle}`}
-      className="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-text-muted transition-colors hover:bg-elevated hover:text-text"
+      className="skin-switcher__button flex h-9 items-center gap-1.5 rounded-full px-2.5 text-text-muted transition-colors hover:bg-elevated hover:text-text"
     >
       <Palette size={17} aria-hidden />
       {/* The name is the only way to tell two dark skins apart at a glance, so it stays visible wherever

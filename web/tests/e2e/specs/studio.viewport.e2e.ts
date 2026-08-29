@@ -33,11 +33,10 @@ const REGISTER = '/memory';
  *  number because a test asserts against a measured box, not against the token. */
 const TOUCH_TARGET = 44;
 
-/** Studio's two columns, from `skins/studio/shared.css`: `width: 16rem` expanded, `3rem` folded — the
- *  folded width being exactly one 40px row plus the body's 2 × 4px inset, so a folded destination is the
- *  same square the expanded one opens from. Restated as numbers because a test measures a box. */
+/** Studio's two desktop columns, from `skins/studio/shared.css`: 256px expanded and a 56px reference
+ *  rail holding one 40px row inside 2 × 8px of air. Restated because the browser test measures pixels. */
 const NAV_FULL = 256;
-const NAV_RAIL = 48;
+const NAV_RAIL = 56;
 
 /** Put a context into a Studio skin.
  *
@@ -81,7 +80,7 @@ async function openStudio(page: Page, route: string): Promise<void> {
     await page.goto(route);
     expect(await page.locator('html').getAttribute('data-skin')).toMatch(/^studio-/);
   }).toPass({ timeout: 20_000 });
-  await expect(page.locator('h1')).toBeVisible();
+  await expect(page.locator('h1:visible').first()).toBeVisible();
 }
 
 test('Studio renders under its own stylesheet, not the operator default', async ({ app, seed }, testInfo) => {
@@ -93,25 +92,64 @@ test('Studio renders under its own stylesheet, not the operator default', async 
   await expect(app.locator('[data-testid="studio-navigation"]')).toBeVisible();
   // The canvas is the skin's, not the built-in black — proof the token block is actually applied.
   const canvas = await app.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--color-bg').trim());
-  expect(canvas.toLowerCase()).toBe('#fafafa');
+  expect(canvas.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3').toLowerCase()).toBe('#ffffff');
 });
 
-test('Studio workspaces fill an ultrawide desk instead of becoming a centred card', async ({ app, seed }, testInfo) => {
+test('Studio centres working pages in the reference 1152px frame', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-light');
   await app.setViewportSize({ width: 1920, height: 900 });
   await openStudio(app, '/account');
 
   const geometry = await app.evaluate(() => {
-    const shell = document.querySelector<HTMLElement>('.workspace-shell')!;
-    const box = shell.getBoundingClientRect();
-    return { width: box.width, rightGap: innerWidth - box.right };
+    const main = document.querySelector<HTMLElement>('main')!.getBoundingClientRect();
+    const shell = document.querySelector<HTMLElement>('.workspace-shell')!.getBoundingClientRect();
+    return { width: shell.width, left: shell.left - main.left, right: main.right - shell.right };
   });
-  // 1920px minus Studio's 256px navigation leaves 1664px. Only the shell gutters belong inside that
-  // region; a global content cap must not shrink the workspace to a centred 1344px column again.
-  expect(geometry.width).toBeGreaterThan(1_600);
-  // Chrome reserves the classic vertical-scrollbar gutter inside the viewport on this Linux runner.
-  expect(geometry.rightGap).toBeLessThanOrEqual(16);
+  expect(Math.round(geometry.width)).toBe(1_152);
+  expect(Math.abs(geometry.left - geometry.right)).toBeLessThanOrEqual(16);
+});
+
+test('Studio matches the reference typography, toolbar and settings density', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await useSkin(app, seed, 'studio-light');
+  await app.setViewportSize({ width: 1440, height: 900 });
+  await openStudio(app, REGISTER);
+
+  const pageStyle = await app.evaluate(() => {
+    const heading = document.querySelector<HTMLElement>('.workspace-hero h1')!;
+    const style = getComputedStyle(heading);
+    return { size: style.fontSize, weight: style.fontWeight, spacing: style.letterSpacing, family: style.fontFamily };
+  });
+  expect(pageStyle.size).toBe('24px');
+  expect(pageStyle.weight).toBe('400');
+  expect(pageStyle.spacing).toBe('normal');
+  expect(pageStyle.family).toContain('Geist');
+
+  const toolbar = app.locator('.workspace-hero__lead .control-surface-toolbar');
+  await expect(toolbar).toBeVisible();
+  const controlHeights = await toolbar
+    .locator('input, button, [role="combobox"], select')
+    .evaluateAll((controls) => controls.filter((control) => (control as HTMLElement).offsetParent !== null)
+      .map((control) => Math.round(control.getBoundingClientRect().height)));
+  expect(controlHeights.length).toBeGreaterThan(2);
+  expect([...new Set(controlHeights)]).toEqual([40]);
+
+  await openStudio(app, '/settings?cat=brain');
+  const split = app.locator('.settings-group__body[data-columns="2"]').first();
+  await expect(split).toBeVisible();
+  const settingsGeometry = await split.evaluate((body) => {
+    const columns = [...body.querySelectorAll<HTMLElement>(':scope > .settings-group__column')];
+    const secondStyle = columns[1] ? getComputedStyle(columns[1]) : null;
+    return {
+      tracks: getComputedStyle(body).gridTemplateColumns.split(' ').filter(Boolean).length,
+      leftBorder: secondStyle?.borderLeftWidth,
+      topBorder: secondStyle?.borderTopWidth,
+    };
+  });
+  expect(settingsGeometry.tracks).toBe(1);
+  expect(settingsGeometry.leftBorder).toBe('0px');
+  expect(settingsGeometry.topBorder).toBe('1px');
 });
 
 test('Studio OLED keeps the chat full-width, left-aligned and in its own top bar', async ({ app, seed }, testInfo) => {
@@ -382,8 +420,8 @@ test('the Studio page bar stays put while the register scrolls under it', async 
   // The bar is `position: sticky`, and a sticky box is clamped to its CONTAINING BLOCK. A wrapper around
   // it whose only child is the header is exactly the header's height, which leaves a sticky range of
   // zero: the bar looks perfect until the first wheel click and then simply leaves. Studio's register
-  // header offsets itself by the bar's 48px precisely BECAUSE the bar stays, so the same wrapper also
-  // parks every column name 48px down with rows scrolling visibly above it.
+  // header offsets itself by the bar's own height precisely BECAUSE the bar stays, so the same wrapper
+  // also parks every column name below a gap with rows scrolling visibly above it.
   //
   // Neither half is visible in a screenshot of an unscrolled page, and no unit test can see it: it is a
   // property of the ancestor CHAIN, which only a laid-out document has. Hence this case, and hence the
@@ -412,6 +450,7 @@ test('the Studio page bar stays put while the register scrolls under it', async 
     };
   });
   expect(geometry.position, 'the bar variant is sticky').toBe('sticky');
+  expect(Math.round(geometry.bar), 'the Studio reference bar height').toBe(50);
   expect(
     geometry.containingBlock - geometry.bar,
     'the bar has room to stay behind — a wrapper holding only the header leaves none',
@@ -427,12 +466,12 @@ test('the Studio page bar stays put while the register scrolls under it', async 
   });
   expect(scrolled, 'the register is long enough to scroll').toBeGreaterThan(200);
   expect(Math.round((await bar.boundingBox())!.y), 'the bar after scrolling').toBe(0);
-  // The column names sit directly under it — not 48px into empty space, not behind the breadcrumb.
+  // The column names sit directly under the 50px bar, with neither a gap nor an overlap.
   expect(Math.round((await app.locator('.data-table-header').first().boundingBox())!.y),
     'the sticky column names clear the bar exactly').toBe(Math.round(geometry.bar));
 });
 
-test('the Studio column is 256px, folds to 48px, and becomes a sheet on a phone', async ({ app, seed }, testInfo) => {
+test('Studio defaults to the full reference sidebar and chat rail, then becomes a sheet below 1024px', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-light');
   const nav = app.locator('[data-testid="studio-navigation"]');
@@ -440,31 +479,64 @@ test('the Studio column is 256px, folds to 48px, and becomes a sheet on a phone'
   await app.setViewportSize({ width: 1440, height: 900 });
   await openStudio(app, REGISTER);
   await expect(nav).toHaveAttribute('data-mode', 'full');
-  expect(Math.round((await nav.boundingBox())!.width), 'the expanded column').toBe(NAV_FULL);
+  expect(Math.round((await nav.boundingBox())!.width), 'the default reference column').toBe(NAV_FULL);
+  await expect(app.locator('.advisor-panel')).toBeVisible();
+  expect(Math.round((await app.locator('.advisor-panel').boundingBox())!.width), 'the reference chat rail').toBe(344);
+  const shellRhythm = await app.evaluate(() => {
+    const item = document.querySelector<HTMLElement>('.studio-nav__body .studio-nav__item')!;
+    const footerItem = document.querySelector<HTMLElement>('.studio-nav__footer > div:not(.studio-nav__user) .studio-nav__item')!;
+    const search = document.querySelector<HTMLElement>('.top-bar__search')!;
+    const skinButton = document.querySelector<HTMLElement>('.skin-switcher__button')!;
+    const skinLabel = skinButton.querySelector<HTMLElement>('.skin-switcher__name')!;
+    const advisorHeader = document.querySelector<HTMLElement>('.advisor-panel__header')!;
+    const searchStyle = getComputedStyle(search);
+    return {
+      itemHeight: Math.round(item.getBoundingClientRect().height),
+      footerItemHeight: Math.round(footerItem.getBoundingClientRect().height),
+      searchWidth: Math.round(search.getBoundingClientRect().width),
+      searchHeight: Math.round(search.getBoundingClientRect().height),
+      searchBorder: searchStyle.borderTopWidth,
+      searchRadius: searchStyle.borderRadius,
+      skinHeight: Math.round(skinButton.getBoundingClientRect().height),
+      skinBorder: getComputedStyle(skinButton).borderTopWidth,
+      skinFont: getComputedStyle(skinLabel).fontSize,
+      advisorHeaderHeight: Math.round(advisorHeader.getBoundingClientRect().height),
+    };
+  });
+  expect(shellRhythm).toEqual({
+    itemHeight: 32,
+    footerItemHeight: 32,
+    searchWidth: 256,
+    searchHeight: 32,
+    searchBorder: '1px',
+    searchRadius: '12px',
+    skinHeight: 32,
+    skinBorder: '1px',
+    skinFont: '13px',
+    advisorHeaderHeight: 50,
+  });
 
-  // The fold is a control, not a width: it must survive at a width that still offers the choice.
-  // Polled, not sampled: the column travels between the two widths over `--motion-base`, and the
-  // attribute flips at the START of that transition — reading the box straight after it caught the
-  // column mid-slide at 63px.
+  // Folding is still available on a roomy desktop and is persisted under Studio's own key, without
+  // changing the spatial design's sidebar preference.
   await app.getByTestId('studio-nav-collapse').click();
   await expect(nav).toHaveAttribute('data-mode', 'rail');
   await expect.poll(async () => Math.round((await nav.boundingBox())!.width), 'the folded column').toBe(NAV_RAIL);
   await app.getByTestId('studio-nav-collapse').click();
   await expect(nav).toHaveAttribute('data-mode', 'full');
-  await expect.poll(async () => Math.round((await nav.boundingBox())!.width), 'the unfolded column').toBe(NAV_FULL);
+  await expect.poll(async () => Math.round((await nav.boundingBox())!.width), 'the expanded column').toBe(NAV_FULL);
 
-  // 768 is the last width with a column; 767 is the first with a sheet. The boundary is the defect the
-  // core spec was written around, so Studio states it too rather than assuming it survived the reskin.
-  await app.setViewportSize({ width: 768, height: 1024 });
+  await app.setViewportSize({ width: 1024, height: 900 });
   await openStudio(app, REGISTER);
-  await expect(nav).toHaveAttribute('data-mode', 'rail');
-  await expect.poll(async () => Math.round((await nav.boundingBox())!.width), 'the column at 768px').toBe(NAV_RAIL);
+  await expect(nav).toHaveAttribute('data-mode', 'full');
+  await expect.poll(async () => Math.round((await nav.boundingBox())!.width), 'the column at 1024px').toBe(NAV_FULL);
+  await expect(app.locator('.advisor-panel')).toHaveCount(0);
 
-  await app.setViewportSize({ width: 767, height: 1024 });
+  await app.setViewportSize({ width: 1023, height: 900 });
   await openStudio(app, REGISTER);
   await expect(nav).toHaveAttribute('data-mode', 'drawer');
-  // A closed sheet is parked off-screen, which is what makes the content full-width beneath it.
-  expect((await nav.boundingBox())!.x, 'a closed sheet is off-screen').toBeLessThan(0);
+  const closed = await nav.boundingBox();
+  expect(closed!.x, 'a closed sheet is off-screen').toBeLessThan(0);
+  expect(Math.round(closed!.width), 'the mobile sheet spans the viewport').toBe(1023);
 });
 
 test('Studio drops the hero mascot from a working page and keeps the page', async ({ app, seed }, testInfo) => {
@@ -501,6 +573,7 @@ test('every Studio navigation row is a real touch target on a coarse pointer', a
     const drawer = page.locator('.overlay-nav-drawer');
     await expect(drawer).toHaveAttribute('role', 'dialog');
     await expect.poll(async () => (await drawer.boundingBox())!.x, 'the sheet slides in').toBeGreaterThanOrEqual(0);
+    expect(Math.round((await drawer.boundingBox())!.width), 'the sheet spans the phone').toBe(390);
 
     const rows = await page.evaluate(() => [...document.querySelectorAll('.studio-nav__item')]
       .map((el) => ({ label: (el.textContent || '').trim(), h: Math.round(el.getBoundingClientRect().height) })));

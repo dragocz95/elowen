@@ -43,6 +43,15 @@ describe('resolveNav', () => {
   it('shows no handle before the region has been measured, so none flashes on first paint', () => {
     expect(resolveNav(0, 'rail')).toEqual({ mode: 'full', pinnable: false });
   });
+
+  it('gives the command profile an expanded first paint and 1024px drawer boundary', () => {
+    expect(resolveNav(0, 'rail', 'command')).toEqual({ mode: 'full', pinnable: false });
+    expect(resolveNav(1023, 'rail', 'command')).toEqual({ mode: 'drawer', pinnable: false });
+    expect(resolveNav(1024, 'full', 'command')).toEqual({ mode: 'full', pinnable: true });
+    expect(resolveNav(1024, 'rail', 'command')).toEqual({ mode: 'rail', pinnable: true });
+    expect(resolveNav(1600, 'rail', 'command')).toEqual({ mode: 'rail', pinnable: true });
+    expect(resolveNav(1600, 'full', 'command')).toEqual({ mode: 'full', pinnable: true });
+  });
 });
 
 describe('Shell', () => {

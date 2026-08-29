@@ -72,7 +72,7 @@ const DEFAULT_PAINT: DocumentPaint = { background: '#000000', colorScheme: 'dark
  *  for a server-only first-frame value. */
 const SKIN_PAINT: Record<SkinName, DocumentPaint> = {
   midnight: { background: '#05070b', colorScheme: 'dark' },
-  'studio-light': { background: '#fafafa', colorScheme: 'light' },
+  'studio-light': { background: '#ffffff', colorScheme: 'light' },
   'studio-oled': { background: '#000000', colorScheme: 'dark' },
 };
 

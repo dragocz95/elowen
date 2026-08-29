@@ -7,7 +7,7 @@ import { NAV_COLUMN_MIN_WIDTH, NAV_FULL_MIN_WIDTH } from '../../lib/breakpoints'
 import { Providers, type PluginUiSeed, type MeSeed } from '../../app/providers';
 import { LanguageProvider, type Locale } from '../../lib/i18n';
 import { SkinProvider, useSkin } from '../../lib/skinContext';
-import { shellProfileFor, type SkinChoice, type SkinName } from '../../lib/skins';
+import { shellProfileFor, type ShellProfile, type SkinChoice, type SkinName } from '../../lib/skins';
 import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand';
 import { ToastProvider, resolveToastDuration } from '../ui/Toast';
 import { useConfig } from '../../lib/queries';
@@ -42,6 +42,22 @@ const CONTENT_MAX = 'max-w-[var(--content-max)]';
 type NavPin = 'full' | 'rail';
 const NAV_PINS: readonly NavPin[] = ['full', 'rail'];
 
+/** Studio follows the reference's tablet boundary: below 1024px its navigation is a full-width sheet. */
+const COMMAND_NAV_COLUMN_MIN_WIDTH = 1024;
+const STUDIO_DOCK_MIN_VIEWPORT = 1440;
+
+function useStudioDockViewport(): boolean | undefined {
+  const [wide, setWide] = useState<boolean | undefined>(undefined);
+  useEffect(() => {
+    const media = window.matchMedia(`(min-width: ${STUDIO_DOCK_MIN_VIEWPORT}px)`);
+    setWide(media.matches);
+    const handleChange = (event: MediaQueryListEvent) => setWide(event.matches);
+    media.addEventListener('change', handleChange);
+    return () => media.removeEventListener('change', handleChange);
+  }, []);
+  return wide;
+}
+
 /** The width sets a FLOOR on how compact the chrome is; the user's pin may only go compacter, never
  *  roomier. So the collapse handle is offered exactly when the pin is what decides — in a window already
  *  too narrow for the full rail, a toggle would be a dead control, and before the first measurement
@@ -49,9 +65,14 @@ const NAV_PINS: readonly NavPin[] = ['full', 'rail'];
  *
  *  `regionW` is the MEASURED width of the nav+content region (window − advisor dock), in the same CSS
  *  pixels the stylesheet's media queries and `useMobileViewport()` read — see lib/breakpoints.ts. Using
- *  the region rather than the viewport is what lets dragging the dock re-chrome the app like a resize. */
-export function resolveNav(regionW: number, pin: NavPin): { mode: NavMode; pinnable: boolean } {
+ *  the region rather than the viewport is what lets dragging the dock re-chrome the app like a resize.
+ *  The profile parameter keeps Studio's reference geometry out of the shared spatial shell. */
+export function resolveNav(regionW: number, pin: NavPin, profile: ShellProfile = 'spatial'): { mode: NavMode; pinnable: boolean } {
   if (regionW === 0) return { mode: 'full', pinnable: false };
+  if (profile === 'command') {
+    if (regionW < COMMAND_NAV_COLUMN_MIN_WIDTH) return { mode: 'drawer', pinnable: false };
+    return { mode: pin, pinnable: true };
+  }
   if (regionW < NAV_COLUMN_MIN_WIDTH) return { mode: 'drawer', pinnable: false };
   if (regionW < NAV_FULL_MIN_WIDTH) return { mode: 'rail', pinnable: false };
   return { mode: pin, pinnable: true };
@@ -75,20 +96,28 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // everyone that design with nothing chosen, and reading the choice would then mount the spatial rail
   // inside the Studio stylesheet.
   const { skin } = useSkin();
-  const dock = useDockState();
-  const docked = dock.state.open;
-  // On /chat the ChatView is the sole chat host: the floating launcher is suppressed (the dock may still
-  // open in Terminál mode — see AdvisorPanel). This is a UX guard only; the single controller in
-  // BrainChatProvider guarantees one SSE stream regardless of how many surfaces mount.
-  const onChat = usePathname() === '/chat';
-  const router = useRouter();
+  const profile = shellProfileFor(skin);
   const mobile = useMobileViewport();
+  const studioDockViewport = useStudioDockViewport();
+  const onChat = usePathname() === '/chat';
+  const dock = useDockState(profile);
+  // Studio's reference chat rail is a desktop workspace column. Withhold it until the viewport is known,
+  // below 1440px and on the full chat route, where it would duplicate the same controller beside itself.
+  const docked = dock.state.open && !onChat && (profile !== 'command' || studioDockViewport === true);
+  // On /chat the ChatView is the sole chat host: the floating launcher and dock are both suppressed. This
+  // is a UX guard only; the single controller in BrainChatProvider guarantees one SSE stream regardless
+  // of how many surfaces mount elsewhere.
+  const router = useRouter();
   const openAdvisor = useCallback(() => {
+    if (profile === 'command' && studioDockViewport !== true) {
+      if (!onChat) router.push('/chat');
+      return;
+    }
     const target = advisorOpenTarget({ onChat, mobile });
     if (target === 'none') return;
     if (target === 'chat-page') { router.push('/chat'); return; }
     dock.setOpen(true);
-  }, [onChat, mobile, router, dock]);
+  }, [profile, studioDockViewport, onChat, mobile, router, dock]);
   // Open (and reveal the advisor pane of) the dock when another view asks to continue a conversation in
   // web chat (Sessions → open in chat). BrainChat mounts on open and switches to the requested session.
   // On /chat the full-page surface reads the same controller and IS the chat host — the request loads
@@ -116,10 +145,13 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // real available space. Content inside <main> reacts to its own width via CSS container queries.
   const regionRef = useRef<HTMLDivElement>(null);
   const regionW = useElementWidth(regionRef);
-  // Collapsing the rail to icons is a per-device display choice, like the UI scale — it belongs to the
-  // screen you are on, not to the user record.
-  const [pin, setPin] = usePersistentState<NavPin>('elowen.nav.pin', 'full', NAV_PINS);
-  const { mode, pinnable } = resolveNav(regionW, pin);
+  // Each shell profile keeps its own per-device pin. Both begin expanded; Studio's narrower labelled column
+  // matches the reference without overwriting the spatial design's preference when skins are switched.
+  const [spatialPin, setSpatialPin] = usePersistentState<NavPin>('elowen.nav.pin', 'full', NAV_PINS);
+  const [commandPin, setCommandPin] = usePersistentState<NavPin>('elowen.nav.command.pin', 'full', NAV_PINS);
+  const pin = profile === 'command' ? commandPin : spatialPin;
+  const setPin = profile === 'command' ? setCommandPin : setSpatialPin;
+  const { mode, pinnable } = resolveNav(regionW, pin, profile);
   // Widening past the drawer breakpoint replaces the drawer with a column, but the open flag would
   // survive — so narrowing again, without ever touching the menu, would slide it back out on its own.
   useEffect(() => { if (mode !== 'drawer') setDrawerOpen(false); }, [mode]);
@@ -146,10 +178,17 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // live conversation, along with the scroll position, any open modal and every in-flight form on the
   // page. The two navigations therefore take the same props from the same state, and the swapped subtree
   // holds nothing but its own disposable presentation state.
-  const profile = shellProfileFor(skin);
   const navigation = profile === 'command'
     ? <StudioNavigation {...navProps} />
     : <OrbitalNav {...navProps} />;
+  const topBar = (
+    <TopBar
+      onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
+      showLocation={profile === 'command'}
+      variant={profile === 'command' ? 'bar' : 'floating'}
+      hideOnPhone={onChat}
+    />
+  );
   const content = (
     <div className="flex min-w-0 flex-1 flex-col">
       {/* NOTE: no `container-type` here on purpose — it would make <main> a containing block for
@@ -157,6 +196,9 @@ function ShellLayout({ children }: { children: ReactNode }) {
           context menus) to it. Content views scope their own `@container` around just the grid/list
           instead, keeping overlays outside it. */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
+        {/* Studio's ruled app bar spans the whole workspace between navigation and advisor, like the
+            reference. Document content below keeps its own centred reading frame. */}
+        {profile === 'command' ? topBar : null}
         {/* The measure the interface is read at. Without it the content is purely fluid and every extra
             pixel of a wide monitor goes into stretching the same table across a wider, emptier row.
             Capping it keeps a table's density tied to its type size instead of to the window. The
@@ -184,17 +226,12 @@ function ShellLayout({ children }: { children: ReactNode }) {
               suppression exists to avoid. */}
           {/* WHICH page chrome, decided from the shell profile and nothing else — the same seam the
               navigation is swapped on, so a design's frame and its menu can never disagree, and no
-              component below has to recognise a skin by name. `command` gets the ruled 48px bar with a
+              component below has to recognise a skin by name. `command` gets the ruled Studio bar with a
               breadcrumb; the built-in design keeps its frameless floating cluster.
               The phone suppression is the component's own property rather than a wrapper around it: the
               `bar` variant is sticky, and a wrapper holding nothing but the header IS the header's
               height, which leaves the sticky range at zero. */}
-          <TopBar
-            onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
-            showLocation={false}
-            variant={profile === 'command' ? 'bar' : 'floating'}
-            hideOnPhone={onChat}
-          />
+          {profile === 'command' ? null : topBar}
           {/* The launcher floats over the bottom-right corner of this scroller, so the last thing on a
               page must not end underneath it. The clearance is the same `--fab-clearance` the toast dock
               composes (styles/components/primitives.css), and it is spent only while the launcher is

@@ -37,6 +37,7 @@ export function DashboardView() {
   return (
     <WorkspaceShell
       variant="single"
+      className="dashboard-view"
       hero={{
         eyebrow: t.dashboard.rightNow,
         title: greeting,

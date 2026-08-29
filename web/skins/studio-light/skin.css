@@ -18,8 +18,8 @@
      rendering in the dark scheme the base document declares. */
   color-scheme: light;
 
-  /* Paper canvas, white cards, one muted step for anything recessed. */
-  --color-bg: #fafafa;
+  /* The reference uses one clean white canvas; depth comes from quiet fills and hairlines. */
+  --color-bg: #ffffff;
   --color-document: #ffffff;
   --color-surface: #ffffff;
   --color-elevated: #f4f4f5;
@@ -72,8 +72,10 @@
   --studio-chat-code: #f4f4f5;
   --studio-chat-composer-radius: 28px;
   --studio-chat-user-radius: 22px;
-  --font-sans: -apple-system-body, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  /* Geist is the shipped metric-compatible counterpart to the reference's Inter working face. */
+  --font-sans: var(--font-geist-sans), Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: var(--font-sans);
+  --studio-chat-font: -apple-system-body, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 
   /* Status fills. --color-on-status is the ink that sits ON one of them, and on a light design it has to
      be white rather than near-black: white measures 5.26:1 on danger, 5.28:1 on success, 5.02:1 on
@@ -88,13 +90,46 @@
   --color-cancelled: #5f5f68;
   --color-on-status: #ffffff;
 
-  /* 6 / 8 / 12. Nothing rounder: a studio reads as drawn, not as a set of pills. */
+  /* A real ladder — 6 / 8 / 10 / 12 / 16 — rather than the flat 6/8/12 this design started with. Each
+     step belongs to a size of thing: 6 an inline mark, 8 a navigation row, 10 a control, 12 a code
+     block, 16 a card. A studio still reads as drawn rather than as a set of pills, so nothing here
+     rounds past 16 and the pill radius below is reserved for genuinely circular things (avatars, the
+     composer's send control).
+     --radius-sm and --radius-lg are deliberately UNCHANGED: the chat surface is frozen by
+     tests/e2e/specs/studio.viewport.e2e.ts and reads both (inline code at 6, code blocks and markdown
+     tables at 12). Moving either would repaint a surface this redesign is not allowed to touch. */
   --radius-sm: 6px;
   --radius: 8px;
-  --radius-md: 8px;
+  --radius-md: 10px;
   --radius-lg: 12px;
-  --radius-xl: 12px;
-  --radius-2xl: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 16px;
+  --studio-radius-pill: 999px;
+
+  /* ---- Alpha-ink structure -------------------------------------------------------------------
+     Hairlines and quiet fills are stated as INK AT AN ALPHA, not as fixed greys, so one token reads
+     correctly on every surface it can land on. A fixed #e4e4e7 rule is a different contrast against
+     the canvas, a card and the sticky register header; the same ink at 11% composites against
+     whatever is behind it and stays a hairline on all three.
+     7.5% is the reference's own hairline (rgba(0,0,0,0.075)) rather than a match for the #e4e4e7 this
+     design used to draw: measured against the real app, 11% was visibly the heavier line, and on a
+     near-white canvas a card is separated by the fact that it is a card, not by the weight of its edge.
+     --studio-line-strong stays at 18% and is deliberately NOT lowered to match — it is what a floating
+     menu uses, and that surface measured 1.22:1 against the page it floats over before it was
+     strengthened. A menu needs the stronger edge; a card does not.
+     --color-border keeps its opaque value and is NOT retired: the frozen chat surface reads it, and
+     freezing that surface is a hard requirement of this change. */
+  --studio-line: color-mix(in srgb, var(--color-text) 7.5%, transparent);
+  --studio-line-strong: color-mix(in srgb, var(--color-text) 18%, transparent);
+  --studio-fill-quiet: color-mix(in srgb, var(--color-text) 4%, transparent);
+  --studio-fill-hover: color-mix(in srgb, var(--color-text) 3.5%, transparent);
+  --studio-fill-active: color-mix(in srgb, var(--color-text) 7%, transparent);
+
+  /* ---- Chrome rhythm -------------------------------------------------------------------------
+     The icon rail is 56px with 40px rows; toolbar fields, buttons and filters share the reference's
+     40px control height. Both are read by shared stylesheets rather than restated per rule. */
+  --studio-rail-width: 3.5rem;
+  --studio-control-height: 2.5rem;
 
   /* Depth comes from hairlines, not from shadow. What is left is the minimum needed to lift a menu or a
      dialog off the page. */

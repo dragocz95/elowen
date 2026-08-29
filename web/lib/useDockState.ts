@@ -1,24 +1,51 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-const KEY = 'advisor:dock';
+
 export type DockSide = 'left' | 'right' | 'top' | 'bottom';
+export type DockProfile = 'spatial' | 'command';
 export interface DockState { open: boolean; side: DockSide; width: number; height: number }
-const DEFAULT: DockState = { open: false, side: 'right', width: 560, height: 420 };
+
+const KEYS: Record<DockProfile, string> = { spatial: 'advisor:dock', command: 'advisor:dock:command' };
+const DEFAULTS: Record<DockProfile, DockState> = {
+  spatial: { open: false, side: 'right', width: 560, height: 420 },
+  // Studio mirrors the reference workspace: the existing advisor chat is a narrow persistent right rail.
+  command: { open: true, side: 'right', width: 344, height: 420 },
+};
 const SIDES: readonly DockSide[] = ['left', 'right', 'top', 'bottom'];
-const clampWidth = (w: number) => Math.max(360, Math.min(w, (typeof window !== 'undefined' ? window.innerWidth : 1920) * 0.96));
+const clampWidth = (w: number, min: number) => Math.max(min, Math.min(w, (typeof window !== 'undefined' ? window.innerWidth : 1920) * 0.96));
 const clampHeight = (h: number) => Math.max(240, Math.min(h, (typeof window !== 'undefined' ? window.innerHeight : 1080) * 0.85));
-function read(): DockState { try { const raw = localStorage.getItem(KEY); if (!raw) return DEFAULT; const v = JSON.parse(raw) as Partial<DockState>; return { open: !!v.open, side: SIDES.includes(v.side as DockSide) ? v.side as DockSide : 'right', width: clampWidth(Number(v.width ?? DEFAULT.width)), height: clampHeight(Number(v.height ?? DEFAULT.height)) }; } catch { return DEFAULT; } }
-function write(state: DockState) { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* best effort */ } }
-export function useDockState() {
-  const [state, setState] = useState<DockState>(DEFAULT);
-  useEffect(() => { setState(read()); }, []);
-  const update = useCallback((fn: (s: DockState) => DockState) => setState((s) => { const next = fn(s); write(next); return next; }), []);
+function read(key: string, fallback: DockState, minWidth: number): DockState {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const value = JSON.parse(raw) as Partial<DockState>;
+    return {
+      open: !!value.open,
+      side: SIDES.includes(value.side as DockSide) ? value.side as DockSide : fallback.side,
+      width: clampWidth(Number(value.width ?? fallback.width), minWidth),
+      height: clampHeight(Number(value.height ?? fallback.height)),
+    };
+  } catch { return fallback; }
+}
+function write(key: string, state: DockState) { try { localStorage.setItem(key, JSON.stringify(state)); } catch { /* best effort */ } }
+
+export function useDockState(profile: DockProfile = 'spatial') {
+  const key = KEYS[profile];
+  const fallback = DEFAULTS[profile];
+  const minWidth = profile === 'command' ? 320 : 360;
+  const [state, setState] = useState<DockState>(fallback);
+  useEffect(() => { setState(read(key, fallback, minWidth)); }, [key, fallback, minWidth]);
+  const update = useCallback((fn: (s: DockState) => DockState) => setState((current) => {
+    const next = fn(current);
+    write(key, next);
+    return next;
+  }), [key]);
   return {
     state,
-    setOpen: useCallback((open: boolean) => update((s) => ({ ...s, open })), [update]),
-    setSide: useCallback((side: DockSide) => update((s) => ({ ...s, side })), [update]),
-    setWidth: useCallback((width: number) => update((s) => ({ ...s, width: clampWidth(width) })), [update]),
-    setHeight: useCallback((height: number) => update((s) => ({ ...s, height: clampHeight(height) })), [update]),
+    setOpen: useCallback((open: boolean) => update((current) => ({ ...current, open })), [update]),
+    setSide: useCallback((side: DockSide) => update((current) => ({ ...current, side })), [update]),
+    setWidth: useCallback((width: number) => update((current) => ({ ...current, width: clampWidth(width, minWidth) })), [update, minWidth]),
+    setHeight: useCallback((height: number) => update((current) => ({ ...current, height: clampHeight(height) })), [update]),
   };
 }
 export type UseDockState = ReturnType<typeof useDockState>;

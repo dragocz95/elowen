@@ -30,11 +30,11 @@
    profile `WorkspaceShell` mounts the shared `Segmented` in its `line` variant instead: the same
    radiogroup, the same roving tab stop, the same caller-owned selection, drawn as tabs. */
 
-/* Studio workspaces use the whole available desk. Individual prose and form descriptions constrain their
-   own reading measure; a global cap made registers and settings look like a small centred card on ultrawide
-   screens, which is the opposite of an operational workspace. */
+/* ElevenLabs keeps working pages in a centred 1152px frame. Tool content still uses every pixel inside
+   that frame, while /chat deliberately opts out in Shell because it is an application layout. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) {
-  --content-max: none;
+  --content-max: 72rem;
+  --studio-top-bar-height: 3.125rem;
 }
 
 /* ---------------------------------------------------------------------------------------------------
@@ -59,8 +59,8 @@
  * rules to match. The ember canvas is hidden above in any case, for the surfaces that DO mount it.
  * --------------------------------------------------------------------------------------------------- */
 
-/* 256px expanded, 48px folded to icons. The column is inset from the content by a hairline, never by a
-   shadow, and sits on its own ground — one step quieter than the content beside it. */
+/* 256px expanded like the reference, 56px folded to icons. The column is inset from the content by a
+   hairline, never by a shadow, and sits on its own ground — one step quieter than the content beside it. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav {
   position: relative;
   display: flex;
@@ -93,18 +93,22 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-side='right'] {
   border-left: 1px solid var(--color-sidebar-border);
 }
-/* The icon column is exactly the row's own height plus the body's inset: 40px of row inside 2 × 4px of
-   padding. Nothing is centred by eye — a folded row is the same square the expanded row opens from. */
+/* The icon column is 56px holding a 40px row — 8px of air either side. It was 48px, which is the row
+   plus 2 × 4px and leaves the glyph looking wedged against both rules; a dense operating console gives
+   its rail the row plus 2 × 8px, and at that proportion the folded column reads as a column rather than
+   as a clipped menu. The row itself is unchanged, so a folded row is still the same square the expanded
+   row opens from.
+   `tests/e2e/specs/studio.viewport.e2e.ts` measures this (NAV_RAIL). */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] {
-  width: 3rem;
+  width: var(--studio-rail-width);
 }
 
-/* The offcanvas sheet. It stops short of the full width on purpose: the strip of backdrop left showing is
-   both the signal that this is a layer over the page and a second target that dismisses it. */
+/* The reference treats mobile navigation as the whole app surface, not a partial side sheet. The explicit
+   close control remains the exit; no content sliver competes with the destination list. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'] {
   position: fixed;
   inset-block: 0;
-  width: min(18rem, 85vw);
+  width: 100vw;
   height: auto;
   box-shadow: var(--shadow-raised);
   transition: transform var(--motion-slow) var(--ease-out);
@@ -143,7 +147,7 @@
   z-index: 2;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   color: var(--color-text-subtle);
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
@@ -209,7 +213,7 @@
   width: 1.75rem;
   height: 1.75rem;
   margin-inline-start: auto;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   color: var(--color-text-subtle);
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
@@ -238,7 +242,7 @@
   transition: opacity var(--motion-base) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__body {
-  padding-inline: 0.25rem;
+  padding-inline: 0.5rem;
   scrollbar-gutter: auto;
 }
 /* Until the arrangement is known the menu would paint in registry order and visibly re-sort itself, on
@@ -259,7 +263,9 @@
   min-width: 0;
   height: 2.5rem;
   padding-inline: 0.5rem;
-  border-radius: var(--radius-sm);
+  /* 8px, the ladder's navigation step. 6px on a 40px row reads as an almost-square with the corners
+     shaved; 8px is the radius the row's own height asks for and the one the rest of the chrome uses. */
+  border-radius: var(--radius);
   color: var(--color-text-muted);
   font-size: 0.875rem;
   line-height: 1.25rem;
@@ -270,6 +276,26 @@
   justify-content: center;
   width: 2.5rem;
   padding-inline: 0;
+}
+/* A FOLDED row is a 32px square, not the 40px the expanded row uses. The reference draws its icon rail
+   exactly this way — a 32px target centred in a 56px column, 12px of air either side — and at 40px the
+   folded column reads as a list of buttons rather than as a rail of marks.
+   Gated on `pointer: fine` and nothing else. The coarse-pointer rule further down grows every row to
+   --touch-target, and it must keep winning: shrinking a finger target to 32px would be an
+   accessibility regression, which is why this is not simply a smaller number on the rule above. */
+@media (pointer: fine) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) :is(.studio-nav__body, .studio-nav__footer > div:not(.studio-nav__user)) .studio-nav__item {
+    height: 2rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item {
+    width: 2rem;
+    height: 2rem;
+    margin-inline: auto;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__user .studio-nav__item {
+    width: 2rem;
+    height: 2rem;
+  }
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item:hover {
   background: var(--color-sidebar-accent);
@@ -325,9 +351,11 @@
   width: 100%;
   height: 2rem;
   padding-inline: 0.5rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   color: var(--color-text-subtle);
-  font-size: 0.75rem;
+  /* A group header is a NAME, at the same 14px/500 step the rows under it use, one ink quieter. It was
+     12px, which made it read as a caption over the rows rather than as their heading. */
+  font-size: 0.875rem;
   font-weight: 500;
   text-align: left;
   transition: color var(--motion-fast) var(--ease-out);
@@ -372,7 +400,7 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__footer {
   align-items: center;
-  padding-inline: 0.25rem;
+  padding-inline: 0.5rem;
 }
 /* The account row is the sidebar's user block: an avatar, the signed-in name over the account it is, and
    the menu that reaches whatever the reader has hidden. It is one row, not a card. */
@@ -408,9 +436,9 @@
   white-space: nowrap;
 }
 
-/* The folded rail cannot hold that row SIDE BY SIDE. The column is 3rem and its footer insets 0.25rem
-   either way, which leaves a 40px track for a 40px account row plus a 4px gap plus the arrangement
-   trigger — 28px on a mouse and 44px on a finger. `.studio-nav { overflow: hidden }` then clipped
+/* The folded rail cannot hold that row SIDE BY SIDE. Even at 56px the footer's 0.5rem inset leaves a
+   40px track for a 40px account row plus a gap plus the arrangement trigger — 28px on a mouse and 44px
+   on a finger. `.studio-nav { overflow: hidden }` then clipped
    whatever did not fit, and the trigger is the documented last resort when the reader has hidden every
    entry, so clipping it is how a rail becomes a dead end.
    Stacked, both are square, centred and whole. Identity and meta are already withheld at rail width, so

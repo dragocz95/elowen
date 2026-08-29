@@ -18,6 +18,16 @@
  * ordinary page gutter and stay left-aligned; no hidden reading cap recentres the working surface.
  * --------------------------------------------------------------------------------------------------- */
 
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) :is(.chat-gutter, .advisor-panel) {
+  font-family: var(--studio-chat-font);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-panel__header {
+  flex: none;
+  height: var(--studio-top-bar-height);
+  padding-inline: 0.75rem;
+  padding-block: 0;
+  border-bottom-color: var(--studio-line);
+}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-gutter {
   inline-size: 100%;
   max-inline-size: none;
@@ -106,7 +116,7 @@
   flex-direction: column;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-turn__body .chat-markdown {
-  font-family: var(--font-sans);
+  font-family: var(--studio-chat-font);
   font-size: 1rem;
   line-height: 1.625;
 }
@@ -119,7 +129,7 @@
   border-radius: var(--studio-chat-user-radius);
   background: var(--studio-chat-user-bg);
   color: var(--studio-chat-user-text);
-  font-family: var(--font-sans);
+  font-family: var(--studio-chat-font);
   font-size: 1rem;
   line-height: 1.5;
 }
@@ -284,7 +294,7 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-takeover > div:first-child {
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
-  border-bottom-color: var(--color-border);
+  border-bottom-color: var(--studio-line);
   background: var(--color-surface);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-takeover > div:first-child h2 {
@@ -293,7 +303,7 @@
   letter-spacing: -0.01em;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-takeover > div:first-child > button {
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
 }
 
 /* No second page frame. `.workspace-page` / `.workspace-shell` carry the shell's reading cap, gutter and

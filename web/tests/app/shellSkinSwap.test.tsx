@@ -20,8 +20,12 @@ const server = setupServer(
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin' } })),
   http.get('*/api/brain/sessions', () => HttpResponse.json([])),
   http.get('*/api/brain/commands', () => HttpResponse.json({ commands: [] })),
+  http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
 );
-beforeAll(() => server.listen({ onUnhandledRequest }));
+beforeAll(() => {
+  server.listen({ onUnhandledRequest });
+  (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
+});
 afterEach(() => {
   server.resetHandlers();
   localStorage.clear();
@@ -130,7 +134,7 @@ describe('a design the reader did not switch away from', () => {
     localStorage.setItem('elowen-skin', 'studio-light');
     // What the server served: the attribute, plus the anti-FOUC canvas inline on <html>.
     document.documentElement.setAttribute('data-skin', 'studio-light');
-    document.documentElement.style.backgroundColor = '#fafafa';
+    document.documentElement.style.backgroundColor = '#ffffff';
 
     const { rerender } = render(
       <Shell skinSeed={seed('studio-light', ALLOWED, null)}><Probe /><SkinReadout /></Shell>,
