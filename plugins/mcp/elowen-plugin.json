@@ -12,7 +12,7 @@
   "web": {
     "entry": "web/index.js",
     "css": "web/index.css",
-    "requiresApiVersion": 8,
+    "requiresApiVersion": 9,
     "navKind": "infrastructure",
     "nav": [{ "label": "MCP", "icon": "Blocks", "route": "" }],
     "strings": {

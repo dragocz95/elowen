@@ -124,16 +124,44 @@ describe('MCP page load states', () => {
     expect(screen.queryByText(strings.loadError!)).not.toBeInTheDocument();
   });
 
-  it('uses the same stacked register toolbar band as the Memory page', async () => {
+  it('puts the search in the canonical page toolbar and the ownership scope behind its filter control', async () => {
     msw.use(http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [server], instance: [remote], canManageInstance: true })));
     mount();
     const search = await screen.findByRole('searchbox', { name: strings.searchPlaceholder });
-    const toolbar = search.closest('.control-surface-toolbar');
-    const band = search.closest('.register-search')?.parentElement;
+    // The row the shell draws under the hero, not a band this bundle lays out inside its own content:
+    // a plugin register's controls have to sit where every built-in register's do.
+    expect(search.closest('.page-toolbar__search')).not.toBeNull();
+    expect(search.closest('.control-surface-toolbar')).toBeNull();
 
-    expect(toolbar).toHaveAttribute('data-layout', 'stacked');
-    expect(band).not.toBeNull();
-    expect(band).toContainElement(screen.getByRole('radiogroup', { name: strings.scope }));
+    // The search is permanent and the scope is a filter, so only one of them is on the row itself.
+    expect(screen.queryByRole('radiogroup', { name: strings.scope })).toBeNull();
+    fireEvent.click(screen.getByTestId('page-filters-trigger'));
+    const panel = within(await screen.findByRole('dialog', { name: 'Filters' }));
+    expect(panel.getByRole('radiogroup', { name: strings.scope })).toBeInTheDocument();
+  });
+
+  it('names the ownership filter in a chip that clears it', async () => {
+    msw.use(http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [server], instance: [remote], canManageInstance: true })));
+    mount();
+    await screen.findByText('github');
+    fireEvent.click(screen.getByTestId('page-filters-trigger'));
+    fireEvent.click(await screen.findByRole('radio', { name: strings.scopeInstance }));
+
+    // "Instance" alone would not say WHAT it narrows, so the chip carries the field's own label too.
+    expect(screen.getByTestId('page-filter-chips')).toHaveTextContent(`${strings.scope}: ${strings.scopeInstance}`);
+    expect(screen.queryByText('github')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: `Remove filter ${strings.scope}: ${strings.scopeInstance}` }));
+    expect(await screen.findByText('github')).toBeInTheDocument();
+  });
+
+  it('offers a non-owner no filter control at all, and keeps the search', async () => {
+    // One ownership scope means nothing to narrow, so the toolbar is handed an EMPTY field set — which
+    // draws no trigger rather than one that opens an empty panel.
+    msw.use(http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [server], instance: [], canManageInstance: false })));
+    mount();
+    await screen.findByText('github');
+    expect(screen.queryByTestId('page-filters-trigger')).toBeNull();
+    expect(screen.getByRole('searchbox', { name: strings.searchPlaceholder })).toBeInTheDocument();
   });
 
   it('clears a populated register search through the shared search control', async () => {

@@ -119,9 +119,6 @@
   .py-2 {
     padding-block: calc(var(--spacing, 0.25rem) * 2);
   }
-  .py-3 {
-    padding-block: calc(var(--spacing, 0.25rem) * 3);
-  }
   .pt-3 {
     padding-top: calc(var(--spacing, 0.25rem) * 3);
   }

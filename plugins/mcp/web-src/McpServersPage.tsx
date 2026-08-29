@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Blocks, PlugZap, Plus, RefreshCw, Search, Server, Trash2, TriangleAlert, Wrench } from 'lucide-react';
-import { apiJson, runtime, DATA_TABLE_ICON_SIZE, type McpScope, type McpServer, type McpServersResponse, type McpTransport } from './runtime';
+import {
+  apiJson, runtime, DATA_TABLE_ICON_SIZE,
+  type McpScope, type McpServer, type McpServersResponse, type McpTransport, type PageFilterField,
+} from './runtime';
 
 /** One page of servers, matching the register size every workspace page in the app uses. */
 const PAGE_SIZE = 20;
@@ -393,6 +396,44 @@ export function McpServersPage() {
   const addServer = () => { setActionError(undefined); setEditor({ key: null, draft: emptyDraft('personal') }); };
   const addButton = <C.Button variant="accent" icon={Plus} onClick={addServer}>{s.addServer}</C.Button>;
 
+  // The register's controls belong to the PAGE, so they sit in the canonical toolbar row the shell draws
+  // under the hero rather than in a band this bundle lays out inside its own content. They appear only
+  // once the servers are in: a search field over a skeleton narrows nothing, and a failed load owes the
+  // reader Retry instead of a filter.
+  const ready = !loading && !loadError && data !== undefined;
+  const searchField = (
+    <C.RegisterSearch
+      value={query}
+      onChange={setQuery}
+      placeholder={s.searchPlaceholder}
+      label={s.searchPlaceholder}
+      onClear={() => setQuery('')}
+      clearLabel={s.searchClear}
+    />
+  );
+  const scopeControl = (
+    <C.Segmented
+      value={scope}
+      onChange={(value: string) => setScope(value as ScopeFilter)}
+      options={[{ value: 'all', label: s.filterAll }, { value: 'personal', label: s.scopePersonal }, { value: 'instance', label: s.scopeInstance }]}
+      aria-label={s.scope}
+      nowrap
+    />
+  );
+  // The chip has to name WHICH filter is on — "Personal" alone would not say what it narrows — so it
+  // carries the field's own label ahead of the value.
+  const scopeField: PageFilterField = scope === 'all'
+    ? { id: 'scope', label: s.scope, control: scopeControl, active: false }
+    : {
+      id: 'scope', label: s.scope, control: scopeControl, active: true,
+      activeLabel: `${s.scope}: ${scopeLabel(scope, s)}`,
+      onReset: () => setScope('all'),
+    };
+  // Only the instance owner ever sees more than one ownership scope, so only he is offered the filter
+  // that narrows to one. Everyone else hands the toolbar an EMPTY field set, which draws no trigger at
+  // all — a page with nothing to filter must not carry a control that opens an empty panel.
+  const filters = ready && canManageInstance ? [scopeField] : [];
+
   const table = (
     <div className="flex min-w-0 flex-col gap-3">
       <C.DataTable
@@ -445,6 +486,7 @@ export function McpServersPage() {
           <C.WorkspaceMetric label={s.tools} value={bridged} icon={Wrench} />
         </>,
       }}
+      toolbar={{ search: ready ? searchField : undefined, filters }}
     >
       <C.ControlSurfaceDocument>
         {/* Error before loading: a failed load leaves `data` undefined, so testing the loading branch
@@ -452,39 +494,13 @@ export function McpServersPage() {
         {loadError ? <C.ControlSurfaceState tone="danger"><C.ErrorState message={s.loadError} onRetry={() => void load()} /></C.ControlSurfaceState>
           : loading || !data ? <C.ControlSurfaceState><C.LoadingState variant="cards" /></C.ControlSurfaceState>
           : (
-            <div className="flex min-w-0 flex-col gap-4">
-              <C.ControlSurfaceToolbar layout="stacked">
-                <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
-                  <C.RegisterSearch
-                    value={query}
-                    onChange={setQuery}
-                    placeholder={s.searchPlaceholder}
-                    label={s.searchPlaceholder}
-                    onClear={() => setQuery('')}
-                    clearLabel={s.searchClear}
-                  />
-                  {/* Only the instance owner ever sees more than one ownership scope, so only he is
-                      offered the filter that narrows to one. */}
-                  {canManageInstance ? (
-                    <C.Segmented
-                      value={scope}
-                      onChange={(value: string) => setScope(value as ScopeFilter)}
-                      options={[{ value: 'all', label: s.filterAll }, { value: 'personal', label: s.scopePersonal }, { value: 'instance', label: s.scopeInstance }]}
-                      aria-label={s.scope}
-                      nowrap
-                    />
-                  ) : null}
-                </div>
-              </C.ControlSurfaceToolbar>
-
-              <C.ControlSurfaceRegister className="flex flex-col gap-4">
-                {rows.length === 0
-                  ? <C.EmptyState title={s.empty} icon={Server} action={addButton} />
-                  : filtered.length === 0
-                    ? <C.EmptyState title={s.emptySearch} icon={Search} />
-                    : table}
-              </C.ControlSurfaceRegister>
-            </div>
+            <C.ControlSurfaceRegister className="flex flex-col gap-4">
+              {rows.length === 0
+                ? <C.EmptyState title={s.empty} icon={Server} action={addButton} />
+                : filtered.length === 0
+                  ? <C.EmptyState title={s.emptySearch} icon={Search} />
+                  : table}
+            </C.ControlSurfaceRegister>
           )}
       </C.ControlSurfaceDocument>
 

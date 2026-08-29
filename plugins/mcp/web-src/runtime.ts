@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 
 export type McpScope = 'personal' | 'instance';
 export type McpTransport = 'stdio' | 'http' | 'sse';
@@ -38,6 +38,21 @@ type AnyComponent = ComponentType<any>;
  *  value is restated here rather than imported — a bundle may not compile against `web/`. */
 export const DATA_TABLE_ICON_SIZE = 12;
 
+/** One field of the canonical page toolbar's condensed filter control, mirrored from the host's
+ *  `PageFilterField` (web/components/ui/PageFilters.tsx) because a bundle may not compile against
+ *  `web/` and the runtime publishes components, not their prop types.
+ *
+ *  The union is the part worth mirroring: the host decides nothing about whether the page is filtered —
+ *  it cannot, a control is an opaque node to it — so a field that claims to be active MUST also carry
+ *  the chip's wording and the reset behind it. Written out here, forgetting either one is a type error
+ *  in this bundle rather than a chip that silently never appears. */
+export type PageFilterField = {
+  id: string;
+  label: string;
+  control: ReactNode;
+  hint?: string;
+} & ({ active: true; activeLabel: string; onReset: () => void } | { active: false });
+
 interface McpRuntime {
   /** The host's own workspace kit — the same components the built-in pages compose, so this page is
    *  the app's register table and detail drawer rather than a second look-alike of them. */
@@ -48,7 +63,6 @@ interface McpRuntime {
     ControlSurfaceDocument: AnyComponent;
     ControlSurfaceRegister: AnyComponent;
     ControlSurfaceState: AnyComponent;
-    ControlSurfaceToolbar: AnyComponent;
     DataTable: AnyComponent;
     DataTableRow: AnyComponent;
     DataTableCell: AnyComponent;
