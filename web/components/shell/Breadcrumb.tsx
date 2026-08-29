@@ -36,13 +36,13 @@ export function Breadcrumb() {
           {page
             // Only a step that is not the destination is a link: `aria-current` on a link the reader is
             // already standing on is a control that does nothing.
-            ? <Link href={world.href ?? '#'} className="truncate text-text-muted transition-colors hover:text-text">{world.label}</Link>
-            : <span className="truncate font-medium text-text" aria-current="page">{world.label}</span>}
+            ? <Link href={world.href ?? '#'} className="truncate text-muted-foreground transition-colors hover:text-foreground">{world.label}</Link>
+            : <span className="truncate font-medium text-foreground" aria-current="page">{world.label}</span>}
         </li>
         {page ? (
           <>
-            <li aria-hidden className="text-text-subtle"><ChevronRight size={14} /></li>
-            <li className="min-w-0"><span className="truncate font-medium text-text" aria-current="page">{page.label}</span></li>
+            <li aria-hidden className="text-subtle-foreground"><ChevronRight size={14} /></li>
+            <li className="min-w-0"><span className="truncate font-medium text-foreground" aria-current="page">{page.label}</span></li>
           </>
         ) : null}
       </ol>

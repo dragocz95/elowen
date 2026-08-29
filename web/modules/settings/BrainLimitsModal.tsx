@@ -98,10 +98,10 @@ export function BrainLimitsModal({ limits, applied, onChange, onClose, presentat
             return (
               <div key={field.key} className="py-3.5">
                 <div className="flex items-center gap-2.5">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
                     <Icon size={18} aria-hidden />
                   </span>
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
                     {t.brain.limits[field.key]}
                     <HelpTip>{t.brain.limits[`${field.key}Hint`]}</HelpTip>
                   </span>
@@ -118,7 +118,7 @@ export function BrainLimitsModal({ limits, applied, onChange, onClose, presentat
                   className="mt-3"
                 />
                 {clamped !== undefined ? (
-                  <p className="mt-2 text-tiny leading-relaxed text-text-muted">
+                  <p className="mt-2 text-tiny leading-relaxed text-muted-foreground">
                     {t.brain.limits.clamped.replace('{value}', displayLabel(field, clamped))}
                   </p>
                 ) : null}

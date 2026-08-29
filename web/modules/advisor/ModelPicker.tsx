@@ -40,7 +40,7 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
           <button
             type="button"
             title={label}
-            className={`flex items-center gap-1.5 rounded-md border border-border text-text-muted transition-colors hover:bg-elevated hover:text-text ${
+            className={`flex items-center gap-1.5 rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
               variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[220px] px-2.5 text-xs'
             }`}
           >

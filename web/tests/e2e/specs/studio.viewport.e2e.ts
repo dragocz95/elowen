@@ -91,7 +91,7 @@ test('Studio renders under its own stylesheet, not the operator default', async 
   await openStudio(app, REGISTER);
   await expect(app.locator('[data-testid="studio-navigation"]')).toBeVisible();
   // The canvas is the skin's, not the built-in black — proof the token block is actually applied.
-  const canvas = await app.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--color-bg').trim());
+  const canvas = await app.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--color-background').trim());
   expect(canvas.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3').toLowerCase()).toBe('#ffffff');
 });
 
@@ -1061,7 +1061,7 @@ test('a Studio register row can be opened with a finger', async ({ browser, seed
 test('switching skin repaints the canvas and the browser chrome with it', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   // The defect: the server writes an anti-FOUC `background-color` inline onto <html>/<body>, and an inline
-  // style outranks the `var(--color-bg)` rule that follows the skin. Switching left the canvas — and the
+  // style outranks the `var(--color-background)` rule that follows the skin. Switching left the canvas — and the
   // theme colour the address bar reports — frozen at whatever design the DOCUMENT was served as, while
   // every surface above it repainted. Switching must hand the canvas back to the cascade.
   await useSkin(app, seed, 'studio-light');
@@ -1075,7 +1075,7 @@ test('switching skin repaints the canvas and the browser chrome with it', async 
     canvas: getComputedStyle(document.documentElement).backgroundColor,
     inline: document.documentElement.style.backgroundColor,
     bodyInline: document.body.style.backgroundColor,
-    token: getComputedStyle(document.documentElement).getPropertyValue('--color-bg').trim(),
+    token: getComputedStyle(document.documentElement).getPropertyValue('--color-background').trim(),
   }));
   expect(after.canvas, 'the canvas actually changed').not.toBe(before);
   // No stale inline paint may survive the switch — that is the whole mechanism of the defect.

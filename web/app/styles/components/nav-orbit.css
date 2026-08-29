@@ -1,6 +1,6 @@
 /* Navigation rail orbit nodes: .orbit-node, .orbit-node-active. */
 
-.orbit-node { position: relative; isolation: isolate; box-shadow: 0 0 0 6px var(--color-bg), inset 0 1px color-mix(in srgb, var(--color-text) 2.5%, transparent); }
+.orbit-node { position: relative; isolation: isolate; box-shadow: 0 0 0 6px var(--color-background), inset 0 1px color-mix(in srgb, var(--color-foreground) 2.5%, transparent); }
 .orbit-node::before {
   content: '';
   position: absolute;
@@ -23,7 +23,7 @@
    ring is re-purposed as the aura on the active node — same pseudo-element, section-rail visuals. */
 .orbit-node-active {
   background: radial-gradient(circle, rgb(var(--primary-rgb) / 0.14), var(--color-document) 68%);
-  box-shadow: 0 0 0 6px var(--color-bg), var(--glow-active), inset 0 0 20px rgb(var(--primary-rgb) / 0.09);
+  box-shadow: 0 0 0 6px var(--color-background), var(--glow-active), inset 0 0 20px rgb(var(--primary-rgb) / 0.09);
 }
 .orbit-node-active::before {
   inset: -1.35rem;

@@ -21,16 +21,16 @@ type WorkflowNode = WorkflowState['nodes'][number];
 /** Status is carried by GLYPH AND BORDER, never by colour alone. */
 const NODE_GLYPH: Record<WorkflowNode['status'], string> = { pending: '○', running: '●', done: '✓', error: '✗' };
 const NODE_TONE: Record<WorkflowNode['status'], string> = {
-  pending: 'border-dashed border-border text-text-muted',
-  running: 'border-primary text-text wf-dag__node--running',
-  done: 'border-success/60 text-text',
-  error: 'border-danger/70 text-text',
+  pending: 'border-dashed border-border text-muted-foreground',
+  running: 'border-primary text-foreground wf-dag__node--running',
+  done: 'border-success/60 text-foreground',
+  error: 'border-destructive/70 text-foreground',
 };
 const GLYPH_TONE: Record<WorkflowNode['status'], string> = {
-  pending: 'text-text-muted',
+  pending: 'text-muted-foreground',
   running: 'text-primary',
   done: 'text-success',
-  error: 'text-danger',
+  error: 'text-destructive',
 };
 
 const ARROW_KEYS: Record<string, DagDirection> = {
@@ -107,25 +107,25 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
       onClick={() => setPickedId(node.id)}
       style={style}
       className={`${className} flex flex-col justify-center rounded-lg border text-left transition-colors ${
-        full ? 'gap-0.5 bg-elevated px-2.5 py-1.5' : 'gap-0 border-transparent bg-transparent px-1.5 hover:border-border'
-      } ${full ? NODE_TONE[node.status] : 'text-text-muted'} ${node.id === selected?.id ? 'ring-1 ring-primary' : ''}`}
+        full ? 'gap-0.5 bg-muted px-2.5 py-1.5' : 'gap-0 border-transparent bg-transparent px-1.5 hover:border-border'
+      } ${full ? NODE_TONE[node.status] : 'text-muted-foreground'} ${node.id === selected?.id ? 'ring-1 ring-primary' : ''}`}
     >
       <span className="flex items-center gap-1.5">
         <span aria-hidden className={`wf-dag__pulse shrink-0 text-tiny ${GLYPH_TONE[node.status]}`}>{NODE_GLYPH[node.status]}</span>
-        <span className={`min-w-0 flex-1 truncate font-mono text-tiny ${full ? '' : 'text-text'}`}>{node.id}</span>
+        <span className={`min-w-0 flex-1 truncate font-mono text-tiny ${full ? '' : 'text-foreground'}`}>{node.id}</span>
       </span>
       {full ? (
         <>
           <span className="truncate text-tiny text-primary">{node.detail || node.task}</span>
-          <span className="truncate text-tiny text-text-muted">{nodeVitals(node)}</span>
+          <span className="truncate text-tiny text-muted-foreground">{nodeVitals(node)}</span>
         </>
       ) : null}
     </button>
   );
 
   const body = () => {
-    if (!wf) return <p className="p-5 text-xs text-text-muted">{t.workflowModal.gone}</p>;
-    if (nodes.length === 0) return <p className="p-5 text-xs text-text-muted">{t.workflowModal.empty}</p>;
+    if (!wf) return <p className="p-5 text-xs text-muted-foreground">{t.workflowModal.gone}</p>;
+    if (nodes.length === 0) return <p className="p-5 text-xs text-muted-foreground">{t.workflowModal.empty}</p>;
     if (mobile) {
       let wave = -1;
       return (
@@ -138,7 +138,7 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
               return (
                 <li key={placed.id} className="flex flex-col gap-1.5">
                   {head !== null ? (
-                    <span className="mt-1 text-tiny uppercase tracking-wide text-text-muted">
+                    <span className="mt-1 text-tiny uppercase tracking-wide text-muted-foreground">
                       {t.workflowModal.wave.replace('{n}', String(placed.column + 1))}
                     </span>
                   ) : null}
@@ -236,19 +236,19 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
         {body()}
         {selected && selectedOutcome ? (
           <div data-testid="workflow-node-detail" className="shrink-0 border-t border-border px-4 py-3">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-tiny text-text-muted">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-tiny text-muted-foreground">
               <span aria-hidden className={GLYPH_TONE[selected.status]}>{NODE_GLYPH[selected.status]}</span>
-              <span className="font-mono text-text">{selected.id}</span>
+              <span className="font-mono text-foreground">{selected.id}</span>
               {meta.map((entry) => <span key={entry}>· {entry}</span>)}
             </div>
-            <p className="mt-1.5 text-tiny text-text">{selected.task}</p>
-            <p className="mt-2 text-tiny uppercase tracking-wide text-text-muted">{selectedOutcome.label}</p>
+            <p className="mt-1.5 text-tiny text-foreground">{selected.task}</p>
+            <p className="mt-2 text-tiny uppercase tracking-wide text-muted-foreground">{selectedOutcome.label}</p>
             {/* A node's result or stack trace can be long: it scrolls in place instead of stretching the
                 modal until the graph is pushed off the screen. */}
-            <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-tiny text-text-muted">
+            <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-tiny text-muted-foreground">
               {selectedOutcome.text}
             </pre>
-            {mobile ? null : <p className="mt-2 text-tiny text-text-muted">{t.workflowModal.hint}</p>}
+            {mobile ? null : <p className="mt-2 text-tiny text-muted-foreground">{t.workflowModal.hint}</p>}
           </div>
         ) : null}
       </div>

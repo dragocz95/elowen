@@ -493,8 +493,8 @@ export function MemoryView() {
           permanent delete everywhere (behind a confirm). Kept a sibling of the layout so it's never
           clipped. */}
       {tab === 'list' && selected.size > 0 ? (
-        <div className="overlay-layer-fab fixed bottom-6 left-1/2 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border border-border bg-elevated px-3 py-2 shadow-[var(--shadow-raised)] animate-fade-up">
-          <span className="px-1 text-sm text-text">{t.memory.selectedCount.replace('{n}', String(selected.size))}</span>
+        <div className="overlay-layer-fab fixed bottom-6 left-1/2 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 shadow-[var(--shadow-raised)] animate-fade-up">
+          <span className="px-1 text-sm text-foreground">{t.memory.selectedCount.replace('{n}', String(selected.size))}</span>
           <Button variant="accent" icon={GitMerge} disabled={selected.size < 2} onClick={() => setMerging(true)}>{t.memory.merge}</Button>
           {status === 'deleted' ? (
             <Button variant="default" icon={RotateCcw} onClick={bulkRestore}>{t.memory.bulkRestore}</Button>
@@ -502,7 +502,7 @@ export function MemoryView() {
             <Button variant="default" icon={Trash2} onClick={bulkDelete}>{t.memory.bulkDelete}</Button>
           )}
           <Button variant="danger" icon={Trash2} onClick={() => setConfirmPurge(true)}>{t.memory.purge}</Button>
-          <button type="button" aria-label={t.memory.clearSelection} onClick={clearSelection} className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text"><X size={15} /></button>
+          <button type="button" aria-label={t.memory.clearSelection} onClick={clearSelection} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"><X size={15} /></button>
         </div>
       ) : null}
 
@@ -538,15 +538,15 @@ export function MemoryView() {
 
 /** Quiet full-width divider for a grouped page. Uncategorized falls back to a muted hash. */
 function CategorySectionHeader({ category, label, count }: { category?: MemoryCategory; label: string; count: number }) {
-  const color = category ? categorySwatch(category.color) : 'var(--color-text-muted)';
+  const color = category ? categorySwatch(category.color) : 'var(--color-muted-foreground)';
   return (
-    <div role="row" className="flex items-center gap-2 border-b border-border/70 bg-elevated/20 px-3 py-2">
+    <div role="row" className="flex items-center gap-2 border-b border-border/70 bg-muted/20 px-3 py-2">
       <div role="cell" className="flex min-w-0 items-center gap-2">
         <span className="shrink-0" style={{ color }} aria-hidden>
           {category ? <CategoryIcon name={category.icon} size={14} /> : <Hash size={14} />}
         </span>
-        <h3 className="truncate text-[11px] font-semibold uppercase tracking-wider text-text">{label}</h3>
-        <span className="font-mono text-[10px] text-text-muted tabular-nums">{count}</span>
+        <h3 className="truncate text-[11px] font-semibold uppercase tracking-wider text-foreground">{label}</h3>
+        <span className="font-mono text-[10px] text-muted-foreground tabular-nums">{count}</span>
       </div>
     </div>
   );
@@ -599,34 +599,34 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
         </button>
       </DataTableCell>
       <DataTableCell lines={1} title={memory.body} className="flex items-center gap-2">
-        <span className="truncate text-sm text-text">{memory.body}</span>
+        <span className="truncate text-sm text-foreground">{memory.body}</span>
         {memory.status !== 'active' ? <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge> : null}
       </DataTableCell>
-      <DataTableCell priority="wide" lines={1} className="truncate text-xs text-text-muted">
+      <DataTableCell priority="wide" lines={1} className="truncate text-xs text-muted-foreground">
         {category ? (
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0" style={{ color: categorySwatch(category.color) }}><CategoryIcon name={category.icon} size={12} /></span>
             <span className="truncate">{category.name}</span>
           </span>
-        ) : <span className="italic text-text-muted/65">{t.memory.categoryUncategorized}</span>}
+        ) : <span className="italic text-muted-foreground/65">{t.memory.categoryUncategorized}</span>}
       </DataTableCell>
       {/* The kind is a WORD the reader picks from a menu — "fact", "preference" — and not an identifier,
           so it is set in the row's own face. The mono face is wider per character and truncated it to
           "preferen…" on every second row of the register. */}
-      <DataTableCell priority="wide" lines={1} className="truncate text-xs text-text-muted">{memory.kind || '—'}</DataTableCell>
+      <DataTableCell priority="wide" lines={1} className="truncate text-xs text-muted-foreground">{memory.kind || '—'}</DataTableCell>
       <DataTableCell priority="wide" lines={1} className="whitespace-nowrap text-xs">
         <VitalityCell value={memory.vitality} />
       </DataTableCell>
-      <DataTableCell priority="wide" lines={1} className="font-mono text-xs text-text-muted">
+      <DataTableCell priority="wide" lines={1} className="font-mono text-xs text-muted-foreground">
         <span className="flex items-center gap-1"><Gauge size={12} aria-hidden />{memory.importance}/5</span>
       </DataTableCell>
-      <DataTableCell priority="wide" lines={1} title={updated.title} className="whitespace-nowrap text-xs text-text-muted">
+      <DataTableCell priority="wide" lines={1} title={updated.title} className="whitespace-nowrap text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5"><Clock size={12} aria-hidden />{updated.label}</span>
       </DataTableCell>
-      <DataTableCell priority="wide" lines={1} title={used.title} className="whitespace-nowrap text-xs text-text-muted">
+      <DataTableCell priority="wide" lines={1} title={used.title} className="whitespace-nowrap text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5" data-testid="memory-used-cell">
           <Activity size={12} aria-hidden />
-          <span className={usedMs == null ? 'text-text-muted/60' : undefined}>{used.label}</span>
+          <span className={usedMs == null ? 'text-muted-foreground/60' : undefined}>{used.label}</span>
         </span>
       </DataTableCell>
       <DataTableChevronCell />
@@ -637,8 +637,8 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
 /** Vitality bar + score for one row. The bar's colour mirrors the tone scale used for lifecycle badges:
  *  danger near the auto-retention floor, success when healthy. */
 const VITALITY_BAR_BG: Record<Tone, string> = {
-  default: 'bg-text-muted', accent: 'bg-primary', muted: 'bg-text-muted',
-  danger: 'bg-danger', success: 'bg-success', warning: 'bg-warning',
+  default: 'bg-muted-foreground', accent: 'bg-primary', muted: 'bg-muted-foreground',
+  danger: 'bg-destructive', success: 'bg-success', warning: 'bg-warning',
 };
 function VitalityCell({ value }: { value: number }) {
   const pct = vitalityPct(value);
@@ -648,10 +648,10 @@ function VitalityCell({ value }: { value: number }) {
       {/* `data-table-meter` names the bar as what it is: a graphic beside a figure that already states
           the same value. A design that reads its registers as tables rather than as dashboards drops
           the graphic and keeps the number, and it needs something to address. */}
-      <span className="data-table-meter h-1.5 w-10 overflow-hidden rounded-full bg-elevated" aria-hidden>
+      <span className="data-table-meter h-1.5 w-10 overflow-hidden rounded-full bg-muted" aria-hidden>
         <span className={`block h-full rounded-full ${VITALITY_BAR_BG[tone]}`} style={{ width: `${pct}%` }} />
       </span>
-      <span className="font-mono tabular-nums text-text-muted">{pct}</span>
+      <span className="font-mono tabular-nums text-muted-foreground">{pct}</span>
     </span>
   );
 }
@@ -702,7 +702,7 @@ function CreateMemoryModal({ onClose, onCreated }: { onClose: () => void; onCrea
             rows={5}
             autoFocus
             placeholder={t.memory.fieldBodyPlaceholder}
-            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
+            className="w-full resize-y rounded-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
           />
         </Field>
         <Field label={t.memory.fieldKind}>
@@ -750,13 +750,13 @@ function MergeMemoryModal({ sources, onClose, onMerged }: { sources: Memory[]; o
   return (
     <Modal title={t.memory.mergeTitle} onClose={onClose} size="md" icon={GitMerge} description={t.memory.mergeHint}>
       <ModalBody>
-        <p className="text-xs text-text-muted">{t.memory.mergeSelected.replace('{n}', String(sources.length))}</p>
+        <p className="text-xs text-muted-foreground">{t.memory.mergeSelected.replace('{n}', String(sources.length))}</p>
         <Field label={t.memory.mergeBodyLabel}>
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={7}
-            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
+            className="w-full resize-y rounded-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
           />
         </Field>
       </ModalBody>

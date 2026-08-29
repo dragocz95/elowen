@@ -33,9 +33,9 @@
 .workspace-hero__headline { display: flex; min-width: 0; align-items: baseline; gap: 0.75rem; }
 /* Sized against the hero, not the window: the title has to shrink when a dock narrows the region even
    though the viewport never changed. */
-.workspace-hero h1 { color: var(--color-text); font-size: clamp(1.75rem, 1.25rem + 2.2cqi, 2.6rem); font-weight: 610; letter-spacing: -0.045em; line-height: 1; }
-.workspace-hero__count { color: var(--color-text-muted); font-family: var(--font-mono); font-size: 0.9rem; }
-.workspace-hero__description { max-width: 42rem; margin-top: 0.5rem; color: var(--color-text-muted); font-size: 0.78rem; line-height: 1.55; }
+.workspace-hero h1 { color: var(--color-foreground); font-size: clamp(1.75rem, 1.25rem + 2.2cqi, 2.6rem); font-weight: 610; letter-spacing: -0.045em; line-height: 1; }
+.workspace-hero__count { color: var(--color-muted-foreground); font-family: var(--font-mono); font-size: 0.9rem; }
+.workspace-hero__description { max-width: 42rem; margin-top: 0.5rem; color: var(--color-muted-foreground); font-size: 0.78rem; line-height: 1.55; }
 .workspace-hero__actions { display: flex; flex: none; align-items: center; gap: 0.75rem; margin-inline-start: auto; }
 .workspace-hero__status { display: inline-flex; min-width: 0; flex: 0 0 auto; align-items: center; }
 
@@ -48,8 +48,8 @@
 
 .workspace-metric { display: flex; min-width: 8.5rem; flex-direction: column; justify-content: center; padding: 1.2rem 2rem; border-inline-end: var(--hairline); }
 .workspace-metric:last-child { border-inline-end: 0; }
-.workspace-metric__value { display: block; color: var(--color-text); font-family: var(--font-mono); font-size: 1.7rem; line-height: 1; }
-.workspace-metric__label { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.65rem; color: var(--color-text-muted); font-size: 0.72rem; }
+.workspace-metric__value { display: block; color: var(--color-foreground); font-family: var(--font-mono); font-size: 1.7rem; line-height: 1; }
+.workspace-metric__label { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.65rem; color: var(--color-muted-foreground); font-size: 0.72rem; }
 
 .escalation-register-row:last-child { border-bottom: var(--hairline); }
 .spatial-scroll-cue svg { animation: spatial-scroll-cue 1.8s ease-in-out infinite; }

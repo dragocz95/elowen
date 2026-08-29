@@ -103,19 +103,19 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
   const selectedDetail = selected ? (
     <div className="flex flex-col gap-5 p-4">
       <div>
-        <p className="font-mono text-xs text-text">{selected.branch}</p>
-        <p className="mt-1 break-all font-mono text-[11px] text-text-muted">{selected.path}</p>
+        <p className="font-mono text-xs text-foreground">{selected.branch}</p>
+        <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">{selected.path}</p>
       </div>
       {stateBadges(selected)}
       <dl className="grid grid-cols-2 gap-3 text-xs">
-        <div><dt className="text-text-muted">{s.ahead}</dt><dd className="font-mono text-text">{selected.status?.ahead ?? 0}</dd></div>
-        <div><dt className="text-text-muted">{s.behind}</dt><dd className="font-mono text-text">{selected.status?.behind ?? 0}</dd></div>
-        <div><dt className="text-text-muted">{s.processes}</dt><dd className="font-mono text-text">{selected.activeProcesses}</dd></div>
-        <div><dt className="text-text-muted">{s.lastUsed}</dt><dd className="text-text">{new Date(selected.lastUsedAt).toLocaleString()}</dd></div>
+        <div><dt className="text-muted-foreground">{s.ahead}</dt><dd className="font-mono text-foreground">{selected.status?.ahead ?? 0}</dd></div>
+        <div><dt className="text-muted-foreground">{s.behind}</dt><dd className="font-mono text-foreground">{selected.status?.behind ?? 0}</dd></div>
+        <div><dt className="text-muted-foreground">{s.processes}</dt><dd className="font-mono text-foreground">{selected.activeProcesses}</dd></div>
+        <div><dt className="text-muted-foreground">{s.lastUsed}</dt><dd className="text-foreground">{new Date(selected.lastUsedAt).toLocaleString()}</dd></div>
       </dl>
       <div>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">{s.changedFiles}</h3>
-        {selected.files.length ? <ul className="space-y-1 font-mono text-xs text-text">{selected.files.map((file) => <li key={`${file.code}:${file.path}`}>{file.code} {file.path}</li>)}</ul> : <p className="text-xs text-text-muted">{s.clean}</p>}
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{s.changedFiles}</h3>
+        {selected.files.length ? <ul className="space-y-1 font-mono text-xs text-foreground">{selected.files.map((file) => <li key={`${file.code}:${file.path}`}>{file.code} {file.path}</li>)}</ul> : <p className="text-xs text-muted-foreground">{s.clean}</p>}
       </div>
       <div className="min-h-52 overflow-hidden rounded-lg border border-border">
         <C.PatchView diff={diff.data?.diff ?? ''} empty={s.emptyPatch} loading={diff.isLoading} />
@@ -141,7 +141,7 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
       ) : (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative min-w-0 flex-1">
-            <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <C.Input value={search} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)} placeholder={s.search} className="pl-9" />
           </div>
           <C.SelectMenu
@@ -179,13 +179,13 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
               >
                 <C.DataTableCell lines="auto" title={workspace.label}>
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-text">{workspace.label}</div>
-                    <div className="truncate font-mono text-[11px] text-text-muted">{workspace.baseRef}</div>
+                    <div className="truncate text-sm font-medium text-foreground">{workspace.label}</div>
+                    <div className="truncate font-mono text-[11px] text-muted-foreground">{workspace.baseRef}</div>
                     <div className="mt-2 sm:hidden">{stateBadges(workspace)}</div>
                   </div>
                 </C.DataTableCell>
-                <C.DataTableCell priority="wide" lines={1} title={projectName} className="text-xs text-text-muted">{projectName}</C.DataTableCell>
-                <C.DataTableCell priority="wide" lines={1} title={workspace.branch} className="font-mono text-xs text-text-muted">{workspace.branch}</C.DataTableCell>
+                <C.DataTableCell priority="wide" lines={1} title={projectName} className="text-xs text-muted-foreground">{projectName}</C.DataTableCell>
+                <C.DataTableCell priority="wide" lines={1} title={workspace.branch} className="font-mono text-xs text-muted-foreground">{workspace.branch}</C.DataTableCell>
                 <C.DataTableCell priority="wide" lines="auto">{stateBadges(workspace)}</C.DataTableCell>
                 <C.DataTableChevronCell />
               </C.DataTableRow>
@@ -244,7 +244,7 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
       <C.Modal title={s.commitTitle} size="md" onClose={() => setCommitWorkspace(null)}>
         <C.ModalBody>
           <C.Field label={s.commitMessage}><C.Input autoFocus value={commitForm.message} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setCommitForm({ ...commitForm, message: event.target.value })} /></C.Field>
-          <C.Field label={s.commitPaths} hint={s.commitPathsHint}><textarea className="min-h-40 w-full rounded-md border border-border bg-bg p-3 font-mono text-xs text-text" value={commitForm.paths} onChange={(event) => setCommitForm({ ...commitForm, paths: event.target.value })} /></C.Field>
+          <C.Field label={s.commitPaths} hint={s.commitPathsHint}><textarea className="min-h-40 w-full rounded-md border border-border bg-background p-3 font-mono text-xs text-foreground" value={commitForm.paths} onChange={(event) => setCommitForm({ ...commitForm, paths: event.target.value })} /></C.Field>
         </C.ModalBody>
         <C.ModalFooter><C.Button variant="ghost" onClick={() => setCommitWorkspace(null)}>{s.cancel}</C.Button><C.Button variant="accent" disabled={commit.isPending || !commitForm.message.trim() || !commitForm.paths.trim()} onClick={() => commit.mutate({ workspaceId: commitWorkspace.id, message: commitForm.message, paths: commitForm.paths.split('\n').map((path) => path.trim()).filter(Boolean) }, { onSuccess: () => setCommitWorkspace(null) })}>{s.commit}</C.Button></C.ModalFooter>
       </C.Modal>
@@ -255,8 +255,8 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
       return (
         <C.Modal title={s.discardTitle} size="md" onClose={() => setRemoveWorkspace(null)}>
           <C.ModalBody>
-            <p className="text-sm leading-relaxed text-danger">{s.discardWarning}</p>
-            <div className="rounded-lg border border-danger/40 bg-danger/5 p-3 font-mono text-xs text-text">
+            <p className="text-sm leading-relaxed text-destructive">{s.discardWarning}</p>
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 font-mono text-xs text-foreground">
               <div>{s.dirty}: {removePreview.dirty}</div><div>{s.untracked}: {removePreview.untracked}</div><div>{s.ahead}: {removePreview.uniqueCommits}</div><div>{s.processes}: {removePreview.activeProcesses}</div>
               {removePreview.files.map((file) => <div key={file}>{file}</div>)}
             </div>

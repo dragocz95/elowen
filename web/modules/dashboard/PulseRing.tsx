@@ -76,10 +76,10 @@ export function PulseRing<T>({ title, slices, centerValue, centerLabel, renderCa
 
   return (
     <section className="flex flex-col items-center" aria-label={title}>
-      <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">{title}</h3>
+      <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</h3>
       {drawn.length === 0 ? (
         <div
-          className="flex w-full items-center justify-center text-[11px] text-text-subtle"
+          className="flex w-full items-center justify-center text-[11px] text-subtle-foreground"
           style={{ height: RING_HEIGHT }}
         >
           {emptyLabel}
@@ -121,8 +121,8 @@ export function PulseRing<T>({ title, slices, centerValue, centerLabel, renderCa
 
           {/* The headline figure sits in the hole. Pointer-events off so it never steals a hover. */}
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <span className="font-mono text-xl leading-none tabular-nums text-text">{centerValue}</span>
-            <span className="mt-1 text-[10px] uppercase tracking-wider text-text-muted">{centerLabel}</span>
+            <span className="font-mono text-xl leading-none tabular-nums text-foreground">{centerValue}</span>
+            <span className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">{centerLabel}</span>
           </div>
         </div>
       )}

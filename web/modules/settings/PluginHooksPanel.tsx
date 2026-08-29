@@ -36,15 +36,15 @@ export function PluginHooksPanel({ contributions, hookExecutions }: { contributi
             is noise (no bundled plugin registers hooks), so the panel stays hidden until there's data. */}
         {hookExecutions && hookExecutions.entries.length > 0 ? (
           <div className="flex flex-col gap-3">
-            <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.hookExecutions}</span>
-            <p className="text-xs text-text-muted">{t.pluginDetail.hookExecutionsHint}</p>
-            <div className="max-h-72 overflow-auto rounded-md border border-border bg-bg p-3 text-[11px] leading-relaxed">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t.pluginDetail.hookExecutions}</span>
+            <p className="text-xs text-muted-foreground">{t.pluginDetail.hookExecutionsHint}</p>
+            <div className="max-h-72 overflow-auto rounded-md border border-border bg-background p-3 text-[11px] leading-relaxed">
               {hookExecutions.entries.map((e, i) => (
                 <div key={i} className="flex items-center gap-2 py-1">
-                  <span className="shrink-0 font-mono text-text-muted">{new Date(e.ts).toLocaleTimeString(locale)}</span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-text">{e.hook}</span>
-                  {e.changed ? <span className="shrink-0 font-mono text-text-muted">{e.changed}</span> : null}
-                  <span className="shrink-0 font-mono text-text-muted">{`${e.durationMs} ms`}</span>
+                  <span className="shrink-0 font-mono text-muted-foreground">{new Date(e.ts).toLocaleTimeString(locale)}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-foreground">{e.hook}</span>
+                  {e.changed ? <span className="shrink-0 font-mono text-muted-foreground">{e.changed}</span> : null}
+                  <span className="shrink-0 font-mono text-muted-foreground">{`${e.durationMs} ms`}</span>
                   <Badge tone={OUTCOME_TONE[e.outcome]}>{outcomeText(e.outcome)}</Badge>
                 </div>
               ))}

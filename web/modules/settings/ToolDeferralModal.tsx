@@ -183,7 +183,7 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
           </SettingsRow>
         </SettingsGroup>
 
-        <div className="rounded-md border border-border bg-elevated/40 px-3 py-2 text-xs text-text-muted" aria-label={t.brain.toolLoading.summary}>
+        <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground" aria-label={t.brain.toolLoading.summary}>
           {t.brain.toolLoading.summary
             .replace('{deferred}', String(summary.deferred))
             .replace('{immediate}', String(summary.immediate))
@@ -191,9 +191,9 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
         </div>
         <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.brain.toolLoading.searchPlaceholder} aria-label={t.brain.toolLoading.search} />
 
-        {catalog === null && !loadError ? <p className="text-sm text-text-muted">{t.common.loading}</p> : null}
-        {loadError ? <p className="text-sm text-danger">{t.brain.toolLoading.loadError}</p> : null}
-        {catalog !== null && filteredGroups.length === 0 ? <p className="text-sm text-text-muted">{t.brain.toolLoading.empty}</p> : null}
+        {catalog === null && !loadError ? <p className="text-sm text-muted-foreground">{t.common.loading}</p> : null}
+        {loadError ? <p className="text-sm text-destructive">{t.brain.toolLoading.loadError}</p> : null}
+        {catalog !== null && filteredGroups.length === 0 ? <p className="text-sm text-muted-foreground">{t.brain.toolLoading.empty}</p> : null}
         <div className={draft.enabled ? 'flex flex-col gap-3' : 'flex flex-col gap-3 opacity-55'}>
           {filteredGroups.map((group) => {
             const isCollapsed = collapsed.has(group.sourceId) && !query.trim();
@@ -210,7 +210,7 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
                       const next = new Set(current);
                       if (next.has(group.sourceId)) next.delete(group.sourceId); else next.add(group.sourceId);
                       return next;
-                    })} className="flex h-8 w-8 items-center justify-center rounded text-text-muted hover:bg-elevated hover:text-text">
+                    })} className="flex h-8 w-8 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground">
                       {isCollapsed ? <ChevronRight size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}
                     </button>
                   </div>
@@ -229,7 +229,7 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
                       status={<Badge tone={locked ? 'danger' : resolved.effective === 'deferred' ? 'accent' : undefined}>{reasonLabel(resolved.reason)}</Badge>}
                     >
                       {locked ? (
-                        <button type="button" disabled aria-label={`${tool.label}: ${reasonLabel(resolved.reason)}`} className="inline-flex h-9 items-center gap-1.5 rounded border border-border px-3 text-xs text-text-muted">
+                        <button type="button" disabled aria-label={`${tool.label}: ${reasonLabel(resolved.reason)}`} className="inline-flex h-9 items-center gap-1.5 rounded border border-border px-3 text-xs text-muted-foreground">
                           <Lock size={13} aria-hidden />{reasonLabel(resolved.reason)}
                         </button>
                       ) : (
@@ -242,8 +242,8 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
             );
           })}
         </div>
-        {!draft.enabled ? <p className="text-xs text-text-muted"><HelpTip>{t.brain.toolLoading.disabledHint}</HelpTip>{t.brain.toolLoading.disabledHint}</p> : null}
-        {saveError ? <p className="text-sm text-danger">{t.brain.toolLoading.saveError}</p> : null}
+        {!draft.enabled ? <p className="text-xs text-muted-foreground"><HelpTip>{t.brain.toolLoading.disabledHint}</HelpTip>{t.brain.toolLoading.disabledHint}</p> : null}
+        {saveError ? <p className="text-sm text-destructive">{t.brain.toolLoading.saveError}</p> : null}
       </ModalBody>
       <ModalFooter>
         <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>

@@ -21,7 +21,7 @@ interface EmberPalette {
 const PALETTE_TOKENS: Record<keyof EmberPalette, string> = {
   accent: '--color-primary',
   success: '--color-success',
-  error: '--color-danger',
+  error: '--color-destructive',
   spark: '--color-ember',
 };
 

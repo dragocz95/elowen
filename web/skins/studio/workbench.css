@@ -59,8 +59,8 @@
   height: 1.75rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text-muted);
+  background: var(--color-card);
+  color: var(--color-muted-foreground);
   box-shadow: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-hero__icon svg {
@@ -144,7 +144,7 @@
   font-size: 1rem;
   line-height: 1.5;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-user-message .text-text {
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-user-message .text-foreground {
   color: inherit;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-turn--you .chat-turn-meta {
@@ -176,8 +176,8 @@
   text-align: left;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-markdown th {
-  background: var(--color-elevated);
-  color: var(--color-text);
+  background: var(--color-muted);
+  color: var(--color-foreground);
   font-weight: 600;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-markdown :is(th, td):last-child {
@@ -195,11 +195,11 @@
    full-width token counter is exactly the regression that ladder exists to prevent. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-statusline {
   padding-block: 0.3125rem;
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-statusline [data-stat='model'] {
   flex: 1 1 auto;
-  color: var(--color-text);
+  color: var(--color-foreground);
   font-weight: 500;
 }
 
@@ -208,7 +208,7 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-composer {
   gap: 0.375rem;
   padding: 0.375rem;
-  border-color: color-mix(in srgb, var(--color-text) 7%, transparent);
+  border-color: color-mix(in srgb, var(--color-foreground) 7%, transparent);
   border-radius: var(--studio-chat-composer-radius);
   background: var(--studio-chat-composer);
   box-shadow: none;
@@ -230,12 +230,12 @@
     min-height: var(--touch-target);
   }
 }
-/* Send / Stop — always the LAST control in the form, and the only filled one. It carries `text-text` on
+/* Send / Stop — always the LAST control in the form, and the only filled one. It carries `text-foreground` on
    an accent ground, which is legible on the ember canvas (near-white ink) and unreadable on Studio's
-   light one (near-black ink on a blue fill). `--color-on-status` is the token both variants already
+   light one (near-black ink on a blue fill). `--color-primary-foreground` is the token both variants already
    define for exactly this: ink that sits on a filled status colour. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-composer > button:last-child {
-  color: var(--color-on-status);
+  color: var(--color-primary-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-composer-slot {
   padding-block: 0.375rem 0.75rem;
@@ -292,10 +292,10 @@
 
 /* The workbench sits on the studio canvas, like the shell content behind it, rather than on a raised
    panel — a surface that fills the screen is not floating above anything. Written against the takeover's
-   own class so it out-specifies surfaces.css's `--color-overlay` ground for every OTHER overlay, which
+   own class so it out-specifies surfaces.css's `--color-popover` ground for every OTHER overlay, which
    IS raised and keeps it. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-surface.workspace-takeover {
-  background: var(--color-bg);
+  background: var(--color-background);
 }
 
 /* The takeover's own header row — the back control, the title and the surface's toolbar. It has no class
@@ -306,7 +306,7 @@
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
   border-bottom-color: var(--studio-line);
-  background: var(--color-surface);
+  background: var(--color-card);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-takeover > div:first-child h2 {
   font-size: 0.8125rem;

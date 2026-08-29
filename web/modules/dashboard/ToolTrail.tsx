@@ -18,7 +18,7 @@ export function ToolTrail({ tools }: { tools: { name: string; count: number }[] 
   const hidden = tools.length - shown.length;
 
   return (
-    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-text-muted">
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-muted-foreground">
       {shown.map((tool) => {
         const Icon = toolIcon(tool.name);
         return (
@@ -27,17 +27,17 @@ export function ToolTrail({ tools }: { tools: { name: string; count: number }[] 
             title={tool.count > 1 ? `${tool.name} ×${tool.count}` : tool.name}
             className="inline-flex min-w-0 items-center gap-1"
           >
-            <Icon size={12} className="shrink-0 text-text-subtle" aria-hidden />
+            <Icon size={12} className="shrink-0 text-subtle-foreground" aria-hidden />
             <span className="max-w-32 truncate">{shortToolName(tool.name)}</span>
             {tool.count > 1 ? (
-              <span className="font-mono tabular-nums text-text-subtle">×{tool.count}</span>
+              <span className="font-mono tabular-nums text-subtle-foreground">×{tool.count}</span>
             ) : null}
           </span>
         );
       })}
       {hidden > 0 ? (
         <span
-          className="font-mono tabular-nums text-text-subtle"
+          className="font-mono tabular-nums text-subtle-foreground"
           title={tools.slice(MAX_SHOWN).map((t) => t.name).join(', ')}
         >
           +{hidden}

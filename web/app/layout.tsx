@@ -59,7 +59,7 @@ export async function generateMetadata() {
 
 /** What the document paints with before any stylesheet has been parsed, and what the browser's own
  *  chrome uses forever after. `background` is the anti-FOUC fill on <html>/<body>: it MUST equal the
- *  design's own `--color-bg`, because the moment the stylesheet lands the element repaints with the
+ *  design's own `--color-background`, because the moment the stylesheet lands the element repaints with the
  *  token and any disagreement is visible as a flash. `colorScheme` drives UA-rendered widgets and the
  *  default canvas; `themeColor` is the same colour again, reported to the address bar and the task
  *  switcher, so the two can never drift apart. */
@@ -69,11 +69,11 @@ type DocumentPaint = { background: string; colorScheme: 'dark' | 'light' };
 const DEFAULT_PAINT: DocumentPaint = { background: '#000000', colorScheme: 'dark' };
 
 /** Per-skin first frame. These are the only colour literals the app is allowed to hold outside a token,
- *  and they exist because the first frame happens before `--color-bg` is defined: nothing can be read
+ *  and they exist because the first frame happens before `--color-background` is defined: nothing can be read
  *  from the cascade yet, so the value has to be duplicated here and kept in step with the skin by hand.
  *  `Record<SkinName, …>` makes that duplication mechanical: adding a skin without deciding what it paints
  *  is a type error rather than a black flash, and `tests/app/layoutDynamic.test.ts` compares each entry
- *  against the `--color-bg` its stylesheet declares. The natural home for this is the skin registry in
+ *  against the `--color-background` its stylesheet declares. The natural home for this is the skin registry in
  *  `lib/skins.ts`; it stays here while that module is imported by CLIENT components, which have no use
  *  for a server-only first-frame value. */
 const SKIN_PAINT: Record<SkinName, DocumentPaint> = {

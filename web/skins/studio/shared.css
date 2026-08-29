@@ -46,7 +46,7 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace-row {
   gap: 0;
   padding: 0;
-  background: var(--color-bg);
+  background: var(--color-background);
   transition: gap var(--motion-slow) var(--ease-out), padding var(--motion-slow) var(--ease-out), background-color var(--motion-slow) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace-row[data-studio-ask-open] {
@@ -56,13 +56,13 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace {
   border-radius: 0;
-  background: var(--color-bg);
+  background: var(--color-background);
   box-shadow: none;
   transition: border-radius var(--motion-slow) var(--ease-out), box-shadow var(--motion-slow) var(--ease-out), background-color var(--motion-slow) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace[data-studio-ask-open] {
   border-radius: 20px;
-  background: var(--color-bg);
+  background: var(--color-background);
   box-shadow: var(--studio-ask-shadow);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-advisor-slot {
@@ -152,7 +152,7 @@
   min-height: 0;
   overflow: hidden;
   background: var(--color-sidebar);
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
   transition: width var(--motion-base) var(--ease-out);
 }
 /* As a COLUMN the navigation sits one step above the content it insets from, so its hairline and its
@@ -205,7 +205,7 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'][data-open] {
   transform: none;
 }
-/* --color-scrim, not a mix of --color-bg: on the light variant the canvas IS near-white, so 70% of it
+/* --color-scrim, not a mix of --color-background: on the light variant the canvas IS near-white, so 70% of it
    over a near-white page darkened nothing and the sheet had no backdrop to slide over. The token is
    declared per variant (tokens.css, overridden in studio-light/skin.css) precisely so this one rule can
    be right on both. */
@@ -229,12 +229,12 @@
   display: grid;
   place-items: center;
   border-radius: var(--radius);
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__close:hover {
   background: var(--color-sidebar-accent);
-  color: var(--color-text);
+  color: var(--color-foreground);
 }
 
 /* The brand row. It is the one place in this column that is allowed to be a piece of identity rather than
@@ -287,7 +287,7 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-name {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text);
+  color: var(--color-foreground);
   font-family: var(--studio-brand-font);
   font-size: 1.125rem;
   font-weight: 600;
@@ -299,7 +299,7 @@
    so it is the one place in this column that stays monospaced — a version string is data. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__version {
   flex: none;
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
   font-family: var(--font-mono);
   font-size: 0.6875rem;
 }
@@ -314,12 +314,12 @@
   height: 1.75rem;
   margin-inline-start: auto;
   border-radius: var(--radius);
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__trigger:hover {
   background: var(--color-sidebar-accent);
-  color: var(--color-text);
+  color: var(--color-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__trigger {
   margin-inline-start: 0;
@@ -366,7 +366,7 @@
   /* 8px, the ladder's navigation step. 6px on a 40px row reads as an almost-square with the corners
      shaved; 8px is the radius the row's own height asks for and the one the rest of the chrome uses. */
   border-radius: var(--radius);
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
   font-size: 0.875rem;
   line-height: 1.25rem;
   text-decoration: none;
@@ -400,15 +400,15 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item:hover {
   background: var(--color-sidebar-accent);
-  color: var(--color-text);
+  color: var(--color-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active] {
   background: var(--color-sidebar-accent);
-  color: var(--color-text);
+  color: var(--color-foreground);
   font-weight: 500;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active] .studio-nav__item-icon {
-  color: var(--color-text);
+  color: var(--color-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-icon {
   display: grid;
@@ -416,7 +416,7 @@
   place-items: center;
   width: 1.125rem;
   height: 1.125rem;
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-label {
   min-width: 0;
@@ -464,7 +464,7 @@
   height: 2rem;
   padding-inline: 0.5rem;
   border-radius: var(--radius);
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
   /* A group header is a NAME, at the same 14px/500 step the rows under it use, one ink quieter. It was
      12px, which made it read as a caption over the rows rather than as their heading. */
   font-size: 0.875rem;
@@ -474,11 +474,11 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle:hover,
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle[data-active] {
-  color: var(--color-text);
+  color: var(--color-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__chevron {
   margin-left: auto;
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
   transform: rotate(90deg);
   transition: transform var(--motion-fast) var(--ease-out);
 }
@@ -544,7 +544,7 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user-name {
   overflow: hidden;
-  color: var(--color-text);
+  color: var(--color-foreground);
   font-size: 0.8125rem;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -552,7 +552,7 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user-meta {
   overflow: hidden;
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
   font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;

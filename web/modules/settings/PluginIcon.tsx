@@ -8,7 +8,7 @@ export function PluginIcon({ name, size = 24 }: { name: string; hasIcon?: boolea
   const Icon = pluginIcon(name);
   return (
     <span
-      className="flex shrink-0 items-center justify-center border border-border bg-elevated text-text-muted"
+      className="flex shrink-0 items-center justify-center border border-border bg-muted text-muted-foreground"
       style={{ width: size, height: size, borderRadius: radius }}
     >
       <Icon size={Math.round(size * 0.46)} aria-hidden />

@@ -11,21 +11,21 @@
 
 :root[data-skin='midnight'] {
   /* Cold graphite canvas instead of OLED ember. */
-  --color-bg: #05070b;
+  --color-background: #05070b;
   --color-document: #070a10;
-  --color-surface: #0b0f16;
-  --color-elevated: #10151f;
-  --color-overlay: #161c28;
+  --color-card: #0b0f16;
+  --color-muted: #10151f;
+  --color-popover: #161c28;
   --color-border: #1e2634;
   --color-border-strong: #2c3648;
   --color-primary: #38bdf8;
   --color-primary-hot: #7dd3fc;
   --color-ember: #a5e3ff;
-  --color-text: #eef2f7;
-  --color-text-muted: #8b95a5;
+  --color-foreground: #eef2f7;
+  --color-muted-foreground: #8b95a5;
   /* Held at >= 4.5:1 against this skin's OWN surfaces, which are lighter than the ember ones — 4.59:1
-     on --color-elevated (#10151f) — and clearly under --color-text-muted (6.04:1 there). */
-  --color-text-subtle: #77808f;
+     on --color-muted (#10151f) — and clearly under --color-muted-foreground (6.04:1 there). */
+  --color-subtle-foreground: #77808f;
   --primary-rgb: 56 189 248;
 
   /* Square, flat, engineering-drawing look: no rounding, no glow — hairlines carry the structure. */

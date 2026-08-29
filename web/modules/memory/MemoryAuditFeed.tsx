@@ -25,9 +25,9 @@ export function MemoryAuditFeed({ memoryId }: { memoryId: number | null }) {
 
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{t.memory.auditHeading}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t.memory.auditHeading}</span>
       {rows.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">{t.memory.auditEmpty}</p>
+        <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">{t.memory.auditEmpty}</p>
       ) : (
         <ul className="flex flex-col gap-1.5">
           {rows.map((ev) => {
@@ -35,18 +35,18 @@ export function MemoryAuditFeed({ memoryId }: { memoryId: number | null }) {
             const when = formatTaskTime(ev.created_at, Date.now(), locale);
             const summary = eventSummary(ev);
             return (
-              <li key={ev.id} className="rounded-lg border border-border bg-surface p-2.5 text-xs">
+              <li key={ev.id} className="rounded-lg border border-border bg-card p-2.5 text-xs">
                 <div className="flex items-center gap-2">
                   <Icon size={14} className={`shrink-0 ${TONE_TEXT[memoryActionTone(ev.action)]}`} aria-hidden />
                   <span className={`min-w-0 flex-1 truncate font-medium ${TONE_TEXT[memoryActionTone(ev.action)]}`}>{memoryActionLabel(t, ev.action)}</span>
-                  <span className="shrink-0 font-mono text-[10px] text-text-muted">{ev.actor}</span>
-                  {when.label ? <span className="shrink-0 text-text-muted" title={when.title}>{when.label}</span> : null}
+                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{ev.actor}</span>
+                  {when.label ? <span className="shrink-0 text-muted-foreground" title={when.title}>{when.label}</span> : null}
                 </div>
-                {ev.reason ? <p className="mt-1 whitespace-pre-wrap pl-6 text-text-muted">{ev.reason}</p> : null}
-                {summary ? <p className="mt-1 truncate pl-6 text-text-muted/80" title={summary}>{summary}</p> : null}
+                {ev.reason ? <p className="mt-1 whitespace-pre-wrap pl-6 text-muted-foreground">{ev.reason}</p> : null}
+                {summary ? <p className="mt-1 truncate pl-6 text-muted-foreground/80" title={summary}>{summary}</p> : null}
                 {ev.model ? (
                   <span
-                    className="mt-1 ml-6 inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-muted"
+                    className="mt-1 ml-6 inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                     title={`${t.memory.eventModel}: ${ev.model}`}
                   >
                     <ModelIcon name={ev.model} size={11} />

@@ -108,7 +108,7 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
           is the headline below, so nothing decorative competes with it above the fold. */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="font-mono text-[11px] text-text-muted">#{memory.id}</span>
+          <span className="font-mono text-[11px] text-muted-foreground">#{memory.id}</span>
           <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge>
           {!isDeleted && memory.importance === 5 ? (
             <Badge tone="accent"><ShieldCheck size={10} className="mr-0.5" aria-hidden />{t.memory.neverDeleted}</Badge>
@@ -141,11 +141,11 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
             onChange={(e) => setBody(e.target.value)}
             rows={5}
             placeholder={t.memory.fieldBodyPlaceholder}
-            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
+            className="w-full resize-y rounded-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
           />
         </Section>
       ) : (
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-text" data-testid="memory-body">{memory.body}</p>
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground" data-testid="memory-body">{memory.body}</p>
       )}
 
       {editing ? (
@@ -171,7 +171,7 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
           {/* Classification and origin, below the text it describes. */}
           <div className="flex flex-wrap items-center gap-1.5">
             {category ? (
-              <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-2 py-0.5 text-[11px] font-medium text-text">
+              <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
                 <span className="shrink-0" style={{ color: categorySwatch(category.color) }}>
                   <CategoryIcon name={category.icon} size={12} />
                 </span>
@@ -181,7 +181,7 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
             {memory.kind ? <Badge><Hash size={10} className="mr-0.5" aria-hidden />{memory.kind}</Badge> : null}
             {memory.source ? <Badge tone="muted">{memory.source}</Badge> : null}
             {created.label ? (
-              <span className="font-mono text-[11px] text-text-muted" title={created.title}>{t.memory.createdAt} {created.label}</span>
+              <span className="font-mono text-[11px] text-muted-foreground" title={created.title}>{t.memory.createdAt} {created.label}</span>
             ) : null}
           </div>
           <div className="grid grid-cols-2 divide-x divide-border/70 border-y border-border/70 @sm:grid-cols-4">
@@ -213,7 +213,7 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{label}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
       {children}
     </div>
   );
@@ -222,8 +222,8 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 function Metric({ icon: Icon, label, value, title }: { icon: typeof Gauge; label: string; value: string; title?: string }) {
   return (
     <div className="flex min-w-0 flex-col gap-1 px-2 py-3" title={title}>
-      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-text-muted"><Icon size={11} aria-hidden />{label}</span>
-      <span className="truncate font-mono text-xs text-text">{value}</span>
+      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground"><Icon size={11} aria-hidden />{label}</span>
+      <span className="truncate font-mono text-xs text-foreground">{value}</span>
     </div>
   );
 }

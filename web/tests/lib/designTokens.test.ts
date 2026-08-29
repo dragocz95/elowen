@@ -53,10 +53,10 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-const TEXT_TOKENS = ['--color-text', '--color-text-muted', '--color-text-subtle'] as const;
-/** Every ground the text ramp is actually painted on. `--color-surface-sticky` is DERIVED rather than
+const TEXT_TOKENS = ['--color-foreground', '--color-muted-foreground', '--color-subtle-foreground'] as const;
+/** Every ground the text ramp is actually painted on. `--color-sticky` is DERIVED rather than
  *  declared (tokens.css mixes 6% ink into the document surface) and is the ground of every sticky table
- *  header and toolbar in the app — and because it is derived it can be lighter than --color-elevated,
+ *  header and toolbar in the app — and because it is derived it can be lighter than --color-muted,
  *  which is the surface each palette was tuned against. Studio's light variant shipped a header at
  *  4.43:1 that way and no gate saw it, because this list stopped at the four declared surfaces.
  *
@@ -64,7 +64,7 @@ const TEXT_TOKENS = ['--color-text', '--color-text-muted', '--color-text-subtle'
  *  is a whole region of the app painted on grounds a design may set independently of its content
  *  surfaces, and its rows carry the muted and subtle steps. A skin is free to make the column quieter
  *  than the page — it must not make the menu unreadable doing so. */
-const SURFACE_TOKENS = ['--color-bg', '--color-document', '--color-surface', '--color-elevated', '--color-surface-sticky', '--color-sidebar', '--color-sidebar-accent'] as const;
+const SURFACE_TOKENS = ['--color-background', '--color-document', '--color-card', '--color-muted', '--color-sticky', '--color-sidebar', '--color-sidebar-accent'] as const;
 const AA_NORMAL_TEXT = 4.5;
 
 /** Mix two `#rrggbb` colours the way `color-mix(in srgb, …)` does: a linear interpolation of the
@@ -106,23 +106,23 @@ function resolveColour(value: string, tokens: Record<string, string>, depth = 0)
  *  ratio has since been fixed fails as a stale entry, and a pair that is not listed has to pass. So the
  *  list can only shrink, and adding to it is a visible act rather than a quiet one.
  *
- *  Both entries are the same defect, found by adding --color-surface-sticky to the surfaces above: the
- *  derived sticky ground is LIGHTER than --color-elevated, which is the surface both of these palettes
+ *  Both entries are the same defect, found by adding --color-sticky to the surfaces above: the
+ *  derived sticky ground is LIGHTER than --color-muted, which is the surface both of these palettes
  *  state their measurement against, so the third text step lands just under AA on it. Neither palette is
  *  this branch's to repaint — Studio must leave the built-in design and midnight pixel-identical — and
  *  the correction is a two-unit darkening of one token in each. */
 const KNOWN_BELOW_AA: { design: string; text: string; surface: string; reason: string }[] = [
   {
     design: 'default',
-    text: '--color-text-subtle',
-    surface: '--color-surface-sticky',
-    reason: 'TODO(contrast): #827974 on the derived sticky ground (#121111) is 4.43:1. tokens.css claims 4.57:1 as its worst case, which was measured before --color-surface-sticky existed; darkening the token repaints the built-in design and belongs to its own change.',
+    text: '--color-subtle-foreground',
+    surface: '--color-sticky',
+    reason: 'TODO(contrast): #827974 on the derived sticky ground (#121111) is 4.43:1. tokens.css claims 4.57:1 as its worst case, which was measured before --color-sticky existed; darkening the token repaints the built-in design and belongs to its own change.',
   },
   {
     design: 'midnight',
-    text: '--color-text-subtle',
-    surface: '--color-surface-sticky',
-    reason: 'TODO(contrast): #77808f on the derived sticky ground (#15181e) is 4.46:1, for the same reason as the built-in design above — the skin was tuned against --color-elevated, which the derived surface is lighter than.',
+    text: '--color-subtle-foreground',
+    surface: '--color-sticky',
+    reason: 'TODO(contrast): #77808f on the derived sticky ground (#15181e) is 4.46:1, for the same reason as the built-in design above — the skin was tuned against --color-muted, which the derived surface is lighter than.',
   },
 ];
 
@@ -167,19 +167,23 @@ function assertReadable(design: string, tokens: Record<string, string>) {
 
   // Three steps that all pass AA but read the same are not a hierarchy. Compare on the LIGHTEST surface,
   // where the steps are closest together.
-  const on = (token: string) => contrast(hex(token), hex('--color-elevated'));
-  expect(on('--color-text'), `${design}: --color-text must read stronger than --color-text-muted`)
-    .toBeGreaterThan(on('--color-text-muted'));
-  expect(on('--color-text-muted'), `${design}: --color-text-muted must read stronger than --color-text-subtle`)
-    .toBeGreaterThan(on('--color-text-subtle'));
+  const on = (token: string) => contrast(hex(token), hex('--color-muted'));
+  expect(on('--color-foreground'), `${design}: --color-foreground must read stronger than --color-muted-foreground`)
+    .toBeGreaterThan(on('--color-muted-foreground'));
+  expect(on('--color-muted-foreground'), `${design}: --color-muted-foreground must read stronger than --color-subtle-foreground`)
+    .toBeGreaterThan(on('--color-subtle-foreground'));
 }
 
 /** The shadcn pairing rule, as a measurement. tokens.css states it in prose — "a base token names a
  *  SURFACE and its `-foreground` names the text and icons that sit on it" — and every component is
- *  written against it: `bg-muted text-muted-foreground`, `bg-primary text-primary-foreground`. Nothing
- *  checked that the pairs are actually READABLE, because the ramp check above measures the palette names
- *  (--color-text*) against the surface names, and a pair like muted/muted-foreground is only those same
- *  colours by way of two aliases a skin is free to move independently.
+ *  written against it: `bg-muted text-muted-foreground`, `bg-primary text-primary-foreground`.
+ *
+ *  It is a SEPARATE check from the ramp above rather than a restatement of it. The ramp measures three
+ *  text steps against every ground the app paints; this measures the pairs a shadcn component reaches
+ *  for, and the two sets only overlap in part — `card`, `popover`, `primary`, `secondary` and
+ *  `destructive` each carry a foreground no ramp step names, and a design is free to move either half of
+ *  a pair on its own. `resolveColour` follows whatever `var()` chain a design leaves behind it, so a skin
+ *  that re-aliases one of these is measured on what it actually renders.
  *
  *  `accent` is deliberately absent: it is a wash of the foreground (`color-mix(… transparent)`) rather
  *  than an opaque surface, so what it composites over is whatever is behind it — which is the property
@@ -205,7 +209,7 @@ describe('text contrast', () => {
     expect(resolveColour('var(--missing)', {})).toBeNull();
     // And the surface it was added for really is derived in every design, i.e. the check below is not
     // quietly measuring a literal somebody declared.
-    expect(baseTokens['--color-surface-sticky']).toContain('color-mix');
+    expect(baseTokens['--color-sticky']).toContain('color-mix');
   });
 
   it('records only real, still-failing pairs in the ledger', () => {
@@ -254,17 +258,21 @@ describe('shadcn surface/foreground pairs', () => {
     assertPairsReadable(skin, palette(skin));
   });
 
-  it('measures the pair a component actually renders, not the alias it is spelled with', () => {
-    // The guard is only worth having if it FAILS on an unreadable pair, and both aliases have to be
-    // followed for it to see one: --color-muted-foreground on --color-muted is two var() hops away from
-    // the colours involved, which is exactly how a pair gets reviewed by reading the prose instead of the
-    // numbers. A palette where the quiet ink has been lightened onto the card fill must not pass.
-    const broken = {
-      ...baseTokens,
-      '--color-text-muted': '#2a2a2a',
-      '--color-elevated': '#0d0d0d',
-    };
-    expect(() => assertPairsReadable('broken', broken)).toThrow(/--color-muted-foreground on --color-muted/);
+  it('measures the pair a component actually renders, following whatever var() chain a design leaves', () => {
+    // The guard is only worth having if it FAILS on an unreadable pair. Two mutations, because the pairs
+    // are declared two different ways and a check that only saw the literal one would pass forever on
+    // half of them: `muted`/`muted-foreground` both hold their own value, while
+    // `destructive-foreground` is an ALIAS of --color-primary-foreground and can only be measured if the
+    // resolver follows that hop. A palette where the quiet ink has been lightened onto the card fill, or
+    // where the destructive fill has been darkened onto the shared status ink, must not pass.
+    const dimInk = { ...baseTokens, '--color-muted-foreground': '#2a2a2a', '--color-muted': '#0d0d0d' };
+    expect(() => assertPairsReadable('broken', dimInk)).toThrow(/--color-muted-foreground on --color-muted/);
+
+    // The message matters as much as the throw: a resolver that stopped at the alias would report
+    // "must resolve to a literal colour" instead, i.e. it would fail without ever measuring the pair.
+    const darkFill = { ...baseTokens, '--color-destructive': '#0a0a0a' };
+    expect(() => assertPairsReadable('broken', darkFill))
+      .toThrow(/--color-destructive-foreground on --color-destructive is \d/);
   });
 });
 
@@ -372,7 +380,7 @@ describe('the host component tree paints from tokens, not from literals', () => 
    *    opens with a digit at all — stay clean;
    *  - Tailwind's literal colour utilities: `bg-black`, `text-white`, and the named palette
    *    (`bg-red-500`, `text-slate-400`), all of which bypass the semantic tokens entirely.
-   *  The semantic utilities the app actually uses — `bg-primary`, `text-muted-foreground`, `border-danger` — carry
+   *  The semantic utilities the app actually uses — `bg-primary`, `text-muted-foreground`, `border-destructive` — carry
    *  no palette name and so match none of these. */
   const LITERAL_PATTERNS = [
     /#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/g,
@@ -411,8 +419,8 @@ describe('the host component tree paints from tokens, not from literals', () => 
    *  cleaned up fails as a stale entry. File granularity rather than `path:line` on purpose: line numbers
    *  churn under every unrelated edit, and a ledger that fails on churn gets deleted rather than paid. */
   //  EMPTY, and it stays that way. Every entry that was here has been paid: the white washes across the
-  //  settings surface and the interactive row became `color-mix` of --color-text, the black scrims became
-  //  --color-bg, the status glows resolved to the --color-success / --color-danger / --color-error and
+  //  settings surface and the interactive row became `color-mix` of --color-foreground, the black scrims became
+  //  --color-background, the status glows resolved to the --color-success / --color-destructive / --color-destructive and
   //  --color-ember tokens they were already spelling out by hand, the diagnostics legend got the two
   //  categorical tone tokens it needed, and the terminal preview now asks xtermTheme for the background
   //  it tints itself against instead of writing its own. Adding a line here again means a literal is
@@ -458,9 +466,9 @@ describe('the host component tree paints from tokens, not from literals', () => 
     for (const legitimate of [
       'background: rgb(var(--primary-rgb) / .16);',
       'border-color: color-mix(in srgb, var(--color-warning) 40%, transparent);',
-      'background: var(--color-surface-sticky);',
-      '<div className="bg-primary text-muted-foreground border-danger" />',
-      '<div className="bg-surface hover:bg-elevated" />',
+      'background: var(--color-sticky);',
+      '<div className="bg-primary text-muted-foreground border-destructive" />',
+      '<div className="bg-card hover:bg-accent" />',
       'const gap = "gap-3 pt-2";',
     ]) expect(flagged(legitimate), `should NOT have been flagged: ${legitimate}`).toBe(false);
   });

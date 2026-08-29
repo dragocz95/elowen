@@ -202,8 +202,8 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         {/* The heading carries the count and the help affordance; the one-line description that used to
             sit under it said what the table already shows. */}
         <div className="flex min-w-0 items-baseline gap-2">
-          <h2 className="text-base font-semibold text-text">{t.sessionsPanel.tab}</h2>
-          {visible.length > 0 ? <span className="font-mono text-xs text-text-muted">{visible.length}</span> : null}
+          <h2 className="text-base font-semibold text-foreground">{t.sessionsPanel.tab}</h2>
+          {visible.length > 0 ? <span className="font-mono text-xs text-muted-foreground">{visible.length}</span> : null}
           <HelpTip align="right">{t.help.sessionsPanel}</HelpTip>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -239,8 +239,8 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
       <ControlSurfaceRegister className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} data-testid="brain-sessions-scroll" className="min-h-0 flex-1 overflow-y-auto">
       {q.isLoading ? <LoadingLine />
-        : q.isError ? <p className="py-8 text-xs italic text-text-muted">{t.common.daemonUnreachable}</p>
-        : visible.length === 0 ? <p className="py-8 text-xs italic text-text-muted">{sessions.length === 0 ? t.sessionsPanel.empty : t.sessionsPanel.noMatches}</p>
+        : q.isError ? <p className="py-8 text-xs italic text-muted-foreground">{t.common.daemonUnreachable}</p>
+        : visible.length === 0 ? <p className="py-8 text-xs italic text-muted-foreground">{sessions.length === 0 ? t.sessionsPanel.empty : t.sessionsPanel.noMatches}</p>
         : (
           <DataTable ariaLabel={t.sessionsPanel.tab} columns={COLUMNS} compactColumns={COMPACT_COLUMNS} mobileColumns={MOBILE_COLUMNS} data-testid="brain-sessions-list">
             <DataTableRow header>
@@ -275,7 +275,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                   <DataTableCell priority="mobile" lines={1}>
                     <span className="flex min-w-0 items-center gap-1.5" title={s.model}>
                       <ModelIcon name={s.model} size={14} />
-                      <span className="truncate text-xs text-text-muted">{s.model}</span>
+                      <span className="truncate text-xs text-muted-foreground">{s.model}</span>
                     </span>
                   </DataTableCell>
                   {/* The title IS the row's control here, so the cell keeps its focus ring and its own
@@ -288,7 +288,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                       aria-label={`${label}: ${title}`}
                       className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
                     >
-                      <span className="truncate text-sm text-text transition-colors group-hover:text-primary">{title}</span>
+                      <span className="truncate text-sm text-foreground transition-colors group-hover:text-primary">{title}</span>
                       {/* WHERE the conversation happened. A web chat carries no mark — it is the norm
                           here and labelling every row would be noise. */}
                       {s.platform ? <PlatformIcon platform={s.platform} /> : null}
@@ -305,29 +305,29 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                     {hostedRoom(s) && writer ? (
                       <span className="flex min-w-0 items-center gap-2" title={s.lastWriterLabel ?? ''}>
                         <Avatar user={writer} size={20} />
-                        <span className="truncate text-xs text-text-muted">{s.lastWriterLabel}</span>
-                        <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny text-text-muted">{t.sessionsPanel.roomBadge}</span>
+                        <span className="truncate text-xs text-muted-foreground">{s.lastWriterLabel}</span>
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny text-muted-foreground">{t.sessionsPanel.roomBadge}</span>
                       </span>
                     ) : owner ? (
                       <span className="flex min-w-0 items-center gap-2" title={s.ownerLabel ?? ''}>
                         <Avatar user={owner} size={20} />
-                        <span className="truncate text-xs text-text-muted">{s.ownerLabel ?? ''}</span>
+                        <span className="truncate text-xs text-muted-foreground">{s.ownerLabel ?? ''}</span>
                         {hostedRoom(s) ? (
-                          <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny text-text-muted">{t.sessionsPanel.roomBadge}</span>
+                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny text-muted-foreground">{t.sessionsPanel.roomBadge}</span>
                         ) : null}
                       </span>
                     ) : null}
                   </DataTableCell>
-                  <DataTableCell priority="wide" lines={1} className="text-right font-mono text-tiny text-text-muted">
+                  <DataTableCell priority="wide" lines={1} className="text-right font-mono text-tiny text-muted-foreground">
                     {s.tokens != null ? formatTokens(s.tokens) : ''}
                   </DataTableCell>
-                  <DataTableCell priority="wide" lines={1} className="font-mono text-tiny text-text-muted">{localDateTime(s.updated_at, locale, false)}</DataTableCell>
+                  <DataTableCell priority="wide" lines={1} className="font-mono text-tiny text-muted-foreground">{localDateTime(s.updated_at, locale, false)}</DataTableCell>
                   <DataTableCell lines="auto">
                     <ActionMenu
                       label={`${title}: ${t.common.actions}`}
                       items={rowActions(s)}
                       trigger={<MoreHorizontal size={16} aria-hidden />}
-                      triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+                      triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
                     />
                   </DataTableCell>
                 </DataTableRow>

@@ -105,17 +105,17 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
         >
           <span className="relative shrink-0">
             <PluginIcon name={p.name} hasIcon={p.hasIcon} size={38} />
-            {p.enabled ? <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-bg bg-success" aria-hidden /> : null}
+            {p.enabled ? <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-background bg-success" aria-hidden /> : null}
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-semibold text-text transition-colors group-hover:text-primary">{p.name}</span>
-              <span className="flex shrink-0 items-center gap-1 font-mono text-[9px] text-text-muted" title={p.source === 'bundled' ? t.plugins.bundled : t.plugins.user}>
+              <span className="truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{p.name}</span>
+              <span className="flex shrink-0 items-center gap-1 font-mono text-[9px] text-muted-foreground" title={p.source === 'bundled' ? t.plugins.bundled : t.plugins.user}>
                 {p.source === 'bundled' ? <Package size={10} aria-hidden /> : <UserIcon size={10} aria-hidden />}v{p.version}
               </span>
               {updatable ? <span className="hidden text-[10px] font-medium text-primary @sm:inline">{t.plugins.updateAvailable}</span> : null}
             </span>
-            <span className="mt-0.5 block truncate text-xs text-text-muted" title={description}>{description}</span>
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground" title={description}>{description}</span>
           </span>
         </button>
         <div className="hidden shrink-0 items-center gap-2 @3xl:flex">
@@ -129,7 +129,7 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
           <ActionMenu
             label={`${p.name}: ${t.common.actions}`}
             trigger={<MoreHorizontal size={16} aria-hidden />}
-            triggerClassName="inline-flex h-9 w-9 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            triggerClassName="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
             items={[
               { label: t.plugins.detail, icon: Eye, onSelect: onDetail },
               ...(updatable ? [{ label: t.plugins.update, icon: ArrowUpCircle, onSelect: onUpdate }] : []),
@@ -152,10 +152,10 @@ function MarketplaceCard({ e, onInstall, busy }: { e: MarketplaceEntry; onInstal
         <PluginIcon name={e.name} size={38} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-semibold text-text">{e.name}</span>
-            <span className="shrink-0 font-mono text-tiny text-text-muted">v{e.version}</span>
+            <span className="truncate text-sm font-semibold text-foreground">{e.name}</span>
+            <span className="shrink-0 font-mono text-tiny text-muted-foreground">v{e.version}</span>
           </div>
-          <p className="truncate text-xs text-text-muted" title={e.description}>{e.description}</p>
+          <p className="truncate text-xs text-muted-foreground" title={e.description}>{e.description}</p>
         </div>
         <Button variant="default" icon={Download} onClick={onInstall} disabled={busy} className="shrink-0">
           {busy ? t.plugins.installing : t.plugins.install}
@@ -176,10 +176,10 @@ function RemovedCard({ p, onRestore, busy }: { p: PluginInfo; onRestore: () => v
         <PluginIcon name={p.name} hasIcon={p.hasIcon} size={38} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-semibold text-text">{p.name}</span>
-            <span className="shrink-0 font-mono text-tiny text-text-muted">v{p.version}</span>
+            <span className="truncate text-sm font-semibold text-foreground">{p.name}</span>
+            <span className="shrink-0 font-mono text-tiny text-muted-foreground">v{p.version}</span>
           </div>
-          <p className="truncate text-xs text-text-muted" title={description}>{description}</p>
+          <p className="truncate text-xs text-muted-foreground" title={description}>{description}</p>
         </div>
         <Button variant="default" icon={RotateCcw} onClick={onRestore} disabled={busy} className="shrink-0">
           {t.plugins.restore}
@@ -349,7 +349,7 @@ export function PluginsSection() {
             </div>
             <div className="flex min-w-0 flex-col gap-3 @xl:flex-row @xl:items-center">
               <div className="relative w-full @xl:max-w-xs">
-                <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.plugins.searchPlaceholder} className="pl-9" />
               </div>
               {/* No scroll axis here on purpose. Segmented wraps unless asked not to, so this track never
@@ -373,7 +373,7 @@ export function PluginsSection() {
           <div className="flex flex-col">
             {removedBundled.length > 0 ? (
               <div className="border-b border-border/70">
-                <div className="px-5 pb-2 pt-5 text-sm font-medium text-text">{t.plugins.removedSection}</div>
+                <div className="px-5 pb-2 pt-5 text-sm font-medium text-foreground">{t.plugins.removedSection}</div>
                 <div role="list" className="@container divide-y divide-border/70" data-testid="removed-plugins-list">
                   <MotionPresence>{removedBundled.map((p) => <MotionLayoutItem key={p.name} layoutId={`removed-plugin-${p.name}`}><RemovedCard p={p} busy={pending === p.name} onRestore={() => doRestore(p.name)} /></MotionLayoutItem>)}</MotionPresence>
                 </div>

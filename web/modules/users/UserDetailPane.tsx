@@ -42,7 +42,7 @@ function ProjectChips({ userId, projects }: { userId: number; projects: Project[
   const assigned = useUserProjects(userId);
   const assign = useAssignProject();
   const [open, setOpen] = useState(false);
-  if (projects.length === 0) return <p className="text-xs italic text-text-muted">—</p>;
+  if (projects.length === 0) return <p className="text-xs italic text-muted-foreground">—</p>;
 
   const assignedIds = new Set(assigned.data ?? []);
   const assignedProjects = projects.filter((p) => assignedIds.has(p.id));
@@ -125,7 +125,7 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   const offeredExecs = [...globalExecs.filter((e) => execProvider(e) !== 'elowen'), ...brainExecs];
   // Nothing left to grant — which now includes the case where every configured provider is gone. Rendering
   // an empty picker would invite a save that clears the account's grants as a side effect of that outage.
-  if (offeredExecs.length === 0) return <p className="text-xs italic text-text-muted">—</p>;
+  if (offeredExecs.length === 0) return <p className="text-xs italic text-muted-foreground">—</p>;
 
   // Order execs by the settings' provider order so the modal groups follow the executor picker.
   const providerOrder = (id: ProviderId) => {
@@ -209,7 +209,7 @@ function PluginGrantChips({ user }: { user: ElowenUser }) {
   const plugins = usePlugins();
 
   const grantable = (plugins.data ?? []).filter((p) => p.userGrantable && !p.removed);
-  if (grantable.length === 0) return <p className="text-xs italic text-text-muted">{t.users.grantedPluginsEmpty}</p>;
+  if (grantable.length === 0) return <p className="text-xs italic text-muted-foreground">{t.users.grantedPluginsEmpty}</p>;
 
   const granted = grantable.filter((p) => user.granted_plugins.includes(p.name));
   const items: ManageSelectionItem[] = grantable.map((p) => ({
@@ -297,13 +297,13 @@ function IdentityHeader({ user }: { user: ElowenUser }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="flex items-center gap-2">
-        <span className="truncate text-base font-semibold text-text">{user.name || user.username}</span>
+        <span className="truncate text-base font-semibold text-foreground">{user.name || user.username}</span>
         {user.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
-        <button type="button" onClick={startEditing} aria-label={t.users.editIdentity} className="shrink-0 rounded-md p-1 text-text-muted opacity-60 hover:bg-elevated hover:text-text hover:opacity-100">
+        <button type="button" onClick={startEditing} aria-label={t.users.editIdentity} className="shrink-0 rounded-md p-1 text-muted-foreground opacity-60 hover:bg-accent hover:text-foreground hover:opacity-100">
           <Pencil size={13} aria-hidden />
         </button>
       </span>
-      <span className="truncate font-mono text-xs text-text-muted">@{user.username} · {localDateTime(user.created_at, locale, false)}</span>
+      <span className="truncate font-mono text-xs text-muted-foreground">@{user.username} · {localDateTime(user.created_at, locale, false)}</span>
     </div>
   );
 }

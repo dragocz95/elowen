@@ -285,8 +285,8 @@ function statusLabel(server, strings) {
 }
 function statusDot(server) {
   if (server.status === "connected") return "bg-success";
-  if (server.status === "error") return "bg-danger";
-  return "bg-text-muted/50";
+  if (server.status === "error") return "bg-destructive";
+  return "bg-muted-foreground/50";
 }
 function scopeLabel(scope, strings) {
   return scope === "instance" ? strings.scopeInstance : strings.scopePersonal;
@@ -308,18 +308,18 @@ function McpServerRow({ server, showScope, selected, onOpen }) {
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "sr-only", children: label })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { lines: 1, title: server.name, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex w-full min-w-0 items-center gap-2", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "truncate text-sm text-text", children: server.name }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "truncate text-sm text-foreground", children: server.name }),
           !server.enabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { tone: "muted", children: s.statusDisabled }) : null
         ] }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: "auto", className: "whitespace-nowrap", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { children: server.transport.toUpperCase() }) }),
-        showScope ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, className: "text-xs text-text-muted", children: scopeLabel(server.scope, s) }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, className: "text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex items-center gap-1.5", children: [
+        showScope ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, className: "text-xs text-muted-foreground", children: scopeLabel(server.scope, s) }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, className: "text-xs text-muted-foreground", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex items-center gap-1.5", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: DATA_TABLE_ICON_SIZE, "aria-hidden": true }),
           server.toolCount
         ] }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, title: server.lastError ?? label, className: "text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex min-w-0 items-center gap-1.5", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, title: server.lastError ?? label, className: "text-xs text-muted-foreground", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex min-w-0 items-center gap-1.5", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "shrink-0", children: server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(TriangleAlert, { size: DATA_TABLE_ICON_SIZE, "aria-hidden": true }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PlugZap, { size: DATA_TABLE_ICON_SIZE, "aria-hidden": true }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `truncate ${server.lastError ? "text-danger" : ""}`, children: server.lastError ?? label })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `truncate ${server.lastError ? "text-destructive" : ""}`, children: server.lastError ?? label })
         ] }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableChevronCell, {})
       ]
@@ -336,7 +336,7 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { tone: server.status === "connected" ? "accent" : server.status === "error" ? "danger" : "muted", children: statusLabel(server, s) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { tone: "muted", children: scopeLabel(server.scope, s) })
       ] }),
-      server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-danger", children: server.lastError }) : null
+      server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-destructive", children: server.lastError }) : null
     ] }) : null,
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "grid grid-cols-1 gap-3 sm:grid-cols-2", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.name, htmlFor: "mcp-name", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-name", value: draft.name, disabled: Boolean(server), onChange: (event) => onChange({ ...draft, name: event.target.value }) }) }),
@@ -363,12 +363,12 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
       ) }) }),
       draft.transport === "stdio" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.command, hint: s.commandHelp, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { value: draft.command, onChange: (event) => onChange({ ...draft, command: event.target.value }) }) }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.arguments, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text", value: draft.args, onChange: (event) => onChange({ ...draft, args: event.target.value }) }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.environment, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text", value: draft.env, onChange: (event) => onChange({ ...draft, env: event.target.value }) }) })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.arguments, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground", value: draft.args, onChange: (event) => onChange({ ...draft, args: event.target.value }) }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.environment, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground", value: draft.env, onChange: (event) => onChange({ ...draft, env: event.target.value }) }) })
       ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.url, htmlFor: "mcp-url", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-url", value: draft.url, onChange: (event) => onChange({ ...draft, url: event.target.value }) }) }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Toggle, { checked: draft.enabled, onChange: (enabled) => onChange({ ...draft, enabled }), label: s.enabled }) })
     ] }),
-    server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DetailBlock, { icon: Wrench, title: s.tools, hint: s.toolsHint, children: server.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-text-muted", children: s.noTools }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DetailBlock, { icon: Wrench, title: s.tools, hint: s.toolsHint, children: server.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-muted-foreground", children: s.noTools }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
       C.SelectionSummary,
       {
         readOnly: true,
@@ -385,7 +385,7 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
         manageAriaLabel: `${s.viewTools}: ${server.name}`
       }
     ) }) : null,
-    error ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-sm text-danger", role: "alert", children: error }) : null,
+    error ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-sm text-destructive", role: "alert", children: error }) : null,
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3", children: [
       server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost-danger", icon: Trash2, onClick: onRemove, disabled: busy, children: s.removeServer }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {}),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center gap-2", children: [

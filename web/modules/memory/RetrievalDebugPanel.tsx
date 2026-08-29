@@ -43,21 +43,21 @@ export function RetrievalDebugPanel() {
     <div className="flex flex-col">
       <ControlSurfaceToolbar promote={false}>
         <div className="flex flex-col gap-1">
-        <h2 className="text-base font-semibold text-text">{t.memory.retrievalHeading}</h2>
-        <p className="text-xs text-text-muted">{t.memory.retrievalIntro}</p>
+        <h2 className="text-base font-semibold text-foreground">{t.memory.retrievalHeading}</h2>
+        <p className="text-xs text-muted-foreground">{t.memory.retrievalIntro}</p>
         </div>
       </ControlSurfaceToolbar>
 
       <ControlSurfaceRegister className="flex flex-col gap-4">
       <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); submit(); }}>
         <div className="relative min-w-0 flex-1">
-          <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+          <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.memory.retrievalQueryPlaceholder} className="pl-9" />
         </div>
         <Button type="submit" variant="accent" icon={Sparkles} disabled={!query.trim() || run.isPending}>{t.memory.retrievalRun}</Button>
       </form>
 
-      {run.isError ? <p className="text-sm text-danger">{apiErrorMessage(run.error)}</p> : null}
+      {run.isError ? <p className="text-sm text-destructive">{apiErrorMessage(run.error)}</p> : null}
 
       {result ? (
         <div className="flex flex-col gap-3">
@@ -68,7 +68,7 @@ export function RetrievalDebugPanel() {
               so a configured user is never told their embeddings are off. */}
           {result.debug.fallback ? (
             result.debug.provider ? (
-              <p className="inline-flex items-center gap-2 rounded-md border border-border bg-elevated px-3 py-2 text-xs text-text-muted">
+              <p className="inline-flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
                 <Info size={13} aria-hidden />{t.memory.retrievalKeywordOnly}
               </p>
             ) : (
@@ -89,7 +89,7 @@ export function RetrievalDebugPanel() {
             // body always resolves (no bare `#id` rows).
             const injected = result.debug.scores.filter((s) => s.picked).sort((a, b) => b.score - a.score);
             return injected.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">{t.memory.retrievalEmpty}</p>
+              <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">{t.memory.retrievalEmpty}</p>
             ) : (
               <ul className="flex flex-col gap-2">
                 {injected.map((s) => (
@@ -107,11 +107,11 @@ export function RetrievalDebugPanel() {
 
 function ScoreRow({ score, body, t }: { score: RetrievalScore; body: string; t: ReturnType<typeof useTranslation>['t'] }) {
   return (
-    <li className={`rounded-lg border p-3 text-xs ${score.picked ? 'border-primary/40 bg-primary/5' : 'border-border bg-surface'}`}>
+    <li className={`rounded-lg border p-3 text-xs ${score.picked ? 'border-primary/40 bg-primary/5' : 'border-border bg-card'}`}>
       <div className="flex items-start gap-2">
-        <p className="min-w-0 flex-1 whitespace-pre-wrap text-text">{body}</p>
+        <p className="min-w-0 flex-1 whitespace-pre-wrap text-foreground">{body}</p>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <span className="font-mono text-sm font-semibold tabular-nums text-text">{score.score.toFixed(3)}</span>
+          <span className="font-mono text-sm font-semibold tabular-nums text-foreground">{score.score.toFixed(3)}</span>
           {score.picked ? <span className="inline-flex items-center gap-1 text-[10px] font-medium text-primary"><Check size={11} aria-hidden />{t.memory.scorePicked}</span> : null}
         </div>
       </div>
@@ -130,10 +130,10 @@ function Weight({ label, value }: { label: string; value: number }) {
   const width = Math.max(0, Math.min(100, pct01(value)));
   return (
     <div className="flex flex-col gap-1">
-      <span className="flex items-center justify-between text-[10px] uppercase tracking-wide text-text-muted">
-        <span>{label}</span><span className="font-mono text-text">{value.toFixed(2)}</span>
+      <span className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+        <span>{label}</span><span className="font-mono text-foreground">{value.toFixed(2)}</span>
       </span>
-      <span className="h-1.5 w-full overflow-hidden rounded-full bg-elevated">
+      <span className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
         <span className="block h-full rounded-full bg-primary" style={{ width: `${width}%` }} />
       </span>
     </div>

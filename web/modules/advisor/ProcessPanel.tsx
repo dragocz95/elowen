@@ -27,7 +27,7 @@ export function ProcessOutputModal({ proc, onClose }: { proc: ProcessInfo; onClo
   return (
     // `inspect`: a live output tail. It is watched, never typed into.
     <Modal title={proc.command} description={proc.running ? t.processes.running : t.processes.exited} onClose={onClose} size="xl" icon={TerminalSquare} intent="inspect">
-      <pre ref={preRef} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap bg-bg p-4 font-mono text-tiny leading-relaxed text-text-muted">
+      <pre ref={preRef} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap bg-background p-4 font-mono text-tiny leading-relaxed text-muted-foreground">
         {output || t.processes.noOutput}
       </pre>
     </Modal>

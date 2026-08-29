@@ -22,7 +22,7 @@ export function CollapseHandle({ side, label, onToggle }: {
       data-testid="nav-collapse-handle"
       className={`group absolute inset-y-0 z-30 flex w-[13px] cursor-pointer items-center justify-center ${side === 'right' ? 'left-0' : 'right-0'}`}
     >
-      <span className="h-8 w-[3px] rounded-full bg-border transition-all duration-200 group-hover:h-12 group-hover:bg-text-muted" aria-hidden />
+      <span className="h-8 w-[3px] rounded-full bg-border transition-all duration-200 group-hover:h-12 group-hover:bg-muted-foreground" aria-hidden />
     </button>
   );
 }

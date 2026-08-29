@@ -51,7 +51,7 @@ export function MemoryBrainMap({ memories, categories, onSelectMemory }: {
 
   if (memories.length === 0) {
     return (
-      <div className="rounded-xl border border-border bg-surface" style={{ boxShadow: 'var(--shadow-card)' }}>
+      <div className="rounded-xl border border-border bg-card" style={{ boxShadow: 'var(--shadow-card)' }}>
         <EmptyState title={t.memory.brainEmpty} description={t.memory.brainEmptyHint} icon={Brain} />
       </div>
     );
@@ -262,8 +262,8 @@ function DetailStrip({ node, onSelectMemory }: { node: BrainNode | null; onSelec
   if (!node) {
     return (
       <div className="flex h-full flex-col justify-center gap-2 rounded-xl border border-dashed border-border p-5 text-center">
-        <Brain size={18} className="mx-auto text-text-muted/50" aria-hidden />
-        <p className="text-xs text-text-muted">{t.memory.brainSelectHint}</p>
+        <Brain size={18} className="mx-auto text-muted-foreground/50" aria-hidden />
+        <p className="text-xs text-muted-foreground">{t.memory.brainSelectHint}</p>
       </div>
     );
   }
@@ -271,8 +271,8 @@ function DetailStrip({ node, onSelectMemory }: { node: BrainNode | null; onSelec
   if (node.kind === 'core') {
     return (
       <DetailCard accent="var(--color-primary)" label={t.memory.brainCore} icon={Brain}>
-        <p className="text-sm leading-relaxed text-text-muted">{t.memory.brainCoreDesc}</p>
-        <div className="mt-3 flex items-center gap-1.5 text-xs text-text-muted">
+        <p className="text-sm leading-relaxed text-muted-foreground">{t.memory.brainCoreDesc}</p>
+        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
           <Layers size={13} aria-hidden />
           {t.memory.brainCategoryCount.replace('{n}', String(node.total))}
         </div>
@@ -283,13 +283,13 @@ function DetailStrip({ node, onSelectMemory }: { node: BrainNode | null; onSelec
   if (node.kind === 'category') {
     return (
       <DetailCard accent={node.color} label={t.memory.brainDetailCategory} icon={Layers}>
-        <p className="text-sm font-semibold text-text">{node.label}</p>
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
+        <p className="text-sm font-semibold text-foreground">{node.label}</p>
+        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
           <Hash size={12} aria-hidden />
           {t.memory.brainCategoryCount.replace('{n}', String(node.count))}
         </div>
         {node.category.description ? (
-          <p className="mt-2.5 text-sm leading-relaxed text-text-muted">{node.category.description}</p>
+          <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{node.category.description}</p>
         ) : null}
       </DetailCard>
     );
@@ -299,9 +299,9 @@ function DetailStrip({ node, onSelectMemory }: { node: BrainNode | null; onSelec
   const m = node.memory;
   return (
     <DetailCard accent={node.color} label={t.memory.brainDetailMemory} icon={Brain}>
-      <p className="text-sm leading-relaxed text-text">{m.body}</p>
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-        {m.kind ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-2 py-0.5"><Hash size={10} aria-hidden />{m.kind}</span> : null}
+      <p className="text-sm leading-relaxed text-foreground">{m.body}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+        {m.kind ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted px-2 py-0.5"><Hash size={10} aria-hidden />{m.kind}</span> : null}
         <span className="inline-flex items-center gap-1 font-mono"><Gauge size={11} aria-hidden />{m.importance}/5</span>
       </div>
       {onSelectMemory ? (
@@ -319,12 +319,12 @@ function DetailStrip({ node, onSelectMemory }: { node: BrainNode | null; onSelec
 
 function DetailCard({ accent, label, icon: Icon, children }: { accent: string; label: string; icon: typeof Brain; children: React.ReactNode }) {
   return (
-    <div className="h-full rounded-xl border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
+    <div className="h-full rounded-xl border border-border bg-card p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
       <div className="mb-3 flex items-center gap-2">
         <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ backgroundColor: `color-mix(in srgb, ${accent} 18%, transparent)`, color: accent }}>
           <Icon size={13} aria-hidden />
         </span>
-        <span className="text-[11px] font-semibold uppercase tracking-widest text-text-muted">{label}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</span>
       </div>
       {children}
     </div>
@@ -338,26 +338,26 @@ function DetailCard({ accent, label, icon: Icon, children }: { accent: string; l
 function BrainStyles() {
   return (
     <style>{`
-      .brain-canvas { background: var(--color-bg); }
+      .brain-canvas { background: var(--color-background); }
       .brain-figure { opacity: 0.92; mix-blend-mode: difference; }
       .brain-vignette {
         background: radial-gradient(circle at 50% 50%,
-          color-mix(in srgb, var(--color-bg) 0%, transparent) 0%,
-          color-mix(in srgb, var(--color-bg) 5%, transparent) 58%,
-          color-mix(in srgb, var(--color-bg) 72%, transparent) 96%);
+          color-mix(in srgb, var(--color-background) 0%, transparent) 0%,
+          color-mix(in srgb, var(--color-background) 5%, transparent) 58%,
+          color-mix(in srgb, var(--color-background) 72%, transparent) 96%);
       }
       .brain-grid {
         background-image:
-          linear-gradient(to right, color-mix(in srgb, var(--color-text) 1.4%, transparent) 1px, transparent 1px),
-          linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.2%, transparent) 1px, transparent 1px);
+          linear-gradient(to right, color-mix(in srgb, var(--color-foreground) 1.4%, transparent) 1px, transparent 1px),
+          linear-gradient(to bottom, color-mix(in srgb, var(--color-foreground) 1.2%, transparent) 1px, transparent 1px);
         background-size: 32px 32px;
       }
       /* Node discs and label chips: a wash of the canvas colour, so they read as glass over it. */
-      .brain-map .brain-disc { background: color-mix(in srgb, var(--color-bg) 40%, transparent); backdrop-filter: blur(1px); }
+      .brain-map .brain-disc { background: color-mix(in srgb, var(--color-background) 40%, transparent); backdrop-filter: blur(1px); }
       .brain-map .brain-chip {
         border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
-        background: color-mix(in srgb, var(--color-bg) 62%, transparent);
-        color: var(--color-text);
+        background: color-mix(in srgb, var(--color-background) 62%, transparent);
+        color: var(--color-foreground);
         backdrop-filter: blur(4px);
       }
       /* A node's label is quiet until the node is hovered, focused or selected. A coarse pointer has no

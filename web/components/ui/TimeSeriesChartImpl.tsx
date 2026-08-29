@@ -62,7 +62,7 @@ export function TimeSeriesChartImpl({ data, series, height = 220, ariaLabel }: T
             <CartesianGrid stroke="var(--color-border)" strokeDasharray="2 4" vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fill: 'var(--color-text-muted)', fontSize: 10 }}
+              tick={{ fill: 'var(--color-muted-foreground)', fontSize: 10 }}
               tickLine={false}
               axisLine={{ stroke: 'var(--color-border)' }}
               minTickGap={24}
@@ -70,7 +70,7 @@ export function TimeSeriesChartImpl({ data, series, height = 220, ariaLabel }: T
             <YAxis
               yAxisId="left"
               width={AXIS_WIDTH}
-              tick={{ fill: 'var(--color-text-muted)', fontSize: 10 }}
+              tick={{ fill: 'var(--color-muted-foreground)', fontSize: 10 }}
               tickLine={false}
               axisLine={false}
               tickFormatter={axisFormatter('left')}
@@ -80,14 +80,14 @@ export function TimeSeriesChartImpl({ data, series, height = 220, ariaLabel }: T
                 yAxisId="right"
                 orientation="right"
                 width={AXIS_WIDTH}
-                tick={{ fill: 'var(--color-text-muted)', fontSize: 10 }}
+                tick={{ fill: 'var(--color-muted-foreground)', fontSize: 10 }}
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={axisFormatter('right')}
               />
             ) : null}
             <Tooltip
-              cursor={{ fill: 'var(--color-elevated)', opacity: 0.35 }}
+              cursor={{ fill: 'var(--color-muted)', opacity: 0.35 }}
               content={<ChartTooltip series={series} />}
             />
             {series.map((entry) => (entry.variant === 'line' ? (

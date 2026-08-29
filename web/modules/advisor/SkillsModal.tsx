@@ -65,10 +65,10 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
           ) : (
             <div className="flex flex-col gap-px overflow-hidden rounded-md border border-border bg-border/50">
               {rows.map((skill) => (
-                <div key={`${skill.name}:${skill.owner ?? 'shared'}`} className="flex items-center gap-2 bg-surface px-3 py-2">
+                <div key={`${skill.name}:${skill.owner ?? 'shared'}`} className="flex items-center gap-2 bg-card px-3 py-2">
                   <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate font-mono text-xs text-text" title={skill.name}>{`/skill:${skill.name}`}</span>
-                    <span className="truncate text-xs text-text-muted" title={skill.description}>
+                    <span className="truncate font-mono text-xs text-foreground" title={skill.name}>{`/skill:${skill.name}`}</span>
+                    <span className="truncate text-xs text-muted-foreground" title={skill.description}>
                       {[skill.scope ?? skill.source, skill.description].filter(Boolean).join(' · ')}
                     </span>
                   </div>

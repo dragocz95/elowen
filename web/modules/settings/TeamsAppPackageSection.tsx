@@ -10,7 +10,7 @@ export function TeamsAppPackageSection() {
   const { t } = useTranslation();
   return (
     <div className="mb-2 space-y-3 border-b border-border pb-4">
-      <p className="text-sm text-text-muted">{t.pluginDetail.teamsAppPackageHint}</p>
+      <p className="text-sm text-muted-foreground">{t.pluginDetail.teamsAppPackageHint}</p>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="accent" icon={Package} onClick={() => { window.location.href = '/api/plugins/msteams/app-package'; }}>
           {t.pluginDetail.teamsAppPackageButton}

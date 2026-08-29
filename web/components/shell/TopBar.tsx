@@ -64,14 +64,14 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
   // The two variants differ in what the row IS — a floating cluster over the canvas versus a ruled bar
   // that content scrolls under — so the geometry is chosen here rather than patched on afterwards.
   const control = bar
-    ? 'h-8 rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text'
-    : 'h-9 rounded-full text-text-muted transition-colors hover:bg-elevated hover:text-text';
+    ? 'h-8 rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+    : 'h-9 rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground';
 
   return (
     <header
       data-testid="future-page-header"
       className={`${bar
-        ? 'top-bar top-bar--bar sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-bg px-4'
+        ? 'top-bar top-bar--bar sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-background px-4'
         : 'top-bar relative z-30 flex min-h-16 shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-3'}${hideOnPhone ? ' max-[767px]:hidden' : ''}`}
     >
       <div className={`top-bar__leading min-w-0 items-center gap-2 ${bar || showLocation || onMenuClick || onNavToggle ? 'flex' : 'hidden'} ${bar ? 'flex-1' : 'items-start gap-3'}`}>
@@ -81,8 +81,8 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
             onClick={onMenuClick}
             aria-label={t.common.toggleSidebar}
             className={bar
-              ? 'top-bar__menu -ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]'
-              : 'top-bar__menu mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-bg/55 text-text-muted backdrop-blur-md transition-colors hover:border-primary/40 hover:text-primary'}
+              ? 'top-bar__menu -ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]'
+              : 'top-bar__menu mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-background/55 text-muted-foreground backdrop-blur-md transition-colors hover:border-primary/40 hover:text-primary'}
           >
             <Menu size={bar ? 18 : 19} strokeWidth={bar ? 1.5 : 2} aria-hidden />
           </button>
@@ -96,7 +96,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
             aria-label={navCollapsed ? t.common.expandNav : t.common.collapseNav}
             title={`${navCollapsed ? t.common.expandNav : t.common.collapseNav} · ${t.nav.collapseShortcut}`}
             aria-keyshortcuts="Control+Backslash Meta+Backslash"
-            className="top-bar__nav-toggle flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+            className="top-bar__nav-toggle flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             {navCollapsed
               ? <NavOpenIcon size={20} strokeWidth={1.5} aria-hidden />
@@ -106,8 +106,8 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
         {bar && showLocation && title ? (
           <div className="top-bar__location flex min-w-0 shrink-0 items-center gap-2">
             {Icon ? <Icon size={18} strokeWidth={1.5} aria-hidden /> : null}
-            <span className="truncate text-sm font-medium text-text">{title}</span>
-            {count !== undefined ? <span className="font-mono text-xs text-text-muted">{count}</span> : null}
+            <span className="truncate text-sm font-medium text-foreground">{title}</span>
+            {count !== undefined ? <span className="font-mono text-xs text-muted-foreground">{count}</span> : null}
           </div>
         ) : null}
         {!bar && showLocation ? (
@@ -116,8 +116,8 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
             <div className="flex min-w-0 flex-col gap-1">
               {context ? <span className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-[.16em] text-primary/75">{context}{context && title ? <ChevronRight size={11} aria-hidden /> : null}</span> : null}
               <div className="flex min-w-0 items-baseline gap-3">
-                {title ? <h1 className="truncate font-display text-2xl font-semibold tracking-[-0.035em] text-text">{title}</h1> : null}
-                {count !== undefined ? <span className="shrink-0 font-mono text-xs text-text-muted">{count}</span> : null}
+                {title ? <h1 className="truncate font-display text-2xl font-semibold tracking-[-0.035em] text-foreground">{title}</h1> : null}
+                {count !== undefined ? <span className="shrink-0 font-mono text-xs text-muted-foreground">{count}</span> : null}
               </div>
             </div>
           </>
@@ -137,7 +137,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
           declarations to undo four others. */}
       <div className={bar
         ? 'top-bar__actions ml-auto flex shrink-0 items-center gap-0.5 max-[767px]:hidden'
-        : 'top-bar__actions ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-bg/45 p-1 backdrop-blur-xl'}>
+        : 'top-bar__actions ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-background/45 p-1 backdrop-blur-xl'}>
         {/* Command search is a control among the others, never a field of its own. A named input parked in
             the middle of the bar claimed the widest slot in the app's chrome for something reached by
             shortcut, and on /chat it split that page's own toolbar away from its title. As an icon it sits
@@ -152,7 +152,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
           className={`top-bar__search group flex items-center justify-center ${bar ? 'w-8' : 'gap-2 px-2.5'} ${control}`}
         >
           <Search size={bar ? 18 : 17} strokeWidth={bar ? 1.5 : undefined} aria-hidden />
-          {!bar ? <span className="hidden font-mono text-[10px] tracking-wide text-text-muted/70 lg:inline">⌘K</span> : null}
+          {!bar ? <span className="hidden font-mono text-[10px] tracking-wide text-muted-foreground/70 lg:inline">⌘K</span> : null}
         </button>
         {/* Only when there is a session to end — the login screen has nothing to sign out of. */}
         {me.data?.user ? (
@@ -177,7 +177,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
           {me.data?.user ? (
             <Avatar user={me.data.user} size={bar ? 26 : 34} />
           ) : (
-            <span className={`flex items-center justify-center rounded-full border border-border bg-elevated ${bar ? 'h-[26px] w-[26px]' : 'h-[34px] w-[34px]'}`}><User size={bar ? 15 : 17} className="text-text-muted" aria-hidden /></span>
+            <span className={`flex items-center justify-center rounded-full border border-border bg-muted ${bar ? 'h-[26px] w-[26px]' : 'h-[34px] w-[34px]'}`}><User size={bar ? 15 : 17} className="text-muted-foreground" aria-hidden /></span>
           )}
         </Link>
       </div>

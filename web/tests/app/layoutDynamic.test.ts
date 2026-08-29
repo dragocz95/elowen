@@ -75,11 +75,11 @@ function luminance(hex: string): number {
   return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
 }
 
-/** `--color-bg` of a design, i.e. what the stylesheet repaints the canvas with the instant it lands. */
+/** `--color-background` of a design, i.e. what the stylesheet repaints the canvas with the instant it lands. */
 function canvasToken(skin: string | null): string {
   const file = skin ? join(root, 'skins', skin, 'skin.css') : join(root, 'app', 'styles', 'tokens.css');
-  const match = readFileSync(file, 'utf-8').match(/--color-bg:\s*(#[0-9a-f]{3,8})/i);
-  expect(match, `${skin ?? 'default'} declares no --color-bg`).toBeTruthy();
+  const match = readFileSync(file, 'utf-8').match(/--color-background:\s*(#[0-9a-f]{3,8})/i);
+  expect(match, `${skin ?? 'default'} declares no --color-background`).toBeTruthy();
   return match![1]!.toLowerCase();
 }
 

@@ -47,9 +47,9 @@ export function TeamPulseTile() {
           </span>
         </div>
         {data && totals ? (
-          <div className="flex items-baseline gap-x-4 font-mono text-[11px] tabular-nums text-text-muted">
-            <span className="text-text">{formatTokens(totals.tokens)}</span>
-            <span className="text-text">
+          <div className="flex items-baseline gap-x-4 font-mono text-[11px] tabular-nums text-muted-foreground">
+            <span className="text-foreground">{formatTokens(totals.tokens)}</span>
+            <span className="text-foreground">
               {data.spendAvailable === false
                 ? t.dashboard.pulseSpendOff
                 : totals.cost === null ? t.dashboard.pulseUnpriced : formatCost(totals.cost, 2)}
@@ -62,7 +62,7 @@ export function TeamPulseTile() {
       {pulse.isLoading ? (
         <LoadingState />
       ) : !data || people.length === 0 || (!canStat && !month) ? (
-        <p className="text-sm text-text-muted">{t.dashboard.pulseNobody}</p>
+        <p className="text-sm text-muted-foreground">{t.dashboard.pulseNobody}</p>
       ) : (
         <div className="flex flex-col gap-6">
           {canStat ? <PulseStats data={data} t={t} /> : null}

@@ -15,7 +15,7 @@ export function CardRow({ icon: Icon, label, children }: {
 }) {
   return (
     <div className="flex items-baseline gap-2 text-[11px] leading-5">
-      <Icon size={12} className="shrink-0 translate-y-0.5 text-text-subtle" aria-hidden />
+      <Icon size={12} className="shrink-0 translate-y-0.5 text-subtle-foreground" aria-hidden />
       <span className="text-muted-foreground">{label}</span>
       <span className="ml-auto min-w-0 truncate text-right font-mono tabular-nums text-foreground">{children}</span>
     </div>

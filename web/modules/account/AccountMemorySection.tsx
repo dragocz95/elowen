@@ -48,21 +48,21 @@ export function AccountMemorySection({ onSaveState }: { onSaveState?: (section: 
   return (
     <SpatialGroup columns={2}>
       <SpatialRow title={t.accountMemory.recallTitle} icon={Search} description={t.help.memoryRecall}>
-        <label className="flex items-center gap-3 text-sm text-text">
+        <label className="flex items-center gap-3 text-sm text-foreground">
           <Toggle checked={autoRecall} onChange={setAutoRecall} label={t.accountMemory.recallToggle} />
           <span>{t.accountMemory.recallToggle}</span>
         </label>
       </SpatialRow>
 
       <SpatialRow title={t.accountMemory.liveRecallTitle} icon={Search} description={t.help.memoryLiveRecall}>
-        <label className="flex items-center gap-3 text-sm text-text">
+        <label className="flex items-center gap-3 text-sm text-foreground">
           <Toggle checked={autoLiveRecall} onChange={setAutoLiveRecall} label={t.accountMemory.liveRecallToggle} />
           <span>{t.accountMemory.liveRecallToggle}</span>
         </label>
       </SpatialRow>
 
       <SpatialRow title={t.accountMemory.saveTitle} icon={Save} description={t.help.memorySave}>
-        <label className="flex items-center gap-3 text-sm text-text">
+        <label className="flex items-center gap-3 text-sm text-foreground">
           <Toggle checked={autoSave} onChange={setAutoSave} label={t.accountMemory.saveToggle} />
           <span>{t.accountMemory.saveToggle}</span>
         </label>

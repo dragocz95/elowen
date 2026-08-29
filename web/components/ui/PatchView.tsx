@@ -7,7 +7,7 @@ export function PatchView({ diff, empty, loading = false }: { diff: string; empt
   if (loading) return <div className="p-4"><LoadingLine /></div>;
   if (!diff.trim()) return <p className="p-4 text-center text-sm text-muted-foreground">{empty}</p>;
   return (
-    <pre className="h-full overflow-auto bg-bg p-3 font-mono text-xs leading-relaxed">
+    <pre className="h-full overflow-auto bg-background p-3 font-mono text-xs leading-relaxed">
       {diff.split('\n').map((line, i) => {
         const c = line.startsWith('+') && !line.startsWith('+++') ? 'text-success'
           : line.startsWith('-') && !line.startsWith('---') ? 'text-destructive'

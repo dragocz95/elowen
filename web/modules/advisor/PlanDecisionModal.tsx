@@ -23,7 +23,7 @@ export function PlanDecisionModal({ plan, submitting, onImplement, onDismiss }: 
   return (
     <Modal title={t.brainChat.planDecisionTitle} onClose={onDismiss} size="md" icon={ClipboardList} description={t.brainChat.planDecision} intent="edit">
       <ModalBody gap={4}>
-        <div data-testid="plan-decision-body" className="whitespace-pre-wrap break-words rounded-md border border-border bg-surface-muted px-3 py-2 text-sm leading-relaxed text-text">
+        <div data-testid="plan-decision-body" className="whitespace-pre-wrap break-words rounded-md border border-border bg-muted px-3 py-2 text-sm leading-relaxed text-foreground">
           {plan}
         </div>
       </ModalBody>

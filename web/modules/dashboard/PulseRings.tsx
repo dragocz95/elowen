@@ -58,13 +58,13 @@ export function PersonCard({ person, share, colour, t }: {
           />
           <span
             aria-hidden
-            className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface"
+            className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card"
             style={{ background: colour }}
           />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-medium leading-tight text-text">{person.label}</div>
-          <div className="font-mono text-[11px] leading-tight text-text-muted tabular-nums">
+          <div className="truncate text-[13px] font-medium leading-tight text-foreground">{person.label}</div>
+          <div className="font-mono text-[11px] leading-tight text-muted-foreground tabular-nums">
             {share.toFixed(1)} %
           </div>
         </div>
@@ -153,7 +153,7 @@ function ContextCard({ datum, share, colour, t }: {
         <CardRow icon={Coins} label={t.dashboard.pulseColTokens}>{formatTokens(datum.value)}</CardRow>
       </div>
       {/* What the number MEANS for the bill — the reason this ring exists at all. */}
-      <p className="mt-2 text-[10px] leading-4 text-text-muted">{hints[datum.kind.key] ?? ''}</p>
+      <p className="mt-2 text-[10px] leading-4 text-muted-foreground">{hints[datum.kind.key] ?? ''}</p>
     </CardShell>
   );
 }

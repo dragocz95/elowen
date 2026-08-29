@@ -199,7 +199,7 @@ export function CommandOrbit({ onClose }: { onClose: () => void }) {
       >
         <div
           data-testid="command-orbit-backdrop"
-          className="absolute inset-0 bg-bg/80"
+          className="absolute inset-0 bg-background/80"
           style={{
             backdropFilter: 'var(--command-orbit-backdrop-filter, none)',
             WebkitBackdropFilter: 'var(--command-orbit-backdrop-filter, none)',

@@ -61,27 +61,27 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
   // block, then plain fields, with the actions in the footer.
   const document = (
     <>
-      <div className="flex items-center gap-3 rounded-lg border border-border bg-elevated/40 p-3">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-bg">
-          <ModeIcon size={20} className={state.mode === 'unavailable' ? 'text-danger' : 'text-accent'} aria-hidden />
+      <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
+          <ModeIcon size={20} className={state.mode === 'unavailable' ? 'text-destructive' : 'text-accent'} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-text">{modeLabel}</div>
-          <div className="truncate font-mono text-xs text-text-muted" title={state.home.path}>{state.home.path}</div>
+          <div className="truncate text-sm font-medium text-foreground">{modeLabel}</div>
+          <div className="truncate font-mono text-xs text-muted-foreground" title={state.home.path}>{state.home.path}</div>
         </div>
         <C.Badge tone={state.probe.available ? 'success' : 'danger'}>{state.probe.available ? s.probeReady : s.probeFailed}</C.Badge>
       </div>
 
       {/* Only a FAILED probe has something to say. The confined-mode caveat is normal operation, so it
           belongs on the plugin's own page, not in front of someone editing a Git author. */}
-      {state.probe.reason ? <p className="text-xs leading-relaxed text-text-muted">{state.probe.reason}</p> : null}
+      {state.probe.reason ? <p className="text-xs leading-relaxed text-muted-foreground">{state.probe.reason}</p> : null}
 
       <C.Field label={s.home}>
         <div className="grid grid-cols-3 gap-2">
           {facts.map(([label, value]) => (
-            <div key={label} className="min-w-0 rounded-md border border-border bg-bg px-3 py-2">
-              <div className="truncate font-mono text-sm text-text" title={value}>{value}</div>
-              <div className="truncate text-[11px] text-text-muted" title={label}>{label}</div>
+            <div key={label} className="min-w-0 rounded-md border border-border bg-background px-3 py-2">
+              <div className="truncate font-mono text-sm text-foreground" title={value}>{value}</div>
+              <div className="truncate text-[11px] text-muted-foreground" title={label}>{label}</div>
             </div>
           ))}
         </div>
@@ -99,7 +99,7 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
   // In the user drawer this is ONE row among the account's other summaries, not a page: it reads as the
   // same kind of preview the tool and project pickers use, and the settings themselves open on top of it.
   return <>
-    {state.migrationCollision ? <div role="alert" className="rounded-lg border border-danger/50 bg-danger/5 p-4 text-sm text-danger">{s.migrationCollision}</div> : null}
+    {state.migrationCollision ? <div role="alert" className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">{s.migrationCollision}</div> : null}
     <C.SelectionSummary
       countText={modeLabel}
       samples={[
@@ -137,8 +137,8 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
     {resetPreview ? (
       <C.Modal title={s.resetTitle} size="sm" onClose={() => setResetPreview(null)}>
         <C.ModalBody>
-          <p className="text-sm leading-relaxed text-danger">{s.resetWarning}</p>
-          <div className="rounded-lg border border-danger/40 bg-danger/5 p-3 text-xs text-text">
+          <p className="text-sm leading-relaxed text-destructive">{s.resetWarning}</p>
+          <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs text-foreground">
             <div>{s.homeSize}: {formatBytes(resetPreview.bytes)}</div>
             <div>{s.processes}: {resetPreview.activeProcesses}</div>
             <div>{s.gitAuthor}: {resetPreview.author.name || '—'} &lt;{resetPreview.author.email || '—'}&gt;</div>

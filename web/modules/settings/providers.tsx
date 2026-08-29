@@ -62,7 +62,7 @@ export const PROVIDERS: ProviderMeta[] = [
 export function ProviderLogo({ meta, alt, size = 36 }: { meta: ProviderMeta; alt?: string; size?: number }) {
   return (
     <span
-      className="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated"
+      className="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted"
       style={{ width: size, height: size }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}

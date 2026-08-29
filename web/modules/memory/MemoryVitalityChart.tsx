@@ -31,13 +31,13 @@ const CHART_H = 168;
 export const VITALITY_CHART_H_CLASS = 'h-[168px]';
 
 /** Every other figure in the app is monospaced and tabular; axis ticks are figures too. */
-const AXIS_TICK = { fontSize: 10, fill: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' } as const;
+const AXIS_TICK = { fontSize: 10, fill: 'var(--color-muted-foreground)', fontFamily: 'var(--font-mono)' } as const;
 
 const TONE_STROKE: Record<ReturnType<typeof vitalityTone>, string> = {
-  default: 'var(--color-text-muted)',
+  default: 'var(--color-muted-foreground)',
   accent: 'var(--color-primary)',
-  muted: 'var(--color-text-muted)',
-  danger: 'var(--color-danger)',
+  muted: 'var(--color-muted-foreground)',
+  danger: 'var(--color-destructive)',
   success: 'var(--color-success)',
   warning: 'var(--color-warning)',
 };
@@ -113,7 +113,7 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{t.memory.vitalityChart}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t.memory.vitalityChart}</span>
         <span className={`text-[11px] ${history.evictAt ? TONE_TEXT.warning : TONE_TEXT.muted}`}>{summary}</span>
       </div>
 
@@ -124,7 +124,7 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
        *  chart would only make a screen reader say them a third time. Recharts' own keyboard layer
        *  stays on, so the series can be stepped through with the arrow keys. */}
       <div
-        className="w-full rounded-md border border-border/70 bg-elevated/30 pr-2 pt-2"
+        className="w-full rounded-md border border-border/70 bg-muted/30 pr-2 pt-2"
         style={{ height: CHART_H }}
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -153,7 +153,7 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
             {/* Retention floor: below this the daily sweep moves the memory to the trash. */}
             <ReferenceLine
               y={history.floor}
-              stroke="var(--color-danger)"
+              stroke="var(--color-destructive)"
               strokeDasharray="2 3"
               strokeOpacity={0.55}
             />
@@ -216,7 +216,7 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
         </ResponsiveContainer>
       </div>
 
-      <span className="text-[11px] text-text-muted">
+      <span className="text-[11px] text-muted-foreground">
         {history.historyFrom === null ? t.memory.vitalityNoHistory : t.memory.vitalityForecastHint}
       </span>
     </div>

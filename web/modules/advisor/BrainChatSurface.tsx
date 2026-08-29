@@ -51,7 +51,7 @@ const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
 /** Sanitized-markdown block for one assistant text segment (marked + DOMPurify, no bubble). */
 function TextSegment({ text, className = '' }: { text: string; className?: string }) {
   const html = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false }) as string), [text]);
-  return <div className={`chat-markdown text-sm leading-relaxed text-text ${className}`} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className={`chat-markdown text-sm leading-relaxed text-foreground ${className}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 /** How many rows of a diff are shown before the rest folds away behind the expander. */
@@ -77,7 +77,7 @@ function DiffBlock({ diff }: { diff: string }) {
   const lines = diff.replace(/\n+$/, '').split('\n');
   const hiddenRows = Math.max(0, lines.length - DIFF_MAX_ROWS);
   return (
-    <div className="my-1 overflow-hidden rounded-md bg-elevated/40 py-1">
+    <div className="my-1 overflow-hidden rounded-md bg-muted/40 py-1">
       <div
         id={bodyId}
         data-testid="chat-diff"
@@ -91,8 +91,8 @@ function DiffBlock({ diff }: { diff: string }) {
           const m = DIFF_SIGN.exec(l);
           const sign = m?.[1] ?? m?.[2] ?? m?.[3];
           const cls = sign === '+' ? 'border-success/50 bg-success/10 text-success'
-            : sign === '-' ? 'border-danger/50 bg-danger/10 text-danger'
-            : 'border-transparent text-text-muted';
+            : sign === '-' ? 'border-destructive/50 bg-destructive/10 text-destructive'
+            : 'border-transparent text-muted-foreground';
           return <div key={i} className={`whitespace-pre-wrap break-words border-l-2 px-2 ${cls}`}>{l || ' '}</div>;
         })}
       </div>
@@ -123,10 +123,10 @@ function ToolOutputBlock({ output }: { output: NonNullable<ToolItem['output']> }
     ? 'bg-warning/10 text-warning'
     : output.tone === 'success'
       ? 'bg-success/10 text-success'
-      : 'bg-elevated/40 text-text-muted';
+      : 'bg-muted/40 text-muted-foreground';
   return (
     <div data-testid="chat-tool-output" className={`my-1 overflow-hidden whitespace-pre-wrap break-words rounded-md px-2.5 py-1.5 ${tone}`}>
-      {output.command ? <div className="text-text">$ {output.command}</div> : null}
+      {output.command ? <div className="text-foreground">$ {output.command}</div> : null}
       {/* Working directory lifted out of the console framing — faint context under the command echo. */}
       {output.cwd ? <div className="opacity-60">({t.brainChat.eventCwd}: {output.cwd})</div> : null}
       {output.status ? <div className="opacity-80">{output.status}</div> : null}
@@ -181,7 +181,7 @@ export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
           type="button"
           onClick={() => setCollapsed((v) => !v)}
           aria-expanded={!collapsed}
-          className="flex w-full items-center gap-1.5 text-left text-text-muted transition-colors hover:text-text"
+          className="flex w-full items-center gap-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
         >
           <ChevronRight size={11} aria-hidden className={`shrink-0 opacity-60 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
           <span className="truncate">{card.title ?? t.brainChat.cardFallback}</span>
@@ -192,13 +192,13 @@ export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
         <ul className="flex flex-col gap-0.5">
           {shown.map((titem, i) => (
             <li key={i} className="flex items-start gap-1.5">
-              <span className={`shrink-0 ${titem.status === 'completed' ? 'text-success' : titem.status === 'in_progress' ? 'text-primary' : 'text-text-muted'}`}>
+              <span className={`shrink-0 ${titem.status === 'completed' ? 'text-success' : titem.status === 'in_progress' ? 'text-primary' : 'text-muted-foreground'}`}>
                 {titem.status === 'completed' ? '✔' : titem.status === 'in_progress' ? '◐' : '○'}
               </span>
-              <span className={titem.status === 'completed' ? 'text-text-muted line-through' : 'text-text'}>
+              <span className={titem.status === 'completed' ? 'text-muted-foreground line-through' : 'text-foreground'}>
                 {titem.text}
                 {titem.status === 'in_progress' && Number.isFinite(titem.startedAt) ? (
-                  <span data-testid="chat-card-elapsed" className="ml-1 tabular-nums text-text-muted opacity-70">· {formatDuration(now - titem.startedAt!)}</span>
+                  <span data-testid="chat-card-elapsed" className="ml-1 tabular-nums text-muted-foreground opacity-70">· {formatDuration(now - titem.startedAt!)}</span>
                 ) : null}
               </span>
             </li>
@@ -210,7 +210,7 @@ export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
           <MorePill expanded={expanded} hidden={items.length - TODO_PREVIEW_ITEMS} onToggle={() => setExpanded((v) => !v)} />
         </div>
       ) : null}
-      {!collapsed && card.body ? <div className="whitespace-pre-wrap break-words text-text-muted">{card.body}</div> : null}
+      {!collapsed && card.body ? <div className="whitespace-pre-wrap break-words text-muted-foreground">{card.body}</div> : null}
     </div>
   );
 }
@@ -243,17 +243,17 @@ function ToolPills({ tools, full, live }: { tools: ToolItem[]; full?: boolean; l
             {running
               ? <Spinner size="xs" tone="text-warning" label={t.brainChat.toolRunning} />
               : <span aria-hidden className="shrink-0 select-none opacity-70">{toolGlyph(tool.name)}</span>}
-            <span className="shrink-0 text-text-muted">{tool.name}</span>
+            <span className="shrink-0 text-muted-foreground">{tool.name}</span>
             {tool.detail ? <span className="truncate opacity-60">{tool.detail}</span> : null}
             {group.count > 1 ? <span className="shrink-0 tabular-nums opacity-50">×{group.count}</span> : null}
           </>
         );
         if (!rich) {
-          return <div key={i} data-testid="chat-tool-pill" data-tool-id={tool.id} className="flex items-center gap-1.5 py-0.5 text-text-muted">{head}</div>;
+          return <div key={i} data-testid="chat-tool-pill" data-tool-id={tool.id} className="flex items-center gap-1.5 py-0.5 text-muted-foreground">{head}</div>;
         }
         return (
           <details key={i} data-testid="chat-tool-pill" data-tool-id={tool.id} className="chat-tool">
-            <summary className="flex cursor-pointer items-center gap-1.5 rounded py-0.5 text-text-muted transition-colors hover:text-text">
+            <summary className="flex cursor-pointer items-center gap-1.5 rounded py-0.5 text-muted-foreground transition-colors hover:text-foreground">
               {head}
               <ChevronRight size={11} aria-hidden className={`chat-tool__chev shrink-0 opacity-40 ${full ? '' : 'ml-auto'}`} />
             </summary>
@@ -280,11 +280,11 @@ function ToolPills({ tools, full, live }: { tools: ToolItem[]; full?: boolean; l
 function PlanBlock({ plan }: { plan: string }) {
   const { t } = useTranslation();
   return (
-    <div data-testid="chat-plan" className="my-1 overflow-hidden rounded-md border border-border bg-surface-muted">
-      <div className="border-b border-border px-2.5 py-1 text-tiny uppercase tracking-wide text-text-muted">
+    <div data-testid="chat-plan" className="my-1 overflow-hidden rounded-md border border-border bg-muted">
+      <div className="border-b border-border px-2.5 py-1 text-tiny uppercase tracking-wide text-muted-foreground">
         {t.brainChat.proposedPlan}
       </div>
-      <div className="whitespace-pre-wrap break-words px-2.5 py-1.5 text-text">{plan}</div>
+      <div className="whitespace-pre-wrap break-words px-2.5 py-1.5 text-foreground">{plan}</div>
     </div>
   );
 }
@@ -315,13 +315,13 @@ function ReasoningBlock({ text, live, full }: { text: string; live: boolean; ful
         type="button"
         onClick={() => setChoice(open ? 'closed' : 'open')}
         aria-expanded={open}
-        className={`flex items-center gap-1.5 text-text-muted transition-colors hover:text-text ${full ? 'text-xs' : 'text-tiny'}`}
+        className={`flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground ${full ? 'text-xs' : 'text-tiny'}`}
       >
         <ChevronRight size={11} aria-hidden className={`shrink-0 opacity-40 transition-transform ${open ? 'rotate-90' : ''}`} />
         <span>{t.brainChat.reasoningLabel}</span>
         <span className="tabular-nums opacity-60">{formatDuration(elapsed)}</span>
       </button>
-      {open ? <p className={`whitespace-pre-wrap break-words border-l-2 border-border pl-2 italic text-text-muted ${full ? 'text-xs' : 'text-tiny'}`}>{text}</p> : null}
+      {open ? <p className={`whitespace-pre-wrap break-words border-l-2 border-border pl-2 italic text-muted-foreground ${full ? 'text-xs' : 'text-tiny'}`}>{text}</p> : null}
     </div>
   );
 }
@@ -331,7 +331,7 @@ function ReasoningBlock({ text, live, full }: { text: string; live: boolean; ful
  *  doubles the final dump. */
 function ProgressBlock({ text }: { text: string }) {
   return (
-    <div className="my-1 overflow-hidden rounded-md bg-elevated/40 px-2.5 py-1.5 text-text-muted">
+    <div className="my-1 overflow-hidden rounded-md bg-muted/40 px-2.5 py-1.5 text-muted-foreground">
       {text.split('\n').slice(-PROGRESS_TAIL_ROWS).map((l, i) => <div key={i} className="whitespace-pre-wrap break-words">{l || ' '}</div>)}
     </div>
   );
@@ -341,7 +341,7 @@ function ProgressBlock({ text }: { text: string }) {
 function ContextDivider({ full }: { full?: boolean }) {
   const { t } = useTranslation();
   return (
-    <div data-testid="chat-turn" data-role="divider" className={`flex items-center gap-2 text-tiny text-text-muted ${full ? 'my-5' : 'my-1'}`} role="separator">
+    <div data-testid="chat-turn" data-role="divider" className={`flex items-center gap-2 text-tiny text-muted-foreground ${full ? 'my-5' : 'my-1'}`} role="separator">
       <span className="h-px flex-1 bg-border" aria-hidden />
       <span data-testid="chat-divider" className="shrink-0 uppercase tracking-wide">{t.brainChat.contextCompacted}</span>
       <span className="h-px flex-1 bg-border" aria-hidden />
@@ -404,7 +404,7 @@ function eventLabel(kind: string, detail: string, t: LocaleDict): string {
 function SessionEvents({ events, tk }: { events: SessionEventItem[]; tk?: string }) {
   const { t } = useTranslation();
   return (
-    <div data-tk={tk} data-testid="chat-turn" data-role="event" className="flex flex-col gap-0.5 py-1 text-tiny text-text-muted">
+    <div data-tk={tk} data-testid="chat-turn" data-role="event" className="flex flex-col gap-0.5 py-1 text-tiny text-muted-foreground">
       {events.map((e) => (
         <div key={e.id || `${e.kind}:${e.detail}`} data-testid="chat-event-marker" className="flex items-center gap-1.5">
           <span aria-hidden className="shrink-0 opacity-60">⚙</span>
@@ -447,7 +447,7 @@ function AttachmentThumb({ image }: { image: BrainMessageImage }) {
 
   if (failed) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-2 text-xs text-text-muted">
+      <span className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-2 text-xs text-muted-foreground">
         <ImageOff size={14} className="shrink-0" aria-hidden />
         {t.brainChat.attachmentGone}
       </span>
@@ -478,7 +478,7 @@ function SharedImage({ image, caption, full }: { image: BrainMessageImage; capti
   return (
     <div className="flex min-w-0 flex-col">
       <Attachments images={[image]} full={full} />
-      {caption ? <div className="mt-1 text-xs leading-relaxed text-text-muted">{caption}</div> : null}
+      {caption ? <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{caption}</div> : null}
     </div>
   );
 }
@@ -488,12 +488,12 @@ function SharedImage({ image, caption, full }: { image: BrainMessageImage; capti
 function SharedFile({ file, caption, full }: { file: BrainMessageFile; caption?: string; full?: boolean }) {
   const { t } = useTranslation();
   return (
-    <div className={`flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-elevated/50 p-3 ${full ? 'my-1.5' : ''}`} data-testid="shared-file">
+    <div className={`flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/50 p-3 ${full ? 'my-1.5' : ''}`} data-testid="shared-file">
       <div className="flex min-w-0 items-center gap-2.5">
-        <FileText size={20} className="shrink-0 text-text-muted" aria-hidden />
+        <FileText size={20} className="shrink-0 text-muted-foreground" aria-hidden />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-text" title={file.name}>{file.name}</div>
-          <div className="text-xs text-text-muted">{formatBytes(file.size)}</div>
+          <div className="truncate text-sm font-medium text-foreground" title={file.name}>{file.name}</div>
+          <div className="text-xs text-muted-foreground">{formatBytes(file.size)}</div>
         </div>
         <a
           href={`/api${file.url}`}
@@ -505,7 +505,7 @@ function SharedFile({ file, caption, full }: { file: BrainMessageFile; caption?:
           {t.brainChat.fileDownload}
         </a>
       </div>
-      {caption ? <div className="text-xs leading-relaxed text-text-muted">{caption}</div> : null}
+      {caption ? <div className="text-xs leading-relaxed text-muted-foreground">{caption}</div> : null}
     </div>
   );
 }
@@ -527,7 +527,7 @@ function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen
   const settled = turn.role === 'elowen' ? turn.durationMs != null : Boolean(turn.createdAt);
   if (!settled) return null;
   return (
-    <div data-testid="chat-turn-meta" className="chat-turn-meta mt-1 flex items-center gap-2 text-[10px] leading-none text-text-muted/70">
+    <div data-testid="chat-turn-meta" className="chat-turn-meta mt-1 flex items-center gap-2 text-[10px] leading-none text-muted-foreground/70">
       {turn.createdAt ? <time dateTime={turn.createdAt}>{localDateTime(turn.createdAt, locale, false)}</time> : null}
       {turn.role === 'elowen' && turn.model ? (
         <span data-testid="chat-turn-model" className="inline-flex min-w-0 items-center gap-1" title={turn.model}>
@@ -569,7 +569,7 @@ function ToolAuthoringHint({ turn, locale }: {
     ?? turn.composingTool
     ?? t.brainChat.toolRunning;
   return (
-    <div data-testid="chat-tool-authoring" role="status" aria-live="polite" className="flex items-center gap-1.5 py-0.5 pl-4 font-mono text-text-muted">
+    <div data-testid="chat-tool-authoring" role="status" aria-live="polite" className="flex items-center gap-1.5 py-0.5 pl-4 font-mono text-muted-foreground">
       <Spinner size="xs" tone="text-warning" />
       <span className="truncate italic opacity-80">{label}</span>
     </div>
@@ -586,7 +586,7 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   const roleAttr = you ? 'you' : 'assistant';
   const body = turn.role === 'you'
     ? <div className="chat-user-message">
-        {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-text ${full ? '' : 'my-1.5'}`}>{turn.text}</div> : null}
+        {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground ${full ? '' : 'my-1.5'}`}>{turn.text}</div> : null}
         {turn.images?.length ? <Attachments images={turn.images} full={full} /> : null}
       </div>
     : <>{turn.segments.map((seg, i) => (seg.kind === 'text'
@@ -605,10 +605,10 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
     return (
       <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className={`chat-turn chat-turn--${roleAttr} grid grid-cols-[16px_1fr] gap-x-3 ${showRole ? 'mt-6 first:mt-0' : ''}`}>
         {showRole ? (
-          <span aria-hidden className={`chat-turn__marker mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-primary ring-4 ring-primary/15' : 'bg-text-muted'}`} />
+          <span aria-hidden className={`chat-turn__marker mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-primary ring-4 ring-primary/15' : 'bg-muted-foreground'}`} />
         ) : <span aria-hidden className="chat-turn__marker" />}
         <div className="chat-turn__column min-w-0">
-          {showRole ? <div className={`chat-turn__role mb-0.5 text-xs font-semibold ${you ? 'text-primary' : 'text-text-muted'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
+          {showRole ? <div className={`chat-turn__role mb-0.5 text-xs font-semibold ${you ? 'text-primary' : 'text-muted-foreground'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
           <div className="chat-turn__body flex min-w-0 flex-col">{body}</div>
           <MessageMeta turn={turn} />
         </div>
@@ -619,7 +619,7 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   if (you) {
     return (
       <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 flex max-w-full flex-col items-end self-end">
-        <div className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-text">
+        <div className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
           {turn.role === 'you' ? turn.text : null}
           {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
         </div>
@@ -641,7 +641,7 @@ function ReasoningButton({ full, onOpen }: { full?: boolean; onOpen: () => void 
       onClick={onOpen}
       aria-label={t.reasoning.modalTitle}
       title={t.reasoning.modalTitle}
-      className={`flex shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text ${
+      className={`flex shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
         full ? 'h-8 w-8' : 'h-7 w-7'
       }`}
     >
@@ -679,7 +679,7 @@ function BarOverflowMenu({ workMode, onOpenTasks }: {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   useDismiss(rootRef, open, () => setOpen(false));
-  const rowClass = 'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text transition-colors hover:bg-bg';
+  const rowClass = 'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent';
   return (
     <div ref={rootRef} className="relative shrink-0">
       <button
@@ -688,7 +688,7 @@ function BarOverflowMenu({ workMode, onOpenTasks }: {
         aria-expanded={open}
         aria-label={t.chat.moreOptions}
         title={t.chat.moreOptions}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         <MoreHorizontal size={18} aria-hidden />
       </button>
@@ -696,7 +696,7 @@ function BarOverflowMenu({ workMode, onOpenTasks }: {
           focus, and this popover leads with the model picker — a composite control, not a menu row — so
           the promise was one a screen reader could not cash. */}
       {open ? (
-        <div data-chat-popover className="absolute right-0 z-20 mt-1 flex w-60 flex-col gap-0.5 rounded-lg border border-border bg-elevated p-1.5 shadow-lg">
+        <div data-chat-popover className="absolute right-0 z-20 mt-1 flex w-60 flex-col gap-0.5 rounded-lg border border-border bg-muted p-1.5 shadow-lg">
           {/* The picker is the menu's heading — it is a control, not a menu row, so it reads wrong pushed
               below one. Plain rows follow it. */}
           <div className="px-1 pb-1"><ModelPicker variant="full" /></div>
@@ -705,11 +705,11 @@ function BarOverflowMenu({ workMode, onOpenTasks }: {
           <div className="px-1 pb-1"><ProjectPicker variant="full" /></div>
           {/* The mobile entry opens the same task manager as `/tasks`; there is one modal and one data path. */}
           <button type="button" onClick={() => { setOpen(false); onOpenTasks(); }} className={rowClass}>
-            <ListChecks size={16} className="text-text-muted" aria-hidden />
+            <ListChecks size={16} className="text-muted-foreground" aria-hidden />
             <span>{t.chat.todos}</span>
           </button>
           {workMode !== 'build' ? (
-            <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-text-muted">
+            <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
               <span>{t.brainChat.workModeLabel}:</span><WorkModePill mode={workMode} full />
             </div>
           ) : null}
@@ -1093,10 +1093,10 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           <button
             type="button"
             onClick={() => setPickerOpen((v) => !v)}
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text transition-colors hover:bg-elevated"
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-foreground transition-colors hover:bg-accent"
           >
             <span className="truncate">{active?.title || t.brainChat.newChat}</span>
-            <ChevronDown size={14} className="shrink-0 text-text-muted" aria-hidden />
+            <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
           </button>
           <WorkModePill mode={workMode} />
           <ProjectPicker variant="compact" />
@@ -1107,7 +1107,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             onClick={newChat}
             aria-label={t.brainChat.newChat}
             title={t.brainChat.newChat}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Plus size={16} aria-hidden />
           </button>
@@ -1115,18 +1115,18 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         </div>
       ) : (
         <PageTopBarPortal>
-        <div className="chat-gutter chat-page-toolbar sticky top-0 z-10 flex min-w-0 shrink-0 items-center gap-1.5 bg-bg py-2">
+        <div className="chat-gutter chat-page-toolbar sticky top-0 z-10 flex min-w-0 shrink-0 items-center gap-1.5 bg-background py-2">
           {/* These controls ride in the shell's top rule at every width that publishes one — a phone
               included. Only the frameless design, which has no page slot, keeps this as its own local
               sticky bar. */}
-          <div aria-hidden className="chat-page-toolbar__fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-bg to-transparent" />
+          <div aria-hidden className="chat-page-toolbar__fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-background to-transparent" />
           {onOpenHistory ? (
             <button
               type="button"
               onClick={onOpenHistory}
               aria-label={t.chat.openHistory}
               title={t.chat.openHistory}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <PanelLeft size={18} aria-hidden />
             </button>
@@ -1135,7 +1135,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               takes the leftover width and pushes the controls to the far edge, while inside the shell's
               top rule the same growth is what tore this toolbar into two halves with the row's whole
               width between them. page-bar.css holds it to its text there. */}
-          <span className="chat-page-toolbar__title min-w-0 flex-1 truncate text-sm font-medium text-text">{active?.title || t.brainChat.newChat}</span>
+          <span className="chat-page-toolbar__title min-w-0 flex-1 truncate text-sm font-medium text-foreground">{active?.title || t.brainChat.newChat}</span>
           {/* On a phone the model picker and work-mode pill fold into the ⋯ menu below; on desktop they
               stay inline. The pill is a security indicator (plan/workflow), so it also shows inline on
               desktop and, when non-build, inside the ⋯ menu on mobile. */}
@@ -1161,7 +1161,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               aria-label={telemetryShown ? t.telemetry.close : t.telemetry.open}
               title={telemetryShown ? t.telemetry.close : t.telemetry.open}
               aria-pressed={telemetryShown}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <Activity size={18} aria-hidden />
             </button>
@@ -1171,7 +1171,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             onClick={newChat}
             aria-label={t.brainChat.newChat}
             title={t.brainChat.newChat}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Plus size={18} aria-hidden />
           </button>
@@ -1196,11 +1196,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         {turns.length === 0 && ready ? (
           variant === 'full' ? (
             <div className="m-auto flex max-w-md flex-col items-center gap-2 text-center">
-              <p className="text-lg font-medium text-text">{t.chat.emptyTitle}</p>
-              <p className="text-sm text-text-muted">{t.brainChat.empty}</p>
+              <p className="text-lg font-medium text-foreground">{t.chat.emptyTitle}</p>
+              <p className="text-sm text-muted-foreground">{t.brainChat.empty}</p>
             </div>
           ) : (
-            <p className="m-auto max-w-[220px] text-center text-xs text-text-muted">{t.brainChat.empty}</p>
+            <p className="m-auto max-w-[220px] text-center text-xs text-muted-foreground">{t.brainChat.empty}</p>
           )
         ) : null}
         {/* Scroll-up lazy-load sentinel. A fixed-height slot kept whenever older history remains so mounting
@@ -1244,7 +1244,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           <button
             type="button"
             onClick={() => setAgentsOpen(true)}
-            className="flex items-center gap-1.5 self-start leading-relaxed text-text-muted transition-colors hover:text-text"
+            className="flex items-center gap-1.5 self-start leading-relaxed text-muted-foreground transition-colors hover:text-foreground"
           >
             <Users size={11} aria-hidden />
             {/* Never fall back to the transcript's total when nothing runs: that is what let a finished
@@ -1310,15 +1310,15 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           `.chat-composer-dock` (chat.css) carries the bottom safe-area inset. Without it the composer's
           send button sits UNDER a phone's home indicator: the dock is pinned at `bottom: 0`, which is the
           edge of the viewport, not the edge of the usable screen. */}
-      <div className={variant === 'full' ? 'chat-composer-dock sticky bottom-0 z-10 bg-bg' : ''}>
+      <div className={variant === 'full' ? 'chat-composer-dock sticky bottom-0 z-10 bg-background' : ''}>
       {/* No hairline above the footer — a soft fade lets the transcript slide under it instead. */}
       {variant === 'full' ? (
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-gradient-to-t from-bg to-transparent" />
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-gradient-to-t from-background to-transparent" />
       ) : null}
       {/* One-line server status notice when the daemon sends one. The running state itself is signalled by
           the composer's Stop button (no separate "thinking" spinner). Hidden while a question is pending. */}
       {notice && !ask ? (
-        <div className={`flex items-center gap-2 py-1.5 font-mono text-text-muted ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
+        <div className={`flex items-center gap-2 py-1.5 font-mono text-muted-foreground ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
           <span className="italic opacity-80">{notice}</span>
         </div>
       ) : null}
@@ -1333,14 +1333,14 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         // width it is the STATISTICS that give way, cheapest first, and the model name that keeps the room
         // they free. Which one drops at which width is the `[data-stat]` ladder in chat.css, driven by the
         // row's own container: the docked telemetry rail narrows it without the viewport changing.
-        <div data-testid="chat-statusline" className={`chat-statusline flex min-w-0 items-center gap-x-2 overflow-hidden py-1 font-mono text-text-muted sm:gap-x-3 ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
+        <div data-testid="chat-statusline" className={`chat-statusline flex min-w-0 items-center gap-x-2 overflow-hidden py-1 font-mono text-muted-foreground sm:gap-x-3 ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
           <button
             type="button"
             onClick={() => setStatuslinePref(statuslineShown ? 'hidden' : 'shown')}
             aria-expanded={statuslineShown}
             aria-label={statuslineShown ? t.chat.hideStats : t.chat.showStats}
             title={statuslineShown ? t.chat.hideStats : t.chat.showStats}
-            className="flex shrink-0 items-center rounded text-text-muted transition-colors hover:text-text"
+            className="flex shrink-0 items-center rounded text-muted-foreground transition-colors hover:text-foreground"
           >
             <ChevronRight size={11} aria-hidden className={`opacity-60 transition-transform ${statuslineShown ? 'rotate-90' : ''}`} />
           </button>
@@ -1374,14 +1374,14 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             /* No thumbnail: the file is already on the daemon, not held in the browser, so there is
                nothing local to preview. The title names where it landed, which is what the user
                actually needs — the file stays in their project after the conversation. */
-            <span key={i} title={a.relative} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated py-1 pl-1.5 pr-1 text-tiny text-text">
-              <FileText size={13} className="text-text-muted" aria-hidden />
+            <span key={i} title={a.relative} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted py-1 pl-1.5 pr-1 text-tiny text-foreground">
+              <FileText size={13} className="text-muted-foreground" aria-hidden />
               <span className="max-w-[140px] truncate">{a.name}</span>
               <button
                 type="button"
                 onClick={() => removeAttachment(i)}
                 aria-label={t.brainChat.attachRemove}
-                className="flex h-4 w-4 items-center justify-center rounded text-text-muted hover:text-text"
+                className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
               >
                 <X size={11} aria-hidden />
               </button>
@@ -1397,13 +1397,13 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           {queued.map((q) => (
             <div key={q.id} className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-tiny">
               <span className="shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-medium uppercase tracking-wide text-primary">{t.brainChat.queued}</span>
-              <span className="min-w-0 flex-1 truncate text-text-muted">{q.text}</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{q.text}</span>
               <button
                 type="button"
                 onClick={() => onQueueRemove(q.id)}
                 aria-label={t.brainChat.removeFromQueue}
                 title={t.brainChat.removeFromQueue}
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted hover:text-text"
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
               >
                 <X size={11} aria-hidden />
               </button>
@@ -1415,9 +1415,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
       {/* Composer — replaced by a read-only banner when viewing a channel/task session's history. */}
       {readOnly ? (
         <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
-          <div className={`flex items-center justify-between gap-2 bg-elevated/40 p-3 text-sm text-text-muted ${variant === 'full' ? 'rounded-xl border border-border' : ''}`}>
+          <div className={`flex items-center justify-between gap-2 bg-muted/40 p-3 text-sm text-muted-foreground ${variant === 'full' ? 'rounded-xl border border-border' : ''}`}>
             <span className="flex min-w-0 items-center gap-2"><FileText size={14} className="shrink-0" aria-hidden /><span className="truncate">{t.brainChat.readOnly}</span></span>
-            <button type="button" onClick={exitReadOnly} className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-text transition-colors hover:bg-elevated">{t.brainChat.readOnlyExit}</button>
+            <button type="button" onClick={exitReadOnly} className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent">{t.brainChat.readOnlyExit}</button>
           </div>
         </div>
       ) : (
@@ -1426,12 +1426,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           it, Claude-style); the dock keeps its original three-control row. */}
       <form
         className={variant === 'full'
-          ? 'chat-composer relative flex items-end gap-1 rounded-2xl border border-border bg-surface p-1.5 transition-colors focus-within:border-border-strong'
+          ? 'chat-composer relative flex items-end gap-1 rounded-2xl border border-border bg-card p-1.5 transition-colors focus-within:border-border-strong'
           : 'relative flex items-end gap-2 p-2'}
         onSubmit={(e) => { e.preventDefault(); void submit(); }}
       >
         {slashOpen && (
-          <div data-testid="chat-slash-menu" className={`absolute bottom-full w-full max-w-md overflow-hidden rounded-lg border border-border bg-elevated shadow-lg ${variant === 'full' ? 'left-0 mb-2' : 'left-2 mb-1'}`}>
+          <div data-testid="chat-slash-menu" className={`absolute bottom-full w-full max-w-md overflow-hidden rounded-lg border border-border bg-muted shadow-lg ${variant === 'full' ? 'left-0 mb-2' : 'left-2 mb-1'}`}>
             <div className="max-h-60 overflow-y-auto py-1">
               {slashItems.map((it, i) => (
                 <button
@@ -1439,7 +1439,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
                   type="button"
                   onMouseDown={(e) => { e.preventDefault(); it.run(); }}
                   onMouseEnter={() => setSlashIdx(i)}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${i === slashSel ? 'bg-primary/15 text-text' : 'text-text-muted'}`}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${i === slashSel ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
                 >
                   <span className="shrink-0 font-mono">{it.label}</span>
                   {it.desc && <span className="truncate text-tiny opacity-60">{it.desc}</span>}
@@ -1461,7 +1461,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           onClick={() => fileRef.current?.click()}
           aria-label={t.brainChat.attach}
           title={t.brainChat.attach}
-          className={`flex h-9 w-9 shrink-0 items-center justify-center text-text-muted transition-colors hover:bg-elevated hover:text-text ${
+          className={`flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
             variant === 'full' ? 'rounded-xl' : 'rounded-lg border border-border'
           }`}
         >
@@ -1499,10 +1499,10 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           // 10rem this used to carry is a comfortable third of a desktop composer and most of a landscape
           // phone, which is how the dock came to take half the reading height at 740x360. dvh, never vh:
           // a collapsing mobile toolbar makes vh taller than the screen really is.
-          className={`max-h-[min(10rem,22dvh)] flex-1 resize-none text-sm text-text placeholder:text-text-muted ${
+          className={`max-h-[min(10rem,22dvh)] flex-1 resize-none text-sm text-foreground placeholder:text-muted-foreground ${
             variant === 'full'
               ? 'bg-transparent px-2 py-2 focus:outline-none'
-              : 'rounded-lg border border-border bg-bg px-3 py-2 focus:border-primary'
+              : 'rounded-lg border border-border bg-background px-3 py-2 focus:border-primary'
           }`}
         />
         {busy ? (
@@ -1513,7 +1513,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             aria-label={t.brainChat.stop}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors ${
               variant === 'full'
-                ? 'rounded-xl bg-primary text-text hover:bg-primary-hot'
+                ? 'rounded-xl bg-primary text-foreground hover:bg-primary-hot'
                 : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
             }`}
           >
@@ -1527,7 +1527,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             aria-label={t.brainChat.send}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${
               variant === 'full'
-                ? 'rounded-xl bg-primary text-text hover:bg-primary-hot'
+                ? 'rounded-xl bg-primary text-foreground hover:bg-primary-hot'
                 : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
             }`}
           >

@@ -34,7 +34,7 @@ export function ModelNoteModal({ label, exec, initial, onClose, onSave }: {
             placeholder={t.settings.modelNotePlaceholder}
             rows={4}
             autoFocus
-            className="w-full resize-y rounded-lg border border-border bg-surface p-2.5 text-sm text-text outline-none transition-colors focus:border-primary"
+            className="w-full resize-y rounded-lg border border-border bg-card p-2.5 text-sm text-foreground outline-none transition-colors focus:border-primary"
             style={{ transitionDuration: 'var(--motion-fast)' }}
           />
         </Field>

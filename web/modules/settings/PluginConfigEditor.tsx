@@ -213,16 +213,16 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
   };
   return (
     <div className="flex flex-col gap-3">
-      {value.length === 0 ? <p className="text-xs italic text-text-muted">{t.pluginCfg.noRoles}</p> : null}
+      {value.length === 0 ? <p className="text-xs italic text-muted-foreground">{t.pluginCfg.noRoles}</p> : null}
       {value.map((r, i) => {
         const open = expanded.has(i);
         return (
-          <div key={i} className="rounded-lg border border-border bg-elevated/40">
+          <div key={i} className="rounded-lg border border-border bg-muted/40">
             <div className="flex items-center gap-2 p-3">
               <button type="button" onClick={() => toggleRow(i)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                {open ? <ChevronDown size={15} className="shrink-0 text-text-muted" aria-hidden /> : <ChevronRight size={15} className="shrink-0 text-text-muted" aria-hidden />}
-                <span className="truncate text-sm font-medium text-text">{r.name || t.pluginCfg.roleNew}</span>
-                {r.roleId ? <span className="truncate font-mono text-[11px] text-text-muted">{r.roleId}</span> : null}
+                {open ? <ChevronDown size={15} className="shrink-0 text-muted-foreground" aria-hidden /> : <ChevronRight size={15} className="shrink-0 text-muted-foreground" aria-hidden />}
+                <span className="truncate text-sm font-medium text-foreground">{r.name || t.pluginCfg.roleNew}</span>
+                {r.roleId ? <span className="truncate font-mono text-[11px] text-muted-foreground">{r.roleId}</span> : null}
                 {r.admin === true ? <span className="ml-auto shrink-0"><Badge tone="accent">{t.pluginCfg.roleAdminBadge}</Badge></span> : null}
               </button>
               <Button variant="ghost" icon={Trash2} aria-label={t.pluginCfg.removeRole} onClick={() => removeRole(i)} />
@@ -242,8 +242,8 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
                 <label className="flex cursor-pointer items-center gap-2.5">
                   <Toggle checked={r.admin === true} onChange={(v) => patch(i, { admin: v })} label={t.pluginCfg.roleAdmin} />
                   <span className="flex flex-col">
-                    <span className="text-sm text-text">{t.pluginCfg.roleAdmin}</span>
-                    <span className="text-tiny text-text-muted">{t.pluginCfg.roleAdminHint}</span>
+                    <span className="text-sm text-foreground">{t.pluginCfg.roleAdmin}</span>
+                    <span className="text-tiny text-muted-foreground">{t.pluginCfg.roleAdminHint}</span>
                   </span>
                 </label>
                 <Field label={t.pluginCfg.rolePrompt} hint={t.help.rolePrompt}>
@@ -288,16 +288,16 @@ function McpServersEditor({ value, onChange }: { value: McpServerSpec[]; onChang
   };
   return (
     <div className="flex flex-col gap-3">
-      {value.length === 0 ? <p className="text-xs italic text-text-muted">{t.pluginCfg.mcpNoServers}</p> : null}
+      {value.length === 0 ? <p className="text-xs italic text-muted-foreground">{t.pluginCfg.mcpNoServers}</p> : null}
       {value.map((s, i) => {
         const open = expanded.has(i);
         return (
-          <div key={i} className="rounded-lg border border-border bg-elevated/40">
+          <div key={i} className="rounded-lg border border-border bg-muted/40">
             <div className="flex items-center gap-2 p-3">
               <button type="button" onClick={() => toggleRow(i)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                {open ? <ChevronDown size={15} className="shrink-0 text-text-muted" aria-hidden /> : <ChevronRight size={15} className="shrink-0 text-text-muted" aria-hidden />}
-                <span className="truncate text-sm font-medium text-text">{s.name || t.pluginCfg.mcpServerNew}</span>
-                {s.command ? <span className="truncate font-mono text-[11px] text-text-muted">{s.command}</span> : null}
+                {open ? <ChevronDown size={15} className="shrink-0 text-muted-foreground" aria-hidden /> : <ChevronRight size={15} className="shrink-0 text-muted-foreground" aria-hidden />}
+                <span className="truncate text-sm font-medium text-foreground">{s.name || t.pluginCfg.mcpServerNew}</span>
+                {s.command ? <span className="truncate font-mono text-[11px] text-muted-foreground">{s.command}</span> : null}
                 <span className="ml-auto shrink-0">
                   <Badge tone={s.enabled ? 'accent' : undefined}>{s.enabled ? t.pluginCfg.mcpEnabledBadge : t.pluginCfg.mcpDisabledBadge}</Badge>
                 </span>
@@ -308,7 +308,7 @@ function McpServersEditor({ value, onChange }: { value: McpServerSpec[]; onChang
               <div className="flex flex-col gap-3 border-t border-border p-3">
                 <label className="flex cursor-pointer items-center gap-2.5">
                   <Toggle checked={s.enabled} onChange={(v) => patch(i, { enabled: v })} label={t.pluginCfg.mcpEnabled} />
-                  <span className="text-sm text-text">{t.pluginCfg.mcpEnabled}</span>
+                  <span className="text-sm text-foreground">{t.pluginCfg.mcpEnabled}</span>
                 </label>
                 <div className="@container">
                   <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
@@ -388,7 +388,7 @@ function LabeledField({ label, hint, help, risk, riskLabel, children }: {
   const descriptions = [...new Set([hint, help].filter((value): value is string => Boolean(value?.trim())))];
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-text-muted">
+      <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         <span>{label}</span>
         {risk && riskLabel ? <Badge tone={RISK_TONE[risk]}>{riskLabel}</Badge> : null}
         {descriptions.length ? (
@@ -473,7 +473,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="success">{t.pluginCfg.secretSet}</Badge>
-              <span className="min-w-0 flex-1 text-xs text-text-muted">{t.pluginCfg.secretKeepHint}</span>
+              <span className="min-w-0 flex-1 text-xs text-muted-foreground">{t.pluginCfg.secretKeepHint}</span>
               {!replacing ? (
                 <Button
                   type="button"
@@ -573,9 +573,9 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               onChange={(e) => set(f.key, e.target.value)}
               rows={6}
               spellCheck={false}
-              className={`${textareaClass}${invalid ? ' border-danger focus:border-danger' : ''}`}
+              className={`${textareaClass}${invalid ? ' border-destructive focus:border-destructive' : ''}`}
             />
-            {invalid ? <span className="flex items-center gap-1 text-xs text-danger" role="alert"><Info size={13} aria-hidden />{t.pluginCfg.invalidJson}</span> : null}
+            {invalid ? <span className="flex items-center gap-1 text-xs text-destructive" role="alert"><Info size={13} aria-hidden />{t.pluginCfg.invalidJson}</span> : null}
           </div>
         );
       }
@@ -661,7 +661,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
     <div className="flex flex-col gap-4">
       {visibleSchema.length === 0 && (detail.configSchema.length > 0 || mode !== 'behavior') ? null : visibleSchema.length === 0 ? (
         <SettingsGroup className="plugin-card" icon={SlidersHorizontal} title={t.pluginDetail.config}>
-          <div className="settings-group__panel"><p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p></div>
+          <div className="settings-group__panel"><p className="text-sm text-muted-foreground">{t.pluginDetail.configEmpty}</p></div>
         </SettingsGroup>
       ) : hasExplicitSections ? (
         // One settings-group card per author-declared section: an icon-chip header (label + `?` hint),

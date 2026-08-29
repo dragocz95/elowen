@@ -217,11 +217,11 @@ export function UsersView() {
                           openLabel={t.users.openUser.replace('{name}', displayName)}
                           onContextMenu={(event) => openCtxMenu(event, user)}
                         >
-                          <DataTableCell lines={1} title={displayName} className="flex items-center gap-3"><Avatar user={user} size={32} /><span className="min-w-0 truncate text-sm font-medium text-text group-hover:text-primary">{displayName}</span></DataTableCell>
-                          <DataTableCell priority="wide" lines={1} title={`@${user.username}`} className="font-mono text-xs text-text-muted">@{user.username}</DataTableCell>
-                          <DataTableCell priority="wide" lines={1}>{user.is_admin ? <Badge tone="accent"><ShieldCheck size={10} className="mr-1" aria-hidden />{t.users.admin}</Badge> : <span className="text-xs text-text-muted">{t.users.member}</span>}</DataTableCell>
-                          <DataTableCell priority="wide" lines={1} className="text-xs text-text-muted">{localDateTime(user.created_at, locale, false)}</DataTableCell>
-                          <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><ActionMenu label={`${user.username}: ${t.common.actions}`} items={userActions(user)} trigger={<MoreHorizontal size={16} aria-hidden />} triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted opacity-60 hover:bg-elevated hover:text-text group-hover:opacity-100" /></DataTableCell>
+                          <DataTableCell lines={1} title={displayName} className="flex items-center gap-3"><Avatar user={user} size={32} /><span className="min-w-0 truncate text-sm font-medium text-foreground group-hover:text-primary">{displayName}</span></DataTableCell>
+                          <DataTableCell priority="wide" lines={1} title={`@${user.username}`} className="font-mono text-xs text-muted-foreground">@{user.username}</DataTableCell>
+                          <DataTableCell priority="wide" lines={1}>{user.is_admin ? <Badge tone="accent"><ShieldCheck size={10} className="mr-1" aria-hidden />{t.users.admin}</Badge> : <span className="text-xs text-muted-foreground">{t.users.member}</span>}</DataTableCell>
+                          <DataTableCell priority="wide" lines={1} className="text-xs text-muted-foreground">{localDateTime(user.created_at, locale, false)}</DataTableCell>
+                          <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><ActionMenu label={`${user.username}: ${t.common.actions}`} items={userActions(user)} trigger={<MoreHorizontal size={16} aria-hidden />} triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-60 hover:bg-accent hover:text-foreground group-hover:opacity-100" /></DataTableCell>
                           <DataTableChevronCell />
                         </DataTableRow>
                       );

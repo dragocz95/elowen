@@ -82,8 +82,8 @@ function statusLabel(server: McpServer, strings: Record<string, string>): string
 
 function statusDot(server: McpServer): string {
   if (server.status === 'connected') return 'bg-success';
-  if (server.status === 'error') return 'bg-danger';
-  return 'bg-text-muted/50';
+  if (server.status === 'error') return 'bg-destructive';
+  return 'bg-muted-foreground/50';
 }
 
 function scopeLabel(scope: McpScope, strings: Record<string, string>): string {
@@ -122,7 +122,7 @@ function McpServerRow({ server, showScope, selected, onOpen }: {
       </C.DataTableCell>
       <C.DataTableCell lines={1} title={server.name}>
         <span className="flex w-full min-w-0 items-center gap-2">
-          <span className="truncate text-sm text-text">{server.name}</span>
+          <span className="truncate text-sm text-foreground">{server.name}</span>
           {!server.enabled ? <C.Badge tone="muted">{s.statusDisabled}</C.Badge> : null}
         </span>
       </C.DataTableCell>
@@ -130,18 +130,18 @@ function McpServerRow({ server, showScope, selected, onOpen }: {
         <C.Badge>{server.transport.toUpperCase()}</C.Badge>
       </C.DataTableCell>
       {showScope ? (
-        <C.DataTableCell priority="wide" lines={1} className="text-xs text-text-muted">
+        <C.DataTableCell priority="wide" lines={1} className="text-xs text-muted-foreground">
           {scopeLabel(server.scope, s)}
         </C.DataTableCell>
       ) : null}
-      <C.DataTableCell priority="wide" lines={1} className="text-xs text-text-muted">
+      <C.DataTableCell priority="wide" lines={1} className="text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5"><Wrench size={DATA_TABLE_ICON_SIZE} aria-hidden />{server.toolCount}</span>
       </C.DataTableCell>
       {/* A failure message is far longer than the column: one line, rest on hover. */}
-      <C.DataTableCell priority="wide" lines={1} title={server.lastError ?? label} className="text-xs text-text-muted">
+      <C.DataTableCell priority="wide" lines={1} title={server.lastError ?? label} className="text-xs text-muted-foreground">
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0">{server.lastError ? <TriangleAlert size={DATA_TABLE_ICON_SIZE} aria-hidden /> : <PlugZap size={DATA_TABLE_ICON_SIZE} aria-hidden />}</span>
-          <span className={`truncate ${server.lastError ? 'text-danger' : ''}`}>{server.lastError ?? label}</span>
+          <span className={`truncate ${server.lastError ? 'text-destructive' : ''}`}>{server.lastError ?? label}</span>
         </span>
       </C.DataTableCell>
       <C.DataTableChevronCell />
@@ -176,7 +176,7 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
             <C.Badge tone={server.status === 'connected' ? 'accent' : server.status === 'error' ? 'danger' : 'muted'}>{statusLabel(server, s)}</C.Badge>
             <C.Badge tone="muted">{scopeLabel(server.scope, s)}</C.Badge>
           </div>
-          {server.lastError ? <p className="text-xs text-danger">{server.lastError}</p> : null}
+          {server.lastError ? <p className="text-xs text-destructive">{server.lastError}</p> : null}
         </div>
       ) : null}
 
@@ -214,10 +214,10 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
               </C.Field>
             </div>
             <C.Field label={s.arguments}>
-              <textarea className="min-h-24 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text" value={draft.args} onChange={(event) => onChange({ ...draft, args: event.target.value })} />
+              <textarea className="min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground" value={draft.args} onChange={(event) => onChange({ ...draft, args: event.target.value })} />
             </C.Field>
             <C.Field label={s.environment}>
-              <textarea className="min-h-24 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text" value={draft.env} onChange={(event) => onChange({ ...draft, env: event.target.value })} />
+              <textarea className="min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground" value={draft.env} onChange={(event) => onChange({ ...draft, env: event.target.value })} />
             </C.Field>
           </>
         ) : (
@@ -240,7 +240,7 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
       {server ? (
         <C.DetailBlock icon={Wrench} title={s.tools} hint={s.toolsHint}>
           {server.tools.length === 0
-            ? <p className="text-xs text-text-muted">{s.noTools}</p>
+            ? <p className="text-xs text-muted-foreground">{s.noTools}</p>
             : (
               <C.SelectionSummary
                 readOnly
@@ -260,7 +260,7 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
         </C.DetailBlock>
       ) : null}
 
-      {error ? <p className="text-sm text-danger" role="alert">{error}</p> : null}
+      {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
         {server

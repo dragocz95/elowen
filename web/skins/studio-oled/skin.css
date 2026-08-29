@@ -10,22 +10,22 @@
  * (#c8ff00) is a brand mark and ours is the mascot's ember, so every accent fill, focus ring, active
  * state and link resolves through --primary-rgb instead.
  *
- * Measured on --color-surface-sticky, which derives to #121719 and is the lightest ground the ink ramp
- * is painted on: text 17.63:1, muted 7.14:1, subtle 4.81:1.
+ * Measured on --color-sticky, which derives to #121719 and is the lightest ground the ink ramp is
+ * painted on: text 17.63:1, muted 7.14:1, subtle 4.81:1.
  *
- * There is no --color-scrim here: the inherited token mixes --color-bg, and on this canvas that IS the
- * darkest colour the design owns, so the veil already darkens. studio-light has to override it. */
+ * There is no --color-scrim here: the inherited token mixes --color-background, and on this canvas that
+ * IS the darkest colour the design owns, so the veil already darkens. studio-light has to override it. */
 
 :root[data-skin='studio-oled'] {
   /* Near-black tinted a few degrees toward cyan rather than neutral grey — that tint is what keeps a dark
      UI from reading as switched-off glass. Card, popover and raised surfaces share ONE fill a single step
      above the canvas: OpenRouter carries structure with hairlines rather than a ladder of greys, and
      copying the greys without that discipline is how a dark theme ends up looking washed out. */
-  --color-bg: #03080a;
+  --color-background: #03080a;
   --color-document: #03080a;
-  --color-surface: #080d0f;
-  --color-elevated: #080d0f;
-  --color-overlay: #080d0f;
+  --color-card: #080d0f;
+  --color-muted: #080d0f;
+  --color-popover: #080d0f;
   /* Their hairline is the off-white ink at 8% alpha; --color-border must stay OPAQUE because the frozen
      chat surface reads it, so it ships as that same mix already resolved over the canvas. */
   --color-border: #171c1e;
@@ -41,9 +41,9 @@
   /* Off-white ink, with the muted step being that same white at 62.7% alpha, shipped already resolved
      over the card fill. The subtle step is the ONE measurement not copied: theirs (43.9%, #737678) lands
      at 3.95:1 on the sticky ground and fails AA, so it is lifted to the nearest value that passes. */
-  --color-text: #fcfcfe;
-  --color-text-muted: #a1a3a5;
-  --color-text-subtle: #828486;
+  --color-foreground: #fcfcfe;
+  --color-muted-foreground: #a1a3a5;
+  --color-subtle-foreground: #828486;
 
   /* The substitution: ember where OpenRouter is volt. Same role in the design — fills, focus rings,
      active tabs, links — and the same near-black ink laid on top of it (6.24:1 on the fill). */
@@ -72,20 +72,18 @@
   --studio-brand-font: "Space Grotesk Variable", var(--font-display);
 
   /* OpenRouter's status colours, unchanged: they are semantic rather than brand-derived, so the accent
-     substitution does not reach them. Each fill carries near-black ink (--color-on-status) — danger
-     5.52:1, success 11.78:1, warning 8.97:1, info 6.30:1 — and each is legible as TEXT on the sticky
-     ground, where danger at 4.95:1 is the tightest.
-     Worth knowing: against an ember accent, danger sits about 20° of hue away instead of the half-wheel
-     their green enjoyed. Crimson against orange-red still separates, but this is the single place where
-     the palette is tighter than the one it was copied from. */
-  --color-danger: #ff2d55;
-  --color-error: #ff2d55;
+     substitution does not reach them. Each fill carries near-black ink (--color-primary-foreground, which
+     the other status foregrounds alias) — destructive 5.52:1, success 11.78:1, warning 8.97:1, info
+     6.30:1 — and each is legible as TEXT on the sticky ground, where destructive at 4.95:1 is the
+     tightest.
+     Worth knowing: against an ember accent, destructive sits about 20° of hue away instead of the
+     half-wheel their green enjoyed. Crimson against orange-red still separates, but this is the single
+     place where the palette is tighter than the one it was copied from. */
+  --color-destructive: #ff2d55;
   --color-success: #34dfaa;
-  --color-approve: #34dfaa;
   --color-warning: #e5a000;
   --color-info: #4d8dff;
-  --color-cancelled: #8a8a94;
-  --color-on-status: #03080a;
+  --color-primary-foreground: #03080a;
 
   /* The same 6 / 8 / 10 / 12 / 16 ladder as the light variant — see the note there. --radius-sm and
      --radius-lg are held at their old values because the frozen chat surface reads them. */
@@ -102,11 +100,11 @@
      low alpha rather than black at one. Both percentages are OpenRouter's own — 8% for a hairline, 30%
      for the focus border — and 8% of #fcfcfe over the canvas resolves to the #171c1e that --color-border
      ships opaque, because the frozen chat surface reads that token and cannot take a mix. */
-  --studio-line: color-mix(in srgb, var(--color-text) 8%, transparent);
-  --studio-line-strong: color-mix(in srgb, var(--color-text) 30%, transparent);
-  --studio-fill-quiet: color-mix(in srgb, var(--color-text) 6%, transparent);
-  --studio-fill-hover: color-mix(in srgb, var(--color-text) 4%, transparent);
-  --studio-fill-active: color-mix(in srgb, var(--color-text) 8%, transparent);
+  --studio-line: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+  --studio-line-strong: color-mix(in srgb, var(--color-foreground) 30%, transparent);
+  --studio-fill-quiet: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+  --studio-fill-hover: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+  --studio-fill-active: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 
   /* ---- Chrome rhythm — see studio-light. ---- */
   --studio-rail-width: 57px;

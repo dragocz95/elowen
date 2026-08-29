@@ -60,14 +60,14 @@ const SkinContext = createContext<SkinContextValue | null>(null);
  *
  *  The attribute is not quite the whole story, because it is not the only thing painting the canvas. The
  *  server writes an inline `background-color` onto <html> and <body> (app/layout.tsx) so the document has
- *  the right fill BEFORE the stylesheet is parsed — and an inline style outranks the `var(--color-bg)`
+ *  the right fill BEFORE the stylesheet is parsed — and an inline style outranks the `var(--color-background)`
  *  rule in base.css that would otherwise follow the skin. Left in place it freezes the canvas at whatever
  *  design the document was SERVED as: switching to studio-oled repainted every surface near-black while
  *  <html> stayed white underneath, which shows in the overscroll fill and in the browser's own chrome.
  *
  *  So the switch hands the canvas back to the cascade. Deleting the inline value is the whole fix, and it
  *  needs no second copy of any palette on the client: by the time anyone can press the switcher the
- *  stylesheet has long since landed, so `--color-bg` is already the authority the anti-FOUC value was
+ *  stylesheet has long since landed, so `--color-background` is already the authority the anti-FOUC value was
  *  standing in for. The same reasoning covers the theme colour, which is read back from the resolved token
  *  rather than restated — the address bar and the task switcher then follow the design like everything
  *  else, instead of reporting the one the document happened to arrive in. */

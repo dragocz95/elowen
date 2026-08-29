@@ -51,7 +51,7 @@ afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
 /** The Tailwind type-size utility an element declares, if any (`text-tiny`, `text-[0.6875rem]`…).
- *  Colour utilities like `text-text-muted` are not sizes and must not be picked up. */
+ *  Colour utilities like `text-muted-foreground` are not sizes and must not be picked up. */
 function sizeClass(el: Element): string | null {
   const sizes = [...el.classList].filter((c) => /^text-(tiny|xs|sm|base|\[[\d.]+rem\])$/.test(c));
   return sizes[0] ?? null;
@@ -84,7 +84,7 @@ describe('transcript reads as one column', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(169_000); });
       const elapsed = screen.getByTestId('chat-card-elapsed');
       expect(elapsed).toHaveTextContent('· 2m 49s');
-      expect(elapsed).toHaveClass('text-text-muted', 'opacity-70');
+      expect(elapsed).toHaveClass('text-muted-foreground', 'opacity-70');
     } finally {
       vi.useRealTimers();
     }

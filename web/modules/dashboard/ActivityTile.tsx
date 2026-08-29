@@ -76,15 +76,15 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
         ) : (
           <span
             data-trunk-dot
-            className="grid h-8 w-8 place-items-center rounded-full border border-primary/30 bg-bg shadow-[0_0_10px_rgb(var(--primary-rgb)_/_0.14)] transition-colors group-hover:border-primary/60"
+            className="grid h-8 w-8 place-items-center rounded-full border border-primary/30 bg-background shadow-[0_0_10px_rgb(var(--primary-rgb)_/_0.14)] transition-colors group-hover:border-primary/60"
           >
-            <Icon size={14} className="text-text-muted" aria-hidden />
+            <Icon size={14} className="text-muted-foreground" aria-hidden />
           </span>
         )}
         {/* Where the work happened, as the platform's own mark — the same badge the pulse table uses,
             so Discord reads as Discord on both halves of the dashboard instead of a generic glyph. */}
         {teamFeed ? (
-          <span className="absolute -bottom-1 -right-1 grid h-[18px] w-[18px] place-items-center rounded-full border-2 border-bg bg-elevated">
+          <span className="absolute -bottom-1 -right-1 grid h-[18px] w-[18px] place-items-center rounded-full border-2 border-background bg-muted">
             <PlatformIcon platform={event.surface} size={11} />
           </span>
         ) : null}
@@ -92,13 +92,13 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
 
       <span className="min-w-0">
         <span className="flex items-baseline gap-2">
-          <span className="truncate text-[13px] font-medium leading-tight text-text">
+          <span className="truncate text-[13px] font-medium leading-tight text-foreground">
             {teamFeed
               ? (event.actor_label || t.dashboard.ev.someone)
               : eventVerb(t, event.type, event.detail)}
           </span>
           {teamFeed && event.count > 1 ? (
-            <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-subtle">×{event.count}</span>
+            <span className="shrink-0 font-mono text-[10px] tabular-nums text-subtle-foreground">×{event.count}</span>
           ) : null}
         </span>
         {/* What the turn actually ran. Falls back to the surface label when the daemon has no transcript
@@ -107,7 +107,7 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
           {teamFeed && event.tools?.length ? (
             <ToolTrail tools={event.tools} />
           ) : (
-            <span className="block truncate text-[11px] leading-tight text-text-muted">
+            <span className="block truncate text-[11px] leading-tight text-muted-foreground">
               {teamFeed
                 ? `${t.dashboard.ev.turn} · ${surfaceLabel(t, event.surface)}`
                 : (event.label || event.target)}
@@ -117,7 +117,7 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
       </span>
 
       {ts != null && (
-        <span className="pt-1 font-mono text-[10px] tabular-nums text-text-subtle">
+        <span className="pt-1 font-mono text-[10px] tabular-nums text-subtle-foreground">
           {compactElapsed(Date.now() - ts)}
         </span>
       )}
@@ -144,7 +144,7 @@ export function ActivityTile({ limit = 14 }: { limit?: number }) {
     <section aria-labelledby="dashboard-activity" className="px-1 py-6 @sm:px-3 @2xl:px-5">
       <header className="mb-3 flex items-center justify-between gap-3">
         <h2 id="dashboard-activity" className="dash-label">{t.dashboard.eventStream}</h2>
-        <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[10px] tabular-nums text-text-muted">
+        <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[10px] tabular-nums text-muted-foreground">
           <span aria-hidden className="live-dot h-1.5 w-1.5 rounded-full bg-success" />
           {/* Presence is the daemon's live view of running turns. Nobody working → the plain "live"
               badge, so the line never claims activity that is not happening. */}
@@ -156,7 +156,7 @@ export function ActivityTile({ limit = 14 }: { limit?: number }) {
       {activity.isLoading ? (
         <LoadingState />
       ) : rows.length === 0 ? (
-        <p className="py-5 text-sm text-text-muted">{t.dashboard.eventStreamEmpty}</p>
+        <p className="py-5 text-sm text-muted-foreground">{t.dashboard.eventStreamEmpty}</p>
       ) : (
         <ol>{rows.map((e, index) => <EventRow key={e.id} event={e} last={index === rows.length - 1} />)}</ol>
       )}
