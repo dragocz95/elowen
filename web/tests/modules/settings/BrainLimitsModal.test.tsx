@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { BrainLimitsModal, BRAIN_LIMIT_DEFAULTS } from '../../../modules/settings/BrainLimitsModal';
 
@@ -93,7 +93,7 @@ describe('BrainLimitsModal', () => {
     expect(screen.getAllByText(/^Saved as /)).toHaveLength(1);
   });
 
-  it('opens field help as a floating layer above the limits modal', () => {
+  it('opens field help as a floating layer above the limits modal', async () => {
     render(
       <LanguageProvider>
         <BrainLimitsModal limits={BRAIN_LIMIT_DEFAULTS} onChange={() => {}} onClose={() => {}} />
@@ -102,18 +102,25 @@ describe('BrainLimitsModal', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Help' })[0]!);
 
-    const tooltip = screen.getByRole('tooltip');
+    const tooltip = await screen.findByRole('tooltip');
     const dialog = screen.getByRole('dialog');
     // "Above the modal" has two halves, and BOTH must hold or the help is unreadable:
-    // 1. it escapes the modal's clipping/stacking context (portaled to <body>, painted after it), and
-    // 2. it outranks the modal's stacking layer — the half a portal alone does NOT give you.
-    expect(tooltip.parentElement).toBe(document.body);
-    expect(dialog.compareDocumentPosition(tooltip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 1. it escapes the modal's clipping context — it is positioned `fixed`, so no ancestor's overflow
+    //    can cut it off, and
+    // 2. it outranks the modal's stacking layer — the half that position alone does NOT give you.
+    //
+    // It stays INSIDE the dialog rather than being portaled to <body>: opening an overlay marks every
+    // other child of <body> inert and aria-hidden and traps focus in the dialog, so a portaled tip is
+    // one the reader can be shut out of. Being a descendant is what keeps it part of the modal.
+    expect(dialog).toContainElement(tooltip);
+    expect(tooltip.closest<HTMLElement>('[data-radix-popper-content-wrapper]')?.style.position).toBe('fixed');
     expect(tooltipZ(tooltip)).toBeGreaterThan(layerZ('overlay-layer-modal'));
   });
 
-  it('flips the help body above the trigger so it stays inside the viewport near the fold', () => {
+  it('flips the help body above the trigger so it stays inside the viewport near the fold', async () => {
     // A real 120px help body opened near the bottom of jsdom's 768px viewport would spill past it.
+    // The flip is Radix's collision handling now rather than this component's own arithmetic, so what
+    // is asserted is the side it actually resolved to — measured from the same stubbed geometry.
     vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(120);
     render(
       <LanguageProvider>
@@ -128,10 +135,8 @@ describe('BrainLimitsModal', () => {
 
     fireEvent.click(trigger);
 
-    const top = Number.parseInt(screen.getByRole('tooltip').style.top, 10);
-    const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
-    expect(top).toBeLessThanOrEqual(700);
-    expect(top + 120).toBeLessThanOrEqual(viewportHeight);
-    expect(top).toBeGreaterThanOrEqual(12);
+    const tooltip = await screen.findByRole('tooltip');
+    // Opened below, 120px of body would end at 844 in a 768px viewport — so it opens upward instead.
+    await waitFor(() => expect(tooltip).toHaveAttribute('data-side', 'top'));
   });
 });
