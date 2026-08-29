@@ -1,6 +1,6 @@
 'use client';
 import { useState, type ReactNode } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, Info, MessagesSquare, Mic, Image as ImageIcon, Puzzle, Wrench, type LucideIcon } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Pencil, Users, SlidersHorizontal, Link2, Info, MessagesSquare, Mic, Image as ImageIcon, Puzzle, Wrench, type LucideIcon } from 'lucide-react';
 import { TeamsAppPackageSection } from './TeamsAppPackageSection';
 import { MonacoEditor } from '../../lib/monaco/monacoLoader';
 import { defineEditorThemes, editorTheme } from '../../lib/monaco/oledTheme';
@@ -10,7 +10,8 @@ import { Input, textareaClass } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
-import { SelectionSummary } from '../../components/ui/SelectionSummary';
+import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
+import { RowPicker } from '../../components/ui/RowPicker';
 import { Toggle } from '../../components/ui/Toggle';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -21,7 +22,7 @@ import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 import { useConfig, useBrainModels, useNotificationDestinations, usePlugins, usePluginTools, useProjects } from '../../lib/queries';
-import type { BrainModelOption, NotificationDestinationOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
+import type { BrainModelOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
@@ -42,79 +43,25 @@ function sectionIcon(field?: PluginConfigField): LucideIcon {
   return SECTION_ICONS.find((s) => s.test.test(key))?.icon ?? SlidersHorizontal;
 }
 
-/** Generic `multiSelect` config field: a compact summary + a multi-select modal over the manifest's
- *  options (one ungrouped list, so no group-filter row). Saved values the manifest no longer offers
- *  stay visible as rows so a save never silently drops them. */
-function DestinationField({ label, hint, value, onChange }: { label: string; hint?: string; value: string; onChange: (v: string) => void }) {
-  const { t } = useTranslation();
-  const { data: destinations = [] } = useNotificationDestinations();
-  const [open, setOpen] = useState(false);
-  const selected = destinations.find((destination) => destination.value === value);
-  const stale: NotificationDestinationOption[] = value && !selected
-    ? [{ value, id: value, platform: '', kind: 'chat', label: value }]
-    : [];
-  const items: ManageSelectionItem[] = [
-    { id: '', label: t.managePicker.none, group: '' },
-    ...stale.map((destination) => ({ id: destination.value, label: destination.label, group: '' })),
-    ...destinations.map((destination) => ({
-      id: destination.value,
-      label: destination.label,
-      group: `${destination.platform}:${destination.group ?? destination.platform}`,
-      groupLabel: destination.group ?? destination.platform,
-      badges: destination.subtitle ? [{ text: destination.subtitle, tone: 'muted' as const }] : undefined,
-    })),
-  ];
-  const current = selected?.label ?? (value || t.managePicker.none);
-  return (
-    <>
-      <SelectionSummary countText={current} samples={selected ? [{ label: selected.label }] : []} moreCount={0} onManage={() => setOpen(true)} manageLabel={t.managePicker.manage} />
-      <ManageSelectionModal
-        title={label}
-        subtitle={hint}
-        open={open}
-        onClose={() => setOpen(false)}
-        items={items}
-        selected={new Set([value])}
-        onSave={(next) => onChange([...next][0] ?? '')}
-        emptySelectionHint={t.managePicker.none}
-        single
-      />
-    </>
-  );
-}
+/** Field types whose editing surface is a DOCUMENT (free text, code, a prompt, JSON) or a list of
+ *  structured entries. None of them fits the one compact control a settings record allows, so the record
+ *  carries a summary trigger and the editor keeps its full surface inside a modal. */
+const MODAL_FIELD_TYPES = new Set<PluginConfigField['type']>(['textarea', 'code', 'prompt', 'json', 'rolePolicies', 'mcpServers']);
 
-function MultiSelectField({ label, options, value, onChange }: { label: string; options: { value: string; label: string }[]; value: string[]; onChange: (v: string[]) => void }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const byValue = new Map(options.map((o) => [o.value, o.label]));
-  const items: ManageSelectionItem[] = [
-    ...value.filter((v) => !byValue.has(v)).map((v) => ({ id: v, label: v, group: '' })),
-    ...options.map((o) => ({ id: o.value, label: o.label, group: '' })),
-  ];
-  return (
-    <>
-      <SelectionSummary
-        countText={t.managePicker.selectedCount.replace('{n}', String(value.length))}
-        samples={value.slice(0, 3).map((v) => ({ label: byValue.get(v) ?? v }))}
-        moreCount={Math.max(0, value.length - 3)}
-        onManage={() => setOpen(true)}
-        manageLabel={t.managePicker.manage}
-      />
-      <ManageSelectionModal
-        title={label}
-        open={open}
-        onClose={() => setOpen(false)}
-        items={items}
-        selected={new Set(value)}
-        onSave={(next) => onChange([...next])}
-      />
-    </>
-  );
-}
+/** A `json` field is stored as the raw text the user typed, but an older config may still hold the parsed
+ *  value — both have to render into the same editor. */
+const jsonText = (raw: unknown): string => (typeof raw === 'string' ? raw : raw === undefined ? '' : JSON.stringify(raw, null, 2));
+const isJsonInvalid = (text: string): boolean => {
+  if (text.trim() === '') return false;
+  try { JSON.parse(text); return false; } catch { return true; }
+};
 
-/** Shared live-catalog multi-select: the catalog-specific wrappers only map their domain rows into the
- *  same compact summary + manage modal used by the Users drawer. Stale stored ids remain selectable. */
-function CatalogMultiSelectField({ label, hint, items: catalogItems, value, onChange, groupIcons }: {
+/** Multi-select twin of the shared {@link RowPicker}: one trigger the width of a record's control cell,
+ *  opening the same {@link ManageSelectionModal}. RowPicker only offers `single` mode, and the
+ *  `SelectionSummary` card this replaced — a count line, sample chips and a "Manage" button — wrapped onto
+ *  three lines inside a record. Saved ids the catalog no longer offers are the caller's job to pin into
+ *  `items`, so a save never silently drops them. */
+function RowMultiPicker({ label, hint, items, value, onChange, groupIcons }: {
   label: string;
   hint?: string;
   items: ManageSelectionItem[];
@@ -124,18 +71,23 @@ function CatalogMultiSelectField({ label, hint, items: catalogItems, value, onCh
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const byId = new Map(catalogItems.map((item) => [item.id, item]));
-  const stale = value.filter((id) => !byId.has(id)).map((id) => ({ id, label: id, group: '' }));
-  const items = [...stale, ...catalogItems];
+  const countText = (n: number) => t.managePicker.selectedCount.replace('{n}', String(n));
   return (
     <>
-      <SelectionSummary
-        countText={t.managePicker.selectedCount.replace('{n}', String(value.length))}
-        samples={value.slice(0, 3).map((id) => ({ label: byId.get(id)?.label ?? id, icon: byId.get(id)?.icon }))}
-        moreCount={Math.max(0, value.length - 3)}
-        onManage={() => setOpen(true)}
-        manageLabel={t.managePicker.manage}
-      />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen(true)}
+        data-row-picker
+        className="w-full justify-between font-normal"
+      >
+        <span className="min-w-0 truncate text-left">{value.length ? countText(value.length) : t.managePicker.none}</span>
+        <ChevronDown size={14} aria-hidden className="opacity-60" />
+      </Button>
       <ManageSelectionModal
         title={label}
         subtitle={hint}
@@ -144,11 +96,67 @@ function CatalogMultiSelectField({ label, hint, items: catalogItems, value, onCh
         items={items}
         selected={new Set(value)}
         onSave={(next) => onChange([...next])}
-        countLabel={(n) => t.managePicker.selectedCount.replace('{n}', String(n))}
+        countLabel={countText}
         groupIcons={groupIcons}
       />
     </>
   );
+}
+
+/** Generic `destination` config field: the shared single-choice row trigger over the live notification
+ *  catalog. A saved value the catalog no longer lists stays pinned and selected. */
+function DestinationField({ label, hint, value, onChange }: { label: string; hint?: string; value: string; onChange: (v: string) => void }) {
+  const { t } = useTranslation();
+  const { data: destinations = [] } = useNotificationDestinations();
+  const selected = destinations.find((destination) => destination.value === value);
+  const items: ManageSelectionItem[] = [
+    { id: '', label: t.managePicker.none, group: '' },
+    ...(value && !selected ? [{ id: value, label: value, group: '' }] : []),
+    ...destinations.map((destination) => ({
+      id: destination.value,
+      label: destination.label,
+      group: `${destination.platform}:${destination.group ?? destination.platform}`,
+      groupLabel: destination.group ?? destination.platform,
+      badges: destination.subtitle ? [{ text: destination.subtitle, tone: 'muted' as const }] : undefined,
+    })),
+  ];
+  return (
+    <RowPicker
+      label={label}
+      subtitle={hint}
+      summary={selected?.label ?? (value || t.managePicker.none)}
+      items={items}
+      value={value}
+      onChange={onChange}
+      emptySelectionHint={t.managePicker.none}
+    />
+  );
+}
+
+/** Generic `multiSelect` config field over the manifest's own options (one ungrouped list, so no
+ *  group-filter row). Saved values the manifest no longer offers stay selectable. */
+function MultiSelectField({ label, options, value, onChange }: { label: string; options: { value: string; label: string }[]; value: string[]; onChange: (v: string[]) => void }) {
+  const byValue = new Map(options.map((o) => [o.value, o.label]));
+  const items: ManageSelectionItem[] = [
+    ...value.filter((v) => !byValue.has(v)).map((v) => ({ id: v, label: v, group: '' })),
+    ...options.map((o) => ({ id: o.value, label: o.label, group: '' })),
+  ];
+  return <RowMultiPicker label={label} items={items} value={value} onChange={onChange} />;
+}
+
+/** Shared live-catalog multi-select: the catalog-specific wrappers only map their domain rows into the
+ *  same row trigger + manage modal used by the Users drawer. Stale stored ids remain selectable. */
+function CatalogMultiSelectField({ label, hint, items: catalogItems, value, onChange, groupIcons }: {
+  label: string;
+  hint?: string;
+  items: ManageSelectionItem[];
+  value: string[];
+  onChange: (v: string[]) => void;
+  groupIcons?: Record<string, ReactNode>;
+}) {
+  const byId = new Map(catalogItems.map((item) => [item.id, item]));
+  const stale = value.filter((id) => !byId.has(id)).map((id) => ({ id, label: id, group: '' }));
+  return <RowMultiPicker label={label} hint={hint} items={[...stale, ...catalogItems]} value={value} onChange={onChange} groupIcons={groupIcons} />;
 }
 
 function ProjectsField({ label, hint, value, onChange }: { label: string; hint?: string; value: string[]; onChange: (v: string[]) => void }) {
@@ -375,65 +383,62 @@ function PluginProviderField({ value, onChange, providerType }: { value: string;
   return <ProviderPicker providers={providers} value={value} onChange={onChange} emptyText={interpolate(t.pluginCfg.noProviders, { agentName })} size="sm" />;
 }
 
-/** A config field's compact label row. Long manifest explanations stay behind the shared `?` affordance
- *  instead of expanding every plugin form vertically. A div keeps the help button out of a label. */
-function LabeledField({ label, hint, help, risk, riskLabel, children }: {
+/** The record a {@link MODAL_FIELD_TYPES} field wears: a summary trigger in the control cell, and the
+ *  real editor in a modal raised from it. The trigger is named after the FIELD, not after what is stored,
+ *  so a card full of them still reads as a list of settings to a screen reader. */
+function ModalFieldRow({ label, description, hint, status, summary, fillsModal, children }: {
   label: string;
+  description?: string;
   hint?: string;
-  help?: string;
-  risk?: 'low' | 'medium' | 'high';
-  riskLabel?: string;
+  status?: ReactNode;
+  summary: string;
+  /** A Monaco surface takes the modal's whole height; a textarea or an entry list scrolls in the body. */
+  fillsModal?: boolean;
   children: ReactNode;
 }) {
-  const descriptions = [...new Set([hint, help].filter((value): value is string => Boolean(value?.trim())))];
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   return (
-    <div className="flex flex-col gap-1.5">
-      <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        <span>{label}</span>
-        {risk && riskLabel ? <Badge tone={RISK_TONE[risk]}>{riskLabel}</Badge> : null}
-        {descriptions.length ? (
-          <HelpTip align="left">
-            <span className="flex flex-col gap-1.5">{descriptions.map((text) => <span key={text}>{text}</span>)}</span>
-          </HelpTip>
-        ) : null}
-      </span>
-      {children}
-    </div>
+    <>
+      <SettingsRow
+        label={label}
+        description={description}
+        hint={hint}
+        status={status}
+        control={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={label}
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            onClick={() => setOpen(true)}
+            data-row-picker
+            className="w-full justify-between font-normal"
+          >
+            <span className="min-w-0 truncate text-left">{summary}</span>
+            <Pencil size={14} aria-hidden className="opacity-60" />
+          </Button>
+        }
+      />
+      {open ? (
+        <Modal title={label} description={description} size="lg" onClose={() => setOpen(false)}>
+          {fillsModal ? <div className="min-h-0 flex-1 overflow-hidden">{children}</div> : <ModalBody>{children}</ModalBody>}
+          <ModalFooter>
+            <Button variant="accent" onClick={() => setOpen(false)}>{t.common.done}</Button>
+          </ModalFooter>
+        </Modal>
+      ) : null}
+    </>
   );
 }
 
-/** Controls with their own summary, picker, or editing surface need the row's horizontal room — and a
- *  manifest may claim it for an ordinary input too, via `fullWidth`. */
-function controlOwnsLayout(f: PluginConfigField): boolean {
-  if (f.fullWidth) return true;
-  switch (f.type) {
-    case 'textarea':
-    case 'model':
-    case 'embeddingModel':
-    case 'provider':
-    case 'destination':
-    case 'multiSelect':
-    case 'projects':
-    case 'plugins':
-    case 'tools':
-    case 'models':
-    case 'code':
-    case 'prompt':
-    case 'json':
-    case 'rolePolicies':
-    case 'mcpServers':
-      return true;
-    case 'enum':
-      return (f.options?.length ?? 0) > 3;
-    default:
-      return false;
-  }
-}
-
 /** The schema-driven config editor: a form generated from the manifest's `configSchema`, rendered as
- *  one Config collapsible or one collapsible per declared `section`. Secrets are write-only (stored
- *  values are reported but never shown back) and saving hot-reloads the brain. Also hosts the cronjob/skills
- *  special sections, whose content is data (jobs.json / .md files), not config schema. */
+ *  one Config collapsible or one collapsible per declared `section`. Every field is one canonical
+ *  settings record — label on the left, ONE compact control on the right — so a plugin's settings read
+ *  as the same table as the rest of the app. Secrets are write-only (stored values are reported but
+ *  never shown back) and saving hot-reloads the brain. */
 type PluginConfigMode = 'setup' | 'behavior' | 'advanced' | 'all';
 
 export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions, riskText, draft, mode = 'behavior', showAppPackage = true }: {
@@ -455,49 +460,16 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const { values, setValue: set } = draft;
   const [replacingSecrets, setReplacingSecrets] = useState<Set<string>>(new Set());
 
+  /** The one compact control a record carries. Modal-backed types are not here — their record is built
+   *  by {@link renderRow} instead. */
   const renderField = (f: PluginConfigField) => {
     switch (f.type) {
       case 'boolean':
-        return <Toggle checked={values[f.key] === true} onChange={(v) => set(f.key, v)} label={f.label} />;
+        return <Toggle checked={values[f.key] === true} onChange={(v) => set(f.key, v)} label={fieldLabel(f)} />;
       case 'number':
         return <Input type="number" min={f.min} max={f.max} step={f.step} placeholder={f.placeholder} aria-label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value === '' ? null : Number(e.target.value))} />;
-      case 'textarea':
-        return <textarea value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} rows={4} className={textareaClass} />;
-      case 'secret': {
-        const stored = detail.secretsSet.includes(f.key);
-        const replacing = replacingSecrets.has(f.key);
-        if (!stored) {
-          return <Input type="password" value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} autoComplete="off" />;
-        }
-        return (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="success">{t.pluginCfg.secretSet}</Badge>
-              <span className="min-w-0 flex-1 text-xs text-muted-foreground">{t.pluginCfg.secretKeepHint}</span>
-              {!replacing ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="h-8"
-                  onClick={() => setReplacingSecrets((current) => new Set(current).add(f.key))}
-                >
-                  {t.pluginCfg.secretReplace}
-                </Button>
-              ) : null}
-            </div>
-            {replacing ? (
-              <Input
-                type="password"
-                value={String(values[f.key] ?? '')}
-                onChange={(e) => set(f.key, e.target.value)}
-                placeholder={t.pluginCfg.secretReplacementPlaceholder}
-                autoComplete="off"
-                autoFocus
-              />
-            ) : null}
-          </div>
-        );
-      }
+      case 'secret':
+        return <Input type="password" aria-label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} autoComplete="off" />;
       case 'model':
         // Brain-only picker: the shared modal/search catalog used by account and cron settings.
         return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={brainModels ?? []} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
@@ -525,53 +497,58 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         const selected = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
         return <ModelsField label={fieldLabel(f)} hint={fieldHint(f)} models={brainModels ?? []} value={selected} onChange={(v) => set(f.key, v)} />;
       }
-      case 'rolePolicies':
-        return <RolePoliciesEditor value={Array.isArray(values[f.key]) ? (values[f.key] as RolePolicy[]) : []} onChange={(v) => set(f.key, v)} />;
-      case 'mcpServers':
-        return <McpServersEditor value={Array.isArray(values[f.key]) ? (values[f.key] as McpServerSpec[]) : []} onChange={(v) => set(f.key, v)} />;
       case 'enum':
         return <ChoiceField title={fieldLabel(f)} options={fieldOptions(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
       case 'multiSelect': {
         const sel = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
         return <MultiSelectField label={fieldLabel(f)} options={fieldOptions(f)} value={sel} onChange={(v) => set(f.key, v)} />;
       }
+      default:
+        return <Input aria-label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} />;
+    }
+  };
+
+  const editorOptions = { fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on' as const, folding: false };
+
+  /** The full editing surface a modal-backed field opens. */
+  const renderEditor = (f: PluginConfigField) => {
+    switch (f.type) {
+      case 'textarea':
+        return <textarea aria-label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} rows={14} className={textareaClass} />;
       case 'code':
         return (
-          <div className="overflow-hidden rounded-md border border-border" style={{ height: 260 }}>
-            <MonacoEditor
-              language={f.language ?? 'plaintext'}
-              value={String(values[f.key] ?? '')}
-              onChange={(v) => set(f.key, v ?? '')}
-              theme={editorTheme()}
-              beforeMount={defineEditorThemes}
-              options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on', folding: false }}
-            />
-          </div>
+          <MonacoEditor
+            language={f.language ?? 'plaintext'}
+            value={String(values[f.key] ?? '')}
+            onChange={(v) => set(f.key, v ?? '')}
+            theme={editorTheme()}
+            beforeMount={defineEditorThemes}
+            height="100%"
+            options={{ ...editorOptions, ariaLabel: fieldLabel(f) }}
+          />
         );
       case 'prompt':
         return (
-          <div className="overflow-hidden rounded-md border border-border" style={{ height: 260 }}>
-            <MonacoEditor
-              language="markdown"
-              value={String(values[f.key] ?? '')}
-              onChange={(v) => set(f.key, v ?? '')}
-              theme={editorTheme()}
-              beforeMount={defineEditorThemes}
-              options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on', lineNumbers: 'off', folding: false }}
-            />
-          </div>
+          <MonacoEditor
+            language="markdown"
+            value={String(values[f.key] ?? '')}
+            onChange={(v) => set(f.key, v ?? '')}
+            theme={editorTheme()}
+            beforeMount={defineEditorThemes}
+            height="100%"
+            options={{ ...editorOptions, lineNumbers: 'off', ariaLabel: fieldLabel(f) }}
+          />
         );
       case 'json': {
-        const raw = values[f.key];
-        const text = typeof raw === 'string' ? raw : raw === undefined ? '' : JSON.stringify(raw, null, 2);
-        let invalid = false;
-        if (text.trim() !== '') { try { JSON.parse(text); } catch { invalid = true; } }
+        const text = jsonText(values[f.key]);
+        const invalid = isJsonInvalid(text);
         return (
           <div className="flex flex-col gap-1">
             <textarea
+              aria-label={fieldLabel(f)}
               value={text}
               onChange={(e) => set(f.key, e.target.value)}
-              rows={6}
+              rows={16}
               spellCheck={false}
               className={`${textareaClass}${invalid ? ' border-destructive focus:border-destructive' : ''}`}
             />
@@ -579,33 +556,96 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           </div>
         );
       }
+      case 'rolePolicies':
+        return <RolePoliciesEditor value={Array.isArray(values[f.key]) ? (values[f.key] as RolePolicy[]) : []} onChange={(v) => set(f.key, v)} />;
+      case 'mcpServers':
+        return <McpServersEditor value={Array.isArray(values[f.key]) ? (values[f.key] as McpServerSpec[]) : []} onChange={(v) => set(f.key, v)} />;
       default:
-        return <Input value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} />;
+        return null;
     }
+  };
+
+  /** What a modal-backed record reports: HOW MUCH is stored, never the content itself. */
+  const editorSummary = (f: PluginConfigField): string => {
+    if (f.type === 'rolePolicies' || f.type === 'mcpServers') {
+      const count = Array.isArray(values[f.key]) ? (values[f.key] as unknown[]).length : 0;
+      return count ? t.pluginCfg.editorItems.replace('{n}', String(count)) : t.pluginCfg.editorEmpty;
+    }
+    const text = f.type === 'json' ? jsonText(values[f.key]) : String(values[f.key] ?? '');
+    return text.trim() ? t.pluginCfg.editorLines.replace('{n}', String(text.split('\n').length)) : t.pluginCfg.editorEmpty;
+  };
+
+  const renderRow = (f: PluginConfigField) => {
+    const label = fieldLabel(f);
+    const description = fieldHint(f);
+    // The manifest's long-form `help` only earns the second HelpTip paragraph when it says something the
+    // one-line hint does not.
+    const help = f.help?.trim() && f.help.trim() !== description?.trim() ? f.help : undefined;
+    const risk = f.risk ? <Badge tone={RISK_TONE[f.risk]}>{riskText(f.risk)}</Badge> : null;
+
+    if (MODAL_FIELD_TYPES.has(f.type)) {
+      const invalid = f.type === 'json' && isJsonInvalid(jsonText(values[f.key]));
+      return (
+        <ModalFieldRow
+          key={f.key}
+          label={label}
+          description={description}
+          hint={help}
+          status={risk || invalid ? (
+            <span className="flex flex-wrap items-center gap-2">
+              {risk}
+              {invalid ? <span className="text-destructive" role="alert">{t.pluginCfg.invalidJson}</span> : null}
+            </span>
+          ) : undefined}
+          summary={editorSummary(f)}
+          fillsModal={f.type === 'code' || f.type === 'prompt'}
+        >
+          {renderEditor(f)}
+        </ModalFieldRow>
+      );
+    }
+
+    // A stored secret is never shown back: the record reports that one exists and offers to replace it.
+    if (f.type === 'secret' && detail.secretsSet.includes(f.key) && !replacingSecrets.has(f.key)) {
+      return (
+        <SettingsRow
+          key={f.key}
+          label={label}
+          description={description}
+          hint={[help, t.pluginCfg.secretKeepHint].filter(Boolean).join(' ')}
+          status={<span className="flex flex-wrap items-center gap-2">{risk}<Badge tone="success">{t.pluginCfg.secretSet}</Badge></span>}
+          actions={
+            <Button type="button" variant="ghost" className="h-8" onClick={() => setReplacingSecrets((current) => new Set(current).add(f.key))}>
+              {t.pluginCfg.secretReplace}
+            </Button>
+          }
+        />
+      );
+    }
+    if (f.type === 'secret' && replacingSecrets.has(f.key)) {
+      return (
+        <SettingsRow key={f.key} label={label} description={description} hint={help} status={risk ?? undefined}>
+          <Input
+            type="password"
+            aria-label={label}
+            value={String(values[f.key] ?? '')}
+            onChange={(e) => set(f.key, e.target.value)}
+            placeholder={t.pluginCfg.secretReplacementPlaceholder}
+            autoComplete="off"
+            autoFocus
+          />
+        </SettingsRow>
+      );
+    }
+
+    return (
+      <SettingsRow key={f.key} label={label} description={description} hint={help} status={risk ?? undefined} control={renderField(f)} />
+    );
   };
 
   // A field is shown unless its `visibleWhen` guard points at a value the form doesn't currently hold.
   const isVisible = (f: PluginConfigField) => !f.visibleWhen || values[f.visibleWhen.key] === f.visibleWhen.equals;
-
-  const fieldList = (fields: PluginConfigField[]) => (
-    <div className="@container grid grid-cols-1 gap-x-5 gap-y-4 @lg:grid-cols-2">
-      {fields.filter(isVisible).map((f) => {
-        // Complex editors carry their own row headers, so they render bare (no outer label/hint).
-        if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key} className="animate-fade-up @lg:col-span-2">{renderField(f)}</div>;
-        if ((f.type === 'boolean' || (f.type === 'enum' && (f.options?.length ?? 0) <= 3)) && !f.risk) {
-          const description = [...new Set([fieldHint(f), f.help].filter((value): value is string => Boolean(value?.trim())))].join('\n\n');
-          return <SettingsRow key={f.key} label={fieldLabel(f)} hint={description || undefined} className="animate-fade-up @lg:col-span-2">{renderField(f)}</SettingsRow>;
-        }
-        return (
-          <div key={f.key} className={`animate-fade-up${controlOwnsLayout(f) ? ' @lg:col-span-2' : ''}`}>
-            <LabeledField label={fieldLabel(f)} hint={fieldHint(f)} help={f.help} risk={f.risk} riskLabel={f.risk ? riskText(f.risk) : undefined}>
-              {renderField(f)}
-            </LabeledField>
-          </div>
-        );
-      })}
-    </div>
-  );
+  const fieldRows = (fields: PluginConfigField[]) => fields.filter(isVisible).map(renderRow);
 
   // Preserve author-declared section boundaries while assigning them to the workspace tabs. A flat
   // legacy schema still falls back to key/type inference, so old third-party manifests remain valid.
@@ -633,16 +673,18 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
     return hasModeChild || (children.length === 0 && entry.mode === mode);
   }).map((entry) => entry.field);
   const hasExplicitSections = schema.some((f) => f.type === 'section');
-  const isComplex = (f: PluginConfigField) => f.type === 'rolePolicies' || f.type === 'mcpServers';
   const isConnection = (f: PluginConfigField) => f.type === 'secret' || CONNECTION_KEYS.has(f.key);
-  const connectionFields = visibleSchema.filter((f) => isConnection(f) && !isComplex(f));
-  const behaviorFields = visibleSchema.filter((f) => !isConnection(f) && !isComplex(f));
-  const complexFields = visibleSchema.filter(isComplex);
-  const group = (key: string, Icon: LucideIcon, title: string, hint: string | undefined, fields: PluginConfigField[]) => (
-    <SettingsGroup key={key} className="plugin-card" title={title} description={hint} icon={Icon}>
-      <div className="settings-group__panel">{fieldList(fields)}</div>
-    </SettingsGroup>
-  );
+  const connectionFields = visibleSchema.filter(isConnection);
+  const behaviorFields = visibleSchema.filter((f) => !isConnection(f));
+  const group = (key: string, Icon: LucideIcon, title: string, hint: string | undefined, fields: PluginConfigField[]) => {
+    const rows = fieldRows(fields);
+    if (rows.length === 0) return null;
+    return (
+      <SettingsGroup key={key} className="plugin-card" title={title} description={hint} icon={Icon}>
+        {rows}
+      </SettingsGroup>
+    );
+  };
 
   // Split the schema into author-declared sections so each becomes its own settings-group card (icon-chip
   // header) instead of one long form separated by naked divider lines. Fields before the first section
@@ -665,11 +707,12 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         </SettingsGroup>
       ) : hasExplicitSections ? (
         // One settings-group card per author-declared section: an icon-chip header (label + `?` hint),
-        // the section's fields in the padded body.
+        // the section's fields as records in the padded body.
         sectionCards.map((card, i) => {
           const hint = card.section ? fieldHint(card.section) : undefined;
           const isConnCard = card.section?.key === 'sec_connection';
           const showPackageAction = showAppPackage && detail.name === 'msteams' && isConnCard;
+          const rows = fieldRows(card.fields);
           return (
             <SettingsGroup
               key={card.section?.key ?? `lead-${i}`}
@@ -678,11 +721,13 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               title={card.section ? fieldLabel(card.section) : undefined}
               actions={hint ? <HelpTip align="left">{hint}</HelpTip> : undefined}
             >
-              {showPackageAction || card.fields.length > 0 ? (
-                <div className="settings-group__panel flex flex-col gap-4">
-                  {showPackageAction ? <TeamsAppPackageSection /> : null}
-                  {card.fields.length > 0 ? fieldList(card.fields) : null}
-                </div>
+              {showPackageAction || rows.length > 0 ? (
+                <>
+                  {/* Not a record — it is one action with a paragraph of instructions — so it spans the
+                      record grid's tracks instead of being placed into the label column. */}
+                  {showPackageAction ? <div className="col-span-full px-4 pt-4"><TeamsAppPackageSection /></div> : null}
+                  {rows}
+                </>
               ) : null}
             </SettingsGroup>
           );
@@ -691,7 +736,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         <>
           {connectionFields.length ? group('connection', Link2, t.pluginCfg.sectionConnection, t.pluginCfg.sectionConnectionHint, connectionFields) : null}
           {behaviorFields.length ? group('behavior', SlidersHorizontal, t.pluginCfg.sectionBehavior, undefined, behaviorFields) : null}
-          {complexFields.map((cf) => group(cf.key, Users, fieldLabel(cf), fieldHint(cf), [cf]))}
         </>
       )}
 

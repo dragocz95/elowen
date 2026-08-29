@@ -61,12 +61,6 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'modules/settings/PluginConfigEditor.tsx': {
     "detail.name === 'msteams'": 'The Teams app-package section has a product-specific payload shape.',
   },
-  'modules/settings/PluginLivePreview.tsx': {
-    "name === 'discord'": 'Decorative preview for the Discord configuration schema.',
-    "name === 'whatsapp'": 'Decorative preview for the WhatsApp configuration schema.',
-    "name === 'cronjob'": 'Decorative preview for the scheduler configuration schema.',
-    "name === 'terminal'": 'Decorative preview for the terminal configuration schema.',
-  },
   'modules/advisor/BrainChatProvider.tsx': {
     "name === 'model'": 'Built-in slash-command name, not a plugin dispatch.',
     "name === 'new'": 'Built-in slash-command name, not a plugin dispatch.',
