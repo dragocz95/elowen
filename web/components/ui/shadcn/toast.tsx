@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import * as ToastPrimitive from '@radix-ui/react-toast';
 import { cva, type VariantProps } from 'class-variance-authority';
 
@@ -28,8 +29,35 @@ import { cn } from '../../../lib/utils';
 
 const ToastProvider = ToastPrimitive.Provider;
 
+/** THE ONE PLACE IN THIS KIT THAT IS DELIBERATELY PORTALED, against the migration's own rule.
+ *
+ *  The rule exists so a menu cannot fall out of the dialog it belongs to. A toast is the opposite case:
+ *  it does not belong to the dialog, it has to OUTLIVE it. Rendered in the app tree it is a descendant
+ *  of the node an open overlay marks `inert`, and `inert` applies to a whole subtree with no way to opt
+ *  out from within — so the toast painted above the dialog (--z-toast is above --z-modal) while being
+ *  unclickable, which is the exact opposite of what that stacking order promises.
+ *
+ *  Being a child of `<body>` is only half of it; there are TWO independent sweeps over those children
+ *  and each has its own opt-out, so the dock has to answer both or the defect just changes attribute:
+ *    - the app's own (`overlayStack.syncIsolation`) skips `data-overlay-exempt`;
+ *    - Radix's modal dialog runs `aria-hidden`'s `hideOthers`, which spares `[aria-live]`.
+ *
+ *  `aria-live` is "off" rather than "polite" on purpose. Radix's exemption tests for the ATTRIBUTE, not
+ *  its value, so "off" is enough to be spared — and it avoids making the dock a third announcing region
+ *  next to Radix's hidden announce node and the `role="status"`/`role="alert"` on each card. A container
+ *  that announced its own children would have every toast read twice. */
 function ToastViewport({ className = '', ...props }: React.ComponentProps<typeof ToastPrimitive.Viewport>) {
-  return (
+  // Mount-gated because `createPortal` needs `document` and the provider renders during SSR.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  // The exemption goes on a wrapper of our own, not on the Viewport, because Radix wraps the list in a
+  // `<div role="region">` of its own — so THAT is the child of `<body>` the two sweeps walk, and
+  // attributes set on the list underneath it are never looked at. The wrapper is unstyled on purpose: it
+  // generates an empty, zero-height box, and the dock inside it is `position: fixed`, so it costs the
+  // layout nothing while giving both sweeps a node to skip.
+  return createPortal(
+    <div data-slot="toast-dock" data-overlay-exempt aria-live="off">
     <ToastPrimitive.Viewport
       data-slot="toast-viewport"
       // `overlay-toast-dock` is the app's toast layer and owns placement, gap and safe-area insets in
@@ -41,6 +69,8 @@ function ToastViewport({ className = '', ...props }: React.ComponentProps<typeof
       className={cn('overlay-toast-dock pointer-events-none', className)}
       {...props}
     />
+    </div>,
+    document.body,
   );
 }
 

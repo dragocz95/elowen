@@ -73,4 +73,40 @@ describe('Toast', () => {
     expect(dock().contains(toast)).toBe(true);
     expect(modal.contains(dock())).toBe(false);
   });
+
+  /** Painting above the dialog is worthless if the toast cannot be reached, and for a long time it could
+   *  not be: two separate sweeps hide everything beside an open overlay, and the dock was caught by both.
+   *  The app's own (`overlayStack.syncIsolation`) sets `inert`, which applies to a whole subtree and
+   *  cannot be opted out of from within; Radix's dialog runs `aria-hidden`'s `hideOthers` over the same
+   *  body children. Each has its own exemption, so a fix that answers only one just moves the defect from
+   *  "unclickable" to "unannounced" — which is why both halves are asserted here together. */
+  it('leaves the toast dock live while a modal holds the rest of the page inert', async () => {
+    function Raiser() {
+      const { toast } = useToast();
+      return (
+        <Modal title="Runtime limits" onClose={vi.fn()}>
+          <button onClick={() => toast(MESSAGE)}>save</button>
+        </Modal>
+      );
+    }
+    render(<ToastProvider><Raiser /></ToastProvider>, { wrapper: W });
+    fireEvent.click(await screen.findByRole('button', { name: 'save' }));
+    await within(dock()).findByText(MESSAGE);
+
+    // Assert on the node the sweeps actually walk: a direct child of <body>. Radix wraps the list in a
+    // region of its own, so the dock's own element is two levels down and is never what gets marked.
+    const exempt = document.querySelector<HTMLElement>('[data-slot="toast-dock"]')!;
+    expect(exempt.parentElement).toBe(document.body);
+    expect(exempt.contains(dock())).toBe(true);
+    expect(exempt.hasAttribute('inert')).toBe(false);
+    expect(exempt.getAttribute('aria-hidden')).toBeNull();
+
+    // The rest of the page really is isolated — otherwise the assertions above would pass on a build
+    // where isolation simply never ran.
+    const isolated = Array.from(document.body.children).filter(
+      (node) => node.hasAttribute('inert') || node.getAttribute('aria-hidden') === 'true',
+    );
+    expect(isolated.length).toBeGreaterThan(0);
+    expect(isolated).not.toContain(exempt);
+  });
 });
