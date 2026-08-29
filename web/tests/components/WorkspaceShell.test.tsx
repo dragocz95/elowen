@@ -287,5 +287,3 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(coarse).toMatch(/min-height:\s*var\(--touch-target\)/);
   });
 });
-
-
