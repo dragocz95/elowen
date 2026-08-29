@@ -110,12 +110,15 @@ function TelemetryDrawer({ label, onClose, children }: { label: string; onClose?
         <DialogContent
           ref={surfaceRef}
           // A right rail that is also its own scroll box, which none of the primitive's presentations
-          // describes; the geometry stays here.
+          // describes; the geometry stays here. Only the geometry: `presentation={null}` drops the shape
+          // classes, but `.overlay-surface` is in the variant BASE and still paints the ground, the
+          // border colour and the raised shadow — so a `bg-card shadow-xl` written here was never what
+          // the reader saw, only a second answer to a question `primitives.css` had already settled.
           presentation={null}
           aria-label={label}
           aria-describedby={undefined}
           data-testid="telemetry-drawer"
-          className={`animate-drawer-in absolute inset-y-0 right-0 w-72 max-w-[85%] border-l border-border bg-card shadow-xl ${RAIL_SCROLL}`}
+          className={`animate-drawer-in absolute inset-y-0 right-0 w-72 max-w-[85%] border-l border-border ${RAIL_SCROLL}`}
           // The backdrop above already owns dismissal, and it is the only owner that knows a nested
           // overlay's backdrop must not close its parent — the rail raises both a process modal and the
           // command field from inside itself.

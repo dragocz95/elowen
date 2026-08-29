@@ -87,41 +87,77 @@ describe('memory filters survive a reload', () => {
   });
 
   // The toolbar derives its count, its chips and its resets from ONE declared field list. The tally it
-  // replaced was hand-written and counted three of the five controls, so grouping could be on with the
-  // trigger reading "Filters" and no chip naming it.
-  it('states every non-default control as a chip and clears the whole set at once', async () => {
+  // replaced was hand-written and counted three of the five controls, so a real filter could be on with
+  // the trigger reading "Filters" and no chip naming it.
+  it('states every active filter as a chip and clears the whole set at once', async () => {
+    localStorage.setItem('elowen.memory.status', 'archived');
+    localStorage.setItem('elowen.memory.kind', 'fact');
+
     renderView();
     await waitFor(() => expect(screen.getByText('alpha memory')).toBeInTheDocument());
-    expect(screen.queryByTestId('page-filter-chips')).toBeNull();
+
+    expect(screen.getByRole('button', { name: 'Filters, 2 active' })).toBeInTheDocument();
+    const chips = screen.getByTestId('page-filter-chips');
+    expect(chips).toHaveTextContent('Status: Archived');
+    expect(chips).toHaveTextContent('Kind: fact');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    await waitFor(() => expect(screen.queryByTestId('page-filter-chips')).toBeNull());
+    expect(localStorage.getItem('elowen.memory.status')).toBe('active');
+    expect(localStorage.getItem('elowen.memory.kind')).toBe('all');
+  });
+
+  it('brings a remembered filter back as an active chip after a reload', async () => {
+    localStorage.setItem('elowen.memory.status', 'archived');
+
+    renderView();
+
+    await waitFor(() => expect(screen.getByTestId('page-filter-chips')).toHaveTextContent('Status: Archived'));
+    expect(screen.getByRole('button', { name: 'Filters, 1 active' })).toBeInTheDocument();
+  });
+
+  // Grouping and the categories panel are DISPLAY options: they rearrange or annotate the same rows and
+  // remove none of them. They live in the condensed panel for page cleanliness, but counting them as
+  // filters told the reader the register was narrowed when every row was still there — and "Clear
+  // filters" then silently flattened a grouping nobody had asked it to touch.
+  it('keeps the display options out of the filter count, the chips and Clear filters', async () => {
+    localStorage.setItem('elowen.memory.status', 'archived');
+    localStorage.setItem('elowen.memory.kind', 'fact');
+
+    renderView();
+    await waitFor(() => expect(screen.getByText('alpha memory')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('page-filters-trigger'));
+    await screen.findByRole('dialog', { name: 'Filters' });
+    // Both switches are still offered by the panel — they are view controls, not deleted controls.
+    fireEvent.click(screen.getByRole('switch', { name: 'Group by category' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Categories' }));
+    await waitFor(() => expect(localStorage.getItem('elowen.memory.layout')).toBe('grouped'));
+
+    // Still the two narrowing filters and nothing else.
+    expect(screen.getByRole('button', { name: 'Filters, 2 active' })).toBeInTheDocument();
+    const chips = screen.getByTestId('page-filter-chips');
+    expect(chips).not.toHaveTextContent('Group by category');
+    expect(chips).not.toHaveTextContent('Categories');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    await waitFor(() => expect(screen.queryByTestId('page-filter-chips')).toBeNull());
+    expect(localStorage.getItem('elowen.memory.layout')).toBe('grouped');
+  });
+
+  it('never counts a display option on its own — the trigger stays unbadged', async () => {
+    renderView();
+    await waitFor(() => expect(screen.getByText('alpha memory')).toBeInTheDocument());
 
     fireEvent.click(screen.getByTestId('page-filters-trigger'));
     await screen.findByRole('dialog', { name: 'Filters' });
     fireEvent.click(screen.getByRole('switch', { name: 'Group by category' }));
     fireEvent.click(screen.getByRole('switch', { name: 'Categories' }));
-
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Filters, 2 active' })).toBeInTheDocument());
-    const chips = screen.getByTestId('page-filter-chips');
-    expect(chips).toHaveTextContent('Group by category');
-    expect(chips).toHaveTextContent('Categories');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
-    await waitFor(() => expect(screen.queryByTestId('page-filter-chips')).toBeNull());
-    expect(localStorage.getItem('elowen.memory.layout')).toBe('flat');
-  });
-
-  it('brings a remembered filter back as an active chip after a reload', async () => {
-    const first = renderView();
-    await waitFor(() => expect(screen.getByText('alpha memory')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('page-filters-trigger'));
-    await screen.findByRole('dialog', { name: 'Filters' });
-    fireEvent.click(screen.getByRole('switch', { name: 'Group by category' }));
     await waitFor(() => expect(localStorage.getItem('elowen.memory.layout')).toBe('grouped'));
-    first.unmount();
 
-    renderView();
-
-    await waitFor(() => expect(screen.getByTestId('page-filter-chips')).toHaveTextContent('Group by category'));
-    expect(screen.getByRole('button', { name: 'Filters, 1 active' })).toBeInTheDocument();
+    expect(screen.queryByTestId('page-filter-chips')).toBeNull();
+    // No count means no accessible name of its own: the trigger is plain "Filters".
+    expect(screen.getByTestId('page-filters-trigger')).not.toHaveAttribute('aria-label');
   });
 
   it('keeps a remembered category filter that still resolves', async () => {
