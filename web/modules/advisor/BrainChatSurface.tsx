@@ -745,6 +745,16 @@ function RenameDialog({ current, onClose, onSubmit }: { current: string; onClose
   );
 }
 
+/** How close to the bottom still counts as sitting ON the newest turn. */
+const BOTTOM_GAP = 80;
+/** How close to the top asks for the next older page. */
+const OLDER_TRIGGER = 120;
+/** Keyboard inputs that can move the transcript. When already reading history, downward keys count too
+ *  so reaching the bottom can re-enable following; while pinned, only upward keys may release it. */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+/** Keep a short causal window between an input gesture and the browser's resulting scroll event. */
+const USER_SCROLL_WINDOW_MS = 350;
+
 /** The presentational brain chat surface, driven entirely by the shared controller (BrainChatProvider)
  *  read from context. It owns NO network or session state: only pure view affordances (the picker-open
  *  toggle, the slash keyboard cursor, DOM refs + autoscroll) live here, so unmounting it (Chat↔Terminál
@@ -804,14 +814,20 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Lazy-load (scroll-up) state. `loadingOlder` drives the top spinner; `atBottomRef` tracks whether the
-  // reader is pinned to the newest turn (so a streaming delta doesn't yank them down while they read up).
+  // Lazy-load (scroll-up) state. `loadingOlder` drives the top spinner.
   // The prepend anchor rides on a real turn ELEMENT: at scroll-trigger we grab the topmost turn node and its
   // offsetTop; after older turns land above it, we shift scrollTop by exactly how far that node moved. Node
   // offsetTop is immune to below-viewport growth (cards / ask / agents / process panel) and to a stream
   // delta landing during the fetch, both of which broke a scrollHeight-delta anchor.
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const atBottomRef = useRef(true);
+  // THE scroll state. `followNewestRef` owns whether layout changes keep the newest turn visible;
+  // `userScrollUntilRef` is a short causal window in which a browser `scroll` event may be trusted as
+  // reader-driven rather than as a side effect of focus, anchoring or one of our own writes.
+  const followNewestRef = useRef(true);
+  const userScrollUntilRef = useRef(0);
+  // The offset the surface itself last wrote, so the `scroll` event that write causes is not mistaken
+  // for the reader moving. -1 is "nothing written yet", which no real offset equals.
+  const ownWriteAtRef = useRef(-1);
   const prevTurnsRef = useRef<ChatTurn[]>([]);
   const previousSessionRef = useRef<string | null>(activeSessionId);
   const anchorNodeRef = useRef<HTMLElement | null>(null);
@@ -825,6 +841,32 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     if (!el) return null;
     return variant === 'full' ? el.closest('main') : el;
   }, [variant]);
+
+  // ── THE SCROLL CONTRACT ────────────────────────────────────────────────────────────────────────────
+  // One invariant owns every scroll write in this component: while `followNewestRef` is true the transcript
+  // shows its newest turn, and each REAL layout change re-pins it there; the pin is released only by the
+  // reader scrolling away from the bottom, and nothing else writes the offset. This is the single writer —
+  // it self-gates, so no caller has to re-check the flag and no two callers can disagree about it.
+  const pinToNewest = useCallback((): void => {
+    const s = getScroller();
+    if (!s || !followNewestRef.current) return;
+    s.scrollTo({ top: s.scrollHeight });
+    // Read the offset BACK rather than assuming `scrollHeight`: the browser clamps the write, and the
+    // clamped value is what the resulting `scroll` event will report. Remembering it is what lets the
+    // handler below discard the surface's own writes even after the reader has been marked engaged —
+    // `keydown` bubbles out of the composer and `pointerdown` out of any click inside the scroller, so
+    // engagement is a coarse signal and must never be the only thing standing between a pin write and
+    // the event it causes.
+    ownWriteAtRef.current = s.scrollTop;
+  }, [getScroller]);
+
+  // Re-entering a conversation is an explicit request to see its newest turn: the pin goes back on, and the
+  // previous visit's intent window is cleared so a stale `scroll` event cannot release it again.
+  const followNewestAgain = useCallback((): void => {
+    followNewestRef.current = true;
+    userScrollUntilRef.current = 0;
+    pinToNewest();
+  }, [pinToNewest]);
 
   // Grab the current topmost turn node as the prepend anchor, then fetch the next older page (the layout
   // effect restores its position once the page lands). Guarded so a burst of scroll events fires at most one
@@ -860,39 +902,32 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   useEffect(() => { ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Entering the full chat route always opens at the newest turn. The shell <main> survives route changes,
-  // so its old scrollTop must not become chat state. Keep following real transcript resizes while the reader
-  // remains pinned; delayed markdown, images and the toolbar portal then cannot leave the first paint halfway
-  // up the conversation. Scrolling up flips `atBottomRef` below and immediately disables this pin.
+  // so neither its old scrollTop nor the previous visit's engagement may become this visit's chat state.
+  //
+  // The ResizeObserver is what makes the guarantee LAYOUT-driven instead of timing-driven, and it replaces
+  // the rAF this used to also fire: a frame is a guess about when the transcript has settled, whereas a
+  // resize IS the transcript settling. Late markdown, a decoded image, a web font and the toolbar portal
+  // each resize the transcript, and each one lands the newest turn back at the bottom — however many
+  // frames after mount it happens.
   useLayoutEffect(() => {
     if (variant !== 'full') return;
-    atBottomRef.current = true;
-    const pinNewest = () => {
-      const scroller = getScroller();
-      if (scroller && atBottomRef.current) scroller.scrollTo({ top: scroller.scrollHeight });
-    };
-    pinNewest();
-    const frame = window.requestAnimationFrame(pinNewest);
+    followNewestAgain();
     const transcript = scrollRef.current;
-    const observer = transcript && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(pinNewest) : null;
+    const observer = transcript && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => pinToNewest()) : null;
     if (transcript) observer?.observe(transcript);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer?.disconnect();
-    };
-  }, [variant, getScroller]);
+    return () => observer?.disconnect();
+  }, [variant, followNewestAgain, pinToNewest]);
 
   // Opening another conversation is an explicit request to see that conversation's newest message. Reset
   // every scroll/prepend guard before its snapshot lands; otherwise a chat opened while the previous one
-  // was scrolled up inherited `atBottom=false` and rendered at the old page offset.
+  // was scrolled up inherited a released pin and rendered at the old page offset.
   useLayoutEffect(() => {
     if (!activeSessionId || activeSessionId === previousSessionRef.current) return;
     previousSessionRef.current = activeSessionId;
-    atBottomRef.current = true;
     prevTurnsRef.current = [];
     anchorNodeRef.current = null;
-    const s = getScroller();
-    if (s) s.scrollTo({ top: s.scrollHeight });
-  }, [activeSessionId, getScroller]);
+    followNewestAgain();
+  }, [activeSessionId, followNewestAgain]);
 
   // Position the transcript after each turns change. A lazy-load PREPEND (older turns inserted in front —
   // detected by the previous head object reappearing below index 0) holds the viewport on the same content
@@ -910,13 +945,16 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     if (isPrepend) {
       // Only the prepend consumes the anchor — a stream delta landing in the fetch gap must NOT clear it,
       // or the real prepend that follows would jump.
-      if (anchor) s.scrollTop += anchor.offsetTop - anchorTopRef.current;
+      if (anchor) {
+        s.scrollTop += anchor.offsetTop - anchorTopRef.current;
+        ownWriteAtRef.current = s.scrollTop;
+      }
       anchorNodeRef.current = null;
-    } else if (atBottomRef.current) {
-      s.scrollTo({ top: s.scrollHeight });
+    } else {
+      pinToNewest();
     }
     prevTurnsRef.current = turns;
-  }, [turns, variant, getScroller]);
+  }, [turns, variant, getScroller, pinToNewest]);
 
   // Watch the live scroll position: track "near the bottom" (the stick-to-newest gate above) and load the
   // next older page when the reader nears the top. Bound imperatively because the scroller is sometimes the
@@ -925,13 +963,91 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   useEffect(() => {
     const s = getScroller();
     if (!s) return;
-    const onScroll = (): void => {
-      atBottomRef.current = s.scrollHeight - s.scrollTop - s.clientHeight < 80;
-      if (s.scrollTop < 120) triggerOlderRef.current();
+    let touchY: number | null = null;
+    let scrollbarPointer: number | null = null;
+
+    // Release immediately on genuine reader intent, before the browser's later `scroll` event. Otherwise a
+    // streaming render can win that gap and pin the transcript back down. Clearing our remembered write also
+    // prevents the reader's first offset from being mistaken for a delayed event from that write.
+    const markReaderScroll = (): void => {
+      followNewestRef.current = false;
+      ownWriteAtRef.current = -1;
+      userScrollUntilRef.current = performance.now() + USER_SCROLL_WINDOW_MS;
     };
+    const onWheel = (event: WheelEvent): void => {
+      if (!event.isTrusted) return;
+      if (event.deltaY < 0 || !followNewestRef.current) markReaderScroll();
+    };
+    const onTouchStart = (event: TouchEvent): void => {
+      if (!event.isTrusted) return;
+      touchY = event.touches[0]?.clientY ?? null;
+    };
+    const onTouchMove = (event: TouchEvent): void => {
+      if (!event.isTrusted) return;
+      const nextY = event.touches[0]?.clientY ?? null;
+      if (nextY !== null && (touchY === null || nextY > touchY || !followNewestRef.current)) markReaderScroll();
+      touchY = nextY;
+    };
+    const onTouchEnd = (): void => { touchY = null; };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!event.isTrusted || !SCROLL_KEYS.has(event.key)) return;
+      const target = event.target as HTMLElement | null;
+      if (target && target !== document.body && !s.contains(target)) return;
+      if (target?.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+      const movesUp = event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home' || (event.key === ' ' && event.shiftKey);
+      if (movesUp || !followNewestRef.current) markReaderScroll();
+    };
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!event.isTrusted) return;
+      const rect = s.getBoundingClientRect();
+      const gutter = Math.max(0, s.offsetWidth - s.clientWidth);
+      const hitsVerticalScrollbar = event.target === s && gutter > 0 && event.clientX >= rect.right - gutter;
+      if (!hitsVerticalScrollbar) return;
+      scrollbarPointer = event.pointerId;
+      markReaderScroll();
+    };
+    const onPointerEnd = (event: PointerEvent): void => {
+      if (event.pointerId === scrollbarPointer) scrollbarPointer = null;
+    };
+    const onScroll = (): void => {
+      // Our own write, arriving back as an event — never the reader.
+      if (s.scrollTop === ownWriteAtRef.current) return;
+      const now = performance.now();
+      const readerDriven = scrollbarPointer !== null || now <= userScrollUntilRef.current;
+      if (!readerDriven) return;
+      // Wheel smoothing and touch momentum can continue after the final input event. Every causally-linked
+      // scroll extends the window so the final offset can re-enable following when momentum reaches bottom.
+      userScrollUntilRef.current = now + USER_SCROLL_WINDOW_MS;
+      followNewestRef.current = s.scrollHeight - s.scrollTop - s.clientHeight < BOTTOM_GAP;
+      // Entry pins and browser-driven focus/anchoring are never requests for older history. Only an offset
+      // causally tied to a reader gesture may cross this boundary.
+      if (!followNewestRef.current && s.scrollTop < OLDER_TRIGGER) triggerOlderRef.current();
+    };
+
     s.addEventListener('scroll', onScroll, { passive: true });
-    return () => s.removeEventListener('scroll', onScroll);
-  }, [getScroller]);
+    s.addEventListener('wheel', onWheel, { passive: true });
+    s.addEventListener('touchstart', onTouchStart, { passive: true });
+    s.addEventListener('touchmove', onTouchMove, { passive: true });
+    s.addEventListener('touchend', onTouchEnd, { passive: true });
+    s.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    const keyTarget: EventTarget = variant === 'full' ? window : s;
+    keyTarget.addEventListener('keydown', onKeyDown as EventListener);
+    s.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointerup', onPointerEnd, { passive: true });
+    window.addEventListener('pointercancel', onPointerEnd, { passive: true });
+    return () => {
+      s.removeEventListener('scroll', onScroll);
+      s.removeEventListener('wheel', onWheel);
+      s.removeEventListener('touchstart', onTouchStart);
+      s.removeEventListener('touchmove', onTouchMove);
+      s.removeEventListener('touchend', onTouchEnd);
+      s.removeEventListener('touchcancel', onTouchEnd);
+      keyTarget.removeEventListener('keydown', onKeyDown as EventListener);
+      s.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerEnd);
+      window.removeEventListener('pointercancel', onPointerEnd);
+    };
+  }, [getScroller, variant]);
 
   // The controller asks the composer to focus (a compose-bridge request / a seeded draft) by bumping the
   // focus nonce — the surface owns the DOM ref, so it does the actual focus. Guard against a plain (re)mount
@@ -952,17 +1068,15 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   useLayoutEffect(() => {
     const el = composerRef.current;
     if (!el) return;
-    const keepNewestVisible = atBottomRef.current;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
-    // The full-page composer participates in the document height even though it is sticky. Grow it and
-    // restore the bottom in the same layout phase, before paint, so wrapped lines do not visibly shove the
-    // whole conversation upward one row at a time. A reader scrolled into history is left untouched.
-    if (keepNewestVisible) {
-      const s = getScroller();
-      if (s) s.scrollTo({ top: s.scrollHeight });
-    }
-  }, [input, getScroller]);
+    // The full-page composer participates in the document height even though it is sticky, and it sits
+    // OUTSIDE the observed transcript, so its growth is the one real layout change the ResizeObserver
+    // above cannot see. Re-pin in the same layout phase, before paint, so wrapped lines do not visibly
+    // shove the whole conversation upward one row at a time. A reader scrolled into history is left
+    // untouched — `pinToNewest` self-gates on the same flag as every other writer.
+    pinToNewest();
+  }, [input, pinToNewest]);
 
   const newChat = () => { setPickerOpen(false); void switchSession({ fresh: true }).catch(() => toast(t.brainChat.searchOpenError, 'error')); };
 

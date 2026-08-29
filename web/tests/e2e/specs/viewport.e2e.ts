@@ -240,7 +240,7 @@ test('the mobile nav drawer is a dialog you can leave', async ({ browser }, test
   }
 });
 
-test('a detail overlay is a bottom sheet on a phone and a side rail on a desktop', async ({ page, browser }, testInfo) => {
+test('a detail overlay takes the screen on a phone and is a side rail on a desktop', async ({ page, browser }, testInfo) => {
   authedOnly(testInfo);
   // Presentation follows the viewport, not the call site: a desktop side rail on a phone leaves a
   // useless strip of backdrop, and heights are dvh so a collapsing mobile toolbar cannot overstate the
@@ -264,18 +264,22 @@ test('a detail overlay is a bottom sheet on a phone and a side rail on a desktop
     await phone.page.goto(REGISTER);
     await expect(phone.page.locator('[role="row"]').nth(3)).toBeVisible();
     await phone.page.locator('.data-table-row-open').first().click();
-    const sheet = phone.page.locator('[role="dialog"][data-presentation]');
-    await expect(sheet).toHaveAttribute('data-presentation', 'sheet');
+    const surface = phone.page.locator('[role="dialog"][data-presentation]');
+    // EVERY automatic overlay takes the whole screen on a phone — `resolveOverlayPresentation`
+    // (overlayDepth.tsx) returns `fullscreen` for the phone viewport whatever the depth or the intent,
+    // and `tests/components/overlayPresentation.test.tsx` pins the same answer for this rail. A partial
+    // sheet hides half the surface it just opened, and a drawer leaves a useless strip of backdrop.
+    await expect(surface).toHaveAttribute('data-presentation', 'fullscreen');
     // It ends at the bottom of the SCREEN. A `vh` height overshoots here by however much a collapsing
     // mobile toolbar is worth, which is exactly why every overlay height moved to `dvh`. Polled: the
-    // sheet arrives on a slide-up, and it is only past the bottom edge until that animation lands.
+    // surface arrives on an animation, and it is only past the bottom edge until that lands.
     await expect.poll(async () => {
-      const box = (await sheet.boundingBox())!;
+      const box = (await surface.boundingBox())!;
       return Math.round(box.y + box.height);
-    }, 'a sheet ends at the bottom of the screen').toBeLessThanOrEqual(844);
-    const box = (await sheet.boundingBox())!;
-    expect(Math.round(box.width), 'a sheet spans the width').toBe(390);
-    expect(box.y, 'a sheet is anchored to the bottom, not the top').toBeGreaterThan(0);
+    }, 'the surface ends at the bottom of the screen').toBeLessThanOrEqual(844);
+    const box = (await surface.boundingBox())!;
+    expect(Math.round(box.width), 'the surface spans the width').toBe(390);
+    expect(Math.round(box.y), 'a fullscreen surface starts at the top edge').toBe(0);
   } finally {
     await phone.context.close();
   }
@@ -293,4 +297,54 @@ test('the register reaches the first screen on a phone', async ({ page }, testIn
     return row.getBoundingClientRect().top + window.scrollY;
   });
   expect(firstRowTop, 'the first row starts within the first screen').toBeLessThan(844);
+});
+
+// An automatic overlay on a phone takes the whole screen (`resolveOverlayPresentation`, overlayDepth.tsx),
+// and taking the screen is only useful if the content inside it can be REACHED. `ModalBody` is a flex
+// column, so its children kept the default `flex-shrink: 1` and a body taller than the dialog compressed
+// them to fit instead of overflowing: `scrollHeight` equalled `clientHeight`, so there was nothing to
+// scroll, and the task list's own `overflow-hidden` silently clipped the rows that no longer fitted —
+// 1785px of a 2429px list, with the filter input squashed from 36px to 23px on the way.
+test('the phone task overlay scrolls to its last task under a pinned header', async ({ browser }, testInfo) => {
+  authedOnly(testInfo);
+  const { context, page } = await touchPage(browser, STORAGE_STATE, { width: 390, height: 844 });
+  try {
+    await page.goto('/chat');
+    await expect(page.locator('[data-variant="full"]')).toBeVisible();
+
+    // The phone folds the wide controls behind ⋯; the task manager it opens is the same modal as /tasks.
+    await page.locator('[data-variant="full"]').locator('button[aria-expanded]').last().click();
+    await page.locator('[data-chat-popover]').getByRole('button', { name: /^(Tasks|Úkoly|Úlohy)$/ }).click();
+
+    const dialog = page.locator('[data-elowen-modal]');
+    await expect(dialog).toBeVisible();
+    // It must remain the fullscreen presentation — not a bottom sheet, and not a centred desktop dialog
+    // shrunk into a 390px viewport.
+    await expect(dialog).toHaveAttribute('data-presentation', 'fullscreen');
+
+    const header = dialog.locator('h2').locator('..').locator('..');
+    const body = dialog.locator('.overflow-y-auto');
+    await expect(body.getByText('Task 1', { exact: true })).toBeVisible();
+
+    // The body genuinely overflows. This is the assertion the defect failed: it reported equal heights,
+    // so no amount of scrolling could ever reach the rows below the fold.
+    const room = await body.evaluate((el) => el.scrollHeight - el.clientHeight);
+    expect(room, 'the task list must overflow its body rather than be compressed into it').toBeGreaterThan(0);
+
+    const headerTop = Math.round((await header.boundingBox())!.y);
+
+    // Scroll the way a finger does, through the input pipeline — not by writing scrollTop, which would
+    // prove only that the property is writable.
+    await body.hover();
+    for (let i = 0; i < 12; i += 1) await page.mouse.wheel(0, 400);
+
+    await expect.poll(async () => body.evaluate((el) => Math.ceil(el.scrollTop + el.clientHeight) >= el.scrollHeight),
+      { message: 'the task list never reached its last row' }).toBe(true);
+    await expect(body.getByText('Task 30', { exact: true })).toBeVisible();
+
+    // The header is the fixed band the body scrolls under, so it may not travel or be squeezed with it.
+    expect(Math.round((await header.boundingBox())!.y), 'the header scrolled away with the body').toBe(headerTop);
+  } finally {
+    await context.close();
+  }
 });

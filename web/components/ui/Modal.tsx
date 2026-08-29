@@ -121,7 +121,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
             : { boxShadow: 'var(--shadow-raised)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-border px-5 py-3">
+        <div className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-3">
           {Icon ? (
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
               <Icon size={18} className="text-accent" aria-hidden />
@@ -151,10 +151,18 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
 }
 
 /** Scrollable content region for a modal. Pair with `ModalFooter` to keep actions pinned
- *  below the scroll. `gap` tunes the vertical rhythm between fields. */
+ *  below the scroll. `gap` tunes the vertical rhythm between fields.
+ *
+ *  `[&>*]:shrink-0` is what makes it SCROLL rather than merely clip. This is a flex column, so its
+ *  children take the default `flex-shrink: 1` and a column that overflows compresses them to fit
+ *  instead of overflowing itself — `scrollHeight` then equals `clientHeight`, there is nothing to
+ *  scroll, and any child carrying `overflow-hidden` (a bordered list, a table frame) silently eats
+ *  the rows that no longer fit. On the phone's fullscreen Tasks overlay that clipped 1785px of a
+ *  2429px list and squashed the filter input from 36px to 23px. Content in a scrolling region keeps
+ *  its natural height; the region scrolls. */
 export function ModalBody({ children, gap = 5 }: { children: ReactNode; gap?: 4 | 5 | 6 }) {
   const gapClass = gap === 4 ? 'gap-4' : gap === 6 ? 'gap-6' : 'gap-5';
-  return <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto p-5 ${gapClass}`}>{children}</div>;
+  return <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto p-5 ${gapClass} [&>*]:shrink-0`}>{children}</div>;
 }
 
 /** Pinned action row at the bottom of a modal, divided from the scrollable body. An optional `status`

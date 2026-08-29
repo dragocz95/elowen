@@ -97,6 +97,24 @@ export function registerPluginSurfaceRoutes(app: Hono): void {
     day: `2026-08-${String(21 + i).padStart(2, '0')}`, tokens: 10_000 * (i + 1), cost: 0.25 * (i + 1),
   }))));
 
+  // --- todo: the per-conversation checklist behind the chat's task manager. Long on purpose: the modal
+  // that shows it is the phone's FULLSCREEN overlay, and a list shorter than the viewport cannot prove
+  // that its body scrolls to the last row. 30 rows overflow 844px comfortably.
+  app.get('/plugins/todo/api/tasks', (c) => c.json({
+    tasks: rows(30, (i) => ({
+      id: String(i + 1),
+      subject: `Task ${i + 1}`,
+      description: i % 3 === 0
+        ? 'A considerably longer task description that wraps onto a second line inside the narrow phone overlay.'
+        : 'Short.',
+      status: i % 5 === 0 ? 'completed' : i % 5 === 1 ? 'in_progress' : 'pending',
+      ...(i % 5 === 1 ? { startedAt: Date.now() - 60_000 * (i + 1) } : {}),
+      metadata: {},
+      blockedBy: [],
+      blocks: [],
+    })),
+  }));
+
   // --- editor: the project surfaces the file tree and the editor pane read. -------------------------
   app.get('/projects/:id/files', (c) => c.json([
     { path: 'src', type: 'dir' },

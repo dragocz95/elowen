@@ -202,15 +202,13 @@ export class ChatPage {
 
   // --- Lazy-load ---
 
-  /** Scroll every scrollable ancestor of the transcript (and the window) to the top, tripping the
-   *  scroll-up loader — robust to whether the actual scroller is the page `<main>` or the surface's own
-   *  box (the compact dock). Assert on `historySentinel` afterwards. */
+  /** The READER scrolls up to the top with the browser's real wheel input, tripping the scroll-up loader.
+   *  Assert on `historySentinel` afterwards. A programmatic offset write must not count as reader intent:
+   *  that distinction prevents entering /chat from loading history and opening mid-conversation. */
   async scrollToTopForOlder(): Promise<void> {
-    await this.transcript.evaluate((el) => {
-      for (let node = el.parentElement; node; node = node.parentElement) {
-        if (node.scrollHeight > node.clientHeight) node.scrollTop = 0;
-      }
-      window.scrollTo(0, 0);
-    });
+    const main = this.page.locator('main');
+    await main.hover();
+    await this.page.mouse.wheel(0, -100_000);
+    await expect.poll(() => main.evaluate((node) => node.scrollTop)).toBeLessThan(120);
   }
 }
