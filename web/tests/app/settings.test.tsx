@@ -68,6 +68,14 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('switch', { name: /capture/i })).not.toBeInTheDocument();
   });
 
+  it('treats a missing model allowlist as empty instead of crashing', async () => {
+    server.use(http.get('*/api/config', () => HttpResponse.json({ ...config, allowedExecs: undefined })));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Claude Opus')).not.toBeChecked();
+  });
+
   it('renders the embedded model catalog without removed CLI-provider controls', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);

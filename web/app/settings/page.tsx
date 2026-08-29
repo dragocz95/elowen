@@ -220,7 +220,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (config.data && !seeded.current) {
       seeded.current = true;
-      setAllowed(config.data.allowedExecs);
+      setAllowed(config.data.allowedExecs ?? []);
       setCustomModels(config.data.customModels ?? []);
       setModelNotes(config.data.modelNotes ?? {});
       setModelWindows(config.data.brain?.modelContextWindows ?? {});
