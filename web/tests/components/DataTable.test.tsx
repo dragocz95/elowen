@@ -221,8 +221,39 @@ describe('register stylesheet', () => {
 
   it('still collapses wide-only cells on a narrow container', () => {
     const sheet = css('data-table.css');
-    expect(sheet).toMatch(/\.data-table-wide\s*\{\s*display:\s*none/);
+    expect(sheet).toMatch(/\.data-table-wide\s*,\s*\.data-table-mobile\s*\{\s*display:\s*none/);
     expect(sheet).toContain('@container (min-width: 56rem)');
+  });
+
+  it('uses a phone-only template for the one mobile-priority decision column', () => {
+    const { container } = render(
+      <DataTable
+        ariaLabel="Agents"
+        columns="minmax(0,1fr) 8rem 5rem"
+        compactColumns="minmax(0,1fr)"
+        mobileColumns="minmax(0,1fr) minmax(0,8rem)"
+      >
+        <DataTableRow>
+          <DataTableCell lines={1}>Task</DataTableCell>
+          <DataTableCell priority="mobile" lines={1}>Model</DataTableCell>
+          <DataTableCell priority="wide" lines={1}>Tokens</DataTableCell>
+        </DataTableRow>
+      </DataTable>,
+    );
+    const table = container.querySelector<HTMLElement>('[role="table"]')!;
+    const [task, model, tokens] = screen.getAllByRole('cell');
+    expect(table.style.getPropertyValue('--data-table-mobile-columns')).toBe('minmax(0,1fr) minmax(0,8rem)');
+    expect(task).not.toHaveClass('data-table-mobile', 'data-table-wide');
+    expect(model).toHaveClass('data-table-mobile');
+    expect(tokens).toHaveClass('data-table-wide');
+
+    // jsdom cannot resolve container queries, so pin the CSS contract for a constrained (<40rem) table:
+    // task + model fill the phone template and the wide metric remains hidden.
+    const sheet = css('data-table.css');
+    expect(sheet).toMatch(/@container \(width < 40rem\)\s*\{[\s\S]*?grid-template-columns:\s*var\(--data-table-mobile-columns/);
+    expect(sheet).toMatch(/@container \(width < 40rem\)\s*\{[\s\S]*?\.data-table-mobile\s*\{\s*display:\s*block/);
+    // AgentsTable must retain its native table layout except on this same phone-only container threshold.
+    expect(sheet).toMatch(/@container \(width < 40rem\)\s*\{[\s\S]*?\.agents-table-secondary\s*\{\s*display:\s*none/);
   });
 
   it('keeps the row-open cell out of the grid and out of the way of pointers', () => {

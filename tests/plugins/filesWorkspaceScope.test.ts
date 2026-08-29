@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import { workspaceToolDefinition } from '../../src/brain/service/spawner.js';
 import type { PluginRegistry } from '../../src/plugins/registry.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -75,6 +76,29 @@ describe('Files tools in an explicit workspace PathView', () => {
       path: 'src/same.ts', oldText: 'value = 10', newText: 'value = 11',
     }));
     expect(readFileSync(join(secondRoot, 'src', 'same.ts'), 'utf8')).toContain('value = 11');
+  });
+
+  // The tests above prove the tools BEHAVE under a PathView. This one proves they are still THERE:
+  // composition and behaviour are separate gates, and for a long time only the second one passed. Every
+  // Files path tool worked correctly inside a workspace, but none except GitStatus carried the
+  // `workspaceSafe` declaration, so the spawner's fail-closed filter removed all of them and a
+  // workspace-scoped sub-agent was handed no way to read or write a single file. Nothing failed loudly —
+  // the child simply reported that it had no file tools.
+  it('survives the spawner composition filter a workspace-scoped child is built with', () => {
+    const composed = reg.tools
+      .filter((tool) => !reg.hostFilesystemTools.has(tool.name)
+        && reg.workspaceSafeTools.has(tool.name)
+        && !reg.workspaceUnsafeTools.has(tool.name))
+      .map(workspaceToolDefinition)
+      .filter((tool): tool is NonNullable<typeof tool> => !!tool);
+    expect(composed.map((tool) => tool.name).sort()).toEqual(
+      ['Edit', 'FileInfo', 'GitStatus', 'Glob', 'Grep', 'ListDir', 'Read', 'Search', 'Write'],
+    );
+    // …and that the contract the model reads travelled with them, so no description still tells a
+    // confined child to pass the absolute path it would then be refused for.
+    const read = composed.find((tool) => tool.name === 'Read');
+    expect(read?.description).toContain('relative to the assigned workspace');
+    expect(read?.description).not.toContain('The path must be absolute.');
   });
 
   it('rejects absolute paths and traversal even under an admin policy', async () => {

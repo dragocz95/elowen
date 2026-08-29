@@ -784,6 +784,15 @@ export function register(ctx) {
     run: (payload) => { seedReadStateFromHistory(payload?.sessionId, payload?.messages); },
   });
 
+  // Every path tool below is declared `workspaceSafe`, which is what lets a sub-agent confined to one
+  // Sandbox worktree have file tools at all. The declaration is not a promise made here — it states that
+  // these tools route their paths through the host's workspace machinery instead of touching disk on
+  // their own: `ctx.assertPathAllowed` resolves through the active PathView BEFORE the admin all-access
+  // branch (so an admin parent cannot widen a confined child), `ctx.defaultCwd` is the workspace root,
+  // and results leave through displayPath/pathStateKey/sanitizePathOutput so no host prefix crosses the
+  // boundary. The spawner rewrites their "path must be absolute" wording and their `path` parameter into
+  // the workspace-relative contract, so the descriptions stay true in both modes.
+  // Without the declaration the spawner drops them fail-closed and the child has no file access at all.
   ctx.registerTool(defineTool({
     name: 'Read', label: 'Read file',
     description: [
@@ -893,7 +902,7 @@ export function register(ctx) {
         return ok('Read', text, { ...pathMeta(abs), bytes: Buffer.byteLength(body), truncated, contentHash: hashOf(raw) });
       } catch (e) { return fail('Read', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'Write', label: 'Write file',
@@ -935,7 +944,7 @@ export function register(ctx) {
         });
       } catch (e) { return fail('Write', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'Edit', label: 'Edit file',
@@ -982,7 +991,7 @@ export function register(ctx) {
         });
       } catch (e) { return fail('Edit', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'ListDir', label: 'List directory',
@@ -1001,7 +1010,7 @@ export function register(ctx) {
         return ok('ListDir', entries.join('\n') || '(empty)', { ...pathMeta(abs), count: entries.length });
       } catch (e) { return fail('ListDir', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'Search', label: 'Search files',
@@ -1060,7 +1069,7 @@ export function register(ctx) {
         return ok('Search', formatted || 'No matches found.', { ...pathMeta(abs), mode, matches: lines.length, truncated });
       } catch (e) { return fail('Search', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'FileInfo', label: 'File info',
@@ -1078,7 +1087,7 @@ export function register(ctx) {
         return ok('FileInfo', JSON.stringify(info, null, 2), info);
       } catch (e) { return fail('FileInfo', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'GitStatus', label: 'Git status',
@@ -1158,7 +1167,7 @@ export function register(ctx) {
         });
       } catch (e) { return fail('Glob', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'Grep', label: 'Search file contents',
@@ -1248,7 +1257,7 @@ export function register(ctx) {
         });
       } catch (e) { return fail('Grep', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.logger.info('registered Read, Write, Edit, ListDir, Search, FileInfo, GitStatus, Glob, Grep');
 }
