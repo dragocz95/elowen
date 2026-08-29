@@ -368,8 +368,11 @@ export function ensurePluginUiRuntime(): void {
 
 /** Link a plugin's own stylesheet into the document, once per URL, and resolve when the browser has
  *  APPLIED it. The app is shipped prebuilt, so its CSS carries only the utilities the host itself uses;
- *  anything else a plugin's markup asks for exists only in this sheet. An `error` resolves too — a
- *  missing sheet must degrade to an unstyled page, never to a page that never renders. */
+ *  anything else a plugin's markup asks for exists only in this sheet. Insert before the host stylesheet:
+ *  older plugins were built into the shared `utilities` layer, and appending one after the host let generic
+ *  classes such as grid/flex utilities corrupt every page visited afterwards until reload. New builds use a
+ *  dedicated lower layer too, but DOM order keeps already-installed plugin versions safe. An `error` resolves
+ *  so a missing sheet degrades to an unstyled page rather than a page that never renders. */
 const pendingCss = new Map<string, Promise<void>>();
 function ensurePluginCss(cssUrl: string): Promise<void> {
   const href = `${BASE}${cssUrl}`;
@@ -381,7 +384,10 @@ function ensurePluginCss(cssUrl: string): Promise<void> {
     link.href = href;
     link.addEventListener('load', () => done());
     link.addEventListener('error', () => done());
-    document.head.appendChild(link);
+    const hostStyle = document.head.querySelector<HTMLLinkElement | HTMLStyleElement>('link[rel="stylesheet"], style');
+    // The shell normally has host CSS by the time a plugin can mount. During early hydration/HMR it may not;
+    // placing the link first still keeps it ahead of host styles that Next appends afterwards.
+    document.head.insertBefore(link, hostStyle ?? document.head.firstChild);
   });
   pendingCss.set(href, load);
   return load;

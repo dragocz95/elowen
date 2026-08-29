@@ -86,3 +86,53 @@ test('the stylesheet is linked, served as text/css, and applied before the page 
   // `load` before resolving the registration, so there is no paint of unstyled plugin markup in between.
   expect(await widthOf(app, 'probe')).toBeCloseTo(PROBE_WIDTH, 0);
 });
+
+test('legacy plugin utilities cannot corrupt host layout after SPA navigation', async ({ app, seed }, testInfo) => {
+  test.skip(testInfo.project.name !== 'authed', 'needs the authenticated shell that hosts plugin pages');
+
+  await seed.response('plugins/ui', PLUGIN_LISTING);
+  await seed.response('activity/pulse', {
+    today: '2026-08-29',
+    month: {
+      from: '2026-08-01', days: 29, tokens: 100, cost: 0,
+      surfaces: [{ surface: 'web', turns: 1, tokens: 100, cost: 0 }],
+      context: { cacheRead: 10, input: 50, cacheWrite: 10, output: 30 },
+    },
+    people: [{
+      userId: 1, label: 'E2E Admin', username: 'admin', working: false, activeToday: true,
+      title: '', lastTs: '2026-08-29T09:00:00.000Z', turns: 1, tokens: 100, cost: 0,
+      cacheHitPct: 10, memoryHits: 0, surfaces: ['web'], hoursToday: Array(24).fill(0),
+      month: { turns: 1, tokens: 100, cost: 0, cacheHitPct: 10, memoryHits: 0, surfaces: ['web'], days: Array(29).fill(0) },
+    }],
+    spendAvailable: true,
+  });
+  await app.setViewportSize({ width: 1920, height: 900 });
+  await app.goto('/dash');
+
+  const ringColumns = () => app.getByTestId('pulse-rings').evaluate((grid) =>
+    getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length);
+  await expect.poll(ringColumns).toBe(4);
+
+  // Real client-side navigation loads and retains the plugin stylesheet. The fixture deliberately ships a
+  // legacy same-layer grid utility that used to win by source order and collapse these rings to one column.
+  await app.locator(`a[href="/p/${PLUGIN_NAME}"]:visible`).first().click();
+  await expect(app.getByTestId('probe')).toBeAttached();
+  await app.locator('a[href="/dash"]:visible').first().click();
+  await expect.poll(ringColumns).toBe(4);
+
+  const xPositions = await app.getByTestId('pulse-rings').locator(':scope > section').evaluateAll((rings) =>
+    rings.map((ring) => Math.round(ring.getBoundingClientRect().x)));
+  expect(new Set(xPositions).size).toBe(4);
+
+  // The compatibility boundary is structural: plugin and host utilities share a layer, so every plugin link
+  // must precede the host sheet. This protects already-installed plugins without rebuilding them.
+  const order = await app.evaluate((cssUrl) => {
+    const styles = [...document.head.querySelectorAll<HTMLLinkElement | HTMLStyleElement>('link[rel="stylesheet"], style')];
+    return {
+      plugin: styles.findIndex((node) => node instanceof HTMLLinkElement && node.href.includes(cssUrl)),
+      host: styles.findIndex((node) => !(node instanceof HTMLLinkElement && node.href.includes('/plugins/'))),
+    };
+  }, PLUGIN_LISTING[0]!.cssUrl);
+  expect(order.plugin).toBeGreaterThanOrEqual(0);
+  expect(order.host).toBeGreaterThan(order.plugin);
+});

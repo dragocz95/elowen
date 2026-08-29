@@ -45,8 +45,10 @@ function Probe() {
 window.__elowenRegisterPluginUi(${JSON.stringify(PLUGIN_NAME)}, { requiresApiVersion: 1, pages: { '': Probe } });
 `;
 
-/** The plugin's stylesheet: one rule, in `@layer utilities`, exactly as `buildPluginUiCss` emits it. */
-export const CSS = `@layer utilities{.${widthClass(PROBE_WIDTH).replace(/([[\]])/g, '\\$1')}{width:${PROBE_WIDTH}px}}`;
+/** A legacy plugin stylesheet in the shared utilities layer. The generic grid rule reproduces the real
+ *  installed-plugin collision: when appended after the host it collapses responsive dashboard grids, while
+ *  the arbitrary width still proves a plugin-only utility remains available. */
+export const CSS = `@layer utilities{.${widthClass(PROBE_WIDTH).replace(/([[\]])/g, '\\$1')}{width:${PROBE_WIDTH}px}.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}}`;
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
 export const BUNDLE_HASH = hash(BUNDLE);

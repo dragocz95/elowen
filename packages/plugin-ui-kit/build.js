@@ -47,8 +47,8 @@ export async function buildPluginUiBundle({ entry, outfile, minify = false, node
  *  utility rendered unstyled there, with nothing the user could do about it. So the plugin brings its own.
  *
  *  Three scoping rules make that safe to drop into a running app, and each is load-bearing:
- *  - everything lands in `@layer utilities`, so the host's own utilities (declared in the same layer, but
- *    earlier in the cascade order the host establishes) are not globally outranked by a plugin's sheet;
+ *  - everything lands in `@layer utilities`, and the host loader inserts the plugin sheet BEFORE host styles,
+ *    so plugin-only classes exist while matching host utilities win by source order;
  *  - NO preflight — a plugin must never reset the host's elements;
  *  - NO prefix — the plugin shares class names with the shared components it renders from
  *    `window.ElowenUiRuntime`, which are styled by the host's sheet.
@@ -65,7 +65,7 @@ export async function buildPluginUiCss({ bundle, outfile }) {
 
   const source = resolve(bundle);
   const css = [
-    // Declare the layer order the host uses, so `utilities` sorts where the host puts it.
+    // Declare the standard Tailwind order; the host loader owns source order between plugin and host sheets.
     '@layer theme, base, components, utilities;',
     // Reference-only: gives the compiler the design system (Tailwind's defaults + the host tokens)
     // WITHOUT emitting a single variable or preflight rule of its own.
