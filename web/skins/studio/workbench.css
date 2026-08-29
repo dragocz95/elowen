@@ -14,8 +14,9 @@
 /* ---------------------------------------------------------------------------------------------------
  * /chat.
  *
- * The canvas, conversation and telemetry layout all fill the shell. The transcript and composer share the
- * ordinary page gutter and stay left-aligned; no hidden reading cap recentres the working surface.
+ * The canvas, conversation and telemetry layout all fill the frame the shell centres them in
+ * (`--chat-max`, wider than the page measure). The transcript and composer share the ordinary page gutter
+ * and stay left-aligned INSIDE that frame; nothing here adds a second reading cap of its own.
  * --------------------------------------------------------------------------------------------------- */
 
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) :is(.chat-gutter, .advisor-panel) {

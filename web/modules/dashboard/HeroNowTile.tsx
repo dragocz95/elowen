@@ -37,17 +37,16 @@ export function HeroNowTile({ now, presence }: { now: number; presence: Presence
       <div className="hero-now__field grid items-center gap-6 @3xl:min-h-[22rem] @3xl:grid-cols-[minmax(0,1fr)_minmax(20rem,1fr)]">
         <div className="flex min-w-0 flex-col gap-4">
           {presence.primary ? (
-            <Link href="/chat" className="group flex items-center gap-3 rounded-2xl border border-accent/15 bg-accent/[0.04] px-4 py-3 shadow-[0_0_24px_rgb(var(--accent-rgb)_/_0.07)] transition-[border-color,background-color] hover:border-accent/40 hover:bg-accent/[0.07]">
+            <Link href="/chat" aria-label={`${presence.primary.title || presence.primary.label} — ${t.dashboard.byPerson.replace('{person}', presence.primary.label)} · ${stateLabel}`} className="group flex items-center gap-3 rounded-2xl border border-accent/15 bg-accent/[0.04] px-4 py-3 shadow-[0_0_24px_rgb(var(--accent-rgb)_/_0.07)] transition-[border-color,background-color] hover:border-accent/40 hover:bg-accent/[0.07]">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 text-accent"><Sparkles size={16} aria-hidden /></span>
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                {/* The title is empty between turns even while `working` is true, so the person's name
-                    is the fallback rather than a blank row. */}
-                <span className="truncate text-sm font-medium text-text">{presence.primary.title || presence.primary.label}</span>
-                <span className="truncate text-xs text-text-muted">
-                  <span>{t.dashboard.byPerson.replace('{person}', presence.primary.label)}</span>
-                  <span aria-hidden> · </span>
-                  <span>{stateLabel}</span>
-                </span>
+              {/* The conversation, and nothing else. The row used to repeat "working by <person> ·
+                  working" underneath the title — the state twice, and a name the reader is usually the
+                  owner of. Everything it said is either on the pulse below or in the row's own existence:
+                  this row is only drawn while somebody IS mid-turn. The accessible name still carries
+                  who and what, because a link labelled by a conversation title alone does not say where
+                  it goes. */}
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">
+                {presence.primary.title || presence.primary.label}
               </span>
               <ArrowRight size={15} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent" aria-hidden />
             </Link>

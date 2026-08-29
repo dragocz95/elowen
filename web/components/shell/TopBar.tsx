@@ -108,9 +108,6 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
             {count !== undefined ? <span className="font-mono text-xs text-text-muted">{count}</span> : null}
           </div>
         ) : null}
-        {/* Route-specific controls live in the page that owns their state and portal into this slot. The
-            sidebar remains the only global navigation; this bar is the current page's own toolbar. */}
-        {bar ? <PageTopBarHost className="top-bar__page-slot flex min-w-0 flex-1 items-center empty:hidden" /> : null}
         {!bar && showLocation ? (
           <>
             {Icon && onMenuClick ? <span className="mt-1.5 hidden h-9 w-9 shrink-0 place-items-center rounded-full border border-accent/20 bg-accent/[0.07] text-accent sm:grid"><Icon size={17} strokeWidth={1.5} aria-hidden /></span> : null}
@@ -124,6 +121,13 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
           </>
         ) : null}
       </div>
+
+      {/* Route-specific controls live in the page that owns their state and portal into this slot. The
+          sidebar remains the only global navigation; this bar is the current page's own toolbar.
+          It is a SIBLING of the leading cluster, not a child of it: as its own region the bar can centre
+          it over the page it belongs to, which is what puts a conversation's own controls above the
+          conversation instead of against the window's left edge. */}
+      {bar ? <PageTopBarHost className="top-bar__page-slot flex min-w-0 items-center justify-center empty:hidden" /> : null}
 
       {/* The action cluster and the hamburger are named — `top-bar__*` — because they are the only chrome
           on every page of the app and a skin has to be able to reach them. Their LAYOUT is the variant's,

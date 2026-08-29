@@ -108,6 +108,13 @@
   letter-spacing: -0.15px;
   line-height: 1.25;
 }
+/* The dashboard's title is a GREETING, not the name of a register — it is the one page whose heading is
+   addressed to the reader — so it carries the same weight as the clock it sits beside instead of the
+   restrained step every working page uses. The date beside the clock stays light; the pair is a strong
+   figure with a quiet qualifier, twice on the same line. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .workspace-hero h1 {
+  font-weight: 600;
+}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__count {
   color: var(--color-text-subtle);
   font-size: 0.875rem;
@@ -425,32 +432,54 @@
 
 /* The reference chrome is a 50px ruled strip. This stays skin-owned: the shared bar remains 48px for
    spatial designs, while Studio's sticky registers offset from the same token below. */
-/* Two regions, not three: the page's own controls on the left, the universal actions on the right. The
-   middle column used to hold a full-width command field, which took the widest slot in the app's chrome
-   for a control the keyboard opens — and on /chat it wedged that page's toolbar apart from its title. The
-   field is now a glyph among the actions (components/shell/TopBar.tsx), so the row has one thing to say
-   on each side. */
+/* Three regions: where you are on the left, what the PAGE offers in the middle, the universal actions on
+   the right. The middle track used to hold a full-width command field — the widest slot in the app's
+   chrome spent on a control the keyboard opens — and the page's own toolbar was crammed into the left
+   cluster beside it. Swapping them is what puts a conversation's controls above the conversation: the
+   bar spans the same workspace the centred content column does, so centred here is centred over the page.
+   Every track is `minmax(0, …)` so a long title shrinks its own region instead of pushing a neighbour. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar {
   display: grid;
   height: var(--studio-top-bar-height);
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
   gap: 0.75rem;
   border-bottom-color: var(--studio-line);
   padding-inline: 0.75rem;
 }
+/* The leading column must NOT clip. Every picker in a portaled page toolbar — project, model, the
+   conversation list — opens as an absolutely positioned listbox anchored to its own trigger, and the bar
+   is 50px tall: `overflow: hidden` here left those menus rendered, focusable and completely invisible,
+   because they begin below the box that was clipping them. Width is held instead by the grid track
+   (`minmax(0, 1fr)`) and by each control truncating its own label, which is what a bar should do anyway. */
+/* Each region names its own column. Placement CANNOT be left to document order: the page slot carries
+   `empty:hidden`, and a `display: none` box is not a grid item at all — so on every route that portals
+   nothing (the dashboard, the registers) the action cluster slid into the middle track and the avatar,
+   sign-out and search ended up centred in the bar. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__leading {
-  overflow: hidden;
+  grid-column: 1;
+  min-width: 0;
 }
-/* The route's own controls are a GROUP, divided from the shell's fold handle by a hairline rather than by
-   nothing at all. Without the rule the chat toolbar's history button read as one more piece of global
-   chrome. `:not(:empty)` because most routes portal nothing here and a divider with nothing behind it is
-   a stray mark. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__page-slot:not(:empty) {
-  border-left: 1px solid var(--studio-line);
-  padding-left: 0.75rem;
-  margin-left: 0.25rem;
+/* Centred, and held to its own track. `justify-self: center` stops the slot stretching, which means it is
+   sized from its CONTENT — and a toolbar wider than the middle track then hangs out over its neighbours
+   instead of letting its controls truncate. The percentage resolves against the grid area, so this is the
+   one declaration that turns "as wide as it wants" back into "at most the room it has". */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__page-slot {
+  grid-column: 2;
+  justify-self: center;
+  max-width: 100%;
+}
+/* Below the tablet boundary there is no room left to centre anything: an `auto` middle track keeps its
+   content at max-content and the tabs of a sectioned page then run out past the window instead of
+   scrolling inside their own track. So the middle becomes the flexible one and the two clusters take only
+   what they need — the toolbar still scrolls and truncates inside it, and the pickers still open freely
+   because nothing in this file clips the row. */
+@media (max-width: 63.99rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar {
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, auto);
+  }
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__actions {
+  grid-column: 3;
   justify-self: end;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar :is(button, a) {

@@ -66,8 +66,12 @@ describe('DashboardView', () => {
 
     // The greeting is time-of-day dependent, so the heading is asserted by role rather than by text.
     expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
-    // Presence comes from the pulse's live `working` flag, not from history.
-    expect(await screen.findByText(/working now: 1/i)).toBeInTheDocument();
+    // Presence comes from the pulse's live `working` flag, not from history — and it is stated ONCE, as
+    // the row that opens the conversation. The greeting used to carry a count of the very people this row
+    // names, and the row then repeated the state a second time under its own title.
+    const working = await screen.findByRole('link', { name: /Filip/ });
+    expect(working).toHaveAttribute('href', '/chat');
+    expect(screen.queryByText(/working now: 1/i)).toBeNull();
     expect(screen.getByRole('img', { name: /Elowen: /i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/what can i do for you/i)).toBeInTheDocument();
   });

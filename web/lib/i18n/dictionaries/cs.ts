@@ -309,8 +309,6 @@ export const cs = {
     greetingAfternoon: 'Dobré odpoledne',
     greetingEvening: 'Dobrý večer',
     rightNow: 'Právě teď',
-    allQuiet: 'Vše v klidu',
-    peopleWorking: 'Právě pracuje: {count}',
     byPerson: 'Pracuje: {person}',
     restingDesc: 'Nikdo právě nepracuje. Napište a rozběhne se to tady.',
     composerPlaceholder: 'Co pro vás mohu udělat?',

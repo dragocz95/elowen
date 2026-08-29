@@ -28,11 +28,11 @@ export function DashboardView() {
   const date = new Date(nowMs);
   const hour = date.getHours();
   const greeting = hour < 12 ? t.dashboard.greetingMorning : hour < 18 ? t.dashboard.greetingAfternoon : t.dashboard.greetingEvening;
-  const statusLine = presence.state === 'offline'
-    ? t.dashboard.presence.offline
-    : presence.activeCount > 0
-      ? t.dashboard.peopleWorking.replace('{count}', String(presence.activeCount))
-      : t.dashboard.allQuiet;
+  // Only a fact the reader cannot get from the page itself belongs under the greeting. "1 person working"
+  // and "all quiet" are both restated a few centimetres below — as the working row, as the live tile and
+  // as the pulse — so the line said nothing three times. An unreachable daemon is different: nothing else
+  // on this page can report it, because everything else on this page comes FROM it.
+  const statusLine = presence.state === 'offline' ? t.dashboard.presence.offline : undefined;
 
   return (
     <WorkspaceShell

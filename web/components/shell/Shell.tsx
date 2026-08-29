@@ -37,6 +37,11 @@ export type NavMode = 'full' | 'rail' | 'drawer';
  *  authority on how wide a document column may grow, so a skin can retune the reading measure without
  *  touching a component. */
 const CONTENT_MAX = 'max-w-[var(--content-max)]';
+/** The measure /chat is read at. It is a SECOND token rather than an exemption from the first: a
+ *  conversation is an application layout — transcript, code, a telemetry column beside it — so it earns a
+ *  wider frame than a page of records, but it is still a frame, centred on the same axis as every other
+ *  route. Opting out entirely is what pinned the transcript to the left edge of a wide display. */
+const CHAT_MAX = 'max-w-[var(--chat-max)]';
 
 /** What the user pinned the navigation to, when the window is roomy enough to leave them the choice. */
 type NavPin = 'full' | 'rail';
@@ -233,11 +238,11 @@ function ShellLayout({ children }: { children: ReactNode }) {
             pixel of a wide monitor goes into stretching the same table across a wider, emptier row.
             Capping it keeps a table's density tied to its type size instead of to the window. The
             heading rides inside the cap so it stays aligned with the content beneath it. */}
-        {/* /chat opts out of the reading measure. It is not a document but an application layout — a
-            conversation column with a telemetry rail docked beside it — and a centred cap leaves the rail
-            floating short of the window edge with dead space behind it, which reads as a bug rather than
-            as breathing room. Routes that ARE documents keep the cap. */}
-        <div className={`mx-auto flex w-full flex-col ${onChat ? '' : CONTENT_MAX}`}>
+        {/* /chat reads its own measure. It is not a document but an application layout — a conversation
+            column with a telemetry rail docked beside it — so it is capped wider than a page of records,
+            and centred on the same axis so the rail sits inside the frame rather than out at the window
+            edge with the transcript stranded opposite it. */}
+        <div className={`mx-auto flex w-full flex-col ${onChat ? CHAT_MAX : CONTENT_MAX}`}>
           {/* Frameless page heading + global actions. In drawer mode it also opens mobile navigation. On
               /chat at phone width the whole global bar is suppressed: the conversation already carries its
               own bar, and stacking a second one above it (avatar, bell, search) crowds the small screen.

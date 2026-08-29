@@ -321,8 +321,6 @@ export const en = {
     greetingAfternoon: 'Good afternoon',
     greetingEvening: 'Good evening',
     rightNow: 'Right now',
-    allQuiet: 'All quiet',
-    peopleWorking: 'Working now: {count}',
     byPerson: 'Working: {person}',
     restingDesc: 'Nobody is mid-turn. Say something and it comes alive here.',
     composerPlaceholder: 'What can I do for you?',

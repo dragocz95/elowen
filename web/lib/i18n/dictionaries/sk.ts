@@ -309,8 +309,6 @@ export const sk = {
     greetingAfternoon: 'Dobré popoludnie',
     greetingEvening: 'Dobrý večer',
     rightNow: 'Práve teraz',
-    allQuiet: 'Všetko v pokoji',
-    peopleWorking: 'Práve pracuje: {count}',
     byPerson: 'Pracuje: {person}',
     restingDesc: 'Nikto práve nepracuje. Napíšte a rozbehne sa to tu.',
     composerPlaceholder: 'Čo pre vás môžem urobiť?',

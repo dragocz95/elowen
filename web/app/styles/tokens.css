@@ -94,6 +94,12 @@
      component may restate a width cap of its own. */
   --content-max: clamp(90rem, 96vw, 118rem);
 
+  /* The same authority for /chat, which is an application layout rather than a document and is allowed a
+     wider frame than a page of records. The built-in design's pages already grow to within a few percent
+     of the window, so here the conversation simply is the window; a design that centres its pages in a
+     narrower frame states its own chat measure beside it. */
+  --chat-max: 100%;
+
   /* One stacking order for the whole app, so a new overlay cannot be talked into an arbitrary number.
      Toast sits above the modal on purpose: a confirmation or an error raised BY a dialog has to stay
      readable over it, otherwise the user is told nothing while the dialog waits. */

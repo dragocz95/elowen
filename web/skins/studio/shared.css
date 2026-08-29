@@ -31,9 +31,13 @@
    radiogroup, the same roving tab stop, the same caller-owned selection, drawn as tabs. */
 
 /* ElevenLabs keeps working pages in a centred 1152px frame. Tool content still uses every pixel inside
-   that frame, while /chat deliberately opts out in Shell because it is an application layout. */
+   that frame. /chat is centred on the same axis but on a frame of its own: a conversation carries code,
+   diffs and a telemetry column beside it, so it gets a third more room than a page of records — while
+   still being a frame, because a transcript pinned to the left edge of a 2500px display is not a layout
+   anyone reads. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) {
   --content-max: 72rem;
+  --chat-max: 96rem;
   --studio-top-bar-height: 3.125rem;
 }
 

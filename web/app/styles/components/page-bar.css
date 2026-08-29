@@ -23,8 +23,17 @@
    ones that have not been opened here yet as well.
    The breadcrumb's steps are the reader's LOCATION, not controls, and must not be sized like one. Today
    they are inline boxes that a height cannot apply to anyway — which is exactly why the exclusion is
-   written down: the day one of them becomes `flex`, the trail would silently grow to 32px. */
-.top-bar--bar :is(a, button):not(.top-bar__identity, .overlay-layer-menu *, .page-bar__breadcrumb *) {
+   written down: the day one of them becomes `flex`, the trail would silently grow to 32px.
+   The fourth is what a control OPENS. A picker in this bar anchors its listbox inline, so the menu is a
+   DESCENDANT of the bar: every option was clamped to the row height of the trigger that opened it, and a
+   model row — a name with its reasoning levels underneath — spilled over the row below it into unreadable
+   overlapping text. `.overlay-layer-menu *` covers the portaled menus only; these never leave the bar. */
+.top-bar--bar :is(a, button):not(
+  .top-bar__identity,
+  .overlay-layer-menu *,
+  .page-bar__breadcrumb *,
+  :is([role='listbox'], [role='menu'], [role='dialog']) *
+) {
   height: 2rem;
   border: 0;
   border-radius: var(--radius-sm);
@@ -33,7 +42,12 @@
    carries: this file is unlayered, so the height above would otherwise outrank it. 44px inside a 48px
    bar. */
 @media (pointer: coarse) {
-  .top-bar--bar :is(a, button):not(.top-bar__identity, .overlay-layer-menu *, .page-bar__breadcrumb *) {
+  .top-bar--bar :is(a, button):not(
+    .top-bar__identity,
+    .overlay-layer-menu *,
+    .page-bar__breadcrumb *,
+    :is([role='listbox'], [role='menu'], [role='dialog']) *
+  ) {
     height: var(--touch-target);
   }
 }

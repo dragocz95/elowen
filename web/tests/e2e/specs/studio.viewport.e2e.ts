@@ -694,6 +694,76 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
   expect(Math.round(closed!.width), 'the mobile sheet spans the viewport').toBe(1023);
 });
 
+test('the Studio chat is centred on its own frame and its bar pickers open out of it', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await seed.messages([
+    { id: 'u1', role: 'user', text: 'Where does the conversation sit?' },
+    { id: 'a1', role: 'assistant', text: 'Centred.', segments: [{ kind: 'text', text: 'Centred.' }] },
+  ]);
+  await useSkin(app, seed, 'studio-light');
+  await app.setViewportSize({ width: 1920, height: 900 });
+  await openStudio(app, '/chat');
+  await expect(app.locator('[data-testid="page-top-bar-host"] .chat-page-toolbar')).toBeVisible();
+
+  const frame = await app.evaluate(() => {
+    const main = document.querySelector<HTMLElement>('main')!;
+    // The CONTENT box: <main> keeps a stable scrollbar gutter, and measuring against its border box would
+    // read that reserved strip as the frame being 10px off centre.
+    const scroller = { left: main.getBoundingClientRect().left, right: main.getBoundingClientRect().left + main.clientWidth };
+    const surface = document.querySelector<HTMLElement>('[data-variant="full"]')!;
+    // The capped, centred frame the shell puts /chat in — the surface's own scroll parent chain up to the
+    // element carrying --chat-max.
+    const cap = surface.closest<HTMLElement>('.mx-auto')!.getBoundingClientRect();
+    const slot = document.querySelector<HTMLElement>('.top-bar__page-slot')!.getBoundingClientRect();
+    return {
+      capWidth: Math.round(cap.width),
+      leftGap: Math.round(cap.left - scroller.left),
+      rightGap: Math.round(scroller.right - cap.right),
+      capCentre: Math.round(cap.left + cap.width / 2),
+      slotCentre: Math.round(slot.left + slot.width / 2),
+      pageMeasure: getComputedStyle(document.documentElement).getPropertyValue('--content-max').trim(),
+      chatMeasure: getComputedStyle(document.documentElement).getPropertyValue('--chat-max').trim(),
+    };
+  });
+  // 96rem, wider than the 72rem a page of records is read at, and centred rather than pinned to the edge.
+  expect(frame.chatMeasure).toBe('96rem');
+  expect(frame.pageMeasure).toBe('72rem');
+  expect(frame.capWidth, 'the conversation is capped at its own measure').toBe(1536);
+  expect(frame.leftGap, 'the frame is centred in the workspace').toBe(frame.rightGap);
+  // The page's own controls sit above the page they belong to, not against the window's left edge.
+  expect(Math.abs(frame.slotCentre - frame.capCentre)).toBeLessThanOrEqual(1);
+
+  // The regression: the bar's leading column clipped its own overflow, so a picker's listbox — anchored
+  // under a 50px bar — was rendered, focusable and entirely invisible. `toBeVisible` cannot see that (the
+  // element has a box either way), so this hit-tests the menu where the pointer would land.
+  await app.locator('[data-testid="page-top-bar-host"] [data-testid="chat-model-picker"] button').click();
+  const menu = await app.evaluate(() => {
+    const listbox = document.querySelector<HTMLElement>('.top-bar__page-slot [role="listbox"]');
+    if (!listbox) return null;
+    const box = listbox.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 8);
+    return { width: Math.round(box.width), height: Math.round(box.height), reachable: listbox.contains(hit) };
+  });
+  expect(menu, 'the model listbox opened').not.toBeNull();
+  expect(menu!.width).toBeGreaterThan(0);
+  expect(menu!.height).toBeGreaterThan(0);
+  expect(menu!.reachable, 'the listbox is clipped away by the bar').toBe(true);
+
+  // A route that portals NOTHING must still keep its universal actions at the right edge. The centre
+  // region is `empty:hidden` there, and a `display: none` box is not a grid item — so without an explicit
+  // column the cluster fell into the middle track and the avatar sat in the middle of the bar.
+  await openStudio(app, REGISTER);
+  await expect(app.locator('.top-bar__page-slot')).toBeHidden();
+  const actions = await app.evaluate(() => {
+    const bar = document.querySelector<HTMLElement>('.top-bar--bar')!;
+    const cluster = document.querySelector<HTMLElement>('.top-bar__actions')!.getBoundingClientRect();
+    const barBox = bar.getBoundingClientRect();
+    return { gap: Math.round(barBox.right - cluster.right), padding: getComputedStyle(bar).paddingRight };
+  });
+  expect(actions.padding).toBe('12px');
+  expect(actions.gap, 'the action cluster sits at the trailing edge').toBe(12);
+});
+
 test('Studio drops the hero mascot from a working page and keeps the page', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   // The mascot belongs to the ember identity and must not appear over a register — but no page may be
