@@ -43,6 +43,30 @@ describe('published sites gateway control', () => {
     expect(invoke).toHaveBeenCalledWith({ op: 'provision-namecheap', ...input });
   });
 
+  it('brokers a fixed root-owned pathname socket for confined runtimes', async () => {
+    const siteId = '123e4567-e89b-12d3-a456-426614174000';
+    const socketPath = `/var/lib/elowen/site-runtime-sockets/${siteId}/app.sock`;
+    const invoke = vi.fn(async () => ({ ok: true, socketPath }));
+    const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke });
+    expect(await control.prepareRuntimeSocket(siteId)).toEqual({ path: socketPath });
+    await control.sealRuntimeSocket(siteId);
+    await control.removeRuntimeSocket(siteId);
+    expect(invoke.mock.calls.map(([request]) => request)).toEqual([
+      { op: 'prepare-runtime-socket', siteId },
+      { op: 'seal-runtime-socket', siteId },
+      { op: 'remove-runtime-socket', siteId },
+    ]);
+  });
+
+  it('rejects a helper that tries to redirect a runtime socket path', async () => {
+    const control = createPublishedSitesGatewayControl({
+      publicWebUrl: 'https://agent.example.com',
+      invoke: async () => ({ ok: true, socketPath: '/run/elowen-daemon.sock' }),
+    });
+    await expect(control.prepareRuntimeSocket('123e4567-e89b-12d3-a456-426614174000'))
+      .rejects.toThrow(/unexpected runtime socket path/);
+  });
+
   it('refuses malformed secrets before starting sudo', async () => {
     const invoke = vi.fn();
     const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke });

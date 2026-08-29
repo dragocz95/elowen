@@ -337,7 +337,8 @@ export interface PluginHttpRequest {
 export interface PluginHttpResponse {
   /** Defaults to 200. */
   status?: number;
-  headers?: Record<string, string>;
+  /** Arrays preserve duplicate response fields such as multiple Set-Cookie lines. */
+  headers?: Record<string, string | string[]>;
   /** An object body is JSON-serialized with a json content-type; string/bytes pass through. */
   body?: string | Uint8Array | object;
   /** Server-sent-events stream instead of a buffered body (authenticated plugin API only). The
@@ -734,6 +735,8 @@ export type PluginUiVisibility = (req: { userId: number | null; isAdmin: boolean
 export interface PluginService {
   /** Short name for logs, unique within the plugin (e.g. 'sync-loop'). */
   name: string;
+  /** Refuse a plugin reload when stop cannot prove that externally reachable work has ended. Default false. */
+  criticalStop?: boolean;
   start(): void | Promise<void>;
   stop(): void | Promise<void>;
 }
@@ -1091,6 +1094,12 @@ export interface PublishedSitesGatewayControl {
   }): Promise<PublishedSitesGatewayStatus>;
   deny(): Promise<PublishedSitesGatewayStatus>;
   status(): Promise<PublishedSitesGatewayStatus>;
+  /** Create a root-owned, group-writable directory for one confined runtime to bind its pathname socket. */
+  prepareRuntimeSocket(siteId: string): Promise<{ path: string }>;
+  /** Revoke directory write permission and prove the runtime created a socket rather than a symlink. */
+  sealRuntimeSocket(siteId: string): Promise<void>;
+  /** Remove the sealed socket directory after the process group is proven gone. */
+  removeRuntimeSocket(siteId: string): Promise<void>;
 }
 
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may

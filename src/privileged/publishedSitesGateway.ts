@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { isIP } from 'node:net';
+import { join } from 'node:path';
 import type { PublishedSitesGatewayControl, PublishedSitesGatewayStatus } from '../plugins/api.js';
-import { SITE_GATEWAY_HELPER_PATH } from '../shared/siteGateway.js';
+import { SITE_GATEWAY_HELPER_PATH, SITE_RUNTIME_SOCKET_ROOT } from '../shared/siteGateway.js';
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const HELPER_TIMEOUT_MS = 30_000;
 const PROVISION_TIMEOUT_MS = 10 * 60_000;
@@ -19,13 +20,17 @@ type HelperRequest =
     gatewayToken: string;
   }
   | { op: 'deny' }
-  | { op: 'status' };
+  | { op: 'status' }
+  | { op: 'prepare-runtime-socket'; siteId: string }
+  | { op: 'seal-runtime-socket'; siteId: string }
+  | { op: 'remove-runtime-socket'; siteId: string };
 
 interface HelperResponse {
   ok: boolean;
   active?: boolean;
   hostnameBase?: string | null;
   detail?: string;
+  socketPath?: string;
 }
 
 export type SiteGatewayHelperInvoker = (request: HelperRequest) => Promise<HelperResponse>;
@@ -135,6 +140,17 @@ export function createPublishedSitesGatewayControl(options: {
     }
   };
 
+  const socketCall = async (op: 'prepare-runtime-socket' | 'seal-runtime-socket' | 'remove-runtime-socket', siteId: string): Promise<string> => {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(siteId)) {
+      throw new Error('site id is invalid');
+    }
+    const expected = join(SITE_RUNTIME_SOCKET_ROOT, siteId, 'app.sock');
+    const result = await invoke({ op, siteId });
+    if (!result.ok) throw new Error(result.detail || 'the site gateway helper refused the runtime socket request');
+    if (result.socketPath !== expected) throw new Error('the site gateway helper returned an unexpected runtime socket path');
+    return expected;
+  };
+
   return {
     hostnameBase: () => base,
     ensure: async ({ certificatePem, privateKeyPem, gatewayToken }) => {
@@ -160,5 +176,8 @@ export function createPublishedSitesGatewayControl(options: {
     },
     deny: () => call({ op: 'deny' }),
     status: () => call({ op: 'status' }),
+    prepareRuntimeSocket: async (siteId) => ({ path: await socketCall('prepare-runtime-socket', siteId) }),
+    sealRuntimeSocket: async (siteId) => { await socketCall('seal-runtime-socket', siteId); },
+    removeRuntimeSocket: async (siteId) => { await socketCall('remove-runtime-socket', siteId); },
   };
 }

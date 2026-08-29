@@ -10,6 +10,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { ElowenApp, ElowenContext, RouteContext } from '../context.js';
 import type { TurnIdentity } from '../../plugins/policyContext.js';
 import type { PluginApiAccess, PluginApiRequest, PluginApiRoute } from '../../plugins/api.js';
+import { pluginResponseHeaders } from './pluginResponse.js';
 
 /** Authenticated plugin API payloads are app traffic (JSON bodies, small uploads), not webhooks — a
  *  larger cap than /hooks but still bounded, because the dispatcher buffers the body whole. */
@@ -93,9 +94,13 @@ async function dispatchPluginApi(
     }
     const status = (res.status ?? 200) as ContentfulStatusCode;
     const body = res.body;
-    if (body === undefined || typeof body === 'string') return c.body(body ?? '', status, res.headers ?? {});
-    if (body instanceof Uint8Array) return c.body(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, status, res.headers ?? {});
-    return c.json(body, status, res.headers ?? {});
+    const responseHeaders = pluginResponseHeaders(res.headers);
+    if (body === undefined || typeof body === 'string') return new Response(body ?? '', { status, headers: responseHeaders });
+    if (body instanceof Uint8Array) {
+      return new Response(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, { status, headers: responseHeaders });
+    }
+    if (!responseHeaders.has('content-type')) responseHeaders.set('content-type', 'application/json; charset=UTF-8');
+    return new Response(JSON.stringify(body), { status, headers: responseHeaders });
   } catch (error) {
     // Body-shape failures map exactly like the core route families' onError, so a grandfathered
     // root-mounted route keeps its clients' 400 contract (invalid JSON / zod shape errors).

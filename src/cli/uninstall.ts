@@ -149,17 +149,19 @@ function buildPlan(deps: UninstallDeps, info: InstallInfo | null, purge: boolean
   // unrelated default vhost on a machine nginx still serves for something else.
   if (!mac && info?.artifacts?.siteGatewayHelper === true) {
     steps.push({
-      label: 'deny published-sites wildcard gateway',
+      label: 'deny published-sites wildcard gateway and remove its broker',
       run: async () => {
         const res = await deps.runner.exec(SITE_GATEWAY_HELPER_PATH, [], { input: '{"op":"deny"}\n' });
-        if (res.code !== 0 && !ALREADY_GONE.test(`${res.stdout}\n${res.stderr}`)) {
+        if (res.code !== 0) {
           throw new Error(`site gateway deny failed: ${`${res.stdout}\n${res.stderr}`.trim() || res.code}`);
         }
+        // Keep the helper until the very last mutation. If removing the deployment record fails, a rerun can
+        // still re-assert the deny tombstone; the unsafe order would delete the only broker first.
+        await rm(deps, SITE_GATEWAY_DEPLOYMENT_PATH);
+        await rm(deps, SITE_GATEWAY_HELPER_PATH);
       },
-      manual: `printf '%s\\n' '{"op":"deny"}' | ${SITE_GATEWAY_HELPER_PATH}`,
+      manual: `printf '%s\\n' '{"op":"deny"}' | ${SITE_GATEWAY_HELPER_PATH} && rm -f ${SITE_GATEWAY_DEPLOYMENT_PATH} ${SITE_GATEWAY_HELPER_PATH}`,
     });
-    steps.push({ label: `remove ${SITE_GATEWAY_HELPER_PATH}`, run: () => rm(deps, SITE_GATEWAY_HELPER_PATH), manual: `rm -f ${SITE_GATEWAY_HELPER_PATH}` });
-    steps.push({ label: `remove ${SITE_GATEWAY_DEPLOYMENT_PATH}`, run: () => rm(deps, SITE_GATEWAY_DEPLOYMENT_PATH), manual: `rm -f ${SITE_GATEWAY_DEPLOYMENT_PATH}` });
     kept.push('/etc/nginx/conf.d/elowen-sites-gateway.conf and /etc/elowen/sites-tls (deny tombstone for stale wildcard DNS)');
   }
 

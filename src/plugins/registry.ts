@@ -115,7 +115,10 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   lsp: ['diagnosticsEnabled'],
   sandbox: ['workspaceRoots', 'workspacesFor', 'activeWorkspace', 'prepareExecution'],
   microsoftIdentity: ['identityFor', 'driveGraphFor'],
-  publishedSitesGateway: ['hostnameBase', 'ensure', 'provisionNamecheap', 'deny', 'status'],
+  publishedSitesGateway: [
+    'hostnameBase', 'ensure', 'provisionNamecheap', 'deny', 'status',
+    'prepareRuntimeSocket', 'sealRuntimeSocket', 'removeRuntimeSocket',
+  ],
 };
 
 /** A missing account is not plugin-access open mode: shared channels and unlinked callers

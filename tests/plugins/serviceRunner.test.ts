@@ -83,6 +83,47 @@ describe('plugin lifecycle contributions + PluginServiceRunner', () => {
     expect({ starts, stops }).toEqual({ starts: 2, stops: 2 });
   });
 
+  it('refuses reload before stopping ordinary services when a critical service cannot stop', async () => {
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('demo', {}, noopLog);
+    let mayStop = false;
+    let criticalStops = 0;
+    let ordinaryStops = 0;
+    ctx.registerService({
+      name: 'critical', criticalStop: true, start() {},
+      stop() { criticalStops += 1; if (!mayStop) throw new Error('still serving'); },
+    });
+    ctx.registerService({ name: 'ordinary', start() {}, stop() { ordinaryStops += 1; } });
+    const runner = new PluginServiceRunner(() => Promise.resolve(reg));
+    await runner.startAll();
+    await expect(runner.stopAll()).rejects.toThrow(/critical plugin service stop failed.*still serving/);
+    expect({ criticalStops, ordinaryStops }).toEqual({ criticalStops: 1, ordinaryStops: 0 });
+    mayStop = true;
+    await runner.stopAll();
+    expect({ criticalStops, ordinaryStops }).toEqual({ criticalStops: 2, ordinaryStops: 1 });
+  });
+
+  it('restarts an already-stopped critical sibling when a later critical stop refuses reload', async () => {
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('demo', {}, noopLog);
+    const order: string[] = [];
+    ctx.registerService({
+      name: 'refuses', criticalStop: true,
+      start() { order.push('start-refuses'); },
+      stop() { order.push('stop-refuses'); throw new Error('busy'); },
+    });
+    ctx.registerService({
+      name: 'stops-first', criticalStop: true,
+      start() { order.push('start-stops-first'); },
+      stop() { order.push('stop-stops-first'); },
+    });
+    const runner = new PluginServiceRunner(() => Promise.resolve(reg));
+    await runner.startAll();
+    order.length = 0;
+    await expect(runner.stopAll()).rejects.toThrow(/busy/);
+    expect(order).toEqual(['stop-stops-first', 'stop-refuses', 'start-stops-first']);
+  });
+
   it('registerService refuses a malformed contribution', () => {
     const reg = new PluginRegistry();
     const warn = vi.fn();

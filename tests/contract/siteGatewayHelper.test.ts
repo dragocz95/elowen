@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 // code after sudo. This contract test imports its pure renderer directly and exercises the bytes shipped.
 // @ts-expect-error the standalone deployment helper intentionally has no TypeScript declaration file
 import {
-  deploymentFrom, parseHosts, renderActiveConfig, renderDenyConfig, setHostsParams, zoneFor,
+  deploymentFrom, parseHosts, renderActiveConfig, renderDenyConfig, runtimeSocketPathFor, setHostsParams, zoneFor,
 } from '../../scripts/elowen-site-gateway.mjs';
 
 const deployment = deploymentFrom({ appHost: 'agent.chetty.ai', daemonPort: 4400 });
@@ -40,6 +40,22 @@ describe('root-owned published-sites gateway helper', () => {
       HostName2: 'www', RecordType2: 'CNAME', Address2: 'agent.chetty.ai.', MXPref2: '10', TTL2: '1800',
     });
     expect(() => parseHosts('<ApiResponse Status="OK"><DomainDNSGetHostsResult IsUsingOurDNS="false" /></ApiResponse>')).toThrow();
+  });
+
+  it('supports an app on a registrable root domain and derives its sites records inside that zone', () => {
+    expect(zoneFor(deploymentFrom({ appHost: 'example.com', daemonPort: 4400 }))).toEqual({
+      sld: 'example',
+      tld: 'com',
+      wildcardName: '*.sites',
+      challengeName: '_acme-challenge.sites',
+      challengeFqdn: '_acme-challenge.sites.example.com',
+    });
+  });
+
+  it('derives runtime socket paths only from UUID site ids', () => {
+    expect(runtimeSocketPathFor('123e4567-e89b-12d3-a456-426614174000'))
+      .toBe('/var/lib/elowen/site-runtime-sockets/123e4567-e89b-12d3-a456-426614174000/app.sock');
+    expect(() => runtimeSocketPathFor('../../run/daemon.sock')).toThrow(/site id/);
   });
 
   it('renders one wildcard gateway whose slug comes from Host and whose upstream is fixed', () => {

@@ -4,7 +4,8 @@ import { X509Certificate, createPrivateKey, createPublicKey, timingSafeEqual } f
 import { resolve4, resolveTxt } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import {
-  chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync,
+  chmodSync, chownSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync,
+  rmSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -14,6 +15,8 @@ export const TLS_DIR = '/etc/elowen/sites-tls';
 export const CERT_PATH = join(TLS_DIR, 'fullchain.pem');
 export const KEY_PATH = join(TLS_DIR, 'privkey.pem');
 export const STATE_PATH = '/var/lib/elowen/site-gateway.json';
+const LOCK_PATH = '/var/lib/elowen/site-gateway.lock';
+const RUNTIME_SOCKET_ROOT = '/var/lib/elowen/site-runtime-sockets';
 const SELF_PATH = '/usr/local/libexec/elowen-site-gateway';
 const ACME_ROOT = '/var/lib/elowen/site-acme';
 const ACME_CONFIG = join(ACME_ROOT, 'config');
@@ -234,18 +237,53 @@ function assertNamecheapOk(xml) {
   if (!response || xmlAttributes(response[1]).Status !== 'OK') fail(namecheapError(xml));
 }
 
+const SAFE_SITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function runtimeSocketPathFor(siteId) {
+  if (typeof siteId !== 'string' || !SAFE_SITE_ID.test(siteId)) fail('site id is invalid');
+  return join(RUNTIME_SOCKET_ROOT, siteId, 'app.sock');
+}
+
+function runtimeSocketRequest(request) {
+  const socketPath = runtimeSocketPathFor(request.siteId);
+  const socketDir = dirname(socketPath);
+  if (request.op === 'prepare-runtime-socket') {
+    const gid = Number.parseInt(process.env.SUDO_GID || '', 10);
+    if (!Number.isInteger(gid) || gid < 0) fail('the invoking service group cannot be determined');
+    mkdirSync(RUNTIME_SOCKET_ROOT, { recursive: true, mode: 0o755 });
+    rmSync(socketDir, { recursive: true, force: true });
+    mkdirSync(socketDir, { mode: 0o730 });
+    chownSync(socketDir, 0, gid);
+    chmodSync(socketDir, 0o730);
+    return { ok: true, socketPath };
+  }
+  if (request.op === 'seal-runtime-socket') {
+    // Remove directory write permission BEFORE inspecting the entry. The confined process can no longer
+    // replace the socket with a symlink between validation and the daemon's first connection.
+    chmodSync(socketDir, 0o510);
+    if (!lstatSync(socketPath).isSocket()) fail('the runtime endpoint is not a Unix socket');
+    return { ok: true, socketPath };
+  }
+  if (request.op === 'remove-runtime-socket') {
+    rmSync(socketDir, { recursive: true, force: true });
+    return { ok: true, socketPath };
+  }
+  fail('runtime socket operation is not supported');
+}
+
 export function zoneFor(deployment) {
   const labels = deployment.appHost.split('.');
-  if (labels.length < 3) fail('the app hostname has no Namecheap-managed parent zone');
+  if (labels.length < 2) fail('the app hostname has no Namecheap-managed zone');
   const tld = labels.pop();
   const sld = labels.pop();
   const appPrefix = labels.join('.');
-  if (!/^[a-z0-9-]+$/.test(sld) || !/^[a-z0-9.-]+$/.test(tld) || !appPrefix) fail('the Namecheap zone cannot be derived');
+  if (!/^[a-z0-9-]+$/.test(sld) || !/^[a-z0-9-]+$/.test(tld)) fail('the Namecheap zone cannot be derived');
+  const suffix = appPrefix ? `.${appPrefix}` : '';
   return {
     sld,
     tld,
-    wildcardName: `*.sites.${appPrefix}`,
-    challengeName: `_acme-challenge.sites.${appPrefix}`,
+    wildcardName: `*.sites${suffix}`,
+    challengeName: `_acme-challenge.sites${suffix}`,
     challengeFqdn: `_acme-challenge.${deployment.hostnameBase}`,
   };
 }
@@ -311,7 +349,9 @@ async function getHosts(deployment, credentials) {
 }
 
 function canonicalRecords(records) {
-  return JSON.stringify(records.map((record) => [record.name, record.type, record.address, record.mxPref, record.ttl]));
+  return JSON.stringify(records
+    .map((record) => [record.name, record.type, record.address, record.mxPref, record.ttl])
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
 }
 
 export function setHostsParams(zone, records) {
@@ -343,7 +383,11 @@ async function mutateHosts(deployment, credentials, mutateRecords) {
     const current = await getHosts(deployment, credentials);
     if (canonicalRecords(current.records) !== canonicalRecords(before.records)) continue;
     await setHosts(before.zone, next, credentials);
-    return;
+    const verified = await getHosts(deployment, credentials);
+    if (canonicalRecords(verified.records) === canonicalRecords(next)) return;
+    // Something else changed the zone between our write and verification. Retry from that fresh state so
+    // the next replacement preserves it instead of declaring success over a lost concurrent edit.
+    continue;
   }
   fail('the DNS zone changed concurrently; no records were replaced');
 }
@@ -444,6 +488,9 @@ async function provisionNamecheap(request, deployment) {
 
 export async function applyRequest(request, deployment) {
   if (!request || typeof request !== 'object' || typeof request.op !== 'string') fail('request is invalid');
+  if (request.op === 'prepare-runtime-socket' || request.op === 'seal-runtime-socket' || request.op === 'remove-runtime-socket') {
+    return runtimeSocketRequest(request);
+  }
   if (request.op === 'status') {
     let active = false;
     let detail;
@@ -483,6 +530,30 @@ export async function applyRequest(request, deployment) {
   fail('operation is not supported');
 }
 
+const processAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+};
+
+async function acquireMutationLock() {
+  mkdirSync(dirname(LOCK_PATH), { recursive: true, mode: 0o755 });
+  const deadline = Date.now() + 9 * 60_000;
+  while (Date.now() < deadline) {
+    try {
+      const fd = openSync(LOCK_PATH, 'wx', 0o600);
+      try { writeFileSync(fd, `${process.pid}\n`); fsyncSync(fd); } finally { closeSync(fd); }
+      return () => rmSync(LOCK_PATH, { force: true });
+    } catch (error) {
+      if (!error || typeof error !== 'object' || error.code !== 'EEXIST') throw error;
+      let owner = 0;
+      try { owner = Number.parseInt(readFileSync(LOCK_PATH, 'utf8'), 10); } catch { /* stale or partial */ }
+      if (!processAlive(owner)) { rmSync(LOCK_PATH, { force: true }); continue; }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  fail('another site gateway mutation did not finish in time');
+}
+
 async function readStdin() {
   const chunks = [];
   let size = 0;
@@ -506,8 +577,21 @@ async function main() {
   }
   if (process.argv.length > 2) fail('helper accepts no command-line arguments');
   const request = await readStdin();
-  const response = await applyRequest(request, readDeployment());
-  process.stdout.write(`${JSON.stringify(response)}\n`);
+  if (request?.op === 'status'
+    || request?.op === 'prepare-runtime-socket'
+    || request?.op === 'seal-runtime-socket'
+    || request?.op === 'remove-runtime-socket') {
+    const response = await applyRequest(request, readDeployment());
+    process.stdout.write(`${JSON.stringify(response)}\n`);
+    return;
+  }
+  const release = await acquireMutationLock();
+  try {
+    const response = await applyRequest(request, readDeployment());
+    process.stdout.write(`${JSON.stringify(response)}\n`);
+  } finally {
+    release();
+  }
 }
 
 const invoked = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
