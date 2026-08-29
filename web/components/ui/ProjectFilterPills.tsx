@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { ChevronDown, FolderGit2 } from 'lucide-react';
 import { useProjects } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
+import { cn } from '../../lib/utils';
 import { ProjectIcon } from './ProjectIcon';
 import { MorePill } from './MorePill';
 import {
@@ -14,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from './shadcn/dropdown-menu';
 import { RadioGroup, RadioGroupItem } from './shadcn/radio-group';
+import { selectTriggerVariants } from './shadcn/select';
 
 /** How many project pills show before the tail folds behind "+N more" — a long workspace list would
  *  otherwise flood the page's single header filter row (and push its other controls out of a narrow
@@ -42,7 +44,9 @@ export function ProjectFilterPills({ value, onChange, includeAll = true, variant
           <button
             type="button"
             aria-label={t.common.filterProjectsAria}
-            className="group inline-flex h-9 max-w-full items-center gap-2 rounded-md border border-input bg-card px-3 text-sm font-medium text-foreground transition-[border-color,background-color,box-shadow] hover:border-border-strong hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_rgb(var(--primary-rgb)/0.08)]"
+            // The shared picker-trigger surface — see `selectTriggerVariants`. `max-w-full` on top of
+            // it because a long project slug must fold inside the toolbar rather than widen it.
+            className={cn(selectTriggerVariants(), 'inline-flex w-auto max-w-full font-medium focus-visible:ring-2 focus-visible:ring-ring')}
           >
             <FolderGit2 size={13} className="shrink-0 text-primary" aria-hidden />
             <span className="max-w-32 truncate">{selected?.slug ?? t.common.filterAllProjects}</span>

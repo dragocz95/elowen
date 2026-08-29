@@ -33,14 +33,26 @@ function SelectValue({ ...props }: React.ComponentProps<typeof SelectPrimitive.V
 }
 
 /** `line` is this app's borderless variant, used where a picker sits inside a toolbar rather than in a
- *  form. It is an extra variant on the shadcn part, not a second component. */
-const selectTriggerVariants = cva(
+ *  form. It is an extra variant on the shadcn part, not a second component.
+ *
+ *  EXPORTED because this is the app's picker-trigger SURFACE, not just the Select's. `DateRangeFilter`
+ *  opens a Popover and `ProjectFilterPills` opens a DropdownMenu, but all three sit in the same toolbar
+ *  row and have to be the same control; both had grown a hand-copied duplicate of the `default` string
+ *  below, which is how the three drifted apart one utility at a time. Composing this instead makes them
+ *  identical by construction. A caller on a different Radix root passes its own display and focus ring
+ *  through `cn`, which resolves the conflicts.
+ *
+ *  The open state's 3px halo reads `--color-ring` — the same token `focus-visible:ring-ring` reads — and
+ *  composes its alpha with `color-mix`. It used to spell `rgb(var(--primary-rgb) / 0.08)`, which worked
+ *  but tied a ring to the channel-triple token that exists for SHADOWS and glows, with nothing saying
+ *  why a control's ring resolved through the brand rather than through `ring`. */
+export const selectTriggerVariants = cva(
   'group flex h-9 w-full min-w-0 items-center gap-2 text-sm transition-[border-color,background-color,box-shadow] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
   {
     variants: {
       variant: {
         default:
-          'rounded-md border border-input bg-card px-3 text-foreground hover:border-border-strong hover:bg-accent data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_rgb(var(--primary-rgb)/0.08)]',
+          'rounded-md border border-input bg-card px-3 text-foreground hover:border-border-strong hover:bg-accent data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-ring)_8%,transparent)]',
         line: 'border-b border-input bg-transparent px-1 text-foreground hover:border-border-strong data-[state=open]:border-primary data-[state=open]:text-primary',
       },
     },

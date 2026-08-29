@@ -2,8 +2,10 @@
 import { useState } from 'react';
 import { CalendarDays, ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
+import { cn } from '../../lib/utils';
 import { Input } from './Input';
 import { Popover, PopoverContent, PopoverTrigger } from './shadcn/popover';
+import { selectTriggerVariants } from './shadcn/select';
 import type { DateRange, RangePreset } from '../../lib/dateRange';
 
 /** The default preset set (the custom from/to picker rides the `custom` entry). Callers restrict it via
@@ -38,7 +40,10 @@ export function DateRangeFilter({ value, onChange, compact = false, presets = DE
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="group inline-flex h-9 items-center gap-2 rounded-md border border-input bg-card px-3 text-sm font-medium text-foreground transition-[border-color,background-color,box-shadow] hover:border-border-strong hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_rgb(var(--primary-rgb)/0.08)]"
+          // The shared picker-trigger surface, so this control cannot drift from the Select and the
+          // project filter it sits beside. `w-auto` because a filter is sized by its label, not by its
+          // column, and `inline-flex` because it sits in a wrapping toolbar row.
+          className={cn(selectTriggerVariants(), 'inline-flex w-auto font-medium focus-visible:ring-2 focus-visible:ring-ring')}
         >
           <CalendarDays size={compact ? 13 : 14} aria-hidden className="text-muted-foreground" />
           <span className={`${compact ? 'max-w-36' : 'max-w-[14rem]'} truncate`}>{label}</span>
