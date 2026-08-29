@@ -1,6 +1,6 @@
 import { beforeEach, describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useDockState } from '../../lib/useDockState';
+import { useDockState, type DockProfile } from '../../lib/useDockState';
 
 describe('useDockState', () => {
   beforeEach(() => localStorage.clear());
@@ -10,9 +10,24 @@ describe('useDockState', () => {
     expect(result.current.state).toEqual({ open: false, side: 'right', width: 560, height: 420 });
   });
 
-  it('defaults Studio to the narrow persistent right chat rail', () => {
-    const { result } = renderHook(() => useDockState('command'));
-    expect(result.current.state).toEqual({ open: true, side: 'right', width: 344, height: 420 });
+  it('keeps Studio closed until the user opens it and persists that choice', () => {
+    const first = renderHook(() => useDockState('command'));
+    expect(first.result.current.state).toEqual({ open: false, side: 'right', width: 336, height: 420 });
+
+    act(() => first.result.current.setOpen(true));
+    first.unmount();
+
+    const second = renderHook(() => useDockState('command'));
+    expect(second.result.current.state.open).toBe(true);
+  });
+
+  it('does not carry an open dock into Studio while its own state loads', () => {
+    const hook = renderHook(({ profile }: { profile: DockProfile }) => useDockState(profile), {
+      initialProps: { profile: 'spatial' },
+    });
+    act(() => hook.result.current.setOpen(true));
+    hook.rerender({ profile: 'command' });
+    expect(hook.result.current.state.open).toBe(false);
   });
 
   it('updates visibility and dimensions', () => {

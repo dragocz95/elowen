@@ -8,8 +8,8 @@ export interface DockState { open: boolean; side: DockSide; width: number; heigh
 const KEYS: Record<DockProfile, string> = { spatial: 'advisor:dock', command: 'advisor:dock:command' };
 const DEFAULTS: Record<DockProfile, DockState> = {
   spatial: { open: false, side: 'right', width: 560, height: 420 },
-  // Studio mirrors the reference workspace: the existing advisor chat is a narrow persistent right rail.
-  command: { open: true, side: 'right', width: 344, height: 420 },
+  // Studio keeps the reference-sized chat rail available, but it opens only after the user asks for it.
+  command: { open: false, side: 'right', width: 336, height: 420 },
 };
 const SIDES: readonly DockSide[] = ['left', 'right', 'top', 'bottom'];
 const clampWidth = (w: number, min: number) => Math.max(min, Math.min(w, (typeof window !== 'undefined' ? window.innerWidth : 1920) * 0.96));
@@ -33,13 +33,15 @@ export function useDockState(profile: DockProfile = 'spatial') {
   const key = KEYS[profile];
   const fallback = DEFAULTS[profile];
   const minWidth = profile === 'command' ? 320 : 360;
-  const [state, setState] = useState<DockState>(fallback);
-  useEffect(() => { setState(read(key, fallback, minWidth)); }, [key, fallback, minWidth]);
-  const update = useCallback((fn: (s: DockState) => DockState) => setState((current) => {
-    const next = fn(current);
+  const [stored, setStored] = useState<{ profile: DockProfile; state: DockState }>({ profile, state: fallback });
+  const state = stored.profile === profile ? stored.state : fallback;
+  useEffect(() => { setStored({ profile, state: read(key, fallback, minWidth) }); }, [profile, key, fallback, minWidth]);
+  const update = useCallback((fn: (s: DockState) => DockState) => setStored((current) => {
+    const currentState = current.profile === profile ? current.state : read(key, fallback, minWidth);
+    const next = fn(currentState);
     write(key, next);
-    return next;
-  }), [key]);
+    return { profile, state: next };
+  }), [profile, key, fallback, minWidth]);
   return {
     state,
     setOpen: useCallback((open: boolean) => update((current) => ({ ...current, open })), [update]),
