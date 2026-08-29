@@ -49,7 +49,10 @@ describe('WorkspaceShell', () => {
     expect(shell).toHaveAttribute('data-variant', 'register');
     expect(screen.getByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument();
     expect(screen.getByTestId('workspace-hero-mascot')).toBeInTheDocument();
-    expect(screen.getByTestId('spatial-section-rail')).toBeInTheDocument();
+    // The section navigation the command profile mounts. The horizontal rail is the ambient design's and
+    // no design this build ships selects it, so asserting the rail here would assert an unreachable page.
+    expect(screen.getByRole('radiogroup', { name: 'Sections' })).toBeInTheDocument();
+    expect(screen.queryByTestId('spatial-section-rail')).toBeNull();
     expect(screen.getByTestId('spatial-workspace-layout')).toContainElement(screen.getByText('Register'));
   });
 
@@ -62,7 +65,7 @@ describe('WorkspaceShell', () => {
 
     expect(container.querySelector('.workspace-hero__body')).toBeNull();
     expect(screen.queryByTestId('workspace-hero-mascot')).toBeNull();
-    expect(screen.queryByTestId('spatial-section-rail')).toBeNull();
+    expect(screen.queryByRole('radiogroup'), 'a variant with no navigation must mount none').toBeNull();
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('Surface'));
   });
 

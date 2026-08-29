@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   BUILTIN_SKIN,
+  DEFAULT_SKIN,
   SKINS,
   SKIN_CHOICES,
   SKIN_DEFINITIONS,
@@ -12,7 +13,10 @@ import {
   currentSkinChoice,
   nextSkinChoice,
   resolveSkin,
+  shellProfileFor,
   skinDisplayName,
+  type SkinChoice,
+  type SkinName,
 } from '../../lib/skins';
 import { activeSkin } from '../../lib/skinEnv';
 import { dictionaries } from '../../lib/i18n/dictionaries';
@@ -163,7 +167,9 @@ describe('skin registry contract', () => {
 
   it('globals.css imports the skin registry and the layout wires the attribute', () => {
     expect(readFileSync(join(root, 'app', 'globals.css'), 'utf-8')).toContain('@import "../skins/index.css";');
-    expect(readFileSync(join(root, 'app', 'layout.tsx'), 'utf-8')).toContain("'data-skin': skin");
+    // Unconditionally, not behind a truthiness check: the resolution has no "no skin" value left, and a
+    // conditional here is how one would creep back in.
+    expect(readFileSync(join(root, 'app', 'layout.tsx'), 'utf-8')).toContain('data-skin={skin}');
   });
 
   it('reserves the built-in name, which no compiled skin may take', () => {
@@ -267,6 +273,58 @@ describe('shared family stylesheets', () => {
   });
 });
 
+// The app ships TWO looks. It used to ship three: `studio-light`, `studio-oled`, and the design a
+// document wore when it carried no `data-skin` at all — the pre-skins Ember palette on the ambient
+// shell. Nothing selected that third one on purpose and every fallback landed on it by accident, which
+// is the worst way for a design to be reachable. These checks are what keep it gone.
+describe('the app has exactly two designs', () => {
+  it('compiles exactly the two Studio variants', () => {
+    // Pinned by value rather than by count. A deployment fork that genuinely adds a design updates this
+    // line, which is the point: adding a third look is a decision, not a side effect of adding a folder.
+    expect([...SKINS]).toEqual(['studio-light', 'studio-oled']);
+    expect(SKINS as readonly string[], 'DEFAULT_SKIN has to be one of them').toContain(DEFAULT_SKIN);
+  });
+
+  it('resolves every possible input to a compiled skin, never to nothing', () => {
+    // The whole matrix of things that used to produce null: nothing chosen, the compatibility name, a
+    // retired name, a name no build ever had, an empty allow-list, an unset ELOWEN_SKIN, and every
+    // combination of those with a deployment default.
+    const lists: (readonly SkinChoice[])[] = [[], [BUILTIN_SKIN], [...SKIN_CHOICES], ['studio-oled']];
+    const chosen = [null, undefined, '', BUILTIN_SKIN, 'midnight', 'ghost', '../etc', 'studio-light', 'studio-oled'];
+    const fallbacks: (SkinName | null)[] = [null, 'studio-light', 'studio-oled'];
+    for (const allowed of lists) {
+      for (const choice of chosen) {
+        for (const fallback of fallbacks) {
+          const resolved = resolveSkin(choice, allowed, fallback);
+          expect(SKINS as readonly string[], `resolveSkin(${JSON.stringify(choice)}, [${allowed}], ${fallback}) escaped the two designs`)
+            .toContain(resolved);
+        }
+      }
+    }
+  });
+
+  it('mounts one shell presentation, whatever the document is wearing', () => {
+    // `spatial` is still a declarable profile — a fork adding an ambient design names it in its own
+    // SKIN_DEFINITIONS entry — but no input to THIS build can reach it, because everything that is not a
+    // compiled skin reads DEFAULT_SKIN's profile and every compiled skin is Studio. A third look cannot
+    // come back through the shell seam while the palette stays put.
+    const expected = SKIN_DEFINITIONS[DEFAULT_SKIN].shellProfile;
+    expect(expected).toBe('command');
+    for (const skin of SKINS) expect(shellProfileFor(skin), `${skin} mounts another shell`).toBe(expected);
+    for (const absent of [null, undefined, BUILTIN_SKIN] as const) {
+      expect(shellProfileFor(absent), `${absent} mounts another shell`).toBe(expected);
+    }
+  });
+
+  it('names one family, so a shared stylesheet reaches every design there is', () => {
+    // Two variants of one design rather than two designs is what makes "exactly two looks" honest: the
+    // structure lives in skins/studio/*.css and is scoped to both ids, so neither variant can drift into
+    // a third shape without leaving the family behind.
+    const families = new Set(Object.values(SKIN_DEFINITIONS).map((definition) => definition.family));
+    expect([...families]).toEqual(['studio']);
+  });
+});
+
 describe('skin choice resolution', () => {
   const allowed = allowedSkinChoices([BUILTIN_SKIN, 'studio-oled']);
 
@@ -281,18 +339,23 @@ describe('skin choice resolution', () => {
     expect(allowedSkinChoices(null)).toEqual([]);
   });
 
-  it('honours an allowed choice, and maps the built-in one to no attribute at all', () => {
+  it('honours an allowed choice, and maps the compatibility one to DEFAULT_SKIN', () => {
     expect(resolveSkin('studio-oled', allowed, null)).toBe('studio-oled');
-    expect(resolveSkin(BUILTIN_SKIN, allowed, 'studio-oled')).toBeNull();
+    // `default` used to mean "the plain design", i.e. no attribute. It is now a stored VALUE that means
+    // "no design of my own", and it still outranks the operator's ELOWEN_SKIN the way it always has —
+    // an explicit choice beats a deployment default — so it resolves to DEFAULT_SKIN and not to the
+    // fallback passed here.
+    expect(resolveSkin(BUILTIN_SKIN, allowed, 'studio-oled')).toBe(DEFAULT_SKIN);
   });
 
   it('drops a choice the admin has revoked, back to the deployment default', () => {
     // This is what makes the allow-list a control rather than a suggestion: nobody has to reach into a
     // stored value for a revocation to take effect on the next document.
     expect(resolveSkin('studio-oled', allowedSkinChoices([BUILTIN_SKIN]), 'studio-oled')).toBe('studio-oled');
-    expect(resolveSkin('studio-oled', [], null)).toBeNull();
     expect(resolveSkin('ghost', allowed, 'studio-oled')).toBe('studio-oled');
     expect(resolveSkin(null, allowed, 'studio-oled')).toBe('studio-oled');
+    // Nothing left to fall to: DEFAULT_SKIN is the floor, never null.
+    expect(resolveSkin('studio-oled', [], null)).toBe(DEFAULT_SKIN);
   });
 
   it('starts the cycle from what is actually on screen', () => {

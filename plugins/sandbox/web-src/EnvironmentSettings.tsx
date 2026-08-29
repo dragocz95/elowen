@@ -63,7 +63,11 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
     <>
       <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
-          <ModeIcon size={20} className={state.mode === 'unavailable' ? 'text-destructive' : 'text-accent'} aria-hidden />
+          {/* `text-primary`, not `text-accent`: in this design `accent` is the INTERACTIVE SURFACE — a
+              10% wash of the foreground — so as an ink it renders the glyph nearly invisible. The icon
+              identifies the sandbox mode rather than reporting its health (the badge beside it carries
+              success/danger), so the brand colour is what it wants. */}
+          <ModeIcon size={20} className={state.mode === 'unavailable' ? 'text-destructive' : 'text-primary'} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-foreground">{modeLabel}</div>

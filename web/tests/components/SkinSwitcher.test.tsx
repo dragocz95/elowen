@@ -6,7 +6,7 @@ import { onUnhandledRequest } from '../msw';
 import { SkinSwitcher } from '../../components/ui/SkinSwitcher';
 import { SkinProvider, useSkin } from '../../lib/skinContext';
 import { QUERY_KEYS } from '../../lib/queries';
-import { BUILTIN_SKIN, type SkinChoice } from '../../lib/skins';
+import { BUILTIN_SKIN, DEFAULT_SKIN, type SkinChoice } from '../../lib/skins';
 import { createWrapper } from '../test-utils';
 
 // The instance config is what the provider reads to learn which skins are allowed. Empty by default, so
@@ -50,15 +50,16 @@ describe('SkinSwitcher', () => {
     // Every skin's CSS is already in the page, scoped under its own [data-skin]. Switching is this
     // attribute and nothing else — no fetch, no reload — so asserting on it IS asserting on the feature.
     mount([BUILTIN_SKIN, 'studio-oled'], BUILTIN_SKIN);
-    expect(document.documentElement.hasAttribute('data-skin')).toBe(false);
+    // The compatibility choice is not a design of its own: it resolves to DEFAULT_SKIN, and the document
+    // wears that. What it must never do is leave `data-skin="default"` behind, matching no stylesheet,
+    // or drop the attribute entirely and leave the page on no design at all.
+    expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN);
 
     fireEvent.click(screen.getByRole('button'));
     expect(document.documentElement.getAttribute('data-skin')).toBe('studio-oled');
 
-    // ...and wraps back to the built-in design, which is the ABSENCE of the attribute rather than a
-    // value. Getting this wrong would leave `data-skin="default"` behind, matching no stylesheet.
     fireEvent.click(screen.getByRole('button'));
-    expect(document.documentElement.hasAttribute('data-skin')).toBe(false);
+    expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN);
   });
 
   it('appears after signing in, without waiting for a full page reload', () => {
@@ -92,18 +93,19 @@ describe('SkinSwitcher', () => {
 });
 
 /** The provider's own contract, independent of the switcher: whatever the document ends up wearing, the
- *  attribute and the context's resolved skin say the same thing. Null is a value in that resolution — the
- *  built-in design — and reaching it while the page is open is ordinary, not an error. */
+ *  attribute and the context's resolved skin say the same thing — and there is always something to wear,
+ *  because every route through the resolution ends at a compiled skin. */
 describe('SkinProvider', () => {
   function Readout() {
     const { skin, choice } = useSkin();
-    return <span data-testid="readout">{`${skin ?? 'builtin'}/${choice ?? 'none'}`}</span>;
+    return <span data-testid="readout">{`${skin}/${choice ?? 'none'}`}</span>;
   }
 
-  it('removes the attribute when the live allow-list drops the skin the reader is wearing', async () => {
+  it('falls back to the default skin when the live allow-list drops the one the reader is wearing', async () => {
     // The mechanism from the blocker: an admin revokes the skin and the config QUERY pushes the narrowed
-    // list into a mounted provider. Nothing reloads, so if the document write is skipped for the built-in
-    // design the page keeps wearing a stylesheet nothing else believes in any more.
+    // list into a mounted provider. Nothing reloads, so if the document write were skipped the page would
+    // keep wearing a stylesheet nothing else believes in any more — and if it removed the attribute the
+    // page would land on no design at all, which is the third look this app is not allowed to have.
     const { wrapper: Wrapper, client } = createWrapper();
     server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [BUILTIN_SKIN, 'studio-oled'] })));
     localStorage.setItem('elowen-skin', 'studio-oled');
@@ -119,7 +121,7 @@ describe('SkinProvider', () => {
 
     client.setQueryData(QUERY_KEYS.config, { allowedSkins: [] });
 
-    await waitFor(() => expect(document.documentElement.hasAttribute('data-skin')).toBe(false));
-    expect(screen.getByTestId('readout').textContent).toBe('builtin/none');
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN));
+    expect(screen.getByTestId('readout').textContent).toBe(`${DEFAULT_SKIN}/none`);
   });
 });

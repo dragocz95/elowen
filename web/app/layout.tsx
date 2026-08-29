@@ -65,14 +65,6 @@ export async function generateMetadata() {
  *  switcher, so the two can never drift apart. */
 type DocumentPaint = { background: string; colorScheme: 'dark' | 'light' };
 
-/** The built-in Ember design — the ABSENCE of a skin — and the fallback for anything unrecognised.
- *
- *  It is what a document falls back to when the stored choice names a skin this build no longer compiles:
- *  `resolveSkin` refuses the unknown name, the attribute is never written, and the first frame is this
- *  black rather than an unpainted white one. That is the whole handling a retired skin needs, and it is
- *  why `documentPaint` takes the RESOLVED skin instead of the raw preference. */
-const DEFAULT_PAINT: DocumentPaint = { background: '#000000', colorScheme: 'dark' };
-
 /** Per-skin first frame. These are the only colour literals the app is allowed to hold outside a token,
  *  and they exist because the first frame happens before `--color-background` is defined: nothing can be read
  *  from the cascade yet, so the value has to be duplicated here and kept in step with the skin by hand.
@@ -80,20 +72,25 @@ const DEFAULT_PAINT: DocumentPaint = { background: '#000000', colorScheme: 'dark
  *  is a type error rather than a black flash, and `tests/app/layoutDynamic.test.ts` compares each entry
  *  against the `--color-background` its stylesheet declares. The natural home for this is the skin registry in
  *  `lib/skins.ts`; it stays here while that module is imported by CLIENT components, which have no use
- *  for a server-only first-frame value. */
+ *  for a server-only first-frame value.
+ *
+ *  There is no entry for "no skin" any more, and no `DEFAULT_PAINT` beside this map. `resolveSkin` always
+ *  returns a compiled skin — a stored name this build no longer carries, a revoked choice and an unset
+ *  ELOWEN_SKIN all land on DEFAULT_SKIN — so every document has a design, and the black Ember first frame
+ *  that used to stand in for its absence would have been a third look nobody could select. */
 const SKIN_PAINT: Record<SkinName, DocumentPaint> = {
   'studio-light': { background: '#ffffff', colorScheme: 'light' },
   'studio-oled': { background: '#03080a', colorScheme: 'dark' },
 };
 
-const documentPaint = (skin: SkinName | null): DocumentPaint => (skin ? SKIN_PAINT[skin] : DEFAULT_PAINT);
+const documentPaint = (skin: SkinName): DocumentPaint => SKIN_PAINT[skin];
 
 type SkinResolution = {
   choice: SkinChoice | null;
   allowed: SkinChoice[];
   fallback: SkinName | null;
-  /** What `data-skin` must be: a compiled skin, or null for the built-in design. */
-  skin: SkinName | null;
+  /** What `data-skin` must be. Always a compiled skin — see DEFAULT_SKIN in lib/skins.ts. */
+  skin: SkinName;
 };
 
 /** The one resolution of "which design is this document wearing", shared by the viewport and the markup
@@ -141,11 +138,11 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // key. Null — logged out, 401/403, daemon down — renders exactly as before and the client queries
   // fill it in.
   const locale = await readLocale();
-  // Every skin ships in every build, scoped under `:root[data-skin='…']`; without the attribute none of
-  // their rules match, so a skinless instance renders byte-identical markup to a build from before skins
-  // existed. WHICH one applies is resolved on the server, from the account's cookie against the instance
-  // allow-list, with the operator's ELOWEN_SKIN as the floor — so the document arrives already wearing
-  // the right design instead of visibly changing colour once hydration reads localStorage.
+  // Every skin ships in every build, scoped under `:root[data-skin='…']`, and the document ALWAYS carries
+  // the attribute: the app has two designs and no third, unattributed one. WHICH of the two applies is
+  // resolved on the server, from the account's cookie against the instance allow-list, with the operator's
+  // ELOWEN_SKIN above DEFAULT_SKIN as the floor — so the document arrives already wearing the right design
+  // instead of visibly changing colour once hydration reads localStorage.
   const [pluginUi, me, sessionPresent, skinState] = await Promise.all([
     fetchPluginUiListing(locale), fetchMe(), hasSessionCookie(), resolveDocumentSkin(),
   ]);
@@ -158,7 +155,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       lang={locale}
       className={`${GeistSans.variable} ${GeistMono.variable}`}
       data-theme="dark"
-      {...(skin ? { 'data-skin': skin } : {})}
+      data-skin={skin}
       data-effects-mode="auto"
       data-effects="full"
       style={{ backgroundColor: paint.background }}
