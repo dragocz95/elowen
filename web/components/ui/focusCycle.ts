@@ -1,6 +1,7 @@
 'use client';
 
 import { type RefObject, useEffect, useRef } from 'react';
+import { hasActiveOverlay } from './overlayStack';
 
 /** What the browser would offer Tab inside a dialog. `[tabindex="-1"]` is excluded deliberately: it is
  *  how a container makes itself focusable programmatically without joining the tab order. */
@@ -81,6 +82,10 @@ export function useNavDrawerFocus({ enabled, open, containerRef, onClose }: {
         ?? container.querySelector<HTMLElement>('a[href], button');
       requested?.focus();
       const onKeyDown = (event: KeyboardEvent) => {
+        // A portalled overlay sits above the drawer and owns Escape and Tab through Radix. Listen in the
+        // capture phase so this decision is made before its dismissal can synchronously unregister it;
+        // otherwise the same Escape bubbles on and closes both layers.
+        if (hasActiveOverlay()) return;
         if (event.key === 'Escape') {
           event.preventDefault();
           onCloseRef.current?.();
@@ -89,8 +94,8 @@ export function useNavDrawerFocus({ enabled, open, containerRef, onClose }: {
         if (event.key !== 'Tab') return;
         cycleTabFocus(event, container);
       };
-      window.addEventListener('keydown', onKeyDown);
-      return () => window.removeEventListener('keydown', onKeyDown);
+      window.addEventListener('keydown', onKeyDown, true);
+      return () => window.removeEventListener('keydown', onKeyDown, true);
     }
 
     // Only take focus back if it is still inside the sheet; the user may have clicked elsewhere.

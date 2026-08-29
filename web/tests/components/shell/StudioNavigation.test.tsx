@@ -1,10 +1,12 @@
+import { useState } from 'react';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 const currentPath = vi.hoisted(() => ({ value: '/dash' }));
 vi.mock('next/navigation', () => ({ usePathname: () => currentPath.value, useRouter: () => ({ push: vi.fn() }) }));
 import { StudioNavigation } from '../../../components/shell/StudioNavigation';
+import { Modal } from '../../../components/ui/Modal';
 import { createWrapper } from '../../test-utils';
 
 const server = setupServer(http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.26.0' })));
@@ -168,6 +170,39 @@ describe('StudioNavigation as an offcanvas sheet', () => {
     expect(onClose.mock.calls.length).toBe(before + 1);
     fireEvent.click(close);
     expect(onClose.mock.calls.length).toBe(before + 2);
+  });
+
+  it('leaves Escape and Tab to a modal raised above the drawer', async () => {
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
+    client.setQueryData(['health'], { ok: true, version: '0.26.0' });
+    client.setQueryData(['my-nav-settings'], { hidden: [], order: [] });
+    client.setQueryData(['plugin-ui', 'en'], []);
+
+    function DrawerWithModal() {
+      const [modalOpen, setModalOpen] = useState(true);
+      return <>
+        <StudioNavigation drawer drawerOpen onDrawerClose={onClose} />
+        {modalOpen ? <Modal title="Raised dialog" onClose={() => setModalOpen(false)}><button type="button">Modal action</button></Modal> : null}
+      </>;
+    }
+
+    render(<Wrapper><DrawerWithModal /></Wrapper>);
+    const dialog = await screen.findByRole('dialog', { name: 'Raised dialog' });
+    const modalAction = screen.getByRole('button', { name: 'Modal action' });
+    modalAction.focus();
+    const before = onClose.mock.calls.length;
+
+    fireEvent.keyDown(modalAction, { key: 'Tab' });
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(onClose).toHaveBeenCalledTimes(before);
+
+    fireEvent.keyDown(modalAction, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Raised dialog' })).not.toBeInTheDocument());
+    expect(onClose).toHaveBeenCalledTimes(before);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(before + 1);
   });
 
   /** The sheet's own tab order, read off the DOM rather than pinned to particular controls: the sheet

@@ -75,6 +75,11 @@ function isTopmost(id: symbol) {
   return stack.at(-1)?.id === id;
 }
 
+/** Whether a body-level overlay currently owns keyboard input above shell chrome such as a nav drawer. */
+export function hasActiveOverlay(): boolean {
+  return stack.length > 0;
+}
+
 /** Isolation is applied in the COMMIT phase, ahead of every passive effect in the same commit.
  *
  *  That ordering is load-bearing now that the dialogs sit on Radix. A Radix modal `Dialog` runs
