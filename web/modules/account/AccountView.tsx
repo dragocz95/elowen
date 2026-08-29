@@ -32,7 +32,8 @@ import { ChoiceField } from '../../components/ui/ChoiceField';
 import { WorkspaceLeadScope, WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
+import { WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
+import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { MotionReveal } from '../../components/ui/Motion';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
 import { PersonalitySection } from './PersonalitySection';
@@ -369,58 +370,76 @@ export function AccountView() {
       </AccountPanel>
 
       <AccountPanel id="profile" active={section} visited={visitedSections}>
-      
       {(() => {
         const rowElowen = elowenModels.length > 0 ? (
-          <SpatialRow title={t.account.defaultElowenAi} description={t.account.defaultElowenAiHint} icon={Brain}>
-            <BrainModelField
-              value={elowenSel}
-              onChange={applyElowen}
-              models={elowenModels}
-              title={t.account.defaultElowenAi}
-              subtitle={t.account.defaultElowenAiHint}
-              defaultLabel={t.account.defaultElowenAiNone}
-              keyOf={(m) => `${m.provider}::${m.model}`}
-              manageAriaLabel={`${t.managePicker.manage}: ${t.account.defaultElowenAi}`}
-            />
-          </SpatialRow>
+          <SpatialRow
+            title={t.account.defaultElowenAi}
+            description={t.account.defaultElowenAiHint}
+            icon={Brain}
+            control={(
+              <BrainModelField
+                value={elowenSel}
+                onChange={applyElowen}
+                models={elowenModels}
+                title={t.account.defaultElowenAi}
+                subtitle={t.account.defaultElowenAiHint}
+                defaultLabel={t.account.defaultElowenAiNone}
+                keyOf={(m) => `${m.provider}::${m.model}`}
+                manageAriaLabel={`${t.managePicker.manage}: ${t.account.defaultElowenAi}`}
+              />
+            )}
+          />
         ) : null;
+        // The row's title is drawn text, not a <label> the input is bound to, so each field carries its
+        // own accessible name — otherwise a screen reader reaches an unnamed box.
         const rowName = (
-          <SpatialRow title={t.account.name} icon={UserIcon}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} className="sm:w-72" />
-          </SpatialRow>
+          <SpatialRow
+            title={t.account.name}
+            icon={UserIcon}
+            control={<Input value={name} onChange={(e) => setName(e.target.value)} aria-label={t.account.name} />}
+          />
         );
         const rowEmail = (
-          <SpatialRow title={t.account.email} icon={Mail}>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="sm:w-72" />
-          </SpatialRow>
+          <SpatialRow
+            title={t.account.email}
+            icon={Mail}
+            control={<Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} aria-label={t.account.email} />}
+          />
         );
         // Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. The
         // slider is the only input: nothing scales the app underneath it, so what it reads is what the
         // app renders at.
         const rowUiScale = (
-          <SpatialRow title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
-            <div className="flex min-w-0 flex-wrap items-center justify-center gap-3">
-              <Slider value={prefPct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setPreference(v / 100)} aria-label={t.account.uiScale} />
-              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-foreground">{prefPct}%</span>
+          <SpatialRow
+            title={t.account.uiScale}
+            icon={ZoomIn}
+            description={t.help.accountUiScale}
+            status={<span className="font-mono tabular-nums text-foreground">{prefPct}%</span>}
+            control={<Slider value={prefPct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setPreference(v / 100)} aria-label={t.account.uiScale} />}
+            actions={(
               <button type="button" className="spatial-inline-action" onClick={() => setPreference(DEFAULT_SCALE)} disabled={prefPct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</button>
-            </div>
-          </SpatialRow>
+            )}
+          />
         );
         const rowEffects = (
-          <SpatialRow title={t.account.effectsTitle} icon={Sparkles} description={t.account.effectsHint}>
-            <ChoiceField
-              title={t.account.effectsTitle}
-              value={effects.mode}
-              onChange={(value) => effects.setMode(value as EffectsMode)}
-              options={[
-                { value: 'auto', label: t.account.effectsAuto },
-                { value: 'full', label: t.account.effectsFull },
-                { value: 'reduced', label: t.account.effectsReduced },
-                { value: 'off', label: t.account.effectsOff },
-              ]}
-            />
-          </SpatialRow>
+          <SpatialRow
+            title={t.account.effectsTitle}
+            icon={Sparkles}
+            description={t.account.effectsHint}
+            control={(
+              <ChoiceField
+                title={t.account.effectsTitle}
+                value={effects.mode}
+                onChange={(value) => effects.setMode(value as EffectsMode)}
+                options={[
+                  { value: 'auto', label: t.account.effectsAuto },
+                  { value: 'full', label: t.account.effectsFull },
+                  { value: 'reduced', label: t.account.effectsReduced },
+                  { value: 'off', label: t.account.effectsOff },
+                ]}
+              />
+            )}
+          />
         );
         // Only platforms this instance can actually receive a message from are offered. The daemon
         // decides (it knows which adapters registered), so a channel plugin that is absent, disabled or
@@ -445,8 +464,8 @@ export function AccountView() {
                   onSaveState={(_id, status, retry) => reportSaveState('profile', status, retry)}
                 />
               ),
-              /* The same mount asked for its one-line claim, so a linked connector appears in the closed
-                 summary like a chat platform does. It renders nothing unless the plugin says it is
+              /* The same mount asked for its one-line claim, so a linked connector appears in the row's
+                 status beside the chat platforms' marks. It renders nothing unless the plugin says it is
                  linked — the host cannot know that, and must not guess a chip that outlives a
                  disconnect. */
               chip: (
@@ -486,93 +505,109 @@ export function AccountView() {
           </div>
         );
       })()}
-      
       </AccountPanel>
 
       <AccountPanel id="security" active={section} visited={visitedSections}>
-      
       {(() => {
-        // Password change — verified server-side against the current password.
+        // Password change — verified server-side against the current password. The submit is the
+        // drawer's pinned footer rather than a button floating at the end of the fields, which is also
+        // what keeps it reachable once the three inputs stack on a phone.
         const passwordForm = (
           <form
-            className="flex flex-col gap-3 py-4"
+            className="flex min-h-0 flex-1 flex-col"
             onSubmit={(e) => { e.preventDefault(); submitPassword(); }}
           >
-            {/* Username hint helps password managers associate the credential. */}
-            <input type="text" name="username" autoComplete="username" value={u.username} readOnly hidden />
-            <div className="@container">
-            <div className="grid grid-cols-1 gap-3 @sm:grid-cols-3">
-              <Input
-                type="password"
-                autoComplete="current-password"
-                placeholder={t.account.currentPassword}
-                aria-label={t.account.currentPassword}
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-              />
-              <Input
-                type="password"
-                autoComplete="new-password"
-                placeholder={t.account.newPassword}
-                aria-label={t.account.newPassword}
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-              />
-              <Input
-                type="password"
-                autoComplete="new-password"
-                placeholder={t.account.confirmPassword}
-                aria-label={t.account.confirmPassword}
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-              />
-            </div>
-            </div>
-            <div className="flex justify-end">
+            <ModalBody gap={4}>
+              {/* Username hint helps password managers associate the credential. */}
+              <input type="text" name="username" autoComplete="username" value={u.username} readOnly hidden />
+              <div className="@container">
+                <div className="grid grid-cols-1 gap-3 @sm:grid-cols-3">
+                  <Input
+                    type="password"
+                    autoComplete="current-password"
+                    placeholder={t.account.currentPassword}
+                    aria-label={t.account.currentPassword}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                  />
+                  <Input
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder={t.account.newPassword}
+                    aria-label={t.account.newPassword}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
+                  <Input
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder={t.account.confirmPassword}
+                    aria-label={t.account.confirmPassword}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+            </ModalBody>
+            <ModalFooter>
               <Button type="submit" variant="accent" icon={KeyRound} disabled={!canSubmitPassword || changePassword.isPending}>
                 {t.account.changePassword}
               </Button>
-            </div>
+            </ModalFooter>
           </form>
         );
-        // The row shows a masked hint; the form itself opens in a side drawer.
+        // The masked hint is the record's value and the change is its one control; the form itself opens
+        // in a side drawer whose header already names it.
         return (
           <>
             <SpatialGroup>
-              <SpatialRow title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
-                <span className="font-mono text-sm tracking-widest text-muted-foreground" aria-hidden>••••••••</span>
-                <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setPasswordOpen(true)}>
-                  <KeyRound size={14} aria-hidden />{t.account.changePassword}
-                </button>
-              </SpatialRow>
+              <SpatialRow
+                title={t.account.password}
+                icon={KeyRound}
+                description={t.account.passwordHint}
+                status={<span className="font-mono tracking-widest" aria-hidden>••••••••</span>}
+                control={(
+                  <button type="button" className="spatial-inline-action" onClick={() => setPasswordOpen(true)}>
+                    <KeyRound size={14} aria-hidden />{t.account.changePassword}
+                  </button>
+                )}
+              />
             </SpatialGroup>
             {passwordOpen ? (
-              <WorkspaceDetailRail label={t.account.password} closeLabel={t.common.close} onClose={() => setPasswordOpen(false)}>
-                <p className="mb-2 text-xs leading-relaxed text-muted-foreground">{t.account.passwordHint}</p>
+              /* The detail rail's own geometry, spelled out rather than borrowed: that component wraps
+                 its children in a ModalBody, and a form that needs a pinned footer cannot live inside
+                 one without nesting a second scroll region in it. */
+              <Modal
+                title={t.account.password}
+                description={t.account.passwordHint}
+                icon={KeyRound}
+                closeLabel={t.common.close}
+                onClose={() => setPasswordOpen(false)}
+                intent="inspect"
+                size="md"
+                drawerWidth="default"
+              >
                 {passwordForm}
-              </WorkspaceDetailRail>
+              </Modal>
             ) : null}
           </>
         );
       })()}
-      
       </AccountPanel>
 
       <AccountPanel id="notifications" active={section} visited={visitedSections}>
-        {/* Phone push — a per-device opt-in. Subscribes this browser/device for off-device alerts.
-           Rendered as an inline toggle row (like the other account settings) instead of a detached
-           right-aligned button, so the control reads as a setting, not a submit form. */}
+        {/* Phone push — a per-device opt-in. Subscribes this browser/device for off-device alerts. One
+           record with one switch: the switch is named for the device it speaks for, which is what the
+           row's own label already says, so it carries no second caption. */}
         {pushSupported ? (
-          
           <SpatialGroup>
-          <SpatialRow title={t.push.title} icon={Bell} description={t.help.pushEnable}>
-            <label className="flex items-center gap-3 text-sm text-foreground">
-              <Toggle checked={pushOn} onChange={togglePush} disabled={pushBusy} label={t.push.deviceToggle} />
-              <span>{t.push.deviceToggle}</span>
-            </label>
-          </SpatialRow>
+            <SpatialRow
+              title={t.push.title}
+              icon={Bell}
+              description={t.help.pushEnable}
+              control={<Toggle checked={pushOn} onChange={togglePush} disabled={pushBusy} label={t.push.deviceToggle} />}
+            />
           </SpatialGroup>
-          
         ) : <p className="text-sm text-muted-foreground">{t.push.unsupported}</p>}
       </AccountPanel>
       </WorkspaceShell>

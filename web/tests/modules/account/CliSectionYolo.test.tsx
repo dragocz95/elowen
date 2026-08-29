@@ -35,11 +35,14 @@ describe('CliSection — YOLO default toggle', () => {
   it('keeps the YOLO warning behind the row help affordance, seeded off', () => {
     renderSection();
     expect(screen.queryByText(en.cli.yoloWarning)).toBeNull();
-    const row = screen.getByText(en.cli.yoloToggle).closest('.settings-row');
+    // Anchored on the switch itself: its caption used to repeat the row's own label beside it, and a
+    // record states its label once.
+    const toggle = screen.getByRole('switch', { name: en.cli.yoloToggle });
+    const row = toggle.closest('.settings-row');
     expect(row).not.toBeNull();
+    expect(screen.queryByText(en.cli.yoloToggle)).toBeNull();
     fireEvent.click(within(row as HTMLElement).getByRole('button', { name: en.common.help }));
     expect(screen.getByRole('tooltip')).toHaveTextContent(en.cli.yoloWarning);
-    const toggle = screen.getByRole('switch', { name: en.cli.yoloToggle });
     expect(toggle.getAttribute('aria-checked')).toBe('false');
   });
 
