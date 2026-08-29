@@ -185,4 +185,26 @@ describe('ChatView (/chat page)', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 1600 });
     scrollTo.mockRestore();
   });
+
+  it('keeps the chat fill height stable when a phone resizes while scrolled', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(
+      <Wrapper><ToastProvider><BrainChatProvider><main><ChatView /></main></BrainChatProvider></ToastProvider></Wrapper>,
+    );
+    await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
+
+    const transcript = screen.getByTestId('chat-transcript');
+    const host = transcript.parentElement!.parentElement!.parentElement!;
+    const main = container.querySelector('main')!;
+    const innerHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
+    Object.defineProperty(main, 'scrollTop', { configurable: true, value: 900, writable: true });
+    vi.spyOn(main, 'getBoundingClientRect').mockReturnValue({ top: 0 } as DOMRect);
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ top: -800 } as DOMRect);
+
+    fireEvent(window, new Event('resize'));
+
+    await waitFor(() => expect(host.style.minHeight).toBe('744px'));
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
+  });
 });
