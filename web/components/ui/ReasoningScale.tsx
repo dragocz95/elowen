@@ -26,7 +26,11 @@ export function ReasoningScale({ options, value, onChange, ariaLabel }: {
               className={`group flex min-w-0 flex-col items-center gap-2 text-[9px] transition-colors sm:text-[10px] ${active ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
             >
               <span className="w-full whitespace-nowrap text-center text-[8px] sm:text-[9px]" title={option.label}>{option.label}</span>
-              <span className={`block rounded-full transition-[width,height,background-color,box-shadow] ${active ? 'h-3.5 w-3.5 bg-primary shadow-[0_0_18px_rgb(255_82_54_/_0.8)]' : 'h-2.5 w-2.5 bg-text-subtle group-hover:bg-text-muted'}`} aria-hidden />
+              {/* The active stop's glow composes an alpha of --primary-rgb, which is the token's stated
+                  job. Spelled out as `rgb(255 82 54 / 0.8)` it was the built-in ember frozen into the
+                  component: the dot's FILL followed the skin and its halo did not, so the active stop
+                  glowed orange around a cyan dot on midnight and around a blue one on studio-light. */}
+              <span className={`block rounded-full transition-[width,height,background-color,box-shadow] ${active ? 'h-3.5 w-3.5 bg-primary shadow-[0_0_18px_rgb(var(--primary-rgb)/0.8)]' : 'h-2.5 w-2.5 bg-text-subtle group-hover:bg-text-muted'}`} aria-hidden />
             </button>
           );
         })}

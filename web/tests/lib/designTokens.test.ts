@@ -339,7 +339,6 @@ describe('the host component tree paints from tokens, not from literals', () => 
     { path: 'components/terminal/palettes.ts', reason: 'The terminal colour schemes fed to that same xterm colour object.' },
     { path: 'components/auth/LoginForm.tsx', reason: "The Microsoft logo's four brand quadrants, which a skin must not recolour." },
     { path: 'modules/settings/providers.tsx', reason: 'Third-party provider brand identity colours.' },
-    { path: 'components/ui/Avatar.tsx', reason: 'The monogram sits on a fixed eight-colour identity palette that deliberately ignores the skin, so its ink has to be equally fixed.' },
     { path: 'modules/memory/memoryMeta.ts', reason: 'The category swatch is a fixed ten-colour identity ramp, the same kind of palette as Avatar: it identifies a category rather than styling it, so the skin must not move it.' },
     { path: 'app/layout.tsx', reason: 'The anti-FOUC paint: the per-skin root background, color-scheme and themeColor land before any stylesheet, so no token exists yet. It is the only copy — base.css no longer holds one.' },
   ];
