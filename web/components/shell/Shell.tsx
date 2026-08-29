@@ -213,6 +213,10 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const navigation = profile === 'command'
     ? <StudioNavigation {...navProps} />
     : <OrbitalNav {...navProps} />;
+  // The ruled Studio bar is never withheld on /chat, at any width: the conversation's own toolbar
+  // portals into its page slot, so on a phone the bar is what carries those controls beside the
+  // hamburger. The frameless masthead has no slot to receive them, so its /chat keeps the phone
+  // suppression and the chat's local bar stands alone there.
   const topBar = (
     <TopBar
       onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
@@ -221,7 +225,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
       navSide={dockLeft ? 'right' : 'left'}
       showLocation={profile === 'command'}
       variant={profile === 'command' ? 'bar' : 'floating'}
-      hideOnPhone={onChat}
+      hideOnPhone={onChat && profile !== 'command'}
     />
   );
   const content = (

@@ -32,8 +32,10 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
   navSide?: 'left' | 'right';
   showLocation?: boolean;
   variant?: PageBarVariant;
-  /** Withhold the whole bar below 768px. /chat carries its own conversation bar there, and stacking the
-   *  global one above it crowds the screen.
+  /** Withhold the whole bar below 768px. The frameless design passes it on /chat, which carries its own
+   *  conversation bar there, and stacking the global one above it crowds the screen. The ruled Studio bar
+   *  never does: /chat's toolbar portals into its page slot at phone width too, so the bar is the one
+   *  carrying those controls.
    *
    *  It is a property of THIS component and not a wrapper the shell puts around it, because the `bar`
    *  variant is `position: sticky` and a sticky box is clamped to its containing block. A wrapper whose

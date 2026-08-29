@@ -1114,10 +1114,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           <ChatHistoryRail variant="dropdown" open={pickerOpen} onClose={() => setPickerOpen(false)} />
         </div>
       ) : (
-        <PageTopBarPortal localOnPhone>
+        <PageTopBarPortal>
         <div className="chat-gutter chat-page-toolbar sticky top-0 z-10 flex min-w-0 shrink-0 items-center gap-1.5 bg-bg py-2">
-          {/* On phones this remains the local sticky chat bar. Desktop portals the same controls into the
-              shell's top rule, where the page toolbar belongs. */}
+          {/* These controls ride in the shell's top rule at every width that publishes one — a phone
+              included. Only the frameless design, which has no page slot, keeps this as its own local
+              sticky bar. */}
           <div aria-hidden className="chat-page-toolbar__fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-bg to-transparent" />
           {onOpenHistory ? (
             <button

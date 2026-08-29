@@ -210,13 +210,13 @@ test('Studio OLED keeps the chat full-width, left-aligned and in its own top bar
   expect(Math.abs(geometry.right)).toBeLessThanOrEqual(1);
   expect(geometry.composerLeft).toBeCloseTo(geometry.composerRight, 0);
   expect(geometry.userLeft).toBeCloseTo(geometry.assistantLeft, 0);
-  expect(geometry.userBackground).toBe('rgb(23, 62, 118)');
+  expect(geometry.userBackground).toBe('rgb(28, 32, 34)');
   expect(geometry.userRadius).toBe('22px');
   expect(geometry.userMaxWidth).toBe('70%');
   expect(geometry.assistantFontSize).toBe('16px');
   expect(geometry.assistantLineHeight).toBe('26px');
   expect(geometry.assistantFontFamily).toContain('BlinkMacSystemFont');
-  expect(geometry.composerBackground).toBe('rgb(33, 33, 33)');
+  expect(geometry.composerBackground).toBe('rgb(8, 13, 15)');
   expect(geometry.composerRadius).toBe('28px');
 
   await app.setViewportSize({ width: 900, height: 800 });
@@ -228,6 +228,27 @@ test('Studio OLED keeps the chat full-width, left-aligned and in its own top bar
     return { toolbarRight: toolbar.right, actionsLeft: actions.left };
   });
   expect(narrowBar.toolbarRight).toBeLessThanOrEqual(narrowBar.actionsLeft + 1);
+
+  await app.setViewportSize({ width: 390, height: 844 });
+  // A phone keeps the ruled bar, and the conversation's own controls ride IN it beside the hamburger.
+  // The regression this pins: the bar wasted on a hamburger while the toolbar sat in a second, local row
+  // below it — out of the sticky bar and under the hero.
+  await expect(app.locator('.top-bar__menu')).toBeVisible();
+  await expect(app.locator('[data-testid="page-top-bar-host"] .chat-page-toolbar')).toBeVisible();
+  await expect(app.locator('.chat-page-toolbar')).toHaveCount(1);
+  await expect(app.locator('.chat-page-toolbar__wide-controls')).toHaveCount(0);
+  const phoneBar = await app.evaluate(() => {
+    const bar = document.querySelector<HTMLElement>('.top-bar--bar')!.getBoundingClientRect();
+    const menu = document.querySelector<HTMLElement>('.top-bar__menu')!.getBoundingClientRect();
+    const toolbar = document.querySelector<HTMLElement>('.chat-page-toolbar')!.getBoundingClientRect();
+    return { barTop: bar.top, barBottom: bar.bottom, menuRight: menu.right, toolbarTop: toolbar.top, toolbarBottom: toolbar.bottom, toolbarLeft: toolbar.left };
+  });
+  expect(phoneBar.toolbarTop).toBeGreaterThanOrEqual(phoneBar.barTop - 1);
+  expect(phoneBar.toolbarBottom).toBeLessThanOrEqual(phoneBar.barBottom + 1);
+  expect(phoneBar.toolbarLeft).toBeGreaterThanOrEqual(phoneBar.menuRight - 1);
+  // The pickers a phone folds behind ⋯ still open from the bar.
+  await app.getByRole('button', { name: 'More options' }).click();
+  await expect(app.locator('[data-chat-popover] [data-testid="chat-model-picker"]')).toBeVisible();
 });
 
 test('returning from Home opens the full chat at its newest turn', async ({ app, seed }, testInfo) => {
@@ -1060,8 +1081,8 @@ test('switching skin repaints the canvas and the browser chrome with it', async 
   // No stale inline paint may survive the switch — that is the whole mechanism of the defect.
   expect(after.inline, 'the anti-FOUC fill is handed back to the stylesheet').toBe('');
   expect(after.bodyInline, 'the body fill is handed back too').toBe('');
-  // And what is painted is the new design's own token rather than a second copy of it. The token is read
-  // back as authored-then-minified (`#000`), so the comparison is on the resolved colour, not the spelling.
-  expect(after.canvas).toBe('rgb(0, 0, 0)');
-  expect(after.token.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3').toLowerCase()).toBe('#000000');
+  // And what is painted is the new design's own token rather than a second copy of it. The comparison is
+  // on the resolved colour, not the spelling — the expansion covers a minified 3-digit form if one returns.
+  expect(after.canvas).toBe('rgb(3, 8, 10)');
+  expect(after.token.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3').toLowerCase()).toBe('#03080a');
 });

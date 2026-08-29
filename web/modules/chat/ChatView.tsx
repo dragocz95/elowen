@@ -72,9 +72,10 @@ export function ChatView() {
           />
         </div>
         {mobile === false && railShown ? <TelemetryPanel variant="column" onOpenWorkflow={openDag} /> : null}
-        {/* On a phone the global TopBar is gone (see Shell), so the drawer that lists conversations is also
-            the only way back to the rest of the app — it carries a "← dashboard" link. Desktop keeps the
-            TopBar, so the link would be redundant there. */}
+        {/* On the frameless design a phone /chat has no TopBar (see Shell), so the drawer that lists
+            conversations is also the only way back to the rest of the app — it carries a "← dashboard"
+            link. Studio's ruled bar stays up on a phone with its hamburger, where the link is a spare
+            exit rather than the only one; desktop keeps the TopBar too. */}
         <ChatHistoryRail
           variant="drawer"
           open={historyOpen}

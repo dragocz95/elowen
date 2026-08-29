@@ -7,10 +7,13 @@ import { createWrapper, setViewport, watchMounts } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChatSurface } from '../../../modules/advisor/BrainChatSurface';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import { PageHeaderProvider, PageTopBarHost } from '../../../lib/pageHeader';
 
 // The conversation bar carries different controls on a phone (model picker and work-mode pill fold into
 // the ⋯ popover) than on desktop (everything inline). Which set is chosen must wait for the viewport
 // measurement. The reasoning button is the exception — it stays inline at every width.
+// Placement is not width-dependent: wherever the shell publishes a top-bar host, the whole bar rides in
+// it — a phone included, which is what keeps the controls inside the one sticky bar a phone has.
 
 class FakeES {
   static instances: FakeES[] = [];
@@ -51,6 +54,25 @@ function renderSurface() {
 }
 
 describe('conversation bar controls', () => {
+  it('rides in the shell top bar on a phone, not in a row of its own below it', async () => {
+    // The phone used to be exempted from the portal, so the shell's bar sat on top holding nothing but
+    // a hamburger while the conversation's controls lived in a second, local row under it. Where a host
+    // is published the controls must land inside it at every width.
+    setViewport(true);
+    const { wrapper: Wrapper } = createWrapper();
+    render(
+      <Wrapper><ToastProvider><PageHeaderProvider>
+        <BrainChatProvider>
+          <PageTopBarHost />
+          <BrainChatSurface variant="full" />
+        </BrainChatProvider>
+      </PageHeaderProvider></ToastProvider></Wrapper>,
+    );
+
+    const host = await screen.findByTestId('page-top-bar-host');
+    await waitFor(() => expect(host).toContainElement(screen.getByTestId('chat-thoughts-toggle')));
+  });
+
   it('never paints the desktop-only controls on a phone, not even for one commit', async () => {
     // The boolean-returning useMobile reports `false` before the first measurement, so the phone briefly
     // got the inline desktop bar and then swapped it for the ⋯ popover — a visible rearrangement on load.

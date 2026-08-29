@@ -2,7 +2,6 @@
 import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
-import { useMobileViewport } from './useMobile';
 
 /** The page title (+ optional count + icon) that the shell's frameless masthead shows. A page publishes
  *  it via <ModuleHeader>; route-owned controls may portal into the separate top-bar host below. */
@@ -42,11 +41,12 @@ export function PageTopBarHost({ className = '' }: { className?: string }) {
   return <div ref={setTopBarHost} data-testid="page-top-bar-host" className={className} />;
 }
 
-/** Keep page controls where their state lives, but paint them in the shell bar. Chat opts into a local
- * phone fallback because its global bar is intentionally hidden there; ordinary page tabs stay in it. */
-export function PageTopBarPortal({ children, localOnPhone = false }: { children: ReactNode; localOnPhone?: boolean }) {
+/** Keep page controls where their state lives, but paint them in the shell bar. There is no phone
+ * exemption: where the shell publishes a host (the ruled Studio bar) the page's controls belong in it
+ * at every width, and where it does not (the frameless design, which has no page slot) the controls
+ * simply stay local here. */
+export function PageTopBarPortal({ children }: { children: ReactNode }) {
   const topBarHost = usePageHeader()?.topBarHost;
-  const mobile = useMobileViewport();
-  if (!topBarHost || (localOnPhone && mobile !== false)) return <>{children}</>;
+  if (!topBarHost) return <>{children}</>;
   return createPortal(children, topBarHost);
 }
