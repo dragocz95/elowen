@@ -1,4 +1,4 @@
-import { daemonUrl, requireSameOrigin, tokenFromCookie, readCookie, sessionCookie, namedCookie, RETURN_COOKIE, IMPERSONATING_COOKIE, isHttps, jsonError } from '../../../../lib/proxy';
+import { daemonUrl, requireSameOrigin, tokenFromCookie, readNamedCookie, sessionCookie, namedCookie, RETURN_COOKIE, IMPERSONATING_COOKIE, isHttps, jsonError } from '../../../../lib/proxy';
 
 // End an impersonation started by /api/auth/impersonate: restore the admin token stashed in
 // RETURN_COOKIE as the active session, revoke the (ephemeral) impersonation token daemon-side, and
@@ -6,7 +6,7 @@ import { daemonUrl, requireSameOrigin, tokenFromCookie, readCookie, sessionCooki
 export async function POST(req: Request): Promise<Response> {
   const blocked = requireSameOrigin(req);
   if (blocked) return blocked;
-  const adminToken = readCookie(req, RETURN_COOKIE);
+  const adminToken = readNamedCookie(req, RETURN_COOKIE);
   if (!adminToken) return jsonError('not_impersonating', 400);
 
   // Revoke the impersonation token so it doesn't linger past this session (best-effort).

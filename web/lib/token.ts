@@ -15,7 +15,11 @@ export function clearToken(): void {
  *  from the JS-readable hint cookie the BFF sets (the real session token stays httpOnly). */
 export function impersonatingAs(): string | null {
   if (typeof document === 'undefined') return null;
-  const m = document.cookie.match(/(?:^|; )elowen_as=([^;]+)/);
+  // HTTPS deliberately ignores the legacy name. A sibling published-site subdomain can set a
+  // parent-domain `elowen_as` cookie, but it cannot mint a browser-reserved `__Host-` cookie.
+  const name = window.location.protocol === 'https:' ? '__Host-elowen_as' : 'elowen_as';
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]+)`));
   return m ? decodeURIComponent(m[1]) : null;
 }
 

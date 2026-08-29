@@ -11,11 +11,13 @@ function post(url: string, body: unknown) {
 }
 
 describe('auth login route', () => {
-  it('sets an httpOnly session cookie and returns no token in the body', async () => {
+  it('sets a host-locked httpOnly session cookie over HTTPS and returns no token in the body', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ token: 'secret-tok' }), { status: 200, headers: { 'content-type': 'application/json' } }));
-    const res = await login(post('https://web.test/api/auth/login', { username: 'admin', password: 'x' }));
+    const req = post('https://web.test/api/auth/login', { username: 'admin', password: 'x' });
+    req.headers.set('x-forwarded-proto', 'https');
+    const res = await login(req);
     const setCookie = res.headers.get('set-cookie') ?? '';
-    expect(setCookie).toContain('elowen_session=secret-tok');
+    expect(setCookie).toContain('__Host-elowen_session=secret-tok');
     expect(setCookie).toMatch(/HttpOnly/);
     const body = await res.json();
     expect(body).toEqual({ ok: true });

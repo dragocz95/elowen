@@ -1,4 +1,4 @@
-import { daemonUrl, clearCookie, namedCookie, readCookie, requireSameOrigin, tokenFromCookie, RETURN_COOKIE, IMPERSONATING_COOKIE, isHttps } from '../../../../lib/proxy';
+import { daemonUrl, clearCookie, namedCookie, readNamedCookie, requireSameOrigin, tokenFromCookie, RETURN_COOKIE, IMPERSONATING_COOKIE, isHttps } from '../../../../lib/proxy';
 
 // Proxy-owned logout: best-effort daemon-side logout with the cookie's token, then expire the cookie
 // regardless so the browser session ends even if the daemon is unreachable. If the user is logged out
@@ -10,7 +10,7 @@ export async function POST(req: Request): Promise<Response> {
   if (blocked) return blocked;
   const secure = isHttps(req);
   const token = tokenFromCookie(req);
-  const returnToken = readCookie(req, RETURN_COOKIE); // admin token stashed while impersonating, if any
+  const returnToken = readNamedCookie(req, RETURN_COOKIE); // admin token stashed while impersonating, if any
   // Revoke both the active session token AND any stashed admin token (distinct tokens → both need it).
   const revoke = [token, returnToken && returnToken !== token ? returnToken : undefined].filter(Boolean) as string[];
   await Promise.all(revoke.map((t) =>
