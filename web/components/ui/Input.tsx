@@ -1,7 +1,7 @@
 import { forwardRef, type InputHTMLAttributes } from 'react';
 
-import { Input as InputPrimitive } from './input';
-import { textareaVariants } from './textarea';
+import { Input as InputPrimitive } from './shadcn/input';
+import { textareaVariants } from './shadcn/textarea';
 
 /** Compatibility class for raw textareas that have not yet moved to the lowercase shadcn primitive. */
 export const textareaClass = textareaVariants();

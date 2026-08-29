@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { cva } from 'class-variance-authority';
 
-import { cn } from '../../lib/utils';
+import { cn } from '../../../lib/utils';
 
 // Unlike stock shadcn, this app deliberately lets `rows` own the minimum height. Existing editors use
 // compact two- and three-row textareas through the exported `textareaClass` compatibility surface.
