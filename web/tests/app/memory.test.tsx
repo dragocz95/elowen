@@ -28,13 +28,13 @@ afterEach(() => { server.resetHandlers(); localStorage.clear(); });
 afterAll(() => server.close());
 
 describe('MemoryPage', () => {
-  it('uses the spatial workspace hero, existing mode rail, and one bordered register', async () => {
+  it('uses the canonical workspace hero, its metric rail, the section nav and one bordered register', async () => {
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
 
     await screen.findByTestId('memory-row');
     expect(screen.getByTestId('spatial-workspace-layout')).toBeInTheDocument();
-    expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
+    expect(screen.getByTestId('workspace-hero-metrics')).toBeInTheDocument();
     expect(screen.getByRole('radiogroup', { name: 'Memory' })).toBeInTheDocument();
     expect(container.querySelectorAll('[data-control-surface]')).toHaveLength(1);
   });

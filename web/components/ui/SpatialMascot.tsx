@@ -60,6 +60,14 @@ const SpatialMascotScene = dynamic(
 let sceneWarmedUp = false;
 
 /** Lazy WebGL identity scene with the original mascot visible as an immediate static fallback.
+ *
+ *  NO CALLER TODAY, and that is recorded in knip.json rather than fixed here. Its one mount was the
+ *  workspace hero's decorative column, which the canonical page anatomy removed — the hero still takes a
+ *  `mascot` state (the plugin ABI could not express its removal) and now publishes it as `data-mascot`
+ *  instead of rendering artwork. Deleting this component is a separate change: it also owns the
+ *  `.spatial-mascot*` rules in spatial-deck.css, the themeable mascot asset and the WebGL scene, none of
+ *  which the page-anatomy pass touches.
+ *
  *  Two ways a theme opts out, and the layer must never mount in either: a theme carrying an ANIMATED
  *  mascot (mascot.svg) would have its animation frozen into a static texture by the scene, and a theme
  *  can also switch the scene off outright (`mascotScene: false`) to show its artwork as a plain image.

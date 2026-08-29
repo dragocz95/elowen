@@ -1,0 +1,112 @@
+'use client';
+
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+
+import { PageFilterChips, PageFilters, type PageFilterField } from './PageFilters';
+
+/** The canonical page toolbar — ONE row of page-level controls, in one place on every page.
+ *
+ *  It sits below the heading, the metric rail and the section navigation, and above the content: the
+ *  reader takes in what the page IS and which section they are in, then the controls that narrow it.
+ *  Before this the same controls were "promoted" into the hero ABOVE the title, so a register opened on
+ *  its filters and named itself second.
+ *
+ *  The row holds, in order: the page's search field, its filter control, and its actions. Everything a
+ *  panel deeper in the tree wants up here arrives through {@link PageToolbarPortal}, which claims the
+ *  single slot in the middle of the row — that portal is the old `WorkspaceLeadPortal` under its new
+ *  name, unchanged in behaviour, so `ControlSurfaceToolbar` and `SettingsToolbar` keep working untouched.
+ *
+ *  Active filter chips are NOT in the row. They are a line of their own directly under it, because their
+ *  number changes as the page is used and a row that reflows every time a filter is set moves the
+ *  controls beside it out from under the pointer. */
+
+interface PageToolbarSlotContextValue {
+  host: HTMLElement | null;
+  ownerId: string | null;
+  claim: (id: string) => void;
+  release: (id: string) => void;
+  setHost: (host: HTMLElement | null) => void;
+}
+
+const PageToolbarSlotContext = createContext<PageToolbarSlotContextValue | null>(null);
+const PageToolbarActiveContext = createContext(true);
+
+/** Retained settings/account panels stay mounted while hidden. This scope keeps their toolbars from
+ * escaping through the portal and lets only the currently visible panel compete for the toolbar slot. */
+export function PageToolbarScope({ active, children }: { active: boolean; children: ReactNode }) {
+  return <PageToolbarActiveContext.Provider value={active}>{children}</PageToolbarActiveContext.Provider>;
+}
+
+/** Owns the one slot for a page. The shell mounts it around the whole page, so a portal written anywhere
+ *  in the content — including inside a React portal, which keeps its owner's context — finds it. */
+export function PageToolbarProvider({ children }: { children: ReactNode }) {
+  const [host, setHostState] = useState<HTMLElement | null>(null);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const claim = useCallback((id: string) => setOwnerId((current) => current ?? id), []);
+  const release = useCallback((id: string) => setOwnerId((current) => current === id ? null : current), []);
+  const setHost = useCallback((node: HTMLElement | null) => setHostState(node), []);
+  const value = useMemo(() => ({ host, ownerId, claim, release, setHost }), [host, ownerId, claim, release, setHost]);
+  return <PageToolbarSlotContext.Provider value={value}>{children}</PageToolbarSlotContext.Provider>;
+}
+
+/** The destination element, rendered by {@link PageToolbar} inside the row. */
+function PageToolbarSlot() {
+  const setHost = useContext(PageToolbarSlotContext)?.setHost;
+  return <div ref={setHost} className="page-toolbar__slot" data-testid="page-toolbar-slot" />;
+}
+
+/** The first mounted page-level toolbar claims the one slot in the canonical row. A later nested toolbar
+ * stays where it belongs; if the owner unmounts (for example, switching Settings sections), the next
+ * mounted toolbar can claim the slot without every caller coordinating identities. */
+export function PageToolbarPortal({ children }: { children: ReactNode }) {
+  const id = useId();
+  const context = useContext(PageToolbarSlotContext);
+  const active = useContext(PageToolbarActiveContext);
+  const host = context?.host;
+  const ownerId = context?.ownerId;
+  const claim = context?.claim;
+  const release = context?.release;
+  useLayoutEffect(() => {
+    if (active && ownerId == null) claim?.(id);
+    else if (!active && ownerId === id) release?.(id);
+  }, [active, id, ownerId, claim, release]);
+  useEffect(() => () => release?.(id), [id, release]);
+  if (!active || !host || ownerId !== id) return <>{children}</>;
+  return createPortal(children, host);
+}
+
+export interface PageToolbarProps {
+  /** The page's text search. A PERMANENT control and never a filter — see `PageFilters`. */
+  search?: ReactNode;
+  /** The page's filter fields. The toolbar renders the condensed control in the row and the active
+   *  chips on the line below it, so the two can never drift apart or be forgotten one at a time. */
+  filters?: PageFilterField[];
+  /** Page-level actions (create, import, refresh). */
+  actions?: ReactNode;
+  /** Extra inline controls, between search and filters. */
+  children?: ReactNode;
+}
+
+/** The row itself. Always mounted by the shell, because it carries the portal slot even on a page that
+ *  passes it nothing; `page-toolbar.css` collapses a row whose every part is empty. */
+export function PageToolbar({ search, filters, actions, children }: PageToolbarProps) {
+  // Not merely an optimisation, and not a second copy of `PageFilters`' own empty-set rule: the filter
+  // control reads the dictionary, and the shell mounts this row on EVERY page. Rendering it for a page
+  // that declares no filters would make `LanguageProvider` a hard requirement of the canonical shell in
+  // exchange for two components that would immediately return null.
+  const fields = filters ?? [];
+  const hasFilters = fields.length > 0;
+  return (
+    <div className="page-toolbar" data-testid="page-toolbar">
+      <div className="page-toolbar__row">
+        {search != null ? <div className="page-toolbar__search">{search}</div> : null}
+        {children}
+        {hasFilters ? <PageFilters fields={fields} /> : null}
+        <PageToolbarSlot />
+        {actions != null ? <div className="page-toolbar__actions">{actions}</div> : null}
+      </div>
+      {hasFilters ? <PageFilterChips fields={fields} /> : null}
+    </div>
+  );
+}

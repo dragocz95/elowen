@@ -5,8 +5,8 @@ import { SpatialWorkspaceHero, SpatialWorkspaceLayout, WorkspaceDetailRail, Work
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../../components/ui/ControlSurface';
 
 describe('SpatialWorkspaceHero', () => {
-  it('composes one mascot, identity, status, primary action and metrics', () => {
-    render(
+  it('composes identity, status, primary action and metrics, with the mascot state as data alone', () => {
+    const { container } = render(
       <SpatialWorkspaceHero
         eyebrow="Control"
         title="Tasks"
@@ -21,7 +21,10 @@ describe('SpatialWorkspaceHero', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Tasks' })).toBeInTheDocument();
-    expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
+    // The pre-unification alias still passes its mascot state through; it reaches the DOM as an inert
+    // visual input and mounts no artwork of its own.
+    expect(container.querySelector('.workspace-hero')).toHaveAttribute('data-mascot', 'idle');
+    expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
     expect(screen.getByText('Ready')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /New task/ })).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
@@ -57,7 +60,7 @@ describe('SpatialWorkspaceHero', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
-    expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
+    expect(screen.getByTestId('workspace-hero-metrics')).toContainElement(screen.getByText('3'));
     expect(screen.getByRole('radiogroup', { name: 'Session view' })).toBeInTheDocument();
     expect(screen.getByText('Register')).toHaveAttribute('data-control-surface');
     expect(screen.getByTestId('spatial-workspace-layout')).toContainElement(screen.getByText('Register'));

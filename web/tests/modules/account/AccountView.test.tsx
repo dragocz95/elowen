@@ -48,10 +48,10 @@ describe('AccountView', () => {
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
       'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
-    // The constellation is gone and the deck carries the mascot hero again, with the account's own
-    // facts beside it. Every one of them comes from /auth/me and the model list the sections already
-    // load, so the hero renders for a plain member too — it never touches the admin-only stats route.
-    expect(await screen.findByRole('img', { name: 'Elowen' })).toBeInTheDocument();
+    // The deck carries the hero's metric rail, with the account's own facts on it. Every one of them
+    // comes from /auth/me and the model list the sections already load, so the rail renders for a plain
+    // member too — it never touches the admin-only stats route.
+    expect(await screen.findByTestId('workspace-hero-metrics')).toBeInTheDocument();
     expect(screen.getByText('Role')).toBeInTheDocument();
     // The username stays a profile fact and is NOT repeated in the hero.
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('@bob'));

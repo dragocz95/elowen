@@ -23,7 +23,7 @@ describe('UsersView', () => {
     expect((await screen.findAllByText('alice')).length).toBeGreaterThan(0);
     expect(screen.getByText('bob')).toBeTruthy();
     expect(screen.getByTestId('spatial-workspace-layout')).toBeInTheDocument();
-    expect(screen.getAllByTestId('workspace-hero-mascot')).toHaveLength(1);
+    expect(screen.getAllByTestId('workspace-hero-metrics')).toHaveLength(1);
     expect(screen.getByTestId('users-register').closest('[data-control-surface]')).toBeInTheDocument();
     expect(screen.getByTestId('users-register').closest('.control-surface-register')).toBeInTheDocument();
     expect(screen.getByTestId('users-register')).not.toHaveClass('border-t-0');
