@@ -22,9 +22,16 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 if (typeof globalThis.PointerEvent === 'undefined') {
   class PointerEventPolyfill extends MouseEvent {
     pointerId: number;
+    // Radix gates every pointer-driven behaviour behind `event.pointerType === 'mouse'` — item
+    // highlight on pointer move, submenu hover-intent, the whole hover contract. Dropping this field
+    // made all of it untestable and made a working menu look like a broken one. It defaults to empty
+    // rather than 'mouse' so a test has to say which pointer it is simulating, which is the
+    // distinction the components branch on.
+    pointerType: string;
     constructor(type: string, init: PointerEventInit = {}) {
       super(type, init);
       this.pointerId = init.pointerId ?? 0;
+      this.pointerType = init.pointerType ?? '';
     }
   }
   globalThis.PointerEvent = PointerEventPolyfill as unknown as typeof PointerEvent;

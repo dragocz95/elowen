@@ -55,6 +55,21 @@
     ],
     "web/components/ui/shadcn/select.tsx": [
       "exports"
+    ],
+    "web/components/ui/shadcn/input.tsx": [
+      "exports"
+    ],
+    "web/components/ui/shadcn/textarea.tsx": [
+      "exports"
+    ],
+    "web/components/ui/shadcn/dropdown-menu.tsx": [
+      "exports"
+    ],
+    "web/components/ui/shadcn/context-menu.tsx": [
+      "exports"
+    ],
+    "web/components/ui/shadcn/tooltip.tsx": [
+      "exports"
     ]
   },
   "ignore": [
