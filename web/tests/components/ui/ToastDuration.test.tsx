@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { act, render, screen, fireEvent } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import {
@@ -10,29 +10,21 @@ import {
  *  a constant — and hold an out-of-range one at its own bound, since the daemon that answered may be of
  *  another version. */
 function W({ children }: { children: React.ReactNode }) { return <LanguageProvider>{children}</LanguageProvider>; }
-function Trigger() {
+function Trigger({ tone }: { tone?: 'ok' | 'error' }) {
   const { toast } = useToast();
-  return <button onClick={() => toast('Saved', 'ok')}>go</button>;
+  return <button onClick={() => toast('Saved', tone)}>go</button>;
 }
 
-/** The countdown runs on rAF, so the test owns the frame clock: each `advance` delivers one frame with an
- *  explicit timestamp instead of waiting for real animation frames jsdom never schedules. */
-let frame: FrameRequestCallback | null = null;
-let start = 0;
-beforeEach(() => {
-  frame = null;
-  start = 10_000;
-  vi.spyOn(performance, 'now').mockReturnValue(start);
-  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { frame = cb; return 1; });
-  vi.stubGlobal('cancelAnimationFrame', () => { frame = null; });
+/** Auto-dismissal is Radix's close timer (a `window.setTimeout`) rather than the hand-rolled animation
+ *  frame countdown this component used to run, so the test owns the clock with fake timers. The frame
+ *  APIs and `performance` are faked alongside it because the progress bar still runs on rAF: left real,
+ *  it would repaint outside `act()` while the timers around it are frozen. */
+const useToastClock = () => vi.useFakeTimers({
+  toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance', 'requestAnimationFrame', 'cancelAnimationFrame'],
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+const advance = (ms: number): void => { act(() => { vi.advanceTimersByTime(ms); }); };
 
-const advance = (ms: number): void => {
-  const tick = frame;
-  frame = null;
-  if (tick) act(() => { tick(start + ms); });
-};
+afterEach(() => { vi.useRealTimers(); });
 
 describe('toast duration — resolving the configured value', () => {
   it('takes the configured duration and holds an out-of-range one at its bound', () => {
@@ -52,23 +44,39 @@ describe('toast duration — resolving the configured value', () => {
 
 describe('toast duration — the card counts against it', () => {
   it('holds the toast for the CONFIGURED duration, not the built-in default', () => {
+    useToastClock();
     render(<ToastProvider durationMs={3_000}><Trigger /></ToastProvider>, { wrapper: W });
     fireEvent.click(screen.getByRole('button', { name: 'go' }));
     expect(screen.getByText('Saved')).toBeInTheDocument();
 
     advance(2_900);
     expect(screen.getByText('Saved')).toBeInTheDocument(); // still inside the configured window
-    advance(3_100);
+    advance(200);
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
   });
 
   it('keeps the built-in default when no duration is passed', () => {
+    useToastClock();
     render(<ToastProvider><Trigger /></ToastProvider>, { wrapper: W });
     fireEvent.click(screen.getByRole('button', { name: 'go' }));
 
     advance(3_100); // past the 3 s above, well inside the 4.5 s default
     expect(screen.getByText('Saved')).toBeInTheDocument();
-    advance(DEFAULT_TOAST_MS + 100);
+    advance(DEFAULT_TOAST_MS - 3_100 + 100);
+    expect(screen.queryByText('Saved')).not.toBeInTheDocument();
+  });
+
+  /** The duration is deliberately NOT per status: an error is announced more loudly than a success but is
+   *  not held any longer, and the operator sets one number for both. Pinning that here means a per-status
+   *  rule has to be added on purpose rather than drift in. */
+  it.each(['ok', 'error'] as const)('holds a %s toast for the same configured duration', (tone) => {
+    useToastClock();
+    render(<ToastProvider durationMs={3_000}><Trigger tone={tone} /></ToastProvider>, { wrapper: W });
+    fireEvent.click(screen.getByRole('button', { name: 'go' }));
+
+    advance(2_900);
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+    advance(200);
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
   });
 });

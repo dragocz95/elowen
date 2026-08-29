@@ -2,6 +2,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CheckCircle2, AlertCircle, X, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
+import {
+  Toast, ToastClose, ToastDescription, ToastProvider as ToastRoot, ToastTitle, ToastViewport, type ToastStatus,
+} from './shadcn/toast';
 
 type Tone = 'ok' | 'error';
 interface ToastItem { id: number; message: string; tone: Tone }
@@ -30,56 +33,69 @@ export function resolveToastDuration(limits?: { toastDurationMs?: number }): num
     : DEFAULT_TOAST_MS;
 }
 
-function ToastCard({ item, meta, durationMs, dismissLabel, onDismiss }: { item: ToastItem; meta: { Icon: LucideIcon; color: string; title: string }; durationMs: number; dismissLabel: string; onDismiss: () => void }) {
-  const { Icon, color, title } = meta;
+/** The app's status policy — the part of a toast that is ours rather than Radix's, kept in one table so
+ *  it is read as policy and not rediscovered from four separate ternaries.
+ *
+ *  `role` and `type` say the same thing to two different mechanisms and must agree. `role` is on the
+ *  visible toast, which is what this app has always exposed and what a test can assert; `type` is what
+ *  Radix hands its own visually-hidden live region, and it is the one that reliably reaches a screen
+ *  reader, because a live region only announces content that arrives AFTER it is in the DOM — a
+ *  role="status" element inserted with its text already inside it usually says nothing at all.
+ *
+ *  There is no per-status DURATION here, and that is the existing policy, not an omission: every status
+ *  is held for the same operator-configured time (Settings → Elowen AI → Runtime). If a status ever
+ *  needs its own, `duration` on the individual `<Toast>` overrides the provider value. */
+const STATUS: Record<Tone, { Icon: LucideIcon; status: ToastStatus; role: 'status' | 'alert'; type: 'foreground' | 'background' }> = {
+  ok: { Icon: CheckCircle2, status: 'success', role: 'status', type: 'background' },
+  error: { Icon: AlertCircle, status: 'error', role: 'alert', type: 'foreground' },
+};
+
+function ToastCard({ item, title, durationMs, dismissLabel, onDismiss }: { item: ToastItem; title: string; durationMs: number; dismissLabel: string; onDismiss: () => void }) {
+  const { Icon, status, role, type } = STATUS[item.tone];
   const [remaining, setRemaining] = useState(100);
   const paused = useRef(false);
-  const edge = `color-mix(in srgb, ${color} 72%, var(--color-on-status))`;
-  const onFill = 'var(--color-on-status)';
 
   useEffect(() => {
-    // rAF countdown that drives both the progress bar and auto-dismiss; pauses on hover.
+    // Drives the progress bar ONLY. Dismissal is Radix's close timer, so the two cannot disagree about
+    // when the toast goes — this loop just stops drawing once it has run the bar down.
     let elapsed = 0;
     let last = performance.now();
     let raf = requestAnimationFrame(function tick(now) {
       if (!paused.current) elapsed += now - last;
       last = now;
       setRemaining(Math.max(0, 100 - (elapsed / durationMs) * 100));
-      if (elapsed >= durationMs) { onDismiss(); return; }
-      raf = requestAnimationFrame(tick);
+      if (elapsed < durationMs) raf = requestAnimationFrame(tick);
     });
     return () => cancelAnimationFrame(raf);
-  }, [durationMs, onDismiss]);
+  }, [durationMs]);
 
   return (
-    <div
-      role={item.tone === 'error' ? 'alert' : 'status'}
-      onMouseEnter={() => { paused.current = true; }}
-      onMouseLeave={() => { paused.current = false; }}
-      className="pointer-events-auto relative flex items-start gap-2.5 overflow-hidden rounded-lg py-2.5 pl-3 pr-2.5 sm:gap-3 sm:py-3 sm:pl-4 sm:pr-3"
-      style={{
-        boxShadow: 'var(--shadow-raised)',
-        background: color,
-        border: `1px solid ${edge}`,
-        animation: 'toast-in 200ms var(--ease-out)',
-      }}
+    <Toast
+      status={status}
+      role={role}
+      type={type}
+      open
+      onOpenChange={(open) => { if (!open) onDismiss(); }}
+      // Radix pauses its close timer on hover, on focus and when the window loses focus. Following it
+      // here keeps the bar honest: it used to pause on `mouseenter` only, which already disagreed with
+      // the countdown it was drawing whenever the toast was reached by keyboard.
+      onPause={() => { paused.current = true; }}
+      onResume={() => { paused.current = false; }}
+      // Escape belongs to the topmost overlay, not to the toast. Radix would otherwise clear the toasts
+      // on the same keypress that closes a modal — including the toast that modal had just raised,
+      // which is the exact message --z-toast exists to keep on screen.
+      onEscapeKeyDown={(event) => event.preventDefault()}
     >
-      <Icon size={18} aria-hidden className="mt-px shrink-0" style={{ color: onFill }} />
+      <Icon size={18} aria-hidden className="mt-px shrink-0" />
       <div className="min-w-0 flex-1">
-        <div className="text-[13px] font-semibold sm:text-sm" style={{ color: onFill }}>{title}</div>
-        <div className="mt-0.5 break-words text-[13px] leading-snug sm:text-sm" style={{ color: onFill }}>{item.message}</div>
+        <ToastTitle>{title}</ToastTitle>
+        <ToastDescription>{item.message}</ToastDescription>
       </div>
-      <button
-        type="button"
-        aria-label={dismissLabel}
-        onClick={onDismiss}
-        className="overlay-touch-target -mr-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-75 transition-opacity hover:bg-on-status/10 hover:opacity-100 sm:h-7 sm:w-7"
-        style={{ color: onFill }}
-      >
+      <ToastClose aria-label={dismissLabel}>
         <X size={15} aria-hidden />
-      </button>
-      <span className="absolute bottom-0 left-0 h-0.5" style={{ width: `${remaining}%`, backgroundColor: onFill, opacity: 0.4 }} aria-hidden />
-    </div>
+      </ToastClose>
+      <span className="absolute bottom-0 left-0 h-0.5 bg-on-status/40" style={{ width: `${remaining}%` }} aria-hidden />
+    </Toast>
   );
 }
 
@@ -89,10 +105,7 @@ function ToastCard({ item, meta, durationMs, dismissLabel, onDismiss }: { item: 
  *  place that resolves it from the daemon config. */
 export function ToastProvider({ children, durationMs = DEFAULT_TOAST_MS }: { children: ReactNode; durationMs?: number }) {
   const { t } = useTranslation();
-  const TONE: Record<Tone, { Icon: LucideIcon; color: string; title: string }> = {
-    ok: { Icon: CheckCircle2, color: 'var(--color-success)', title: t.common.success },
-    error: { Icon: AlertCircle, color: 'var(--color-danger)', title: t.common.error },
-  };
+  const TITLE: Record<Tone, string> = { ok: t.common.success, error: t.common.error };
   const [items, setItems] = useState<ToastItem[]>([]);
   const dismiss = useCallback((id: number) => setItems((xs) => xs.filter((x) => x.id !== id)), []);
   const toast = useCallback((message: string, tone: Tone = 'ok') => {
@@ -104,17 +117,24 @@ export function ToastProvider({ children, durationMs = DEFAULT_TOAST_MS }: { chi
   const ctx = useMemo(() => ({ toast }), [toast]);
   return (
     <Ctx.Provider value={ctx}>
-      {children}
-      {/* Placement, layer and safe-area insets all live in `.overlay-toast-dock` (styles/components/
-          primitives.css), with the rest of the overlay system: on a phone the stack docks bottom-right
-          clear of the advisor launcher, from the tablet breakpoint up it is the conventional top-right
-          column. It sits on --z-toast, above even a modal, because a message about what just happened
-          has to be readable over the thing that caused it. */}
-      <div className="overlay-toast-dock pointer-events-none">
+      {/* The configured duration is set once, on the Radix provider, because it applies to every status
+          alike. Radix renders each toast into the viewport below via its own portal — into that node,
+          not into <body> — so the dock stays a sibling of the app tree rather than of an open modal,
+          and nothing can trap it inside the modal's stacking context. */}
+      <ToastRoot duration={durationMs}>
+        {children}
         {items.map((item) => (
-          <ToastCard key={item.id} item={item} meta={TONE[item.tone]} durationMs={durationMs} dismissLabel={t.common.dismiss} onDismiss={() => dismiss(item.id)} />
+          <ToastCard
+            key={item.id}
+            item={item}
+            title={TITLE[item.tone]}
+            durationMs={durationMs}
+            dismissLabel={t.common.dismiss}
+            onDismiss={() => dismiss(item.id)}
+          />
         ))}
-      </div>
+        <ToastViewport />
+      </ToastRoot>
     </Ctx.Provider>
   );
 }
