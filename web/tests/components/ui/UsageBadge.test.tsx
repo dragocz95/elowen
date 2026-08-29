@@ -38,7 +38,7 @@ describe('UsageBadge', () => {
       Array.from(container.querySelectorAll('span')).find((el) => el.textContent === label)?.parentElement;
     expect(pillFor('input')?.className).toContain('text-info');
     expect(pillFor('cache')?.className).toContain('text-warning');
-    expect(pillFor('output')?.className).toContain('text-danger');
+    expect(pillFor('output')?.className).toContain('text-destructive');
   });
 
   it('renders a green cost pill when cost is positive', () => {

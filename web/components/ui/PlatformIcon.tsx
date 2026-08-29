@@ -59,7 +59,7 @@ export function PlatformIcon({ platform, size = 14, className = '' }: { platform
   const Glyph = GLYPHS[platform] ?? MessageSquare;
   return (
     <span title={title} className="inline-flex shrink-0">
-      <Glyph size={size} className={`text-text-muted ${className}`} aria-hidden />
+      <Glyph size={size} className={`text-muted-foreground ${className}`} aria-hidden />
     </span>
   );
 }

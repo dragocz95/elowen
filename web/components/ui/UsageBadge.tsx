@@ -32,8 +32,8 @@ export function UsageBadge({ usage }: { usage: TokenUsage }) {
     <span className="inline-flex items-center gap-1 font-mono text-[11px]" title={tip}>
       <Pill icon={ArrowDownToLine} label={t.usage.input} display={formatTokens(usage.input)} className="border-info/30 text-info" />
       {hasCache ? <Pill icon={DatabaseZap} label={t.usage.cache} display={formatTokens(cache)} className="border-warning/30 text-warning" /> : null}
-      <Pill icon={ArrowUpFromLine} label={t.usage.output} display={formatTokens(usage.output)} className="border-danger/30 text-danger" />
-      {hasCost ? <Pill icon={Coins} label={t.usage.cost} display={costLabel} className={estimated ? 'border-border text-text-muted' : 'border-approve/30 text-approve'} /> : null}
+      <Pill icon={ArrowUpFromLine} label={t.usage.output} display={formatTokens(usage.output)} className="border-danger/30 text-destructive" />
+      {hasCost ? <Pill icon={Coins} label={t.usage.cost} display={costLabel} className={estimated ? 'border-border text-muted-foreground' : 'border-approve/30 text-approve'} /> : null}
     </span>
   );
 }

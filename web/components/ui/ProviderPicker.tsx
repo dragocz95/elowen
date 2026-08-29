@@ -19,6 +19,6 @@ export function ProviderPicker({ providers, value, onChange, label, emptyText, s
 }) {
   const options = providers.map((p) => ({ value: p.id, label: p.label }));
   if (value && !providers.some((p) => p.id === value)) options.unshift({ value, label: value });
-  if (options.length === 0) return <p className="text-xs italic text-text-muted">{emptyText ?? ''}</p>;
+  if (options.length === 0) return <p className="text-xs italic text-muted-foreground">{emptyText ?? ''}</p>;
   return <Segmented aria-label={label} options={options} value={value} onChange={onChange} size={size} variant={variant} />;
 }

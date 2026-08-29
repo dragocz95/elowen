@@ -14,7 +14,7 @@ export function DetailBlock({ icon: Icon, title, hint, children }: {
 }) {
   return (
     <section className="flex flex-col gap-2">
-      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         <Icon size={13} aria-hidden />{title}
         {hint ? <HelpTip align="left">{hint}</HelpTip> : null}
       </span>

@@ -25,8 +25,8 @@ export function ChangeStrip() {
   const dirtyLabel = dirty === 0 ? null : dirty === 1 ? t.changes.dirtyOne : t.changes.dirtyN.replace('{count}', String(dirty));
 
   return (
-    <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-text-muted" title={last ? t.changes.lastCommit.replace('{relative}', last.relative).replace('{subject}', last.subject) : (dirtyLabel ?? '')}>
-      <GitCommitHorizontal size={12} className="shrink-0 text-text-muted" aria-hidden />
+    <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground" title={last ? t.changes.lastCommit.replace('{relative}', last.relative).replace('{subject}', last.subject) : (dirtyLabel ?? '')}>
+      <GitCommitHorizontal size={12} className="shrink-0 text-muted-foreground" aria-hidden />
       {dirtyLabel ? <span className="shrink-0 text-warning">{dirtyLabel}</span> : null}
       {last ? <span className="min-w-0 flex-1 truncate">{t.changes.lastCommit.replace('{relative}', last.relative).replace('{subject}', last.subject)}</span> : null}
     </span>

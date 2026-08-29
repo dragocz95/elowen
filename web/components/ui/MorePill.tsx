@@ -8,7 +8,7 @@ import { useTranslation } from '../../lib/i18n';
  *
  *  `controls` names the element the pill unfolds, and `label` replaces the announced text where the
  *  generic "+N more" would be ambiguous — several pills on one screen folding different things. */
-const cls = 'rounded-full border border-border px-2.5 py-1 text-[11px] text-text-muted transition-colors hover:border-primary hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary';
+const cls = 'rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary';
 
 export function MorePill({ expanded, hidden, onToggle, controls, label }: {
   expanded: boolean;

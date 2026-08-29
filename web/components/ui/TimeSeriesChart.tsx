@@ -19,10 +19,10 @@ export function TimeSeriesChart(props: TimeSeriesChartProps) {
   const { data, height = 220, emptyText } = props;
   // Resolved before the lazy boundary: an empty range should not fetch a charting library to say so.
   if (data.length === 0) {
-    return <p className="py-10 text-center text-sm text-text-muted">{emptyText ?? ''}</p>;
+    return <p className="py-10 text-center text-sm text-muted-foreground">{emptyText ?? ''}</p>;
   }
   return (
-    <Suspense fallback={<div className="animate-pulse rounded-lg bg-elevated/40" style={{ height }} aria-hidden />}>
+    <Suspense fallback={<div className="animate-pulse rounded-lg bg-muted/40" style={{ height }} aria-hidden />}>
       <Impl {...props} />
     </Suspense>
   );

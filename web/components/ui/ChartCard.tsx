@@ -16,8 +16,8 @@ export function CardRow({ icon: Icon, label, children }: {
   return (
     <div className="flex items-baseline gap-2 text-[11px] leading-5">
       <Icon size={12} className="shrink-0 translate-y-0.5 text-text-subtle" aria-hidden />
-      <span className="text-text-muted">{label}</span>
-      <span className="ml-auto min-w-0 truncate text-right font-mono tabular-nums text-text">{children}</span>
+      <span className="text-muted-foreground">{label}</span>
+      <span className="ml-auto min-w-0 truncate text-right font-mono tabular-nums text-foreground">{children}</span>
     </div>
   );
 }
@@ -25,7 +25,7 @@ export function CardRow({ icon: Icon, label, children }: {
 /** The frame every card sits in, so all of them look like one component rather than several. */
 export function CardShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="w-60 rounded-xl border border-border bg-surface/95 p-3 shadow-xl backdrop-blur">
+    <div className="w-60 rounded-xl border border-border bg-card/95 p-3 shadow-xl backdrop-blur">
       {children}
     </div>
   );
@@ -38,10 +38,10 @@ export function CardHead({ colour, title, share, icon: Icon }: {
   return (
     <div className="flex items-center gap-2">
       <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colour }} />
-      {Icon ? <Icon size={13} className="shrink-0 text-text-muted" aria-hidden /> : null}
-      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight text-text">{title}</span>
+      {Icon ? <Icon size={13} className="shrink-0 text-muted-foreground" aria-hidden /> : null}
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight text-foreground">{title}</span>
       {share === undefined ? null : (
-        <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted">{share.toFixed(1)} %</span>
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">{share.toFixed(1)} %</span>
       )}
     </div>
   );
