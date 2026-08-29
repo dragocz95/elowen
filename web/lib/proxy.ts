@@ -58,7 +58,14 @@ export function namedCookie(name: string, value: string, secure: boolean, maxAge
  *  Anchored so one cookie name can't match as a substring of another. */
 export function readCookieHeader(cookieHeader: string, name: string): string | null {
   const m = cookieHeader.match(new RegExp(`(?:^|; )${name}=([^;]+)`));
-  return m ? decodeURIComponent(m[1]) : null;
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    // Cookie bytes are untrusted input. A malformed percent escape means this cookie is unusable, not
+    // that every BFF route and server-rendered page should throw 500 before reaching its auth guard.
+    return null;
+  }
 }
 
 /** Read (and URL-decode) an arbitrary cookie by its exact name from the request, or null when absent. */

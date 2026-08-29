@@ -9,6 +9,7 @@ import {
   isSameOrigin,
   jsonError,
   namedCookie,
+  readCookieHeader,
   readNamedCookie,
   requireSameOrigin,
   sessionCookie,
@@ -54,6 +55,10 @@ describe('proxy helpers', () => {
   it('named authority cookies are also host-locked on HTTPS', () => {
     expect(namedCookie('elowen_return', 'admin-token', true, 60)).toContain('__Host-elowen_return=admin-token');
     expect(namedCookie('elowen_return', 'admin-token', false, 60)).toContain('elowen_return=admin-token');
+  });
+
+  it('treats a malformed encoded cookie as absent instead of throwing from every BFF route', () => {
+    expect(readCookieHeader('other=1; elowen_session=%E0%A4%A', 'elowen_session')).toBeNull();
   });
 
   it('isHttps reads X-Forwarded-Proto from the reverse proxy', () => {
