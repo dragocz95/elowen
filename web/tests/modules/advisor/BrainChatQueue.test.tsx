@@ -237,6 +237,12 @@ describe('BrainChat pending queue', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Send|Odeslat/i })); });
 
     await waitFor(() => expect(textarea).toHaveValue('do not lose this'));
-    expect(screen.getByText(/Message was not sent|Zprávu se nepodařilo odeslat/i)).toBeInTheDocument();
+    // Scoped to the visible description on purpose. Radix Toast renders the same text a second time in
+    // a visually hidden `role="status"` region so a screen reader hears it, and that copy appears a beat
+    // after the toast itself — an unscoped `getByText` therefore matches once or twice depending on how
+    // far timers happened to advance, which is a flake waiting for a slow run.
+    expect(screen.getByText(/Message was not sent|Zprávu se nepodařilo odeslat/i, {
+      selector: '[data-slot="toast-description"]',
+    })).toBeInTheDocument();
   });
 });
