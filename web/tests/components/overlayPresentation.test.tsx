@@ -196,16 +196,24 @@ describe('one owner paints every overlay surface', () => {
 });
 
 describe('overlay layer band', () => {
-  it('puts a browsing surface on the drawer band and an editing dialog on the modal band', () => {
+  it('puts only the drawer shape below the modal band', () => {
     // --z-drawer (90) sits under --z-modal (100) so that a dialog raised FROM a detail rail paints over
-    // the rail it came from by the shared scale, rather than by whichever of the two <body> children
-    // happened to be appended last.
-    const { unmount } = render(<Modal title="Record" intent="inspect" onClose={vi.fn()}><span>read</span></Modal>, { wrapper: W });
+    // the rail it came from. Intent alone cannot choose the band: an inspect surface nested or explicitly
+    // centered is a modal shape and must not paint underneath the dialog that opened it.
+    const drawer = render(<Modal title="Record" intent="inspect" onClose={vi.fn()}><span>read</span></Modal>, { wrapper: W });
     expect(screen.getByRole('dialog', { name: 'Record' }).parentElement).toHaveClass('overlay-layer-drawer');
-    unmount();
+    drawer.unmount();
 
-    render(<Modal title="Rule" onClose={vi.fn()}><span>edit</span></Modal>, { wrapper: W });
-    expect(screen.getByRole('dialog', { name: 'Rule' }).parentElement).toHaveClass('overlay-layer-modal');
+    const centeredInspect = render(<Modal title="Nested record" intent="inspect" presentation="center" onClose={vi.fn()}><span>read</span></Modal>, { wrapper: W });
+    expect(screen.getByRole('dialog', { name: 'Nested record' }).parentElement).toHaveClass('overlay-layer-modal');
+    centeredInspect.unmount();
+
+    const editDrawer = render(<Modal title="Rule" onClose={vi.fn()}><span>edit</span></Modal>, { wrapper: W });
+    expect(screen.getByRole('dialog', { name: 'Rule' }).parentElement).toHaveClass('overlay-layer-drawer');
+    editDrawer.unmount();
+
+    render(<Modal title="Centered rule" presentation="center" onClose={vi.fn()}><span>edit</span></Modal>, { wrapper: W });
+    expect(screen.getByRole('dialog', { name: 'Centered rule' }).parentElement).toHaveClass('overlay-layer-modal');
   });
 });
 

@@ -64,11 +64,10 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
   const wide = (drawerWidth ?? (size === 'lg' ? 'wide' : 'default')) === 'wide';
   const automatic = useOverlayPresentation(intent);
   const resolved = presentation === 'auto' ? automatic : presentation;
-  // Which z-band the whole overlay sits in, and the one thing `intent` decides on its own. A browsing
-  // surface takes the drawer band and an editing dialog the modal band above it, so a dialog raised FROM
-  // a detail rail paints over that rail by the shared scale rather than by whichever of the two happened
-  // to be appended to <body> last.
-  const layer = intent === 'inspect' ? 'drawer' : 'modal';
+  // The resolved SHAPE owns the z-band. Only a top-level drawer belongs under modal dialogs; an inspect
+  // surface forced or nested into a centered/fullscreen presentation must stay on the modal band, or it
+  // paints underneath the dialog that opened it.
+  const layer = resolved === 'drawer' ? 'drawer' : 'modal';
   const { t } = useTranslation();
   const titleId = useId();
   const descriptionId = useId();
