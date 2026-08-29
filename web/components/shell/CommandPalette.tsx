@@ -129,7 +129,7 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
           }}
         >
           <div className="flex items-center gap-2.5 border-b border-border px-4">
-            <Search size={16} className="shrink-0 text-text-muted" aria-hidden />
+            <Search size={16} className="shrink-0 text-muted-foreground" aria-hidden />
             <input
               data-autofocus
               role="combobox"
@@ -143,7 +143,7 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onKeyDown}
               placeholder={t.common.searchCommands}
-              className="h-12 w-full bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
+              className="h-12 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             />
           </div>
           {/* The rows are `role="option"` on the buttons themselves, as in `SelectMenu`, but held out of the
@@ -151,7 +151,7 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
               `aria-activedescendant`. The <li> wrappers are presentational so the listbox owns options only. */}
           <ul id={listId} role="listbox" aria-label={t.common.searchCommands} className="max-h-[50dvh] overflow-y-auto p-1.5">
             {results.length === 0 ? (
-              <li role="presentation" className="px-3 py-6 text-center text-sm text-text-muted">{t.common.noCommands}</li>
+              <li role="presentation" className="px-3 py-6 text-center text-sm text-muted-foreground">{t.common.noCommands}</li>
             ) : results.map((c, i) => {
               const Icon = c.icon;
               return (
@@ -165,12 +165,15 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
                     tabIndex={-1}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => c.run()}
-                    className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${i === active ? 'bg-elevated text-text' : 'text-text-muted'}`}
+                    // The active row is a wash of the foreground (`accent`), not a step up the surface
+                    // ramp: a skin may collapse that ramp — studio-oled paints surface, elevated and
+                    // overlay the same near-black — and a highlight built from it disappears entirely.
+                    className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${i === active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'}`}
                   >
                     <Icon size={15} className="shrink-0" aria-hidden />
-                    <span className="flex-1 text-text"><Highlight text={c.label} q={query.trim()} /></span>
-                    {c.hint ? <span className="font-mono text-[11px] text-text-muted">{c.hint}</span> : null}
-                    {i === active ? <CornerDownLeft size={13} className="text-text-muted" aria-hidden /> : null}
+                    <span className="flex-1 text-foreground"><Highlight text={c.label} q={query.trim()} /></span>
+                    {c.hint ? <span className="font-mono text-[11px] text-muted-foreground">{c.hint}</span> : null}
+                    {i === active ? <CornerDownLeft size={13} className="text-muted-foreground" aria-hidden /> : null}
                   </button>
                 </li>
               );
