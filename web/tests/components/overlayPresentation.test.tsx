@@ -199,6 +199,25 @@ describe('overlay geometry', () => {
     expect(primitivesCss).toContain('padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left)');
   });
 
+  it('keeps a sheet and a fullscreen surface apart where there is room', () => {
+    // On a phone both take the width of the screen, which is right: there is one column and no page to
+    // leave visible beside them. With room the phone geometry alone collapsed the two into the same
+    // object — full bleed either way, 12dvh and half a rem apart — so `presentation="sheet"` and
+    // `presentation="fullscreen"` opened surfaces nobody could tell apart. What separates them is that a
+    // sheet stops being full-bleed: it takes a bounded width and centres itself over a page that stays
+    // visible on both sides.
+    const sheet = /@media \(min-width: 768px\)\s*\{\s*\.overlay-surface\[data-presentation='sheet'\]\s*\{([^}]*)\}/.exec(primitivesCss);
+    expect(sheet, 'a sheet needs a geometry of its own above the phone breakpoint').not.toBeNull();
+    expect(sheet![1], 'a full-bleed sheet is a fullscreen surface that stops short').toMatch(/width:\s*min\(/);
+    expect(sheet![1], 'a surface pinned at both inline edges is centred by auto margins').toContain('margin-inline: auto');
+
+    // And the other half of the pair stays full-bleed, so the two cannot be re-collapsed from the
+    // fullscreen side by bounding it to the same width.
+    const fullscreen = /@media \(min-width: 768px\)\s*\{\s*\.overlay-surface\[data-presentation='fullscreen'\]\s*\{([^}]*)\}/.exec(primitivesCss);
+    expect(fullscreen, 'the fullscreen inset rule must stay').not.toBeNull();
+    expect(fullscreen![1], 'a fullscreen surface is sized by its inset, never by a width').not.toMatch(/(?:^|[\s;])width:/);
+  });
+
   it('guarantees the touch floor for a coarse pointer', () => {
     expect(primitivesCss).toMatch(/@media \(pointer: coarse\)[^}]*\{[\s\S]*?min-height: var\(--touch-target\)/);
   });
