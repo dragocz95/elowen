@@ -2,6 +2,7 @@ import { useId, type ReactNode } from 'react';
 import { useLocaleSafe } from '../../lib/i18n/context';
 import { dictionaries } from '../../lib/i18n/dictionaries';
 import { HelpTip } from './HelpTip';
+import { Label } from './shadcn/label';
 
 /** The ARIA a field produces for the control it labels. Only these three: everything else about the
  *  control belongs to the control. Spread it onto the element the user actually focuses. */
@@ -88,9 +89,8 @@ export function Field(props: FieldProps) {
   };
 
   const body = typeof children === 'function' ? children(control) : children;
-  const requiredMarker = required ? <span aria-hidden className="field__required text-danger">*</span> : null;
-  const labelRowClass = 'field__label flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-text-muted';
-  const stackClass = 'flex flex-col gap-1.5';
+  const requiredMarker = required ? <span aria-hidden className="field__required text-destructive">*</span> : null;
+  const labelRowClass = 'field__label flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground';
 
   // A `hint` renders a HelpTip, and a HelpTip is a BUTTON. A button inside a wrapping `<label>` is an
   // embedded control, and the accessible-name algorithm collapses the labelled control's computed name
@@ -100,33 +100,37 @@ export function Field(props: FieldProps) {
   // the reader, since it no longer labels anything), and the label carries the same words for a screen
   // reader instead. Same elements, same classes, same gaps — `.field__label` is still one flex row six
   // pixels above the control — so every design renders exactly what it rendered before.
+  //
+  // The label is the shadcn `Label`, wrapping rather than pointing: the control is whatever the caller
+  // renders, so there is no id for `htmlFor` unless the caller supplies one. `variant="stack"` is that
+  // wrapping form — the label IS the field's column — and not the standalone label row.
   const named = hint ? (
     <>
       <span className={labelRowClass}>
         <span aria-hidden className="flex items-center gap-1.5">{label}{requiredMarker}</span>
         <HelpTip align="left">{hint}</HelpTip>
       </span>
-      <label htmlFor={htmlFor} className={stackClass}>
+      <Label htmlFor={htmlFor} variant="stack">
         <span className="sr-only">{required ? `${label} ${requiredLabel}` : label}</span>
         {body}
-      </label>
+      </Label>
     </>
   ) : (
-    <label htmlFor={htmlFor} className={stackClass}>
+    <Label htmlFor={htmlFor} variant="stack">
       <span className={labelRowClass}>
         {label}
         {requiredMarker}
         {required ? <span className="sr-only">{requiredLabel}</span> : null}
       </span>
       {body}
-    </label>
+    </Label>
   );
 
   return (
     <div className="field flex flex-col gap-1.5">
       {named}
-      {description ? <p id={descriptionId} className="field__description text-xs leading-relaxed text-text-muted">{description}</p> : null}
-      {error ? <p id={errorId} role="alert" className="field__error text-xs leading-relaxed text-danger">{error}</p> : null}
+      {description ? <p id={descriptionId} className="field__description text-xs leading-relaxed text-muted-foreground">{description}</p> : null}
+      {error ? <p id={errorId} role="alert" className="field__error text-xs leading-relaxed text-destructive">{error}</p> : null}
     </div>
   );
 }

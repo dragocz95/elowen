@@ -114,6 +114,21 @@ describe('Field', () => {
     expect(screen.getAllByRole('button', { name: 'Help' })).toHaveLength(2);
   });
 
+  // The name has to be exactly one name, from exactly one label. The two ways this has gone wrong are
+  // opposite: the tip's button inside the wrapping label collapsed the computed name to '', and naming
+  // the field a second time to buy it back would leave two elements claiming to label one control —
+  // "Slug Slug" to a reader, and an ambiguous `getByLabelText` to everything else.
+  it('names a hinted control once, from one label element', () => {
+    wrap(<Field label="Slug" hint="Lowercase, no spaces."><Input defaultValue="" /></Field>);
+
+    expect(screen.getAllByLabelText('Slug')).toHaveLength(1);
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    expect(input).toHaveAccessibleName('Slug');
+    expect(input.labels).toHaveLength(1);
+    // And the tip is still a control the reader can operate: silencing it is not how the name is won.
+    expect(screen.getByRole('button', { name: 'Help' })).toBeInTheDocument();
+  });
+
   it('renders a hinted field with the same anatomy classes as an unhinted one', () => {
     const { container } = wrap(
       <>
