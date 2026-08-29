@@ -5268,7 +5268,7 @@ describe('sub-agent session tap + owner steering', () => {
         toolPolicy: { allow: [], deny: ['Read'] },
       },
       promptAppend: ['focused child'], trusted: false,
-      toolPolicy: { allow: new Set(), deny: new Set(['DiscordApi', 'Read']) },
+      toolPolicy: { allow: new Set(), deny: new Set(['AskUserQuestion', 'DiscordApi', 'Read']) },
       identity: expect.objectContaining({ platform: 'subagent', admin: false, owner: false }),
     }), 'continue');
     const forwarded = send.mock.calls[0]![0] as { policy: { allowedProjectIds: Set<number> | 'all' }; writerUserId?: number };
