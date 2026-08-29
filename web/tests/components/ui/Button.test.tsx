@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { Save } from 'lucide-react';
-import { Button } from '../../../components/ui/Button';
+import { Button, buttonClassName } from '../../../components/ui/Button';
 import { Button as ShadcnButton } from '../../../components/ui/shadcn/button';
 
 describe('Button', () => {
@@ -28,6 +28,41 @@ describe('Button', () => {
   it('renders an optional leading icon', () => {
     const { container } = render(<Button icon={Save}>Save</Button>);
     expect(container.querySelector('svg')).not.toBeNull();
+  });
+
+  /** The wrapper used to swallow the size axis: it passed `variant` down and nothing else, so every app
+   *  button was the default height and a caller who wanted another one hand-wrote `h-8` into `className`.
+   *  What is worth pinning is that the prop reaches the CVA — that the geometry comes from the declared
+   *  size and not from the default plus an override. */
+  it('forwards the size axis to the primitive', () => {
+    render(<Button size="sm">Small</Button>);
+    render(<Button size="lg">Large</Button>);
+    render(<Button>Medium</Button>);
+
+    expect(screen.getByRole('button', { name: 'Small' }).className).toContain('h-8');
+    expect(screen.getByRole('button', { name: 'Large' }).className).toContain('h-10');
+    expect(screen.getByRole('button', { name: 'Medium' }).className).toContain('h-9');
+  });
+
+  it('lets className override the size it was given, rather than emitting both', () => {
+    render(<Button size="lg" className="h-8">Squashed</Button>);
+    const button = screen.getByRole('button', { name: 'Squashed' });
+    expect(button.className).toContain('h-8');
+    expect(button.className).not.toContain('h-10');
+  });
+});
+
+describe('buttonClassName', () => {
+  it('takes the same size axis, so a button-shaped <a> matches a real button', () => {
+    expect(buttonClassName('default', 'sm')).toBe(
+      render(<Button variant="default" size="sm" />).container.querySelector('button')!.className,
+    );
+  });
+
+  it('defaults to the default size and keeps caller overrides last', () => {
+    expect(buttonClassName()).toContain('h-9');
+    expect(buttonClassName('accent', 'lg', 'w-full')).toContain('w-full');
+    expect(buttonClassName('accent', 'lg', 'w-full')).toContain('h-10');
   });
 });
 
