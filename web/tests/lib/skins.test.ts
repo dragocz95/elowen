@@ -116,7 +116,7 @@ describe('activeSkin', () => {
     expect(activeSkin()).toBe('studio-oled');
   });
 
-  it('returns null for unset, unknown and malformed values — the built-in design must render', () => {
+  it('returns null for unset, unknown and malformed values so the resolver uses studio-light', () => {
     vi.stubEnv('ELOWEN_SKIN', '');
     expect(activeSkin()).toBeNull();
     vi.stubEnv('ELOWEN_SKIN', 'ghost');
