@@ -47,20 +47,22 @@ function Harness({ onChange, initial = '', allowRelay = false, kind = 'all' }: {
 
 function mount(props: Parameters<typeof Harness>[0]) {
   const { wrapper: Wrapper } = createWrapper();
-  render(<Wrapper><Harness {...props} /></Wrapper>);
+  return render(<Wrapper><Harness {...props} /></Wrapper>);
 }
 
 describe('BackendPicker', () => {
-  it('renders as a summary with a Manage button; empty value shows the relay label', async () => {
-    mount({ onChange: vi.fn() });
-    // No pill rows — just a compact summary + Manage affordance.
-    expect(await screen.findByRole('button', { name: 'Manage' })).toBeTruthy();
+  it('renders as one compact row picker; empty value shows the relay label', async () => {
+    const { container } = mount({ onChange: vi.fn() });
+    // No pill rows and no summary card — one trigger named for the field, showing the current pick.
+    expect(await screen.findByRole('button', { name: 'Executor' })).toBeTruthy();
     expect(screen.getByText('Relay (model via API)')).toBeTruthy();
+    expect(container.querySelector('[data-selection-summary]')).toBeNull();
+    expect(screen.getAllByRole('button')).toHaveLength(1);
   });
 
   it('opens the modal with worker + Elowen AI groups, group logos and per-row icons', async () => {
     mount({ onChange: vi.fn() });
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Executor' }));
 
     // Workers group: engine logo on the header, brand icon on the row.
     const workers = await screen.findByRole('heading', { name: 'Claude Code' });
@@ -78,7 +80,7 @@ describe('BackendPicker', () => {
   it('single-select: clicking a row and saving fires onChange with that exec', async () => {
     const onChange = vi.fn();
     mount({ onChange });
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Executor' }));
     fireEvent.click(await screen.findByRole('button', { name: /GPT-5 Codex/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(onChange).toHaveBeenCalledWith('codex:gpt-5'));
@@ -87,7 +89,7 @@ describe('BackendPicker', () => {
   it('single-select picks an Elowen AI brain model by its exec', async () => {
     const onChange = vi.fn();
     mount({ onChange });
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Executor' }));
     fireEvent.click(await screen.findByRole('button', { name: /Claude Opus/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(onChange).toHaveBeenCalledWith('elowen:anthropic::opus'));
@@ -96,7 +98,7 @@ describe('BackendPicker', () => {
   it('when allowRelay, a pinned relay row lets the user clear the pick to relay', async () => {
     const onChange = vi.fn();
     mount({ onChange, initial: 'sonnet', allowRelay: true });
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Executor' }));
     // The pinned relay row (empty exec) sits above the groups; picking it saves ''.
     fireEvent.click(await screen.findByRole('button', { name: 'Relay (model via API)' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -115,7 +117,7 @@ describe('BackendPicker', () => {
     it('stays two distinct, provider-badged rows', async () => {
       useCollidingCatalog();
       mount({ onChange: vi.fn(), kind: 'brain' });
-      fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Executor' }));
       const rows = await screen.findAllByRole('button', { name: /claude-opus-5/ });
       expect(rows).toHaveLength(2);
       // …and each one names the provider it belongs to, so they are telling apart in the UI too.
@@ -127,7 +129,7 @@ describe('BackendPicker', () => {
       useCollidingCatalog();
       const onChange = vi.fn();
       mount({ onChange, kind: 'brain' });
-      fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Executor' }));
       const rows = await screen.findAllByRole('button', { name: /claude-opus-5/ });
       fireEvent.click(rows[1]!); // the relay one
       fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -137,7 +139,7 @@ describe('BackendPicker', () => {
     it('shows the saved value as its own row instead of an unknown pick', async () => {
       useCollidingCatalog();
       mount({ onChange: vi.fn(), initial: 'elowen:relay/claude-opus-5', kind: 'brain' });
-      // Summary renders the clean model name — the raw spec would mean the value matched no row.
+      // The trigger renders the clean model name — the raw spec would mean the value matched no row.
       expect(await screen.findByText('claude-opus-5')).toBeTruthy();
       expect(screen.queryByText('elowen:relay/claude-opus-5')).toBeNull();
     });
@@ -146,9 +148,9 @@ describe('BackendPicker', () => {
   it('preserves a saved-but-unknown exec as a pinned, selectable row', async () => {
     const onChange = vi.fn();
     mount({ onChange, initial: 'removed:legacy-model' });
-    // The summary surfaces the unknown value so it never silently vanishes.
+    // The trigger surfaces the unknown value so it never silently vanishes.
     expect(await screen.findByText('removed:legacy-model')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Executor' }));
     // Re-picking it round-trips the same exec on save.
     fireEvent.click(await screen.findByRole('button', { name: /removed:legacy-model/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));

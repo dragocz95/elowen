@@ -19,12 +19,16 @@ describe('ChoiceField', () => {
     render(<LanguageProvider><ChoiceField title="Effects" value="auto" onChange={() => {}} options={[
       { value: 'auto', label: 'Auto' }, { value: 'full', label: 'Full' }, { value: 'reduced', label: 'Reduced' }, { value: 'off', label: 'Off' },
     ]} /></LanguageProvider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    // The trigger is named for the FIELD and shows the current pick — not a "Manage" button beside a
+    // summary card, which is what a record's trailing cell has no room for.
+    const trigger = screen.getByRole('button', { name: 'Effects' });
+    expect(trigger).toHaveTextContent('Auto');
+    fireEvent.click(trigger);
     expect(screen.getByRole('searchbox', { name: 'Search…' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Auto' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('renders option icons inside the shared picker rows', () => {
+  it('renders the option icon on the trigger and inside the shared picker rows', () => {
     render(<LanguageProvider><ChoiceField
       title="Project scope"
       picker="always"
@@ -33,8 +37,13 @@ describe('ChoiceField', () => {
       options={[{ value: 'project-1', label: 'elowen', icon: <span data-testid="project-icon" /> }]}
     /></LanguageProvider>);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    // The trigger IS the current pick — its own mark included, so the row reads as the choice rather
+    // than as a button that leads to one.
+    const trigger = screen.getByRole('button', { name: 'Project scope' });
+    expect(trigger.querySelector('[data-testid="project-icon"]')).not.toBeNull();
 
-    expect(screen.getByRole('button', { name: 'elowen' })).toContainElement(screen.getByTestId('project-icon'));
+    fireEvent.click(trigger);
+
+    expect(screen.getByRole('button', { name: 'elowen' }).querySelector('[data-testid="project-icon"]')).not.toBeNull();
   });
 });

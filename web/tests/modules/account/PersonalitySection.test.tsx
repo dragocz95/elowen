@@ -41,7 +41,7 @@ describe('PersonalitySection — error state', () => {
 
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
     // No editor form (style picker / body field) must render while the load has failed.
-    expect(screen.queryByRole('button', { name: 'Manage' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Communication style' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Agent instructions' })).not.toBeInTheDocument();
 
     server.use(http.get('*/api/auth/me/cli-settings', () => HttpResponse.json(settings)));
@@ -71,8 +71,9 @@ describe('PersonalitySection', () => {
     // The server style is 'concise' — wait for the seed to land (the chip shows it) before editing,
     // otherwise the seeding effect would overwrite the edits.
     expect(await screen.findByText('Concise')).toBeInTheDocument();
-    // Pick a new style in the picker (the style row's Manage button; the body row's says Add).
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    // Pick a new style in the picker. The trigger is named for the field, so the style row and the
+    // instructions row beside it no longer offer a screen reader two identically named buttons.
+    fireEvent.click(screen.getByRole('button', { name: 'Communication style' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Friendly' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     // Open the drawer to reach the body editor, then edit it.

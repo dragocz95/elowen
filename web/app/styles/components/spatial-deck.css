@@ -170,13 +170,17 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 /* Three tracks, because a record may carry BOTH a control and trailing actions (a connected account
    shows its usage meters and a "Models" button). A two-track grid pushed the actions onto a second line
    and crushed the meters. The tracks come from the enclosing stack via subgrid — see the alignment rule
-   above — so every record in a card shares one set of columns. */
+   above — so every record in a card shares one set of columns.
+   `min-height` is the record's floor rather than its height: a row whose control is a switch and a row
+   whose control is a picker trigger then occupy the same band, so a card reads as evenly ruled instead
+   of as rows that shrink to whatever their control happened to be. */
 .settings-row {
   position: relative;
   display: grid;
   grid-template-columns: minmax(10rem, 1fr) minmax(0, 1.05fr) auto;
   align-items: center;
   gap: 0.75rem 1rem;
+  min-height: 2.75rem;
   padding: 0.8rem 0.95rem;
   border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 4.5%, transparent);
   transition: background-color var(--motion-base) var(--ease-out);
@@ -231,6 +235,16 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    when a record carries more than one trailing value. It spans the control/action tracks of the shared
    subgrid; skins may retune the tracks without changing the DOM contract. */
 .settings-row__trailing { display: flex; min-width: 0; grid-column: 2 / 4; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem 0.75rem; }
+/* An INLINE record's trailing side is one line, here and at every width below. That is the whole
+   canonical anatomy: one control, a short status, at most two actions, and nothing that turns a record
+   into a two-row block on a wide card. `stack` keeps `wrap`, because a record that declared it is
+   carrying several values on purpose. */
+.settings-row[data-trailing='inline'] .settings-row__trailing { flex-wrap: nowrap; }
+/* And what pays for the `nowrap`: on a line that cannot break, something has to give way. The control
+   already shrinks (`min-width: 0` below), so the status is what ELLIPSES — it is a state word or a count
+   by contract, and an unbreakable one would otherwise push the actions past the card's edge instead of
+   wrapping as it used to. A `stack` record is excluded: its status has a line to itself and wraps. */
+.settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .settings-row__trailing .settings-row__status { margin-top: 0; white-space: nowrap; }
 .settings-row__trailing .settings-row__control { min-width: 0; flex: 1 1 10rem; }
 .settings-row__trailing .settings-row__actions { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 0.5rem; }
@@ -238,6 +252,19 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    descendant specificity intentionally matches the phone reset below, whose later rule must release it. */
 .settings-row__control { min-width: 0; grid-column: 2; }
 .settings-row__actions { grid-column: 3; }
+
+/* A FINGER, not a pointer. The record's own rhythm is tuned for a cursor, and the controls it carries —
+   a picker trigger, a segmented track, a switch, an action button — are all 32-36px tall by design. That
+   is under the 44px a touch target needs, so a coarse pointer raises the floor for the controls in the
+   trailing cell and nothing else: the ceiling only has to hold where the record compresses, and applying
+   it to every button in the app would inflate toolbars a finger reaches perfectly well already. */
+@media (pointer: coarse) {
+  .settings-row__trailing button,
+  .settings-row__trailing [role='button'],
+  .settings-row__trailing [role='combobox'],
+  .settings-row__trailing [role='radio'],
+  .settings-row__trailing [role='switch'] { min-height: 2.75rem; }
+}
 
 .settings-toolbar { position: sticky; top: 0; z-index: var(--z-sticky); border-radius: var(--radius-lg); background: linear-gradient(180deg, var(--color-document) 88%, transparent); }
 
@@ -296,8 +323,10 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
   .spatial-section-rail {
     mask-image: linear-gradient(90deg, transparent, black 1.75rem, black calc(100% - 1.75rem), transparent);
   }
-  /* The stack collapses to a single track, and the records borrowing it through subgrid collapse with
-     it — overriding the record alone would lose to the more specific subgrid rule. */
+  /* THE TWO-LINE BAND. The stack collapses to a single track, and the records borrowing it through
+     subgrid collapse with it — overriding the record alone would lose to the more specific subgrid rule.
+     A record is then two lines: its label and help, then everything trailing. There is no third line,
+     because an inline record's trailing cell does not wrap at any width (see the rule above). */
   .settings-group__body:has(> .settings-row), .settings-group__column { grid-template-columns: 1fr; }
   .settings-row { grid-template-columns: 1fr; gap: 0.6rem; }
   /* One track: release the pinned columns, or each slot would open an implicit column of its own. */
