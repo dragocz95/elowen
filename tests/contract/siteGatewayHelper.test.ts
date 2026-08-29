@@ -38,7 +38,7 @@ describe('root-owned published-sites gateway helper', () => {
     // The challenge block covers the whole wildcard rather than one site: the CA calls back for a name
     // whose certificate does not exist yet, so a per-site block could not answer it.
     const empty = renderActiveConfig(deployment, TOKEN, []);
-    expect(empty).toContain('server_name ~^[a-z0-9][a-z0-9-]{1,63}\\.sites\\.agent\\.chetty\\.ai$');
+    expect(empty).toContain('server_name "~^[a-z0-9][a-z0-9-]{1,63}\\.sites\\.agent\\.chetty\\.ai$";');
     expect(empty).toContain('location /.well-known/acme-challenge/');
     expect(empty).toContain('root /var/lib/elowen/site-acme/webroot;');
     expect(empty).toContain('return 308 https://$host$request_uri;');
@@ -66,6 +66,24 @@ describe('root-owned published-sites gateway helper', () => {
     expect(config).not.toContain('$elowen_site_slug');
     expect(() => renderActiveConfig(deployment, TOKEN, ['../etc'])).toThrow(/slug/);
     expect(() => renderActiveConfig(deployment, 'short', ['alpha'])).toThrow(/token/);
+  });
+
+  // Shipped broken and cost a production outage that looked like a DNS problem: the wildcard regex
+  // carries the slug length bound, so it contains `{`, and nginx reads an unquoted `{` as the start of a
+  // block. `nginx -t` rejected the whole file with `directive "server_name" is not terminated by ";"`,
+  // the helper rolled the mutation back, and the gateway reported itself unprovisioned forever — with
+  // correct DNS and no error anywhere but the readiness detail.
+  it('quotes any directive value containing a brace, which nginx would otherwise read as a block', () => {
+    const configs = [renderActiveConfig(deployment, TOKEN, ['alpha']), renderDenyConfig(deployment)];
+    for (const config of configs) {
+      for (const line of config.split('\n')) {
+        const directive = line.trim();
+        if (!directive.includes('{') || directive.endsWith('{')) continue; // a real block opener
+        // Anything else carrying a brace is a VALUE, and a value with a brace has to be a quoted string.
+        const value = directive.replace(/^\S+\s+/, '').replace(/;$/, '');
+        expect(value.startsWith('"') && value.endsWith('"')).toBe(true);
+      }
+    }
   });
 
   it('keeps a deny tombstone instead of letting old hostnames fall into another vhost', () => {

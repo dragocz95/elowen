@@ -42,8 +42,12 @@ export function deploymentFrom(raw) {
 
 const MANAGED_HEADER = '# Managed by Elowen. Do not edit: the root-owned site gateway helper rewrites this file.';
 
+/** Quoted, and it has to be: the slug length bound makes this regex contain `{`, which nginx reads as the
+ *  start of a block unless the value is a quoted string. Unquoted, the whole gateway config is rejected by
+ *  `nginx -t` with `directive "server_name" is not terminated by ";"`, the mutation is rolled back, and the
+ *  gateway silently never activates however correct the DNS is. */
 function wildcardServerName(deployment) {
-  return `~^[a-z0-9][a-z0-9-]{1,63}\\.${escapeRegex(deployment.hostnameBase)}$`;
+  return `"~^[a-z0-9][a-z0-9-]{1,63}\\.${escapeRegex(deployment.hostnameBase)}$"`;
 }
 
 export function lineageFor(deployment, slug) {
@@ -129,10 +133,32 @@ export function renderDenyConfig(deployment) {
   ].join('\n')}\n`;
 }
 
+/** nginx builds ONE exact-name hash for every server_name on the machine, and refuses the whole
+ *  configuration when they do not fit, with `could not build server_names_hash`. The bucket defaults to
+ *  the CPU cache line (64 bytes here), and a site hostname is a slug of up to 64 characters plus the
+ *  base, so ordinary slugs overflow it — which is exactly how this shipped: the sites were issued
+ *  certificates and then rolled straight back out of nginx.
+ *
+ *  The size cannot be derived exactly, because the names that share the hash include every OTHER vhost
+ *  on the host, which this helper does not own and must not parse. So it is a floor, not a fit: 128 is
+ *  the value nginx's own documentation reaches for, and it still grows if a long base ever needs more.
+ *  The stock nginx.conf ships this directive commented out, so setting it here does not collide. */
+function serverNamesHashBucketSize(lineages) {
+  const longest = lineages.reduce((max, name) => Math.max(max, name.length), 0);
+  let size = 128;
+  while (size < longest * 2) size *= 2;
+  return size;
+}
+
 export function renderActiveConfig(deployment, gatewayToken, slugs) {
   if (!SAFE_TOKEN.test(gatewayToken)) fail('gateway token is invalid');
   const ordered = [...new Set(slugs)].sort();
-  const blocks = [MANAGED_HEADER, ...challengeBlock(deployment)];
+  const blocks = [MANAGED_HEADER];
+  if (ordered.length > 0) {
+    const lineages = ordered.map((slug) => lineageFor(deployment, slug));
+    blocks.push(`server_names_hash_bucket_size ${serverNamesHashBucketSize(lineages)};`, '');
+  }
+  blocks.push(...challengeBlock(deployment));
   for (const slug of ordered) blocks.push('', ...siteBlock(deployment, slug, gatewayToken));
   return `${blocks.join('\n')}\n`;
 }
