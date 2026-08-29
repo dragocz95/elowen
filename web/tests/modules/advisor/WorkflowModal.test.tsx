@@ -182,6 +182,26 @@ describe('workflow DAG modal', () => {
     expect(screen.getByTestId('workflow-node-detail').textContent).toContain('ověřit testy');
   });
 
+  it('scrolls the graph in the shared body and keeps the node detail pinned below it', async () => {
+    const es = await renderChat();
+    await openDag(es);
+
+    // `ModalBody`'s own signature (components/ui/Modal.tsx). The DAG used to build a body per branch —
+    // `min-h-0 flex-1 overflow-auto` with a p-3 on the phone and a p-4 on a desktop — so the graph and the
+    // list sat at different insets from the same header, each scrolling in a region the shell had already
+    // provided one of.
+    const dialog = screen.getByRole('dialog');
+    const bodies = dialog.querySelectorAll('.overflow-y-auto.overscroll-contain');
+    expect(bodies, 'the dialog has exactly one scroll region').toHaveLength(1);
+    const body = bodies[0]!;
+
+    expect(body.contains(screen.getByTestId('workflow-dag-graph')), 'the graph scrolls in the shared body').toBe(true);
+    // And the dock stays OUT of it: a detail pane pinned under the scroll, the way an action row is.
+    const detail = screen.getByTestId('workflow-node-detail');
+    expect(body.contains(detail), 'the node detail is pinned, not scrolled away with the graph').toBe(false);
+    expect(detail.className).toMatch(/\bshrink-0\b/);
+  });
+
   it('renders the node list instead of the graph on a phone', async () => {
     const es = await renderChat(true);
     // On mobile the rail is a drawer, so the row is reached through it.

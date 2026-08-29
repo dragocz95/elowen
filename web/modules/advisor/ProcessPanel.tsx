@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { TerminalSquare } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { elowenClient } from '../../lib/elowenClient';
-import { Modal } from '../../components/ui/Modal';
+import { Modal, ModalBody } from '../../components/ui/Modal';
 import type { ProcessInfo } from '../../lib/types';
 
 /** Live output of one background process, polled while it runs. Mirrors the terminal plugin's rolling
@@ -23,13 +23,19 @@ export function ProcessOutputModal({ proc, onClose }: { proc: ProcessInfo; onClo
     const timer = proc.running ? setInterval(() => void pull(), 1500) : null;
     return () => { stale = true; if (timer) clearInterval(timer); };
   }, [proc.id, proc.running]);
-  useEffect(() => { preRef.current?.scrollTo({ top: preRef.current.scrollHeight }); }, [output]);
+  // `ModalBody` owns the scroll, so the pane is sized by its output and following the tail means bringing
+  // the pane's END edge into that one region — not scrolling the <pre>, which no longer overflows.
+  useEffect(() => { preRef.current?.scrollIntoView?.({ block: 'end' }); }, [output]);
   return (
     // `inspect`: a live output tail. It is watched, never typed into.
     <Modal title={proc.command} description={proc.running ? t.processes.running : t.processes.exited} onClose={onClose} size="xl" icon={TerminalSquare} intent="inspect">
-      <pre ref={preRef} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap bg-background p-4 font-mono text-tiny leading-relaxed text-muted-foreground">
-        {output || t.processes.noOutput}
-      </pre>
+      <ModalBody>
+        {/* The dark ground and the frame are the CODE PANE's own material — content, not the dialog's
+            surface, which `.overlay-surface` already paints one level up. */}
+        <pre ref={preRef} className="whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-tiny leading-relaxed text-muted-foreground">
+          {output || t.processes.noOutput}
+        </pre>
+      </ModalBody>
     </Modal>
   );
 }
