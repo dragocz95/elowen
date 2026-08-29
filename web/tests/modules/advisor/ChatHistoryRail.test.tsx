@@ -130,6 +130,22 @@ describe('ChatHistoryRail', () => {
     await waitFor(() => expect(ctrl.switchSession).toHaveBeenCalledWith({ session: 's1-fork' }));
   });
 
+  // The drawer is the one variant that is a dialog, and it used to answer Escape from a React handler on
+  // its own layer — which reached it only because the search field happened to hold focus. Both halves
+  // are the primitive's now, so both are pinned: the field still takes focus on open, and Escape closes
+  // the drawer from anywhere inside it.
+  it('opens the drawer with focus in the search field and closes it on Escape', async () => {
+    const onClose = vi.fn();
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ChatHistoryRail variant="drawer" open onClose={onClose} /></ToastProvider></Wrapper>);
+
+    const search = screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i });
+    expect(search).toHaveFocus();
+
+    fireEvent.keyDown(search, { key: 'Escape' });
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
   it('runs a fulltext search (≥2 chars) and highlights the match', async () => {
     renderRail('rail');
     fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });

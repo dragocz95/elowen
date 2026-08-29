@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Plus } from 'lucide-react';
 import { SpatialWorkspaceHero, SpatialWorkspaceLayout, WorkspaceDetailRail, WorkspaceMetric } from '../../../components/ui/WorkspacePrimitives';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../../components/ui/ControlSurface';
@@ -86,7 +86,7 @@ describe('SpatialWorkspaceHero', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('moves focus into the drawer, isolates the app root and restores focus on unmount', () => {
+  it('moves focus into the drawer, isolates the app root and restores focus on unmount', async () => {
     const opener = document.createElement('button');
     opener.textContent = 'Open detail';
     document.body.append(opener);
@@ -100,7 +100,9 @@ describe('SpatialWorkspaceHero', () => {
     expect(screen.getByRole('dialog', { name: 'Task detail' })).toHaveFocus();
     expect(container).toHaveAttribute('inert');
     unmount();
-    expect(opener).toHaveFocus();
+    // Radix's focus scope releases a tick after the surface is gone, so that its own trap is already
+    // torn down and cannot pull the restored focus back inside the drawer it is unmounting.
+    await waitFor(() => expect(opener).toHaveFocus());
     opener.remove();
   });
 });

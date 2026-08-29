@@ -95,6 +95,35 @@ export function focusOverlaySurface(surface: HTMLElement): void {
   (requested ?? surface).focus({ preventScroll: true });
 }
 
+/** Where focus goes when an overlay closes, and nothing else.
+ *
+ *  Radix cannot answer this one: `Dialog` hands focus back to a `Dialog.Trigger`, and every overlay in
+ *  this app is mounted on open rather than opened from a trigger, so there is nothing for it to restore
+ *  to. Declining `onCloseAutoFocus` and calling this instead is what keeps the opener reachable.
+ *
+ *  Split out of `useOverlayIsolation` because the two halves have different prerequisites: the isolation
+ *  below only works for an overlay portalled to <body>, while focus return applies to any overlay that
+ *  takes focus — including the history and telemetry drawers, which render inside the shell tree and
+ *  therefore cannot join the stack. */
+export function useReturnFocus() {
+  // Captured on the FIRST render rather than in an effect: by the time effects run, an overlay that
+  // autofocuses itself has already taken focus off the control that opened it. This is also why every
+  // consumer mounts on open instead of rendering itself away while closed.
+  const returnFocusRef = useRef<HTMLElement | null | undefined>(undefined);
+  if (returnFocusRef.current === undefined && typeof document !== 'undefined') {
+    returnFocusRef.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null;
+  }
+  return {
+    /** Focus back to the opener, if it is still on the page and still reachable. */
+    restoreFocus: useCallback(() => {
+      const target = returnFocusRef.current;
+      if (target?.isConnected && !target.inert && !target.closest('[inert]')) target.focus({ preventScroll: true });
+    }, []),
+  };
+}
+
 /** The part of the overlay lifecycle that is THIS APP'S and has no counterpart in Radix: ownership of the
  *  overlay stack, isolation of everything below the top of it, the body scroll lock, and the element to
  *  give focus back to.
@@ -104,21 +133,14 @@ export function focusOverlaySurface(surface: HTMLElement): void {
  *  overlays — Radix-driven or not — is the live one; and a `Dialog` mounted without a `Dialog.Trigger`,
  *  which is every dialog in this app, leaves Radix with nothing to hand focus back to on close.
  *
- *  Use this directly when Radix already owns the focus trap and Escape (`Modal`, `ConfirmDialog`). Use
- *  `useDialogOverlay` below for a hand-written overlay that owns those itself. */
+ *  This is what an overlay takes once Radix owns its focus trap and Escape — `Modal`, `ConfirmDialog`,
+ *  the workspace detail rail, the workspace takeover and the command orbit. `useDialogOverlay` below is
+ *  the pre-Radix contract and has one caller left. */
 export function useOverlayIsolation({ enabled, rootRef }: {
   enabled: boolean;
   rootRef: RefObject<HTMLElement | null>;
 }) {
-  // Captured on the FIRST render rather than in the effect: by the time effects run, an overlay that
-  // autofocuses itself has already taken focus off the control that opened it. This is also why every
-  // consumer mounts on open instead of rendering itself away while closed.
-  const returnFocusRef = useRef<HTMLElement | null | undefined>(undefined);
-  if (returnFocusRef.current === undefined && typeof document !== 'undefined') {
-    returnFocusRef.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
-      ? document.activeElement
-      : null;
-  }
+  const { restoreFocus } = useReturnFocus();
   const idRef = useRef<symbol | null>(null);
   useIsomorphicLayoutEffect(() => {
     if (!enabled || !rootRef.current) return undefined;
@@ -130,23 +152,30 @@ export function useOverlayIsolation({ enabled, rootRef }: {
     };
   }, [enabled, rootRef]);
 
+  // Then again once every primitive in the commit has had its say. `hideOthers()` sweeps the body from
+  // a passive effect and knows only its OWN dialog: two overlays that mount in the same commit — a
+  // detail rail with a dialog raised over it — leave the lower one's sweep marking the higher one
+  // `aria-hidden`, which takes the live overlay out of the accessibility tree entirely. The stack is
+  // what knows which one is on top, so it says so last. Writing only: `priorState` was recorded in the
+  // layout pass above, so nothing Radix wrote can be mistaken for the page's own prior state.
+  useEffect(() => {
+    if (!enabled || !rootRef.current) return;
+    syncIsolation();
+  }, [enabled, rootRef]);
+
   return {
     /** Whether this overlay is the one the user is in — the guard every global key handler owes the stack. */
     isTopmostOverlay: useCallback(() => idRef.current != null && isTopmost(idRef.current), []),
-    /** Focus back to the opener, if it is still on the page and still reachable. */
-    restoreFocus: useCallback(() => {
-      const target = returnFocusRef.current;
-      if (target?.isConnected && !target.inert && !target.closest('[inert]')) target.focus({ preventScroll: true });
-    }, []),
+    restoreFocus,
   };
 }
 
 /** Shared modal/drawer lifecycle: stack ownership, background isolation, focus trap and restoration.
  *
- *  This is the whole contract for an overlay that is NOT built on a Radix primitive — the command
- *  palette, the command orbit, the workspace detail rail and the workspace takeover. `Modal` and
- *  `ConfirmDialog` take `useOverlayIsolation` instead and let Radix trap focus, because running this
- *  trap alongside Radix's would mean two implementations answering the same Tab. */
+ *  This is the pre-Radix contract, and `components/shell/CommandPalette.tsx` is the last caller — every
+ *  other overlay now takes `useOverlayIsolation` and lets Radix trap focus and answer Escape, because
+ *  running this trap alongside Radix's would mean two implementations answering the same Tab and moving
+ *  focus twice. Delete this hook (and `focusCycle`'s use of it here) with that last caller. */
 export function useDialogOverlay({ enabled, rootRef, dialogRef, onClose }: {
   enabled: boolean;
   rootRef: RefObject<HTMLElement | null>;

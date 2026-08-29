@@ -6,7 +6,8 @@ import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
 import { SpatialWorkspaceHero, WorkspaceHero, WorkspaceMetric, type SpatialWorkspaceHeroProps } from './WorkspaceHero';
 import { WorkspaceShell, type SpatialDeckSection } from './WorkspaceShell';
-import { useDialogOverlay } from './overlayStack';
+import { focusOverlaySurface, useOverlayIsolation } from './overlayStack';
+import { Dialog, DialogContent } from './shadcn/dialog';
 
 // The hero, its metric and the page shell live in their own modules so the control deck can mount them
 // without an import cycle back through this one. Only the two names existing callers already reach by
@@ -65,27 +66,67 @@ export function SpatialWorkspaceLayout({ hero, navigation, children, className =
 /** The master/detail rail: a surface you open to READ a record, not to work in one. That is what
  *  `intent="inspect"` says, and it is the whole difference on a phone — the rail comes up as a bottom
  *  sheet there, where the desktop side rail would leave a useless strip of backdrop beside it. The
- *  geometry of each presentation lives in `.overlay-surface[data-presentation]`. */
+ *  geometry of each presentation lives in `.overlay-surface[data-presentation]`.
+ *
+ *  On the shadcn `Dialog` (Radix) for the same split `Modal.tsx` documents: Radix owns the dialog role,
+ *  the focus trap, Escape and the layer order among several open overlays; the app keeps the overlay
+ *  stack's `inert` isolation, the focus it puts in and gives back, and the backdrop press. */
 export function WorkspaceDetailRail({ label, closeLabel, onClose, children }: { label: string; closeLabel: string; onClose: () => void; children: ReactNode }) {
-  const drawer = useRef<HTMLElement>(null);
+  const drawer = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const [portal, setPortal] = useState<HTMLElement | null>(null);
   const presentation = useOverlayPresentation('inspect');
 
   useEffect(() => setPortal(document.body), []);
-  useDialogOverlay({ enabled: portal != null, rootRef: layer, dialogRef: drawer, onClose });
+  const { restoreFocus } = useOverlayIsolation({ enabled: portal != null, rootRef: layer });
 
-  const content = (
-    <div ref={layer} className="overlay-layer-drawer workspace-detail-layer">
-      <div data-testid="workspace-detail-backdrop" className="workspace-detail-backdrop" aria-hidden onMouseDown={onClose} />
-      <aside ref={drawer} role="dialog" aria-modal="true" tabIndex={-1} data-presentation={presentation} className="overlay-surface workspace-detail-rail workspace-detail-drawer" aria-label={label}>
-      <header className="workspace-detail-rail__header">
-        <span>{label}</span>
-        <button type="button" onClick={onClose} aria-label={closeLabel} className="overlay-touch-target workspace-detail-rail__close">×</button>
-      </header>
-      <div className="workspace-detail-rail__body"><OverlayDepthProvider>{children}</OverlayDepthProvider></div>
-      </aside>
-    </div>
+  if (!portal) return null;
+  return createPortal(
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <div
+        ref={layer}
+        className="overlay-layer-drawer workspace-detail-layer"
+        // Radix's modal content sets `pointer-events: none` on <body> and re-enables them on itself;
+        // this layer would inherit the block and the backdrop below would stop answering the press that
+        // dismisses the rail. Opting back in is what `DialogOverlay` does for the same reason.
+        style={{ pointerEvents: 'auto' }}
+      >
+        <div data-testid="workspace-detail-backdrop" className="workspace-detail-backdrop" aria-hidden onMouseDown={onClose} />
+        <DialogContent
+          ref={drawer}
+          // The rail's shape is its own (`.workspace-detail-rail`, workspace-detail.css) and the
+          // resolved presentation dresses it through `.overlay-surface[data-presentation]`, so the
+          // primitive's geometry variants are declined rather than merged over the top of it.
+          presentation={null}
+          data-presentation={presentation}
+          className="overlay-surface workspace-detail-rail workspace-detail-drawer"
+          aria-label={label}
+          // The rail has no description slot; without this Radix points `aria-describedby` at an id
+          // nothing in the tree carries.
+          aria-describedby={undefined}
+          // The backdrop above already owns dismissal, and it is the only owner that knows a nested
+          // overlay's backdrop must not close its parent.
+          onInteractOutside={(event) => event.preventDefault()}
+          // Focus policy stays the app's: the surface (or whatever asked for `[data-autofocus]`) on the
+          // way in, the opener on the way out — Radix would take the first control and then hand focus
+          // to a trigger that does not exist.
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            if (drawer.current) focusOverlaySurface(drawer.current);
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus();
+          }}
+        >
+          <header className="workspace-detail-rail__header">
+            <span>{label}</span>
+            <button type="button" onClick={onClose} aria-label={closeLabel} className="overlay-touch-target workspace-detail-rail__close">×</button>
+          </header>
+          <div className="workspace-detail-rail__body"><OverlayDepthProvider>{children}</OverlayDepthProvider></div>
+        </DialogContent>
+      </div>
+    </Dialog>,
+    portal,
   );
-  return portal ? createPortal(content, portal) : content;
 }
