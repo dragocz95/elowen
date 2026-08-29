@@ -393,12 +393,8 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           className={`overlay-layer-nav-drawer fixed inset-0 bg-bg/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       ) : null}
-    {/* The column widths below are real pixels. 17rem/4.75rem were a 1900px design read through an
-        automatic ~72% zoom and spent a fifth of a 1280px laptop on a menu; 12.5rem/3.5rem, the first
-        correction, undershot the other way — a 200px column left the labels crowded against the nodes
-        and a 56px folded rail was narrower than the 60px node it has to hold. 16rem/4rem is the pair
-        that fits: 4rem is exactly the icon column, so the folded rail IS the node column, and 16rem
-        leaves 12rem of label beside it. */}
+    {/* Match the established Chetty shell: 17rem gives the labelled rail its original visual weight.
+        The folded rail stays 4rem because its current nodes are drawn on that exact icon column. */}
     <nav
       ref={navRef}
       data-side={side}
@@ -423,7 +419,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         ? `overlay-layer-nav-drawer overlay-nav-drawer fixed inset-y-0 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
           ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
           : `left-0 border-r ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}`
-        : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4rem]' : 'w-[16rem]'}`}`}
+        : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4rem]' : 'w-[17rem]'}`}`}
       style={drawer ? { transitionTimingFunction: 'var(--ease-out)' } : undefined}
     >
       {/* A dialog needs a way out that is not "guess that the strip of backdrop is a target". Tapping
