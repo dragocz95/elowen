@@ -126,7 +126,7 @@ test('Studio matches the reference typography, toolbar and settings density', as
   expect(pageStyle.spacing).toBe('-0.15px');
   expect(pageStyle.family).toContain('Geist');
 
-  const toolbar = app.locator('.workspace-hero__lead .control-surface-toolbar');
+  const toolbar = app.locator('.page-toolbar__slot .control-surface-toolbar');
   await expect(toolbar).toBeVisible();
   const controlHeights = await toolbar
     .locator('input, button, [role="combobox"], select')
@@ -273,13 +273,15 @@ test('returning from Home opens the full chat at its newest turn', async ({ app,
   expect(bottomGap).toBeLessThanOrEqual(2);
 });
 
-test('sectioned Studio pages keep plain tabs in the top bar at every width', async ({ app, seed }, testInfo) => {
+test('sectioned Studio pages keep plain tabs in the page at every width', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-oled');
   await app.setViewportSize({ width: 1440, height: 900 });
   await openStudio(app, '/account');
 
-  const submenu = app.locator('.top-bar__page-slot .workspace-shell__section-navigation [role="radiogroup"]');
+  // In the PAGE, under the metric rail — the sections belong to the page and change with it, and the top
+  // bar is the one strip that does not. The chat surface still portals its own controls up there.
+  const submenu = app.locator('.workspace-shell > .workspace-shell__section-navigation [role="radiogroup"]');
   await expect(submenu).toBeVisible();
   await expect(submenu).toHaveAttribute('aria-orientation', 'horizontal');
   await expect(submenu).toHaveAttribute('data-nowrap', 'true');
@@ -309,31 +311,34 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
   await useSkin(app, seed, 'studio-oled');
   await app.setViewportSize({ width: 1440, height: 900 });
   await openStudio(app, REGISTER);
-  const memoryToolbar = app.locator('.workspace-hero__lead .control-surface-toolbar');
+  // The canonical order: what the page IS, then its live figures, then the controls that narrow it. A
+  // promoted register toolbar lands in the toolbar row's slot, BELOW the title — it used to be lifted
+  // above it, so every register opened on its filters and named itself second.
+  const memoryToolbar = app.locator('.page-toolbar__slot .control-surface-toolbar');
   await expect(memoryToolbar).toBeVisible();
   const desktopOrder = await app.evaluate(() => {
-    const body = document.querySelector<HTMLElement>('.workspace-hero__body')!.getBoundingClientRect();
-    const lead = document.querySelector<HTMLElement>('.workspace-hero__lead')!.getBoundingClientRect();
     const head = document.querySelector<HTMLElement>('.workspace-hero__head')!.getBoundingClientRect();
+    const metrics = document.querySelector<HTMLElement>('.workspace-hero__metrics')!.getBoundingClientRect();
+    const toolbar = document.querySelector<HTMLElement>('.page-toolbar')!.getBoundingClientRect();
     const actions = document.querySelector<HTMLElement>('.workspace-hero__actions')!.getBoundingClientRect();
-    return { bodyTop: body.top, leadTop: lead.top, headTop: head.top, actionsRight: actions.right, headRight: head.right };
+    return { headTop: head.top, metricsTop: metrics.top, toolbarTop: toolbar.top, actionsRight: actions.right, headRight: head.right };
   });
-  expect(desktopOrder.bodyTop).toBeLessThan(desktopOrder.leadTop);
-  expect(desktopOrder.leadTop).toBeLessThan(desktopOrder.headTop);
+  expect(desktopOrder.headTop).toBeLessThan(desktopOrder.metricsTop);
+  expect(desktopOrder.metricsTop).toBeLessThan(desktopOrder.toolbarTop);
   expect(desktopOrder.actionsRight).toBeLessThanOrEqual(desktopOrder.headRight + 1);
 
   await app.setViewportSize({ width: 390, height: 844 });
   await openStudio(app, '/settings?cat=models');
   await expect(app.getByRole('heading', { level: 1, name: 'Models' })).toBeVisible();
-  await expect(app.locator('.workspace-hero__lead .settings-toolbar input[type="search"]')).toBeVisible();
-  await expect(app.locator('.workspace-hero__body')).toHaveCount(0);
+  await expect(app.locator('.page-toolbar__slot .settings-toolbar input[type="search"]')).toBeVisible();
+  await expect(app.locator('.workspace-hero__metrics')).toHaveCount(0);
   await expect(app.locator('.workspace-hero__actions button')).toHaveCount(0);
   const mobileOrder = await app.evaluate(() => {
-    const lead = document.querySelector<HTMLElement>('.workspace-hero__lead')!.getBoundingClientRect();
+    const toolbar = document.querySelector<HTMLElement>('.page-toolbar')!.getBoundingClientRect();
     const head = document.querySelector<HTMLElement>('.workspace-hero__head')!.getBoundingClientRect();
-    return { leadTop: lead.top, headTop: head.top };
+    return { toolbarTop: toolbar.top, headTop: head.top };
   });
-  expect(mobileOrder.leadTop).toBeLessThan(mobileOrder.headTop);
+  expect(mobileOrder.headTop).toBeLessThan(mobileOrder.toolbarTop);
   const modelColumns = await app.locator('.settings-model-row--elowen:visible').evaluateAll((rows) => rows.map((row) => {
     const identity = row.querySelector<HTMLElement>('.settings-model-row__identity')!.getBoundingClientRect();
     const controls = row.querySelector<HTMLElement>('.settings-model-row__controls')!.getBoundingClientRect();
@@ -347,8 +352,8 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
 
   await app.getByRole('radio', { name: 'System' }).click();
   await expect(app.getByRole('heading', { level: 1, name: 'System' })).toBeVisible();
-  await expect(app.locator('.workspace-hero__lead .settings-toolbar')).toHaveCount(0);
-  await expect(app.locator('.workspace-hero__body')).toBeVisible();
+  await expect(app.locator('.page-toolbar__slot .settings-toolbar')).toHaveCount(0);
+  await expect(app.locator('.workspace-hero__metrics')).toBeVisible();
   await expect(app.locator('.workspace-hero__actions button')).toHaveCount(2);
   const mobileActions = await app.evaluate(() => {
     const actions = document.querySelector<HTMLElement>('.workspace-hero__actions')!.getBoundingClientRect();
@@ -798,24 +803,19 @@ test('the Studio chat is centred on its own frame and its bar pickers open out o
   expect(actions.gap, 'the action cluster sits at the trailing edge').toBe(12);
 });
 
-test('Studio drops the hero mascot from a working page and keeps the page', async ({ app, seed }, testInfo) => {
+test('no page mounts a hero mascot, and every one still states its mascot prop', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
-  // The mascot belongs to the ember identity and must not appear over a register — but no page may be
-  // FORKED to achieve that: every route states its mascot as a prop and Studio restyles rather than
-  // rewrites. So the element stays in the document and simply stops painting, and the hero's two-column
-  // grid must collapse rather than leave an empty track behind it.
+  // The decorative column is gone from the shared hero: it carried no information, both shipped designs
+  // hid it outright, and it cost every register most of a screen before the first record. What did NOT
+  // go is the prop — no page is forked, every route still states its mascot state, and it now reaches
+  // the document as `data-mascot` so a design can answer the page's state without any artwork.
   await useSkin(app, seed, 'studio-light');
   await app.setViewportSize({ width: 1440, height: 900 });
   for (const route of [REGISTER, '/projects', '/settings']) {
     await openStudio(app, route);
-    const mascot = await app.evaluate(() => {
-      const el = document.querySelector('.workspace-hero__mascot');
-      if (!el) return null;
-      return { display: getComputedStyle(el).display, width: el.getBoundingClientRect().width };
-    });
-    expect(mascot, `${route} still renders the hero mascot element`).not.toBeNull();
-    expect(mascot!.display, `${route} paints the hero mascot under Studio`).toBe('none');
-    expect(mascot!.width, `${route} leaves the mascot an empty track`).toBe(0);
+    await expect(app.locator('.workspace-hero__mascot'), `${route} still mounts the hero mascot column`).toHaveCount(0);
+    await expect(app.locator('.workspace-hero .spatial-mascot'), `${route} still paints mascot artwork`).toHaveCount(0);
+    await expect(app.locator('.workspace-hero[data-mascot]'), `${route} lost the mascot state input`).toHaveCount(1);
   }
 });
 

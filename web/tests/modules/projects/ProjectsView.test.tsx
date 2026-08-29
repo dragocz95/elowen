@@ -137,7 +137,7 @@ describe('ProjectsView', () => {
     await waitFor(() => expect(screen.queryByText('website')).not.toBeInTheDocument());
     expect(screen.getByText('elowen')).toBeInTheDocument();
     expect(screen.getByTestId('spatial-workspace-layout')).toBeInTheDocument();
-    expect(screen.getAllByTestId('workspace-hero-mascot')).toHaveLength(1);
+    expect(screen.getAllByTestId('workspace-hero-metrics')).toHaveLength(1);
     expect(screen.getByTestId('projects-register').closest('[data-control-surface]')).toBeInTheDocument();
   });
 });

@@ -178,6 +178,15 @@ export const en = {
     rangeTo: 'To',
     filterAllProjects: 'All projects',
     filterProjectsAria: 'Project filter',
+    // The canonical page toolbar's condensed filter control (components/ui/PageFilters.tsx). `filters`
+    // is the trigger's visible label; `filtersWithCount` replaces its accessible name once something is
+    // filtering, because the count beside the label is a decorative badge a screen reader would read as
+    // a bare number.
+    filters: 'Filters',
+    filtersWithCount: 'Filters, {count} active',
+    filtersActive: 'Active filters',
+    filtersClear: 'Clear filters',
+    filterRemove: 'Remove filter {name}',
     defaultExecutor: 'Default',
     fieldExecutor: 'Executor',
     openTerminal: 'Open terminal',

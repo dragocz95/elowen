@@ -13,6 +13,7 @@
 @import "./components/workspace-shell.css";
 @import "./components/control-surface.css";
 @import "./components/workspace-hero.css";
+@import "./components/page-toolbar.css";
 @import "./components/workspace-detail.css";
 @import "./components/feedback.css";
 @import "./components/nav-orbit.css";

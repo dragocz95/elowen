@@ -1,0 +1,128 @@
+/* The canonical page toolbar and the filter control it carries: .page-toolbar*, .page-filters*.
+
+   CASCADE POSITION: directly after workspace-hero.css and before workspace-detail.css. That is not
+   arbitrary. The toolbar's slot hosts toolbars declared by OTHER files — .control-surface-toolbar
+   (control-surface.css) and .settings-toolbar (spatial-deck.css) — and the two rules below undo the card
+   chrome each of them carries so a promoted toolbar reads as a group of controls in the page row rather
+   than as a second card floating above the content. Both of those files are imported earlier, so a
+   single-class selector here wins on order alone and needs no specificity trick. Move this import above
+   either of them and the promoted toolbar silently gets its border and background back. */
+
+.page-toolbar {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.625rem;
+  padding-block: 0.875rem;
+}
+
+/* A toolbar that holds nothing must spend NO space. The shell mounts this row on every page — it carries
+   the portal slot, and the slot's owner may mount long after the page does — so a page that fills
+   neither the slot nor a prop would otherwise draw a gap between its section navigation and its first
+   record with nothing in it. Neither React nor a layout effect can see that a child rendered to nothing;
+   :has can. The row is empty exactly when its only child is the empty slot. */
+.page-toolbar:not(:has(.page-toolbar__row > :not(.page-toolbar__slot:empty))) { display: none; }
+
+.page-toolbar__row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+/* Search is the elastic part of the row: it takes the free width and gives it back to the filter and the
+   actions before the row wraps. */
+.page-toolbar__search { min-width: 0; flex: 1 1 16rem; }
+.page-toolbar__slot { display: flex; min-width: 0; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+.page-toolbar__slot:empty { display: none; }
+.page-toolbar__actions { display: flex; flex: none; align-items: center; gap: 0.5rem; margin-inline-start: auto; }
+
+/* See the cascade note at the top: a toolbar that portals itself into this row keeps its CONTROLS and
+   loses its frame. */
+.page-toolbar__slot .control-surface-toolbar,
+.page-toolbar__slot .settings-toolbar {
+  position: static;
+  z-index: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* Filters ------------------------------------------------------------------ */
+
+.page-filters__trigger { flex: none; }
+.page-filters__count {
+  display: inline-flex;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 0.3rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-primary);
+  background: rgb(var(--primary-rgb) / 0.15);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+/* The popover is sized here rather than through the primitive's `w-72`, which is a utility a caller can
+   only fight. The viewport clamp is what keeps the panel on screen on a small laptop window; the phone
+   never reaches it, because there the same fields open as a sheet. */
+.page-filters__panel { width: 20rem; max-width: calc(100vw - 2rem); }
+/* One shell per field, whatever the field's control turns out to be — a Segmented, a Toggle, a date
+   range, a pill row. The panel's job is that they all read as the same kind of thing; the control's own
+   look stays the control's. */
+.page-filters__fields { display: flex; min-width: 0; flex-direction: column; gap: 1rem; }
+.page-filters__field { display: flex; min-width: 0; flex-direction: column; gap: 0.4rem; }
+.page-filters__field-label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.66rem;
+  font-weight: 620;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.page-filters__field-control { min-width: 0; }
+
+/* The chips are a line of their own under the row. They name WHICH filter is on and reset it; a chip is
+   therefore a control, not a label, and it wears a control's hover and focus. */
+.page-filters__chips { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 0.375rem; }
+.page-filters__chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted-foreground);
+  background: var(--color-secondary);
+  font-size: 0.72rem;
+  transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.page-filters__chip:hover { border-color: var(--color-border-strong); color: var(--color-foreground); }
+.page-filters__chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-filters__clear { flex: none; }
+
+/* Narrow region. A container query, not a viewport one: the same toolbar renders full width, beside a
+   pinned advisor dock and inside a plugin page's column, and only the room it actually has can decide
+   whether the search field still fits beside the filter control. */
+@container workspace-shell (width < 34rem) {
+  .page-toolbar { gap: 0.5rem; padding-block: 0.75rem; }
+  /* The field takes the whole first line, so the filter and the actions share the second one instead of
+     each being crushed to its minimum beside a 16rem input. */
+  .page-toolbar__search { flex-basis: 100%; }
+  .page-toolbar__actions { margin-inline-start: 0; }
+}
+
+/* Every part of this row is a target on a touch pointer: the filter trigger, a chip's reset and each
+   page action. The chip is included because tapping it is how a filter is removed — it is the reset
+   control, not a caption beside one. */
+@media (pointer: coarse) {
+  .page-filters__trigger,
+  .page-filters__chip,
+  .page-toolbar__actions > * { min-height: var(--touch-target); }
+}

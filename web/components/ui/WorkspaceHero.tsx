@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { SpatialMascot, type SpatialMascotState } from './SpatialMascot';
+import type { SpatialMascotState } from './SpatialMascot';
 
 /** The ONE workspace hero. Every page shell — the registers (Memory, Projects, Users, every plugin
  *  register), the control decks (Settings, Account) and the single-surface pages (the editor) — opens
@@ -19,22 +19,26 @@ export interface WorkspaceHeroProps {
   status?: ReactNode;
   action?: ReactNode;
   icon?: LucideIcon;
-  /** The decorative mascot panel. `false` (the default) is the compact title block a single working
-   *  surface wants; a state renders the panel and makes the hero the full register opening. */
+  /** The page's ambient state, as a visual input and nothing more.
+   *
+   *  It used to mount a decorative mascot panel beside the title — a 12rem column of artwork that carried
+   *  no information, pushed the first record of every register most of a screen further down, and was
+   *  already hidden outright by both shipped designs and by the phone stylesheet. The column is gone.
+   *
+   *  The PROP is not: eleven plugin bundles across two repositories pass it, `SpatialWorkspaceHero`
+   *  defaults it to `idle`, and the plugin UI API version is a compatibility ceiling that cannot express
+   *  a removal. It is now inert — published on the hero as `data-mascot` so a design can still read the
+   *  page's state and answer it in CSS, with no artwork and no layout of its own. */
   mascot?: SpatialMascotState | false;
-  /** WorkspaceMetric children. Supplying them opens the metric row around the title block. */
+  /** WorkspaceMetric children. Supplying them opens the hairline metric rail below the title block. */
   metrics?: ReactNode;
-  /** Shell-owned page filters promoted above the title in command-profile layouts. */
-  lead?: ReactNode;
 }
 
-export function WorkspaceHero({ eyebrow, title, count, description, status, action, icon: Icon, mascot = false, metrics, lead }: WorkspaceHeroProps) {
-  const hasMascot = mascot !== false;
-  const hasBody = hasMascot || metrics != null;
+export function WorkspaceHero({ eyebrow, title, count, description, status, action, icon: Icon, mascot = false, metrics }: WorkspaceHeroProps) {
   const hasActions = status != null || action != null;
 
   return (
-    <section className="workspace-hero" data-mascot={hasMascot ? mascot : undefined}>
+    <section className="workspace-hero" data-mascot={mascot === false ? undefined : mascot}>
       <header className="workspace-hero__head">
         {Icon ? <span className="workspace-hero__icon"><Icon size={20} strokeWidth={1.5} aria-hidden /></span> : null}
         <div className="workspace-hero__titles">
@@ -54,15 +58,7 @@ export function WorkspaceHero({ eyebrow, title, count, description, status, acti
           </div>
         ) : null}
       </header>
-      {lead}
-      {hasBody ? (
-        <div className="workspace-hero__body">
-          {hasMascot ? (
-            <div className="workspace-hero__mascot" data-testid="workspace-hero-mascot"><SpatialMascot state={mascot} /></div>
-          ) : null}
-          <div className="workspace-hero__metrics">{metrics}</div>
-        </div>
-      ) : null}
+      {metrics != null ? <div className="workspace-hero__metrics" data-testid="workspace-hero-metrics">{metrics}</div> : null}
     </section>
   );
 }

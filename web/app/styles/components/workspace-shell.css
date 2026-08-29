@@ -20,6 +20,32 @@
   padding-block-end: calc(3rem + var(--safe-bottom));
 }
 
+/* BREATHING ROOM below the shell top bar. The page used to begin on the rule under the bar, so the title
+   read as part of the window chrome rather than as the first thing the page says.
+
+   It is padding on the hero rather than padding on the shell for two reasons. A margin on the first child
+   would be at the mercy of margin collapsing, and the shell's own top padding would also push down the
+   pages that compose `.workspace-page` with something other than a hero first. And it is declared HERE,
+   from the shell, because the distance to the bar is the shell's decision — the hero has no idea what is
+   above it.
+
+   The narrow value is set from the `workspace-shell` container, which is the right question to ask: a
+   hero squeezed by a pinned advisor dock wants the tighter gap even though the window is wide. It works
+   because an element is styled against its nearest ANCESTOR container, so `.workspace-hero` — itself a
+   container — is still matched against the shell around it. */
+.workspace-shell > .workspace-hero,
+.workspace-page > .workspace-hero { padding-block-start: 2rem; }
+
+@container workspace-shell (width < 34rem) {
+  .workspace-shell > .workspace-hero,
+  .workspace-page > .workspace-hero { padding-block-start: 1rem; }
+}
+
+/* The section navigation is IN THE PAGE, between the metric rail and the toolbar row — it used to portal
+   itself into the top bar, where a page's own sections sat among the window's global controls. The track
+   itself is the shared `Segmented`; this rule only places it. */
+.workspace-shell__section-navigation { min-width: 0; padding-block: 1rem 0; }
+
 .workspace-shell__content { min-width: 0; padding-block: 1rem 2rem; }
 
 .workspace-status { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--color-muted-foreground); font-size: 0.75rem; }

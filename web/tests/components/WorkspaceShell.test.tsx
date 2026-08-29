@@ -33,8 +33,14 @@ const sections = [
   { id: 'brain', label: 'Models', description: 'Providers and models.', icon: Bot },
 ];
 
+/** The class each direct child of an element is identified by. The anatomy of a page is an ORDER, and an
+ *  order is the one thing a per-element `toBeInTheDocument` cannot see: every assertion below passed just
+ *  as happily when the toolbar sat above the title. */
+const anatomy = (element: Element | null): string[] =>
+  [...(element?.children ?? [])].map((child) => child.className.split(' ')[0]!);
+
 describe('WorkspaceShell', () => {
-  it('renders one shell anatomy for the register variant: hero, mascot, metrics, rail, content', () => {
+  it('renders one shell anatomy for the register variant: hero, metric rail, section nav, toolbar, content', () => {
     const { container } = render(
       <WorkspaceShell
         variant="register"
@@ -47,26 +53,53 @@ describe('WorkspaceShell', () => {
 
     const shell = container.querySelector('.workspace-shell');
     expect(shell).toHaveAttribute('data-variant', 'register');
+    expect(anatomy(shell)).toEqual([
+      'workspace-hero',
+      'workspace-shell__section-navigation',
+      'page-toolbar',
+      'workspace-shell__content',
+    ]);
+    // The heading first, the metric rail directly under it — never the other way round.
+    expect(anatomy(container.querySelector('.workspace-hero'))).toEqual(['workspace-hero__head', 'workspace-hero__metrics']);
     expect(screen.getByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument();
-    expect(screen.getByTestId('workspace-hero-mascot')).toBeInTheDocument();
-    // The section navigation the command profile mounts. The horizontal rail is the ambient design's and
-    // no design this build ships selects it, so asserting the rail here would assert an unreachable page.
+    expect(screen.getByTestId('workspace-hero-metrics')).toContainElement(screen.getByText('Active'));
+    // The section navigation is IN THE PAGE. The horizontal rail is still exported for the bundles that
+    // mount it themselves, but the shell chooses it for nobody.
     expect(screen.getByRole('radiogroup', { name: 'Sections' })).toBeInTheDocument();
     expect(screen.queryByTestId('spatial-section-rail')).toBeNull();
     expect(screen.getByTestId('spatial-workspace-layout')).toContainElement(screen.getByText('Register'));
   });
 
-  it('drops the hero body entirely when a variant has neither mascot nor metrics', () => {
+  it('keeps the mascot prop as an inert visual state input and mounts no artwork for it', () => {
+    const { container } = render(
+      <WorkspaceShell variant="register" hero={{ title: 'Memory', mascot: 'saving', metrics: <WorkspaceMetric label="Active" value={4} /> }}>
+        <div>Register</div>
+      </WorkspaceShell>,
+    );
+
+    // The published prop still reaches the DOM, so a design can answer the page's state in CSS…
+    expect(container.querySelector('.workspace-hero')).toHaveAttribute('data-mascot', 'saving');
+    // …and the decorative column it used to open is gone from the markup entirely.
+    expect(container.querySelector('.workspace-hero__mascot')).toBeNull();
+    expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
+  });
+
+  it('drops the metric rail entirely when a variant has no metrics', () => {
     const { container } = render(
       <WorkspaceShell variant="single" hero={{ title: 'Editor' }}>
         <div>Surface</div>
       </WorkspaceShell>,
     );
 
-    expect(container.querySelector('.workspace-hero__body')).toBeNull();
-    expect(screen.queryByTestId('workspace-hero-mascot')).toBeNull();
+    expect(container.querySelector('.workspace-hero__metrics')).toBeNull();
+    expect(container.querySelector('.workspace-hero')).not.toHaveAttribute('data-mascot');
     expect(screen.queryByRole('radiogroup'), 'a variant with no navigation must mount none').toBeNull();
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('Surface'));
+  });
+
+  it('mounts the toolbar row on a page that passes it nothing, because it carries the portal slot', () => {
+    render(<WorkspaceShell variant="single" hero={{ title: 'Editor' }}>x</WorkspaceShell>);
+    expect(screen.getByTestId('page-toolbar-slot')).toBeEmptyDOMElement();
   });
 
   it('omits the action row when a hero has neither status nor action', () => {
@@ -95,8 +128,8 @@ describe('the pre-unification names are aliases onto the same shell', () => {
     );
 
     expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-variant', 'register');
-    // The default mascot state survived the move: omitting mascotState still renders the panel.
-    expect(screen.getByTestId('workspace-hero-mascot')).toBeInTheDocument();
+    // The alias's default mascot state survived the move; it now reaches the DOM as state, not artwork.
+    expect(container.querySelector('.workspace-hero')).toHaveAttribute('data-mascot', 'idle');
     expect(screen.getByTestId('spatial-workspace-layout')).toContainElement(screen.getByText('Rows'));
   });
 
@@ -111,12 +144,11 @@ describe('the pre-unification names are aliases onto the same shell', () => {
 
     expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-variant', 'deck');
     expect(screen.getByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
-    expect(screen.queryByTestId('workspace-hero-mascot')).toBeNull();
-    expect(container.querySelector('.workspace-hero__body')).toBeNull();
+    expect(container.querySelector('.workspace-hero__metrics')).toBeNull();
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('Section'));
   });
 
-  it('SpatialControlDeck opens the mascot hero when one is supplied', () => {
+  it('SpatialControlDeck opens the metric rail when a hero is supplied', () => {
     render(
       <LanguageProvider>
         <SpatialControlDeck
@@ -132,18 +164,17 @@ describe('the pre-unification names are aliases onto the same shell', () => {
       </LanguageProvider>,
     );
 
-    expect(screen.getByTestId('workspace-hero-mascot')).toBeInTheDocument();
-    expect(screen.getByText('Uptime')).toBeInTheDocument();
+    expect(screen.getByTestId('workspace-hero-metrics')).toContainElement(screen.getByText('Uptime'));
   });
 
-  it('CompactWorkspaceHeader is the mascot-less hero and nothing else', () => {
+  it('CompactWorkspaceHeader is the title block and nothing else', () => {
     const { container } = render(
       <CompactWorkspaceHeader eyebrow="Plugin" title="Editor" count={3} description="Files" icon={Wrench} action={<button type="button">Save</button>} />,
     );
 
     expect(container.querySelector('.workspace-hero')).not.toBeNull();
     expect(container.querySelector('.workspace-hero__icon')).not.toBeNull();
-    expect(container.querySelector('.workspace-hero__body')).toBeNull();
+    expect(container.querySelector('.workspace-hero__metrics')).toBeNull();
     expect(screen.getByText('3')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
   });
@@ -175,11 +206,39 @@ describe('the shell stylesheets carry one authority per decision', () => {
   });
 
   it('collapses the phone hero so the content starts on the first screen', () => {
-    const phone = atRuleBody(css('workspace-hero'), '@container workspace-hero (width < 34rem)');
-    expect(phone).toMatch(/\.workspace-hero__mascot\s*\{[^}]*display:\s*none/);
+    const hero = css('workspace-hero');
+    const phone = atRuleBody(hero, '@container workspace-hero (width < 34rem)');
     // A compact horizontal strip, not the 12rem metric panel.
     expect(phone).toMatch(/\.workspace-hero__metrics\s*\{[^}]*display:\s*flex/);
     expect(phone).toMatch(/\.workspace-metric\s*\{[^}]*padding:\s*0\.7rem/);
+    // The mascot column is gone from the markup, so the stylesheet must not still be hiding one: a rule
+    // for an element nobody renders is how a stylesheet keeps describing a page that no longer exists.
+    expect(hero).not.toMatch(/\.workspace-hero__mascot|\.workspace-hero__body/);
+    // Neither is the reserved height that made an empty title block cost a third of a phone screen.
+    expect(hero).not.toMatch(/min-height:\s*8\.6rem/);
+  });
+
+  it('makes the metric rail one hairline under the heading, in that order under every design', () => {
+    const hero = css('workspace-hero');
+    expect(hero).toMatch(/\.workspace-hero__metrics\s*\{[^}]*border-top:\s*var\(--hairline\)/);
+    // ORDER, not DOM order: the Studio skin makes the hero a flex column and gives the head `order: 2`,
+    // so a rail left at the initial `order: 0` paints the figures above the name of the page.
+    const railOrder = /\.workspace-hero__metrics\s*\{[^}]*order:\s*(\d+)/.exec(hero);
+    expect(railOrder, 'the metric rail must state its order').not.toBeNull();
+    const studio = readFileSync(resolve(process.cwd(), 'skins', 'studio', 'surfaces.css'), 'utf-8');
+    const headOrder = /\.workspace-hero__head\s*\{[^}]*order:\s*(\d+)/.exec(studio);
+    expect(headOrder, 'the Studio skin no longer orders the head — recheck the rail order').not.toBeNull();
+    expect(Number(railOrder![1])).toBeGreaterThan(Number(headOrder![1]));
+  });
+
+  it('gives the page room below the top bar, and less of it in a narrow region', () => {
+    const shell = css('workspace-shell');
+    expect(shell).toMatch(/\.workspace-shell > \.workspace-hero,\s*\n\.workspace-page > \.workspace-hero\s*\{\s*padding-block-start:\s*2rem/);
+    const narrow = atRuleBody(shell, '@container workspace-shell (width < 34rem)');
+    expect(narrow).toMatch(/padding-block-start:\s*1rem/);
+    // Padding rather than a margin: the shell declares no top padding of its own, so a margin on the
+    // first child would collapse straight out through it.
+    expect(shell).not.toMatch(/\.workspace-hero\s*\{[^}]*margin-block-start/);
   });
 
   it('compresses against the width of the hero itself, never the viewport', () => {
@@ -198,5 +257,33 @@ describe('the shell stylesheets carry one authority per decision', () => {
     const shell = css('workspace-shell');
     expect(shell).toMatch(/\.module-header__toolbar:not\(:has\(> :not\(:empty\).*?\)\)\s*\{\s*display:\s*none/);
     expect(shell).toMatch(/\.module-header:not\(:has\(> p\)\)/);
+  });
+
+  it('collapses the canonical toolbar row when its only child is the empty portal slot', () => {
+    const toolbar = css('page-toolbar');
+    expect(toolbar).toMatch(/\.page-toolbar:not\(:has\(\.page-toolbar__row > :not\(\.page-toolbar__slot:empty\)\)\)\s*\{\s*display:\s*none/);
+  });
+
+  it('strips the card chrome off a toolbar promoted into the row, and can only do so from below', () => {
+    const toolbar = css('page-toolbar');
+    expect(toolbar).toMatch(/\.page-toolbar__slot \.control-surface-toolbar,\s*\n\.page-toolbar__slot \.settings-toolbar\s*\{[^}]*background:\s*none/);
+    // Same specificity as the rules it undoes, so ONLY the import order decides — see components.css.
+    const order = readFileSync(resolve(process.cwd(), 'app', 'styles', 'components.css'), 'utf-8');
+    const at = (part: string) => order.indexOf(`./components/${part}.css`);
+    expect(at('page-toolbar')).toBeGreaterThan(at('workspace-hero'));
+    expect(at('page-toolbar')).toBeGreaterThan(at('control-surface'));
+    expect(at('page-toolbar')).toBeGreaterThan(at('spatial-deck'));
+  });
+
+  it('folds the narrow toolbar and keeps every part of it a touch target', () => {
+    const toolbar = css('page-toolbar');
+    const narrow = atRuleBody(toolbar, '@container workspace-shell (width < 34rem)');
+    expect(narrow).toMatch(/\.page-toolbar__search\s*\{[^}]*flex-basis:\s*100%/);
+    // A container query, never a viewport one: the same toolbar renders beside a pinned advisor dock.
+    expect(toolbar.match(/@media \([^)]*width[^)]*\)/g)).toBeNull();
+    const coarse = atRuleBody(toolbar, '@media (pointer: coarse)');
+    // The chip is included because tapping it IS how a filter is removed.
+    expect(coarse).toMatch(/\.page-filters__chip/);
+    expect(coarse).toMatch(/min-height:\s*var\(--touch-target\)/);
   });
 });

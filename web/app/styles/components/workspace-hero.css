@@ -1,5 +1,9 @@
-/* The workspace hero and its metric row: .workspace-hero*, .workspace-metric*, plus the two unrelated
-   classes that share the register's vertical rhythm (.escalation-register-row, .spatial-scroll-cue). */
+/* The workspace hero and its metric rail: .workspace-hero*, .workspace-metric*, plus the two unrelated
+   classes that share the register's vertical rhythm (.escalation-register-row, .spatial-scroll-cue).
+
+   The hero is a HEAD and a RAIL, in that order: the title block that says what the page is, and a
+   hairline strip of live figures directly under it. The decorative mascot column that used to sit beside
+   the metrics is gone from the markup — see components/ui/WorkspaceHero.tsx for why the PROP stays. */
 
 /* The hero is its OWN container. Its compression follows the space it actually has rather than the
    viewport, because the same hero sits in a full-width register, beside a pinned advisor dock and
@@ -10,12 +14,15 @@
   min-width: 0;
   border-bottom: var(--hairline);
 }
+/* Compact by declaration: no minimum height. The head used to reserve 8.6rem whether or not there was
+   anything to put in it, so a two-word title and no description still cost a third of a phone screen
+   before the page said anything else. It is now as tall as the title, the description and the actions
+   actually are. */
 .workspace-hero__head {
   display: flex;
-  min-height: 8.6rem;
   align-items: center;
   gap: 1rem;
-  padding-block: 1.5rem;
+  padding-block: 1.25rem;
 }
 .workspace-hero__icon {
   display: grid;
@@ -39,12 +46,23 @@
 .workspace-hero__actions { display: flex; flex: none; align-items: center; gap: 0.75rem; margin-inline-start: auto; }
 .workspace-hero__status { display: inline-flex; min-width: 0; flex: 0 0 auto; align-items: center; }
 
-.workspace-hero__body { display: grid; min-height: 12rem; grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 1.28fr); border-top: var(--hairline); }
-/* Metrics without a mascot: the row takes the whole width and stops pretending to be a hero panel. */
-.workspace-hero:not(:has(.workspace-hero__mascot)) .workspace-hero__body { min-height: 0; grid-template-columns: minmax(0, 1fr); }
-.workspace-hero__mascot { position: relative; min-width: 0; overflow: hidden; border-inline-end: var(--hairline); background: radial-gradient(circle at 46% 54%, rgb(var(--primary-rgb) / 0.11), transparent 62%); pointer-events: none; }
-.workspace-hero__mascot .spatial-mascot { width: min(100%, 20rem); margin-inline: auto; transform: scale(0.82); transform-origin: center; }
-.workspace-hero__metrics { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); align-items: stretch; }
+/* THE METRIC RAIL. One hairline, directly under the head, and the figures on it — not a 12rem panel with
+   a decorative column beside them.
+
+   `order` is load-bearing and cannot be left to DOM order. The base hero is a plain block, where the
+   property does nothing and the markup's own order already reads head → rail. The Studio skin makes
+   .workspace-hero a flex column and gives the head `order: 2` (skins/studio/surfaces.css), so a rail with
+   the initial `order: 0` would paint ABOVE the title — the figures first and the name of the page second.
+   Stating the rail's order here is what makes the anatomy the same under every design, and it belongs
+   here rather than in the skin because it is the shared anatomy that is being pinned, not a skin's look. */
+.workspace-hero__metrics {
+  display: grid;
+  order: 3;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  align-items: stretch;
+  border-top: var(--hairline);
+}
 
 .workspace-metric { display: flex; min-width: 8.5rem; flex-direction: column; justify-content: center; padding: 1.2rem 2rem; border-inline-end: var(--hairline); }
 .workspace-metric:last-child { border-inline-end: 0; }
@@ -57,27 +75,25 @@
 @media (prefers-reduced-motion: reduce) { .spatial-scroll-cue svg { animation: none; } }
 
 
-/* Narrow region: the head stacks and the mascot moves above the metrics.
+/* Narrow region: the head stacks.
 
    The action row is deliberately LEFT-anchored and stretched rather than `space-between`. With
    space-between two wrapped buttons alternate right-aligned then left-aligned down the column, so the
    primary action lands in a different place on every row — the zig-zag seen on /settings and /memory.
    Stretching each action to fill its row instead puts it in one predictable place at every width. */
 @container workspace-hero (width < 48rem) {
-  .workspace-hero__head { align-items: flex-start; flex-direction: column; min-height: 0; gap: 1rem; padding-block: 1.25rem; }
+  .workspace-hero__head { align-items: flex-start; flex-direction: column; gap: 1rem; padding-block: 1.25rem; }
   .workspace-hero__actions { width: 100%; flex-wrap: wrap; justify-content: flex-start; margin-inline-start: 0; }
   .workspace-hero__actions > :not(.workspace-hero__status) { flex: 1 1 10rem; justify-content: center; }
-  .workspace-hero__body { min-height: 0; grid-template-columns: minmax(0, 1fr); }
-  .workspace-hero__mascot { min-height: 9rem; border-inline-end: 0; border-bottom: var(--hairline); }
   .workspace-metric { min-width: 7rem; padding: 1rem; }
 }
 
 /* Phone: the register has to START on the first screen. At 390x844 the full-weight hero — title,
    description, status, two actions, mascot panel and a four-up metric grid — pushed the first record
-   past 1700px, roughly two screens of chrome before any content. So the mascot collapses (it is
-   decoration and carries no information), the metrics become one compact scrolling strip instead of a
-   12rem panel, the description keeps its first two lines, and the vertical padding tightens. The
-   desktop hero above is untouched and stays generous. */
+   past 1700px, roughly two screens of chrome before any content. The mascot column is gone from the
+   markup entirely now; what remains here is the rest of that collapse — the metric rail becomes one
+   compact scrolling strip instead of a 12rem panel, the description keeps its first two lines, and the
+   vertical padding tightens. The desktop hero above is untouched and stays generous. */
 @container workspace-hero (width < 34rem) {
   .workspace-hero__head { gap: 0.75rem; padding-block: 0.875rem 1rem; }
   .workspace-hero__eyebrow { margin-bottom: 0.2rem; }
@@ -89,7 +105,6 @@
     -webkit-line-clamp: 2;
     line-clamp: 2;
   }
-  .workspace-hero__mascot { display: none; }
   .workspace-hero__metrics { display: flex; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; }
   .workspace-hero__metrics::-webkit-scrollbar { display: none; }
   .workspace-metric { min-width: 0; flex: 1 0 auto; padding: 0.7rem 0.9rem; }

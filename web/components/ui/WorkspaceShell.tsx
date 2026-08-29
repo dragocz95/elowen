@@ -1,12 +1,15 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { useShellProfile } from '../../lib/shellProfile';
-import { PageTopBarPortal } from '../../lib/pageHeader';
 import { Segmented } from './Segmented';
+import { PageToolbar, PageToolbarPortal, PageToolbarProvider, PageToolbarScope, type PageToolbarProps } from './PageToolbar';
 import { WorkspaceHero, type WorkspaceHeroProps } from './WorkspaceHero';
+
+/** The page toolbar's portal under its pre-move names. The slot itself left the hero for the canonical
+ *  toolbar row below the section navigation; `ControlSurfaceToolbar`, `SettingsToolbar`, `/settings` and
+ *  `/account` reach it by THESE names, and a rename they can all see is not what this change is about. */
+export { PageToolbarPortal as WorkspaceLeadPortal, PageToolbarScope as WorkspaceLeadScope };
 
 export interface SpatialDeckSection {
   id: string;
@@ -85,78 +88,30 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   );
 }
 
-interface WorkspaceLeadContextValue {
-  host: HTMLElement | null;
-  ownerId: string | null;
-  claim: (id: string) => void;
-  release: (id: string) => void;
-  setHost: (host: HTMLElement | null) => void;
-}
-
-const WorkspaceLeadContext = createContext<WorkspaceLeadContextValue | null>(null);
-const WorkspaceLeadActiveContext = createContext(true);
-
-/** Retained settings/account panels stay mounted while hidden. This scope keeps their toolbars from
- * escaping through the portal and lets only the currently visible panel compete for the page lead. */
-export function WorkspaceLeadScope({ active, children }: { active: boolean; children: ReactNode }) {
-  return <WorkspaceLeadActiveContext.Provider value={active}>{children}</WorkspaceLeadActiveContext.Provider>;
-}
-
-function WorkspaceLeadProvider({ children }: { children: ReactNode }) {
-  const [host, setHostState] = useState<HTMLElement | null>(null);
-  const [ownerId, setOwnerId] = useState<string | null>(null);
-  const claim = useCallback((id: string) => setOwnerId((current) => current ?? id), []);
-  const release = useCallback((id: string) => setOwnerId((current) => current === id ? null : current), []);
-  const setHost = useCallback((node: HTMLElement | null) => setHostState(node), []);
-  const value = useMemo(() => ({ host, ownerId, claim, release, setHost }), [host, ownerId, claim, release, setHost]);
-  return <WorkspaceLeadContext.Provider value={value}>{children}</WorkspaceLeadContext.Provider>;
-}
-
-function WorkspaceLeadHost() {
-  const setHost = useContext(WorkspaceLeadContext)?.setHost;
-  return <div ref={setHost} className="workspace-hero__lead" data-testid="workspace-lead-host" />;
-}
-
-/** The first mounted page-level toolbar claims the one lead position immediately above the title. A later
- * nested toolbar stays where it belongs; if the owner unmounts (for example, switching Settings sections),
- * the next mounted toolbar can claim the slot without every caller coordinating identities. */
-export function WorkspaceLeadPortal({ children }: { children: ReactNode }) {
-  const id = useId();
-  const context = useContext(WorkspaceLeadContext);
-  const active = useContext(WorkspaceLeadActiveContext);
-  const host = context?.host;
-  const ownerId = context?.ownerId;
-  const claim = context?.claim;
-  const release = context?.release;
-  useLayoutEffect(() => {
-    if (active && ownerId == null) claim?.(id);
-    else if (!active && ownerId === id) release?.(id);
-  }, [active, id, ownerId, claim, release]);
-  useEffect(() => () => release?.(id), [id, release]);
-  if (!active || !host || ownerId !== id) return <>{children}</>;
-  return createPortal(children, host);
-}
-
-/** One section model, one presentation at every width: a quiet underline track in the shell top bar. On a
- * phone it stays horizontal and scrollable rather than changing control type. */
+/** One section model, one presentation at every width: a quiet underline track IN THE PAGE, directly
+ * under the metric rail. On a phone it stays horizontal and scrollable rather than changing control type.
+ *
+ * It used to portal itself into the shell's top bar, which put a page's sections in the window chrome
+ * beside the global controls — the sections belong to the page, they change with it, and the top bar is
+ * the one strip that does not. The chat surface still portals its own conversation controls up there
+ * (`PageTopBarPortal`, modules/advisor/BrainChatSurface.tsx); that is a different decision about a
+ * different set of controls and is untouched. */
 function SectionNavigation({ sections, value, onChange, ariaLabel }: WorkspaceShellNavigation) {
   return (
-    <PageTopBarPortal>
-      <nav className="workspace-shell__section-navigation min-w-0" aria-label={ariaLabel}>
-        <Segmented
-          aria-label={ariaLabel}
-          value={value}
-          onChange={onChange}
-          variant="line"
-          nowrap
-          options={sections.map((section) => ({
-            value: section.id,
-            label: section.label,
-            count: section.count,
-          }))}
-        />
-      </nav>
-    </PageTopBarPortal>
+    <nav className="workspace-shell__section-navigation min-w-0" aria-label={ariaLabel}>
+      <Segmented
+        aria-label={ariaLabel}
+        value={value}
+        onChange={onChange}
+        variant="line"
+        nowrap
+        options={sections.map((section) => ({
+          value: section.id,
+          label: section.label,
+          count: section.count,
+        }))}
+      />
+    </nav>
   );
 }
 
@@ -181,17 +136,32 @@ export interface WorkspaceShellProps {
   variant?: WorkspaceShellVariant;
   hero: WorkspaceHeroProps;
   navigation?: WorkspaceShellNavigation;
+  /** The page's own toolbar contents. Omit it and the row is still mounted — it carries the portal slot
+   *  that panels deeper in the tree claim through `WorkspaceLeadPortal`. */
+  toolbar?: PageToolbarProps;
   children: ReactNode;
   className?: string;
 }
 
 /** The canonical page shell. Every full-page workspace in the app is this component; the older
  *  SpatialWorkspaceLayout / SpatialControlDeck / CompactWorkspaceHeader names are thin aliases onto it
- *  so the bundles that call them by name keep working unchanged. */
-export function WorkspaceShell({ variant = 'register', hero, navigation, children, className = '' }: WorkspaceShellProps) {
-  // WHICH page anatomy, from the shell profile and nothing else. A page states data and controls; it never
-  // chooses a sidebar, toolbar location or mobile selector, so host and plugin pages stay one pattern.
-  const commandProfile = useShellProfile() === 'command';
+ *  so the bundles that call them by name keep working unchanged.
+ *
+ *  ONE anatomy, top to bottom, on every page and under every design:
+ *
+ *    heading + description + actions   the hero's head — what this page is
+ *    metric rail                       a hairline strip of live figures, directly below it
+ *    section navigation                a Segmented track, in the page and not in the window chrome
+ *    toolbar row                       search, filters, page actions, and the one portal slot
+ *    active filter chips               a line of their own, so the row above does not reflow
+ *    content
+ *
+ *  It no longer branches on the shell profile. The two profiles used to ship different page anatomies —
+ *  the rail-and-mascot register versus the command layout — which meant a page could not be reasoned
+ *  about without also knowing which design was on the document, and the profile-specific half was the one
+ *  no shipped design selected. `SpatialSectionRail` stays exported and fully functional for the bundles
+ *  and forks that mount it themselves; the shell simply does not choose it for them. */
+export function WorkspaceShell({ variant = 'register', hero, navigation, toolbar, children, className = '' }: WorkspaceShellProps) {
   const content = (
     <section
       className="workspace-shell__content spatial-content-surface"
@@ -201,23 +171,14 @@ export function WorkspaceShell({ variant = 'register', hero, navigation, childre
     </section>
   );
 
-  if (commandProfile) {
-    return (
-      <WorkspaceLeadProvider>
-        <div className={`workspace-shell ${className}`.trim()} data-variant={variant} data-section-layout={navigation ? 'submenu' : undefined}>
-          <WorkspaceHero {...hero} lead={<WorkspaceLeadHost />} />
-          {navigation ? <SectionNavigation {...navigation} /> : null}
-          {content}
-        </div>
-      </WorkspaceLeadProvider>
-    );
-  }
-
   return (
-    <div className={`workspace-shell ${className}`.trim()} data-variant={variant}>
-      <WorkspaceHero {...hero} />
-      {navigation ? <SpatialSectionRail {...navigation} /> : null}
-      {content}
-    </div>
+    <PageToolbarProvider>
+      <div className={`workspace-shell ${className}`.trim()} data-variant={variant} data-section-layout={navigation ? 'submenu' : undefined}>
+        <WorkspaceHero {...hero} />
+        {navigation ? <SectionNavigation {...navigation} /> : null}
+        <PageToolbar {...toolbar} />
+        {content}
+      </div>
+    </PageToolbarProvider>
   );
 }

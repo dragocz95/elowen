@@ -53,6 +53,9 @@
     "packages/plugin-shared/lifecycle.mjs": [
       "exports"
     ],
+    "web/components/ui/SpatialMascot.tsx": [
+      "exports"
+    ],
     "web/components/ui/shadcn/select.tsx": [
       "exports"
     ],
