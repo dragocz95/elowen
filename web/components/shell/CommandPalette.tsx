@@ -7,7 +7,8 @@ import { MODULES } from '../../modules/registry';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginUi } from '../../lib/queries';
 import { pluginNavEntries } from '../../lib/pluginNav';
-import { useDialogOverlay } from '../ui/overlayStack';
+import { focusOverlaySurface, useOverlayIsolation } from '../ui/overlayStack';
+import { Dialog, DialogContent, DialogOverlay } from '../ui/shadcn/dialog';
 
 interface Command { id: string; label: string; hint?: string; icon: LucideIcon; run: () => void }
 
@@ -21,10 +22,21 @@ function Highlight({ text, q }: { text: string; q: string }) {
   return <>{text.slice(0, i)}<span className="text-primary">{text.slice(i, i + q.length)}</span>{text.slice(i + q.length)}</>;
 }
 
-/** The open palette. Deliberately a component of its own, mounted only while the palette is open, for two
- *  reasons that both come from `useDialogOverlay`: it captures the element to return focus to on its FIRST
- *  render, and it registers on the overlay stack in its first effect. Hosting that hook in the always-
- *  mounted `CommandPalette` would capture `document.body` at app start and restore focus to nothing.
+/** The open palette: the shadcn `Dialog` (and therefore Radix) wrapped around a combobox of commands.
+ *
+ *  THE DIALOG IS RADIX'S, exactly as in `Modal` — the focus trap, Tab looping, `role="dialog"`, Escape and
+ *  the layer stack that decides which of several open overlays Escape belongs to, so a dialog raised FROM a
+ *  command dismisses itself before this one. The app keeps only what Radix has no notion of: the overlay
+ *  stack's `inert` isolation and scroll lock (`useOverlayIsolation`), which element takes focus on open and
+ *  which gets it back on close, and the backdrop press. See `Modal.tsx` for why each of those is declined
+ *  from Radix rather than merely reimplemented.
+ *
+ *  THE COMBOBOX IS THE APP'S. Radix has no combobox primitive, so the input's `role="combobox"`, the
+ *  listbox and its options, and the Arrow/Home/End/Enter cursor below are authored here on purpose.
+ *
+ *  Mounted only while the palette is open, like every overlay here: `useOverlayIsolation` captures the
+ *  element to return focus to on its FIRST render, so a component that stayed mounted while closed would
+ *  capture whatever happened to be focused at app start and restore focus to nothing.
  *
  *  It is also portaled to <body>, like `Modal` and `WorkspaceTakeover`. That is not cosmetic either:
  *  `overlayStack` isolates the background by marking every CHILD OF BODY except the overlay root `inert`,
@@ -41,11 +53,12 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const listId = useId();
   const optionId = (index: number) => `${listId}-option-${index}`;
+  /** Whether the press that is about to produce a click started on the backdrop itself. */
+  const pressedBackdrop = useRef(false);
 
-  // Focus trap, background isolation, body scroll lock, Escape and focus restore — the same contract
-  // every other overlay in the app has. The input carries `data-autofocus`, which is what the hook
-  // honours instead of focusing the panel itself.
-  useDialogOverlay({ enabled: true, rootRef: layerRef, dialogRef: panelRef, onClose });
+  // Background isolation, body scroll lock and the element to hand focus back to. The focus trap and
+  // Escape are Radix's now; running both would mean two implementations answering the same Tab.
+  const { restoreFocus } = useOverlayIsolation({ enabled: true, rootRef: layerRef });
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -72,74 +85,100 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
   };
 
   return createPortal(
-    <div
-      ref={layerRef}
-      className="overlay-layer-modal fixed inset-0 flex items-start justify-center bg-bg/70 p-4 pt-[12dvh]"
-      onClick={(event) => {
-        if (event.target !== event.currentTarget) return;
-        event.stopPropagation();
-        onClose();
-      }}
-    >
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t.common.openCommandPalette}
-        tabIndex={-1}
-        className="animate-pop-in w-full max-w-lg overflow-hidden rounded-xl border border-border bg-surface focus:outline-none"
-        style={{ boxShadow: 'var(--shadow-raised)' }}
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogOverlay
+        ref={layerRef}
+        presentation="center"
+        // A launcher sits near the top of the viewport rather than in the middle of it, so the surface is
+        // anchored to the start of the layer. The inline padding keeps the centered presentation's
+        // safe-area insets; only the top one is replaced.
+        className="items-start"
+        style={{ paddingTop: 'max(12dvh, var(--safe-top))' }}
+        // A backdrop dismissal has to be a press that BEGAN on the backdrop. `click` fires on the common
+        // ancestor of the press and the release, so a press that starts inside the panel and ends out here
+        // still arrives with `target === currentTarget` — and Radix Select makes that the normal case
+        // rather than an edge one, since opening it puts `pointer-events: none` on <body>. See `Modal`.
+        onPointerDown={(event) => { pressedBackdrop.current = event.target === event.currentTarget; }}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget || !pressedBackdrop.current) return;
+          pressedBackdrop.current = false;
+          event.stopPropagation();
+          onClose();
+        }}
       >
-        <div className="flex items-center gap-2.5 border-b border-border px-4">
-          <Search size={16} className="shrink-0 text-text-muted" aria-hidden />
-          <input
-            data-autofocus
-            role="combobox"
-            aria-label={t.common.searchCommands}
-            aria-autocomplete="list"
-            aria-haspopup="listbox"
-            aria-controls={listId}
-            aria-expanded={results.length > 0}
-            aria-activedescendant={results.length > 0 ? optionId(active) : undefined}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={t.common.searchCommands}
-            className="h-12 w-full bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
-          />
-        </div>
-        {/* The rows are `role="option"` on the buttons themselves, as in `SelectMenu`, but held out of the
-            Tab cycle: focus stays in the combobox and the active row is announced through
-            `aria-activedescendant`. The <li> wrappers are presentational so the listbox owns options only. */}
-        <ul id={listId} role="listbox" aria-label={t.common.searchCommands} className="max-h-[50dvh] overflow-y-auto p-1.5">
-          {results.length === 0 ? (
-            <li role="presentation" className="px-3 py-6 text-center text-sm text-text-muted">{t.common.noCommands}</li>
-          ) : results.map((c, i) => {
-            const Icon = c.icon;
-            return (
-              <li key={c.id} role="presentation">
-                <button
-                  id={optionId(i)}
-                  ref={(node) => { optionRefs.current[i] = node; }}
-                  type="button"
-                  role="option"
-                  aria-selected={i === active}
-                  tabIndex={-1}
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => c.run()}
-                  className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${i === active ? 'bg-elevated text-text' : 'text-text-muted'}`}
-                >
-                  <Icon size={15} className="shrink-0" aria-hidden />
-                  <span className="flex-1 text-text"><Highlight text={c.label} q={query.trim()} /></span>
-                  {c.hint ? <span className="font-mono text-[11px] text-text-muted">{c.hint}</span> : null}
-                  {i === active ? <CornerDownLeft size={13} className="text-text-muted" aria-hidden /> : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    </div>,
+        <DialogContent
+          ref={panelRef}
+          presentation="center"
+          size="md"
+          className="overflow-hidden"
+          aria-label={t.common.openCommandPalette}
+          style={{ boxShadow: 'var(--shadow-raised)' }}
+          // Radix would otherwise dismiss on any press outside the surface, a second owner of the decision
+          // the backdrop above already makes — and one that cannot tell the two presses apart.
+          onInteractOutside={(event) => event.preventDefault()}
+          // Focus policy stays the app's. Radix would focus the first tabbable control; this app anchors on
+          // `[data-autofocus]` — the search field — and hands focus back to the opener on close, which
+          // Radix cannot do because the palette is mounted on open rather than opened from a trigger.
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            if (panelRef.current) focusOverlaySurface(panelRef.current);
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus();
+          }}
+        >
+          <div className="flex items-center gap-2.5 border-b border-border px-4">
+            <Search size={16} className="shrink-0 text-text-muted" aria-hidden />
+            <input
+              data-autofocus
+              role="combobox"
+              aria-label={t.common.searchCommands}
+              aria-autocomplete="list"
+              aria-haspopup="listbox"
+              aria-controls={listId}
+              aria-expanded={results.length > 0}
+              aria-activedescendant={results.length > 0 ? optionId(active) : undefined}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={t.common.searchCommands}
+              className="h-12 w-full bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
+            />
+          </div>
+          {/* The rows are `role="option"` on the buttons themselves, as in `SelectMenu`, but held out of the
+              Tab cycle: focus stays in the combobox and the active row is announced through
+              `aria-activedescendant`. The <li> wrappers are presentational so the listbox owns options only. */}
+          <ul id={listId} role="listbox" aria-label={t.common.searchCommands} className="max-h-[50dvh] overflow-y-auto p-1.5">
+            {results.length === 0 ? (
+              <li role="presentation" className="px-3 py-6 text-center text-sm text-text-muted">{t.common.noCommands}</li>
+            ) : results.map((c, i) => {
+              const Icon = c.icon;
+              return (
+                <li key={c.id} role="presentation">
+                  <button
+                    id={optionId(i)}
+                    ref={(node) => { optionRefs.current[i] = node; }}
+                    type="button"
+                    role="option"
+                    aria-selected={i === active}
+                    tabIndex={-1}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => c.run()}
+                    className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${i === active ? 'bg-elevated text-text' : 'text-text-muted'}`}
+                  >
+                    <Icon size={15} className="shrink-0" aria-hidden />
+                    <span className="flex-1 text-text"><Highlight text={c.label} q={query.trim()} /></span>
+                    {c.hint ? <span className="font-mono text-[11px] text-text-muted">{c.hint}</span> : null}
+                    {i === active ? <CornerDownLeft size={13} className="text-text-muted" aria-hidden /> : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </DialogContent>
+      </DialogOverlay>
+    </Dialog>,
     document.body,
   );
 }
@@ -151,8 +190,8 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    // Escape is deliberately NOT handled here: while the palette is open the overlay stack owns it, and
-    // only for the TOPMOST overlay — so a dialog raised from a command dismisses itself first.
+    // Escape is deliberately NOT handled here: while the palette is open its Radix dialog owns it, and
+    // only for the TOPMOST layer — so a dialog raised from a command dismisses itself first.
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setOpen((v) => !v); }
     };

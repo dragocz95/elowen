@@ -54,8 +54,8 @@ for (const skin of DESIGNS) {
     await expect(trigger).toBeVisible();
     await trigger.click();
 
-    // A real dialog now, not an anonymous div: the palette goes through `useDialogOverlay` like every
-    // other overlay, so it is announced, focus-trapped and isolates the page behind it.
+    // A real dialog now, not an anonymous div: the palette renders through the shadcn `Dialog`, so Radix
+    // announces it and traps focus in it while the app's overlay stack isolates the page behind it.
     const dialog = app.getByRole('dialog', { name: 'Open command palette' });
     await expect(dialog).toBeVisible();
     const input = dialog.getByRole('combobox', { name: 'Search commands…' });
