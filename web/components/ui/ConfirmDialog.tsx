@@ -57,7 +57,6 @@ function OpenConfirmDialog({ title, description, confirmLabel, onConfirm, onClos
           aria-labelledby={titleId}
           aria-describedby={description ? descriptionId : undefined}
           data-elowen-modal
-          style={{ boxShadow: 'var(--shadow-raised)' }}
           // The app's focus policy, as in `Modal`: anchor on the surface unless a control asked for it,
           // and hand focus back to whatever opened this — Radix would aim at a `Trigger` that does not
           // exist here, and `AlertDialog` would otherwise focus the cancel button.

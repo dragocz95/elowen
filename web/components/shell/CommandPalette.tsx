@@ -112,7 +112,6 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
           size="md"
           className="overflow-hidden"
           aria-label={t.common.openCommandPalette}
-          style={{ boxShadow: 'var(--shadow-raised)' }}
           // Radix would otherwise dismiss on any press outside the surface, a second owner of the decision
           // the backdrop above already makes — and one that cannot tell the two presses apart.
           onInteractOutside={(event) => event.preventDefault()}

@@ -67,15 +67,20 @@ export function WorkspaceTakeover({ title, onBack, backLabel, toolbar, children 
           // `.overlay-surface.workspace-takeover[data-presentation='fullscreen']` (primitives.css),
           // which keeps the full bleed at every width where the primitive's own `fullscreen` variant
           // insets and rounds itself from the tablet breakpoint up. So the geometry variants are
-          // declined and the attribute is pinned by hand. `flex flex-col focus:outline-none` still comes
-          // from the primitive's base: the surface is focused on open so the trap has an anchor, and a
-          // ring around the whole screen says nothing. The controls inside keep their own.
+          // declined and the attribute is pinned by hand. The primitive's base still applies:
+          // `.overlay-surface` (which is where primitives.css paints it, including the one exception
+          // that puts a takeover on the document canvas instead of the raised popover tone) and
+          // `flex flex-col focus:outline-none` — the surface is focused on open so the trap has an
+          // anchor, and a ring around the whole screen says nothing. The controls inside keep their own.
+          //
+          // `data-elowen-takeover` is load-bearing rather than a test hook: it is the fourth condition
+          // the paint rule needs to out-specify a skin's own `.overlay-surface` ground.
           presentation={null}
           aria-labelledby={titleId}
           aria-describedby={undefined}
           data-elowen-takeover
           data-presentation="fullscreen"
-          className="overlay-surface workspace-takeover min-h-0 w-full bg-card"
+          className="workspace-takeover min-h-0 w-full"
           // A takeover has exactly one exit and it is the labelled back control. Radix would add a
           // second by dismissing on any press outside the surface — which, edge to edge, is the safe
           // area — and it would answer for a nested dialog's backdrop as well.

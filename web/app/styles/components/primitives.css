@@ -42,6 +42,27 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
 .overlay-layer-modal { z-index: var(--z-modal); }
 .overlay-layer-menu { z-index: var(--z-menu); }
 
+/* ── Surface paint ──────────────────────────────────────────────────────────────────────────────────
+   ONE owner of what an overlay is MADE of. Every `DialogContent` presentation carries
+   `.overlay-surface` (components/ui/shadcn/dialog.tsx), so a centered window, a drawer, a sheet, a
+   fullscreen dialog, the command palette and a confirmation are the same material and cannot drift
+   apart one call site at a time — which is exactly what had happened: the drawer painted itself
+   `--color-document` with a hand-rolled `-2rem 0 5rem` cast shadow from a style prop in `Modal.tsx`,
+   the detail rail restated the same pair a third time in its own stylesheet, and the centered window
+   beside them took `--color-card` and `--shadow-raised` from a utility class.
+
+   `--color-popover` is the shadcn token for a surface that FLOATS over the page, which is what every
+   one of these is; `--color-card` is the token for a panel that sits IN the page. The two are the same
+   value in both shipped skins, so this is the vocabulary being made honest rather than a repaint.
+
+   The presentation variants keep the border WIDTH and which edges are drawn — a drawer shows one edge,
+   a fullscreen surface four — because that is geometry. The colour of that border is here. */
+.overlay-surface {
+  border-color: var(--color-border);
+  background: var(--color-popover);
+  box-shadow: var(--shadow-raised);
+}
+
 /* ── Presentation ───────────────────────────────────────────────────────────────────────────────────
    `resolveOverlayPresentation()` (components/ui/overlayDepth.tsx) decides WHICH presentation an
    overlay gets; these rules are what each one MEANS geometrically. Every overlay surface in the app
@@ -59,7 +80,6 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
 .overlay-surface[data-presentation='fullscreen'] {
   position: fixed;
   width: auto;
-  box-shadow: var(--shadow-raised);
 }
 
 /* A browsing surface comes up from the edge the thumb is already on and deliberately stops short of
@@ -125,6 +145,17 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
   border-width: 0;
   border-radius: 0;
   padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+/* And it is the only overlay that is not made of the floating material above: a surface that IS the
+   page sits on the document canvas, not on the raised popover tone, or it reads as a second
+   application pasted over the first.
+   The extra attribute is what carries it, not decoration. `data-elowen-takeover` is rendered by the
+   component itself, and the three-part selector above ties with the skin's own `.overlay-surface`
+   ground rule (skins/studio/surfaces.css) — a tie the skin wins on source order, because the skins are
+   imported after this file. One more real condition puts the exception back where the rest of the
+   overlay paint lives instead of leaving a copy of it in every skin. */
+.overlay-surface.workspace-takeover[data-elowen-takeover][data-presentation='fullscreen'] {
+  background: var(--color-background);
 }
 
 @keyframes overlay-sheet-in {
