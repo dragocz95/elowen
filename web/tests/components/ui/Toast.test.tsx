@@ -66,12 +66,12 @@ describe('Toast', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'save' }));
 
     const toast = card(await within(dock()).findByText(MESSAGE))!;
-    const modal = document.querySelector('.overlay-layer-modal')!;
+    const modalLayer = screen.getByRole('dialog', { name: 'Runtime limits' }).parentElement!;
 
-    expect(modal).toBeInTheDocument();
+    expect(modalLayer).toBeInTheDocument();
     expect(dock()).toHaveClass('overlay-toast-dock');
     expect(dock().contains(toast)).toBe(true);
-    expect(modal.contains(dock())).toBe(false);
+    expect(modalLayer.contains(dock())).toBe(false);
   });
 
   /** Painting above the dialog is worthless if the toast cannot be reached, and for a long time it could
