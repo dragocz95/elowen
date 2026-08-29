@@ -56,6 +56,7 @@ const DEFAULT_DIRECTION: Record<SortKey, SortDirection> = { title: 'asc', owner:
 // Model first, then the conversation, its owner, the tokens it burned and when it last moved.
 const COLUMNS = 'minmax(0,1.2fr) minmax(0,2.4fr) minmax(0,1.2fr) 5.5rem 10rem 2.25rem';
 const COMPACT_COLUMNS = 'minmax(0,1fr) 2.25rem';
+const MOBILE_COLUMNS = 'minmax(0,1.6fr) minmax(0,1fr) 2.25rem';
 
 /** Full-width conversation register. A regular user sees only their own conversations; an admin
  *  defaults to every user's oversight view and can switch to their own. `afterOpen` lets a modal host
@@ -241,9 +242,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         : q.isError ? <p className="py-8 text-xs italic text-text-muted">{t.common.daemonUnreachable}</p>
         : visible.length === 0 ? <p className="py-8 text-xs italic text-text-muted">{sessions.length === 0 ? t.sessionsPanel.empty : t.sessionsPanel.noMatches}</p>
         : (
-          <DataTable ariaLabel={t.sessionsPanel.tab} columns={COLUMNS} compactColumns={COMPACT_COLUMNS} data-testid="brain-sessions-list">
+          <DataTable ariaLabel={t.sessionsPanel.tab} columns={COLUMNS} compactColumns={COMPACT_COLUMNS} mobileColumns={MOBILE_COLUMNS} data-testid="brain-sessions-list">
             <DataTableRow header>
-              <DataTableSortCell priority="wide" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
+              <DataTableSortCell priority="mobile" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
               <DataTableSortCell active={sort === 'title'} direction={direction} onSort={() => sortBy('title')}>{t.sessionsPanel.colTitle}</DataTableSortCell>
               <DataTableSortCell priority="wide" active={sort === 'owner'} direction={direction} onSort={() => sortBy('owner')}>{t.sessionsPanel.owner}</DataTableSortCell>
               <DataTableSortCell priority="wide" align="end" active={sort === 'tokens'} direction={direction} onSort={() => sortBy('tokens')}>{t.sessionsPanel.colTokens}</DataTableSortCell>
@@ -271,7 +272,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                 : userById.get(s.lastWriterId) ?? { id: s.lastWriterId, username: s.lastWriterLabel || String(s.lastWriterId) };
               return (
                 <DataTableRow key={s.id} interactive className="group" onContextMenu={(event) => openRowContextMenu(event, s)}>
-                  <DataTableCell priority="wide" lines={1}>
+                  <DataTableCell priority="mobile" lines={1}>
                     <span className="flex min-w-0 items-center gap-1.5" title={s.model}>
                       <ModelIcon name={s.model} size={14} />
                       <span className="truncate text-xs text-text-muted">{s.model}</span>

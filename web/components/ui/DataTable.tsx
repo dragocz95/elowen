@@ -7,6 +7,7 @@ import { dictionaries } from '../../lib/i18n/dictionaries';
 type TableStyle = CSSProperties & {
   '--data-table-columns'?: string;
   '--data-table-compact-columns'?: string;
+  '--data-table-mobile-columns'?: string;
 };
 
 /** Every icon inside a register is this size. One number, so a table never mixes 11px and 15px glyphs. */
@@ -32,14 +33,20 @@ type RowOpenRegistry = {
 const RowOpenContext = createContext<RowOpenRegistry | null>(null);
 
 /** Responsive register table. Wide-only cells disappear as a unit and the compact grid closes ranks. */
-export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)', children, className = '', ...rest }: {
+export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)', mobileColumns, children, className = '', ...rest }: {
   ariaLabel: string;
   columns: string;
   compactColumns?: string;
+  /** The phone-only template. At <40rem, cells with priority="mobile" join the always-visible cells. */
+  mobileColumns?: string;
   children: ReactNode;
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children'>) {
-  const style: TableStyle = { '--data-table-columns': columns, '--data-table-compact-columns': compactColumns };
+  const style: TableStyle = {
+    '--data-table-columns': columns,
+    '--data-table-compact-columns': compactColumns,
+    '--data-table-mobile-columns': mobileColumns,
+  };
   const openRows = useRef(0);
   const [hasOpenRow, setHasOpenRow] = useState(false);
   // Stable by construction: a `register` that changed identity would re-run every row's effect, and the
@@ -151,7 +158,7 @@ export function DataTableSortCell({ children, active, direction, onSort, priorit
   active: boolean;
   direction: SortDirection;
   onSort: () => void;
-  priority?: 'always' | 'wide';
+  priority?: 'always' | 'mobile' | 'wide';
   align?: 'start' | 'end';
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'onClick'>) {
   const Arrow = !active ? ChevronsUpDown : direction === 'asc' ? ChevronUp : ChevronDown;
@@ -180,7 +187,7 @@ export function DataTableSortCell({ children, active, direction, onSort, priorit
 export function DataTableCell({ children, header = false, priority = 'always', lines = 'auto', labelHidden = false, reveal = false, title, className = '', ...rest }: {
   children: ReactNode;
   header?: boolean;
-  priority?: 'always' | 'wide';
+  priority?: 'always' | 'mobile' | 'wide';
   /** `1` is the register rhythm: one line, ellipsised at the column edge, with the full value on `title`.
    *  It is what keeps every row the same height, and it is what a text cell wants. `auto` is for a cell
    *  that hosts a control, or that carries a second line on a row marked `height="tall"`.
@@ -209,7 +216,7 @@ export function DataTableCell({ children, header = false, priority = 'always', l
       // A truncated cell hides part of its own content, so the full value has to stay reachable. It can
       // only be recovered when the cell IS the text; a composed cell passes its own `title`.
       title={title ?? (lines === 1 && typeof children === 'string' ? children : undefined)}
-      className={`data-table-cell ${priority === 'wide' ? 'data-table-wide' : ''} min-w-0 ${header ? 'text-[10px] font-semibold uppercase tracking-wider text-text-muted' : ''} ${className}`}
+      className={`data-table-cell ${priority === 'wide' ? 'data-table-wide' : priority === 'mobile' ? 'data-table-mobile' : ''} min-w-0 ${header ? 'text-[10px] font-semibold uppercase tracking-wider text-text-muted' : ''} ${className}`}
       {...rest}
     >
       {labelHidden ? <span className="sr-only">{children}</span> : children}

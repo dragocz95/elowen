@@ -121,9 +121,25 @@
   }
 }
 
-/* Wide-only cells disappear as a unit and the compact grid closes ranks. */
-.data-table-wide { display: none; }
+/* Wide-only cells disappear as a unit and the compact grid closes ranks. A table that needs one more
+   decision column on a phone opts into `mobileColumns`: it stays hidden through the existing compact
+   (tablet) layout, then joins its identity column only below 40rem. That leaves every current tablet and
+   desktop register unchanged. */
+.data-table-wide,
+.data-table-mobile { display: none; }
+@container (width < 40rem) {
+  .data-table-grid { grid-template-columns: var(--data-table-mobile-columns, var(--data-table-compact-columns, minmax(0, 1fr))); }
+  .data-table-mobile { display: block; }
+}
 @container (min-width: 56rem) {
   .data-table-grid { grid-template-columns: var(--data-table-columns, minmax(0, 1fr)); }
-  .data-table-wide { display: block; }
+  .data-table-wide,
+  .data-table-mobile { display: block; }
+}
+
+/* This is deliberately not a DataTable: a native table keeps its desktop sizing and semantics in the
+   sub-agent modal. Its status dot stays beside the task; only the columns that crushed the task disappear
+   on a phone-sized container. */
+@container (width < 40rem) {
+  .agents-table-secondary { display: none; }
 }
