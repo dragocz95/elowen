@@ -1,24 +1,22 @@
 'use client';
-import Link from 'next/link';
-import { ArrowRight, Clock3, Sparkles, WifiOff } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 import { HeroCosmos } from './HeroCosmos';
 import { HomeComposer } from './HomeComposer';
 import type { Presence, PresenceState } from './usePresence';
 
-/** What the instance is doing right now, over the composer that starts the next turn — with the orbital
- *  field beside it.
+/** The box you type into, beside the being — the whole of what this tile is.
  *
- *  The greeting, the status line and the clock that used to open this tile now live in the page's
- *  WorkspaceHero (DashboardView): they are the page's title block, and having a second <h1> inside the
- *  first surface below it meant the dashboard announced itself twice. What is left is the part that is
- *  genuinely a working surface — who is mid-turn, and the box you type into.
+ *  The greeting, the status line and the clock that used to open it live in the page's WorkspaceHero
+ *  (DashboardView): they are the page's title block, and having a second <h1> inside the first surface
+ *  below it meant the dashboard announced itself twice.
  *
- *  The "what is it working on" row used to name a tmux agent session and deep-link to the task it was
- *  assigned. Both belonged to the `agents`/`work` plugins. What replaces them is the same fact from a
- *  source that survived: the pulse names the person mid-turn and carries their conversation title, so
- *  the row still says who is doing what and now links to the conversation itself. */
+ *  A status ROW used to sit above the composer as well — the live conversation as a link while somebody
+ *  was mid-turn, a "resting" card otherwise. It is gone rather than restyled, because the page already
+ *  answers that question three times below the fold: the live tile counts who is working, the pulse draws
+ *  the same flag, and the activity feed names the person in its own header. An unreachable daemon is the
+ *  one fact none of them can report, and it belongs to the whole page, so it is the hero's description.
+ *  The presence state still reaches the orbital field, which is what actually renders it. */
 export function HeroNowTile({ now, presence }: { now: number; presence: Presence }) {
   const { t } = useTranslation();
   const { appName } = useBrand();
@@ -36,32 +34,6 @@ export function HeroNowTile({ now, presence }: { now: number; presence: Presence
           nothing above the fold. Room is reserved only where the two-column field is actually drawn. */}
       <div className="hero-now__field grid items-center gap-6 @3xl:min-h-[22rem] @3xl:grid-cols-[minmax(0,1fr)_minmax(20rem,1fr)]">
         <div className="flex min-w-0 flex-col gap-4">
-          {presence.primary ? (
-            <Link href="/chat" aria-label={`${presence.primary.title || presence.primary.label} — ${t.dashboard.byPerson.replace('{person}', presence.primary.label)} · ${stateLabel}`} className="group flex items-center gap-3 rounded-2xl border border-accent/15 bg-accent/[0.04] px-4 py-3 shadow-[0_0_24px_rgb(var(--accent-rgb)_/_0.07)] transition-[border-color,background-color] hover:border-accent/40 hover:bg-accent/[0.07]">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 text-accent"><Sparkles size={16} aria-hidden /></span>
-              {/* The conversation, and nothing else. The row used to repeat "working by <person> ·
-                  working" underneath the title — the state twice, and a name the reader is usually the
-                  owner of. Everything it said is either on the pulse below or in the row's own existence:
-                  this row is only drawn while somebody IS mid-turn. The accessible name still carries
-                  who and what, because a link labelled by a conversation title alone does not say where
-                  it goes. */}
-              <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">
-                {presence.primary.title || presence.primary.label}
-              </span>
-              <ArrowRight size={15} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent" aria-hidden />
-            </Link>
-          ) : (
-            <div className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated text-text-muted">
-                {presence.state === 'offline' ? <WifiOff size={16} aria-hidden /> : <Clock3 size={16} aria-hidden />}
-              </span>
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="text-sm font-medium text-text">{presence.state === 'offline' ? stateLabel : t.dashboard.resting.replace('{agentName}', appName)}</span>
-                <span className="text-xs text-text-muted">{presence.state === 'offline' ? t.common.daemonUnreachable : t.dashboard.restingDesc}</span>
-              </span>
-            </div>
-          )}
-
           <HomeComposer placeholder={t.dashboard.composerPlaceholder} actionLabel={t.dashboard.composerAction.replace('{agentName}', appName)} />
         </div>
 
