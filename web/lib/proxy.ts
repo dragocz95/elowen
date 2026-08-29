@@ -25,7 +25,7 @@ export function isHttps(req: Request): boolean {
 }
 
 export const sessionCookieName = (secure: boolean): string => secure ? SECURE_COOKIE_NAME : COOKIE_NAME;
-export const namedCookieName = (name: string, secure: boolean): string => secure ? `__Host-${name}` : name;
+const namedCookieName = (name: string, secure: boolean): string => secure ? `__Host-${name}` : name;
 
 /** Mint the httpOnly session cookie. `maxAgeSeconds` MUST match the daemon token's TTL so the browser
  *  keeps the cookie for exactly as long as the daemon will accept the token; without a Max-Age the
@@ -69,7 +69,7 @@ export function readCookieHeader(cookieHeader: string, name: string): string | n
 }
 
 /** Read (and URL-decode) an arbitrary cookie by its exact name from the request, or null when absent. */
-export function readCookie(req: Request, name: string): string | null {
+function readCookie(req: Request, name: string): string | null {
   return readCookieHeader(req.headers.get('cookie') ?? '', name);
 }
 
