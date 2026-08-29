@@ -310,7 +310,7 @@ describe('the host component tree paints from tokens, not from literals', () => 
    *    opens with a digit at all — stay clean;
    *  - Tailwind's literal colour utilities: `bg-black`, `text-white`, and the named palette
    *    (`bg-red-500`, `text-slate-400`), all of which bypass the semantic tokens entirely.
-   *  The semantic utilities the app actually uses — `bg-primary`, `text-muted`, `border-danger` — carry
+   *  The semantic utilities the app actually uses — `bg-primary`, `text-muted-foreground`, `border-danger` — carry
    *  no palette name and so match none of these. */
   const LITERAL_PATTERNS = [
     /#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/g,
@@ -398,7 +398,7 @@ describe('the host component tree paints from tokens, not from literals', () => 
       'background: rgb(var(--primary-rgb) / .16);',
       'border-color: color-mix(in srgb, var(--color-warning) 40%, transparent);',
       'background: var(--color-surface-sticky);',
-      '<div className="bg-primary text-muted border-danger" />',
+      '<div className="bg-primary text-muted-foreground border-danger" />',
       '<div className="bg-surface hover:bg-elevated" />',
       'const gap = "gap-3 pt-2";',
     ]) expect(flagged(legitimate), `should NOT have been flagged: ${legitimate}`).toBe(false);

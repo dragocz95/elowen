@@ -38,6 +38,31 @@ describe('Modal', () => {
     expect(screen.getByText('modal-body')).toBeInTheDocument();
   });
 
+  /** A `click` fires on the common ancestor of the press and the release, so a press that starts on a
+   *  control inside the dialog and ends anywhere else arrives at the backdrop with `target ===
+   *  currentTarget` — indistinguishable, by that check alone, from a real backdrop click. Radix Select
+   *  makes it the normal case rather than an edge one: opening it sets `pointer-events: none` on the
+   *  body, the release stops hit-testing onto the trigger, and the click surfaces on the backdrop. That
+   *  closed the whole dialog the moment anyone opened a picker inside it. */
+  it('does not dismiss when a press begins on a control inside it and the click lands on the backdrop', () => {
+    const onClose = vi.fn();
+    render(
+      <Modal title="Nová vzpomínka" onClose={onClose}>
+        <button type="button">picker</button>
+      </Modal>,
+      { wrapper: W },
+    );
+    const backdrop = document.querySelector('.overlay-layer-modal')!;
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'picker' }));
+    fireEvent.click(backdrop);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // A press that really does begin on the backdrop still dismisses.
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('exposes a labelled modal dialog', () => {
     render(
       <Modal title="Accessible title" description="Dialog context" onClose={vi.fn()}>
@@ -174,6 +199,9 @@ describe('Modal', () => {
     );
     // The modal portals to <body>, so reach the backdrop from the document, not the render container.
     const overlay = document.querySelector('.fixed.inset-0') as HTMLElement;
+    // Press AND release on the backdrop. A bare click is not a sequence a browser produces, and the
+    // backdrop deliberately only dismisses on a press that began on it — see the regression above.
+    fireEvent.pointerDown(overlay);
     fireEvent.click(overlay);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -390,6 +418,7 @@ describe('Modal', () => {
 
     render(<NestedBackdropHarness />, { wrapper: W });
     const child = screen.getByRole('dialog', { name: 'Child backdrop modal' });
+    fireEvent.pointerDown(child.parentElement!);
     fireEvent.click(child.parentElement!);
 
     expect(screen.queryByRole('dialog', { name: 'Child backdrop modal' })).not.toBeInTheDocument();

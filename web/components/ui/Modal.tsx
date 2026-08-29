@@ -64,6 +64,8 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  /** Whether the press that is about to produce a click started on the backdrop itself. */
+  const pressedBackdrop = useRef(false);
   // Portal to <body> so the fixed overlay is positioned against the viewport, not trapped inside a
   // transformed/clipping ancestor (a card with a transform turns `position: fixed` into "fixed to the
   // card" → the modal renders inside the card and flickers with the card's hover state). It is also what
@@ -80,8 +82,18 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
       <DialogOverlay
         ref={overlayRef}
         presentation={resolved}
+        // A backdrop dismissal has to be a press that BEGAN on the backdrop, not merely a click event
+        // whose target happens to be it. `click` fires on the common ancestor of the press and the
+        // release, so a press that starts on a control and ends anywhere else still arrives here with
+        // `target === currentTarget`. Radix Select makes that the normal case rather than an edge one:
+        // opening it sets `pointer-events: none` on <body>, so the release no longer hit-tests onto the
+        // trigger and the click surfaces on this backdrop — which closed the whole dialog the moment
+        // anyone opened a picker inside it. Recording where the press started is what tells the two
+        // apart, and it covers every control that disables or unmounts itself between press and release.
+        onPointerDown={(event) => { pressedBackdrop.current = event.target === event.currentTarget; }}
         onClick={(event) => {
-          if (event.target !== event.currentTarget) return;
+          if (event.target !== event.currentTarget || !pressedBackdrop.current) return;
+          pressedBackdrop.current = false;
           // Portal events still bubble through their React tree. Stop at this backdrop so clicking a
           // nested modal's backdrop cannot also reach and close its parent modal.
           event.stopPropagation();

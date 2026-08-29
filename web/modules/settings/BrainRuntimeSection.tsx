@@ -172,7 +172,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
               aria-label={t.brain.maxSteps}
               className="w-40"
             />
-            <span className="w-10 text-right tabular-nums text-sm text-muted">{Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200}</span>
+            <span className="w-10 text-right tabular-nums text-sm text-muted-foreground">{Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200}</span>
           </div>
         </SettingsRow>
         {limits ? (
