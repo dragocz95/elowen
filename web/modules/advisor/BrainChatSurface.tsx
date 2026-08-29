@@ -1130,7 +1130,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               <PanelLeft size={18} aria-hidden />
             </button>
           ) : null}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{active?.title || t.brainChat.newChat}</span>
+          {/* Named because the two hosts want opposite things from it: as the page's own sticky bar it
+              takes the leftover width and pushes the controls to the far edge, while inside the shell's
+              top rule the same growth is what tore this toolbar into two halves with the row's whole
+              width between them. page-bar.css holds it to its text there. */}
+          <span className="chat-page-toolbar__title min-w-0 flex-1 truncate text-sm font-medium text-text">{active?.title || t.brainChat.newChat}</span>
           {/* On a phone the model picker and work-mode pill fold into the ⋯ menu below; on desktop they
               stay inline. The pill is a security indicator (plan/workflow), so it also shows inline on
               desktop and, when non-build, inside the ⋯ menu on mobile. */}

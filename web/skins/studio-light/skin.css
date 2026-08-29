@@ -77,6 +77,9 @@
   --font-sans: "Inter Variable", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: var(--font-geist-sans), "Inter Variable", Inter, ui-sans-serif, sans-serif;
   --studio-chat-font: -apple-system-body, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  /* The wordmark alone. Space Grotesk's shorter, squarer grotesk cut reads as a mark beside Inter's
+     interface text without pretending to be another UI face — nothing else in the design uses it. */
+  --studio-brand-font: "Space Grotesk Variable", var(--font-display);
 
   /* Status fills. --color-on-status is the ink that sits ON one of them, and on a light design it has to
      be white rather than near-black: white measures 5.26:1 on danger, 5.28:1 on success, 5.02:1 on

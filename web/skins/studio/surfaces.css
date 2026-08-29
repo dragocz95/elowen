@@ -425,10 +425,15 @@
 
 /* The reference chrome is a 50px ruled strip. This stays skin-owned: the shared bar remains 48px for
    spatial designs, while Studio's sticky registers offset from the same token below. */
+/* Two regions, not three: the page's own controls on the left, the universal actions on the right. The
+   middle column used to hold a full-width command field, which took the widest slot in the app's chrome
+   for a control the keyboard opens — and on /chat it wedged that page's toolbar apart from its title. The
+   field is now a glyph among the actions (components/shell/TopBar.tsx), so the row has one thing to say
+   on each side. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar {
   display: grid;
   height: var(--studio-top-bar-height);
-  grid-template-columns: minmax(0, 1fr) 16rem minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.75rem;
   border-bottom-color: var(--studio-line);
   padding-inline: 0.75rem;
@@ -436,15 +441,14 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__leading {
   overflow: hidden;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__search {
-  width: 100%;
-  justify-self: center;
-  border: 1px solid var(--studio-line);
-  border-radius: var(--radius-lg);
-  font-size: 0.8125rem;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__search > span:first-of-type {
-  font-size: inherit;
+/* The route's own controls are a GROUP, divided from the shell's fold handle by a hairline rather than by
+   nothing at all. Without the rule the chat toolbar's history button read as one more piece of global
+   chrome. `:not(:empty)` because most routes portal nothing here and a divider with nothing behind it is
+   a stray mark. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__page-slot:not(:empty) {
+  border-left: 1px solid var(--studio-line);
+  padding-left: 0.75rem;
+  margin-left: 0.25rem;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__actions {
   justify-self: end;
@@ -464,15 +468,6 @@
   border-radius: var(--radius);
   font-size: 0.8125rem;
 }
-@media (max-width: 63.99rem) {
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__search {
-    display: none;
-  }
-}
-
 /* Page sections are plain tabs in the shell's top rule at every width, never a second pill-shaped control
    below the heading. The track scrolls horizontally when a phone cannot fit every label. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation {

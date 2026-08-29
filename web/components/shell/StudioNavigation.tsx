@@ -215,8 +215,8 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
           <div className="studio-nav__brand-lockup">
             <img className="studio-nav__brand-mark" src={iconSrc} alt="" width={20} height={20} />
             <span className="studio-nav__brand-name" aria-hidden={compact || undefined}>{appName}</span>
-            {/* The build stays attached to the brand lockup. In rail mode the whole lockup remains at full
-                width and the sidebar clips it, matching the reference's partial wordmark treatment. */}
+            {/* The build stays attached to the brand lockup. In rail mode the skin drops the name and the
+                build and centres the mark — the folded column shows a logo, never a sliced word. */}
             {health.data?.version ? <span className="studio-nav__version" aria-hidden={compact || undefined}>{`v${health.data.version}`}</span> : null}
           </div>
         </header>

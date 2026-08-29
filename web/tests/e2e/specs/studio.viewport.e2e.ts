@@ -504,6 +504,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     const navElement = document.querySelector<HTMLElement>('.studio-nav')!;
     const brandLockup = document.querySelector<HTMLElement>('.studio-nav__brand-lockup')!;
     const brandMark = document.querySelector<HTMLElement>('.studio-nav__brand-mark')!;
+    const brandName = document.querySelector<HTMLElement>('.studio-nav__brand-name')!;
     const search = document.querySelector<HTMLElement>('.top-bar__search')!;
     const searchIcon = search.querySelector<SVGElement>('svg')!;
     const skinButton = document.querySelector<HTMLElement>('.skin-switcher__button')!;
@@ -532,11 +533,18 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
       navTransition: { duration: navStyle.transitionDuration, easing: navStyle.transitionTimingFunction },
       brandClipped: brandLockup.getBoundingClientRect().right > navElement.getBoundingClientRect().right,
       brandMarkWidth: Math.round(brandMark.getBoundingClientRect().width),
-      searchWidth: Math.round(search.getBoundingClientRect().width),
-      searchHeight: Math.round(search.getBoundingClientRect().height),
-      searchBorder: searchStyle.borderTopWidth,
-      searchRadius: searchStyle.borderRadius,
-      searchIcon: { width: searchIcon.getAttribute('width'), stroke: searchIcon.getAttribute('stroke-width') },
+      brandName: {
+        display: getComputedStyle(brandName).display,
+        size: getComputedStyle(brandName).fontSize,
+        family: getComputedStyle(brandName).fontFamily,
+      },
+      search: {
+        width: Math.round(search.getBoundingClientRect().width),
+        height: Math.round(search.getBoundingClientRect().height),
+        border: searchStyle.borderTopWidth,
+        inActions: search.closest('.top-bar__actions') !== null,
+        icon: { width: searchIcon.getAttribute('width'), stroke: searchIcon.getAttribute('stroke-width') },
+      },
       skinHeight: Math.round(skinButton.getBoundingClientRect().height),
       skinBorder: getComputedStyle(skinButton).borderTopWidth,
       skinFont: getComputedStyle(skinLabel).fontSize,
@@ -583,11 +591,8 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     navTransition: shellRhythm.navTransition,
     brandClipped: shellRhythm.brandClipped,
     brandMarkWidth: shellRhythm.brandMarkWidth,
-    searchWidth: shellRhythm.searchWidth,
-    searchHeight: shellRhythm.searchHeight,
-    searchBorder: shellRhythm.searchBorder,
-    searchRadius: shellRhythm.searchRadius,
-    searchIcon: shellRhythm.searchIcon,
+    brandName: shellRhythm.brandName,
+    search: shellRhythm.search,
     skinHeight: shellRhythm.skinHeight,
     skinBorder: shellRhythm.skinBorder,
     skinFont: shellRhythm.skinFont,
@@ -603,13 +608,13 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     footerItemHeight: 32,
     navWidth: NAV_RAIL,
     navTransition: { duration: '0.15s', easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
-    brandClipped: true,
-    brandMarkWidth: 24,
-    searchWidth: 256,
-    searchHeight: 32,
-    searchBorder: '1px',
-    searchRadius: '12px',
-    searchIcon: { width: '18', stroke: '1.5' },
+    // Folded, the column is the mark and nothing else: the wordmark is out of the flow rather than sliced
+    // by the rail's edge, so the lockup fits inside the column it belongs to.
+    brandClipped: false,
+    brandMarkWidth: 30,
+    brandName: { display: 'none', size: '18px', family: shellRhythm.brandName.family },
+    // Command search is one 32px glyph in the action cluster, not a field holding the middle of the bar.
+    search: { width: 32, height: 32, border: '0px', inActions: true, icon: { width: '18', stroke: '1.5' } },
     skinHeight: 32,
     skinBorder: '1px',
     skinFont: '13px',
@@ -640,6 +645,9 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
   expect(shellRhythm.workspace.shadow).not.toBe('none');
   expect(shellRhythm.bodyFont).toContain('Inter Variable');
   expect(shellRhythm.advisorText.family).toContain('BlinkMacSystemFont');
+  // The wordmark is the one thing set in the display face, so the menu's own name cannot silently become
+  // one more line of interface text.
+  expect(shellRhythm.brandName.family).toContain('Space Grotesk Variable');
 
   await app.getByTestId('studio-nav-collapse').click();
   await expect(nav).toHaveAttribute('data-mode', 'full');

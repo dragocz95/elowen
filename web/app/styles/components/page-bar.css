@@ -42,15 +42,25 @@
    page's state in the page component rather than rebuilding controls in the shell. */
 .top-bar__page-slot { scrollbar-width: none; }
 .top-bar__page-slot::-webkit-scrollbar { display: none; }
-.top-bar__page-slot > * { min-width: 0; flex: 1 1 auto; }
+/* Portaled controls are a GROUP beside the location, not a second row spanning the bar. They shrink but
+   never grow: a route whose toolbar stretched to the full slot pushed its own trailing controls to the
+   far edge of the screen, leaving its title stranded at the other end with the whole window between two
+   halves of one toolbar. */
+.top-bar__page-slot > * { min-width: 0; flex: 0 1 auto; }
 .top-bar__page-slot .chat-page-toolbar {
   position: static;
   z-index: auto;
-  width: 100%;
-  max-width: none;
+  width: auto;
+  max-width: 100%;
   margin: 0;
   padding: 0;
   background: transparent;
+}
+/* The conversation's name is the one elastic part of that group, and it is elastic DOWNWARDS: it gives up
+   width to the pickers beside it and truncates, rather than spending the row on a short title. */
+.top-bar__page-slot .chat-page-toolbar__title {
+  flex: 0 1 auto;
+  max-width: 16rem;
 }
 .top-bar__page-slot .chat-page-toolbar__fade { display: none; }
 .chat-page-toolbar__overflow { display: none; }

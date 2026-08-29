@@ -125,19 +125,6 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
         ) : null}
       </div>
 
-      {bar ? (
-        <button
-          type="button"
-          onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
-          aria-label={t.common.openCommandPalette}
-          className="top-bar__search flex h-8 min-w-0 items-center gap-2 rounded-md border border-border bg-bg px-3 text-text-muted transition-colors hover:border-border-strong hover:text-text"
-        >
-          <Search size={18} strokeWidth={1.5} aria-hidden />
-          <span className="min-w-0 flex-1 truncate text-left text-xs">{t.common.searchCommands}</span>
-          <span className="shrink-0 font-mono text-[10px] text-text-muted/70">⌘ K</span>
-        </button>
-      ) : null}
-
       {/* The action cluster and the hamburger are named — `top-bar__*` — because they are the only chrome
           on every page of the app and a skin has to be able to reach them. Their LAYOUT is the variant's,
           not a stylesheet's: a skin that had to un-pill this cluster from outside was overriding four
@@ -145,18 +132,22 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
       <div className={bar
         ? 'top-bar__actions ml-auto flex shrink-0 items-center gap-0.5 max-[767px]:hidden'
         : 'top-bar__actions ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-bg/45 p-1 backdrop-blur-xl'}>
-        {!bar ? (
-          <button
-            type="button"
-            onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
-            aria-label={t.common.openCommandPalette}
-            title={t.common.openCommandPalette}
-            className={`group flex items-center gap-2 px-2.5 ${control}`}
-          >
-            <Search size={17} aria-hidden />
-            <span className="hidden font-mono text-[10px] tracking-wide text-text-muted/70 lg:inline">⌘K</span>
-          </button>
-        ) : null}
+        {/* Command search is a control among the others, never a field of its own. A named input parked in
+            the middle of the bar claimed the widest slot in the app's chrome for something reached by
+            shortcut, and on /chat it split that page's own toolbar away from its title. As an icon it sits
+            with the actions it belongs to; the shortcut still opens the same palette. The floating cluster
+            keeps the ⌘K hint beside the glyph because it has the room. */}
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
+          aria-label={t.common.openCommandPalette}
+          title={`${t.common.openCommandPalette} · ⌘K`}
+          aria-keyshortcuts="Control+K Meta+K"
+          className={`top-bar__search group flex items-center justify-center ${bar ? 'w-8' : 'gap-2 px-2.5'} ${control}`}
+        >
+          <Search size={bar ? 18 : 17} strokeWidth={bar ? 1.5 : undefined} aria-hidden />
+          {!bar ? <span className="hidden font-mono text-[10px] tracking-wide text-text-muted/70 lg:inline">⌘K</span> : null}
+        </button>
         {/* Only when there is a session to end — the login screen has nothing to sign out of. */}
         {me.data?.user ? (
           <button

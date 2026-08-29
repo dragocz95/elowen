@@ -233,8 +233,9 @@
   color: var(--color-text);
 }
 
-/* The 50px brand row stays full-size while the rail clips it. That is the reference's signature collapsed
-   treatment: the mark remains visible and the rest of the lockup disappears behind the 57px edge. */
+/* The brand row. It is the one place in this column that is allowed to be a piece of identity rather than
+   a control, so the mark is set larger than any glyph beneath it and the name is the only text in the app
+   that is not the interface sans. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__header {
   display: flex;
   flex: none;
@@ -245,12 +246,24 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-lockup {
   display: flex;
-  width: max-content;
-  min-width: 10rem;
+  min-width: 0;
+  width: 100%;
   align-items: center;
   gap: 0.5rem;
+  padding-inline: 0.5rem;
   white-space: nowrap;
   transition: translate var(--motion-base) var(--ease-out);
+}
+/* Folded, the column carries the MARK and nothing else. It used to keep the lockup at full width and let
+   the 57px edge slice through it, which left a truncated "Elo" sitting where a logo should be — a clip is
+   only a treatment when what remains still reads as a word. The mark alone always does. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__brand-lockup {
+  justify-content: center;
+  padding-inline: 0;
+  gap: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] :is(.studio-nav__brand-name, .studio-nav__version) {
+  display: none;
 }
 /* Only the sheet carries a close control, and it is absolutely positioned into this header's trailing
    corner — 44×44 on a coarse pointer, which is every pointer that gets a sheet. The header gives way
@@ -260,17 +273,21 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-mark {
   flex: none;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.875rem;
+  height: 1.875rem;
   object-fit: contain;
 }
+/* The wordmark, in the display face the skin names — one typeface, used exactly once, which is what makes
+   it read as a mark instead of as a heading. `--studio-brand-font` ends in `var(--font-display)`, so an
+   instance that never loads the face still gets the interface sans at this size rather than a serif. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-name {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text);
-  font-size: 0.875rem;
+  font-family: var(--studio-brand-font);
+  font-size: 1.125rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

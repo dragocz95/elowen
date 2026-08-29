@@ -1,5 +1,10 @@
 import './globals.css';
 import '@fontsource-variable/inter';
+// The wordmark's face. Declared globally because @font-face is inert until a rule asks for the family —
+// only a design that names it (`--studio-brand-font`) makes a browser fetch the file — and self-hosted
+// because a brand lockup that arrives one network round trip after the menu it belongs to is worse than
+// no wordmark at all.
+import '@fontsource-variable/space-grotesk';
 import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import type { ReactNode } from 'react';
