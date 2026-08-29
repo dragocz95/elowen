@@ -104,7 +104,7 @@ export function LoginForm({ onAuthed }: { onAuthed: () => void }) {
             <span>{t.auth.passwordPlaceholder}</span>
             <Input type="password" placeholder={t.auth.passwordPlaceholder} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
           </label>
-          <Button type="submit" variant="accent" disabled={login.isPending} className="h-10 w-full justify-center">
+          <Button type="submit" variant="accent" size="lg" disabled={login.isPending} className="w-full justify-center">
             {t.auth.signIn}
           </Button>
         </form>
@@ -118,7 +118,7 @@ export function LoginForm({ onAuthed }: { onAuthed: () => void }) {
             </div>
             <a
               href={`/api/auth/sso/microsoft/start?next=${encodeURIComponent(currentTarget)}`}
-              className={buttonClassName('default', 'h-10 w-full justify-center')}
+              className={buttonClassName('default', 'lg', 'w-full justify-center')}
             >
               <MicrosoftLogo />
               {t.auth.microsoft}

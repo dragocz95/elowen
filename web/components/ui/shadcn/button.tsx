@@ -35,7 +35,12 @@ const buttonVariants = cva(
         // highlight a design is free to erase, and both designs here do erase it, which is how a hover
         // ends up invisible. A wash of the text colour reads on every design by construction.
         ghost: 'border-transparent bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-        link: 'border-transparent bg-transparent text-primary underline-offset-4 hover:underline',
+        // shadcn's `link` variant is deliberately absent. It had no call site anywhere in the app, and as
+        // a CVA cell it is not neutral: `link` × `icon` is a state nothing can render sensibly — an
+        // underline-on-hover with no text to underline, in a square box — yet the gallery is exhaustive
+        // over variant × size by construction, so the cell had to be either rendered or removed. A link
+        // that looks like a link belongs in prose as an `<a>`, and a link that looks like a button is
+        // already reachable through `asChild`.
         // Two app-specific variants, both with no shadcn counterpart, and both the same idea: a
         // destructive action that has to sit quietly in a row or a form. It stays unfilled until the
         // pointer is on it and only then admits what it does — a solid `destructive` button in every row

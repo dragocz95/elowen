@@ -14,7 +14,12 @@ import { ActionMenu } from '../../../components/ui/ActionMenu';
 import { AutoSaveStatus } from '../../../components/ui/AutoSaveStatus';
 import { Avatar } from '../../../components/ui/Avatar';
 import { Badge as AppBadge } from '../../../components/ui/Badge';
-import { Button as AppButton, buttonClassName } from '../../../components/ui/Button';
+import {
+  Button as AppButton,
+  buttonClassName,
+  BUTTON_SIZES as APP_BUTTON_SIZES,
+  BUTTON_VARIANTS as APP_BUTTON_VARIANTS,
+} from '../../../components/ui/Button';
 import { CardHead, CardRow, CardShell } from '../../../components/ui/ChartCard';
 import { Checkbox as AppCheckbox } from '../../../components/ui/Checkbox';
 import { ChoiceField } from '../../../components/ui/ChoiceField';
@@ -168,7 +173,7 @@ const axisOf = <T extends string>(record: Record<T, true>): T[] => Object.keys(r
 
 const BUTTON_VARIANTS = axisOf<ShadcnButtonVariant>({
   default: true, secondary: true, destructive: true, outline: true,
-  ghost: true, link: true, 'ghost-destructive': true, 'outline-destructive': true,
+  ghost: true, 'ghost-destructive': true, 'outline-destructive': true,
 });
 const BUTTON_SIZES = axisOf<ShadcnButtonSize>({ sm: true, default: true, lg: true, icon: true });
 const BADGE_VARIANTS = axisOf<ShadcnBadgeVariant>({
@@ -176,7 +181,8 @@ const BADGE_VARIANTS = axisOf<ShadcnBadgeVariant>({
   'soft-primary': true, 'soft-destructive': true, 'soft-success': true, 'soft-warning': true,
 });
 
-const APP_BUTTON_VARIANTS = ['default', 'accent', 'ghost', 'danger', 'ghost-danger'] as const;
+// The app wrapper's own axes are not re-declared here: `components/ui/Button.tsx` exports them as values
+// precisely so this gallery reads them off the map itself and cannot fall behind it.
 
 /* --- Fixtures ---------------------------------------------------------------------------------- */
 
@@ -375,19 +381,27 @@ function Gallery() {
         <Section
           id="button-app"
           title="Button — app wrapper"
-          note="components/ui/Button.tsx names its variants by emphasis and maps them onto the shadcn names. `accent` is the brand fill here; it is NOT the shadcn `accent` token. The wrapper exposes no size axis — every app button is the default 36px height."
+          note="components/ui/Button.tsx names its variants by emphasis and maps them onto the shadcn names. `accent` is the brand fill here; it is NOT the shadcn `accent` token. The size axis is the primitive's, forwarded under the same names; `outline` and `outline-danger` exist for IconButton, which composes this wrapper rather than the primitive."
         >
-          {APP_BUTTON_VARIANTS.map((variant) => (
-            <Specimen key={variant} label={`<Button variant="${variant}">`}>
-              <State caption="default"><AppButton variant={variant}>Save</AppButton></State>
-              <State caption="disabled"><AppButton variant={variant} disabled>Save</AppButton></State>
-              <State caption="icon prop"><AppButton variant={variant} icon={Save}>Save</AppButton></State>
-              <State caption="icon-only"><AppButton variant={variant} icon={Save} aria-label="Save" /></State>
+          {APP_BUTTON_VARIANTS.map((variant) => APP_BUTTON_SIZES.map((size) => (
+            <Specimen key={`${variant}-${size}`} label={`<Button variant="${variant}" size="${size}">`}>
+              {size === 'icon' ? (
+                <>
+                  <State caption="icon-only"><AppButton variant={variant} size={size} icon={Save} aria-label="Save" /></State>
+                  <State caption="icon-only disabled"><AppButton variant={variant} size={size} icon={Save} aria-label="Save" disabled /></State>
+                </>
+              ) : (
+                <>
+                  <State caption="default"><AppButton variant={variant} size={size}>Save</AppButton></State>
+                  <State caption="disabled"><AppButton variant={variant} size={size} disabled>Save</AppButton></State>
+                  <State caption="icon prop"><AppButton variant={variant} size={size} icon={Save}>Save</AppButton></State>
+                </>
+              )}
             </Specimen>
-          ))}
-          <Specimen label="buttonClassName() — the same control on an <a> and a <label>">
+          )))}
+          <Specimen label="buttonClassName() — the same control on an <a> and a <label>, at a chosen size">
             <a className={buttonClassName('accent')} href="#button-app">Anchor</a>
-            <label className={buttonClassName('default')}>
+            <label className={buttonClassName('default', 'sm')}>
               File
               <input type="file" className="sr-only" />
             </label>
@@ -398,7 +412,7 @@ function Gallery() {
         <Section
           id="icon-button"
           title="IconButton"
-          note="The shadcn button at its `icon` size, squared off to 28px for table rows and toolbars. Two variants only."
+          note="The app Button at its `icon` size — the outline variant, squared off and scaled down to 28px for table rows and toolbars. Two variants only."
         >
           <Specimen label='<IconButton variant="default">'>
             <State caption="default"><IconButton icon={Pencil} label="Edit" /></State>

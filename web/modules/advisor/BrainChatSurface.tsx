@@ -498,7 +498,7 @@ function SharedFile({ file, caption, full }: { file: BrainMessageFile; caption?:
         <a
           href={`/api${file.url}`}
           download={file.name}
-          className={buttonClassName('default', 'h-8 shrink-0 px-3')}
+          className={buttonClassName('default', 'sm', 'shrink-0')}
           aria-label={`${t.brainChat.fileDownload}: ${file.name}`}
         >
           <Download size={14} aria-hidden />
