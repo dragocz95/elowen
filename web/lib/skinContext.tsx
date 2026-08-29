@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useConfig } from './queries';
 import {
+  DEFAULT_SKIN,
   allowedSkinChoices,
   currentSkinChoice,
   isSkinChoice,
@@ -33,12 +34,13 @@ interface SkinContextValue {
   /** The account's current choice, or null when the visible design is the operator's default and that
    *  default is not itself one of the offered choices. */
   choice: SkinChoice | null;
-  /** The skin the document is actually WEARING — exactly what `data-skin` says, or null for the built-in
-   *  design. It is not the same thing as `choice`: an operator who sets ELOWEN_SKIN without offering it
-   *  in the allow-list gives everyone that design with nothing chosen, so `choice` is null while the
-   *  document carries the attribute. Anything deciding what to RENDER for the active design has to read
-   *  this one — reading `choice` would mount the built-in shell inside another design's stylesheet. */
-  skin: SkinName | null;
+  /** The skin the document is actually WEARING — exactly what `data-skin` says, and never nothing: every
+   *  resolution ends at a compiled skin (DEFAULT_SKIN is the floor). It is not the same thing as
+   *  `choice`: an operator who sets ELOWEN_SKIN without offering it in the allow-list gives everyone that
+   *  design with nothing chosen, so `choice` is null while the document wears a skin. Anything deciding
+   *  what to RENDER for the active design has to read this one — reading `choice` would mount one
+   *  design's shell inside another design's stylesheet. */
+  skin: SkinName;
   /** What may be picked. Empty means the instance has not enabled switching at all. */
   allowed: SkinChoice[];
   /** Advance to the next allowed choice — the switcher's whole interaction. */
@@ -51,30 +53,30 @@ const SkinContext = createContext<SkinContextValue | null>(null);
  *  page, scoped under its own `[data-skin]`, so the attribute alone decides which rules match. No fetch,
  *  no reload, no flash.
  *
- *  It takes the RESOLVED skin — a compiled skin name, or null for the built-in design — rather than the
- *  account's choice, because the resolution is what `data-skin` states and null is a first-class value in
- *  it, not an error: revoking the active skin from the allow-list, or moving the operator's ELOWEN_SKIN,
- *  legitimately hands the document back to the built-in design while the page is open. Every path that can
- *  change the visible design therefore goes through this function via the single effect below, so the
- *  attribute cannot disagree with the `skin` the context reports and the shell renders from.
+ *  It takes the RESOLVED skin rather than the account's choice, because the resolution is what `data-skin`
+ *  states: revoking the active skin from the allow-list, or moving the operator's ELOWEN_SKIN, changes the
+ *  visible design while the page is open, and both land on another COMPILED skin — DEFAULT_SKIN when
+ *  nothing else decides. The attribute is therefore never removed; there is no unattributed document to
+ *  fall back to. Every path that can change the visible design goes through this function via the single
+ *  effect below, so the attribute cannot disagree with the `skin` the context reports and the shell
+ *  renders from.
  *
  *  The attribute is not quite the whole story, because it is not the only thing painting the canvas. The
  *  server writes an inline `background-color` onto <html> and <body> (app/layout.tsx) so the document has
- *  the right fill BEFORE the stylesheet is parsed — and an inline style outranks the `var(--color-bg)`
+ *  the right fill BEFORE the stylesheet is parsed — and an inline style outranks the `var(--color-background)`
  *  rule in base.css that would otherwise follow the skin. Left in place it freezes the canvas at whatever
  *  design the document was SERVED as: switching to studio-oled repainted every surface near-black while
  *  <html> stayed white underneath, which shows in the overscroll fill and in the browser's own chrome.
  *
  *  So the switch hands the canvas back to the cascade. Deleting the inline value is the whole fix, and it
  *  needs no second copy of any palette on the client: by the time anyone can press the switcher the
- *  stylesheet has long since landed, so `--color-bg` is already the authority the anti-FOUC value was
+ *  stylesheet has long since landed, so `--color-background` is already the authority the anti-FOUC value was
  *  standing in for. The same reasoning covers the theme colour, which is read back from the resolved token
  *  rather than restated — the address bar and the task switcher then follow the design like everything
  *  else, instead of reporting the one the document happened to arrive in. */
-function applySkin(skin: SkinName | null): void {
+function applySkin(skin: SkinName): void {
   const root = document.documentElement;
-  if (skin) root.setAttribute('data-skin', skin);
-  else root.removeAttribute('data-skin');
+  root.setAttribute('data-skin', skin);
   root.style.removeProperty('background-color');
   document.body?.style.removeProperty('background-color');
   const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
@@ -141,15 +143,17 @@ export function SkinProvider({
   // The document follows that resolution and nothing else. Every way the visible design can change — first
   // mount, the switcher, an admin revoking the active skin, the operator's default moving — changes THIS
   // value and therefore lands here, so there is one place deciding what `<html>` wears and no path that
-  // can leave a stale attribute behind. Notably `null` writes too: it removes the attribute, which is how
-  // the built-in design is expressed.
+  // can leave a stale attribute behind.
   useEffect(() => { applySkin(skin); }, [skin]);
   const value = useMemo(() => ({ choice, skin, allowed, cycle }), [choice, skin, allowed, cycle]);
   return <SkinContext.Provider value={value}>{children}</SkinContext.Provider>;
 }
 
 /** Tolerates a missing provider (bare component tests, isolated mounts) by reporting nothing to switch —
- *  the switcher then renders nothing, which is also what an instance with switching disabled does. */
+ *  the switcher then renders nothing, which is also what an instance with switching disabled does. The
+ *  skin it reports is DEFAULT_SKIN rather than "none", for the same reason the provider never removes the
+ *  attribute: a component mounted outside the provider still has to render for a real design, and the one
+ *  it would have got from a real document with nothing chosen is the default. */
 export function useSkin(): SkinContextValue {
-  return useContext(SkinContext) ?? { choice: null, skin: null, allowed: [], cycle: () => {} };
+  return useContext(SkinContext) ?? { choice: null, skin: DEFAULT_SKIN, allowed: [], cycle: () => {} };
 }

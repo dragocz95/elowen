@@ -15,8 +15,8 @@ import type { PluginDetail } from '../../lib/types';
 function Meta({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium uppercase tracking-wide text-text-muted">{label}</span>
-      <span className="min-w-0 text-sm text-text">{children}</span>
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="min-w-0 text-sm text-foreground">{children}</span>
     </div>
   );
 }
@@ -41,7 +41,7 @@ function DataSection({ name, summary }: { name: string; summary: { path: string;
         <Meta label={t.pluginDetail.dataSize}>{formatBytes(summary.bytes)}</Meta>
         <Meta label={t.pluginDetail.dataFiles.replace('{n}', String(summary.files))}><span className="font-mono">{summary.files}</span></Meta>
         <div className="min-w-0 @sm:col-span-3">
-          <Meta label={t.pluginDetail.dataPath}><span className="block break-all font-mono text-xs text-text-muted">{summary.path}</span></Meta>
+          <Meta label={t.pluginDetail.dataPath}><span className="block break-all font-mono text-xs text-muted-foreground">{summary.path}</span></Meta>
         </div>
       </div>
       <Button variant="danger" icon={Trash2} className="self-start" onClick={() => setConfirm(true)} disabled={clear.isPending}>{t.pluginDetail.dataClear}</Button>

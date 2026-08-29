@@ -8,7 +8,7 @@ export interface ProgressRibbonPhase {
 const phaseColor = (status: string, active: boolean): string =>
   status === 'closed' ? (active ? 'bg-primary' : 'bg-primary/40')
   : status === 'in_progress' ? (active ? 'bg-primary/60' : 'bg-primary/30')
-  : status === 'blocked' ? 'bg-danger'
+  : status === 'blocked' ? 'bg-destructive'
   : status === 'cancelled' ? 'bg-muted'
   : 'bg-border-strong';
 

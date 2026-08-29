@@ -60,7 +60,7 @@ function TelemetryMascot({ busy }: { busy: boolean }) {
         // The floor is deliberately NOT in proportion to the share: at the narrowest rail the percentage
         // already yields less than the floor would, so raising it would push the mascot wider than the
         // column that has to hold it.
-        className="aspect-square w-[84%] min-w-[8rem] max-w-[22rem] rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-text"
+        className="aspect-square w-[84%] min-w-[8rem] max-w-[22rem] rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
       >
         <MascotGlyph state={busy ? 'saving' : 'idle'} />
       </button>
@@ -106,7 +106,7 @@ function TelemetryDrawer({ label, onClose, children }: { label: string; onClose?
         // dismisses the drawer. Opting back in is what `DialogOverlay` does for the same reason.
         style={{ pointerEvents: 'auto' }}
       >
-        <div className="absolute inset-0 bg-bg/50" onClick={onClose} aria-hidden />
+        <div className="absolute inset-0 bg-background/50" onClick={onClose} aria-hidden />
         <DialogContent
           ref={surfaceRef}
           // A right rail that is also its own scroll box, which none of the primitive's presentations
@@ -115,7 +115,7 @@ function TelemetryDrawer({ label, onClose, children }: { label: string; onClose?
           aria-label={label}
           aria-describedby={undefined}
           data-testid="telemetry-drawer"
-          className={`animate-drawer-in absolute inset-y-0 right-0 w-72 max-w-[85%] border-l border-border bg-surface shadow-xl ${RAIL_SCROLL}`}
+          className={`animate-drawer-in absolute inset-y-0 right-0 w-72 max-w-[85%] border-l border-border bg-card shadow-xl ${RAIL_SCROLL}`}
           // The backdrop above already owns dismissal, and it is the only owner that knows a nested
           // overlay's backdrop must not close its parent — the rail raises both a process modal and the
           // command field from inside itself.
@@ -141,7 +141,7 @@ function TelemetryDrawer({ label, onClose, children }: { label: string; onClose?
 /** A section heading: a quiet label with an optional right-aligned meta value, mirroring the CLI rail. */
 function SectionHead({ label, meta }: { label: string; meta?: string }) {
   return (
-    <div className="telemetry-section-head flex items-baseline justify-between gap-2 text-tiny uppercase tracking-wide text-text-subtle">
+    <div className="telemetry-section-head flex items-baseline justify-between gap-2 text-tiny uppercase tracking-wide text-subtle-foreground">
       {/* The label truncates like the meta does: it is a translated string, and at the narrow end of the
           rail an uppercase heading like "OTHER PROCESSES" is otherwise a width floor the row cannot go
           under, pushing the whole section past the column. */}
@@ -156,7 +156,7 @@ function SectionHead({ label, meta }: { label: string; meta?: string }) {
 function ContextMeter({ percent }: { percent: number }) {
   const pct = Math.max(0, Math.min(100, percent));
   return (
-    <span className="block h-1.5 overflow-hidden rounded-full bg-elevated">
+    <span className="block h-1.5 overflow-hidden rounded-full bg-muted">
       <span
         className={`block h-full rounded-full ${usageFillClass(pct)} transition-[width] duration-500`}
         style={{ width: `${pct > 0 ? Math.max(pct, 3) : 0}%` }}
@@ -186,11 +186,11 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel }: {
       // `min-w-0 flex-1` rather than `w-full`: the row also carries a fixed-size icon (and, in the other-
       // processes section, a badge and a kill button), so a child asking for the row's FULL width starts
       // every layout pass over budget and only truncation inside it saves the row.
-      className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-tiny transition-colors hover:text-text disabled:cursor-default"
+      className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-tiny transition-colors hover:text-foreground disabled:cursor-default"
     >
-      <span className={`shrink-0 ${tone === 'running' ? 'text-success' : 'text-text-subtle'}`} aria-hidden>●</span>
-      <span className="min-w-0 flex-1 truncate text-text">{label}</span>
-      {meta ? <span className="shrink-0 font-mono tabular-nums text-text-muted">{meta}</span> : null}
+      <span className={`shrink-0 ${tone === 'running' ? 'text-success' : 'text-subtle-foreground'}`} aria-hidden>●</span>
+      <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
+      {meta ? <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{meta}</span> : null}
     </button>
   );
 }
@@ -272,7 +272,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
     <div className="flex flex-col gap-4 px-3 py-3">
       <TelemetryMascot busy={busy} />
       {!sections.some(Boolean) ? (
-        <p className="text-xs text-text-muted">{t.telemetry.empty}</p>
+        <p className="text-xs text-muted-foreground">{t.telemetry.empty}</p>
       ) : (
         <>
       {usage ? (
@@ -282,7 +282,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
             meta={usage.percent == null ? undefined : `${Math.round(usage.percent)}%`}
           />
           <ContextMeter percent={usage.percent ?? 0} />
-          <p className="font-mono text-tiny text-text-muted">
+          <p className="font-mono text-tiny text-muted-foreground">
             {formatTokens(usage.tokens ?? 0)} / {formatTokens(usage.contextWindow)} · {formatCost(usage.cost, 2)}
           </p>
         </section>
@@ -293,10 +293,10 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           <SectionHead label={t.telemetry.goal} meta={goalTurns} />
           <p className="flex items-center gap-1.5 text-tiny">
             <Target size={11} className="shrink-0 text-primary" aria-hidden />
-            <span className="min-w-0 truncate text-text" title={activeGoal.goal}>{activeGoal.goal}</span>
+            <span className="min-w-0 truncate text-foreground" title={activeGoal.goal}>{activeGoal.goal}</span>
           </p>
           {subgoals ? (
-            <p className="text-tiny text-text-muted">
+            <p className="text-tiny text-muted-foreground">
               {t.telemetry.goalSubgoals.replace('{done}', String(subgoals.done)).replace('{total}', String(subgoals.total))}
             </p>
           ) : null}
@@ -337,7 +337,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           <ul className="flex flex-col gap-0.5">
             {liveAgents.map((agent) => (
               <li key={agent.sessionId} className="flex items-center gap-1.5">
-                <Users size={11} className="shrink-0 text-text-subtle" aria-hidden />
+                <Users size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
                 <LiveRow
                   label={agent.detail || agent.task}
                   meta={agent.tokens != null ? formatTokens(agent.tokens) : undefined}
@@ -358,7 +358,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           <ul className="flex flex-col gap-0.5">
             {processes.map((proc) => (
               <li key={proc.id} className="flex items-center gap-1.5">
-                <TerminalSquare size={11} className="shrink-0 text-text-subtle" aria-hidden />
+                <TerminalSquare size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
                 <LiveRow
                   label={proc.command}
                   tone="running"
@@ -388,7 +388,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
               const origin = processOrigin(proc.sessionId);
               return (
                 <li key={proc.id} className="flex items-center gap-1.5">
-                  <TerminalSquare size={11} className="shrink-0 text-text-subtle" aria-hidden />
+                  <TerminalSquare size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
                   <LiveRow
                     label={proc.command}
                     tone="running"
@@ -397,7 +397,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
                     onClick={() => setOpenProcessId(proc.id)}
                   />
                   {origin ? (
-                    <span className="shrink-0 rounded bg-bg px-1 text-[10px] text-text-muted" title={proc.sessionId ?? undefined}>
+                    <span className="shrink-0 rounded bg-background px-1 text-[10px] text-muted-foreground" title={proc.sessionId ?? undefined}>
                       {t.processes[origin]}
                     </span>
                   ) : null}
@@ -408,7 +408,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
                     onClick={() => void killProcess(proc.id)}
                     aria-label={t.processes.kill}
                     title={t.processes.kill}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-subtle transition-colors hover:text-danger"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-subtle-foreground transition-colors hover:text-destructive"
                   >
                     <X size={11} aria-hidden />
                   </button>
@@ -425,13 +425,13 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
         <section className="flex flex-col gap-1" data-testid="telemetry-project">
           <SectionHead label={t.telemetry.project} />
           {project?.cwd ? (
-            <p className="truncate font-mono text-tiny text-text" title={project.cwd}>{project.cwd}</p>
+            <p className="truncate font-mono text-tiny text-foreground" title={project.cwd}>{project.cwd}</p>
           ) : null}
           {project?.branch ? (
             // A branch name is one unbreakable token (`agent/chat-rail-no-scroll-20260818`), so without a
             // truncation of its own it sets the section's minimum width — the same rule the cwd above
             // already follows.
-            <p className="flex items-baseline gap-1 font-mono text-tiny text-text-muted">
+            <p className="flex items-baseline gap-1 font-mono text-tiny text-muted-foreground">
               <span className="shrink-0">{t.telemetry.branch}</span>
               <span className="min-w-0 truncate text-primary" title={project.branch}>{project.branch}</span>
             </p>
@@ -449,7 +449,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
             {mcpConnected.map((s) => (
               <li key={s.name} className="flex items-center gap-1.5 text-tiny">
                 <span className="shrink-0 text-success" aria-hidden>●</span>
-                <span className="truncate font-mono text-text" title={s.name}>{s.name}</span>
+                <span className="truncate font-mono text-foreground" title={s.name}>{s.name}</span>
               </li>
             ))}
           </ul>
@@ -460,8 +460,8 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
         <section className="flex flex-col gap-1" data-testid="telemetry-lsp">
           <SectionHead label={t.telemetry.lsp} />
           <p className="flex items-center gap-1.5 text-tiny">
-            <span className={`shrink-0 ${telemetry.lspEnabled ? 'text-success' : 'text-text-subtle'}`} aria-hidden>●</span>
-            <span className="text-text">{telemetry.lspEnabled ? t.telemetry.lspActive : t.telemetry.lspInactive}</span>
+            <span className={`shrink-0 ${telemetry.lspEnabled ? 'text-success' : 'text-subtle-foreground'}`} aria-hidden>●</span>
+            <span className="text-foreground">{telemetry.lspEnabled ? t.telemetry.lspActive : t.telemetry.lspInactive}</span>
           </p>
         </section>
       ) : null}
@@ -500,13 +500,13 @@ export function TelemetryPanel({ variant, open = false, onClose, onOpenWorkflow 
     return (
       <TelemetryDrawer label={t.telemetry.title} onClose={onClose}>
         <div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{t.telemetry.title}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{t.telemetry.title}</span>
           <button
             type="button"
             onClick={onClose}
             aria-label={t.telemetry.close}
             title={t.telemetry.close}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <X size={16} aria-hidden />
           </button>

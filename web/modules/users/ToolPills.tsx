@@ -37,7 +37,7 @@ export function ToolPills({ user }: { user: User }) {
 
   const all = tools.data ?? [];
   if (tools.isLoading) return <LoadingLine layout="inline" />;
-  if (all.length === 0) return <p className="text-xs italic text-text-muted">{t.users.toolsEmpty}</p>;
+  if (all.length === 0) return <p className="text-xs italic text-muted-foreground">{t.users.toolsEmpty}</p>;
 
   const enabled = all.filter((x) => x.state === 'allowed' || x.state === 'inherited');
   const pluginCount = new Set(all.map((x) => x.plugin).filter(Boolean)).size;

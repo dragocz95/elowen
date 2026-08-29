@@ -24,7 +24,7 @@ export function AdvisorPanel({ dock, visible = true, presentation = 'dock' }: {
   ];
   const ActiveIcon = options.find((option) => option.side === state.side)!.Icon;
   const panel = <div
-    className={`advisor-panel ${presentation === 'studio-ask' ? 'advisor-panel--studio-ask' : ''} flex shrink-0 flex-col overflow-hidden border-border bg-surface ${horizontal ? 'h-full' : 'w-full'}`}
+    className={`advisor-panel ${presentation === 'studio-ask' ? 'advisor-panel--studio-ask' : ''} flex shrink-0 flex-col overflow-hidden border-border bg-card ${horizontal ? 'h-full' : 'w-full'}`}
     data-presentation={presentation}
     data-visible={visible || undefined}
     aria-hidden={visible ? undefined : true}
@@ -32,10 +32,10 @@ export function AdvisorPanel({ dock, visible = true, presentation = 'dock' }: {
     style={horizontal ? { width: `min(${state.width}px, 100vw)` } : { height: `min(${state.height}px, 85dvh)` }}
   >
     <div className="advisor-panel__header flex items-center gap-1 border-b border-border px-2 py-1.5"><span className="text-sm font-medium">{t.advisor.title}</span><div className="flex-1" />
-      <div className="relative"><button type="button" onClick={() => setSideMenuOpen((v) => !v)} aria-label={t.advisor.dockPosition} className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-elevated hover:text-text"><ActiveIcon size={headerIconSize} strokeWidth={iconStroke} /></button>
-        {sideMenuOpen ? <div className="absolute right-0 top-8 z-30 flex gap-0.5 rounded-md border border-border bg-surface p-0.5 shadow-lg">{options.map(({ side, Icon, label }) => <button key={side} type="button" onClick={() => { setSide(side); setSideMenuOpen(false); }} aria-label={label} className={`flex h-7 w-7 items-center justify-center rounded ${side === state.side ? 'bg-primary/15 text-primary' : 'text-text-muted hover:bg-elevated hover:text-text'}`}><Icon size={menuIconSize} strokeWidth={iconStroke} /></button>)}</div> : null}
+      <div className="relative"><button type="button" onClick={() => setSideMenuOpen((v) => !v)} aria-label={t.advisor.dockPosition} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><ActiveIcon size={headerIconSize} strokeWidth={iconStroke} /></button>
+        {sideMenuOpen ? <div className="absolute right-0 top-8 z-30 flex gap-0.5 rounded-md border border-border bg-card p-0.5 shadow-lg">{options.map(({ side, Icon, label }) => <button key={side} type="button" onClick={() => { setSide(side); setSideMenuOpen(false); }} aria-label={label} className={`flex h-7 w-7 items-center justify-center rounded ${side === state.side ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}><Icon size={menuIconSize} strokeWidth={iconStroke} /></button>)}</div> : null}
       </div>
-      <button type="button" onClick={() => setOpen(false)} aria-label={t.advisor.close} className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-elevated hover:text-text"><X size={headerIconSize} strokeWidth={iconStroke} /></button>
+      <button type="button" onClick={() => setOpen(false)} aria-label={t.advisor.close} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><X size={headerIconSize} strokeWidth={iconStroke} /></button>
     </div>
     <div className="min-h-0 flex-1"><BrainChat /></div>
   </div>;

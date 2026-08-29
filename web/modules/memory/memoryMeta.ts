@@ -65,7 +65,7 @@ export function vitalityTone(v: number): Tone {
 }
 
 /** Fallback swatch color for a category whose `color` is blank. A muted token so the chip still reads. */
-const CATEGORY_FALLBACK_COLOR = 'var(--color-text-muted)';
+const CATEGORY_FALLBACK_COLOR = 'var(--color-muted-foreground)';
 
 /** Preset swatch palette offered in the category create/edit modal — tasteful, spread across the wheel. */
 export const CATEGORY_COLORS: readonly string[] = [

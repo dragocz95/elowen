@@ -2,7 +2,6 @@
  * here — a contract test holds the list, the folders and these imports in sync. All skins ship in every
  * build; each one scopes every rule under `:root[data-skin='<name>']`, so on an instance without that
  * skin active none of its rules match and the built-in ember design renders untouched. */
-@import "./midnight/skin.css";
 @import "./studio-light/skin.css";
 @import "./studio-oled/skin.css";
 /* Studio is ONE design in two palettes: the structure both variants share is imported once, here, rather

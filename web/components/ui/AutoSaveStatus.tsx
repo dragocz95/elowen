@@ -16,7 +16,7 @@ export function AutoSaveStatus({ status, onRetry }: { status: SaveStatus; onRetr
     </span>
   );
   if (status === 'saved') return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-approve" role="status" aria-live="polite">
+    <span className="inline-flex items-center gap-1.5 text-xs text-success" role="status" aria-live="polite">
       <Check size={13} aria-hidden />{t.common.saved}
     </span>
   );

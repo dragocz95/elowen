@@ -46,10 +46,10 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
                 key={cmd.name}
                 type="button"
                 onClick={() => { onClose(); runSlash(cmd); }}
-                className="flex items-center gap-3 bg-surface px-3 py-2 text-left transition-colors hover:bg-elevated"
+                className="flex items-center gap-3 bg-card px-3 py-2 text-left transition-colors hover:bg-accent"
               >
-                <span className="shrink-0 font-mono text-xs text-text">{`/${cmd.name}`}</span>
-                <span className="truncate text-xs text-text-muted" title={cmd.description}>{cmd.description}</span>
+                <span className="shrink-0 font-mono text-xs text-foreground">{`/${cmd.name}`}</span>
+                <span className="truncate text-xs text-muted-foreground" title={cmd.description}>{cmd.description}</span>
               </button>
             ))}
           </div>

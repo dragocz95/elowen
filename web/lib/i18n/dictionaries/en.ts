@@ -150,7 +150,6 @@ export const en = {
     kill: 'Kill',
     appName: '{productName}',
     primaryNav: 'Primary',
-    breadcrumb: 'Breadcrumb',
     expand: 'Expand',
     collapse: 'Collapse',
     collapseNav: 'Collapse navigation to icons',
@@ -162,7 +161,6 @@ export const en = {
     // Human names for the compiled skins, keyed by SkinDefinition.nameKey. These are product names and
     // stay identical in every locale.
     skinNames: {
-      midnight: 'Midnight',
       studioLight: 'Studio Light',
       studioOled: 'Studio OLED',
     },

@@ -87,7 +87,7 @@ function ProjectAccessPanel({ project }: { project: Project }) {
 
   return (
     <div className="py-3">
-      {assignable.length === 0 ? <p className="text-xs text-text-muted">{t.projects.accessEmpty}</p> : (
+      {assignable.length === 0 ? <p className="text-xs text-muted-foreground">{t.projects.accessEmpty}</p> : (
         <SelectionSummary
           countText={t.projects.accessCount.replace('{n}', String(assigned.length)).replace('{total}', String(assignable.length))}
           samples={assigned.slice(0, 3).map((user) => ({ label: user.name || user.username, icon: <Avatar user={user} size={16} /> }))}

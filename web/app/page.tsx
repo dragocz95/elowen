@@ -13,7 +13,7 @@ export default function Home() {
   useEffect(() => { router.replace('/dash'); }, [router]);
 
   return (
-    <main className="text-text-muted">
+    <main className="text-muted-foreground">
       <LoadingLine layout="page" />
     </main>
   );

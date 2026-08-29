@@ -60,7 +60,7 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
           : images.length === 0 ? <EmptyState title={t.projects.noImages} icon={ImageIcon} />
           : groups.map(([dir, paths]) => (
             <div key={dir} className="flex flex-col gap-2">
-              <span className="font-mono text-[11px] uppercase tracking-wide text-text-muted">{dir}</span>
+              <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">{dir}</span>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] gap-2">
                 {paths.map((path) => {
                   const on = selected === path;
@@ -73,19 +73,19 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
                       onDoubleClick={() => apply(path)}
                       title={path}
                       aria-pressed={on}
-                      className={`flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors ${on ? 'border-primary bg-primary/[0.08]' : 'border-border bg-surface hover:border-border-strong hover:bg-elevated'}`}
+                      className={`flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors ${on ? 'border-primary bg-primary/[0.08]' : 'border-border bg-card hover:border-border-strong hover:bg-accent'}`}
                     >
-                      <span className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-md border border-border bg-bg">
+                      <span className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
                         <ProjectIcon project={{ id: project.id, icon: path }} size={40} />
                       </span>
-                      <span className="w-full truncate text-center text-[11px] text-text-muted">{name}</span>
+                      <span className="w-full truncate text-center text-[11px] text-muted-foreground">{name}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
           ))}
-        {images.length >= MAX_SHOWN && <p className="text-xs text-text-muted">{t.projects.iconMore}</p>}
+        {images.length >= MAX_SHOWN && <p className="text-xs text-muted-foreground">{t.projects.iconMore}</p>}
       </ModalBody>
       <ModalFooter>
         {project.icon ? <Button variant="danger" onClick={() => apply('', true)} disabled={setIcon.isPending}>{t.projects.iconRemove}</Button> : null}

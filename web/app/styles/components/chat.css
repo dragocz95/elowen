@@ -21,7 +21,7 @@
 /* Sized against the hero, not the window. The old `0.4vw` term was written while the whole app rendered
    at a 70-75% CSS zoom; on a native 1024-1900px desktop it produced a heading barely larger than the
    stats beneath it. `cqi` ties it to the room the hero actually has. */
-.chat-hero h1 { color: var(--color-text); font-size: clamp(1.3rem, 1.05rem + 1.1cqi, 1.75rem); font-weight: 610; letter-spacing: -0.035em; line-height: 1; }
+.chat-hero h1 { color: var(--color-foreground); font-size: clamp(1.3rem, 1.05rem + 1.1cqi, 1.75rem); font-weight: 610; letter-spacing: -0.035em; line-height: 1; }
 
 /* The live conversation stats are WorkspaceMetric — the same primitive every other hero uses. This is
    its compact INLINE presentation, not a second set of typography: the markup, the tokens and the label

@@ -91,7 +91,7 @@ export function PlatformLinksCard({ available, values, onChange, connectors = []
         <WorkspaceDetailRail label={t.account.linkedAccounts} closeLabel={t.common.close} onClose={() => setOpen(false)}>
           {/* Chat-platform copy, so it stands over the chat rows only — a drawer holding nothing but a
               plugin connector is not "paste the sender id this platform reports". */}
-          {shown.length > 0 ? <p className="mb-4 text-xs leading-relaxed text-text-muted">{t.help.accountPlatformLinks}</p> : null}
+          {shown.length > 0 ? <p className="mb-4 text-xs leading-relaxed text-muted-foreground">{t.help.accountPlatformLinks}</p> : null}
           <div className="flex flex-col divide-y divide-border">
             {shown.map((key) => {
               const value = values[key] ?? '';

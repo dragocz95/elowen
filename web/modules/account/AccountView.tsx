@@ -402,7 +402,7 @@ export function AccountView() {
           <SpatialRow title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
             <div className="flex min-w-0 flex-wrap items-center justify-center gap-3">
               <Slider value={prefPct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setPreference(v / 100)} aria-label={t.account.uiScale} />
-              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{prefPct}%</span>
+              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-foreground">{prefPct}%</span>
               <button type="button" className="spatial-inline-action" onClick={() => setPreference(DEFAULT_SCALE)} disabled={prefPct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</button>
             </div>
           </SpatialRow>
@@ -471,10 +471,10 @@ export function AccountView() {
               <Avatar user={u} size={72} />
               <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <span className="flex items-center gap-2">
-                  <span className="truncate text-lg font-semibold text-text">{u.name || u.username}</span>
+                  <span className="truncate text-lg font-semibold text-foreground">{u.name || u.username}</span>
                   {u.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
                 </span>
-                <span className="truncate font-mono text-xs text-text-muted">@{u.username}</span>
+                <span className="truncate font-mono text-xs text-muted-foreground">@{u.username}</span>
               </div>
               <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
             </div>
@@ -540,7 +540,7 @@ export function AccountView() {
           <>
             <SpatialGroup>
               <SpatialRow title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
-                <span className="font-mono text-sm tracking-widest text-text-muted" aria-hidden>••••••••</span>
+                <span className="font-mono text-sm tracking-widest text-muted-foreground" aria-hidden>••••••••</span>
                 <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setPasswordOpen(true)}>
                   <KeyRound size={14} aria-hidden />{t.account.changePassword}
                 </button>
@@ -548,7 +548,7 @@ export function AccountView() {
             </SpatialGroup>
             {passwordOpen ? (
               <WorkspaceDetailRail label={t.account.password} closeLabel={t.common.close} onClose={() => setPasswordOpen(false)}>
-                <p className="mb-2 text-xs leading-relaxed text-text-muted">{t.account.passwordHint}</p>
+                <p className="mb-2 text-xs leading-relaxed text-muted-foreground">{t.account.passwordHint}</p>
                 {passwordForm}
               </WorkspaceDetailRail>
             ) : null}
@@ -566,14 +566,14 @@ export function AccountView() {
           
           <SpatialGroup>
           <SpatialRow title={t.push.title} icon={Bell} description={t.help.pushEnable}>
-            <label className="flex items-center gap-3 text-sm text-text">
+            <label className="flex items-center gap-3 text-sm text-foreground">
               <Toggle checked={pushOn} onChange={togglePush} disabled={pushBusy} label={t.push.deviceToggle} />
               <span>{t.push.deviceToggle}</span>
             </label>
           </SpatialRow>
           </SpatialGroup>
           
-        ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>}
+        ) : <p className="text-sm text-muted-foreground">{t.push.unsupported}</p>}
       </AccountPanel>
       </WorkspaceShell>
     </div>

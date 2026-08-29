@@ -19,7 +19,7 @@
  *
  * The page bar is no longer restated here. It used to be: the built-in design's chrome is a pill-shaped,
  * blurred cluster of pill-shaped buttons floating over the canvas, and this file undid it declaration by
- * declaration — a border-radius against a `rounded-full`, an opaque background against a `bg-bg/45`
+ * declaration — a border-radius against a `rounded-full`, an opaque background against a `bg-background/45`
  * wash, `backdrop-filter: none` against a `backdrop-blur-xl`. Four rules undoing four rules is not a
  * design decision, it is a fight, and whichever side is edited next the two drift apart.
  * The bar is now a typed variant of the component (`TopBar variant="bar"`), chosen from the shell
@@ -84,8 +84,8 @@
   margin-top: 0.125rem;
   border: 1px solid var(--studio-line);
   border-radius: var(--radius);
-  background: var(--color-surface);
-  color: var(--color-text-muted);
+  background: var(--color-card);
+  color: var(--color-muted-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__icon svg {
   width: 0.875rem;
@@ -116,7 +116,7 @@
   font-weight: 600;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__count {
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
   font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
@@ -200,7 +200,7 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric__label {
   margin-top: 0;
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
   font-size: 0.8125rem;
   white-space: nowrap;
 }
@@ -387,17 +387,17 @@
   display: none;
 }
 
-/* The sticky header stays OPAQUE — rows scroll under it. --color-surface-sticky is derived from
+/* The sticky header stays OPAQUE — rows scroll under it. --color-sticky is derived from
    --color-document, so it follows the variant instead of being a fixed tint: on the light canvas it
    resolves to a solid paper grey (#f0f0f0), on OLED to a solid near-black (#141414).
-   Being derived, it is LIGHTER than --color-elevated on the light variant, which makes it that palette's
+   Being derived, it is LIGHTER than --color-muted on the light variant, which makes it that palette's
    worst surface rather than the one the token block was tuned against, so the whole text ramp has to
    clear 4.5:1 on it. Both skins state their measurement against this token, and
    tests/lib/designTokens.test.ts measures it.
 
    Inside `.shell-content` it sticks one Studio top-bar height down rather than at 0: the page bar is
    sticky at the top of that same scroller, so a header stuck at 0 slides underneath it and the column
-   names disappear behind the breadcrumb.
+   names disappear behind the page bar.
    The `.shell-content` scope is what keeps the offset off every OTHER register. A table inside a modal
    is portalled to <body> (components/ui/Modal.tsx) and scrolls in a box of its own with no page bar
    anywhere near it — the sessions panel is one — and there any offset would leave a hole above the
@@ -405,7 +405,7 @@
    wherever it is. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header {
   border-bottom-color: var(--studio-line);
-  background: var(--color-surface-sticky);
+  background: var(--color-sticky);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-content .data-table-header {
   top: var(--studio-top-bar-height);
@@ -419,7 +419,7 @@
    disagreeing with itself, column by column. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header .data-table-cell,
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header .data-table-cell :is(button, span) {
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
   font-family: var(--font-sans);
   font-size: 0.75rem;
   font-weight: 500;
@@ -527,7 +527,7 @@
   border: 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
   font-size: 0.875rem;
   font-weight: 500;
 }
@@ -535,9 +535,9 @@
   height: 3rem;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__option[aria-checked='true'] {
-  border-bottom-color: var(--color-text);
+  border-bottom-color: var(--color-foreground);
   background: transparent;
-  color: var(--color-text);
+  color: var(--color-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__count {
   color: inherit;
@@ -570,7 +570,7 @@
    utilities on the element, which this rule outranks (the stylesheet tree is unlayered) — hence the
    explicit `none`/`normal` rather than simply not saying anything. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .field__label {
-  color: var(--color-text);
+  color: var(--color-foreground);
   font-size: 0.875rem;
   font-weight: 500;
   letter-spacing: normal;
@@ -578,18 +578,18 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .field__description {
   max-width: min(100%, 68ch);
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
   font-size: 0.8125rem;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .field__error {
-  color: var(--color-danger);
+  color: var(--color-destructive);
   font-size: 0.75rem;
 }
 
 /* An invalid control says so on its own edge, not only in the message under it. `aria-invalid` is the
    state the field already wires onto the control, so the paint and the announcement cannot disagree. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) :is(input, select, textarea)[aria-invalid='true'] {
-  border-color: var(--color-danger);
+  border-color: var(--color-destructive);
 }
 
 /* A settings section is a CARD: a header naming it over a body of records, and one border around the
@@ -619,7 +619,7 @@
 /* The section glyph reads as a mark on the neutral ink rather than as the accent: the accent in this
    design means state, and every section header carrying one made "important" the default. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__icon {
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-group__column) {
@@ -843,7 +843,7 @@
 
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-surface {
   border-color: var(--studio-line);
-  background: var(--color-overlay);
+  background: var(--color-popover);
   box-shadow: var(--shadow-raised);
 }
 /* A menu item is a control, so it takes the ladder's control step and the shared hover fill — the same
@@ -866,7 +866,7 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-surface h2 + p {
   margin-top: 0.375rem;
   max-width: min(100%, 68ch);
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
   font-size: 0.875rem;
   line-height: 1.5;
 }
@@ -874,10 +874,10 @@
 /* The scrim. `.overlay-layer-modal` IS the backdrop in this app — every consumer is a `fixed inset-0`
    layer that paints the veil on itself (Modal, the command palette, the advisor's blocking layer) — so
    the layer is where the veil belongs.
-   The consumers spell it `bg-bg/70`, which is right on a design whose canvas is black and paints
+   The consumers spell it `bg-background/70`, which is right on a design whose canvas is black and paints
    NOTHING on one whose canvas is white: 70% of #ffffff over #ffffff left the dialog on a 1.27:1
-   hairline with no darkening behind it at all. The utility is untouched — Ember and midnight keep their
-   scrim exactly — and this rule, being unlayered, replaces it for Studio with a veil derived per variant
+   hairline with no darkening behind it at all. The utility is untouched — the built-in Ember design keeps
+   its scrim exactly — and this rule, being unlayered, replaces it for Studio with a veil derived per variant
    from --color-scrim (measured on light: the page reads 3.68:1 darker, a white dialog stands 3.84:1 off
    the veil). */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-layer-modal {
@@ -949,7 +949,7 @@
   min-height: 10rem;
   border-color: var(--studio-line);
   border-radius: var(--radius-lg);
-  background: var(--color-elevated);
+  background: var(--color-muted);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .home-composer:focus-within {
   border-color: var(--studio-line-strong);
@@ -996,8 +996,8 @@
   height: 2rem;
   border: 1px solid var(--studio-line);
   border-radius: var(--radius);
-  background: var(--color-elevated);
-  color: var(--color-text-muted);
+  background: var(--color-muted);
+  color: var(--color-muted-foreground);
   box-shadow: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb::before,
@@ -1005,7 +1005,7 @@
   display: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__label {
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
   font-size: 0.8125rem;
   font-weight: 400;
   letter-spacing: normal;
@@ -1028,7 +1028,7 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod--alert .hero-cosmos__orb {
   border-color: color-mix(in srgb, var(--color-warning) 55%, var(--studio-line));
-  background: var(--color-elevated);
+  background: var(--color-muted);
   color: var(--color-warning);
   box-shadow: none;
 }
@@ -1037,7 +1037,7 @@
    tracking with a glow behind it — the design's loudest possible way to write the word "Activity". It
    is a heading, and every other heading in this design is sentence-case sans on the page's own ink. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-label {
-  color: var(--color-text);
+  color: var(--color-foreground);
   font-family: var(--font-sans);
   font-size: 0.9375rem;
   font-weight: 600;
@@ -1050,7 +1050,7 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-live {
   padding: 0;
   border: 0;
-  color: var(--color-text-muted);
+  color: var(--color-muted-foreground);
   font-size: 0.75rem;
   font-weight: 400;
   letter-spacing: normal;

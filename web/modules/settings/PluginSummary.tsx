@@ -16,10 +16,10 @@ export function PluginHero({ name, detail, description, toolCount }: { name: str
           <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden text-primary">{icon}</div>
           <div className="min-w-0 pt-1">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h2 className="text-2xl font-semibold tracking-[-0.025em] text-text">{detail.name}</h2>
+              <h2 className="text-2xl font-semibold tracking-[-0.025em] text-foreground">{detail.name}</h2>
               <Badge tone={detail.enabled ? 'success' : 'muted'}>{detail.enabled ? t.pluginDetail.statusEnabled : t.pluginDetail.statusDisabled}</Badge>
             </div>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-text-muted">{description}</p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
           </div>
         </div>
         <div className="shrink-0 @2xl:pt-1"><PluginActions name={name} detail={detail} /></div>
@@ -30,9 +30,9 @@ export function PluginHero({ name, detail, description, toolCount }: { name: str
           { term: t.pluginDetail.overviewSource, value: detail.source === 'bundled' ? t.plugins.bundled : t.plugins.user, mono: false },
           { term: t.pluginDetail.tools, value: String(toolCount), mono: true },
         ].map((fact) => (
-          <div key={fact.term} className="inline-flex items-center gap-2 rounded-full border border-border bg-text/[0.012] px-3 py-1.5">
-            <dt className="text-[9px] font-semibold uppercase tracking-[0.12em] text-text-muted">{fact.term}</dt>
-            <dd className={`text-xs text-text ${fact.mono ? 'font-mono' : ''}`}>{fact.value}</dd>
+          <div key={fact.term} className="inline-flex items-center gap-2 rounded-full border border-border bg-foreground/[0.012] px-3 py-1.5">
+            <dt className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{fact.term}</dt>
+            <dd className={`text-xs text-foreground ${fact.mono ? 'font-mono' : ''}`}>{fact.value}</dd>
           </div>
         ))}
       </dl>

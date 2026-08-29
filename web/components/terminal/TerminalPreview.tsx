@@ -23,7 +23,7 @@ const SAMPLE = [
 // macOS-style titlebar traffic lights. The three hues carry no meaning here — they are window chrome —
 // so they take the design's own three status tones rather than the macOS literals they imitate, and a
 // skin repaints the preview frame along with everything else.
-const DOTS = ['var(--color-danger)', 'var(--color-warning)', 'var(--color-success)'];
+const DOTS = ['var(--color-destructive)', 'var(--color-warning)', 'var(--color-success)'];
 
 /** Whether a `#rrggbb` background is light — picks the titlebar chrome colour (the frame is filled with
  *  the terminal's own background, which is independent of the app theme). */

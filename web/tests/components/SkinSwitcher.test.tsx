@@ -6,7 +6,7 @@ import { onUnhandledRequest } from '../msw';
 import { SkinSwitcher } from '../../components/ui/SkinSwitcher';
 import { SkinProvider, useSkin } from '../../lib/skinContext';
 import { QUERY_KEYS } from '../../lib/queries';
-import { BUILTIN_SKIN, type SkinChoice } from '../../lib/skins';
+import { BUILTIN_SKIN, DEFAULT_SKIN, type SkinChoice } from '../../lib/skins';
 import { createWrapper } from '../test-utils';
 
 // The instance config is what the provider reads to learn which skins are allowed. Empty by default, so
@@ -42,23 +42,24 @@ describe('SkinSwitcher', () => {
   });
 
   it('does not render for a single allowed skin either', () => {
-    mount(['midnight']);
+    mount(['studio-oled']);
     expect(screen.queryByRole('button')).toBeNull();
   });
 
   it('cycles the live document attribute, which is the entire mechanism', () => {
     // Every skin's CSS is already in the page, scoped under its own [data-skin]. Switching is this
     // attribute and nothing else — no fetch, no reload — so asserting on it IS asserting on the feature.
-    mount([BUILTIN_SKIN, 'midnight'], BUILTIN_SKIN);
-    expect(document.documentElement.hasAttribute('data-skin')).toBe(false);
+    mount([BUILTIN_SKIN, 'studio-oled'], BUILTIN_SKIN);
+    // The compatibility choice is not a design of its own: it resolves to DEFAULT_SKIN, and the document
+    // wears that. What it must never do is leave `data-skin="default"` behind, matching no stylesheet,
+    // or drop the attribute entirely and leave the page on no design at all.
+    expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN);
 
     fireEvent.click(screen.getByRole('button'));
-    expect(document.documentElement.getAttribute('data-skin')).toBe('midnight');
+    expect(document.documentElement.getAttribute('data-skin')).toBe('studio-oled');
 
-    // ...and wraps back to the built-in design, which is the ABSENCE of the attribute rather than a
-    // value. Getting this wrong would leave `data-skin="default"` behind, matching no stylesheet.
     fireEvent.click(screen.getByRole('button'));
-    expect(document.documentElement.hasAttribute('data-skin')).toBe(false);
+    expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN);
   });
 
   it('appears after signing in, without waiting for a full page reload', () => {
@@ -66,60 +67,61 @@ describe('SkinSwitcher', () => {
     // had no cookie to forward and seeded an EMPTY allow-list. Logging in only opens the shell gate — it
     // does not re-render the layout. Without the live config query the switcher would stay missing until
     // the user happened to reload, which looks exactly like the feature not existing.
-    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [BUILTIN_SKIN, 'midnight'] })));
+    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [BUILTIN_SKIN, 'studio-oled'] })));
     mount([]);
     return waitFor(() => expect(screen.getByRole('button')).toBeTruthy());
   });
 
   it('shows the skin its human name, never its id', () => {
-    // The id is a directory name and a `data-skin` value. Rendering it verbatim put "midnight" — and
+    // The id is a directory name and a `data-skin` value. Rendering it verbatim put "studio-oled" — and
     // would have put "studio-oled" — in the top bar as if it were a product name.
-    mount([BUILTIN_SKIN, 'midnight'], BUILTIN_SKIN);
+    mount([BUILTIN_SKIN, 'studio-oled'], BUILTIN_SKIN);
     fireEvent.click(screen.getByRole('button'));
-    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Skin: Midnight');
-    expect(screen.getByText('Midnight')).toBeTruthy();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Skin: Studio OLED');
+    expect(screen.getByText('Studio OLED')).toBeTruthy();
   });
 
   it('remembers the choice where both the client and the next server render can find it', () => {
-    mount([BUILTIN_SKIN, 'midnight'], BUILTIN_SKIN);
+    mount([BUILTIN_SKIN, 'studio-oled'], BUILTIN_SKIN);
     fireEvent.click(screen.getByRole('button'));
 
-    expect(localStorage.getItem('elowen-skin')).toBe('midnight');
+    expect(localStorage.getItem('elowen-skin')).toBe('studio-oled');
     // The cookie is the half the SERVER reads, and it is what stops the next document arriving in the
     // old design and visibly changing colour once hydration catches up.
-    expect(document.cookie).toContain('elowen-skin=midnight');
+    expect(document.cookie).toContain('elowen-skin=studio-oled');
   });
 });
 
 /** The provider's own contract, independent of the switcher: whatever the document ends up wearing, the
- *  attribute and the context's resolved skin say the same thing. Null is a value in that resolution — the
- *  built-in design — and reaching it while the page is open is ordinary, not an error. */
+ *  attribute and the context's resolved skin say the same thing — and there is always something to wear,
+ *  because every route through the resolution ends at a compiled skin. */
 describe('SkinProvider', () => {
   function Readout() {
     const { skin, choice } = useSkin();
-    return <span data-testid="readout">{`${skin ?? 'builtin'}/${choice ?? 'none'}`}</span>;
+    return <span data-testid="readout">{`${skin}/${choice ?? 'none'}`}</span>;
   }
 
-  it('removes the attribute when the live allow-list drops the skin the reader is wearing', async () => {
+  it('falls back to the default skin when the live allow-list drops the one the reader is wearing', async () => {
     // The mechanism from the blocker: an admin revokes the skin and the config QUERY pushes the narrowed
-    // list into a mounted provider. Nothing reloads, so if the document write is skipped for the built-in
-    // design the page keeps wearing a stylesheet nothing else believes in any more.
+    // list into a mounted provider. Nothing reloads, so if the document write were skipped the page would
+    // keep wearing a stylesheet nothing else believes in any more — and if it removed the attribute the
+    // page would land on no design at all, which is the third look this app is not allowed to have.
     const { wrapper: Wrapper, client } = createWrapper();
-    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [BUILTIN_SKIN, 'midnight'] })));
-    localStorage.setItem('elowen-skin', 'midnight');
+    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [BUILTIN_SKIN, 'studio-oled'] })));
+    localStorage.setItem('elowen-skin', 'studio-oled');
     render(
       <Wrapper>
-        <SkinProvider allowedSkins={[BUILTIN_SKIN, 'midnight']} initialChoice="midnight" fallback={null}>
+        <SkinProvider allowedSkins={[BUILTIN_SKIN, 'studio-oled']} initialChoice="studio-oled" fallback={null}>
           <Readout />
         </SkinProvider>
       </Wrapper>,
     );
-    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('midnight'));
-    expect(screen.getByTestId('readout').textContent).toBe('midnight/midnight');
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('studio-oled'));
+    expect(screen.getByTestId('readout').textContent).toBe('studio-oled/studio-oled');
 
     client.setQueryData(QUERY_KEYS.config, { allowedSkins: [] });
 
-    await waitFor(() => expect(document.documentElement.hasAttribute('data-skin')).toBe(false));
-    expect(screen.getByTestId('readout').textContent).toBe('builtin/none');
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN));
+    expect(screen.getByTestId('readout').textContent).toBe(`${DEFAULT_SKIN}/none`);
   });
 });

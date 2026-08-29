@@ -135,9 +135,9 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
             <div className="settings-group__panel flex flex-wrap gap-2">
               {detail.configSchema.filter((field) => field.required).map((field) => {
                 const missing = missingRequired.includes(field);
-                return <span key={field.key} className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-text-muted">{missing ? <Circle size={10} className="text-warning" aria-hidden /> : <Check size={11} className="text-success" aria-hidden />}{fieldLabel(field)}</span>;
+                return <span key={field.key} className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">{missing ? <Circle size={10} className="text-warning" aria-hidden /> : <Check size={11} className="text-success" aria-hidden />}{fieldLabel(field)}</span>;
               })}
-              {detail.configSchema.every((field) => !field.required) ? <span className="text-xs text-text-muted">{t.pluginDetail.setupNoRequired}</span> : null}
+              {detail.configSchema.every((field) => !field.required) ? <span className="text-xs text-muted-foreground">{t.pluginDetail.setupNoRequired}</span> : null}
             </div>
           </SettingsGroup>
           <PluginConfigEditor {...editorProps} mode="setup" />

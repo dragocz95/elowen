@@ -26,7 +26,7 @@ const START_ANGLE = 220;
 const END_ANGLE = -40;
 
 function toneFor(percent: number): string {
-  if (percent >= 90) return 'var(--color-danger)';
+  if (percent >= 90) return 'var(--color-destructive)';
   if (percent >= 70) return 'var(--color-warning)';
   return 'var(--color-primary)';
 }
@@ -37,13 +37,13 @@ function Card({ icon: Icon, label, children, caption }: {
   icon: LucideIcon; label: string; children: React.ReactNode; caption?: string;
 }) {
   return (
-    <div className="flex min-w-0 flex-col items-center gap-1.5 rounded-xl border border-border/60 bg-elevated/25 px-3 py-3">
-      <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+    <div className="flex min-w-0 flex-col items-center gap-1.5 rounded-xl border border-border/60 bg-muted/25 px-3 py-3">
+      <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         <Icon size={12} aria-hidden />
         <span className="truncate">{label}</span>
       </span>
       <div className="relative w-full" style={{ height: GAUGE_H }}>{children}</div>
-      <span className="h-4 w-full truncate text-center font-mono text-[11px] tabular-nums text-text-muted">
+      <span className="h-4 w-full truncate text-center font-mono text-[11px] tabular-nums text-muted-foreground">
         {caption ?? ''}
       </span>
     </div>
@@ -81,7 +81,7 @@ function Dial({ percent }: { percent: number }) {
         </ResponsiveContainer>
       </div>
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <span className="font-mono text-base leading-none tabular-nums text-text">
+        <span className="font-mono text-base leading-none tabular-nums text-foreground">
           {Math.round(percent)} %
         </span>
       </div>
@@ -93,7 +93,7 @@ function Dial({ percent }: { percent: number }) {
 function Plain({ value }: { value: string }) {
   return (
     <div className="absolute inset-0 flex items-center justify-center">
-      <span className="truncate px-1 font-mono text-base leading-none tabular-nums text-text">{value}</span>
+      <span className="truncate px-1 font-mono text-base leading-none tabular-nums text-foreground">{value}</span>
     </div>
   );
 }

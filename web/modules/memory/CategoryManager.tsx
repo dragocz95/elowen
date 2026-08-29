@@ -32,28 +32,28 @@ export function CategoryManager({ memories }: { memories: Memory[] }) {
   const rows = categories.data ?? [];
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
+    <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
       <div className="flex items-center justify-between gap-3">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
           <Tags size={13} aria-hidden />{t.memory.categoriesTitle}
         </span>
         <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.categoryNew}</Button>
       </div>
 
       {rows.length === 0 ? (
-        <p className="text-xs italic text-text-muted">{t.memory.categoriesEmpty}</p>
+        <p className="text-xs italic text-muted-foreground">{t.memory.categoriesEmpty}</p>
       ) : (
         <ul className="flex flex-wrap gap-2">
           {rows.map((c) => (
             <li
               key={c.id}
-              className="group inline-flex min-w-0 max-w-full items-center gap-2 rounded-full border border-border bg-elevated py-1 pl-2.5 pr-1.5"
+              className="group inline-flex min-w-0 max-w-full items-center gap-2 rounded-full border border-border bg-muted py-1 pl-2.5 pr-1.5"
             >
               <span className="shrink-0" style={{ color: categorySwatch(c.color) }}>
                 <CategoryIcon name={c.icon} size={14} />
               </span>
-              <span className="min-w-0 truncate text-sm text-text">{c.name}</span>
-              <span className="shrink-0 font-mono text-[11px] text-text-muted" title={c.description || undefined}>
+              <span className="min-w-0 truncate text-sm text-foreground">{c.name}</span>
+              <span className="shrink-0 font-mono text-[11px] text-muted-foreground" title={c.description || undefined}>
                 {t.memory.memoryCount.replace('{n}', String(counts.byId.get(c.id) ?? 0))}
               </span>
               <span className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
@@ -147,7 +147,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
             placeholder={t.memory.categoryDescriptionPlaceholder}
-            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
+            className="w-full resize-y rounded-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
           />
         </Field>
         <Field label={t.memory.categoryProject}>
@@ -158,14 +158,14 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
               {/* Show the bound project's own glyph (or a globe for a global category) so the scope is
                   readable at a glance, not only after opening the picker. */}
               {selectedProject
-                ? <ProjectIcon project={selectedProject} size={18} className="text-text-muted" />
-                : <Globe size={18} aria-hidden className="shrink-0 text-text-muted" />}
+                ? <ProjectIcon project={selectedProject} size={18} className="text-muted-foreground" />
+                : <Globe size={18} aria-hidden className="shrink-0 text-muted-foreground" />}
               <div className="min-w-0 flex-1">
                 <ChoiceField
                   title={t.memory.categoryProject}
                   options={[
-                    { value: '', label: t.memory.categoryProjectGlobal, icon: <Globe size={16} aria-hidden className="shrink-0 text-text-muted" /> },
-                    ...(projects.data ?? []).map((project) => ({ value: String(project.id), label: project.slug, icon: <ProjectIcon project={project} size={16} className="text-text-muted" /> })),
+                    { value: '', label: t.memory.categoryProjectGlobal, icon: <Globe size={16} aria-hidden className="shrink-0 text-muted-foreground" /> },
+                    ...(projects.data ?? []).map((project) => ({ value: String(project.id), label: project.slug, icon: <ProjectIcon project={project} size={16} className="text-muted-foreground" /> })),
                   ]}
                   value={projectId == null ? '' : String(projectId)}
                   onChange={(value) => setProjectId(value ? Number(value) : null)}
@@ -185,7 +185,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
                 onClick={() => setColor(c)}
                 aria-label={c}
                 aria-pressed={color === c}
-                className={`h-7 w-7 rounded-full border-2 transition-transform ${color === c ? 'scale-110 border-text' : 'border-transparent hover:scale-105'}`}
+                className={`h-7 w-7 rounded-full border-2 transition-transform ${color === c ? 'scale-110 border-foreground' : 'border-transparent hover:scale-105'}`}
                 style={{ backgroundColor: c }}
               />
             ))}
@@ -202,7 +202,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
                   aria-label={n}
                   aria-pressed={icon === n}
                   title={n}
-                  className={`flex aspect-square items-center justify-center rounded-md border transition-colors ${icon === n ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-surface text-text-muted hover:border-text-muted hover:text-text'}`}
+                  className={`flex aspect-square items-center justify-center rounded-md border transition-colors ${icon === n ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card text-muted-foreground hover:border-muted-foreground hover:text-foreground'}`}
                 >
                   <CategoryIcon name={n} size={16} />
                 </button>

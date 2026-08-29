@@ -31,7 +31,7 @@
   position: sticky;
   top: 0;
   min-height: var(--data-table-row-header);
-  background: var(--color-surface-sticky);
+  background: var(--color-sticky);
   z-index: var(--z-sticky);
 }
 
@@ -53,10 +53,10 @@
 
 /* The single trailing open affordance: quiet until the row is hovered. */
 .data-table-chevron {
-  color: var(--color-text-subtle);
+  color: var(--color-subtle-foreground);
   transition: color var(--motion-fast) var(--ease-out);
 }
-.data-table-grid:hover .data-table-chevron { color: var(--color-text); }
+.data-table-grid:hover .data-table-chevron { color: var(--color-foreground); }
 
 /* Row activation is a real button stretched over the row: one tab stop, native Enter/Space, and a SHORT
    accessible name supplied by the caller — the row's own text is not one (a memory body ran past 3000

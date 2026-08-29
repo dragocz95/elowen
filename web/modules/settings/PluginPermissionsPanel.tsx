@@ -55,25 +55,25 @@ export function PluginPermissionsPanel({ detail, fieldLabel, riskText, toolCount
             plugin actually declares something; an absent declaration means "cannot do anything", so an
             empty panel carries no information and stays hidden. */}
         {hasCapabilities ? (
-          <div className="flex flex-col gap-2 rounded-md border border-border bg-bg p-3">
-            <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.capabilities}</span>
-            <p className="text-xs text-text-muted">{t.pluginDetail.capabilitiesDeny}</p>
+          <div className="flex flex-col gap-2 rounded-md border border-border bg-background p-3">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t.pluginDetail.capabilities}</span>
+            <p className="text-xs text-muted-foreground">{t.pluginDetail.capabilitiesDeny}</p>
             <div className="flex flex-col gap-2">
               {mutates.length ? (
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-text-muted">{t.pluginDetail.capMutates}</span>
+                  <span className="text-[11px] font-medium text-muted-foreground">{t.pluginDetail.capMutates}</span>
                   {mutates.map((m) => <Badge key={m} tone={MUTATE_TONE[m]}>{m}</Badge>)}
                 </div>
               ) : null}
               {capabilities.network === true ? (
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-text-muted">{t.pluginDetail.capNetwork}</span>
+                  <span className="text-[11px] font-medium text-muted-foreground">{t.pluginDetail.capNetwork}</span>
                   <Badge tone="warning"><Globe size={10} className="mr-1" aria-hidden />{t.pluginDetail.capNetworkOn}</Badge>
                 </div>
               ) : null}
               {reads.length ? (
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-text-muted">{t.pluginDetail.capReads}</span>
+                  <span className="text-[11px] font-medium text-muted-foreground">{t.pluginDetail.capReads}</span>
                   {reads.map((r) => <span key={r} className={namePill}>{r}</span>)}
                 </div>
               ) : null}
@@ -81,18 +81,18 @@ export function PluginPermissionsPanel({ detail, fieldLabel, riskText, toolCount
           </div>
         ) : null}
         {requiredSecrets.length === 0 && requiredConfig.length === 0 ? (
-          <p className="text-sm text-text-muted">{t.pluginDetail.requiresNone}</p>
+          <p className="text-sm text-muted-foreground">{t.pluginDetail.requiresNone}</p>
         ) : (
           <div className="flex flex-col gap-3">
             {requiredSecrets.length ? (
               <div className="flex flex-col gap-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.requiresEnv}</span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t.pluginDetail.requiresEnv}</span>
                 <div className="flex flex-wrap gap-1.5">{requiredSecrets.map((f) => <span key={f.key} className={namePill}>{fieldLabel(f)}</span>)}</div>
               </div>
             ) : null}
             {requiredConfig.length ? (
               <div className="flex flex-col gap-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.requiresConfig}</span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t.pluginDetail.requiresConfig}</span>
                 <div className="flex flex-wrap gap-1.5">{requiredConfig.map((f) => <span key={f.key} className={namePill}>{fieldLabel(f)}</span>)}</div>
               </div>
             ) : null}

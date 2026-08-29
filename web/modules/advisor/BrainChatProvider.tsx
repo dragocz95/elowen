@@ -1115,15 +1115,15 @@ function ReconnectOverlay() {
   const { t } = useTranslation();
   return (
     <div
-      className="overlay-layer-modal fixed inset-0 flex flex-col items-center justify-center gap-4 bg-bg/60 backdrop-blur-md"
+      className="overlay-layer-modal fixed inset-0 flex flex-col items-center justify-center gap-4 bg-background/60 backdrop-blur-md"
       role="status"
       aria-live="polite"
     >
       <Spinner size="lg" />
-      <span className="text-base text-text-muted">{t.brainChat.reconnecting}</span>
+      <span className="text-base text-muted-foreground">{t.brainChat.reconnecting}</span>
       <Link
         href="/dash"
-        className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm text-text-muted transition-colors hover:bg-elevated hover:text-text"
+        className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         <ArrowLeft size={16} aria-hidden />
         <span>{t.nav.dashboard}</span>

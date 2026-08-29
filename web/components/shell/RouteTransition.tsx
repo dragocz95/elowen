@@ -39,7 +39,7 @@ export function RouteTransition({ children }: { children: ReactNode }) {
         <m.div
           key={`scrim:${routeKey}`}
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-10 bg-bg"
+          className="pointer-events-none absolute inset-0 z-10 bg-background"
           initial={{ opacity: reduced ? 0.14 : 0.38 }}
           animate={{ opacity: 0 }}
           transition={reduced

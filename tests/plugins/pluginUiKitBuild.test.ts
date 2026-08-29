@@ -50,7 +50,7 @@ describe('elowen-plugin-ui-kit css build', () => {
   // A MINIFIED bundle, because that is what a plugin actually ships: class names survive as string
   // literals, and the extractor has to pull arbitrary values and variants back out of that soup.
   const bundle = join(dir, 'index.js');
-  writeFileSync(bundle, 'var a=`h-36 bg-surface text-text-muted rounded-lg w-[137px] sm:grid-cols-[10rem_minmax(0,1fr)]`;\n');
+  writeFileSync(bundle, 'var a=`h-36 bg-card text-muted-foreground rounded-lg w-[137px] sm:grid-cols-[10rem_minmax(0,1fr)]`;\n');
 
   let css = '';
   beforeAll(async () => { css = await buildPluginUiCss({ bundle, outfile: join(dir, 'index.css') }); });
@@ -67,12 +67,12 @@ describe('elowen-plugin-ui-kit css build', () => {
     // THE regression to watch for. `web/skins/*` repaint by overriding the token variables on
     // `:root[data-skin]`. If the compile ever inlined the theme (an `@import` where an `@reference`
     // belongs), every plugin would freeze on the default palette while the host repainted around it.
-    expect(css).toMatch(/\.bg-surface\s*\{\s*background-color:\s*var\(--color-surface,\s*#070707\)/);
-    expect(css).toMatch(/\.text-text-muted\s*\{\s*color:\s*var\(--color-text-muted,/);
+    expect(css).toMatch(/\.bg-card\s*\{\s*background-color:\s*var\(--color-card,\s*#070707\)/);
+    expect(css).toMatch(/\.text-muted-foreground\s*\{\s*color:\s*var\(--color-muted-foreground,/);
     expect(css).toMatch(/\.rounded-lg\s*\{\s*border-radius:\s*var\(--radius-lg,/);
     // And it must not have shipped the host's variable DEFINITIONS — that would pin the tokens at the
     // plugin's build-time values for everything downstream of the sheet.
-    expect(css).not.toMatch(/^\s*--color-surface:/m);
+    expect(css).not.toMatch(/^\s*--color-card:/m);
   });
 
   it('puts every rule inside @layer utilities', () => {

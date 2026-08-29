@@ -21,8 +21,8 @@ const ACTIONS: readonly PermissionAction[] = ['allow', 'ask', 'deny'];
 /** Active tone per action: allow=success, ask=neutral, deny=danger (matches the app's tone tokens). */
 const ACTIVE_TONE: Record<PermissionAction, string> = {
   allow: 'border-success/50 bg-success/10 text-success',
-  ask: 'border-border-strong bg-elevated text-text',
-  deny: 'border-danger/50 bg-danger/10 text-danger',
+  ask: 'border-border-strong bg-muted text-foreground',
+  deny: 'border-destructive/50 bg-destructive/10 text-destructive',
 };
 
 const toRules = (map: Record<string, PermissionAction>): Rule[] =>
@@ -39,7 +39,7 @@ function ActionSwitch({ value, onChange, label, labels }: {
   labels: Record<PermissionAction, string>;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex shrink-0 gap-0.5 rounded-md border border-border bg-surface p-0.5">
+    <div role="radiogroup" aria-label={label} className="inline-flex shrink-0 gap-0.5 rounded-md border border-border bg-card p-0.5">
       {ACTIONS.map((a) => {
         const active = a === value;
         return (
@@ -49,7 +49,7 @@ function ActionSwitch({ value, onChange, label, labels }: {
             role="radio"
             aria-checked={active}
             onClick={() => onChange(a)}
-            className={`rounded border px-2 py-1 text-tiny font-medium transition-colors ${active ? ACTIVE_TONE[a] : 'border-transparent text-text-muted hover:bg-elevated hover:text-text'}`}
+            className={`rounded border px-2 py-1 text-tiny font-medium transition-colors ${active ? ACTIVE_TONE[a] : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}`}
             style={{ transitionDuration: 'var(--motion-fast)' }}
           >
             {labels[a]}
@@ -123,7 +123,7 @@ export function PermissionRulesCard() {
 
   const ruleRow = (scope: Scope, rules: Rule[], rule: Rule, i: number) => (
     <li key={rule.pattern} className="flex items-center gap-2">
-      <code className="min-w-0 flex-1 truncate font-mono text-xs text-text" title={rule.pattern}>{rule.pattern}</code>
+      <code className="min-w-0 flex-1 truncate font-mono text-xs text-foreground" title={rule.pattern}>{rule.pattern}</code>
       <ActionSwitch
         value={rule.action}
         label={rule.pattern}
@@ -142,7 +142,7 @@ export function PermissionRulesCard() {
   const editor = (
     <div className="flex flex-col gap-4 py-4">
       {bashRules.length === 0 ? (
-        <p className="text-xs text-text-muted">{t.cli.permEmpty}</p>
+        <p className="text-xs text-muted-foreground">{t.cli.permEmpty}</p>
       ) : (
         <ul className="flex flex-col gap-2">{bashRules.map((r, i) => ruleRow('bash', bashRules, r, i))}</ul>
       )}
@@ -162,7 +162,7 @@ export function PermissionRulesCard() {
 
       {toolsRules.length > 0 ? (
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.cli.permToolsTitle}</span>
+          <span className="text-tiny font-semibold uppercase tracking-wide text-muted-foreground">{t.cli.permToolsTitle}</span>
           <ul className="flex flex-col gap-2">{toolsRules.map((r, i) => ruleRow('tools', toolsRules, r, i))}</ul>
         </div>
       ) : null}
@@ -200,7 +200,7 @@ export function PermissionRulesCard() {
       </SpatialRow>
       {drawerOpen ? (
         <WorkspaceDetailRail label={t.cli.permTitle} closeLabel={t.common.close} onClose={() => setDrawerOpen(false)}>
-          <p className="mb-2 text-xs leading-relaxed text-text-muted">{t.help.cliPermissions}</p>
+          <p className="mb-2 text-xs leading-relaxed text-muted-foreground">{t.help.cliPermissions}</p>
           {editor}
         </WorkspaceDetailRail>
       ) : null}

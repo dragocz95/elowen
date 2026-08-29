@@ -54,39 +54,42 @@ describe('resolveNav', () => {
   });
 });
 
+// An unseeded Shell is what a document with nothing chosen gets, and that is DEFAULT_SKIN — a command
+// profile. It is no longer a way to reach the frameless masthead and orbital rail: those belong to the
+// ambient design this build stopped shipping, so what these cases describe is the only chrome there is.
 describe('Shell', () => {
-  it('renders the orbital desktop navigation, frameless masthead and content slot', async () => {
+  it('renders the Studio navigation, ruled app bar and content slot', async () => {
     render(<Shell><span>page-body</span></Shell>);
-    // The orbital navigation and Home world appear after the async gate opens.
-    expect(await screen.findByTestId('future-navigation')).toBeInTheDocument();
+    // The navigation and Home world appear after the async gate opens.
+    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    expect(screen.queryByTestId('future-navigation'), 'the orbital rail belongs to no design this build ships').toBeNull();
     expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
     expect(screen.getByText('page-body')).toBeInTheDocument();
-    expect(screen.getByTestId('future-page-header')).not.toHaveClass('sticky');
-    expect(screen.getByTestId('future-page-header')).not.toHaveClass('border-b');
+    // The ruled bar, not the floating cluster: sticky and separated from the content it scrolls over.
+    expect(screen.getByTestId('future-page-header')).toHaveClass('sticky');
+    expect(screen.getByTestId('future-page-header')).toHaveClass('border-b');
   });
 
-  it('suppresses the global bar on /chat by breakpoint, never by the measured region', async () => {
-    // The region is window − dock, so keying the bar off it let a docked desktop window drop the bar AND
-    // its hamburger while ChatView's replacement link (keyed off the viewport) stayed away — no way off
-    // /chat at all. A CSS breakpoint reads the same viewport ChatView does, and needs no measurement.
-    // The value is asserted in PIXELS on purpose: Tailwind's `md` is 48rem, which drifts away from the
-    // hook's pixel media query as soon as the browser font is not 16px, reopening that same gap.
+  it('keeps the ruled bar at every width, on /chat as much as off it', async () => {
+    // The phone suppression was the FRAMELESS masthead's: that cluster has no slot for a page's own
+    // controls, so on /chat it only crowded the conversation's local bar. The ruled bar does have one —
+    // the conversation portals its toolbar into it — so suppressing it on a phone would take those
+    // controls away with it, along with the hamburger that is the way off /chat.
     //
     // Asserted on the HEADER and not on a wrapper around it. The suppression used to be a <div> holding
-    // nothing but the bar, which is fatal to the `bar` variant: that one is `position: sticky`, and a
-    // sticky box is clamped to its containing block — a wrapper whose only child is the header is
-    // exactly the header's height, so the sticky range was zero and the bar scrolled away.
-    pathname = '/chat';
-    render(<Shell><span>page-body</span></Shell>);
-    const bar = await screen.findByTestId('future-page-header');
-    expect(bar).toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
-    expect(bar.parentElement, 'no wrapper may clamp the sticky bar').not.toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
-  });
-
-  it('leaves the global bar unconditional off /chat', async () => {
-    pathname = '/dash';
-    render(<Shell><span>page-body</span></Shell>);
-    const bar = await screen.findByTestId('future-page-header');
-    expect(bar).not.toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
+    // nothing but the bar, which is fatal to this variant: it is `position: sticky`, and a sticky box is
+    // clamped to its containing block — a wrapper whose only child is the header is exactly the header's
+    // height, so the sticky range was zero and the bar scrolled away.
+    //
+    // The width is spelled in PIXELS on purpose: Tailwind's `md` is 48rem, which drifts away from the
+    // hook's pixel media query as soon as the browser font is not 16px.
+    for (const path of ['/chat', '/dash']) {
+      pathname = path;
+      const view = render(<Shell><span>page-body</span></Shell>);
+      const bar = await screen.findByTestId('future-page-header');
+      expect(bar, `the bar is withheld on ${path}`).not.toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
+      expect(bar.parentElement, 'no wrapper may clamp the sticky bar').not.toHaveClass(`max-[${MOBILE_MAX_WIDTH}px]:hidden`);
+      view.unmount();
+    }
   });
 });

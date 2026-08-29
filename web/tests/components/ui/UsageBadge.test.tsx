@@ -46,7 +46,7 @@ describe('UsageBadge', () => {
     const { container } = render(<Wrapper><UsageBadge usage={{ input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, total: 1500, costUsd: 0.0234 }} /></Wrapper>);
     expect(container.textContent).toContain('$0.0234');
     const pill = Array.from(container.querySelectorAll('span')).find((el) => el.textContent === 'cost')?.parentElement;
-    expect(pill?.className).toContain('text-approve');
+    expect(pill?.className).toContain('text-success');
   });
 
   it('renders an icon in every pill', () => {

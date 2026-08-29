@@ -8,8 +8,8 @@ import type { SubagentState } from '../../lib/transcript';
 
 const STATUS_DOT: Record<SubagentState['status'], string> = {
   running: 'text-success',
-  done: 'text-text-muted',
-  error: 'text-danger',
+  done: 'text-muted-foreground',
+  error: 'text-destructive',
 };
 
 /** The workflow view: a table of the delegated sub-agents (model · tokens · tools · idle · status). Rows
@@ -41,7 +41,7 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
     <Modal title={t.agents.title} description={t.agents.subtitle} onClose={onClose} size="xl" icon={Users}>
       <div className="min-h-0 flex-1 overflow-auto @container">
         <table className="w-full text-tiny">
-          <thead className="sticky top-0 bg-surface text-text-muted">
+          <thead className="sticky top-0 bg-card text-muted-foreground">
             <tr className="border-b border-border text-left">
               <th className="px-3 py-2 font-medium">{t.agents.task}</th>
               <th className="agents-table-secondary px-3 py-2 font-medium">{t.agents.model}</th>
@@ -58,19 +58,19 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                 <tr
                   key={a.sessionId}
                   onClick={() => onOpen(a.sessionId)}
-                  className="cursor-pointer border-b border-border/50 transition-colors hover:bg-elevated"
+                  className="cursor-pointer border-b border-border/50 transition-colors hover:bg-accent"
                 >
                   <td className="max-w-0 px-3 py-2">
                     <div className="flex items-center gap-1.5">
                       <span className={`shrink-0 ${STATUS_DOT[a.status]}`} title={t.agents[a.status]}>●</span>
-                      <span className="truncate text-text" title={a.task}>{a.detail || a.task}</span>
+                      <span className="truncate text-foreground" title={a.task}>{a.detail || a.task}</span>
                     </div>
                   </td>
-                  <td className="agents-table-secondary whitespace-nowrap px-3 py-2 font-mono text-text-muted">{a.model ?? '—'}</td>
-                  <td className="agents-table-secondary px-3 py-2 text-right tabular-nums text-text-muted">{a.tokens != null ? formatTokens(a.tokens) : '—'}</td>
-                  <td className="agents-table-secondary px-3 py-2 text-right tabular-nums text-text-muted">{a.tools}</td>
-                  <td className="agents-table-secondary px-3 py-2 text-right tabular-nums text-text-muted">{idle == null ? '—' : `${idle}s`}</td>
-                  <td className="px-2 py-2 text-right"><ChevronRight size={13} className="text-text-muted" aria-hidden /></td>
+                  <td className="agents-table-secondary whitespace-nowrap px-3 py-2 font-mono text-muted-foreground">{a.model ?? '—'}</td>
+                  <td className="agents-table-secondary px-3 py-2 text-right tabular-nums text-muted-foreground">{a.tokens != null ? formatTokens(a.tokens) : '—'}</td>
+                  <td className="agents-table-secondary px-3 py-2 text-right tabular-nums text-muted-foreground">{a.tools}</td>
+                  <td className="agents-table-secondary px-3 py-2 text-right tabular-nums text-muted-foreground">{idle == null ? '—' : `${idle}s`}</td>
+                  <td className="px-2 py-2 text-right"><ChevronRight size={13} className="text-muted-foreground" aria-hidden /></td>
                 </tr>
               );
             })}

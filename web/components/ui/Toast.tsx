@@ -94,7 +94,9 @@ function ToastCard({ item, title, durationMs, dismissLabel, onDismiss }: { item:
       <ToastClose aria-label={dismissLabel}>
         <X size={15} aria-hidden />
       </ToastClose>
-      <span className="absolute bottom-0 left-0 h-0.5 bg-on-status/40" style={{ width: `${remaining}%` }} aria-hidden />
+      {/* A wash of the INHERITED ink, so the countdown reads on whichever status fill the card carries
+          and follows a skin that repaints the pair. */}
+      <span className="absolute bottom-0 left-0 h-0.5 bg-current/40" style={{ width: `${remaining}%` }} aria-hidden />
     </Toast>
   );
 }

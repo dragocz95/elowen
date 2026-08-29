@@ -46,13 +46,13 @@ export function ModelModal({ initial, existingExecs, activeProviders, onClose, o
     <Modal title={editing ? t.settings.editModelTitle : t.settings.addModelTitle} onClose={onClose} size="md" icon={Cpu}>
       <ModalBody>
         {/* live preview */}
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-elevated/40 p-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-bg">
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
             <ModelIcon name={previewExec || model} size={24} />
           </span>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-text">{label.trim() || t.settings.addModelTitle}</div>
-            <div className="truncate font-mono text-xs text-text-muted">{previewExec || '—'}</div>
+            <div className="truncate text-sm font-medium text-foreground">{label.trim() || t.settings.addModelTitle}</div>
+            <div className="truncate font-mono text-xs text-muted-foreground">{previewExec || '—'}</div>
           </div>
         </div>
 
@@ -72,13 +72,13 @@ export function ModelModal({ initial, existingExecs, activeProviders, onClose, o
                   type="button"
                   onClick={() => setProvider(id)}
                   aria-pressed={active}
-                  className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 transition-colors ${active ? 'border-primary bg-primary/[0.07]' : 'border-border bg-surface hover:border-border-strong'}`}
+                  className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 transition-colors ${active ? 'border-primary bg-primary/[0.07]' : 'border-border bg-card hover:border-border-strong'}`}
                 >
                   {meta
                     /* eslint-disable-next-line @next/next/no-img-element */
                     ? <img src={meta.icon} alt="" width={18} height={18} style={{ objectFit: 'contain' }} aria-hidden />
-                    : <Cpu size={18} className="text-text-muted" aria-hidden />}
-                  <span className="text-[11px] text-text">{meta?.label ?? t.settings.providerOther}</span>
+                    : <Cpu size={18} className="text-muted-foreground" aria-hidden />}
+                  <span className="text-[11px] text-foreground">{meta?.label ?? t.settings.providerOther}</span>
                 </button>
               );
             })}

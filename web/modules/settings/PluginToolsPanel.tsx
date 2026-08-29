@@ -44,12 +44,12 @@ function ContributionsList({ contributions }: { contributions?: PluginContributi
   return (
     <div className="flex flex-col gap-3">
       <div className="relative">
-        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden />
+        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden />
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.plugins.searchPlaceholder} className="pl-9" />
       </div>
       {filtered.map((g) => (
         <div key={g.key} className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{g.label}</span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{g.label}</span>
           <PillRow expandAll={q.length > 0} pills={g.items.map((i) => <span key={i.name} className={namePill}>{i.name}</span>)} />
         </div>
       ))}

@@ -1,5 +1,5 @@
 /* The page chrome every route carries: .top-bar and its parts (.top-bar__menu, .top-bar__actions,
-   .top-bar__identity), plus .page-bar__breadcrumb and .shell-content.
+   .top-bar__identity) and .shell-content.
 
    Geometry belongs to the TopBar's typed variant (components/shell/TopBar.tsx), not here — this file
    holds only what a utility cannot say once for a whole subtree. */
@@ -21,17 +21,13 @@
    a 16px content box for a 20px line, and the label spilled out of the menu's own `overflow: hidden`.
    `.overlay-layer-menu` is what every floating menu in the app already wears, so excluding it covers the
    ones that have not been opened here yet as well.
-   The breadcrumb's steps are the reader's LOCATION, not controls, and must not be sized like one. Today
-   they are inline boxes that a height cannot apply to anyway — which is exactly why the exclusion is
-   written down: the day one of them becomes `flex`, the trail would silently grow to 32px.
-   The fourth is what a control OPENS. A picker in this bar anchors its listbox inline, so the menu is a
+   The third is what a control OPENS. A picker in this bar anchors its listbox inline, so the menu is a
    DESCENDANT of the bar: every option was clamped to the row height of the trigger that opened it, and a
    model row — a name with its reasoning levels underneath — spilled over the row below it into unreadable
    overlapping text. `.overlay-layer-menu *` covers the portaled menus only; these never leave the bar. */
 .top-bar--bar :is(a, button):not(
   .top-bar__identity,
   .overlay-layer-menu *,
-  .page-bar__breadcrumb *,
   :is([role='listbox'], [role='menu'], [role='dialog']) *
 ) {
   height: 2rem;
@@ -45,7 +41,6 @@
   .top-bar--bar :is(a, button):not(
     .top-bar__identity,
     .overlay-layer-menu *,
-    .page-bar__breadcrumb *,
     :is([role='listbox'], [role='menu'], [role='dialog']) *
   ) {
     height: var(--touch-target);
@@ -82,7 +77,3 @@
   .top-bar__page-slot .chat-page-toolbar__wide-controls { display: none; }
   .top-bar__page-slot .chat-page-toolbar__overflow { display: block; }
 }
-
-/* The trail must give way before the actions do: it is the one part of the row that can be read from
-   the page itself, and every step inside it truncates rather than wrapping. */
-.page-bar__breadcrumb { min-width: 0; overflow: hidden; font-size: 0.8125rem; }

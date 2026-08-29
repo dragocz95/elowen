@@ -22,10 +22,10 @@ const FULL_FILE_LINES = 50_000;
 
 /** Level chip tint — the same severity palette the plugin log panel uses. */
 const LEVEL_CLASS: Record<LogLevel, string> = {
-  debug: 'text-text-muted/70',
-  info: 'text-text-muted',
+  debug: 'text-muted-foreground/70',
+  info: 'text-muted-foreground',
   warn: 'text-warning',
-  error: 'text-danger',
+  error: 'text-destructive',
 };
 
 type CodeEditor = Parameters<OnMount>[0];
@@ -138,11 +138,11 @@ export function LogsModal({ onClose }: { onClose: () => void }) {
                 files.map((f) => (
                   <div
                     key={f.name}
-                    className={`flex items-center gap-2 border-b border-border px-3 py-2 last:border-b-0 ${f.name === selected ? 'bg-elevated' : ''}`}
+                    className={`flex items-center gap-2 border-b border-border px-3 py-2 last:border-b-0 ${f.name === selected ? 'bg-accent' : ''}`}
                   >
                     <button type="button" aria-current={f.name === selected} className="min-w-0 flex-1 text-left" onClick={() => pick(f.name)}>
-                      <div className="truncate text-xs text-text">{f.name}</div>
-                      <div className="mt-0.5 flex items-center gap-2 text-[11px] text-text-muted">
+                      <div className="truncate text-xs text-foreground">{f.name}</div>
+                      <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
                         <Badge>{f.source}</Badge>
                         <span>{formatBytes(f.bytes)}</span>
                         <span>{new Date(f.modifiedAt).toLocaleTimeString(locale)}</span>
@@ -152,7 +152,7 @@ export function LogsModal({ onClose }: { onClose: () => void }) {
                       type="button"
                       aria-label={t.settings.logsDeleteFile}
                       title={t.settings.logsDeleteFile}
-                      className="shrink-0 text-text-muted transition-colors hover:text-danger"
+                      className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
                       onClick={() => setPendingDelete(f.name)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -187,21 +187,21 @@ export function LogsModal({ onClose }: { onClose: () => void }) {
                   disabled={!selected}
                   onClick={() => toggleLevel(level)}
                   className={`rounded-md border px-2 py-1 text-[11px] uppercase transition-colors disabled:opacity-40 ${
-                    levels.has(level) ? 'border-primary bg-elevated' : 'border-border'
+                    levels.has(level) ? 'border-primary bg-accent' : 'border-border'
                   } ${LEVEL_CLASS[level]}`}
                 >
                   {level}
                 </button>
               ))}
               {selected && file.data ? (
-                <span className="ml-auto text-[11px] text-text-muted">
+                <span className="ml-auto text-[11px] text-muted-foreground">
                   {t.settings.logsMatches.replace('{n}', String(visible.length)).replace('{total}', String(parsed.length))}
                 </span>
               ) : null}
             </div>
 
             {selected && file.data?.truncated ? (
-              <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2 text-[11px] text-text-muted">
+              <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2 text-[11px] text-muted-foreground">
                 <span>
                   {/* Once the whole file was requested, a still-truncated read means the file is over the
                       viewer's line ceiling — the count is honest but the button no longer does anything, so

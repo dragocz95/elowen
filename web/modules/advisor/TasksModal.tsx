@@ -102,16 +102,16 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
           ) : (
             <div className="flex flex-col gap-px overflow-hidden rounded-md border border-border bg-border/50">
               {rows.map((task) => (
-                <div key={task.id} className="flex items-start gap-3 bg-surface px-3 py-3">
+                <div key={task.id} className="flex items-start gap-3 bg-card px-3 py-3">
                   <div className="flex min-w-0 flex-1 flex-col gap-1">
                     <div className="flex items-baseline gap-1.5">
-                      <span className="text-xs tabular-nums text-text-muted">#{task.id}</span>
-                      <span className="text-sm font-medium text-text">{task.subject}</span>
+                      <span className="text-xs tabular-nums text-muted-foreground">#{task.id}</span>
+                      <span className="text-sm font-medium text-foreground">{task.subject}</span>
                       {task.status === 'in_progress' && task.startedAt != null ? (
-                        <span className="text-xs tabular-nums text-text-muted">· {formatDuration(now - task.startedAt)}</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">· {formatDuration(now - task.startedAt)}</span>
                       ) : null}
                     </div>
-                    <span className="whitespace-pre-wrap text-xs text-text-muted">{task.description}</span>
+                    <span className="whitespace-pre-wrap text-xs text-muted-foreground">{task.description}</span>
                     {task.blockedBy.length > 0 ? (
                       <span className="text-xs text-warning">{t.tasksModal.blockedBy}: {task.blockedBy.map((id) => `#${id}`).join(', ')}</span>
                     ) : null}
@@ -121,7 +121,7 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
                     value={task.status}
                     disabled={mutationPending}
                     onChange={(event) => setStatus(task, event.target.value as SessionTask['status'])}
-                    className="h-8 rounded-md border border-border bg-elevated px-2 text-xs text-text"
+                    className="h-8 rounded-md border border-border bg-muted px-2 text-xs text-foreground"
                   >
                     <option value="pending">{t.tasksModal.statusPending}</option>
                     <option value="in_progress">{t.tasksModal.statusInProgress}</option>

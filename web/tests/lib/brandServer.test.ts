@@ -31,11 +31,11 @@ describe('buildThemeStyle', () => {
   // must not TRUST that — a value that could close the declaration or the tag never passes here.
   it('drops any value that could escape the CSS declaration', () => {
     const css = buildThemeStyle(theme({
-      colors: { primary: 'red;}</style><script>', 'primary-rgb': 'rgb(0,0,0)', bg: '#000000' },
+      colors: { primary: 'red;}</style><script>', 'primary-rgb': 'rgb(0,0,0)', background: '#000000' },
       fonts: { mono: 'x; background:url(//evil)' },
       assets: { logo: '/public/theme/assets/../../../etc/passwd?v=0123456789abcdef' },
     }));
-    expect(css).toContain('--color-bg: #000000;'); // the valid key still applies
+    expect(css).toContain('--color-background: #000000;'); // the valid key still applies
     expect(css).not.toContain('script');
     expect(css).not.toContain('primary-rgb');
     expect(css).not.toContain('--font-mono');

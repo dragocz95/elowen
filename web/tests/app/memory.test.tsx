@@ -109,7 +109,7 @@ describe('MemoryPage', () => {
     expect(row).toHaveClass('px-4');
     expect(row).not.toHaveClass('px-1');
     expect(row).not.toHaveClass('rounded-lg');
-    expect(row).not.toHaveClass('bg-surface');
+    expect(row).not.toHaveClass('bg-card');
     expect(row.closest('.control-surface-register')).toBeInTheDocument();
     expect(screen.getByText('Page 1 of 1')).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Kind' })).toBeNull();

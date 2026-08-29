@@ -78,7 +78,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
   const cursorOpts: { value: TerminalCursorStyle; label: string }[] = [
     { value: 'block', label: t.terminal.cursorBlock }, { value: 'bar', label: t.terminal.cursorBar }, { value: 'underline', label: t.terminal.cursorUnderline },
   ];
-  const label = 'text-tiny font-semibold uppercase tracking-wide text-text-muted';
+  const label = 'text-tiny font-semibold uppercase tracking-wide text-muted-foreground';
 
   // The live preview sits NEXT TO the swatches (right column on wide screens, on top on narrow
   // ones) so a color tweak is visible without scrolling back to a separate preview card. In the
@@ -135,7 +135,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
             <span className={label}>{t.terminal.fontSize}</span>
             <div className="flex items-center gap-4">
               <Slider value={fontSize} min={10} max={20} step={1} onChange={setFontSize} aria-label={t.terminal.fontSize} />
-              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{fontSize}px</span>
+              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-foreground">{fontSize}px</span>
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -155,8 +155,8 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
             <span className={label}>{t.terminal.cursorStyle}</span>
             <Segmented options={cursorOpts} value={cursorStyle} onChange={(v) => setCursorStyle(v as TerminalCursorStyle)} aria-label={t.terminal.cursorStyle} />
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-3 py-2">
-            <span className="text-sm text-text">{t.terminal.cursorBlink}</span>
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2">
+            <span className="text-sm text-foreground">{t.terminal.cursorBlink}</span>
             <Toggle checked={cursorBlink} onChange={setCursorBlink} label={t.terminal.cursorBlink} />
           </div>
         </div>
@@ -166,7 +166,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
   const rowCli = (
       <SpatialRow title={t.terminal.cliTitle} icon={ScrollText} description={t.terminal.showThoughtsHelp}>
         <div className="flex flex-col gap-4">
-          <label className="flex items-center gap-3 text-sm text-text">
+          <label className="flex items-center gap-3 text-sm text-foreground">
             <Toggle checked={showThoughtsCli} onChange={setShowThoughtsCli} label={t.terminal.showThoughts} />
             <span>{t.terminal.showThoughts}</span>
           </label>
@@ -184,7 +184,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
                 onChange={setPromptHistoryDepth}
                 aria-label={t.terminal.promptHistoryDepth}
               />
-              <span className="w-20 shrink-0 text-right font-mono text-sm tabular-nums text-text">{`${promptHistoryDepth.toLocaleString()} ${t.terminal.lineUnit}`}</span>
+              <span className="w-20 shrink-0 text-right font-mono text-sm tabular-nums text-foreground">{`${promptHistoryDepth.toLocaleString()} ${t.terminal.lineUnit}`}</span>
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -202,7 +202,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
                 onChange={(next) => setInterruptConfirmMs(Math.round(next * MILLISECONDS_PER_SECOND))}
                 aria-label={t.terminal.interruptConfirmMs}
               />
-              <span className="w-20 shrink-0 text-right font-mono text-sm tabular-nums text-text">
+              <span className="w-20 shrink-0 text-right font-mono text-sm tabular-nums text-foreground">
                 {`${Number((interruptConfirmMs / MILLISECONDS_PER_SECOND).toFixed(1))} ${t.terminal.secondUnit}`}
               </span>
             </div>
@@ -217,7 +217,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
           <span className={label}>{t.terminal.scrollback}</span>
           <div className="flex items-center gap-4">
             <Slider value={scrollback} min={500} max={50000} step={500} onChange={setScrollback} aria-label={t.terminal.scrollback} />
-            <span className="w-16 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scrollback.toLocaleString()}</span>
+            <span className="w-16 shrink-0 text-right font-mono text-sm tabular-nums text-foreground">{scrollback.toLocaleString()}</span>
           </div>
         </div>
       </SpatialRow>
@@ -244,7 +244,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
 
       {colorsOpen ? (
         <WorkspaceDetailRail label={t.terminal.colorsTitle} closeLabel={t.common.close} onClose={() => setColorsOpen(false)}>
-          <p className="mb-2 text-xs leading-relaxed text-text-muted">{t.terminal.colorsHelp}</p>
+          <p className="mb-2 text-xs leading-relaxed text-muted-foreground">{t.terminal.colorsHelp}</p>
           {colorsEditor}
         </WorkspaceDetailRail>
       ) : null}

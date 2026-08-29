@@ -14,7 +14,7 @@ export const MAX_LEAVES = 40;
 
 const CORE_ID = 'core';
 /** Muted fallback swatch for a category whose stored color is blank (mirrors memoryMeta). */
-const FALLBACK_COLOR = 'var(--color-text-muted)';
+const FALLBACK_COLOR = 'var(--color-muted-foreground)';
 
 /** The core cortex sits just above dead-center, matching the brain PNG's mass. */
 const CORE_X = 50;

@@ -256,7 +256,7 @@ describe('DataTableSortCell', () => {
 describe('register stylesheet', () => {
   it('gives the sticky header an opaque fill and a token stacking order', () => {
     const sheet = css('data-table.css');
-    expect(sheet).toMatch(/\.data-table-header\s*\{[^}]*background:\s*var\(--color-surface-sticky\)/);
+    expect(sheet).toMatch(/\.data-table-header\s*\{[^}]*background:\s*var\(--color-sticky\)/);
     expect(sheet).toMatch(/\.data-table-header\s*\{[^}]*z-index:\s*var\(--z-sticky\)/);
     // A translucent header lets the rows scrolling under it read straight through the column names.
     expect(sheet).not.toMatch(/rgb\(255 255 255/);

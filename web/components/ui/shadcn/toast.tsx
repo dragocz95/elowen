@@ -77,7 +77,7 @@ function ToastViewport({ className = '', ...props }: React.ComponentProps<typeof
 const toastVariants = cva(
   [
     'pointer-events-auto relative flex items-start gap-2.5 overflow-hidden rounded-lg border',
-    'py-2.5 pl-3 pr-2.5 text-on-status shadow-[var(--shadow-raised)] sm:gap-3 sm:py-3 sm:pl-4 sm:pr-3',
+    'py-2.5 pl-3 pr-2.5 shadow-[var(--shadow-raised)] sm:gap-3 sm:py-3 sm:pl-4 sm:pr-3',
     // Radix drives the swipe gesture through these two custom properties; without the transforms the
     // toast does not follow the pointer and the gesture reads as broken rather than absent.
     'data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none',
@@ -86,13 +86,15 @@ const toastVariants = cva(
   ],
   {
     variants: {
-      // A status fill is one of the few places the app paints a saturated surface, so the text on it is
-      // `on-status` rather than any of the ordinary foregrounds. The border is the fill darkened toward
-      // that same ink: a flat edge disappears against the fill, and mixing (rather than hardcoding a
-      // second colour) keeps the edge correct when a skin repaints the status colours.
+      // A status fill is one of the few places the app paints a saturated surface, so each variant
+      // carries its OWN `-foreground` beside its fill rather than one shared ink on the base class —
+      // that is the shadcn pairing rule, and it is what lets a skin split the two inks apart. The border
+      // is the fill darkened toward that same ink: a flat edge disappears against the fill, and mixing
+      // (rather than hardcoding a second colour) keeps the edge correct when a skin repaints the status
+      // colours.
       status: {
-        success: 'bg-success border-[color-mix(in_srgb,var(--color-success)_72%,var(--color-on-status))]',
-        error: 'bg-destructive border-[color-mix(in_srgb,var(--color-destructive)_72%,var(--color-on-status))]',
+        success: 'bg-success text-success-foreground border-[color-mix(in_srgb,var(--color-success)_72%,var(--color-success-foreground))]',
+        error: 'bg-destructive text-destructive-foreground border-[color-mix(in_srgb,var(--color-destructive)_72%,var(--color-destructive-foreground))]',
       },
     },
     defaultVariants: { status: 'success' },
@@ -147,7 +149,10 @@ function ToastClose({ className = '', ...props }: React.ComponentProps<typeof To
       data-slot="toast-close"
       className={cn(
         'overlay-touch-target -mr-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
-        'opacity-75 transition-opacity hover:bg-on-status/10 hover:opacity-100 sm:h-7 sm:w-7',
+        // `current` rather than a named ink: the close sits INSIDE a variant fill and inherits that
+        // variant's `-foreground`, so a wash of the inherited colour is correct for every status and for
+        // any status a skin adds, where naming one of them would be right for one card and wrong on the next.
+        'opacity-75 transition-opacity hover:bg-current/10 hover:opacity-100 sm:h-7 sm:w-7',
         className,
       )}
       {...props}

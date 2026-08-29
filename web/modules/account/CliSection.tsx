@@ -190,7 +190,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       <SpatialRow title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.help.cliAutoCompact}>
         <div className="flex items-center gap-3">
           <Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />
-          {autoCompact ? <span className="font-mono text-sm tabular-nums text-text">{autoCompactAt}%</span> : null}
+          {autoCompact ? <span className="font-mono text-sm tabular-nums text-foreground">{autoCompactAt}%</span> : null}
           <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setThresholdsOpen(true)}>
             <SlidersHorizontal size={14} aria-hidden />{t.cli.compactByModelTitle}
           </button>
@@ -211,7 +211,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       </SpatialRow>
 
       <SpatialRow title={t.cli.fastModeTitle} icon={Bolt} description={t.help.cliFastMode}>
-        <label className="flex items-center gap-3 text-sm text-text">
+        <label className="flex items-center gap-3 text-sm text-foreground">
           <Toggle checked={fastMode} onChange={setFastMode} disabled={!anyFastRoute} label={t.cli.fastModeToggle} />
           <span>
             {!anyFastRoute
@@ -226,7 +226,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       {/* The warning reads as inline text like every other row here — a lone HelpTip button on one row
           of the section was the only "?" on the page and drew the eye to the wrong place. */}
       <SpatialRow title={t.cli.yoloTitle} icon={Zap} description={t.cli.yoloWarning}>
-        <label className="flex items-center gap-3 text-sm text-text">
+        <label className="flex items-center gap-3 text-sm text-foreground">
           <Toggle checked={yolo} onChange={(next) => next ? setConfirmYolo(true) : setYolo(false)} label={t.cli.yoloToggle} />
           <span>{t.cli.yoloToggle}</span>
         </label>

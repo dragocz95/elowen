@@ -66,12 +66,20 @@ export type ThemeAssetSlot = 'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon'
  *  The brand colour is `primary`, not `accent`. The web adopted the shadcn/ui token vocabulary, where
  *  `accent` names the hover/highlight SURFACE and `primary` names the brand — keeping the old spelling
  *  here would have let a white-label config repaint every hovered row in the brand colour. A theme.json
- *  still carrying `accent` is rejected by name rather than silently ignored. */
+ *  still carrying `accent` is rejected by name rather than silently ignored.
+ *
+ *  The rest of the list moved onto that same vocabulary when the web deleted its parallel palette names:
+ *  `bg`→`background`, `surface`→`card`, `elevated`→`muted`, `overlay`→`popover`, `text`→`foreground`,
+ *  `text-muted`→`muted-foreground`, `text-subtle`→`subtle-foreground`, `danger`→`destructive`. Three keys
+ *  are gone with no successor: `error` and `approve` were exact duplicates of `danger` and `success`, and
+ *  `cancelled` named a token nothing ever read. As with `accent`, an old spelling is REJECTED by name —
+ *  the contract test above this list is what makes a rename here impossible to forget, and a silently
+ *  ignored key is how a white-label instance ends up half-repainted with nothing to look at. */
 export const THEME_COLOR_KEYS = [
-  'bg', 'document', 'surface', 'elevated', 'overlay', 'border', 'border-strong',
+  'background', 'document', 'card', 'muted', 'popover', 'border', 'border-strong',
   'primary', 'primary-hot', 'ember', 'primary-rgb',
-  'text', 'text-muted', 'text-subtle',
-  'danger', 'success', 'warning', 'error', 'info', 'approve', 'cancelled',
+  'foreground', 'muted-foreground', 'subtle-foreground',
+  'destructive', 'success', 'warning', 'info',
 ] as const;
 
 const COLOR_KEY_SET = new Set<string>(THEME_COLOR_KEYS);

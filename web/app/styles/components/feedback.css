@@ -2,7 +2,7 @@
 
 .skeleton {
   border-radius: var(--radius-sm);
-  background: linear-gradient(100deg, var(--color-elevated) 30%, var(--color-overlay) 50%, var(--color-elevated) 70%);
+  background: linear-gradient(100deg, var(--color-muted) 30%, var(--color-popover) 50%, var(--color-muted) 70%);
   background-size: 240% 100%;
   animation: skeleton-drift 1.7s var(--ease-standard) infinite;
 }

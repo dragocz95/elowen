@@ -267,14 +267,14 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   const isOpen = editing !== null && assetKey(editing) === assetKey(item);
                   const cells = (
                     <>
-                      <DataTableCell lines={1} className="font-mono text-sm text-text">{item.name}</DataTableCell>
+                      <DataTableCell lines={1} className="font-mono text-sm text-foreground">{item.name}</DataTableCell>
                       {/* Preview, not wrap: a description is a sentence and would push every other row
                           out of alignment; the full text is on hover. */}
-                      <DataTableCell priority="wide" lines={1} title={item.description} className="text-xs text-text-muted">
+                      <DataTableCell priority="wide" lines={1} title={item.description} className="text-xs text-muted-foreground">
                         {item.description || '—'}
                       </DataTableCell>
                       {ownership ? (
-                        <DataTableCell priority="wide" lines={1} title={ownership.label(item)} className="text-xs text-text-muted">
+                        <DataTableCell priority="wide" lines={1} title={ownership.label(item)} className="text-xs text-muted-foreground">
                           {ownership.label(item)}
                         </DataTableCell>
                       ) : null}
@@ -346,7 +346,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   value={form.name}
                   onChange={(e) => setForm((cur) => (cur ? { ...cur, name: e.target.value } : cur))}
                   disabled={form.editing !== null}
-                  className={`font-mono ${form.editing === null && form.name !== '' && !nameValid ? 'border-danger' : ''}`}
+                  className={`font-mono ${form.editing === null && form.name !== '' && !nameValid ? 'border-destructive' : ''}`}
                   placeholder={labels.namePlaceholder}
                 />
               </Field>

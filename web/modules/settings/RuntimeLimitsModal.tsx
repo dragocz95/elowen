@@ -111,10 +111,10 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, presen
             return (
               <div key={field.key} className="py-3.5">
                 <div className="flex items-center gap-2.5">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
                     <Icon size={18} aria-hidden />
                   </span>
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
                     {t.brain.runtime[field.key]}
                     <HelpTip>{t.brain.runtime[`${field.key}Hint`]}</HelpTip>
                   </span>
@@ -131,7 +131,7 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, presen
                   className="mt-3"
                 />
                 {clamped !== undefined ? (
-                  <p className="mt-2 text-tiny leading-relaxed text-text-muted">
+                  <p className="mt-2 text-tiny leading-relaxed text-muted-foreground">
                     {t.brain.runtime.clamped.replace('{value}', displayLabel(field, clamped))}
                   </p>
                 ) : null}
@@ -141,10 +141,10 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, presen
           {/* The daemon re-reads this per delegation, so flipping it takes effect on the next sub-agent
               without a restart — that live read is what makes it a usable rollback under load. */}
           <div className="flex items-center gap-2.5 py-3.5">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
               <Cpu size={18} aria-hidden />
             </span>
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
               {t.brain.runtime.subagentRunnerEnabled}
               <HelpTip>{t.brain.runtime.subagentRunnerEnabledHint}</HelpTip>
             </span>
@@ -157,10 +157,10 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, presen
           {/* Read live on every compaction and every request, so switching it off does not merely stop new
               blobs — the stored ones stop being sent too, from the next request on. */}
           <div className="flex items-center gap-2.5 py-3.5">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
               <Cpu size={18} aria-hidden />
             </span>
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
               {t.brain.runtime.remoteCompactionEnabled}
               <HelpTip>{t.brain.runtime.remoteCompactionEnabledHint}</HelpTip>
             </span>

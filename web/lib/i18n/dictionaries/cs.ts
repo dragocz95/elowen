@@ -146,7 +146,6 @@ export const cs = {
     kill: 'Ukončit',
     appName: '{productName}',
     primaryNav: 'Hlavní',
-    breadcrumb: 'Drobečková navigace',
     expand: 'Rozbalit',
     collapse: 'Sbalit',
     collapseNav: 'Sbalit navigaci na ikony',
@@ -156,7 +155,6 @@ export const cs = {
     skinBuiltIn: 'Výchozí',
     skinCycle: 'kliknutím přepnete',
     skinNames: {
-      midnight: 'Midnight',
       studioLight: 'Studio Light',
       studioOled: 'Studio OLED',
     },

@@ -46,10 +46,10 @@ function SettingRow({ icon: Icon, label, hint, control, children }: {
   return (
     <div className="py-3.5">
       <div className="flex items-center gap-2.5">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
           <Icon size={18} aria-hidden />
         </span>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
           {label}<HelpTip>{hint}</HelpTip>
         </span>
         {control}
@@ -100,8 +100,8 @@ export function ProviderCompatibilityModal({ value, onSave, onClose }: {
             <ShieldCheck size={17} aria-hidden />
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-medium text-text">{t.brain.compatibility.safeTitle}</p>
-            <p className="mt-0.5 text-xs leading-relaxed text-text-muted">{t.brain.compatibility.safeHint}</p>
+            <p className="text-sm font-medium text-foreground">{t.brain.compatibility.safeTitle}</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{t.brain.compatibility.safeHint}</p>
           </div>
         </div>
 

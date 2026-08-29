@@ -390,7 +390,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         <div
           aria-hidden
           onClick={onDrawerClose}
-          className={`overlay-layer-nav-drawer fixed inset-0 bg-bg/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+          className={`overlay-layer-nav-drawer fixed inset-0 bg-background/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       ) : null}
     {/* Match the established Chetty shell: 17rem gives the labelled rail its original visual weight.
@@ -415,7 +415,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
       onPointerMove={endSurfacePress}
       onPointerUp={endSurfacePress}
       onPointerCancel={endSurfacePress}
-      className={`overflow-hidden border-border/45 bg-bg ${drawer
+      className={`overflow-hidden border-border/45 bg-background ${drawer
         ? `overlay-layer-nav-drawer overlay-nav-drawer fixed inset-y-0 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
           ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
           : `left-0 border-r ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}`
@@ -430,7 +430,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           type="button"
           onClick={onDrawerClose}
           aria-label={t.common.close}
-          className="overlay-touch-target absolute right-2 top-2 z-30 grid place-items-center rounded-full text-text-muted transition-colors hover:bg-elevated hover:text-text"
+          className="overlay-touch-target absolute right-2 top-2 z-30 grid place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <X size={18} aria-hidden />
         </button>
@@ -501,7 +501,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                 // A resting destination is drawn as a 2.25rem node, which is under the 44px a finger
                 // needs. The node keeps its size; the row it sits in grows to the floor around it, and
                 // MIN_SPACING keeps two such rows from overlapping once the axis tightens.
-                className={`overlay-touch-target group flex items-center gap-2 whitespace-nowrap ${active ? 'text-primary' : 'text-text-muted hover:text-text'}`}
+                className={`overlay-touch-target group flex items-center gap-2 whitespace-nowrap ${active ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
                 title={compact ? undefined : entry.label}
               >
                 {/* The icon column is twice `axis`, because `axis` is where the spine is drawn. The node
@@ -509,7 +509,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                     destinations, and a rail whose icons shrank as well would read as a different menu
                     rather than as the same one with its names hidden. */}
                 <span className="flex w-[4rem] shrink-0 justify-center" aria-hidden>
-                  <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-bg transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
+                  <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-background transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
                     ? 'orbit-node-active border-primary h-[3.75rem] w-[3.75rem]'
                     : 'border-border-strong/80 h-[2.25rem] w-[2.25rem]'}`}>
                     <Icon size={active ? 20 : 15} strokeWidth={1.45} />
@@ -532,16 +532,16 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           rail whether or not the destinations overflowed (a promise the rail could not keep) and never in
           the icon rail, which is the width that overflows soonest. */}
       {!compact || scrollRange > 0 ? (
-        <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center bg-gradient-to-t from-bg via-bg to-transparent pb-4 pt-6">
+        <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center bg-gradient-to-t from-background via-background to-transparent pb-4 pt-6">
           {scrollRange > 0 ? (
-            <div className="spatial-scroll-cue mb-2 flex flex-col items-center font-mono text-[8px] font-semibold tracking-[.24em] text-text-muted/45" aria-hidden>
+            <div className="spatial-scroll-cue mb-2 flex flex-col items-center font-mono text-[8px] font-semibold tracking-[.24em] text-muted-foreground/45" aria-hidden>
               {!compact ? <span>SCROLL</span> : null}
               <span className="mt-1 h-3 w-px bg-gradient-to-b from-primary/45 to-transparent" />
               <ChevronDown size={11} className="-mt-0.5 text-primary/55" />
             </div>
           ) : null}
           {!compact ? (
-            <div className="flex justify-center font-mono text-[9px] tracking-[.14em] text-text-muted/35"><span>&lt;</span><span className="mx-3">{health.data?.version ? `v${health.data.version}` : '—'}</span><span>&gt;</span></div>
+            <div className="flex justify-center font-mono text-[9px] tracking-[.14em] text-muted-foreground/35"><span>&lt;</span><span className="mx-3">{health.data?.version ? `v${health.data.version}` : '—'}</span><span>&gt;</span></div>
           ) : null}
         </div>
       ) : null}
@@ -555,7 +555,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           const box = event.currentTarget.getBoundingClientRect();
           customization.openSurfaceMenu(box.left + box.width / 2, box.top);
         }}
-        className="overlay-touch-target absolute bottom-0 left-1/2 z-30 grid -translate-x-1/2 place-items-center rounded-full p-1.5 text-text-muted/40 transition-colors hover:text-text focus-visible:text-text"
+        className="overlay-touch-target absolute bottom-0 left-1/2 z-30 grid -translate-x-1/2 place-items-center rounded-full p-1.5 text-muted-foreground/40 transition-colors hover:text-foreground focus-visible:text-foreground"
       >
         <MoreHorizontal size={13} />
       </button>

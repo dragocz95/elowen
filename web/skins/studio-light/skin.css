@@ -9,9 +9,8 @@
  * invisible to the WCAG gate and the gate would silently measure the built-in ember palette instead.
  *
  * Every value here is measured, not eyeballed: all fifteen text/surface pairs clear WCAG AA (4.5:1) and
- * the three text steps stay ordered. The tightest pair is --color-text-subtle on the derived
- * --color-surface-sticky at 4.70:1, which is why the third step is #6A6A73 rather than something
- * lighter. */
+ * the three text steps stay ordered. The tightest pair is --color-subtle-foreground on the derived
+ * --color-sticky at 4.70:1, which is why the third step is #6A6A73 rather than something lighter. */
 
 :root[data-skin='studio-light'] {
   /* A light document. The browser has to be told, or form controls, scrollbars and the caret keep
@@ -19,41 +18,41 @@
   color-scheme: light;
 
   /* The reference uses one clean white canvas; depth comes from quiet fills and hairlines. */
-  --color-bg: #ffffff;
+  --color-background: #ffffff;
   --color-document: #ffffff;
-  --color-surface: #ffffff;
-  --color-elevated: #f4f4f5;
-  --color-overlay: #ffffff;
+  --color-card: #ffffff;
+  --color-muted: #f4f4f5;
+  --color-popover: #ffffff;
   --color-border: #e4e4e7;
   --color-border-strong: #d4d4d8;
 
   /* The navigation column, one step quieter than the canvas it insets from, with its own row fill and
-     its own rule. It is deliberately NOT --color-elevated: that step belongs to the content cards and
+     its own rule. It is deliberately NOT --color-muted: that step belongs to the content cards and
      moves with them, and a sidebar row taking the card fill made the menu read as a stack of cards.
      Measured: subtle text 5.00:1 on the column, 4.54:1 on the row fill — both clear AA. */
   --color-sidebar: #f7f7f8;
   --color-sidebar-accent: #ececef;
   --color-sidebar-border: #e6e6e9;
 
-  /* Ink. --color-text-muted is #52525b rather than the lighter grey a light UI reaches for by reflex:
-     #71717a measures 4.40:1 on --color-elevated and fails AA outright.
-     --color-text-subtle is measured against the WORST surface a light design has, which is not
-     --color-elevated but --color-surface-sticky: that token is derived (94% document + 6% ink) and
-     resolves here to #f0f0f0, lighter than #f4f4f5, and it is what the register's sticky header is
-     painted with. #6e6e77 measured 4.43:1 there — below AA on 10px uppercase mono. #6a6a73 clears it.
-     Measured: on --color-surface-sticky text 17.46:1, muted 6.78:1, subtle 4.70:1; on
-     --color-elevated text 18.10:1, muted 7.04:1, subtle 4.87:1. */
-  --color-text: #09090b;
-  --color-text-muted: #52525b;
-  --color-text-subtle: #6a6a73;
+  /* Ink. --color-muted-foreground is #52525b rather than the lighter grey a light UI reaches for by
+     reflex: #71717a measures 4.40:1 on --color-muted and fails AA outright.
+     --color-subtle-foreground is measured against the WORST surface a light design has, which is not
+     --color-muted but --color-sticky: that token is derived (94% document + 6% ink) and resolves here to
+     #f0f0f0, lighter than #f4f4f5, and it is what the register's sticky header is painted with. #6e6e77
+     measured 4.43:1 there — below AA on 10px uppercase mono. #6a6a73 clears it.
+     Measured: on --color-sticky text 17.46:1, muted 6.78:1, subtle 4.70:1; on --color-muted text
+     18.10:1, muted 7.04:1, subtle 4.87:1. */
+  --color-foreground: #09090b;
+  --color-muted-foreground: #52525b;
+  --color-subtle-foreground: #6a6a73;
 
-  /* The overlay veil. The inherited token mixes --color-bg, which on this canvas is near-white: at 70%
-     over a near-white page it darkened nothing and left a dialog floating on a hairline. On a light
-     design the veil has to come from the INK instead, which is also what keeps it following a repaint.
+  /* The overlay veil. The inherited token mixes --color-background, which on this canvas is near-white:
+     at 70% over a near-white page it darkened nothing and left a dialog floating on a hairline. On a
+     light design the veil has to come from the INK instead, which is also what keeps it following a repaint.
      At 50% the page reads 3.68:1 darker and a white dialog stands 3.84:1 off it. */
-  --color-scrim: color-mix(in srgb, var(--color-text) 50%, transparent);
+  --color-scrim: color-mix(in srgb, var(--color-foreground) 50%, transparent);
 
-  /* Signal blue. #0070f3 is the design's blue, but as body text it measures 4.14:1 on --color-elevated,
+  /* Signal blue. #0070f3 is the design's blue, but as body text it measures 4.14:1 on --color-muted,
      so the base accent is one step darker (4.70:1) and #0070f3 becomes the hot/hover step — the ramp
      keeps the intended colour and links stay readable. */
   --color-primary: #0068e1;
@@ -81,18 +80,16 @@
      interface text without pretending to be another UI face — nothing else in the design uses it. */
   --studio-brand-font: "Space Grotesk Variable", var(--font-display);
 
-  /* Status fills. --color-on-status is the ink that sits ON one of them, and on a light design it has to
-     be white rather than near-black: white measures 5.26:1 on danger, 5.28:1 on success, 5.02:1 on
-     warning, 5.64:1 on info and 6.32:1 on cancelled. Each fill is also dark enough to serve as TEXT on
-     --color-elevated (danger 4.79:1, success 4.81:1, warning 4.57:1, info 5.13:1, cancelled 5.75:1). */
-  --color-danger: #ce2b1e;
-  --color-error: #ce2b1e;
+  /* Status fills. --color-primary-foreground is the ink that sits ON one of them — the other status
+     foregrounds alias it — and on a light design it has to be white rather than near-black: white
+     measures 5.26:1 on destructive, 5.28:1 on success, 5.02:1 on warning and 5.64:1 on info. Each fill
+     is also dark enough to serve as TEXT on --color-muted (destructive 4.79:1, success 4.81:1, warning
+     4.57:1, info 5.13:1). */
+  --color-destructive: #ce2b1e;
   --color-success: #0a7c42;
-  --color-approve: #0a7c42;
   --color-warning: #b45309;
   --color-info: #0761d9;
-  --color-cancelled: #5f5f68;
-  --color-on-status: #ffffff;
+  --color-primary-foreground: #ffffff;
 
   /* A real ladder — 6 / 8 / 10 / 12 / 16 — rather than the flat 6/8/12 this design started with. Each
      step belongs to a size of thing: 6 an inline mark, 8 a navigation row, 10 a control, 12 a code
@@ -123,11 +120,11 @@
      strengthened. A menu needs the stronger edge; a card does not.
      --color-border keeps its opaque value and is NOT retired: the frozen chat surface reads it, and
      freezing that surface is a hard requirement of this change. */
-  --studio-line: color-mix(in srgb, var(--color-text) 7.5%, transparent);
-  --studio-line-strong: color-mix(in srgb, var(--color-text) 18%, transparent);
-  --studio-fill-quiet: color-mix(in srgb, var(--color-text) 4%, transparent);
-  --studio-fill-hover: color-mix(in srgb, var(--color-text) 3.5%, transparent);
-  --studio-fill-active: color-mix(in srgb, var(--color-text) 7%, transparent);
+  --studio-line: color-mix(in srgb, var(--color-foreground) 7.5%, transparent);
+  --studio-line-strong: color-mix(in srgb, var(--color-foreground) 18%, transparent);
+  --studio-fill-quiet: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+  --studio-fill-hover: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
+  --studio-fill-active: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 
   /* ---- Chrome rhythm -------------------------------------------------------------------------
      The icon rail is the reference's measured 57px; toolbar fields, buttons and filters share a 40px

@@ -47,10 +47,10 @@ export function DashboardView() {
         // pair, so it wraps instead of overflowing on a narrow hero.
         status: (
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="font-mono text-lg font-semibold tabular-nums text-text">
+            <span className="font-mono text-lg font-semibold tabular-nums text-foreground">
               {date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}
             </span>
-            <span className="text-xs capitalize text-text-muted">
+            <span className="text-xs capitalize text-muted-foreground">
               {date.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })}
             </span>
           </span>

@@ -14,7 +14,7 @@ function Radio({ checked }: { checked: boolean }) {
   return (
     <span
       className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
-        checked ? 'border-primary' : 'border-border-strong bg-surface'
+        checked ? 'border-primary' : 'border-border-strong bg-card'
       }`}
       aria-hidden
     >
@@ -122,8 +122,8 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
                 >
                   {q.multiSelect ? <Checkbox checked={on} className="mt-0.5" /> : <Radio checked={on} />}
                   <span className="flex min-w-0 flex-col">
-                    <span className="text-sm text-text">{shown.label}</span>
-                    {shown.description ? <span className="text-tiny text-text-muted">{shown.description}</span> : null}
+                    <span className="text-sm text-foreground">{shown.label}</span>
+                    {shown.description ? <span className="text-tiny text-muted-foreground">{shown.description}</span> : null}
                   </span>
                 </button>
               );
@@ -135,8 +135,8 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
                 onClick={() => setOtherOpen((cur) => ({ ...cur, [qi]: !cur[qi] }))}
                 className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-primary/10 disabled:opacity-60 ${otherOpen[qi] ? 'bg-primary/10' : ''}`}
               >
-                <Pencil size={14} className="shrink-0 text-text-muted" />
-                <span className="text-sm text-text">{t.brainChat.askOther}</span>
+                <Pencil size={14} className="shrink-0 text-muted-foreground" />
+                <span className="text-sm text-foreground">{t.brainChat.askOther}</span>
               </button>
             ) : null}
           </div>
@@ -144,10 +144,10 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
         return (
           <div key={qi} className="flex flex-col gap-1.5">
             <div className="flex items-baseline gap-2">
-              <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny font-medium text-text-muted">
+              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny font-medium text-muted-foreground">
                 {wording ? t.brainChat.approvalHeader : q.header}
               </span>
-              <span className="text-sm text-text">
+              <span className="text-sm text-foreground">
                 {wording
                   ? (wording.command
                     ? `${t.brainChat.approvalRunCommand}\n$ ${wording.command}`
@@ -162,7 +162,7 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
                 {optionList}
                 <pre
                   data-testid={`ask-preview-${qi}`}
-                  className="max-w-full overflow-x-auto rounded-md border border-border bg-elevated p-2 font-mono text-tiny leading-relaxed text-text-muted"
+                  className="max-w-full overflow-x-auto rounded-md border border-border bg-muted p-2 font-mono text-tiny leading-relaxed text-muted-foreground"
                 >
                   {focusedPreview ?? t.brainChat.askPreviewHint}
                 </pre>

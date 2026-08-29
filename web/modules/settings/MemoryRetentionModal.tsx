@@ -63,10 +63,10 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
       <ModalBody>
         <div className="flex flex-col divide-y divide-border">
           <div className="flex items-center gap-2.5 py-3.5">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
               <ShieldCheck size={18} aria-hidden />
             </span>
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
               {t.brain.retention.enabled}
               <HelpTip>{t.brain.retention.enabledHint}</HelpTip>
             </span>
@@ -85,10 +85,10 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
             return (
               <div key={field.key} className="py-3.5">
                 <div className="flex items-center gap-2.5">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
                     <Icon size={18} aria-hidden />
                   </span>
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
                     {t.brain.retention[field.key]}
                     <HelpTip>{t.brain.retention[`${field.key}Hint`]}</HelpTip>
                   </span>
@@ -105,7 +105,7 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
                   className="mt-3"
                 />
                 {clamped !== undefined ? (
-                  <p className="mt-2 text-tiny leading-relaxed text-text-muted">
+                  <p className="mt-2 text-tiny leading-relaxed text-muted-foreground">
                     {t.brain.runtime.clamped.replace('{value}', field.key === 'graceDays' ? daysLabel(clamped) : String(clamped))}
                   </p>
                 ) : null}
@@ -120,10 +120,10 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
             return (
               <div key={level} className="py-3.5">
                 <div className="flex items-center gap-2.5">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
                     <Timer size={18} aria-hidden />
                   </span>
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
                     {t.brain.retention.halfLifeLevel.replace('{n}', String(level))}
                     {level === 1 ? <HelpTip>{t.brain.retention.halfLifeHint}</HelpTip> : null}
                   </span>
@@ -140,7 +140,7 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
                   className="mt-3"
                 />
                 {clamped !== undefined ? (
-                  <p className="mt-2 text-tiny leading-relaxed text-text-muted">
+                  <p className="mt-2 text-tiny leading-relaxed text-muted-foreground">
                     {t.brain.runtime.clamped.replace('{value}', halfLifeLabel(clamped))}
                   </p>
                 ) : null}
@@ -150,14 +150,14 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
 
           {/* Importance 5 is pinned by the daemon (never decays, never evicted) — shown, not editable. */}
           <div className="flex items-center gap-2.5 py-3.5">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
               <Pin size={18} aria-hidden />
             </span>
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
               {t.brain.retention.pinned}
               <HelpTip>{t.brain.retention.pinnedHint}</HelpTip>
             </span>
-            <span className="shrink-0 font-mono text-sm tabular-nums text-text-muted">{t.brain.retention.never}</span>
+            <span className="shrink-0 font-mono text-sm tabular-nums text-muted-foreground">{t.brain.retention.never}</span>
           </div>
         </div>
       </ModalBody>

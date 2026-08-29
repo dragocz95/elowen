@@ -1,7 +1,7 @@
 /* The reference density is based on a true 16px root. Per-device zoom remains available through
    UiScaleProvider; the viewport itself no longer inflates every desktop control by 25%.
 
-   No literal canvas here: this file and tokens.css ship as ONE stylesheet, so `--color-bg` is already
+   No literal canvas here: this file and tokens.css ship as ONE stylesheet, so `--color-background` is already
    defined by the time these rules apply and a hardcoded black would only be a second, skin-blind copy
    of it. The frame BEFORE the stylesheet lands is painted by the inline style in app/layout.tsx, which
    derives its colour from the resolved skin. */
@@ -9,8 +9,8 @@ html { font-size: 100%; }
 
 html, body {
   height: 100%;
-  background-color: var(--color-bg);
-  color: var(--color-text);
+  background-color: var(--color-background);
+  color: var(--color-foreground);
   font-family: var(--font-sans);
   font-weight: 400;
   font-feature-settings: "ss01" 1, "cv01" 1, "cv09" 1;
@@ -27,7 +27,7 @@ body {
   background-attachment: fixed;
 }
 
-::selection { color: var(--color-text); background: rgb(var(--primary-rgb) / 0.34); }
+::selection { color: var(--color-foreground); background: rgb(var(--primary-rgb) / 0.34); }
 
 h1, h2, h3, h4, h5, h6, .font-display {
   font-family: var(--font-display);
@@ -47,7 +47,7 @@ select:focus-visible,
 [role="radio"]:focus-visible,
 [role="checkbox"]:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px var(--color-bg), 0 0 0 3px color-mix(in srgb, var(--color-primary) 78%, white 22%);
+  box-shadow: 0 0 0 1px var(--color-background), 0 0 0 3px color-mix(in srgb, var(--color-primary) 78%, white 22%);
 }
 
 * {
@@ -57,6 +57,6 @@ select:focus-visible,
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb { background: var(--color-border-strong); border: 2px solid transparent; border-radius: 999px; background-clip: padding-box; }
-*::-webkit-scrollbar-thumb:hover { background-color: var(--color-text-subtle); }
+*::-webkit-scrollbar-thumb:hover { background-color: var(--color-subtle-foreground); }
 .xterm-viewport::-webkit-scrollbar-thumb { background-color: var(--color-border-strong); }
 

@@ -27,11 +27,11 @@ export function CompactThresholdsDrawer({ models, thresholds, defaultPct, onDefa
   const { t } = useTranslation();
   return (
     <WorkspaceDetailRail label={onDefaultChange ? t.cli.autoCompact : t.cli.compactByModelTitle} closeLabel={t.common.close} onClose={onClose}>
-      <p className="mb-4 text-xs leading-relaxed text-text-muted">{t.help.cliCompactByModel}</p>
+      <p className="mb-4 text-xs leading-relaxed text-muted-foreground">{t.help.cliCompactByModel}</p>
       {onDefaultChange ? (
         <div className="mb-5 border-b border-border pb-5">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-text">{t.cli.autoCompactAt}</span>
+            <span className="text-sm font-medium text-foreground">{t.cli.autoCompactAt}</span>
             <span className="font-mono text-sm tabular-nums text-primary">{defaultPct}%</span>
           </div>
           <Slider value={defaultPct} min={30} max={95} step={5} onChange={onDefaultChange} aria-label={t.cli.autoCompactAt} className="mt-3" />
@@ -45,12 +45,12 @@ export function CompactThresholdsDrawer({ models, thresholds, defaultPct, onDefa
           return (
             <div key={m.exec} className="py-3.5">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted"><ModelIcon name={m.model} size={18} /></span>
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground"><ModelIcon name={m.model} size={18} /></span>
                 <div className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-text">{m.model}</span>
-                  <span className="block truncate font-mono text-[11px] text-text-muted">{formatTokens(m.contextWindow)} · {m.providerLabel}</span>
+                  <span className="block truncate text-sm font-medium text-foreground">{m.model}</span>
+                  <span className="block truncate font-mono text-[11px] text-muted-foreground">{formatTokens(m.contextWindow)} · {m.providerLabel}</span>
                 </div>
-                <span className={`shrink-0 font-mono text-sm tabular-nums ${override != null ? 'text-primary' : 'text-text-muted'}`}>
+                <span className={`shrink-0 font-mono text-sm tabular-nums ${override != null ? 'text-primary' : 'text-muted-foreground'}`}>
                   {override != null ? `${pct}%` : t.cli.compactByModelDefault}
                 </span>
                 {override != null ? (
@@ -58,7 +58,7 @@ export function CompactThresholdsDrawer({ models, thresholds, defaultPct, onDefa
                     type="button"
                     onClick={() => onChange(key, null)}
                     aria-label={`${t.cli.compactByModelReset}: ${m.providerLabel} ${m.model}`}
-                    className="shrink-0 p-1 text-text-muted transition-colors hover:text-text"
+                    className="shrink-0 p-1 text-muted-foreground transition-colors hover:text-foreground"
                   >
                     <RotateCcw size={14} aria-hidden />
                   </button>

@@ -81,7 +81,7 @@ function RadioDot({ checked }: { checked: boolean }) {
       }`}
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full bg-text transition-transform duration-150 ${checked ? 'scale-100' : 'scale-0'}`}
+        className={`h-1.5 w-1.5 rounded-full bg-foreground transition-transform duration-150 ${checked ? 'scale-100' : 'scale-0'}`}
         style={{ transitionTimingFunction: 'var(--ease-spring)' }}
       />
     </span>
@@ -228,7 +228,7 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
               role="tab"
               aria-selected={groupFilter === null}
               onClick={() => setGroupFilter(null)}
-              className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${groupFilter === null ? 'border-border-strong bg-muted text-foreground' : 'border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
+              className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${groupFilter === null ? 'border-border-strong bg-accent text-accent-foreground' : 'border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
             >
               {t.managePicker.all}
             </button>
@@ -239,7 +239,7 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
                 role="tab"
                 aria-selected={groupFilter === g.id}
                 onClick={() => setGroupFilter(g.id)}
-                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${groupFilter === g.id ? 'border-border-strong bg-muted text-foreground' : 'border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
+                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${groupFilter === g.id ? 'border-border-strong bg-accent text-accent-foreground' : 'border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
               >
                 {groupIcons?.[g.id]}
                 {g.label}

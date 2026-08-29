@@ -24,20 +24,20 @@ describe('ConfigStore', () => {
 
     // The daemon does NOT know which skins a given web build compiled — that registry is a build
     // artifact of web/ — so an unrecognized name is stored and filtered by the browser, which does know.
-    expect(cfg.update({ allowedSkins: ['default', 'midnight', 'not-built-yet'] }).allowedSkins)
-      .toEqual(['default', 'midnight', 'not-built-yet']);
+    expect(cfg.update({ allowedSkins: ['default', 'studio-oled', 'not-built-yet'] }).allowedSkins)
+      .toEqual(['default', 'studio-oled', 'not-built-yet']);
 
     // What IS enforced is the single-segment grammar, because the value ends up in a DOM attribute.
-    expect(cfg.update({ allowedSkins: ['../etc', 'a b', "x'y", '-lead', 'Midnight', 7, 'ok'] as unknown as string[] }).allowedSkins)
-      .toEqual(['midnight', 'ok']);
+    expect(cfg.update({ allowedSkins: ['../etc', 'a b', "x'y", '-lead', 'Studio-OLED', 7, 'ok'] as unknown as string[] }).allowedSkins)
+      .toEqual(['studio-oled', 'ok']);
 
     // Order is the operator's — it is the order the switcher cycles through — and duplicates collapse.
-    expect(cfg.update({ allowedSkins: ['midnight', 'default', 'midnight'] }).allowedSkins)
-      .toEqual(['midnight', 'default']);
+    expect(cfg.update({ allowedSkins: ['studio-oled', 'default', 'studio-oled'] }).allowedSkins)
+      .toEqual(['studio-oled', 'default']);
 
     // A patch touching a sibling field must not reset the list; an explicit empty one turns it off.
     cfg.update({ autoUpdate: true });
-    expect(cfg.get().allowedSkins).toEqual(['midnight', 'default']);
+    expect(cfg.get().allowedSkins).toEqual(['studio-oled', 'default']);
     expect(cfg.update({ allowedSkins: [] }).allowedSkins).toEqual([]);
   });
   it('brain.hiddenOauth defaults empty, sanitizes, survives a sibling patch, and clears on an empty list', () => {

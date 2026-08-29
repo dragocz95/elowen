@@ -55,7 +55,7 @@ const SystemDiagnostics = nextDynamic(
   { ssr: false, loading: () => <LoadingState variant="block" height="h-[150px]" /> },
 );
 
-const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-primary';
+const inputClass = 'w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground transition-colors focus:border-primary';
 
 function formatMemory(used: number, total: number): string {
   const gb = (value: number) => `${(value / 1_000_000_000).toFixed(1)} GB`;
@@ -417,7 +417,7 @@ export default function SettingsPage() {
           <>
             <SettingsToolbar>
               <div className="relative w-full">
-                <Search size={15} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                <Search size={15} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   type="search"
                   value={modelQuery}
@@ -446,7 +446,7 @@ export default function SettingsPage() {
                       <ProviderLogo meta={prov} size={28} />
                       <div className="flex items-center gap-2">
                         <h2>{prov.label}</h2>
-                        <span className="font-mono text-tiny text-text-muted">{enabledCount}/{groupExecs.length}</span>
+                        <span className="font-mono text-tiny text-muted-foreground">{enabledCount}/{groupExecs.length}</span>
                         {prov.embedded ? <HelpTip align="left">{t.help.elowenModels}</HelpTip> : null}
                       </div>
                     </div>
@@ -456,21 +456,21 @@ export default function SettingsPage() {
                       const isCustom = !isPresetExec(p.exec);
                       return (
                         <div data-testid="model-row" key={p.exec} className="settings-model-row settings-model-row--cli group flex min-w-0 items-center gap-3 transition-colors">
-                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-text-muted">
+                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground">
                             <ModelIcon name={p.exec} size={20} />
                           </span>
                           <div className="settings-model-row__identity min-w-0 @2xl:w-56 @2xl:shrink-0">
                             <div className="flex min-w-0 items-center gap-2">
-                              <span className="truncate text-sm font-medium text-text">{p.label}</span>
-                              {!isCustom ? <span className="text-[9px] uppercase tracking-wide text-text-muted/70">{t.settings.presetTag}</span> : null}
+                              <span className="truncate text-sm font-medium text-foreground">{p.label}</span>
+                              {!isCustom ? <span className="text-[9px] uppercase tracking-wide text-muted-foreground/70">{t.settings.presetTag}</span> : null}
                             </div>
-                            <span className="block truncate font-mono text-[11px] text-text-muted">{execModel(p.exec)}</span>
+                            <span className="block truncate font-mono text-[11px] text-muted-foreground">{execModel(p.exec)}</span>
                           </div>
                           <button
                             type="button"
                             onClick={() => setNoteFor({ label: p.label, exec: p.exec })}
                             title={t.settings.modelNoteEdit}
-                            className={`hidden min-w-0 flex-1 truncate text-left text-xs @2xl:block ${modelNotes[p.exec]?.trim() ? 'text-text-muted hover:text-text' : 'italic text-text-muted/60 hover:text-text-muted'}`}
+                            className={`hidden min-w-0 flex-1 truncate text-left text-xs @2xl:block ${modelNotes[p.exec]?.trim() ? 'text-muted-foreground hover:text-foreground' : 'italic text-muted-foreground/60 hover:text-muted-foreground'}`}
                           >
                             {modelNotes[p.exec]?.trim() || t.settings.modelNoteAdd}
                           </button>
@@ -480,7 +480,7 @@ export default function SettingsPage() {
                               aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
                               title={t.settings.editLabel.replace('{exec}', p.exec)}
                               onClick={() => startEdit(p)}
-                              className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                             >
                               <Pencil size={13} aria-hidden />
                             </button>
@@ -489,7 +489,7 @@ export default function SettingsPage() {
                               aria-label={t.settings.deleteLabel.replace('{exec}', p.exec)}
                               title={t.settings.deleteLabel.replace('{exec}', p.exec)}
                               onClick={() => setPendingDelete(p.exec)}
-                              className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                             >
                               <X size={13} aria-hidden />
                             </button>
@@ -507,10 +507,10 @@ export default function SettingsPage() {
                       const overridden = override != null;
                       return (
                       <div data-testid="model-row" key={m.exec} className="settings-model-row settings-model-row--elowen flex min-w-0 items-center gap-3 transition-colors">
-                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-text-muted"><ModelIcon name={m.model} size={20} /></span>
+                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground"><ModelIcon name={m.model} size={20} /></span>
                           <div className="settings-model-row__identity min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-text">{m.model}</span>
-                            <span className="block truncate font-mono text-[11px] text-text-muted">{m.exec}</span>
+                            <span className="block truncate text-sm font-medium text-foreground">{m.model}</span>
+                            <span className="block truncate font-mono text-[11px] text-muted-foreground">{m.exec}</span>
                           </div>
                           <div className="settings-model-row__controls ml-auto flex shrink-0 items-center gap-2">
                             <span className="settings-model-row__provider min-w-0"><Badge>{m.providerLabel}</Badge></span>
@@ -519,7 +519,7 @@ export default function SettingsPage() {
                               onClick={() => setCtxFor({ model: m.model, key: winKey, effective: m.contextWindow })}
                               title={`${t.brain.contextWindowEdit} · ${formatTokens(override ?? m.contextWindow)}`}
                               aria-label={`${t.brain.contextWindowEdit}: ${m.model}`}
-                              className={`settings-model-row__context inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-primary' : 'text-text-muted hover:text-text'}`}
+                              className={`settings-model-row__context inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
                             >
                               <Gauge size={12} aria-hidden />
                               {formatTokens(override ?? m.contextWindow)}
@@ -648,7 +648,7 @@ export default function SettingsPage() {
                 <SettingsRow label={t.settings.retention.label} description={t.settings.retention.hint} icon={CalendarClock}>
                   <div className="flex items-center gap-3">
                     <Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />
-                    {retention.enabled ? <span className="whitespace-nowrap font-mono text-sm tabular-nums text-text">{retention.days} {t.settings.retention.days}</span> : null}
+                    {retention.enabled ? <span className="whitespace-nowrap font-mono text-sm tabular-nums text-foreground">{retention.days} {t.settings.retention.days}</span> : null}
                     <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setRetentionOpen(true)}>
                       <CalendarClock size={14} aria-hidden />{t.managePicker.manage}
                     </button>
@@ -657,14 +657,14 @@ export default function SettingsPage() {
               );
               const retentionDrawer = retentionOpen ? (
                 <WorkspaceDetailRail label={t.settings.retention.label} closeLabel={t.common.close} onClose={() => setRetentionOpen(false)}>
-                  <p className="mb-4 text-xs leading-relaxed text-text-muted">{t.settings.retention.hint}</p>
+                  <p className="mb-4 text-xs leading-relaxed text-muted-foreground">{t.settings.retention.hint}</p>
                   <div className="flex flex-col gap-5 py-2">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm text-text">{t.settings.retention.label}</span>
+                      <span className="text-sm text-foreground">{t.settings.retention.label}</span>
                       <Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.settings.retention.olderThan}</span>
+                      <span className="text-tiny font-semibold uppercase tracking-wide text-muted-foreground">{t.settings.retention.olderThan}</span>
                       <div className="flex items-center gap-2">
                         <Input
                           type="number"
@@ -677,7 +677,7 @@ export default function SettingsPage() {
                           className="w-24 text-center"
                           aria-label={t.settings.retention.olderThan}
                         />
-                        <span className="text-xs text-text-muted">{t.settings.retention.days}</span>
+                        <span className="text-xs text-muted-foreground">{t.settings.retention.days}</span>
                       </div>
                     </div>
                   </div>

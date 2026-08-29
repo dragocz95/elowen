@@ -33,15 +33,15 @@ import type { ProjectSummary } from '../../lib/types';
 function ProjectSummaryCell({ summary, membersLabel }: { summary?: ProjectSummary; membersLabel: string }) {
   const members = summary?.members;
   const indicators = summary?.indicators ?? [];
-  if ((!members || members.total === 0) && indicators.length === 0) return <span className="text-xs text-text-muted">—</span>;
+  if ((!members || members.total === 0) && indicators.length === 0) return <span className="text-xs text-muted-foreground">—</span>;
   return (
     <div className="flex min-w-0 items-center gap-2 overflow-hidden">
       {members && members.total > 0 ? (
         <div className="flex shrink-0 items-center" aria-label={membersLabel.replace('{n}', String(members.total))}>
           <div className="flex -space-x-1.5">
-            {members.samples.map((user) => <span key={user.id} className="rounded-full ring-2 ring-surface" title={user.name || user.username}><Avatar user={user} size={22} /></span>)}
+            {members.samples.map((user) => <span key={user.id} className="rounded-full ring-2 ring-card" title={user.name || user.username}><Avatar user={user} size={22} /></span>)}
           </div>
-          <span className="ml-1.5 text-[11px] font-semibold text-text-muted">{members.total}</span>
+          <span className="ml-1.5 text-[11px] font-semibold text-muted-foreground">{members.total}</span>
         </div>
       ) : null}
       {indicators.length > 0 ? (
@@ -287,19 +287,19 @@ export function ProjectsView() {
                                 whose rows measure one height is what makes it scannable, and the path has
                                 its own column plus the detail rail one tap away. */}
                             <DataTableCell lines={1} title={project.path} className="flex items-center gap-3">
-                              <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated/60">
-                                <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-text-muted" />
+                              <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/60">
+                                <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-muted-foreground" />
                               </span>
-                              <span className="min-w-0 truncate text-sm font-semibold text-text transition-colors group-hover:text-primary">{project.slug}</span>
+                              <span className="min-w-0 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
                             </DataTableCell>
-                            <DataTableCell priority="wide" lines={1} title={project.path} className="font-mono text-xs text-text-muted"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
+                            <DataTableCell priority="wide" lines={1} title={project.path} className="font-mono text-xs text-muted-foreground"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
                             <DataTableCell priority="wide" lines="auto"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
                             <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()}>
                               <ActionMenu
                                 label={`${project.slug}: ${t.common.actions}`}
                                 items={projectActions(project)}
                                 trigger={<MoreHorizontal size={16} aria-hidden />}
-                                triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-elevated hover:text-text group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+                                triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-colors hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
                               />
                             </DataTableCell>
                             <DataTableChevronCell />
@@ -313,27 +313,27 @@ export function ProjectsView() {
                 {selectedProject ? (
                   <WorkspaceDetailRail label={t.projects.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}>
                     <div className="flex min-w-0 items-center gap-3 border-b border-border/70 pb-4">
-                      <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated/60">
-                        <ProjectIcon project={selectedProject} size={selectedProject.icon ? 39 : 22} className="text-text-muted" />
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/60">
+                        <ProjectIcon project={selectedProject} size={selectedProject.icon ? 39 : 22} className="text-muted-foreground" />
                       </span>
                       <div className="min-w-0">
-                        <h2 className="truncate text-base font-semibold text-text">{selectedProject.slug}</h2>
-                        <span className="block truncate font-mono text-[11px] text-text-muted">{selectedProject.path}</span>
+                        <h2 className="truncate text-base font-semibold text-foreground">{selectedProject.slug}</h2>
+                        <span className="block truncate font-mono text-[11px] text-muted-foreground">{selectedProject.path}</span>
                       </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 py-3">
-                      {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-text"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
-                      {isAdmin ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}
+                      {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-foreground"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
+                      {isAdmin ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}
                     </div>
 
                     <ProjectDetailTabs project={selectedProject} isAdmin={isAdmin} overview={<>
-                      {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-text-muted">{selectedProject.notes}</p> : null}
+                      {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-muted-foreground">{selectedProject.notes}</p> : null}
                       {git.isLoading ? <LoadingLine /> : null}
                       {git.data && !git.data.isRepo ? <div className="py-4"><Badge tone="muted">{t.projects.notGit}</Badge></div> : null}
                       {git.data?.status ? (
                         <section className="border-b border-border/70 py-4">
-                          <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text"><FolderGit2 size={14} className="text-text-muted" aria-hidden />{t.projects.git}</h3>
+                          <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-foreground"><FolderGit2 size={14} className="text-muted-foreground" aria-hidden />{t.projects.git}</h3>
                           <div className="flex flex-wrap items-center gap-1.5">
                             <Badge tone="accent"><GitBranch size={11} className="mr-1" aria-hidden />{git.data.status.branch}</Badge>
                             {git.data.status.clean
@@ -348,23 +348,23 @@ export function ProjectsView() {
 
                       {git.data?.isRepo && git.data.branches.length > 0 ? (
                         <section className="border-b border-border/70 py-4">
-                          <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text"><GitBranch size={14} className="text-text-muted" aria-hidden />{t.projects.branches}</h3>
+                          <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-foreground"><GitBranch size={14} className="text-muted-foreground" aria-hidden />{t.projects.branches}</h3>
                           <div className="flex flex-wrap gap-1.5">{git.data.branches.map((branch) => <Badge key={branch.name} tone={branch.current ? 'accent' : 'muted'}>{branch.name}{branch.current ? ' *' : ''}</Badge>)}</div>
                         </section>
                       ) : null}
 
                       {git.data?.isRepo && git.data.commits.length > 0 ? (
                         <section className="py-4">
-                          <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold text-text"><GitCommitHorizontal size={14} className="text-text-muted" aria-hidden />{t.projects.commits}</h3>
+                          <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground"><GitCommitHorizontal size={14} className="text-muted-foreground" aria-hidden />{t.projects.commits}</h3>
                           <EntityList>
                             {git.data.commits.map((commit) => (
                               <EntityRow key={commit.hash} interactive={false} className="py-0">
                                 {editorEnabled ? <button type="button" onClick={() => openEditor(commit.hash)} title={t.projects.viewCommit} className="flex w-full min-w-0 flex-col gap-1 px-1 py-3 text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70">
-                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-primary">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
-                                  <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
+                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-primary">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-foreground">{commit.subject}</span></span>
+                                  <span className="text-[10px] text-muted-foreground">{commit.author} · {commit.relative}</span>
                                 </button> : <div className="flex min-w-0 flex-col gap-1 px-1 py-3">
-                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-primary">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
-                                  <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
+                                  <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-primary">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-foreground">{commit.subject}</span></span>
+                                  <span className="text-[10px] text-muted-foreground">{commit.author} · {commit.relative}</span>
                                 </div>}
                               </EntityRow>
                             ))}
@@ -397,7 +397,7 @@ export function ProjectsView() {
               )}
             </Field>
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-primary focus:outline-none" />
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none" />
             </Field>
           </ModalBody>
           <ModalFooter>
@@ -419,11 +419,11 @@ export function ProjectsView() {
                 const live = projects.data?.find((x) => x.id === editProject.id) ?? editProject;
                 return (
                   <div className="flex items-center gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated">
-                      <ProjectIcon project={live} size={live.icon ? 36 : 22} className="text-text-muted" />
+                    <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
+                      <ProjectIcon project={live} size={live.icon ? 36 : 22} className="text-muted-foreground" />
                     </span>
                     {editorEnabled ? <Button icon={ImageIcon} onClick={() => setIconFor(live)}>{t.projects.chooseIcon}</Button> : null}
-                    {live.icon ? <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-muted" title={live.icon}>{live.icon}</span> : null}
+                    {live.icon ? <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={live.icon}>{live.icon}</span> : null}
                   </div>
                 );
               })()}
@@ -432,7 +432,7 @@ export function ProjectsView() {
               {(control) => <Input value={editPath} onChange={(e) => setEditPath(e.target.value)} className="font-mono text-xs" {...control} />}
             </Field>
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
-              <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-primary focus:outline-none" />
+              <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none" />
             </Field>
 
           </ModalBody>
@@ -458,7 +458,7 @@ export function ProjectsView() {
       {removing && (
         <Modal title={t.projects.removeConfirmTitle} onClose={() => setRemoving(null)} size="sm" icon={AlertTriangle}>
           <ModalBody>
-            <p className="text-sm text-text-muted">{t.projects.removeConfirmBody.replace('{slug}', removing.slug)}</p>
+            <p className="text-sm text-muted-foreground">{t.projects.removeConfirmBody.replace('{slug}', removing.slug)}</p>
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" onClick={() => setRemoving(null)}>{t.common.cancel}</Button>

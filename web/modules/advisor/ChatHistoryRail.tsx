@@ -20,13 +20,13 @@ function Highlight({ text, query }: { text: string; query: string }) {
   return (
     <>
       {text.slice(0, at)}
-      <mark className="rounded-sm bg-primary/30 px-0.5 text-text">{text.slice(at, at + query.length)}</mark>
+      <mark className="rounded-sm bg-primary/30 px-0.5 text-foreground">{text.slice(at, at + query.length)}</mark>
       {text.slice(at + query.length)}
     </>
   );
 }
 
-const MENU_ITEM = 'flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-text-muted transition-colors hover:bg-elevated hover:text-text';
+const MENU_ITEM = 'flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground';
 
 /** The phone slide-over, on the shadcn `Dialog` (Radix): the dialog role, the focus trap, Escape and the
  *  layer order among several open overlays are Radix's, so this file no longer writes any of them.
@@ -49,14 +49,14 @@ function HistoryDrawer({ label, onClose, children }: { label: string; onClose?: 
         // dismisses the drawer. Opting back in is what `DialogOverlay` does for the same reason.
         style={{ pointerEvents: 'auto' }}
       >
-        <div className="absolute inset-0 bg-bg/50" onClick={onClose} aria-hidden />
+        <div className="absolute inset-0 bg-background/50" onClick={onClose} aria-hidden />
         <DialogContent
           ref={surfaceRef}
           // A left rail, which none of the primitive's presentations describes; the geometry stays here.
           presentation={null}
           aria-label={label}
           aria-describedby={undefined}
-          className="absolute inset-y-0 left-0 w-72 max-w-[85%] border-r border-border bg-surface shadow-xl"
+          className="absolute inset-y-0 left-0 w-72 max-w-[85%] border-r border-border bg-card shadow-xl"
           // The backdrop above already owns dismissal, and it is the only owner that knows a nested
           // overlay's backdrop must not close its parent.
           onInteractOutside={(event) => event.preventDefault()}
@@ -182,7 +182,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
         <Link
           href="/dash"
           onClick={onClose}
-          className="flex items-center gap-2 border-b border-border px-2 py-2 text-sm text-text-muted transition-colors hover:bg-elevated hover:text-text"
+          className="flex items-center gap-2 border-b border-border px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <ArrowLeft size={16} aria-hidden />
           <span className="truncate">{t.nav.dashboard}</span>
@@ -190,13 +190,13 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
       ) : null}
       {variant !== 'dropdown' ? (
         <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{t.chat.historyTitle}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{t.chat.historyTitle}</span>
           <button
             type="button"
             onClick={() => openSession({ fresh: true })}
             aria-label={t.brainChat.newChat}
             title={t.brainChat.newChat}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Plus size={16} aria-hidden />
           </button>
@@ -206,7 +206,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
               onClick={onClose}
               aria-label={t.advisor.close}
               title={t.advisor.close}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <X size={16} aria-hidden />
             </button>
@@ -215,8 +215,8 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
       ) : null}
 
       {/* Fulltext search across the caller's conversations; a live query swaps the list for hits. */}
-      <div className="m-1 flex items-center gap-1.5 rounded-md border border-border bg-bg px-2">
-        <Search size={13} className="shrink-0 text-text-muted" aria-hidden />
+      <div className="m-1 flex items-center gap-1.5 rounded-md border border-border bg-background px-2">
+        <Search size={13} className="shrink-0 text-muted-foreground" aria-hidden />
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -227,14 +227,14 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
           // surface unless a control asks for the focus by name — so it asks.
           autoFocus={variant === 'dropdown'}
           data-autofocus={variant === 'drawer' ? '' : undefined}
-          className="w-full bg-transparent py-1.5 text-sm text-text placeholder:text-text-muted focus:outline-none"
+          className="w-full bg-transparent py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
         />
       </div>
 
       <div className={`${listScroll} px-1 pb-1`}>
         {q.length >= 2 ? (
           results === null ? null : results.length === 0 ? (
-            <p className="px-2 py-2 text-xs text-text-muted">{t.brainChat.searchEmpty}</p>
+            <p className="px-2 py-2 text-xs text-muted-foreground">{t.brainChat.searchEmpty}</p>
           ) : (
             results.map((h, i) => {
               const when = formatTaskTime(h.ts, Date.now(), locale);
@@ -243,13 +243,13 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                   key={i}
                   type="button"
                   onClick={() => openSession({ session: h.sessionId })}
-                  className="flex w-full flex-col rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface"
+                  className="flex w-full flex-col rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent"
                 >
                   <span className="flex w-full items-baseline justify-between gap-2">
-                    <span className="truncate text-sm text-text">{h.sessionTitle || t.brainChat.untitled}</span>
-                    <span className="shrink-0 text-tiny text-text-muted" title={when.title}>{when.label}</span>
+                    <span className="truncate text-sm text-foreground">{h.sessionTitle || t.brainChat.untitled}</span>
+                    <span className="shrink-0 text-tiny text-muted-foreground" title={when.title}>{when.label}</span>
                   </span>
-                  <span className="w-full truncate text-tiny text-text-muted">
+                  <span className="w-full truncate text-tiny text-muted-foreground">
                     <Highlight text={h.snippet} query={q} />
                   </span>
                 </button>
@@ -257,9 +257,9 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
             })
           )
         ) : sessions.isLoading && !sessions.data ? null : (sessions.data ?? []).length === 0 ? (
-          <p className="px-2 py-2 text-xs text-text-muted">{t.chat.emptyHistory}</p>
+          <p className="px-2 py-2 text-xs text-muted-foreground">{t.chat.emptyHistory}</p>
         ) : (sessions.data ?? []).map((s) => (
-          <div key={s.id} className={`group relative flex items-center rounded-md transition-colors hover:bg-surface ${s.active ? 'bg-surface' : ''}`}>
+          <div key={s.id} className={`group relative flex items-center rounded-md transition-colors hover:bg-accent ${s.active ? 'bg-accent' : ''}`}>
             {renameFor === s.id ? (
               <input
                 autoFocus
@@ -272,7 +272,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                 onBlur={() => void commitRename(s.id)}
                 aria-label={t.chat.renamePlaceholder}
                 placeholder={t.chat.renamePlaceholder}
-                className="m-1 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm text-text focus:border-primary focus:outline-none"
+                className="m-1 w-full rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground focus:border-primary focus:outline-none"
               />
             ) : (
               <>
@@ -281,8 +281,8 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                   onClick={() => openSession({ session: s.id })}
                   className="flex min-w-0 flex-1 flex-col px-2 py-1.5 text-left"
                 >
-                  <span className="truncate text-sm text-text">{s.title || t.brainChat.untitled}</span>
-                  <span className="truncate font-mono text-tiny text-text-muted">{brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}</span>
+                  <span className="truncate text-sm text-foreground">{s.title || t.brainChat.untitled}</span>
+                  <span className="truncate font-mono text-tiny text-muted-foreground">{brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}</span>
                 </button>
                 <div className="relative mr-1">
                   <button
@@ -298,14 +298,14 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                     // itself on keyboard focus as well — a tab stop that stays at `opacity-0` is a control
                     // a keyboard user cannot see they have landed on. Fading in on a fine pointer is the
                     // only part of the old behaviour worth keeping, and it stays.
-                    className={`overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-all hover:bg-elevated hover:text-text ${menuFor === s.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100'}`}
+                    className={`overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-all hover:bg-accent hover:text-foreground ${menuFor === s.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100'}`}
                   >
                     <MoreVertical size={14} aria-hidden />
                   </button>
                   {menuFor === s.id ? (
                     <>
                       <div className="fixed inset-0 z-20" onClick={() => setMenuFor(null)} aria-hidden />
-                      <div className="absolute right-0 top-full z-30 mt-1 flex w-44 flex-col rounded-md border border-border bg-surface p-1 shadow-lg">
+                      <div className="absolute right-0 top-full z-30 mt-1 flex w-44 flex-col rounded-md border border-border bg-card p-1 shadow-lg">
                         <button type="button" onClick={() => beginRename(s.id, s.title || '')} className={MENU_ITEM}>
                           <Pencil size={13} aria-hidden /> {t.chat.rename}
                         </button>
@@ -318,7 +318,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                         <button type="button" onClick={() => exportSession(s.id, 'jsonl')} className={MENU_ITEM}>
                           <Download size={13} aria-hidden /> {t.chat.exportJsonl}
                         </button>
-                        <button type="button" onClick={() => removeSession(s.id, s.active)} className={`${MENU_ITEM} hover:text-danger`}>
+                        <button type="button" onClick={() => removeSession(s.id, s.active)} className={`${MENU_ITEM} hover:text-destructive`}>
                           <Trash2 size={13} aria-hidden /> {t.brainChat.deleteChat}
                         </button>
                       </div>
@@ -335,12 +335,12 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
         <button
           type="button"
           onClick={() => { dismiss(); onOpenRegister(); }}
-          className="flex shrink-0 items-center gap-2 border-t border-border px-2 py-2 text-left text-sm text-text-muted transition-colors hover:bg-elevated hover:text-text"
+          className="flex shrink-0 items-center gap-2 border-t border-border px-2 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Library size={15} aria-hidden />
           <span className="flex min-w-0 flex-col">
             <span className="truncate">{t.chat.openRegister}</span>
-            <span className="truncate text-tiny text-text-muted">{t.chat.registerHint}</span>
+            <span className="truncate text-tiny text-muted-foreground">{t.chat.registerHint}</span>
           </span>
         </button>
       ) : null}
@@ -350,7 +350,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   if (variant === 'dropdown') {
     if (!open) return null;
     return (
-      <div className="absolute left-2 right-2 top-full z-20 mt-1 flex max-h-72 flex-col overflow-y-auto rounded-lg border border-border bg-elevated p-1 shadow-lg">
+      <div className="absolute left-2 right-2 top-full z-20 mt-1 flex max-h-72 flex-col overflow-y-auto rounded-lg border border-border bg-muted p-1 shadow-lg">
         {body}
       </div>
     );

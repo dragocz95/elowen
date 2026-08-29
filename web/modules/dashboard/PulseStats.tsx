@@ -22,18 +22,18 @@ interface CardProps {
 
 function StatCard({ label, value, colour, series, footnote }: CardProps) {
   return (
-    <div className="min-w-0 rounded-xl border border-border/60 bg-elevated/25 px-3 py-2.5">
+    <div className="min-w-0 rounded-xl border border-border/60 bg-muted/25 px-3 py-2.5">
       <div className="flex items-center gap-1.5">
         <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: colour }} />
-        <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-text-muted">{label}</span>
+        <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
       </div>
       <div className="mt-1 flex items-end justify-between gap-2">
-        <span className="font-mono text-2xl leading-none tabular-nums text-text">{value}</span>
+        <span className="font-mono text-2xl leading-none tabular-nums text-foreground">{value}</span>
         {series ? (
           <Sparkline values={series} colour={colour} className="h-8 w-16 shrink-0 @lg:w-20" />
         ) : null}
       </div>
-      <div className="mt-1 truncate text-[10px] text-text-muted">{footnote}</div>
+      <div className="mt-1 truncate text-[10px] text-muted-foreground">{footnote}</div>
     </div>
   );
 }
@@ -47,7 +47,7 @@ function Delta({ today, yesterday, t }: { today: number; yesterday: number; t: L
   if (rounded === 0) return <>{t.dashboard.pulseFlat}</>;
   return (
     <>
-      <span className={rounded > 0 ? 'text-success' : 'text-danger'}>
+      <span className={rounded > 0 ? 'text-success' : 'text-destructive'}>
         {rounded > 0 ? '+' : ''}{rounded}&nbsp;%
       </span>{' '}
       {t.dashboard.pulseVsYesterday}

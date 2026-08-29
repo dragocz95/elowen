@@ -53,14 +53,14 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
             type="button"
             onClick={() => cycle(-1)}
             aria-label={t.common.back}
-            className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text"
+            className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <ChevronLeft size={16} aria-hidden />
           </button>
 
-          <div className="flex items-center gap-2 text-sm font-medium text-text">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             {section === 'conversation' ? t.stats.sectionConversation : section === 'models' ? t.stats.sectionModels : t.stats.sectionContext}
-            <span className="text-xs text-text-muted">
+            <span className="text-xs text-muted-foreground">
               {`${SECTIONS.indexOf(section) + 1}/${SECTIONS.length}`}
             </span>
           </div>
@@ -69,7 +69,7 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
             type="button"
             onClick={() => cycle(1)}
             aria-label={t.common.forward}
-            className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text"
+            className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <ChevronRight size={16} aria-hidden />
           </button>
@@ -79,91 +79,91 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
           <div className="flex flex-col gap-4">
             {/* Context usage bar */}
             <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-text-muted">{t.stats.contextLabel}</span>
-              <div className="relative h-6 w-full overflow-hidden rounded-md border border-border bg-elevated">
+              <span className="text-xs font-medium text-muted-foreground">{t.stats.contextLabel}</span>
+              <div className="relative h-6 w-full overflow-hidden rounded-md border border-border bg-muted">
                 <div
                   className="h-full rounded-md transition-all"
                   style={{
                     width: `${Math.min(100, pct ?? 0)}%`,
                     background: pct != null && pct >= 90
-                      ? 'var(--color-danger)'
+                      ? 'var(--color-destructive)'
                       : pct != null && pct >= 70
                         ? 'var(--color-warning)'
                         : 'var(--color-primary)',
                   }}
                 />
               </div>
-              <span className="text-xs tabular-nums text-text-muted">
+              <span className="text-xs tabular-nums text-muted-foreground">
                 {u ? `${formatTokens(u.tokens ?? 0)} / ${formatTokens(u.contextWindow)}` : '—'}
                 {pct != null ? `  ·  ${pct} %` : ''}
               </span>
             </div>
 
             {/* Model row */}
-            <div className="flex items-center justify-between rounded-md border border-border bg-elevated px-3 py-2">
-              <span className="text-xs text-text-muted">{t.stats.model}</span>
-              <span className="text-sm font-mono text-text">{currentModel ? brainModelQualifiedLabel({ provider, model: currentModel }) : '—'}</span>
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2">
+              <span className="text-xs text-muted-foreground">{t.stats.model}</span>
+              <span className="text-sm font-mono text-foreground">{currentModel ? brainModelQualifiedLabel({ provider, model: currentModel }) : '—'}</span>
             </div>
 
             {/* Metrics grid */}
             <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                <span className="flex items-center gap-1.5 text-xs text-text-muted">
+              <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <BarChart3 size={13} aria-hidden />
                   {t.stats.sessionTokens}
                 </span>
-                <span className="font-mono text-sm tabular-nums text-text">
+                <span className="font-mono text-sm tabular-nums text-foreground">
                   {u ? formatTokens(u.totalTokens) : '—'}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                <span className="flex items-center gap-1.5 text-xs text-text-muted">
+              <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <DollarSign size={13} aria-hidden />
                   {t.stats.cardTotalCost}
                 </span>
-                <span className="font-mono text-sm tabular-nums text-text">
+                <span className="font-mono text-sm tabular-nums text-foreground">
                   {u ? formatCost(u.cost) : '—'}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                <span className="flex items-center gap-1.5 text-xs text-text-muted">
+              <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <ArrowDownToLine size={13} aria-hidden />
                   {t.stats.inputTokens}
                 </span>
-                <span className="font-mono text-sm tabular-nums text-text">
+                <span className="font-mono text-sm tabular-nums text-foreground">
                   {u?.input != null ? formatTokens(u.input) : '—'}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                <span className="flex items-center gap-1.5 text-xs text-text-muted">
+              <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <ArrowUpFromLine size={13} aria-hidden />
                   {t.stats.outputTokens}
                 </span>
-                <span className="font-mono text-sm tabular-nums text-text">
+                <span className="font-mono text-sm tabular-nums text-foreground">
                   {u?.output != null ? formatTokens(u.output) : '—'}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                <span className="flex items-center gap-1.5 text-xs text-text-muted">
+              <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Zap size={13} aria-hidden />
                   {t.stats.cacheHit}
                 </span>
-                <span className="font-mono text-sm tabular-nums text-text">
+                <span className="font-mono text-sm tabular-nums text-foreground">
                   {convCacheHit != null ? `${Math.round(convCacheHit)} %` : '—'}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                <span className="flex items-center gap-1.5 text-xs text-text-muted">
+              <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Gauge size={13} aria-hidden />
                   {t.stats.speed}
                 </span>
-                <span className="font-mono text-sm tabular-nums text-text">
+                <span className="font-mono text-sm tabular-nums text-foreground">
                   {u ? formatSpeed(u.outputTps) : '—'}
                 </span>
               </div>
             </div>
 
-            <p className="text-xs text-text-muted">{t.stats.arrowHint}</p>
+            <p className="text-xs text-muted-foreground">{t.stats.arrowHint}</p>
           </div>
         )}
 
@@ -172,39 +172,39 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
             {/* Totals strip */}
             {summary.hasAnyUsage && (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                  <span className="flex items-center gap-1.5 text-xs text-text-muted">
+                <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <BarChart3 size={13} aria-hidden />
                     {t.stats.cardTotalTokens}
                   </span>
-                  <span className="font-mono text-sm tabular-nums text-text">
+                  <span className="font-mono text-sm tabular-nums text-foreground">
                     {summary.totalTokensLabel}
                   </span>
                 </div>
-                <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                  <span className="flex items-center gap-1.5 text-xs text-text-muted">
+                <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <Database size={13} aria-hidden />
                     {t.stats.cardCache}
                   </span>
-                  <span className="font-mono text-sm tabular-nums text-text">
+                  <span className="font-mono text-sm tabular-nums text-foreground">
                     {summary.totalCacheLabel}
                   </span>
                 </div>
-                <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                  <span className="flex items-center gap-1.5 text-xs text-text-muted">
+                <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <Boxes size={13} aria-hidden />
                     {t.stats.cardModelsUsed}
                   </span>
-                  <span className="font-mono text-sm tabular-nums text-text">
+                  <span className="font-mono text-sm tabular-nums text-foreground">
                     {summary.modelsUsed}
                   </span>
                 </div>
-                <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                  <span className="flex items-center gap-1.5 text-xs text-text-muted">
+                <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <Gauge size={13} aria-hidden />
                     {t.stats.avgSpeed}
                   </span>
-                  <span className="font-mono text-sm tabular-nums text-text">
+                  <span className="font-mono text-sm tabular-nums text-foreground">
                     {summary.avgSpeedLabel}
                   </span>
                 </div>
@@ -223,11 +223,11 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                 {summary.rows.map((row) => (
                   <div
                     key={row.exec}
-                    className="flex items-center gap-2 bg-surface px-3 py-2"
+                    className="flex items-center gap-2 bg-card px-3 py-2"
                     title={row.cacheHitPct != null ? `${t.stats.cacheHit}: ${Math.round(row.cacheHitPct)} %` : undefined}
                   >
                     <ModelIcon name={row.exec} size={15} />
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-text" title={row.exec}>
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground" title={row.exec}>
                       {row.exec}
                     </span>
                     <div className="hidden h-px w-16 flex-1 sm:block">
@@ -243,13 +243,13 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                         }}
                       />
                     </div>
-                    <span className="font-mono text-xs tabular-nums text-text-muted">
+                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
                       {row.tokensLabel}
                     </span>
-                    <span className="w-16 text-right font-mono text-xs tabular-nums text-text-muted">
+                    <span className="w-16 text-right font-mono text-xs tabular-nums text-muted-foreground">
                       {row.speedLabel}
                     </span>
-                    <span className="w-20 text-right font-mono text-xs tabular-nums text-text">
+                    <span className="w-20 text-right font-mono text-xs tabular-nums text-foreground">
                       {row.costLabel}
                     </span>
                   </div>
@@ -257,7 +257,7 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            <p className="text-xs text-text-muted">{t.stats.arrowHint}</p>
+            <p className="text-xs text-muted-foreground">{t.stats.arrowHint}</p>
           </div>
         )}
 
@@ -272,13 +272,13 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
             ) : (
               <>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                    <span className="text-xs text-text-muted">{t.stats.contextWindow}</span>
-                    <span className="font-mono text-sm tabular-nums text-text">{formatTokens(breakdown.contextWindow)}</span>
+                  <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                    <span className="text-xs text-muted-foreground">{t.stats.contextWindow}</span>
+                    <span className="font-mono text-sm tabular-nums text-foreground">{formatTokens(breakdown.contextWindow)}</span>
                   </div>
-                  <div className="flex flex-col gap-1 rounded-md border border-border bg-elevated px-3 py-2">
-                    <span className="text-xs text-text-muted">{t.stats.contextReported}</span>
-                    <span className="font-mono text-sm tabular-nums text-text">
+                  <div className="flex flex-col gap-1 rounded-md border border-border bg-muted px-3 py-2">
+                    <span className="text-xs text-muted-foreground">{t.stats.contextReported}</span>
+                    <span className="font-mono text-sm tabular-nums text-foreground">
                       {breakdown.reportedTokens != null ? formatTokens(breakdown.reportedTokens) : '—'}
                     </span>
                   </div>
@@ -286,9 +286,9 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
 
                 <div className="flex flex-col gap-2">
                   <div className="flex items-baseline justify-between gap-3">
-                    <h3 className="text-xs font-medium text-text-muted">{t.stats.contextBreakdown}</h3>
+                    <h3 className="text-xs font-medium text-muted-foreground">{t.stats.contextBreakdown}</h3>
                     {breakdown.compactAtTokens != null ? (
-                      <span className="font-mono text-xs tabular-nums text-text-muted">
+                      <span className="font-mono text-xs tabular-nums text-muted-foreground">
                         {t.stats.compactsAt}: {formatTokens(breakdown.compactAtTokens)}
                       </span>
                     ) : null}
@@ -302,30 +302,30 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                     />
                   ))}
                   <ContextBar label={t.stats.contextCategoryFree} tokens={breakdown.free.tokens} percent={breakdown.free.percent} muted />
-                  <p className="text-xs text-text-muted">{t.stats.contextEstimateNote}</p>
+                  <p className="text-xs text-muted-foreground">{t.stats.contextEstimateNote}</p>
                 </div>
 
                 {breakdown.tools.length > 0 ? (
                   <div className="flex flex-col gap-2">
-                    <h3 className="text-xs font-medium text-text-muted">{t.stats.heaviestTools}</h3>
+                    <h3 className="text-xs font-medium text-muted-foreground">{t.stats.heaviestTools}</h3>
                     <div className="flex flex-col gap-px overflow-hidden rounded-md border border-border bg-border/50">
                       {breakdown.tools.map((tool) => (
-                        <div key={tool.name} className="flex items-center gap-2 bg-surface px-3 py-2">
-                          <span className="min-w-0 flex-1 truncate font-mono text-xs text-text" title={tool.name}>{tool.name}</span>
-                          <span className="hidden font-mono text-xs tabular-nums text-text-muted sm:inline">
+                        <div key={tool.name} className="flex items-center gap-2 bg-card px-3 py-2">
+                          <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground" title={tool.name}>{tool.name}</span>
+                          <span className="hidden font-mono text-xs tabular-nums text-muted-foreground sm:inline">
                             {`${formatTokens(tool.schemaTokens)} · ${formatTokens(tool.callTokens)} · ${formatTokens(tool.resultTokens)}`}
                           </span>
-                          <span className="w-16 text-right font-mono text-xs tabular-nums text-text">{formatTokens(tool.tokens)}</span>
+                          <span className="w-16 text-right font-mono text-xs tabular-nums text-foreground">{formatTokens(tool.tokens)}</span>
                         </div>
                       ))}
                     </div>
-                    <p className="text-xs text-text-muted">{t.stats.toolColumnsHint}</p>
+                    <p className="text-xs text-muted-foreground">{t.stats.toolColumnsHint}</p>
                   </div>
                 ) : null}
               </>
             )}
 
-            <p className="text-xs text-text-muted">{t.stats.arrowHint}</p>
+            <p className="text-xs text-muted-foreground">{t.stats.arrowHint}</p>
           </div>
         )}
       </ModalBody>
@@ -338,15 +338,15 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
 function ContextBar({ label, tokens, percent, muted }: { label: string; tokens: number; percent: number; muted?: boolean }) {
   return (
     <div className="flex items-center gap-3">
-      <span className="w-24 shrink-0 truncate text-xs text-text-muted" title={label}>{label}</span>
-      <div className="relative h-2 flex-1 overflow-hidden rounded-full border border-border bg-elevated">
+      <span className="w-24 shrink-0 truncate text-xs text-muted-foreground" title={label}>{label}</span>
+      <div className="relative h-2 flex-1 overflow-hidden rounded-full border border-border bg-muted">
         <div
           className="h-full rounded-full transition-all"
           style={{ width: `${Math.min(100, Math.max(0, percent))}%`, background: muted ? 'var(--color-border)' : 'var(--color-primary)' }}
         />
       </div>
-      <span className="w-14 text-right font-mono text-xs tabular-nums text-text">{formatTokens(tokens)}</span>
-      <span className="w-10 text-right font-mono text-xs tabular-nums text-text-muted">{`${Math.round(percent)} %`}</span>
+      <span className="w-14 text-right font-mono text-xs tabular-nums text-foreground">{formatTokens(tokens)}</span>
+      <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">{`${Math.round(percent)} %`}</span>
     </div>
   );
 }

@@ -13,7 +13,7 @@ function windowLabel(minutes: number | null, weekly: string, windowWord: string)
 /** Usage is pressure: the fill shifts accent → warning (70 %) → danger (90 %), matching the CLI meter.
  *  Shared with the chat telemetry panel's context meter so every usage bar reads the same. */
 export function usageFillClass(pct: number): string {
-  return pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-primary';
+  return pct >= 90 ? 'bg-destructive' : pct >= 70 ? 'bg-warning' : 'bg-primary';
 }
 
 function resetLabel(resetsAt: number | null): string {
@@ -41,16 +41,16 @@ export function OAuthUsageRail({ usage }: { usage: ProviderUsage }) {
             className="flex items-center gap-2 text-xs"
             title={reset ? t.brain.usageResets.replace('{time}', reset) : undefined}
           >
-            <span className="w-12 shrink-0 text-text-muted">
+            <span className="w-12 shrink-0 text-muted-foreground">
               {windowLabel(w.windowMinutes, t.brain.usageWeekly, t.brain.usageWindow)}
             </span>
-            <span data-testid="oauth-usage-track" className="h-1.5 flex-1 overflow-hidden rounded-full bg-elevated">
+            <span data-testid="oauth-usage-track" className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
               <span
                 className={`block h-full rounded-full ${usageFillClass(pct)} transition-[width] duration-500`}
                 style={{ width: `${pct > 0 ? Math.max(pct, 3) : 0}%` }}
               />
             </span>
-            <span className="w-9 shrink-0 text-right tabular-nums text-text">{Math.round(pct)}%</span>
+            <span className="w-9 shrink-0 text-right tabular-nums text-foreground">{Math.round(pct)}%</span>
           </div>
         );
       })}

@@ -312,7 +312,7 @@ function Gallery() {
 
       <nav
         aria-label="Component groups"
-        className="surface-sticky sticky top-0 z-10 flex flex-wrap gap-1 border-y border-border bg-background py-2"
+        className="sticky top-0 z-10 flex flex-wrap gap-1 border-y border-border bg-background py-2"
       >
         {SECTIONS.map((section) => (
           <a

@@ -7,12 +7,18 @@ import { onUnhandledRequest } from '../msw';
 vi.mock('next/navigation', () => ({ usePathname: () => '/dash', useRouter: () => ({ push: () => {}, replace: () => {} }), useSearchParams: () => new URLSearchParams() }));
 import { Shell } from '../../components/shell/Shell';
 import { useSkin } from '../../lib/skinContext';
-import type { SkinChoice, SkinName } from '../../lib/skins';
+import { DEFAULT_SKIN, type SkinChoice, type SkinName } from '../../lib/skins';
 
 class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) {} }
 (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
 
-const ALLOWED: SkinChoice[] = ['midnight', 'studio-light'];
+/** Both designs the app has. There is no third one to swap to: every compiled skin is a Studio variant
+ *  and everything else resolves to DEFAULT_SKIN, so what these cases exercise is a REPAINT that keeps the
+ *  same shell — which is the harder half of the seam, because nothing visibly unmounts to prove the
+ *  switch happened. The compatibility choice is deliberately NOT here: it resolves to DEFAULT_SKIN, so
+ *  cycling onto it would change no attribute and the test would assert nothing. lib/skins.test.ts and
+ *  SkinSwitcher.test.tsx cover it where it is the subject rather than the noise. */
+const ALLOWED: SkinChoice[] = ['studio-light', 'studio-oled'];
 const server = setupServer(
   http.get('*/api/health', () => HttpResponse.json({ ok: true })),
   http.get('*/api/config', () => HttpResponse.json({ allowedSkins: ALLOWED })),
@@ -46,32 +52,36 @@ function Probe() {
   return <input aria-label="probe" value={typed} onChange={(event) => setTyped(event.target.value)} />;
 }
 
-// Switching the design swaps the NAVIGATION and nothing else. The seam is one expression inside
-// ShellLayout for exactly this reason: branching a component type higher up would make React unmount the
-// whole shell — <main>'s scroll position, every open modal and in-flight form on the page, the command
-// palette's query, and the brain-chat stream with it. The assertion that matters here is not that the
-// Studio sidebar appeared; it is that nothing else went away while it did.
-describe('switching to a command-profile skin', () => {
-  it('swaps the navigation in place, without remounting the shell or the page under it', async () => {
+// Switching the design repaints IN PLACE. The seam is one expression inside ShellLayout for exactly this
+// reason: branching a component type higher up would make React unmount the whole shell — <main>'s scroll
+// position, every open modal and in-flight form on the page, the command palette's query, and the
+// brain-chat stream with it. The assertion that matters here is not that a sidebar appeared; it is that
+// nothing went away while the design changed underneath it.
+describe('switching between the two designs', () => {
+  it('repaints in place, without remounting the shell or the page under it', async () => {
     mounts = 0;
+    // localStorage is the client's source of truth and the mount effect reconciles the seed against it;
+    // without it the provider would settle on the implied choice rather than the one seeded here.
+    localStorage.setItem('elowen-skin', 'studio-light');
     render(
-      <Shell skinSeed={{ choice: 'midnight', allowed: ALLOWED, fallback: 'midnight' }}><Probe /></Shell>,
+      <Shell skinSeed={{ choice: 'studio-light', allowed: ALLOWED, fallback: null }}><Probe /></Shell>,
     );
 
-    // The spatial rail is what a `spatial` profile mounts.
-    expect(await screen.findByTestId('future-navigation')).toBeInTheDocument();
-    expect(screen.queryByTestId('studio-navigation')).toBeNull();
+    // One shell for both designs, and the ambient rail belongs to no design this build ships.
+    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    expect(screen.queryByTestId('future-navigation')).toBeNull();
+    expect(document.documentElement.getAttribute('data-skin')).toBe('studio-light');
 
     const probe = await screen.findByLabelText('probe');
     fireEvent.change(probe, { target: { value: 'unsaved draft' } });
     expect(mounts).toBe(1);
 
     // The switcher is the real way a reader changes design: one button, no reload.
-    fireEvent.click(await screen.findByRole('button', { name: 'Skin: Midnight' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Skin: Studio Light' }));
 
-    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByTestId('future-navigation')).toBeNull());
-    expect(document.documentElement.getAttribute('data-skin')).toBe('studio-light');
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('studio-oled'));
+    expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
+    expect(screen.queryByTestId('future-navigation')).toBeNull();
 
     // Same node, same state, same single mount — the page never went away and came back.
     expect(screen.getByLabelText('probe')).toBe(probe);
@@ -84,7 +94,7 @@ describe('switching to a command-profile skin', () => {
     // arrives with it stored and the document already rendered in it.
     localStorage.setItem('elowen-skin', 'studio-light');
     const { container } = render(
-      <Shell skinSeed={{ choice: 'studio-light', allowed: ALLOWED, fallback: 'midnight' }}><span>page-body</span></Shell>,
+      <Shell skinSeed={{ choice: 'studio-light', allowed: ALLOWED, fallback: null }}><span>page-body</span></Shell>,
     );
     expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
     expect(screen.queryByTestId('future-navigation')).toBeNull();
@@ -106,11 +116,11 @@ describe('switching to a command-profile skin', () => {
 });
 
 /** Reports the skin the CONTEXT resolved, so the assertions below can compare it against the attribute
- *  and the navigation instead of inferring it from them. `builtin` stands for null, which is a value here
- *  and not an absence: it is how "the plain design" is expressed. */
+ *  instead of inferring it from it. It is always one of the two compiled skins — there is no "no design"
+ *  value left to report — which is itself part of what these cases check. */
 function SkinReadout() {
   const { skin } = useSkin();
-  return <span data-testid="skin-readout">{skin ?? 'builtin'}</span>;
+  return <span data-testid="skin-readout">{skin}</span>;
 }
 
 /** The four signals that describe the visible design — the `data-skin` attribute, the context's resolved
@@ -118,17 +128,18 @@ function SkinReadout() {
  *  nobody pressed anything. They are driven by one resolution, so a change to the inputs of that
  *  resolution must move all four together.
  *
- *  The defect these cover: the document write was made conditionally, only for a truthy skin, so the
- *  built-in design could never be written back. The context flipped to null and the shell swapped the
- *  navigation back, while <html> kept `data-skin='studio-light'` and the whole Studio stylesheet with it —
- *  Studio CSS painting an Ember shell, with the sidebar rules aimed at markup that was no longer there. */
+ *  The defect these cover: the document write was made conditionally, only for a truthy skin, so a
+ *  resolution that produced nothing could never be written back — <html> kept the design it arrived in
+ *  while the context reported another. The condition is gone with the value that motivated it, and these
+ *  cases are what stop either coming back: every leg asserts a real skin id on the attribute, never its
+ *  absence. */
 describe('a design the reader did not switch away from', () => {
   // With no `allowedSkins` in the config payload the provider reads the seed, which is what lets these
   // cases change the allow-list and the operator default on a LIVE tree instead of on a fresh mount.
   const seedOnly = () => server.use(http.get('*/api/config', () => HttpResponse.json({})));
   const seed = (choice: SkinChoice | null, allowed: SkinChoice[], fallback: SkinName | null) => ({ choice, allowed, fallback });
 
-  it('hands the document back to the built-in design when an admin revokes the active skin', async () => {
+  it('hands the document to DEFAULT_SKIN when an admin revokes the active skin', async () => {
     seedOnly();
     mounts = 0;
     localStorage.setItem('elowen-skin', 'studio-light');
@@ -149,12 +160,16 @@ describe('a design the reader did not switch away from', () => {
 
     // The admin drops studio-light from the instance allow-list. No reload: the new list reaches the
     // live provider, and the design the reader is looking at is no longer on offer.
-    rerender(<Shell skinSeed={seed('studio-light', ['midnight'], null)}><Probe /><SkinReadout /></Shell>);
+    // The list it narrows to must NOT contain the built-in choice: with `default` still on offer the
+    // provider would resolve to it and WRITE that back over the stored preference, and the last leg of
+    // this test — re-allowing the skin restores it — would be asserting nothing.
+    rerender(<Shell skinSeed={seed('studio-oled', ['studio-light'], null)}><Probe /><SkinReadout /></Shell>);
 
-    expect(await screen.findByTestId('future-navigation')).toBeInTheDocument();
-    await waitFor(() => expect(document.documentElement.hasAttribute('data-skin')).toBe(false));
-    expect(screen.queryByTestId('studio-navigation')).toBeNull();
-    expect(screen.getByTestId('skin-readout').textContent).toBe('builtin');
+    // DEFAULT_SKIN, not "no design": the attribute is rewritten rather than removed, and the shell stays.
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN));
+    expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
+    expect(screen.queryByTestId('future-navigation')).toBeNull();
+    expect(screen.getByTestId('skin-readout').textContent).toBe(DEFAULT_SKIN);
     // The canvas goes back to the cascade rather than staying frozen at the design the document arrived in.
     expect(document.documentElement.style.backgroundColor).toBe('');
     // ...and it all happened in place, exactly as a switch does.
@@ -185,20 +200,24 @@ describe('a design the reader did not switch away from', () => {
     expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
     expect(screen.getByTestId('skin-readout').textContent).toBe('studio-light');
 
-    // ELOWEN_SKIN moves to a spatial design.
-    rerender(<Shell skinSeed={seed(null, [], 'midnight')}><Probe /><SkinReadout /></Shell>);
+    // ELOWEN_SKIN moves to the other variant of the same design. The attribute and the context follow it,
+    // and the navigation deliberately does NOT: both Studio variants mount the same shell profile, so a
+    // swapped rail here would mean the shell was keying off the skin id rather than off the profile.
+    rerender(<Shell skinSeed={seed(null, [], 'studio-oled')}><Probe /><SkinReadout /></Shell>);
 
-    expect(await screen.findByTestId('future-navigation')).toBeInTheDocument();
-    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('midnight'));
-    expect(screen.getByTestId('skin-readout').textContent).toBe('midnight');
-    expect(screen.queryByTestId('studio-navigation')).toBeNull();
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('studio-oled'));
+    expect(screen.getByTestId('skin-readout').textContent).toBe('studio-oled');
+    expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
+    expect(screen.queryByTestId('future-navigation')).toBeNull();
     expect(mounts).toBe(1);
 
-    // ...and away entirely, which is the built-in design and therefore no attribute at all.
+    // ...and away entirely. That used to mean no attribute and the ambient shell; it now means the floor
+    // under every resolution, which is a design like any other.
     rerender(<Shell skinSeed={seed(null, [], null)}><Probe /><SkinReadout /></Shell>);
-    await waitFor(() => expect(document.documentElement.hasAttribute('data-skin')).toBe(false));
-    expect(screen.getByTestId('skin-readout').textContent).toBe('builtin');
-    expect(await screen.findByTestId('future-navigation')).toBeInTheDocument();
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN));
+    expect(screen.getByTestId('skin-readout').textContent).toBe(DEFAULT_SKIN);
+    expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
+    expect(screen.queryByTestId('future-navigation'), 'the ambient shell belongs to no design this build ships').toBeNull();
     expect(mounts).toBe(1);
   });
 });

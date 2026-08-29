@@ -12,9 +12,9 @@ import { categorySwatch } from './memoryMeta';
 export function RankSlider({ label, icon: Icon = Gauge, value, onChange }: { label: string; icon?: typeof Gauge; value: number; onChange: (v: number) => void }) {
   return (
     <div className="flex flex-col gap-2">
-      <span className="inline-flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+      <span className="inline-flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         <span className="inline-flex items-center gap-1"><Icon size={11} aria-hidden />{label}</span>
-        <span className="font-mono text-text">{value} / 5</span>
+        <span className="font-mono text-foreground">{value} / 5</span>
       </span>
       <Slider value={value} min={1} max={5} step={1} onChange={onChange} />
     </div>

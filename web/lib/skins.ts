@@ -20,17 +20,28 @@ import type { LocaleDict } from './i18n/types';
  *  This stays a plain tuple of ids because that is what the rest of the app consumes: a directory name, a
  *  `data-skin` value, a member test against `readonly string[]`. The richer per-skin metadata lives in
  *  SKIN_DEFINITIONS below, keyed by these ids. */
-export const SKINS = ['midnight', 'studio-light', 'studio-oled'] as const;
+export const SKINS = ['studio-light', 'studio-oled'] as const;
 export type SkinName = (typeof SKINS)[number];
 
 /** Skins that are variants of ONE design rather than separate designs. `studio-light` and `studio-oled`
  *  share every structural rule and differ only in their token block, so anything that reasons about the
- *  design — shared stylesheets, docs, a future grouped picker — reasons about the family. */
-type SkinFamily = 'midnight' | 'studio';
+ *  design — shared stylesheets, docs, a future grouped picker — reasons about the family.
+ *
+ *  One family today, and it stays a named union rather than collapsing into the id list: the family is
+ *  what a shared stylesheet is scoped to, and a second design added later needs a name to be scoped to
+ *  before it has any skins. */
+type SkinFamily = 'studio';
 
 /** Which navigation/shell presentation a design mounts. This is a property of the SHELL, not of a skin:
  *  `spatial` is the layered, ambient shell the app has always rendered, `command` is the flat command-grid
- *  presentation Studio asks for. Two skins of the same family necessarily share one. */
+ *  presentation Studio asks for. Two skins of the same family necessarily share one.
+ *
+ *  No design this build ships asks for `spatial` any more: both compiled skins are Studio, and every
+ *  resolution now lands on one of them. It stays in the union because the profile is a property a skin
+ *  DECLARES — a deployment fork adding an ambient design names it here and gets that shell back — and
+ *  because the seam is what keeps the shell from recognising a design by id. It is unreachable in this
+ *  build by construction, not by accident: `shellProfileFor` reads DEFAULT_SKIN's profile for everything
+ *  that is not a compiled skin, so there is no input to the app that produces it. */
 export type ShellProfile = 'spatial' | 'command';
 
 /** The dictionary key holding a skin's human name. Skins are named in `common.skinNames` rather than by
@@ -47,7 +58,6 @@ export interface SkinDefinition {
 /** Every compiled skin's metadata. Declared as a total Record over SkinName so the compiler — not review —
  *  rejects a skin added to SKINS with no definition, and a definition for a skin that does not exist. */
 export const SKIN_DEFINITIONS: Record<SkinName, SkinDefinition> = {
-  midnight: { id: 'midnight', family: 'midnight', shellProfile: 'spatial', nameKey: 'midnight' },
   'studio-light': { id: 'studio-light', family: 'studio', shellProfile: 'command', nameKey: 'studioLight' },
   'studio-oled': { id: 'studio-oled', family: 'studio', shellProfile: 'command', nameKey: 'studioOled' },
 };
@@ -88,33 +98,51 @@ export const SKIN_FAMILY_SHEETS: readonly SkinFamilySheets[] = (
   sharedStylesheets: SHARED_STYLESHEET_PATHS[family],
 }));
 
-/** The built-in design, which is not a skin at all but the ABSENCE of one: no `data-skin` attribute, so
- *  no skin's rules match and the markup renders exactly as it did before skins existed. It still needs a
- *  name, because "go back to the plain design" has to be selectable like any other option — otherwise
- *  allowing a single skin would be a one-way door. Reserved: a contract test fails if a compiled skin ever
- *  takes this name, since the two meanings would then be indistinguishable in a stored choice. */
+/** The name a stored choice or an instance allow-list may still carry for "no design of my own". It was
+ *  once the ABSENCE of a skin — no `data-skin` attribute, and the pre-skins Ember markup underneath — and
+ *  that is no longer a design this app ships: the app has exactly two looks, and an unattributed document
+ *  was a third. The name is kept because it is DATA this build cannot reach into (a stored preference, a
+ *  configured allow-list, an admin's saved list), and rejecting it would strand those accounts on an
+ *  option that silently does nothing; it now resolves to DEFAULT_SKIN like every other route into the
+ *  resolution. Reserved: a contract test fails if a compiled skin ever takes this name, since the two
+ *  meanings would then be indistinguishable in a stored choice. */
 export const BUILTIN_SKIN = 'default';
 export type SkinChoice = SkinName | typeof BUILTIN_SKIN;
 
-/** Every choice that can be offered, built-in design first. One stable order so the switcher and the
- *  admin list cannot disagree about what exists. */
+/** Every choice that can be offered, the compatibility name first. One stable order so the switcher and
+ *  the admin list cannot disagree about what exists. */
 export const SKIN_CHOICES: readonly SkinChoice[] = [BUILTIN_SKIN, ...SKINS];
+
+/** THE FLOOR UNDER EVERY RESOLUTION, and the reason `resolveSkin` cannot return null.
+ *
+ *  Every path that used to end at "no skin" ends here instead: nothing chosen, a choice the admin has
+ *  revoked, a stored name this build no longer compiles, an unset or malformed ELOWEN_SKIN. The document
+ *  therefore ALWAYS carries `data-skin`, which is what makes "this app has two looks" true rather than
+ *  aspirational — the unattributed state was a third design that nothing selected on purpose and that
+ *  every fallback landed on by accident.
+ *
+ *  It has to be a real compiled skin rather than a palette copied into the base tokens, because a design
+ *  is not only its colours: `skins/studio/*.css` carry the whole Studio structure and are scoped to the
+ *  two `[data-skin]` values, so a document without the attribute would wear studio-light's palette on the
+ *  old ambient shell. The attribute is the design. */
+export const DEFAULT_SKIN: SkinName = 'studio-light';
 
 /** What to SHOW for a choice, in the reader's language. Every call site goes through here so a skin's
  *  name is decided in one place — the definition — instead of a switch per switcher. Null and the
- *  built-in choice are the same thing to a reader: the plain design. */
+ *  compatibility choice are the same thing to a reader: whatever this deployment defaults to. */
 export function skinDisplayName(t: LocaleDict, choice: SkinChoice | null): string {
   if (!choice || choice === BUILTIN_SKIN) return t.common.skinBuiltIn;
   return t.common.skinNames[SKIN_DEFINITIONS[choice].nameKey];
 }
 
-/** Which shell presentation a design asks the app to mount. The built-in design is not a skin and has no
- *  definition, so it — and "no skin at all" — resolve to the shell the app has always rendered.
+/** Which shell presentation a design asks the app to mount. Anything that is not a compiled skin — the
+ *  compatibility name, null, undefined — reads the DEFAULT_SKIN's profile, so the shell cannot mount a
+ *  presentation no design asks for.
  *
  *  This is the ONE place the mapping lives: the shell reads a profile, never a skin id, so recognising a
  *  design by name cannot start spreading through the component tree. */
 export function shellProfileFor(skin: SkinChoice | null | undefined): ShellProfile {
-  if (!skin || skin === BUILTIN_SKIN) return 'spatial';
+  if (!skin || skin === BUILTIN_SKIN) return SKIN_DEFINITIONS[DEFAULT_SKIN].shellProfile;
   return SKIN_DEFINITIONS[skin].shellProfile;
 }
 
@@ -136,23 +164,27 @@ export function allowedSkinChoices(configured: readonly string[] | null | undefi
   return out;
 }
 
-/** What the document's `data-skin` attribute must be: a compiled skin name, or null for the built-in
- *  design. `chosen` is the account's stored choice and is honoured only while it is still allowed, which
- *  is what makes the admin list a real control rather than a suggestion — revoking a skin moves everyone
- *  holding it back on their next document, without having to reach into anybody's stored value.
+/** What the document's `data-skin` attribute must be — ALWAYS a compiled skin name, never nothing.
  *
- *  `fallback` is the operator's ELOWEN_SKIN. It applies to anyone who has not chosen, and to anyone whose
- *  choice is no longer on offer, so the DEPLOYMENT's design stays the floor rather than the built-in one:
- *  an instance that ships a brand skin must not fall back to looking like stock Elowen. */
+ *  `chosen` is the account's stored choice and is honoured only while it is still allowed, which is what
+ *  makes the admin list a real control rather than a suggestion: revoking a skin moves everyone holding
+ *  it back on their next document, without having to reach into anybody's stored value. The
+ *  compatibility name resolves to DEFAULT_SKIN directly rather than to `fallback`, which preserves the
+ *  rule it has always carried — an explicit "no design of my own" outranks the operator's default.
+ *
+ *  `fallback` is the operator's ELOWEN_SKIN. It applies to anyone who has not chosen, to anyone whose
+ *  choice is no longer on offer, and to anyone holding a name this build no longer compiles, so the
+ *  DEPLOYMENT's design stays the floor above DEFAULT_SKIN: an instance that ships a brand skin must not
+ *  fall back to looking like stock Elowen. */
 export function resolveSkin(
   chosen: string | null | undefined,
   allowed: readonly SkinChoice[],
   fallback: SkinName | null,
-): SkinName | null {
+): SkinName {
   if (chosen && isSkinChoice(chosen) && allowed.includes(chosen)) {
-    return chosen === BUILTIN_SKIN ? null : chosen;
+    return chosen === BUILTIN_SKIN ? DEFAULT_SKIN : chosen;
   }
-  return fallback;
+  return fallback ?? DEFAULT_SKIN;
 }
 
 /** The choice corresponding to what is currently on screen, so the switcher starts where the eye is.

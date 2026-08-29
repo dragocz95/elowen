@@ -108,7 +108,7 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
             disabled={moving || !ready}
             title={cwd ? `${t.brainChat.projectPicker}: ${cwd}` : t.brainChat.projectPicker}
             aria-disabled={!ready}
-            className={`flex items-center gap-1.5 rounded-md border border-border text-text-muted transition-colors hover:bg-elevated hover:text-text disabled:opacity-50 ${
+            className={`flex items-center gap-1.5 rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 ${
               variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[200px] px-2.5 text-xs'
             }`}
           >

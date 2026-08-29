@@ -57,8 +57,8 @@ export function ReasoningModal({ onClose }: { onClose: () => void }) {
         ) : levels.length === 0 ? (
           <EmptyState title={t.reasoning.noLevelsTitle} description={t.reasoning.noLevelsDesc} icon={Brain} />
         ) : (
-          <div className="flex flex-col gap-2 rounded-md border border-border bg-elevated px-3 py-3">
-            <span className="text-xs font-medium text-text-muted">{t.reasoning.effortLabel}</span>
+          <div className="flex flex-col gap-2 rounded-md border border-border bg-muted px-3 py-3">
+            <span className="text-xs font-medium text-muted-foreground">{t.reasoning.effortLabel}</span>
             <ReasoningScale
               options={levels.map((level) => ({ value: level, label: status?.thinkingLevelLabels?.[level] ?? level }))}
               value={current}
@@ -68,8 +68,8 @@ export function ReasoningModal({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-elevated px-3 py-2">
-          <span className="text-xs text-text-muted">{t.reasoning.thoughtRows}</span>
+        <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted px-3 py-2">
+          <span className="text-xs text-muted-foreground">{t.reasoning.thoughtRows}</span>
           <Toggle checked={showThoughts} onChange={setShowThoughts} label={t.reasoning.thoughtRows} />
         </div>
       </ModalBody>

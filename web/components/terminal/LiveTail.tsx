@@ -49,7 +49,7 @@ export function LiveTail({ name, lines = 20, heightClass = 'max-h-80', onExpand 
         <pre
           ref={preRef}
           style={{ transform: fit.scale < 1 ? `scale(${fit.scale})` : undefined, transformOrigin: 'top left' }}
-          className="w-max whitespace-pre font-mono text-xs leading-relaxed text-text-muted"
+          className="w-max whitespace-pre font-mono text-xs leading-relaxed text-muted-foreground"
         >
           {isLoading ? t.common.loading : tail
             ? parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>)
@@ -60,7 +60,7 @@ export function LiveTail({ name, lines = 20, heightClass = 'max-h-80', onExpand 
   );
 
   if (!onExpand) {
-    return <div className="rounded-md border border-border bg-bg p-3">{pane}</div>;
+    return <div className="rounded-md border border-border bg-background p-3">{pane}</div>;
   }
   return (
     <div className="group relative">
@@ -70,11 +70,11 @@ export function LiveTail({ name, lines = 20, heightClass = 'max-h-80', onExpand 
         onClick={onExpand}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onExpand(); } }}
         title={t.common.openTerminal}
-        className="block w-full cursor-pointer rounded-md border border-border bg-bg p-3 transition-colors hover:border-primary/60 focus:border-primary focus:outline-none"
+        className="block w-full cursor-pointer rounded-md border border-border bg-background p-3 transition-colors hover:border-primary/60 focus:border-primary focus:outline-none"
       >
         {pane}
       </div>
-      <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-md border border-border bg-surface/90 px-2 py-1 text-[11px] text-text-muted opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
+      <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-md border border-border bg-card/90 px-2 py-1 text-[11px] text-muted-foreground opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
         <Maximize2 size={12} aria-hidden /> {t.common.openTerminal}
       </span>
     </div>

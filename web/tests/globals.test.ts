@@ -25,7 +25,7 @@ describe('design tokens', () => {
   });
 
   it('has one dark palette and no light-theme override', () => {
-    expect(css).toContain('--color-bg: #000000');
+    expect(css).toContain('--color-background: #000000');
     expect(css).toContain('--font-sans: var(--font-geist-sans)');
     expect(css).not.toContain("data-theme='light'");
   });
