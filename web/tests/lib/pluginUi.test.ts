@@ -22,9 +22,12 @@ describe('plugin UI runtime', () => {
     // the canonical shell and hero, the shared pager, the toolbar search and the row's chevron cell —
     // each of which every plugin register had hand-rolled its own copy of, plus the full-application
     // takeover, which is the one surface a bundle genuinely cannot build for itself because the overlay
-    // layer scale and the focus/inert machinery live in the host.
-    expect(PLUGIN_UI_API_VERSION).toBe(8);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(8);
+    // layer scale and the focus/inert machinery live in the host. 9 adds the canonical page toolbar and
+    // its condensed filter control, and — the part a bundle cannot see from the component map alone —
+    // `WorkspaceShell` now accepts a `toolbar`, so a register's search and filters land in the same row
+    // as every built-in page's instead of in a band the bundle lays out for itself.
+    expect(PLUGIN_UI_API_VERSION).toBe(9);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(9);
     expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({
       WorkspaceShell: expect.any(Function),
       WorkspaceHero: expect.any(Function),
@@ -32,6 +35,8 @@ describe('plugin UI runtime', () => {
       RegisterSearch: expect.any(Function),
       DataTableChevronCell: expect.any(Function),
       WorkspaceTakeover: expect.any(Function),
+      PageToolbar: expect.any(Function),
+      PageFilters: expect.any(Function),
     }));
     expect(window.ElowenUiRuntime?.components).toHaveProperty('LinkedAccountRow');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('SummaryChip');
@@ -100,7 +105,8 @@ const FROZEN_COMPONENTS = [
   'IconButton', 'Input', 'LinkedAccountRow', 'LiveTail', 'LoadingLine', 'LoadingState',
   'ManageSelectionModal', 'MarkdownAssetEditor', 'Modal', 'ModalBody', 'ModalFooter', 'ModelCatalogField',
   'ModelIcon', 'ModuleHeader', 'MotionLayout', 'MotionLayoutItem', 'MotionPresence', 'OutcomeBadge',
-  'Pager', 'PatchView', 'PluginConfigEditor', 'PluginPageFrame', 'PluginPageHeader', 'PluginSection',
+  'PageFilters', 'PageToolbar', 'Pager', 'PatchView', 'PluginConfigEditor', 'PluginPageFrame',
+  'PluginPageHeader', 'PluginSection',
   'ProgressRibbon', 'ProjectFilterPills', 'ProjectPill', 'ProviderLogo', 'ProviderPicker',
   'RegisterSearch', 'Segmented', 'SelectMenu', 'SelectionSummary', 'SettingsDocument', 'SettingsGroup',
   'SettingsRow', 'SpatialIdentity', 'SpatialWorkspaceLayout', 'Spinner', 'SummaryChip', 'TimeSeriesChart',
@@ -168,7 +174,7 @@ describe('the plugin runtime surface only ever grows', () => {
     // they were frozen, so a list truncated to a handful of names — which would leave most of the surface
     // unguarded while still going green — fails here instead. Deliberately a FLOOR: publishing a new
     // primitive grows the live map and must not need this file edited at all.
-    const FROZEN_AT_LEAST = { components: 78, hooks: 52, utils: 24 } as const;
+    const FROZEN_AT_LEAST = { components: 80, hooks: 52, utils: 24 } as const;
     for (const [surface, frozen] of surfaces) {
       expect(frozen.length, `the frozen ${surface} set no longer covers the surface it was taken from`)
         .toBeGreaterThanOrEqual(FROZEN_AT_LEAST[surface]);

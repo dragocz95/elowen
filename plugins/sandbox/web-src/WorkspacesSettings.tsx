@@ -100,8 +100,12 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
     }, { onSuccess: () => { setRemoveWorkspace(null); setRemovePreview(null); setSelectedId(null); } });
   };
 
+  // The body of the detail rail (and, in the project panel, of the modal that stands in for it). Both
+  // surfaces render it inside the canonical `ModalBody`, which already supplies the scrolling column,
+  // its inset and the rhythm between blocks — so this states none of the three. It used to wrap itself
+  // in a padded column of its own, which inset the rail's contents twice over.
   const selectedDetail = selected ? (
-    <div className="flex flex-col gap-5 p-4">
+    <>
       <div>
         <p className="font-mono text-xs text-foreground">{selected.branch}</p>
         <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">{selected.path}</p>
@@ -125,7 +129,7 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
         <C.Button onClick={() => { setCommitWorkspace(selected); setCommitForm({ message: '', paths: selected.files.map((file) => file.path).join('\n') }); }} disabled={!selected.accessible || selected.lifecycle !== 'active' || selected.files.length === 0}>{s.commit}</C.Button>
         <C.Button variant="danger" onClick={() => openRemove(selected)} disabled={!selected.accessible}>{s.remove}</C.Button>
       </div>
-    </div>
+    </>
   ) : null;
 
   const content = query.isError ? (

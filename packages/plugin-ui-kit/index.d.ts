@@ -10,7 +10,7 @@ import type { ComponentType } from 'react';
 /** See index.js — bump on incompatible changes to `ElowenUiRuntime`. Deliberately a LITERAL type:
  *  the web app re-declares the value and annotates it with `typeof PLUGIN_UI_API_VERSION`, so a kit
  *  bump that forgets the host fails the web typecheck instead of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 8;
+export declare const PLUGIN_UI_API_VERSION: 9;
 
 /** Project metadata exposed to a contextual plugin panel. The Project remains core-owned; a panel uses
  *  this identity to address only its own project-scoped API data. */

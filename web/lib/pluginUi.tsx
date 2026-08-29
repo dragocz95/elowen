@@ -44,6 +44,8 @@ import { WorkspaceShell } from '../components/ui/WorkspaceShell';
 import { WorkspaceHero } from '../components/ui/WorkspaceHero';
 import { WorkspaceTakeover } from '../components/ui/WorkspaceTakeover';
 import { Pager } from '../components/ui/Pager';
+import { PageToolbar } from '../components/ui/PageToolbar';
+import { PageFilters } from '../components/ui/PageFilters';
 import { RegisterSearch } from '../components/ui/RegisterSearch';
 import { SpatialIdentity } from '../components/ui/SpatialPrimitives';
 import { TimeSeriesChart } from '../components/ui/TimeSeriesChart';
@@ -121,7 +123,7 @@ import { eventIcon } from './eventMeta';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 8;
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 9;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -324,6 +326,12 @@ export function ensurePluginUiRuntime(): void {
       // editor) each carried their own pager, and the search field was copy-pasted with a hard `min-w`
       // that pushed its sibling controls out of a narrow toolbar.
       Pager, RegisterSearch, DataTableChevronCell,
+      // The canonical page toolbar and its condensed filter control. A bundle normally reaches the row
+      // through `WorkspaceShell`'s `toolbar` prop — that is what puts a plugin register's search and
+      // filters in the same place as every built-in page — but both are published as components too, so
+      // a surface that mounts its own shell (or none) can still draw the canonical row rather than the
+      // hand-rolled band each register used to carry.
+      PageToolbar, PageFilters,
     } as Record<string, ComponentType<never>>,
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a
