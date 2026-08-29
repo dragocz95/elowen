@@ -32,8 +32,8 @@ export function FinishSetupBanner() {
       </span>
       <div className="flex flex-1 flex-col gap-2">
         <div className="flex flex-col gap-0.5">
-          <h2 className="text-sm font-semibold text-text">{t.dashboard.finishSetup.title}</h2>
-          <p className="text-sm text-text-muted">{t.dashboard.finishSetup.body}</p>
+          <h2 className="text-sm font-semibold text-foreground">{t.dashboard.finishSetup.title}</h2>
+          <p className="text-sm text-muted-foreground">{t.dashboard.finishSetup.body}</p>
         </div>
         <Link
           href="/settings?cat=brain"
@@ -47,7 +47,7 @@ export function FinishSetupBanner() {
         aria-label={t.dashboard.finishSetup.dismiss}
         title={t.dashboard.finishSetup.dismiss}
         onClick={() => setState('dismissed')}
-        className="shrink-0 rounded-md p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text"
+        className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
       >
         <X size={16} aria-hidden />
       </button>

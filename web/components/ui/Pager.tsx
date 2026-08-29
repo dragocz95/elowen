@@ -46,7 +46,7 @@ export function Pager({ page, pageSize, total, onPageChange, ariaLabel, classNam
       aria-label={ariaLabel ?? t.pagination.label}
       className={`@container flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border/80 pt-3${className ? ` ${className}` : ''}`}
     >
-      <span className="min-w-0 font-mono text-xs text-text-muted">
+      <span className="min-w-0 font-mono text-xs text-muted-foreground">
         {interpolate(t.pagination.range, { from, to, total })}
       </span>
       <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
@@ -60,7 +60,7 @@ export function Pager({ page, pageSize, total, onPageChange, ariaLabel, classNam
         >
           <span className={labelClass}>{t.pagination.previous}</span>
         </Button>
-        <span aria-live="polite" className="min-w-0 px-1 text-center font-mono text-xs text-text-muted">
+        <span aria-live="polite" className="min-w-0 px-1 text-center font-mono text-xs text-muted-foreground">
           {interpolate(t.pagination.pageLabel, { page: current + 1, pages: pageCount })}
         </span>
         <Button

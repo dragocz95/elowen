@@ -26,7 +26,7 @@ export function ModuleHeader({ title, count, icon: Icon, children, subtitle }: {
     // is an empty live region. The `.module-header` classes let the stylesheet collapse the wrapper (and
     // its margin) when nothing inside it is actually visible — see workspace-shell.css.
     <div className="module-header mb-6 flex flex-col gap-2">
-      {subtitle ? <p className="text-sm text-text-muted">{subtitle}</p> : null}
+      {subtitle ? <p className="text-sm text-muted-foreground">{subtitle}</p> : null}
       {/* Responsive toolbar: filter/action groups wrap as whole controls, while controls that contain
           their own collections (project pills, segmented filters) may wrap internally. Keeping every
           direct child bounded to the row prevents one long group from creating body-level overflow. */}

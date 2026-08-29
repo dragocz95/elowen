@@ -37,7 +37,7 @@ export function RegisterSearch({
 
   return (
     <div className={`register-search relative flex min-w-0 flex-1 basis-40 items-center${className ? ` ${className}` : ''}`}>
-      <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+      <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
       <Input
         type="search"
         value={value}
@@ -48,7 +48,7 @@ export function RegisterSearch({
       />
       <div className="pointer-events-none absolute right-2 flex items-center gap-1">
         {showCount ? (
-          <span role="status" className="font-mono text-tiny text-text-muted">
+          <span role="status" className="font-mono text-tiny text-muted-foreground">
             <span aria-hidden>{count}</span>
             {countLabel ? <span className="sr-only">{countLabel}</span> : null}
           </span>
@@ -58,7 +58,7 @@ export function RegisterSearch({
             type="button"
             aria-label={clearLabel}
             onClick={onClear}
-            className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]"
+            className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]"
           >
             <X size={14} aria-hidden />
           </button>

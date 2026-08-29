@@ -9,9 +9,9 @@ import { Spinner } from '../ui/states';
  *  stealing focus; the error is role="alert". */
 export function AutoSaveStatus({ status, onRetry }: { status: SaveStatus; onRetry?: () => void }) {
   const { t } = useTranslation();
-  if (status === 'idle') return <span className="text-xs text-text-muted" role="status" aria-live="polite" />;
+  if (status === 'idle') return <span className="text-xs text-muted-foreground" role="status" aria-live="polite" />;
   if (status === 'saving') return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-text-muted" role="status" aria-live="polite">
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-live="polite">
       <Spinner size="sm" tone="" />{t.common.saving}
     </span>
   );
@@ -21,9 +21,9 @@ export function AutoSaveStatus({ status, onRetry }: { status: SaveStatus; onRetr
     </span>
   );
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-danger" role="alert">
+    <span className="inline-flex items-center gap-1.5 text-xs text-destructive" role="alert">
       <TriangleAlert size={13} aria-hidden />{t.common.saveFailed}
-      {onRetry ? <button type="button" onClick={onRetry} className="underline underline-offset-2 hover:text-text">{t.common.retry}</button> : null}
+      {onRetry ? <button type="button" onClick={onRetry} className="underline underline-offset-2 hover:text-foreground">{t.common.retry}</button> : null}
     </span>
   );
 }

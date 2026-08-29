@@ -23,7 +23,7 @@ export function ModelIcon({ name, size = 20, className = '' }: { name?: string |
     else setFailed(true);
   }, [icon?.color, icon?.slug, fallback]);
 
-  if (!icon || failed) return <Cpu size={size} className={`text-text-muted ${className}`} aria-hidden />;
+  if (!icon || failed) return <Cpu size={size} className={`text-muted-foreground ${className}`} aria-hidden />;
 
   const ext = WEBP_PRIMARY.has(icon.slug) || (icon.color && fallback) ? 'webp' : 'svg';
   return (

@@ -68,7 +68,7 @@ const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').t
 
 const BADGE_TONES = {
   accent: 'border-primary/40 bg-primary/15 text-primary',
-  muted: 'border-border bg-elevated text-text-muted',
+  muted: 'border-border bg-muted text-muted-foreground',
 } as const;
 
 /** Radio-like check for single-select rows — same footprint as the Checkbox, but round. */
@@ -77,7 +77,7 @@ function RadioDot({ checked }: { checked: boolean }) {
     <span
       aria-hidden
       className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
-        checked ? 'border-primary bg-primary' : 'border-border-strong bg-surface'
+        checked ? 'border-primary bg-primary' : 'border-border-strong bg-card'
       }`}
     >
       <span
@@ -110,7 +110,7 @@ function Row({ item, on, single, readOnly, onToggle }: {
   );
   if (readOnly) {
     return (
-      <div title={item.disabledHint} className="flex w-full items-center gap-2.5 rounded-lg border border-border px-3 py-2 text-left text-xs text-text">
+      <div title={item.disabledHint} className="flex w-full items-center gap-2.5 rounded-lg border border-border px-3 py-2 text-left text-xs text-foreground">
         {content}
       </div>
     );
@@ -123,7 +123,7 @@ function Row({ item, on, single, readOnly, onToggle }: {
       aria-pressed={on}
       title={item.disabled ? item.disabledHint : undefined}
       className={`flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
-        on ? 'border-primary/50 bg-primary/15 text-text' : 'border-border text-text hover:bg-elevated'
+        on ? 'border-primary/50 bg-primary/15 text-foreground' : 'border-border text-foreground hover:bg-accent hover:text-accent-foreground'
       } ${item.disabled ? 'cursor-not-allowed opacity-50' : ''}`}
     >
       {content}
@@ -204,14 +204,14 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
       <ModalBody gap={4}>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
-            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden />
+            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <input
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t.managePicker.searchPlaceholder}
               aria-label={t.managePicker.searchPlaceholder}
-              className="w-full rounded-md border border-border bg-surface py-1.5 pl-8 pr-2.5 text-xs text-text outline-none transition-colors focus:border-primary"
+              className="w-full rounded-md border border-border bg-card py-1.5 pl-8 pr-2.5 text-xs text-foreground outline-none transition-colors focus:border-primary"
             />
           </div>
           <span className="shrink-0 rounded-md border border-primary/40 bg-primary/15 px-2 py-1 text-[11px] font-medium text-primary">
@@ -228,7 +228,7 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
               role="tab"
               aria-selected={groupFilter === null}
               onClick={() => setGroupFilter(null)}
-              className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${groupFilter === null ? 'border-border-strong bg-elevated text-text' : 'border-border text-text-muted hover:bg-elevated hover:text-text'}`}
+              className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${groupFilter === null ? 'border-border-strong bg-muted text-foreground' : 'border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
             >
               {t.managePicker.all}
             </button>
@@ -239,7 +239,7 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
                 role="tab"
                 aria-selected={groupFilter === g.id}
                 onClick={() => setGroupFilter(g.id)}
-                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${groupFilter === g.id ? 'border-border-strong bg-elevated text-text' : 'border-border text-text-muted hover:bg-elevated hover:text-text'}`}
+                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${groupFilter === g.id ? 'border-border-strong bg-muted text-foreground' : 'border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
               >
                 {groupIcons?.[g.id]}
                 {g.label}
@@ -249,7 +249,7 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
         )}
 
         {pinned.length === 0 && visible.length === 0
-          ? <p className="py-6 text-center text-xs italic text-text-muted">{t.managePicker.noResults}</p>
+          ? <p className="py-6 text-center text-xs italic text-muted-foreground">{t.managePicker.noResults}</p>
           : (
             <div className="flex flex-col gap-4">
               {pinned.length > 0 && (
@@ -262,7 +262,7 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
                 if (groupItems.length === 0) return null;
                 return (
                   <section key={g.id} className="flex flex-col gap-1.5">
-                    <h3 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                    <h3 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       {groupIcons?.[g.id]}
                       {g.label}
                     </h3>
@@ -279,7 +279,7 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
       </ModalBody>
       <ModalFooter
         status={
-          <span className="text-xs text-text-muted">
+          <span className="text-xs text-muted-foreground">
             {readOnly
               ? countText(items.length)
               : single

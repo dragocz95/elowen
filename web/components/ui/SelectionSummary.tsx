@@ -30,7 +30,7 @@ interface SelectionSummaryProps {
 export function SummaryChip({ icon, label, variant = 'default' }: { icon?: ReactNode; label: string; variant?: 'default' | 'line' }) {
   const line = variant === 'line';
   return (
-    <span className={`inline-flex max-w-full items-center gap-1.5 text-[11px] ${line ? 'text-text' : 'rounded-md border border-border bg-elevated px-2 py-0.5 text-text-muted'}`}>
+    <span className={`inline-flex max-w-full items-center gap-1.5 text-[11px] ${line ? 'text-foreground' : 'rounded-md border border-border bg-muted px-2 py-0.5 text-muted-foreground'}`}>
       {icon ? <span aria-hidden className="shrink-0">{icon}</span> : null}
       <span className="truncate">{label}</span>
     </span>
@@ -44,11 +44,11 @@ export function SelectionSummary({ countText, samples, moreCount, onManage, mana
   return (
     <div
       data-selection-summary
-      className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${line ? 'border-b border-border/80 py-2.5' : 'rounded-xl border border-border bg-surface px-3.5 py-3'}`}
+      className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${line ? 'border-b border-border/80 py-2.5' : 'rounded-xl border border-border bg-card px-3.5 py-3'}`}
       style={line ? undefined : { boxShadow: 'var(--shadow-card)' }}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        {countText ? <span className="text-xs font-medium text-text">{countText}</span> : null}
+        {countText ? <span className="text-xs font-medium text-foreground">{countText}</span> : null}
         {(samples.length > 0 || moreCount > 0 || extraSamples) && (
           <div className="flex flex-wrap items-center gap-1.5">
             {samples.map((s) => (
@@ -56,7 +56,7 @@ export function SelectionSummary({ countText, samples, moreCount, onManage, mana
             ))}
             {extraSamples}
             {moreCount > 0 && (
-              <span className={`font-mono text-[11px] text-text-muted ${line ? '' : 'rounded-md border border-border bg-elevated px-2 py-0.5'}`}>+{moreCount}</span>
+              <span className={`font-mono text-[11px] text-muted-foreground ${line ? '' : 'rounded-md border border-border bg-muted px-2 py-0.5'}`}>+{moreCount}</span>
             )}
           </div>
         )}
@@ -66,7 +66,7 @@ export function SelectionSummary({ countText, samples, moreCount, onManage, mana
         data-selection-manage
         onClick={onManage}
         aria-label={manageAriaLabel}
-        className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:bg-elevated hover:text-text ${line ? '' : 'border border-border bg-transparent'}`}
+        className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground ${line ? '' : 'border border-border bg-transparent'}`}
       >
         {readOnly ? <Eye size={13} aria-hidden /> : <Settings2 size={13} aria-hidden />}
         {manageLabel}

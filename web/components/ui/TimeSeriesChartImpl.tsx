@@ -19,16 +19,16 @@ function ChartTooltip({ active, label, payload, series }: {
 }) {
   if (!active || !payload || payload.length === 0) return null;
   return (
-    <div className="rounded-lg border border-border bg-surface px-3 py-2 shadow-[var(--shadow-raised)]">
-      <div className="mb-1 truncate font-mono text-[11px] text-text-muted">{label}</div>
+    <div className="rounded-lg border border-border bg-card px-3 py-2 shadow-[var(--shadow-raised)]">
+      <div className="mb-1 truncate font-mono text-[11px] text-muted-foreground">{label}</div>
       {series.map((entry) => {
         const point = payload.find((row) => row.dataKey === entry.key);
         if (point?.value == null) return null;
         return (
           <div key={entry.key} className="flex items-center gap-2 whitespace-nowrap text-xs">
             <span aria-hidden className="h-2 w-2 shrink-0 rounded-sm" style={{ background: entry.colour }} />
-            <span className="text-text-muted">{entry.label}</span>
-            <span className="ml-auto font-mono tabular-nums text-text">{entry.format(Number(point.value))}</span>
+            <span className="text-muted-foreground">{entry.label}</span>
+            <span className="ml-auto font-mono tabular-nums text-foreground">{entry.format(Number(point.value))}</span>
           </div>
         );
       })}
@@ -48,7 +48,7 @@ export function TimeSeriesChartImpl({ data, series, height = 220, ariaLabel }: T
 
   return (
     <figure className="flex min-w-0 flex-col gap-2">
-      <figcaption className="flex min-w-0 flex-wrap items-center gap-4 text-xs text-text-muted">
+      <figcaption className="flex min-w-0 flex-wrap items-center gap-4 text-xs text-muted-foreground">
         {series.map((entry) => (
           <span key={entry.key} className="inline-flex items-center gap-1.5">
             <span aria-hidden className="h-2 w-2 rounded-sm" style={{ background: entry.colour }} />

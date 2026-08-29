@@ -75,7 +75,7 @@ export function WorkspaceTakeover({ title, onBack, backLabel, toolbar, children 
           aria-describedby={undefined}
           data-elowen-takeover
           data-presentation="fullscreen"
-          className="overlay-surface workspace-takeover min-h-0 w-full bg-surface"
+          className="overlay-surface workspace-takeover min-h-0 w-full bg-card"
           // A takeover has exactly one exit and it is the labelled back control. Radix would add a
           // second by dismissing on any press outside the surface — which, edge to edge, is the safe
           // area — and it would answer for a nested dialog's backdrop as well.
@@ -102,11 +102,11 @@ export function WorkspaceTakeover({ title, onBack, backLabel, toolbar, children 
               aria-label={back}
               title={back}
               onClick={onBack}
-              className="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+              className="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
             >
               <ChevronLeft size={18} aria-hidden />
             </button>
-            <h2 id={titleId} className="min-w-0 truncate text-sm font-semibold text-text">{title}</h2>
+            <h2 id={titleId} className="min-w-0 truncate text-sm font-semibold text-foreground">{title}</h2>
             {toolbar ? <div className="ml-auto flex min-w-0 items-center gap-2">{toolbar}</div> : null}
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
