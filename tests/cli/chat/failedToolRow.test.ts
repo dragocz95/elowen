@@ -14,6 +14,21 @@ const refusal = (path: string): ToolItem => ({
   },
 });
 
+/** A schema validation failure, in the exact shape production produces it: the message OPENS with the
+ *  cause and CLOSES with the arguments it received. Compaction keeps the last few lines — right for
+ *  command output, wrong for a failure — so `text` is a fragment of raw JSON whose first key happens to
+ *  be the `_reason` status note, while the sentence naming the cause sits just off the top. Copied from
+ *  a real row: the operator read it as "the `_reason` argument broke the call". */
+const validationFailure = (reason: string): ToolItem => ({
+  name: 'Edit', detail: '/var/www/app/x.ts', id: `call-${reason}`,
+  output: {
+    title: 'tool result', kind: 'result', tone: 'warning', status: 'needs attention',
+    text: `… 4 earlier lines hidden\n{\n  "_reason": "${reason}",\n  "path": "/var/www/app/x.ts",`,
+    fullText: 'Validation failed for tool "Edit":\n  - oldText: must have required properties oldText, newText\n\n'
+      + `Received arguments:\n{\n  "_reason": "${reason}",\n  "path": "/var/www/app/x.ts",\n  "old_string": "before"\n}`,
+  },
+});
+
 const turnOf = (...items: ToolItem[]): ChatTurn => ({
   role: 'elowen', streaming: false, segments: [{ kind: 'tools', items }],
 });
@@ -70,6 +85,28 @@ describe('a failed tool result in the transcript', () => {
     const row = rows.find((r) => r.line.includes('Error'));
     expect(row?.kind).toBe('expandable');
     expect(row?.key).toBe('tool:call-/docs/routes.md');
+  });
+
+  // The headline must name the CAUSE. Reading it from the compacted preview showed the tail of the
+  // message instead — a slice of the arguments — and sent the operator hunting the wrong argument.
+  it('headlines a validation failure with its cause, not with the arguments it echoed back', () => {
+    const rows = render(turnOf(validationFailure('Registruju nový token…')));
+    const body = words(rows);
+    expect(body).toContain('Validation failed');
+    expect(body).toContain('oldText');
+    expect(body).not.toContain('_reason');
+    expect(body).not.toContain('earlier lines hidden');
+  });
+
+  it('keeps the cause visible for every member of a folded group of failures', () => {
+    const items = [validationFailure('Srovnávám první snímek OLED…'), validationFailure('Registruju nový token…')];
+    const collapsed = words(render(turnOf(...items)));
+    expect(collapsed).toContain('2× Error');
+
+    const expanded = words(render(turnOf(...items), new Set(['tool:call-Registruju nový token…'])));
+    // Both rows say what actually went wrong; neither leads with the status note the model wrote.
+    expect(expanded.match(/Validation failed/g)).toHaveLength(2);
+    expect(expanded).not.toContain('_reason');
   });
 
   // A successful result is content the user asked for, not a complaint they have already read.
