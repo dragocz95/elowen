@@ -24,7 +24,7 @@ import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '..
 import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { RegisterSearch } from '../../components/ui/RegisterSearch';
-import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
+import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState } from '../../components/ui/ControlSurface';
 
 export function UsersView() {
   const users = useUsers();
@@ -174,9 +174,10 @@ export function UsersView() {
             <WorkspaceMetric label={t.users.allowedModels} value={globalExecs.length} icon={Cpu} />
           </>,
         }}
-      >
-        <ControlSurfaceDocument>
-          <ControlSurfaceToolbar>
+        // Search-only, and deliberately no `filters`: the directory narrows on one text query and
+        // nothing else, so an empty Filters trigger would open a panel with nothing in it.
+        toolbar={{
+          search: (
             <RegisterSearch
               value={query}
               onChange={setQuery}
@@ -185,7 +186,10 @@ export function UsersView() {
               onClear={() => setQuery('')}
               clearLabel={t.users.searchClear}
             />
-          </ControlSurfaceToolbar>
+          ),
+        }}
+      >
+        <ControlSurfaceDocument>
         {users.isLoading ? <ControlSurfaceState><LoadingState variant="list" /></ControlSurfaceState>
           : users.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.users.loadError} onRetry={() => users.refetch()} /></ControlSurfaceState>
           : data.length === 0 ? <ControlSurfaceState><EmptyState title={t.users.empty} description={t.users.emptyDescription} icon={Users} action={<Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button>} /></ControlSurfaceState>

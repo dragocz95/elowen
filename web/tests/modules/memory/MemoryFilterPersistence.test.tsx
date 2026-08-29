@@ -86,6 +86,44 @@ describe('memory filters survive a reload', () => {
     expect(localStorage.getItem('elowen.memory.category')).toBe('all');
   });
 
+  // The toolbar derives its count, its chips and its resets from ONE declared field list. The tally it
+  // replaced was hand-written and counted three of the five controls, so grouping could be on with the
+  // trigger reading "Filters" and no chip naming it.
+  it('states every non-default control as a chip and clears the whole set at once', async () => {
+    renderView();
+    await waitFor(() => expect(screen.getByText('alpha memory')).toBeInTheDocument());
+    expect(screen.queryByTestId('page-filter-chips')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('page-filters-trigger'));
+    await screen.findByRole('dialog', { name: 'Filters' });
+    fireEvent.click(screen.getByRole('switch', { name: 'Group by category' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Categories' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Filters, 2 active' })).toBeInTheDocument());
+    const chips = screen.getByTestId('page-filter-chips');
+    expect(chips).toHaveTextContent('Group by category');
+    expect(chips).toHaveTextContent('Categories');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    await waitFor(() => expect(screen.queryByTestId('page-filter-chips')).toBeNull());
+    expect(localStorage.getItem('elowen.memory.layout')).toBe('flat');
+  });
+
+  it('brings a remembered filter back as an active chip after a reload', async () => {
+    const first = renderView();
+    await waitFor(() => expect(screen.getByText('alpha memory')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('page-filters-trigger'));
+    await screen.findByRole('dialog', { name: 'Filters' });
+    fireEvent.click(screen.getByRole('switch', { name: 'Group by category' }));
+    await waitFor(() => expect(localStorage.getItem('elowen.memory.layout')).toBe('grouped'));
+    first.unmount();
+
+    renderView();
+
+    await waitFor(() => expect(screen.getByTestId('page-filter-chips')).toHaveTextContent('Group by category'));
+    expect(screen.getByRole('button', { name: 'Filters, 1 active' })).toBeInTheDocument();
+  });
+
   it('keeps a remembered category filter that still resolves', async () => {
     localStorage.setItem('elowen.memory.category', '7');
     categories.mockReturnValue(cats([category({ id: 7, name: 'Work' })]));

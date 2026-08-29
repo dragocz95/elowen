@@ -84,9 +84,18 @@ export function SpatialWorkspaceLayout({ hero, navigation, children, className =
  *  Kept as a named component rather than folded into call sites: eleven plugin bundles across two
  *  repositories mount it through the plugin UI runtime, and the plugin API version is a compatibility
  *  ceiling that cannot express a removal. */
-export function WorkspaceDetailRail({ label, closeLabel, onClose, children }: { label: string; closeLabel: string; onClose: () => void; children: ReactNode }) {
+export function WorkspaceDetailRail({ label, description, closeLabel, onClose, children }: {
+  label: string;
+  /** The one line that identifies the record under its name — a path, an id, a source. It belongs in
+   *  the header `Modal` already draws; written into the body instead it becomes a SECOND header band
+   *  stacked under the first, which is what every rail here had grown. */
+  description?: string;
+  closeLabel: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
   return (
-    <Modal title={label} closeLabel={closeLabel} onClose={onClose} intent="inspect" size="md" drawerWidth="default">
+    <Modal title={label} description={description} closeLabel={closeLabel} onClose={onClose} intent="inspect" size="md" drawerWidth="default">
       <ModalBody>{children}</ModalBody>
     </Modal>
   );

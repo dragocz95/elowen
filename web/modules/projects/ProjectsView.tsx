@@ -24,7 +24,7 @@ import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '..
 import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { RegisterSearch } from '../../components/ui/RegisterSearch';
-import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
+import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState } from '../../components/ui/ControlSurface';
 import { copyText } from '../../lib/clipboard';
 import { Avatar } from '../../components/ui/Avatar';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
@@ -230,9 +230,10 @@ export function ProjectsView() {
             <WorkspaceMetric label={t.projects.metricDocumented} value={summary.documented} icon={FileText} />
           </>,
         }}
-      >
-        <ControlSurfaceDocument>
-          <ControlSurfaceToolbar>
+        // Search-only, and deliberately no `filters`: the register narrows on one text query and
+        // nothing else, so an empty Filters trigger would open a panel with nothing in it.
+        toolbar={{
+          search: (
             <RegisterSearch
               value={query}
               onChange={setQuery}
@@ -241,8 +242,10 @@ export function ProjectsView() {
               onClear={() => setQuery('')}
               clearLabel={t.projects.searchClear}
             />
-          </ControlSurfaceToolbar>
-
+          ),
+        }}
+      >
+        <ControlSurfaceDocument>
           {projects.isLoading ? <ControlSurfaceState><LoadingState variant="list" /></ControlSurfaceState>
             : projects.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.projects.loadError} onRetry={() => projects.refetch()} /></ControlSurfaceState>
             : !projects.data || projects.data.length === 0 ? <ControlSurfaceState><EmptyState title={t.projects.empty} icon={FolderGit2} action={isAdmin ? <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button> : undefined} /></ControlSurfaceState>
@@ -310,18 +313,16 @@ export function ProjectsView() {
                   )}
                 </div>
 
+                {/* The rail names the record itself. It used to be titled "Project detail" and then
+                    repeat the slug and path in a header band of its own directly under that title —
+                    two stacked headers for one project. */}
                 {selectedProject ? (
-                  <WorkspaceDetailRail label={t.projects.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}>
-                    <div className="flex min-w-0 items-center gap-3 border-b border-border/70 pb-4">
-                      <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/60">
-                        <ProjectIcon project={selectedProject} size={selectedProject.icon ? 39 : 22} className="text-muted-foreground" />
-                      </span>
-                      <div className="min-w-0">
-                        <h2 className="truncate text-base font-semibold text-foreground">{selectedProject.slug}</h2>
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground">{selectedProject.path}</span>
-                      </div>
-                    </div>
-
+                  <WorkspaceDetailRail
+                    label={selectedProject.slug}
+                    description={selectedProject.path}
+                    closeLabel={t.common.close}
+                    onClose={() => setSelectedId(null)}
+                  >
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 py-3">
                       {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-foreground"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
                       {isAdmin ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}

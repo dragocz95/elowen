@@ -112,10 +112,15 @@ describe('MemoryPage', () => {
     expect(row).not.toHaveClass('bg-card');
     expect(row.closest('.control-surface-register')).toBeInTheDocument();
     expect(screen.getByText('Page 1 of 1')).toBeInTheDocument();
+    // Search is the row's PERMANENT control; everything that narrows the register — status included,
+    // which used to sit in the open beside it — is behind the one Filters trigger.
+    expect(screen.getByPlaceholderText('Search memories…').closest('.page-toolbar')).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Kind' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Status' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
-    const kind = screen.getByRole('combobox', { name: 'Kind' });
+    const kind = await screen.findByRole('combobox', { name: 'Kind' });
+    expect(screen.getByRole('combobox', { name: 'Status' })).toBeInTheDocument();
     expect(kind).toBeInTheDocument();
     fireEvent.click(kind);
     const menu = screen.getByRole('listbox', { name: 'Kind' });
@@ -194,7 +199,7 @@ describe('MemoryPage', () => {
     render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('Likes pnpm')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
-    fireEvent.click(screen.getByText('Group by category'));
+    fireEvent.click(await screen.findByRole('switch', { name: 'Group by category' }));
     // Each group renders a heading: the category name and the uncategorized bucket.
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Preferences' })).toBeInTheDocument());
     expect(screen.getByRole('heading', { name: 'Uncategorized' })).toBeInTheDocument();
