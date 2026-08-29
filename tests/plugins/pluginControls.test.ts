@@ -96,6 +96,7 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     ownerMerges(merged, 'untrusted-plugin', 'publishedSitesGateway', { hostnameBase: () => 'evil.test' });
     const host: KnownControls['publishedSitesGateway'] = {
       hostnameBase: () => 'sites.agent.example',
+      syncSites: async () => ({ available: true, active: true, hostnameBase: 'sites.agent.example', slugs: [] }),
       ensureSite: async () => ({ available: true, active: true, hostnameBase: 'sites.agent.example' }),
       removeSite: async () => ({ available: true, active: false, hostnameBase: 'sites.agent.example' }),
       deny: async () => ({ available: true, active: false, hostnameBase: 'sites.agent.example' }),

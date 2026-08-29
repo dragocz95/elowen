@@ -12,6 +12,7 @@ const SAFE_EMAIL = /^[^\s@]{1,64}@[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$/i;
 const SAFE_TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 
 type HelperRequest =
+  | { op: 'sync-sites'; gatewayToken: string }
   | { op: 'ensure-site'; slug: string; email: string; gatewayToken: string }
   | { op: 'remove-site'; slug: string; gatewayToken: string }
   | { op: 'deny' }
@@ -130,6 +131,7 @@ export function createPublishedSitesGatewayControl(options: {
         active: result.active === true,
         hostnameBase: base,
         ...(result.detail ? { detail: result.detail } : {}),
+        ...(Array.isArray(result.slugs) ? { slugs: result.slugs.filter((slug) => typeof slug === 'string') } : {}),
       };
     } catch (error) {
       return unavailable(error instanceof Error ? error.message : String(error));
@@ -149,6 +151,10 @@ export function createPublishedSitesGatewayControl(options: {
 
   return {
     hostnameBase: () => base,
+    syncSites: async ({ gatewayToken }) => {
+      if (!SAFE_TOKEN.test(gatewayToken)) return unavailable('the internal gateway token is malformed');
+      return call({ op: 'sync-sites', gatewayToken });
+    },
     ensureSite: async ({ slug, email, gatewayToken }) => {
       if (!SAFE_SLUG.test(slug)) return unavailable('the site slug is malformed');
       if (!SAFE_EMAIL.test(email) || email.length > 254) return unavailable('a contact email is required for certificate issuance');

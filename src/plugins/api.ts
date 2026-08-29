@@ -1075,14 +1075,19 @@ export interface PublishedSitesGatewayStatus {
   active: boolean;
   hostnameBase: string | null;
   detail?: string;
+  /** Which sites currently hold a certificate, for the operations that report or converge on that set. */
+  slugs?: string[];
 }
 
-/** Core-owned privileged boundary for the ONE wildcard gateway used by published sites. The plugin
- * never receives a command, path, upstream or nginx fragment: core derives the hostname from trusted
- * install metadata and the root helper owns every system path. Certificate material travels only over
- * the helper's stdin and is never placed on a command line. */
+/** Core-owned privileged boundary for the wildcard gateway used by published sites. The plugin never
+ * receives a command, path, upstream or nginx fragment: core derives the hostname from trusted install
+ * metadata and the root helper owns every system path, every certificate and the whole certbot
+ * invocation. Nothing the plugin sends reaches a command line. */
 export interface PublishedSitesGatewayControl {
   hostnameBase(): string | null;
+  /** Make the gateway live and report the sites that already hold a certificate. Required before the
+   *  first issuance: HTTP-01 is answered by a port-80 block that has to be serving beforehand. */
+  syncSites(input: { gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
   /** Serve one published site on its own hostname, issuing its certificate through HTTP-01 if needed.
    *  There is deliberately no wildcard-certificate path: a wildcard can only be issued over DNS-01,
    *  which would make every deployment depend on registrar API credentials. Per-name issuance needs

@@ -269,6 +269,16 @@ function ensureSite(request, deployment) {
   return { ok: true, active: true, hostnameBase: deployment.hostnameBase, slugs };
 }
 
+/** Bring nginx in line with the certificates that exist, and report which sites those are. This is what
+ *  makes the gateway live on an instance with no sites yet: the port-80 challenge block must be serving
+ *  before the first certificate can be issued at all. */
+function syncSites(request, deployment) {
+  if (typeof request.gatewayToken !== 'string' || !SAFE_TOKEN.test(request.gatewayToken)) fail('gateway token is invalid');
+  mkdirSync(ACME_WEBROOT, { recursive: true, mode: 0o755 });
+  const slugs = syncConfig(deployment, request.gatewayToken);
+  return { ok: true, active: true, hostnameBase: deployment.hostnameBase, slugs };
+}
+
 function removeSite(request, deployment) {
   const slug = typeof request.slug === 'string' ? request.slug : '';
   if (!SAFE_SLUG.test(slug)) fail('site slug is invalid');
@@ -335,6 +345,7 @@ export async function applyRequest(request, deployment) {
     return { ok: true, active, hostnameBase: deployment.hostnameBase, ...(detail ? { detail } : {}) };
   }
 
+  if (request.op === 'sync-sites') return syncSites(request, deployment);
   if (request.op === 'ensure-site') return ensureSite(request, deployment);
   if (request.op === 'remove-site') return removeSite(request, deployment);
 

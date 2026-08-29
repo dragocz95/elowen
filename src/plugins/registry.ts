@@ -116,7 +116,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   sandbox: ['workspaceRoots', 'workspacesFor', 'activeWorkspace', 'prepareExecution'],
   microsoftIdentity: ['identityFor', 'driveGraphFor'],
   publishedSitesGateway: [
-    'hostnameBase', 'ensureSite', 'removeSite', 'deny', 'status',
+    'hostnameBase', 'syncSites', 'ensureSite', 'removeSite', 'deny', 'status',
     'prepareRuntimeSocket', 'sealRuntimeSocket', 'removeRuntimeSocket',
   ],
 };

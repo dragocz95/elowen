@@ -32,6 +32,17 @@ describe('published sites gateway control', () => {
     ]);
   });
 
+  it('reports the sites that already hold a certificate', async () => {
+    const invoke = vi.fn(async () => ({ ok: true, active: true, hostnameBase: 'sites.agent.example.com', slugs: ['alpha', 42, 'beta'] }));
+    const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke });
+    // The helper is trusted to be root-owned, not to be well-typed: the list crosses a process boundary
+    // as JSON and is filtered before any caller treats an entry as a slug.
+    expect(await control.syncSites({ gatewayToken: TOKEN })).toEqual({
+      available: true, active: true, hostnameBase: 'sites.agent.example.com', slugs: ['alpha', 'beta'],
+    });
+    expect(invoke).toHaveBeenCalledWith({ op: 'sync-sites', gatewayToken: TOKEN });
+  });
+
   it('refuses a malformed slug, email or token before starting sudo', async () => {
     const invoke = vi.fn();
     const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke });
