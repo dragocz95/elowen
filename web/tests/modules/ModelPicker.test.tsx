@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { createWrapper } from '../test-utils';
 import { en } from '../../lib/i18n/dictionaries/en';
 import type { BrainModelOption } from '../../lib/types';
@@ -41,16 +41,21 @@ function setCtx(over: Partial<typeof ctx.value>): void {
 const renderPicker = (variant: 'full' | 'compact' = 'full') =>
   render(<ModelPicker variant={variant} />, { wrapper: createWrapper().wrapper });
 
-const openPopover = () => fireEvent.click(screen.getByRole('button', { name: /./ }));
+const openPopover = () => fireEvent.pointerDown(screen.getByRole('button', { name: /./ }), { button: 0, ctrlKey: false });
 
 beforeEach(() => setCtx({}));
 
 describe('ModelPicker', () => {
-  it('fetches the catalog once on first open when it is not yet loaded', () => {
+  it('fetches the catalog once on first open when it is not yet loaded', async () => {
     const loadModels = vi.fn();
     setCtx({ models: null, loadModels });
     renderPicker();
     expect(loadModels).not.toHaveBeenCalled();
+    openPopover();
+    expect(loadModels).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
     openPopover();
     expect(loadModels).toHaveBeenCalledTimes(1);
   });
@@ -69,9 +74,9 @@ describe('ModelPicker', () => {
     expect(screen.getByText('API')).toBeInTheDocument();
 
     // Active model is the selected option; the others are not.
-    const duplicateRows = screen.getAllByRole('option', { name: /claude-sonnet/ });
-    expect(duplicateRows.filter((row) => row.getAttribute('aria-selected') === 'true')).toHaveLength(1);
-    expect(screen.getByRole('option', { name: /claude-opus/ })).toHaveAttribute('aria-selected', 'false');
+    const duplicateRows = screen.getAllByRole('menuitemradio', { name: /claude-sonnet/ });
+    expect(duplicateRows.filter((row) => row.getAttribute('aria-checked') === 'true')).toHaveLength(1);
+    expect(screen.getByRole('menuitemradio', { name: /claude-opus/ })).toHaveAttribute('aria-checked', 'false');
 
     // Reasoning chips render for the model that supports them (labelled), from its reasoningLabels.
     expect(screen.getByText('Low')).toBeInTheDocument();
@@ -83,9 +88,30 @@ describe('ModelPicker', () => {
     setCtx({ models: CATALOG, currentModel: 'claude-opus', setModel });
     renderPicker();
     openPopover();
-    fireEvent.click(screen.getByRole('option', { name: /gpt-5/ }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /gpt-5/ }));
     expect(setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: 'openai', model: 'gpt-5' }));
-    expect(screen.queryByRole('listbox')).toBeNull(); // closed after a pick
+    expect(screen.queryByRole('menu')).toBeNull(); // closed after a pick
+  });
+
+  it('supports keyboard opening, typeahead selection, and focus restoration', async () => {
+    const setModel = vi.fn();
+    setCtx({ models: CATALOG, currentModel: 'claude-opus', provider: 'anthropic-oauth', setModel });
+    renderPicker();
+    const trigger = screen.getByRole('button', { name: /claude-opus/ });
+    trigger.focus();
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    const first = await screen.findByRole('menuitemradio', { name: /claude-opus/ });
+    await waitFor(() => expect(first).toHaveFocus());
+
+    fireEvent.keyDown(first, { key: 'g' });
+    const target = screen.getByRole('menuitemradio', { name: /gpt-5/ });
+    await waitFor(() => expect(target).toHaveFocus());
+    fireEvent.keyDown(target, { key: 'Enter' });
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+    expect(setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: 'openai', model: 'gpt-5' }));
+    expect(trigger).toHaveFocus();
   });
 
   it('shows the RBAC no-allowed-model state when the server-filtered catalog is empty', () => {
@@ -109,7 +135,8 @@ describe('ModelPicker', () => {
     openPopover();
     expect(screen.getByText(en.brainChat.modelPickerError)).toBeInTheDocument();
     loadModels.mockClear(); // ignore the on-open fetch; assert the retry button re-invokes
-    fireEvent.click(screen.getByRole('button', { name: en.brainChat.modelPickerRetry }));
+    fireEvent.click(screen.getByRole('menuitem', { name: en.brainChat.modelPickerRetry }));
     expect(loadModels).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
   });
 });

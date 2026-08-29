@@ -168,17 +168,17 @@ export class ChatPage {
    *  placeholder). Assert on it to check a model switch landed (initiator label, or a watcher reconciled
    *  via the `session-event` → status refetch). */
   modelTrigger(): Locator {
-    return this.modelPicker.locator('button[aria-haspopup="listbox"]');
+    return this.modelPicker.getByRole('button');
   }
 
-  /** Open the model-picker popover (its trigger carries `aria-haspopup="listbox"`). */
+  /** Open the model-picker menu. */
   async openModelPicker(): Promise<void> {
     await this.modelTrigger().click();
   }
 
-  /** The picker's option rows (role="option"), available once it is open. */
+  /** The picker's radio rows, available once it is open. */
   modelOptions(): Locator {
-    return this.modelPicker.getByRole('option');
+    return this.modelPicker.getByRole('menuitemradio');
   }
 
   /** Open the picker and choose the option whose text contains `label`. */

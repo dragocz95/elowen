@@ -368,7 +368,7 @@ describe('web slash commands: /help and /model overlays', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Anthropic')).toBeInTheDocument();
-    const row = within(dialog).getByRole('option', { name: /claude-opus-5/ });
+    const row = within(dialog).getByRole('button', { name: /claude-opus-5/ });
     // The brand icon is what the plain dropdown could not carry; without it this is the old flat list.
     expect(row.querySelector('img, svg')).not.toBeNull();
 

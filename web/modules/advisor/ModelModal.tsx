@@ -26,8 +26,8 @@ export function ModelModal({ onClose }: { onClose: () => void }) {
           placeholder={t.modelModal.filterPlaceholder}
           aria-label={t.modelModal.filterPlaceholder}
         />
-        <div role="listbox" aria-label={t.brainChat.modelPicker} className="max-h-[26rem] overflow-y-auto rounded-md border border-border py-1">
-          <ModelOptionList filter={filter} onPick={onClose} />
+        <div className="max-h-[26rem] overflow-y-auto rounded-md border border-border py-1">
+          <ModelOptionList filter={filter} onPickAction={onClose} presentation="list" />
         </div>
       </ModalBody>
     </Modal>
