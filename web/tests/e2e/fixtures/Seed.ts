@@ -14,6 +14,7 @@ import type {
   SlashCommandDef,
   ElowenConfig,
   PluginUiListing,
+  ProviderUsage,
 } from '../../../lib/types.ts';
 import type { OverrideKey } from '../fake-daemon/overrides.ts';
 import {
@@ -22,6 +23,8 @@ import {
   brainModels as defaultBrainModels,
   brainCommands as defaultBrainCommands,
   config as defaultConfig,
+  brainOauthStatus as defaultBrainOauthStatus,
+  brainRateLimits as defaultBrainRateLimits,
 } from '../seed/fixtures.ts';
 import { DAEMON_URL } from './env.ts';
 
@@ -70,6 +73,20 @@ export class Seed {
   brainCommands(commands: SlashCommandDef[]): Promise<void> {
     return this.response('brain/commands', { commands });
   }
+
+  /** Replace `GET /brain/oauth/status` — the map the settings accounts card enumerates its rows from.
+   *  Keys are the supported OAuth types, values whether that account is connected. */
+  brainOauthStatus(status: Record<string, boolean>): Promise<void> {
+    return this.response('brain/oauth/status', { ...defaultBrainOauthStatus, ...status });
+  }
+
+  /** Replace `GET /brain/rate-limits/all` — the per-account usage rails, keyed by provider entry id. */
+  brainRateLimits(usage: Record<string, ProviderUsage>): Promise<void> {
+    return this.response('brain/rate-limits/all', usage);
+  }
+
+  /** The stock usage rails, for a spec that wants the defaults spelled out. */
+  static get rateLimitDefaults(): Record<string, ProviderUsage> { return defaultBrainRateLimits; }
 
   /** Patch the app `GET /config`. */
   config(patch: Partial<ElowenConfig>): Promise<void> {

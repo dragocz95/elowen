@@ -611,12 +611,49 @@
     gap: 0.625rem;
     padding-inline: 1rem;
   }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing {
+  /* `nowrap` holds a one-value record on its label's line, which is the whole point of the table above.
+     It is applied to the INLINE record only: forcing a single line on a record carrying a badge, two
+     usage meters and two buttons does not compress them, it makes them overrun the row — the account
+     name, the "Connected" badge, the window labels and the percentages all landed on top of each other,
+     and the provider rows lost their names behind their badges entirely. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing {
     flex-wrap: nowrap;
     gap: 0.375rem;
   }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__control {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control {
     flex-basis: 0;
+  }
+
+  /* THE STACKED RECORD. Studio keeps its two-column value table down to the narrowest phone (see the
+     `< 48rem` block), and that rule is more specific than the base stylesheet's own phone collapse — so
+     a multi-value record never got the single column the base design gives it, and had to fit a meter
+     rail plus two buttons into ~120px. A record that declared `trailingLayout="stack"` opts out here,
+     explicitly, instead of the base rule being expected to win a cascade it cannot. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__label,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__trailing {
+    grid-column: 1;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  /* Each trailing value takes the row's full width: a meter that is a flex item of a shared value column
+     resolves to zero width, and a zero-width meter reads as an empty rail rather than as usage. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__status,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__control,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__actions {
+    width: 100%;
+    flex: 1 1 100%;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+  /* The inline record pins its status to one line so the table's rows stay level. A stacked record has
+     its own line already, so the pin is released and a two-part status (a provider's endpoint above its
+     model count) lays out as the two lines it is. The endpoint itself still truncates — that belongs to
+     the endpoint, which carries `truncate`, not to the status wrapper. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__status {
+    white-space: normal;
   }
 }
 @container workspace-shell (width < 22rem) {

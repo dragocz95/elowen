@@ -13,6 +13,7 @@ import type {
   Project,
   Memory,
   MemoryCategory,
+  ProviderUsage,
 } from '../../../lib/types.ts';
 
 /** The single admin account the fake daemon accepts. Global setup logs in with exactly these creds
@@ -110,6 +111,33 @@ export const brainModels: BrainModelOption[] = [
     fastAvailable: false,
   },
 ];
+
+/** The OAuth account types the daemon supports, and whether each is connected. The settings Brain
+ *  section derives the whole accounts list from these KEYS, so an empty object renders no account rows at
+ *  all — which is why the layout specs seed this explicitly rather than relying on a 404. */
+export const brainOauthStatus: Record<string, boolean> = {
+  'oauth-anthropic': true,
+  'oauth-openai-codex': false,
+  'oauth-github-copilot': false,
+  'oauth-kimi': false,
+};
+
+/** Subscription usage for the connected account, keyed by the account's provider ENTRY id (not its
+ *  `oauth-*` type) — the same mapping BrainProvidersSection uses to look a rail up. Two windows, because
+ *  a single-window rail cannot expose the row's multi-metric stacking, which is where the phone layout
+ *  broke. */
+export const brainRateLimits: Record<string, ProviderUsage> = {
+  anthropic: {
+    provider: 'oauth-anthropic',
+    planType: 'max',
+    windows: [
+      { usedPercent: 42, windowMinutes: 300, resetsAt: 1_790_000_000 },
+      { usedPercent: 87, windowMinutes: 10_080, resetsAt: 1_790_500_000 },
+    ],
+    fetchedAt: 1_789_900_000,
+    stale: false,
+  },
+};
 
 export const brainCommands: SlashCommandDef[] = [
   { name: 'new', description: 'Start a fresh conversation', kind: 'action' },

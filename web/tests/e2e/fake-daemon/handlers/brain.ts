@@ -10,6 +10,8 @@ import {
   brainModels,
   brainCommands,
   brainMessages,
+  brainOauthStatus,
+  brainRateLimits,
   DEFAULT_SESSION_ID,
 } from '../../seed/fixtures.ts';
 import type { BrainMessage } from '../../../../lib/types.ts';
@@ -90,6 +92,11 @@ export function registerBrainRoutes(app: Hono): void {
   app.get('/brain/sessions', (c) => c.json(getResponse('brain/sessions', brainSessions)));
   app.get('/brain/models', (c) => c.json(getResponse('brain/models', brainModels)));
   app.get('/brain/commands', (c) => c.json(getResponse('brain/commands', { commands: brainCommands })));
+
+  // Settings → Brain. `oauth/status` is what the accounts card enumerates its rows FROM, and
+  // `rate-limits/all` supplies the usage rail a connected row renders in its control slot.
+  app.get('/brain/oauth/status', (c) => c.json(getResponse('brain/oauth/status', brainOauthStatus)));
+  app.get('/brain/rate-limits/all', (c) => c.json(getResponse('brain/rate-limits/all', brainRateLimits)));
 
   app.get('/brain/messages', (c) => {
     const session = c.req.query('session') ?? DEFAULT_SESSION_ID;

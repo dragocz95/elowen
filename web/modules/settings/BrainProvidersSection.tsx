@@ -456,6 +456,10 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
             <SettingsRow
               key={type}
               label={typeLabel(type)}
+              // A connected account is a multi-value record: a connection badge, one usage meter per
+              // rate-limit window, and two actions. It does not fit the one-value table a phone gives a
+              // record's trailing side.
+              trailingLayout="stack"
               status={(
                 <span className="flex items-center gap-2">
                   <ModelIcon name={icon} size={15} />
@@ -513,6 +517,9 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
                 <SettingsRow
                   key={p.id}
                   label={p.label}
+                  // Endpoint, model count, type badge, key badge, an optional hosted-search badge and up
+                  // to three buttons — the same multi-value record as an account above.
+                  trailingLayout="stack"
                   iconNode={<DomainFavicon baseUrl={p.baseUrl} fallback={<BrainCircuit size={15} strokeWidth={1.75} />} />}
                   status={(
                     <span className="flex flex-col gap-1">

@@ -72,7 +72,7 @@ function splitIntoColumns(children: ReactNode, columns: 1 | 2): ReactNode {
 /** A label/control record inside a section card. Explanatory copy lives behind the shared HelpTip so the
  * row remains scannable on a phone; `description` gives the short meaning and `hint` adds long-form or
  * cautionary detail in the same click/hover surface. */
-export function SettingsRow({ label, description, hint, icon: Icon, iconNode, status, actions, children, className = '' }: {
+export function SettingsRow({ label, description, hint, icon: Icon, iconNode, status, actions, trailingLayout = 'inline', children, className = '' }: {
   label: string;
   description?: string;
   hint?: string;
@@ -82,11 +82,25 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, st
   iconNode?: ReactNode;
   status?: ReactNode;
   actions?: ReactNode;
+  /** How much room the trailing side needs.
+   *
+   *  `inline` is the default record: ONE compact value (a switch, a select, a short status) that sits
+   *  opposite its label, and the two-column table every settings card reads as.
+   *
+   *  `stack` is for a record whose trailing side is not one value but SEVERAL — a connected account
+   *  carries a connection badge, a usage meter per rate-limit window and two buttons; a provider entry
+   *  carries an endpoint, a model count, up to three badges and three buttons. Those cannot share a
+   *  phone's ~120px value column: the meters collapse to zero width and the badges overrun the label,
+   *  which is exactly what made the account and provider names unreadable. Declaring it here keeps the
+   *  decision with the row that has the content, instead of leaving a stylesheet to guess from the DOM.
+   *
+   *  It changes nothing above the phone breakpoint — a wide card has the room for the inline form. */
+  trailingLayout?: 'inline' | 'stack';
   children?: ReactNode;
   className?: string;
 }) {
   return (
-    <div className={`settings-row ${className}`}>
+    <div className={`settings-row ${className}`} data-trailing={trailingLayout}>
       <div className="settings-row__label">
         {iconNode ? <span className="settings-row__icon" aria-hidden>{iconNode}</span>
           : Icon ? <span className="settings-row__icon" aria-hidden><Icon size={15} strokeWidth={1.75} /></span> : null}

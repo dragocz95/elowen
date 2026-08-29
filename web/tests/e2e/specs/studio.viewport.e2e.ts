@@ -555,6 +555,125 @@ test('Studio settings help buttons stay tappable on a coarse-pointer phone', asy
   }
 });
 
+/** Settings → Elowen AI, seeded so BOTH multi-value cards have something to lay out: one connected OAuth
+ *  account (which is what carries a usage rail) and one API-key provider entry with a long endpoint, a
+ *  key and two models — the row that shows the most badges at once. */
+async function seedBrainSettings(seed: Seed): Promise<void> {
+  await seed.response('config', {
+    ...Seed.defaults.config,
+    allowedSkins: ['default', 'midnight', 'studio-light', 'studio-oled'],
+    brain: {
+      ...Seed.defaults.config.brain,
+      providers: [{
+        id: 'coresynth',
+        label: 'CoreSynth Proxy',
+        type: 'openai',
+        baseUrl: 'https://ai.coresynth.example.com/v1',
+        models: ['gpt-5-codex', 'gpt-5-mini'],
+        apiKeySet: true,
+      }],
+    },
+  });
+}
+
+// A phone rendering of Settings → Elowen AI, reported from an iPhone: in "Connected accounts (OAuth)" the
+// account name, the "Connected" badge, the usage window labels and their percentages were all drawn on
+// top of one another and the meters were not visible at all; in "Providers" the entry's own name and
+// endpoint were gone and only the type/key badges remained.
+//
+// Both cards hold a MULTI-VALUE record — an account carries a badge, one meter per rate-limit window and
+// two buttons; a provider entry carries an endpoint, a model count, up to three badges and three buttons.
+// Studio keeps its two-column value table down to the narrowest phone, and that rule is more specific
+// than the base stylesheet's phone collapse, so those records were held in a ~120px value column with
+// `flex-wrap: nowrap`: the meters resolved to ZERO width and the badge group overran the label. Measured
+// at the time: the meter fills were 0px wide and the provider's action group was laid out 321px wide
+// starting 50px LEFT of the card at 320px.
+//
+// So the assertions are the two halves of that: a stacked record's parts each get a line of their own
+// inside the card (nothing negative, nothing past the edge, no box overlapping the title), and a meter is
+// actually a meter. The inline records in the same page are measured alongside, because the fix must not
+// buy this by flattening the `label | value` table the rest of Settings reads as.
+for (const size of [{ width: 390, height: 844 }, { width: 320, height: 700 }]) {
+  test(`Studio keeps account and provider records readable at ${size.width}px`, async ({ browser, seed }, testInfo) => {
+    authedOnly(testInfo);
+    const { context, page } = await studioTouchPage(browser, seed, 'studio-light', size);
+    try {
+      // After `studioTouchPage`, whose own `useSkin` writes the allow-list over `config` — this seed
+      // carries the allow-list forward AND adds the provider entry, so it must be the last writer.
+      await seedBrainSettings(seed);
+      await openStudio(page, '/settings?cat=brain');
+      // The connected account and the provider entry, by their own names — the two the screenshot lost.
+      await expect(page.getByText('Claude account')).toBeVisible();
+      await expect(page.getByText('CoreSynth Proxy')).toBeVisible();
+
+      const layout = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll<HTMLElement>('.settings-row')]
+          .filter((row) => row.getBoundingClientRect().width > 0);
+        const box = (el: Element) => el.getBoundingClientRect();
+        /** Do two boxes share any area? Two parts of one record may sit on one line or on two, but they
+         *  may never be drawn over each other — which is the defect, in one predicate. */
+        const overlaps = (a: DOMRect, b: DOMRect) =>
+          a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+
+        return rows.map((row) => {
+          const rect = box(row);
+          const title = row.querySelector<HTMLElement>('.settings-row__title');
+          const parts = [...row.querySelectorAll<HTMLElement>('.settings-row__status, .settings-row__control, .settings-row__actions')];
+          return {
+            label: title?.textContent?.trim() ?? '',
+            trailing: row.dataset.trailing ?? '',
+            columns: getComputedStyle(row).gridTemplateColumns,
+            titleWidth: title ? Math.round(box(title).width) : 0,
+            // How far any part of the record falls outside the row's own box, in either direction.
+            spill: Math.round(Math.max(0, ...parts.map((p) => Math.max(rect.left - box(p).left, box(p).right - rect.right)))),
+            // Any trailing part drawn over the record's own name.
+            collidesWithTitle: title ? parts.some((p) => overlaps(box(title), box(p))) : false,
+            meters: [...row.querySelectorAll<HTMLElement>('[data-testid="oauth-usage-track"]')]
+              .map((track) => ({ track: Math.round(box(track).width), fill: Math.round(box(track.firstElementChild!).width) })),
+          };
+        });
+      });
+
+      const stacked = layout.filter((row) => row.trailing === 'stack');
+      const inline = layout.filter((row) => row.trailing === 'inline');
+      // Guard: if the accounts card ever stops rendering, every assertion below would hold vacuously.
+      expect(stacked.map((row) => row.label)).toEqual(
+        expect.arrayContaining(['Claude account', 'CoreSynth Proxy']),
+      );
+
+      // The symptom first, because it is the one a person sees: the connected account's usage rail. A
+      // meter has to be wide enough to read a proportion off, and the fill has to be a proportion OF it.
+      const account = stacked.find((row) => row.label === 'Claude account')!;
+      expect(account.meters).toHaveLength(2);
+      for (const meter of account.meters) {
+        expect(meter.track, 'a usage meter collapsed to nothing').toBeGreaterThan(60);
+        expect(meter.fill).toBeGreaterThan(0);
+        expect(meter.fill).toBeLessThanOrEqual(meter.track);
+      }
+      // 42% and 87% of the same track: the rail must still read as pressure, not as two full bars.
+      expect(account.meters[0]!.fill).toBeLessThan(account.meters[1]!.fill);
+
+      for (const row of stacked) {
+        expect(row.titleWidth, `${row.label} has no room for its own name`).toBeGreaterThan(40);
+        expect(row.spill, `${row.label} draws part of itself outside its row`).toBe(0);
+        expect(row.collidesWithTitle, `${row.label} draws a value over its own name`).toBe(false);
+      }
+
+      // And the structure underneath it: a stacked record gets the card's full width rather than a share
+      // of the two-column table, while every one-value record KEEPS that table.
+      for (const row of stacked) {
+        expect(row.columns.split(' '), `${row.label} is still in the narrow value column`).toHaveLength(1);
+      }
+      expect(inline.length).toBeGreaterThan(0);
+      for (const row of inline) {
+        expect(row.columns.split(' ').length, `${row.label} lost the settings table`).toBeGreaterThan(1);
+      }
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 test('a destination in the Studio nav sheet can actually be tapped', async ({ browser, seed }, testInfo) => {
   authedOnly(testInfo);
   // The defect this stands for made the phone's entire menu inert. `.studio-nav` declared `z-index: 1`

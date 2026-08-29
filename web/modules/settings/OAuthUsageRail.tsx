@@ -37,13 +37,14 @@ export function OAuthUsageRail({ usage }: { usage: ProviderUsage }) {
         return (
           <div
             key={i}
+            data-testid="oauth-usage-window"
             className="flex items-center gap-2 text-xs"
             title={reset ? t.brain.usageResets.replace('{time}', reset) : undefined}
           >
             <span className="w-12 shrink-0 text-text-muted">
               {windowLabel(w.windowMinutes, t.brain.usageWeekly, t.brain.usageWindow)}
             </span>
-            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-elevated">
+            <span data-testid="oauth-usage-track" className="h-1.5 flex-1 overflow-hidden rounded-full bg-elevated">
               <span
                 className={`block h-full rounded-full ${usageFillClass(pct)} transition-[width] duration-500`}
                 style={{ width: `${pct > 0 ? Math.max(pct, 3) : 0}%` }}

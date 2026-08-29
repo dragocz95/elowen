@@ -124,7 +124,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .settings-group__icon { display: grid; flex: none; place-items: center; color: var(--color-accent); }
 .settings-group__heading h2 { color: var(--color-text); font-size: 0.95rem; font-weight: 600; letter-spacing: -0.015em; }
 .settings-group__heading p { margin-top: 0.15rem; color: var(--color-text-muted); font-size: 0.72rem; line-height: 1.45; }
-.settings-group__actions, .settings-row__actions { display: flex; flex: none; align-items: center; gap: 0.5rem; }
+.settings-group__actions, .settings-row__actions { display: flex; min-width: 0; flex: none; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .settings-group__body { min-width: 0; }
 
 /* A body made of records becomes an inset panel, so the records read as one instrument inside the card
@@ -304,6 +304,15 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
   .settings-row__control, .settings-row__actions { grid-column: auto; }
   .settings-row__actions { justify-self: start; }
   .settings-row__trailing { width: 100%; grid-column: auto; justify-content: flex-start; }
+  /* A record that declared `trailingLayout="stack"` carries SEVERAL trailing values (a connected
+     account's meters, a provider entry's endpoint and badge set). Give each of them the row's whole
+     width: a usage meter sized as a flex item of a shared value column resolves to zero and stops being
+     a meter at all. */
+  .settings-row[data-trailing='stack'] .settings-row__status,
+  .settings-row[data-trailing='stack'] .settings-row__control,
+  .settings-row[data-trailing='stack'] .settings-row__actions { width: 100%; flex: 1 1 100%; }
+  .settings-row[data-trailing='stack'] .settings-row__status { white-space: normal; }
+  .settings-row[data-trailing='stack'] .settings-row__actions { justify-content: flex-start; }
   .spatial-identity { align-items: flex-start; flex-wrap: wrap; }
   .settings-model-row { padding-inline: 1rem; }
 }

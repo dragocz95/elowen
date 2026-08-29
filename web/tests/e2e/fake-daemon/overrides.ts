@@ -22,6 +22,11 @@ export type OverrideKey =
   | 'brain/sessions'
   | 'brain/models'
   | 'brain/commands'
+  // The OAuth accounts card and its per-account usage rails. Both are absent from the stock fake
+  // daemon's answers only in the sense that they have DEFAULTS here; a spec overrides them to put a
+  // specific account into a specific usage state.
+  | 'brain/oauth/status'
+  | 'brain/rate-limits/all'
   // The plugin browser-UI listing. Empty by default, so the plugin-less shell every other spec was
   // written against is unchanged; `specs/plugin.css.e2e.ts` arms it with the fixture plugin.
   | 'plugins/ui';
