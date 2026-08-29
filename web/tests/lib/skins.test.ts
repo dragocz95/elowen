@@ -108,8 +108,8 @@ describe('activeSkin', () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it('resolves a known skin, tolerating case and whitespace from a unit file', () => {
-    vi.stubEnv('ELOWEN_SKIN', ' Midnight ');
-    expect(activeSkin()).toBe('midnight');
+    vi.stubEnv('ELOWEN_SKIN', ' Studio-OLED ');
+    expect(activeSkin()).toBe('studio-oled');
   });
 
   it('returns null for unset, unknown and malformed values — the built-in design must render', () => {
@@ -255,45 +255,45 @@ describe('shared family stylesheets', () => {
 });
 
 describe('skin choice resolution', () => {
-  const allowed = allowedSkinChoices([BUILTIN_SKIN, 'midnight']);
+  const allowed = allowedSkinChoices([BUILTIN_SKIN, 'studio-oled']);
 
   it('offers only names this build compiled, in the order the operator listed them', () => {
-    expect(allowedSkinChoices(['midnight', BUILTIN_SKIN])).toEqual(['midnight', BUILTIN_SKIN]);
+    expect(allowedSkinChoices(['studio-oled', BUILTIN_SKIN])).toEqual(['studio-oled', BUILTIN_SKIN]);
     // A name left behind by a deployment that used to ship a skin would otherwise be offered as an
     // option that visibly does nothing. The placeholder is deliberately one no build can ever compile:
     // this file is inherited by deployment forks that DO add skins of their own, and naming a real one
     // here would fail there for the wrong reason.
-    expect(allowedSkinChoices(['not-a-compiled-skin', 'midnight'])).toEqual(['midnight']);
-    expect(allowedSkinChoices(['midnight', 'midnight'])).toEqual(['midnight']);
+    expect(allowedSkinChoices(['not-a-compiled-skin', 'studio-oled'])).toEqual(['studio-oled']);
+    expect(allowedSkinChoices(['studio-oled', 'studio-oled'])).toEqual(['studio-oled']);
     expect(allowedSkinChoices(null)).toEqual([]);
   });
 
   it('honours an allowed choice, and maps the built-in one to no attribute at all', () => {
-    expect(resolveSkin('midnight', allowed, null)).toBe('midnight');
-    expect(resolveSkin(BUILTIN_SKIN, allowed, 'midnight')).toBeNull();
+    expect(resolveSkin('studio-oled', allowed, null)).toBe('studio-oled');
+    expect(resolveSkin(BUILTIN_SKIN, allowed, 'studio-oled')).toBeNull();
   });
 
   it('drops a choice the admin has revoked, back to the deployment default', () => {
     // This is what makes the allow-list a control rather than a suggestion: nobody has to reach into a
     // stored value for a revocation to take effect on the next document.
-    expect(resolveSkin('midnight', allowedSkinChoices([BUILTIN_SKIN]), 'midnight')).toBe('midnight');
-    expect(resolveSkin('midnight', [], null)).toBeNull();
-    expect(resolveSkin('ghost', allowed, 'midnight')).toBe('midnight');
-    expect(resolveSkin(null, allowed, 'midnight')).toBe('midnight');
+    expect(resolveSkin('studio-oled', allowedSkinChoices([BUILTIN_SKIN]), 'studio-oled')).toBe('studio-oled');
+    expect(resolveSkin('studio-oled', [], null)).toBeNull();
+    expect(resolveSkin('ghost', allowed, 'studio-oled')).toBe('studio-oled');
+    expect(resolveSkin(null, allowed, 'studio-oled')).toBe('studio-oled');
   });
 
   it('starts the cycle from what is actually on screen', () => {
-    expect(currentSkinChoice('midnight', allowed, null)).toBe('midnight');
+    expect(currentSkinChoice('studio-oled', allowed, null)).toBe('studio-oled');
     // Nothing chosen: the visible design is the operator's default, and that is where cycling starts.
-    expect(currentSkinChoice(null, allowed, 'midnight')).toBe('midnight');
+    expect(currentSkinChoice(null, allowed, 'studio-oled')).toBe('studio-oled');
     expect(currentSkinChoice(null, allowed, null)).toBe(BUILTIN_SKIN);
     // The deployment default is not itself on offer — cycling must not claim it was picked.
-    expect(currentSkinChoice(null, allowedSkinChoices([BUILTIN_SKIN]), 'midnight')).toBeNull();
+    expect(currentSkinChoice(null, allowedSkinChoices([BUILTIN_SKIN]), 'studio-oled')).toBeNull();
   });
 
   it('cycles forward and wraps, and starts at the first entry from nothing', () => {
-    expect(nextSkinChoice(BUILTIN_SKIN, allowed)).toBe('midnight');
-    expect(nextSkinChoice('midnight', allowed)).toBe(BUILTIN_SKIN);
+    expect(nextSkinChoice(BUILTIN_SKIN, allowed)).toBe('studio-oled');
+    expect(nextSkinChoice('studio-oled', allowed)).toBe(BUILTIN_SKIN);
     expect(nextSkinChoice(null, allowed)).toBe(BUILTIN_SKIN);
     expect(nextSkinChoice(null, [])).toBeNull();
   });

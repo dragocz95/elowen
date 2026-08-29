@@ -29,7 +29,7 @@ export function ReasoningScale({ options, value, onChange, ariaLabel }: {
               {/* The active stop's glow composes an alpha of --primary-rgb, which is the token's stated
                   job. Spelled out as `rgb(255 82 54 / 0.8)` it was the built-in ember frozen into the
                   component: the dot's FILL followed the skin and its halo did not, so the active stop
-                  glowed orange around a cyan dot on midnight and around a blue one on studio-light. */}
+                  glowed orange around a blue dot on studio-light. */}
               <span className={`block rounded-full transition-[width,height,background-color,box-shadow] ${active ? 'h-3.5 w-3.5 bg-primary shadow-[0_0_18px_rgb(var(--primary-rgb)/0.8)]' : 'h-2.5 w-2.5 bg-subtle-foreground group-hover:bg-muted-foreground'}`} aria-hidden />
             </button>
           );

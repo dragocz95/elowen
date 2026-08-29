@@ -265,8 +265,8 @@ function ShellLayout({ children }: { children: ReactNode }) {
               suppression exists to avoid. */}
           {/* WHICH page chrome, decided from the shell profile and nothing else — the same seam the
               navigation is swapped on, so a design's frame and its menu can never disagree, and no
-              component below has to recognise a skin by name. `command` gets the ruled Studio bar with a
-              breadcrumb; the built-in design keeps its frameless floating cluster.
+              component below has to recognise a skin by name. `command` gets the ruled Studio bar; the built-in
+              design keeps its frameless floating cluster.
               The phone suppression is the component's own property rather than a wrapper around it: the
               `bar` variant is sticky, and a wrapper holding nothing but the header IS the header's
               height, which leaves the sticky range at zero. */}

@@ -146,7 +146,6 @@ export const sk = {
     kill: 'Ukončiť',
     appName: '{productName}',
     primaryNav: 'Hlavné',
-    breadcrumb: 'Navigačná cesta',
     expand: 'Rozbaliť',
     collapse: 'Zbaliť',
     collapseNav: 'Zbaliť navigáciu na ikony',
@@ -156,7 +155,6 @@ export const sk = {
     skinBuiltIn: 'Predvolený',
     skinCycle: 'kliknutím prepnete',
     skinNames: {
-      midnight: 'Midnight',
       studioLight: 'Studio Light',
       studioOled: 'Studio OLED',
     },

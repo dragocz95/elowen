@@ -46,7 +46,7 @@ const NAV_RAIL = 57;
  *  no `allowedSkins` at all, so without the seed every assertion below would run against Ember and pass
  *  for the wrong reason. */
 async function useSkin(page: Page, seed: Seed, skin: 'studio-light' | 'studio-oled'): Promise<void> {
-  await seed.response('config', { ...Seed.defaults.config, allowedSkins: ['default', 'midnight', 'studio-light', 'studio-oled'] });
+  await seed.response('config', { ...Seed.defaults.config, allowedSkins: ['default', 'studio-light', 'studio-oled'] });
   const url = new URL(page.url() === 'about:blank' ? 'http://127.0.0.1' : page.url());
   await page.context().addCookies([{ name: 'elowen-skin', value: skin, domain: url.hostname, path: '/', sameSite: 'Lax' }]);
 }
@@ -885,7 +885,7 @@ test('Studio settings help buttons stay tappable on a coarse-pointer phone', asy
 async function seedBrainSettings(seed: Seed): Promise<void> {
   await seed.response('config', {
     ...Seed.defaults.config,
-    allowedSkins: ['default', 'midnight', 'studio-light', 'studio-oled'],
+    allowedSkins: ['default', 'studio-light', 'studio-oled'],
     brain: {
       ...Seed.defaults.config.brain,
       providers: [{

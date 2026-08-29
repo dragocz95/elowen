@@ -106,23 +106,17 @@ function resolveColour(value: string, tokens: Record<string, string>, depth = 0)
  *  ratio has since been fixed fails as a stale entry, and a pair that is not listed has to pass. So the
  *  list can only shrink, and adding to it is a visible act rather than a quiet one.
  *
- *  Both entries are the same defect, found by adding --color-sticky to the surfaces above: the
- *  derived sticky ground is LIGHTER than --color-muted, which is the surface both of these palettes
- *  state their measurement against, so the third text step lands just under AA on it. Neither palette is
- *  this branch's to repaint — Studio must leave the built-in design and midnight pixel-identical — and
- *  the correction is a two-unit darkening of one token in each. */
+ *  The one entry left is a defect found by adding --color-sticky to the surfaces above: the derived
+ *  sticky ground is LIGHTER than --color-muted, which is the surface the built-in palette states its
+ *  measurement against, so the third text step lands just under AA on it. That palette is not this
+ *  branch's to repaint, and the correction is a two-unit darkening of one token. (A second entry lived
+ *  here for the midnight skin, which had the same defect for the same reason; it went with the skin.) */
 const KNOWN_BELOW_AA: { design: string; text: string; surface: string; reason: string }[] = [
   {
     design: 'default',
     text: '--color-subtle-foreground',
     surface: '--color-sticky',
     reason: 'TODO(contrast): #827974 on the derived sticky ground (#121111) is 4.43:1. tokens.css claims 4.57:1 as its worst case, which was measured before --color-sticky existed; darkening the token repaints the built-in design and belongs to its own change.',
-  },
-  {
-    design: 'midnight',
-    text: '--color-subtle-foreground',
-    surface: '--color-sticky',
-    reason: 'TODO(contrast): #77808f on the derived sticky ground (#15181e) is 4.46:1, for the same reason as the built-in design above — the skin was tuned against --color-muted, which the derived surface is lighter than.',
   },
 ];
 

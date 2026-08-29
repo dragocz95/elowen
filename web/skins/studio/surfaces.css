@@ -397,7 +397,7 @@
 
    Inside `.shell-content` it sticks one Studio top-bar height down rather than at 0: the page bar is
    sticky at the top of that same scroller, so a header stuck at 0 slides underneath it and the column
-   names disappear behind the breadcrumb.
+   names disappear behind the page bar.
    The `.shell-content` scope is what keeps the offset off every OTHER register. A table inside a modal
    is portalled to <body> (components/ui/Modal.tsx) and scrolls in a box of its own with no page bar
    anywhere near it — the sessions panel is one — and there any offset would leave a hole above the
@@ -876,8 +876,8 @@
    the layer is where the veil belongs.
    The consumers spell it `bg-background/70`, which is right on a design whose canvas is black and paints
    NOTHING on one whose canvas is white: 70% of #ffffff over #ffffff left the dialog on a 1.27:1
-   hairline with no darkening behind it at all. The utility is untouched — Ember and midnight keep their
-   scrim exactly — and this rule, being unlayered, replaces it for Studio with a veil derived per variant
+   hairline with no darkening behind it at all. The utility is untouched — the built-in Ember design keeps
+   its scrim exactly — and this rule, being unlayered, replaces it for Studio with a veil derived per variant
    from --color-scrim (measured on light: the page reads 3.68:1 darker, a white dialog stands 3.84:1 off
    the veil). */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-layer-modal {

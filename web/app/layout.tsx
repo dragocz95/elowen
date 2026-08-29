@@ -65,7 +65,12 @@ export async function generateMetadata() {
  *  switcher, so the two can never drift apart. */
 type DocumentPaint = { background: string; colorScheme: 'dark' | 'light' };
 
-/** The built-in Ember design — the ABSENCE of a skin — and the fallback for anything unrecognised. */
+/** The built-in Ember design — the ABSENCE of a skin — and the fallback for anything unrecognised.
+ *
+ *  It is what a document falls back to when the stored choice names a skin this build no longer compiles:
+ *  `resolveSkin` refuses the unknown name, the attribute is never written, and the first frame is this
+ *  black rather than an unpainted white one. That is the whole handling a retired skin needs, and it is
+ *  why `documentPaint` takes the RESOLVED skin instead of the raw preference. */
 const DEFAULT_PAINT: DocumentPaint = { background: '#000000', colorScheme: 'dark' };
 
 /** Per-skin first frame. These are the only colour literals the app is allowed to hold outside a token,
@@ -77,7 +82,6 @@ const DEFAULT_PAINT: DocumentPaint = { background: '#000000', colorScheme: 'dark
  *  `lib/skins.ts`; it stays here while that module is imported by CLIENT components, which have no use
  *  for a server-only first-frame value. */
 const SKIN_PAINT: Record<SkinName, DocumentPaint> = {
-  midnight: { background: '#05070b', colorScheme: 'dark' },
   'studio-light': { background: '#ffffff', colorScheme: 'light' },
   'studio-oled': { background: '#03080a', colorScheme: 'dark' },
 };

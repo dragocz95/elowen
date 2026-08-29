@@ -27,7 +27,7 @@ const DESIGNS = [null, 'studio-light', 'studio-oled'] as const;
  *  the list back to the operator default — so a spec that only sets the cookie measures Ember and passes
  *  for the wrong reason. See `studio.viewport.e2e.ts`, where this is explained at length. */
 async function useSkin(page: Page, seed: Seed, skin: string): Promise<void> {
-  await seed.response('config', { ...Seed.defaults.config, allowedSkins: ['default', 'midnight', 'studio-light', 'studio-oled'] });
+  await seed.response('config', { ...Seed.defaults.config, allowedSkins: ['default', 'studio-light', 'studio-oled'] });
   const url = new URL(page.url() === 'about:blank' ? 'http://127.0.0.1' : page.url());
   await page.context().addCookies([{ name: 'elowen-skin', value: skin, domain: url.hostname, path: '/', sameSite: 'Lax' }]);
 }

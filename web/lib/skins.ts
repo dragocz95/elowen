@@ -20,17 +20,24 @@ import type { LocaleDict } from './i18n/types';
  *  This stays a plain tuple of ids because that is what the rest of the app consumes: a directory name, a
  *  `data-skin` value, a member test against `readonly string[]`. The richer per-skin metadata lives in
  *  SKIN_DEFINITIONS below, keyed by these ids. */
-export const SKINS = ['midnight', 'studio-light', 'studio-oled'] as const;
+export const SKINS = ['studio-light', 'studio-oled'] as const;
 export type SkinName = (typeof SKINS)[number];
 
 /** Skins that are variants of ONE design rather than separate designs. `studio-light` and `studio-oled`
  *  share every structural rule and differ only in their token block, so anything that reasons about the
- *  design — shared stylesheets, docs, a future grouped picker — reasons about the family. */
-type SkinFamily = 'midnight' | 'studio';
+ *  design — shared stylesheets, docs, a future grouped picker — reasons about the family.
+ *
+ *  One family today, and it stays a named union rather than collapsing into the id list: the family is
+ *  what a shared stylesheet is scoped to, and a second design added later needs a name to be scoped to
+ *  before it has any skins. */
+type SkinFamily = 'studio';
 
 /** Which navigation/shell presentation a design mounts. This is a property of the SHELL, not of a skin:
  *  `spatial` is the layered, ambient shell the app has always rendered, `command` is the flat command-grid
- *  presentation Studio asks for. Two skins of the same family necessarily share one. */
+ *  presentation Studio asks for. Two skins of the same family necessarily share one.
+ *
+ *  `spatial` has no SKIN asking for it now that the demo skin is gone, and it is NOT dead: it is what the
+ *  built-in design mounts — see `shellProfileFor`, where "no skin at all" resolves to it. */
 export type ShellProfile = 'spatial' | 'command';
 
 /** The dictionary key holding a skin's human name. Skins are named in `common.skinNames` rather than by
@@ -47,7 +54,6 @@ export interface SkinDefinition {
 /** Every compiled skin's metadata. Declared as a total Record over SkinName so the compiler — not review —
  *  rejects a skin added to SKINS with no definition, and a definition for a skin that does not exist. */
 export const SKIN_DEFINITIONS: Record<SkinName, SkinDefinition> = {
-  midnight: { id: 'midnight', family: 'midnight', shellProfile: 'spatial', nameKey: 'midnight' },
   'studio-light': { id: 'studio-light', family: 'studio', shellProfile: 'command', nameKey: 'studioLight' },
   'studio-oled': { id: 'studio-oled', family: 'studio', shellProfile: 'command', nameKey: 'studioOled' },
 };
