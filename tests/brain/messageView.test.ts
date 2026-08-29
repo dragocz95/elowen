@@ -45,6 +45,14 @@ describe('toolDetail: read ranges', () => {
     expect(toolDetail({ path: 'src/a.ts', oldText: 'a', newText: 'b' }, 'Edit')).toBe('src/a.ts');
     expect(toolDetail({ file_path: 'src/a.ts', old_string: 'a', new_string: 'b' }, 'Edit')).toBe('src/a.ts');
   });
+
+  // The `??` chain became a loop over TOOL_SUBJECT_KEYS when live recall started sharing that list.
+  // A chain stops at the first key PRESENT, so a non-string value claims the slot and yields no detail;
+  // a loop written to seek the first STRING would silently start rendering a later key instead.
+  it('lets a present-but-unrenderable argument claim its slot rather than falling through', () => {
+    expect(toolDetail({ path: 42, command: 'npm test' }, 'Bash')).toBeUndefined();
+    expect(toolDetail({ command: 'npm test' }, 'Bash')).toBe('npm test');
+  });
 });
 
 describe('shapeBrainMessages: compaction divider', () => {

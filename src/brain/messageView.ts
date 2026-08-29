@@ -46,13 +46,32 @@ function readRange(args: Record<string, unknown>): string | undefined {
   return count > 0 ? `lines ${start}–${start + count - 1}` : `0 lines from ${start}`;
 }
 
+/** The argument names that say WHAT a tool call is about: a file, a command, a pattern, a query.
+ *
+ *  Payload arguments are deliberately absent — `content`, `old_string`/`new_string`, `function`,
+ *  `metadata` and friends carry the work rather than name it. That exclusion is what lets both readers
+ *  below stay free of any text-shape guessing: a file body or an evaluated script simply has no key
+ *  here to arrive through.
+ *
+ *  Two consumers, one order: {@link toolDetail} shows the FIRST key present, because a UI line has room
+ *  for one thing; live recall searches with EVERY key present, because a query has no such constraint
+ *  and `Grep` would otherwise lose its pattern to its path. */
+export const TOOL_SUBJECT_KEYS = [
+  'path', 'file_path', 'filename', 'command', 'pattern', 'query', 'url', 'name', 'text',
+] as const;
+
 /** A short, human-scannable summary of a tool call's most salient argument (the file path, command,
  *  query…), opencode-style: `read src/foo.ts`, `bash "npm test"`. `Read` keeps its requested line
  *  window visible at the end, even when a long path needs truncating. */
 export function toolDetail(args: unknown, toolName?: string): string | undefined {
   if (!args || typeof args !== 'object') return undefined;
   const a = args as Record<string, unknown>;
-  const raw = a.path ?? a.file_path ?? a.filename ?? a.command ?? a.pattern ?? a.query ?? a.url ?? a.name ?? a.text;
+  // First key PRESENT, preserving the `??` chain this replaced: a non-string value still claims its
+  // slot and yields no detail, rather than falling through to a later key.
+  let raw: unknown;
+  for (const key of TOOL_SUBJECT_KEYS) {
+    if (a[key] !== undefined && a[key] !== null) { raw = a[key]; break; }
+  }
   if (typeof raw !== 'string' || !raw.trim()) return undefined;
   const s = collapseWhitespace(raw);
   const range = toolName === 'Read' ? readRange(a) : undefined;

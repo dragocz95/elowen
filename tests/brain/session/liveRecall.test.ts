@@ -619,6 +619,51 @@ describe('liveRecallQuery', () => {
   });
 });
 
+describe('liveRecallQuery — tool calls', () => {
+  const call = (name: string, args: Record<string, unknown>): Msg =>
+    ({ role: 'assistant', content: [{ type: 'toolCall', name, arguments: args }] } as unknown as Msg);
+
+  it('searches with what the tools were aimed at, not only with what they printed', () => {
+    const q = liveRecallQuery([
+      { role: 'user', content: 'oprav to' },
+      call('Read', { _reason: 'Checking the project rules…', path: '/var/www/kolin/AGENTS.md' }),
+      { role: 'toolResult', content: 'ok' },
+    ]);
+    expect(q).toContain('Checking the project rules');
+    expect(q).toContain('/var/www/kolin/AGENTS.md');
+  });
+
+  it('keeps every naming argument, so a search cannot lose its pattern to its path', () => {
+    // toolDetail shows only the FIRST key present; recall must not inherit that limit, or a Grep would
+    // arrive as a bare directory and the term actually being hunted would never be searched with.
+    const q = liveRecallQuery([call('Grep', { pattern: 'elowen_session', path: '/var/www/elowen' })]);
+    expect(q).toContain('elowen_session');
+    expect(q).toContain('/var/www/elowen');
+  });
+
+  it('never lets a payload argument into the query', () => {
+    const q = liveRecallQuery([
+      call('Write', { path: '/tmp/out.md', content: 'zebra giraffe pelican' }),
+      call('Edit', { path: '/tmp/a.ts', old_string: 'aardvark', new_string: 'narwhal' }),
+      call('Eval', { function: '() => document.querySelector("kingfisher")' }),
+    ]);
+    expect(q).toContain('/tmp/out.md');
+    expect(q).not.toContain('zebra');
+    expect(q).not.toContain('narwhal');
+    expect(q).not.toContain('kingfisher');
+  });
+
+  it('caps one argument so a long command cannot crowd out the rest of the turn', () => {
+    const q = liveRecallQuery([call('Bash', { command: `echo ${'x'.repeat(4000)}` })]);
+    expect(q).toContain('echo'); // the head survives — this is a cap, not a rejection
+    expect(q.length).toBeLessThan(400);
+  });
+
+  it('contributes nothing for a call that names nothing', () => {
+    expect(liveRecallQuery([call('Screenshot', { pageId: 1, fullPage: true })])).toBe('');
+  });
+});
+
 describe('liveRecallQuery — meta messages', () => {
   it('does not treat a recalled-memory meta message as steering', () => {
     const q = liveRecallQuery([
