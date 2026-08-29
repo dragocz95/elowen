@@ -40,7 +40,10 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
         {rows.length === 0 ? (
           <EmptyState title={t.helpModal.emptyTitle} description={t.helpModal.emptyDesc} icon={HelpCircle} />
         ) : (
-          <div className="flex max-h-[26rem] flex-col gap-px overflow-y-auto rounded-md border border-border bg-border/50">
+          /* The catalog is content in the body's scroll, not a scroll region of its own: a bounded inner
+             scroller put a second scrollbar inside a dialog that already scrolls, and on the phone's
+             fullscreen presentation it capped the list at 26rem in the middle of an empty screen. */
+          <div className="flex flex-col gap-px overflow-hidden rounded-md border border-border bg-border/50">
             {rows.map((cmd) => (
               <button
                 key={cmd.name}

@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useRef, useState } from 'react';
 import { Workflow } from 'lucide-react';
-import { Modal } from '../../components/ui/Modal';
+import { Modal, ModalBody } from '../../components/ui/Modal';
 import { useTranslation } from '../../lib/i18n';
 import { useMobileViewport } from '../../lib/useMobile';
 import { formatTokens } from '../../lib/format';
@@ -123,14 +123,17 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
     </button>
   );
 
+  // Every branch hands its content to `ModalBody`: the dialog's one scroll region, with the shell's own
+  // gutter. What used to sit here — `min-h-0 flex-1 overflow-auto` plus a p-3/p-4 of its own — was a
+  // second body rebuilt per branch, each with a different inset from the header above it.
   const body = () => {
-    if (!wf) return <p className="p-5 text-xs text-muted-foreground">{t.workflowModal.gone}</p>;
-    if (nodes.length === 0) return <p className="p-5 text-xs text-muted-foreground">{t.workflowModal.empty}</p>;
+    if (!wf) return <ModalBody><p className="text-xs text-muted-foreground">{t.workflowModal.gone}</p></ModalBody>;
+    if (nodes.length === 0) return <ModalBody><p className="text-xs text-muted-foreground">{t.workflowModal.empty}</p></ModalBody>;
     if (mobile) {
       let wave = -1;
       return (
-        <div data-testid="workflow-dag-list" className="min-h-0 flex-1 overflow-auto p-3" onKeyDown={onKeyDown}>
-          <ul className="flex flex-col gap-1.5">
+        <ModalBody>
+          <ul data-testid="workflow-dag-list" className="flex flex-col gap-1.5" onKeyDown={onKeyDown}>
             {layout.nodes.map((placed) => {
               const node = nodes.find((n) => n.id === placed.id);
               if (!node) return null;
@@ -147,62 +150,62 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
               );
             })}
           </ul>
-        </div>
+        </ModalBody>
       );
     }
     return (
-      <div
-        data-testid="workflow-dag-graph"
-        role="group"
-        aria-label={t.workflowModal.graph}
-        className="min-h-0 flex-1 overflow-auto p-4"
-        onKeyDown={onKeyDown}
-      >
+      <ModalBody>
         {/* The graph is centred in whatever space the modal has rather than pinned to the top-left: a DAG
             is usually far smaller than the dialog, and left alone it reads as an accident in a large empty
             panel. min-w/min-h-full keeps the centring from shrinking the scroll area when it IS larger. */}
-        <div className="flex min-h-full min-w-full items-center justify-center">
+        <div
+          data-testid="workflow-dag-graph"
+          role="group"
+          aria-label={t.workflowModal.graph}
+          className="flex min-h-full min-w-full items-center justify-center"
+          onKeyDown={onKeyDown}
+        >
           <div className="relative shrink-0" style={{ width: layout.width, height: layout.height }}>
-          <svg
-            aria-hidden
-            className="wf-dag__edges"
-            width={layout.width}
-            height={layout.height}
-            viewBox={`0 0 ${layout.width} ${layout.height}`}
-          >
-            {/* Dependencies are directed, so they are drawn as arrows. Without a head, a wave-to-wave
-                curve reads as an undirected thread and the eye cannot tell which node feeds which. */}
-            <defs>
-              <marker
-                id="wf-dag-arrowhead"
-                viewBox="0 0 8 8"
-                refX="7.5"
-                refY="4"
-                markerWidth="5"
-                markerHeight="5"
-                orient="auto-start-reverse"
-              >
-                <path d="M0 0.5 L8 4 L0 7.5 Z" className="wf-dag__arrowhead" />
-              </marker>
-            </defs>
-            {layout.edges.map((edge) => (
-              <path
-                key={`${edge.from}->${edge.to}`}
-                d={edge.d}
-                markerEnd="url(#wf-dag-arrowhead)"
-                className={`wf-dag__edge${nodes.find((n) => n.id === edge.to)?.status === 'running' ? ' wf-dag__edge--live' : ''}`}
-              />
-            ))}
-          </svg>
-          {layout.nodes.map((placed) => {
-            const node = nodes.find((n) => n.id === placed.id);
-            return node
-              ? nodeButton(node, placed.full, 'absolute', { left: placed.x, top: placed.y, width: DAG_NODE_W, height: placed.height })
-              : null;
-          })}
+            <svg
+              aria-hidden
+              className="wf-dag__edges"
+              width={layout.width}
+              height={layout.height}
+              viewBox={`0 0 ${layout.width} ${layout.height}`}
+            >
+              {/* Dependencies are directed, so they are drawn as arrows. Without a head, a wave-to-wave
+                  curve reads as an undirected thread and the eye cannot tell which node feeds which. */}
+              <defs>
+                <marker
+                  id="wf-dag-arrowhead"
+                  viewBox="0 0 8 8"
+                  refX="7.5"
+                  refY="4"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0 0.5 L8 4 L0 7.5 Z" className="wf-dag__arrowhead" />
+                </marker>
+              </defs>
+              {layout.edges.map((edge) => (
+                <path
+                  key={`${edge.from}->${edge.to}`}
+                  d={edge.d}
+                  markerEnd="url(#wf-dag-arrowhead)"
+                  className={`wf-dag__edge${nodes.find((n) => n.id === edge.to)?.status === 'running' ? ' wf-dag__edge--live' : ''}`}
+                />
+              ))}
+            </svg>
+            {layout.nodes.map((placed) => {
+              const node = nodes.find((n) => n.id === placed.id);
+              return node
+                ? nodeButton(node, placed.full, 'absolute', { left: placed.x, top: placed.y, width: DAG_NODE_W, height: placed.height })
+                : null;
+            })}
           </div>
         </div>
-      </div>
+      </ModalBody>
     );
   };
 
@@ -235,7 +238,10 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
       <div data-testid="workflow-modal" className="flex min-h-0 flex-1 flex-col">
         {body()}
         {selected && selectedOutcome ? (
-          <div data-testid="workflow-node-detail" className="shrink-0 border-t border-border px-4 py-3">
+          /* Pinned BELOW the body's scroll, the way `ModalFooter` pins an action row — but it is a detail
+             pane, not actions, so it keeps its own block layout and only borrows the shell's divider and
+             px-5 gutter, so its text lines up with the graph above it. */
+          <div data-testid="workflow-node-detail" className="shrink-0 border-t border-border px-5 py-3">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-tiny text-muted-foreground">
               <span aria-hidden className={GLYPH_TONE[selected.status]}>{NODE_GLYPH[selected.status]}</span>
               <span className="font-mono text-foreground">{selected.id}</span>

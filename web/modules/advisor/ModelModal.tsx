@@ -26,7 +26,9 @@ export function ModelModal({ onClose }: { onClose: () => void }) {
           placeholder={t.modelModal.filterPlaceholder}
           aria-label={t.modelModal.filterPlaceholder}
         />
-        <div className="max-h-[26rem] overflow-y-auto rounded-md border border-border py-1">
+        {/* Framed, not scrolled: the body above owns the one scroll region, so the catalog grows into it
+            instead of putting a second scrollbar inside a dialog that already has one. */}
+        <div className="overflow-hidden rounded-md border border-border py-1">
           <ModelOptionList filter={filter} onPickAction={onClose} presentation="list" />
         </div>
       </ModalBody>
