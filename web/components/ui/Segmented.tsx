@@ -1,6 +1,11 @@
 'use client';
+
 import { useEffect, useRef } from 'react';
+import { cva } from 'class-variance-authority';
 import type { LucideIcon } from 'lucide-react';
+
+import { cn } from '../../lib/utils';
+import { RadioGroup, RadioGroupItem } from './shadcn/radio-group';
 
 export interface SegmentedOption {
   value: string;
@@ -12,9 +17,52 @@ export interface SegmentedOption {
   count?: number;
 }
 
-/** A connected segmented switch: one bordered track holding the options, the active one lifted with an
- *  accent fill. Single source of truth for single-choice toggles (mode, filters, type, priority,
- *  autonomy, PR workflow…). The track wraps when it can't fit, so long option sets degrade gracefully. */
+const segmentedIconVariants = cva('shrink-0', {
+  variants: {
+    variant: {
+      default: 'size-[13px]',
+      line: 'size-[13px]',
+      menu: 'size-4',
+    },
+  },
+  defaultVariants: {
+    variant: 'default',
+  },
+});
+
+const segmentedLabelVariants = cva('', {
+  variants: {
+    variant: {
+      default: '',
+      line: '',
+      menu: 'min-w-0 flex-1 truncate text-left',
+    },
+  },
+  defaultVariants: {
+    variant: 'default',
+  },
+});
+
+const segmentedCountVariants = cva('segmented__count text-muted-foreground', {
+  variants: {
+    variant: {
+      default: '',
+      line: '',
+      menu: 'ml-auto',
+    },
+  },
+  defaultVariants: {
+    variant: 'default',
+  },
+});
+
+/** A connected single-choice control for modes, filters, types, priorities and section views.
+ *
+ *  This is a Radix RadioGroup rather than a ToggleGroup because one value is always selected and clicking
+ *  it again must not turn the set off. That gives the control its native `radiogroup` / `radio` roles,
+ *  `aria-checked` state, roving tab stop and radio-group arrow/Home/End keyboard model without reimplementing
+ *  any of them. The `line` and `menu` variants change presentation only; they retain the same mutually
+ *  exclusive selection semantics as the compact field treatment. */
 export function Segmented({ options, value, onChange, size = 'md', variant = 'default', className, nowrap = false, 'aria-label': ariaLabel }: {
   options: SegmentedOption[];
   value: string;
@@ -32,76 +80,51 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
   /** Accessible name for the radiogroup — pass it when the control acts as a labelled section nav. */
   'aria-label'?: string;
 }) {
-  const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const menu = variant === 'menu';
-  const pad = menu ? 'h-10 px-2.5' : size === 'sm' ? 'h-9 px-2.5' : 'h-9 px-3';
-  // A menu is a vertical navigation list. Horizontal tracks either wrap or scroll, but never clip.
-  const wrap = menu
-    ? 'max-w-full flex-col items-stretch'
-    : nowrap
-      ? 'max-w-full flex-nowrap overflow-x-auto overflow-y-hidden overscroll-x-contain'
-      : 'max-w-full flex-wrap';
-  const track = variant === 'line'
-    ? 'gap-4 border-b border-border/80'
-    : menu
-      ? 'gap-1'
-      : 'gap-0.5 rounded-md border border-border bg-surface p-0.5';
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const selectedIndex = options.findIndex((option) => option.value === value);
-  const tabbableIndex = selectedIndex >= 0 ? selectedIndex : 0;
+  const orientation = variant === 'menu' ? 'vertical' : 'horizontal';
+  const radioSize = size === 'sm' ? 'sm' : 'default';
+
   useEffect(() => {
     if (!nowrap || selectedIndex < 0) return;
-    buttonRefs.current[selectedIndex]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    itemRefs.current[selectedIndex]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [nowrap, selectedIndex]);
-  const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
-    let next: number | null = null;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % options.length;
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + options.length) % options.length;
-    else if (event.key === 'Home') next = 0;
-    else if (event.key === 'End') next = options.length - 1;
-    if (next == null || !options[next]) return;
-    event.preventDefault();
-    onChange(options[next].value);
-    buttonRefs.current[next]?.focus();
-  };
+
   return (
     // `segmented` / `segmented__option` / `segmented__count` are named for the same reason the toolbar
     // and the field are: this control is one of the handful a DESIGN has to be able to restate, and a
     // stylesheet has nothing to hold on to otherwise. The utilities below stay the built-in reading.
-    <div
-      role="radiogroup"
+    <RadioGroup
+      value={value}
+      onValueChange={onChange}
       aria-label={ariaLabel}
-      aria-orientation={menu ? 'vertical' : 'horizontal'}
-      data-variant={variant}
+      aria-orientation={orientation}
+      variant={variant}
+      nowrap={nowrap}
       data-nowrap={nowrap ? 'true' : undefined}
-      className={`segmented inline-flex ${wrap} ${track} ${className ?? ''}`}
+      className={cn('segmented', className)}
     >
-      {options.map((o, index) => {
-        const active = o.value === value;
-        const Icon = o.icon;
+      {options.map((option, index) => {
+        const Icon = option.icon;
         return (
-          <button
-            key={o.value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            aria-label={o.count === undefined ? o.label : `${o.label} ${o.count}`}
-            tabIndex={index === tabbableIndex ? 0 : -1}
-            ref={(node) => { buttonRefs.current[index] = node; }}
-            onClick={() => onChange(o.value)}
-            onKeyDown={(event) => move(event, index)}
-            className={`segmented__option inline-flex shrink-0 items-center gap-1.5 text-xs font-medium transition-colors pointer-coarse:min-h-[var(--touch-target)] ${pad} ${variant === 'line'
-              ? `-mb-px border-b-2 ${active ? 'border-primary text-primary' : 'border-transparent text-text-muted hover:text-text'}`
-              : menu
-                ? `w-full justify-start rounded-md ${active ? 'bg-elevated text-text' : 'text-text-muted hover:bg-elevated hover:text-text'}`
-                : `rounded ${active ? 'bg-primary/15 text-primary' : 'text-text-muted hover:bg-elevated hover:text-text'}`}`}
+          <RadioGroupItem
+            key={option.value}
+            value={option.value}
+            aria-label={option.count === undefined ? option.label : `${option.label} ${option.count}`}
+            appearance="segmented"
+            variant={variant}
+            size={radioSize}
+            ref={(node) => { itemRefs.current[index] = node; }}
             style={{ transitionDuration: 'var(--motion-fast)' }}
           >
-            {Icon ? <Icon size={menu ? 16 : 13} aria-hidden /> : null}
-            <span className={menu ? 'min-w-0 flex-1 truncate text-left' : undefined}>{o.label}</span>
-            {o.count === undefined ? null : <span className={`segmented__count text-text-subtle ${menu ? 'ml-auto' : ''}`} aria-hidden>{o.count}</span>}
-          </button>
+            {Icon ? <Icon aria-hidden className={segmentedIconVariants({ variant })} /> : null}
+            <span className={segmentedLabelVariants({ variant })}>{option.label}</span>
+            {option.count === undefined ? null : (
+              <span className={segmentedCountVariants({ variant })} aria-hidden>{option.count}</span>
+            )}
+          </RadioGroupItem>
         );
       })}
-    </div>
+    </RadioGroup>
   );
 }

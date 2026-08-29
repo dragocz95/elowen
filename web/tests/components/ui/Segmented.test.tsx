@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Segmented } from '../../../components/ui/Segmented';
 
 const opts = [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }, { value: 'c', label: 'C' }];
@@ -17,22 +18,40 @@ describe('Segmented', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'C' }));
     expect(onChange).toHaveBeenCalledWith('c');
   });
-  it('uses roving focus and arrow keys for the radio group', () => {
+  it('uses roving focus and arrow keys for the radio group', async () => {
     const onChange = vi.fn();
-    render(<Segmented aria-label="Mode" options={opts} value="b" onChange={onChange} />);
+    function Harness() {
+      const [value, setValue] = useState('b');
+      return (
+        <Segmented
+          aria-label="Mode"
+          options={opts}
+          value={value}
+          onChange={(next) => {
+            setValue(next);
+            onChange(next);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    const group = screen.getByRole('radiogroup', { name: 'Mode' });
     const active = screen.getByRole('radio', { name: 'B' });
-    expect(active).toHaveAttribute('tabindex', '0');
+    const next = screen.getByRole('radio', { name: 'C' });
+    expect(group).toHaveAttribute('tabindex', '0');
+    act(() => group.focus());
+    await waitFor(() => expect(active).toHaveFocus());
     expect(screen.getByRole('radio', { name: 'A' })).toHaveAttribute('tabindex', '-1');
-    active.focus();
     fireEvent.keyDown(active, { key: 'ArrowRight' });
+    await waitFor(() => expect(next).toHaveFocus());
+    expect(next).toHaveAttribute('aria-checked', 'true');
     expect(onChange).toHaveBeenCalledWith('c');
-    expect(screen.getByRole('radio', { name: 'C' })).toHaveFocus();
   });
   it('offers a quiet underline variant for settings navigation', () => {
     render(<Segmented variant="line" options={opts} value="b" onChange={() => {}} />);
     expect(screen.getByRole('radiogroup')).toHaveClass('border-b');
-    expect(screen.getByRole('radio', { name: 'B' })).toHaveClass('border-primary');
-    expect(screen.getByRole('radio', { name: 'A' })).toHaveClass('border-transparent');
+    expect(screen.getByRole('radio', { name: 'B' })).toHaveAttribute('data-state', 'checked');
+    expect(screen.getByRole('radio', { name: 'A' })).toHaveAttribute('data-state', 'unchecked');
   });
   it('marks nowrap tabs for horizontal scrolling without a vertical overflow axis', () => {
     render(<Segmented nowrap options={opts} value="b" onChange={() => {}} />);
@@ -43,6 +62,7 @@ describe('Segmented', () => {
     render(<Segmented variant="menu" options={opts} value="b" onChange={() => {}} />);
     expect(screen.getByRole('radiogroup')).toHaveAttribute('aria-orientation', 'vertical');
     expect(screen.getByRole('radiogroup')).toHaveClass('flex-col', 'items-stretch');
-    expect(screen.getByRole('radio', { name: 'B' })).toHaveClass('w-full', 'bg-elevated');
+    expect(screen.getByRole('radio', { name: 'B' })).toHaveClass('w-full');
+    expect(screen.getByRole('radio', { name: 'B' })).toHaveAttribute('data-state', 'checked');
   });
 });
