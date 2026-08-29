@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
@@ -8,6 +8,20 @@ import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
 import { CompactWorkspaceHeader, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
 import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
+
+/** How much room the shell reports. The layout the section navigation takes is a function of MEASURED
+ *  width, and jsdom lays nothing out — a real `ResizeObserver` would report 0 here forever, which is only
+ *  ever the wide answer. Mocking the hook is what makes the narrow branch reachable at all.
+ *
+ *  0 is the default because it is the hook's own "not measured yet" contract and therefore what every
+ *  case that is not about width should see. `vi.hoisted` is required: `vi.mock` is lifted above the
+ *  imports, so a plain `const` would still be in its temporal dead zone when the factory runs. */
+const shell = vi.hoisted(() => ({ width: 0 }));
+vi.mock('../../lib/useElementWidth', () => ({
+  useElementWidth: () => shell.width,
+  useElementHeight: () => 0,
+}));
+afterEach(() => { shell.width = 0; });
 
 const COMPONENTS = resolve(process.cwd(), 'app', 'styles', 'components');
 const css = (name: string): string => readFileSync(join(COMPONENTS, `${name}.css`), 'utf-8');
@@ -113,6 +127,116 @@ describe('WorkspaceShell', () => {
     );
     expect(container.querySelector('.workspace-hero__status')).toContainElement(screen.getByText('Saved'));
     expect(container.querySelector('.workspace-hero__actions')).toContainElement(screen.getByRole('button', { name: 'New' }));
+  });
+});
+
+/** ONE section model, three presentations, and the shell — not the page — decides which. A deck is a
+ *  configuration surface with a long unordered set of sections, so with room it gets a column of its own
+ *  and without room a single picker; a register's sections are a filter over one collection and stay a
+ *  tab row at every width. None of it is a prop, which is the point: no call site and no plugin bundle
+ *  changed to get it. */
+describe('the section navigation takes its shape from the variant and the room the shell has', () => {
+  const deck = (
+    <LanguageProvider>
+      <SpatialControlDeck eyebrow="Settings" ariaLabel="Settings sections" sections={sections} value="system" onChange={vi.fn()}>
+        <div>Section</div>
+      </SpatialControlDeck>
+    </LanguageProvider>
+  );
+
+  it('gives a roomy deck a vertical section column, with a glyph on every row', () => {
+    shell.width = 1_200;
+    const { container } = render(deck);
+
+    expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar');
+    const nav = container.querySelector('.workspace-shell__section-navigation');
+    expect(nav).toHaveAttribute('data-layout', 'sidebar');
+
+    // Still one radiogroup with the same accessible name — a column is a presentation, not a different
+    // control. `menu` is the shared Segmented's vertical variant, so the roving tab stop, the arrows and
+    // aria-checked all come from the same place they do in a tab row.
+    const group = screen.getByRole('radiogroup', { name: 'Settings sections' });
+    expect(group).toHaveAttribute('data-variant', 'menu');
+    expect(group).toHaveAttribute('aria-orientation', 'vertical');
+    expect(screen.queryByRole('combobox')).toBeNull();
+    // A row has a whole line to itself here, so the section's own glyph rides with its name. Counted as
+    // a DIRECT child of each option: the checked row also mounts Radix's own (hidden) indicator glyph,
+    // and counting every svg in the column would pass on that alone.
+    const withGlyph = [...(nav?.querySelectorAll('.segmented__option') ?? [])]
+      .filter((option) => option.querySelector(':scope > svg') !== null);
+    expect(withGlyph).toHaveLength(sections.length);
+  });
+
+  it('folds a deck with no room for a column down to one picker, keeping the glyph and the count', () => {
+    shell.width = 720;
+    const { container } = render(
+      <LanguageProvider>
+        <SpatialControlDeck
+          eyebrow="Settings"
+          ariaLabel="Settings sections"
+          sections={[{ ...sections[0]!, count: 3 }, sections[1]!]}
+          value="system"
+          onChange={vi.fn()}
+        >
+          <div>Section</div>
+        </SpatialControlDeck>
+      </LanguageProvider>,
+    );
+
+    expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'select');
+    expect(container.querySelector('.workspace-shell__section-navigation')).toHaveAttribute('data-layout', 'select');
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    const picker = screen.getByRole('combobox', { name: 'Settings sections' });
+    // A picker has nowhere to put a figure beside a label, so the count folds INTO the label rather than
+    // being dropped — a section that carries one on a desktop still carries it on a phone.
+    expect(picker).toHaveTextContent('System (3)');
+    expect(picker.querySelector('span[aria-hidden] > svg')).not.toBeNull();
+  });
+
+  it('opens on the column rather than the picker while the width is still unknown', () => {
+    // `useElementWidth` reports 0 until its first observation. Reading that as narrow would paint the
+    // phone picker for a frame on every desktop deck; reading it as wide is the safe first paint, and the
+    // stylesheet carries the complementary phone guard.
+    shell.width = 0;
+    const { container } = render(deck);
+    expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar');
+  });
+
+  it('keeps a register on horizontal tabs however much room it has', () => {
+    for (const width of [0, 480, 1_600]) {
+      shell.width = width;
+      const { container, unmount } = render(
+        <WorkspaceShell
+          variant="register"
+          hero={{ title: 'Memory', metrics: <WorkspaceMetric label="Active" value={4} /> }}
+          navigation={{ sections, value: 'system', onChange: vi.fn(), ariaLabel: 'Sections' }}
+        >
+          <div>Register</div>
+        </WorkspaceShell>,
+      );
+
+      expect(container.querySelector('.workspace-shell'), `${width}px`).toHaveAttribute('data-section-layout', 'tabs');
+      const group = screen.getByRole('radiogroup', { name: 'Sections' });
+      expect(group).toHaveAttribute('data-variant', 'line');
+      expect(group, 'a tab row stays on one line and scrolls').toHaveAttribute('data-nowrap', 'true');
+      expect(screen.queryByRole('combobox')).toBeNull();
+      // And no glyphs: in a tab row an icon doubles the width of every label and buys nothing.
+      expect(container.querySelectorAll('.workspace-shell__section-navigation .segmented__option > svg')).toHaveLength(0);
+      unmount();
+    }
+  });
+
+  it('states the same DOM anatomy in every layout, because the arrangement is a grid placement', () => {
+    // The sidebar is laid out by `grid-area`, not by a different tree. A reader with no stylesheet, and a
+    // screen reader following the document, meet the page in the order it is written — and that order is
+    // the SAME order in all three layouts.
+    const expected = ['workspace-hero', 'workspace-shell__section-navigation', 'page-toolbar', 'workspace-shell__content'];
+    for (const width of [1_200, 720]) {
+      shell.width = width;
+      const { container, unmount } = render(deck);
+      expect(anatomy(container.querySelector('.workspace-shell')), `${width}px`).toEqual(expected);
+      unmount();
+    }
   });
 });
 
@@ -279,6 +403,82 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(at('page-toolbar')).toBeGreaterThan(at('workspace-hero'));
     expect(at('page-toolbar')).toBeGreaterThan(at('control-surface'));
     expect(at('page-toolbar')).toBeGreaterThan(at('spatial-deck'));
+  });
+
+  it('measures a settings surface against the content column, not against the page', () => {
+    // `@container workspace-shell` is what every settings record, control surface and toolbar folds
+    // against. A container query resolves against the NEAREST named ancestor, so while the shell was the
+    // only one, a record beside a 15rem section column asked how wide the whole PAGE is and answered by
+    // the width of the column. The content column has to carry the name for the question to mean "how
+    // much room does this surface have".
+    const shellCss = css('workspace-shell');
+    expect(shellCss).toMatch(/\.workspace-shell__content\s*\{[^}]*container:\s*workspace-shell \/ inline-size/);
+    expect(shellCss).toMatch(/\.workspace-shell\[data-section-layout='sidebar'\] > \.page-toolbar\s*\{[^}]*container:\s*workspace-shell \/ inline-size/);
+    // The shell keeps the name too for the hero and section column, which still measure the full page.
+    expect(shellCss).toMatch(/\.workspace-shell,\s*\n\.workspace-page\s*\{[^}]*container:\s*workspace-shell \/ inline-size/);
+  });
+
+  it('places the deck column beside the surface it configures and parks it there', () => {
+    const shellCss = css('workspace-shell');
+    const sidebar = /\.workspace-shell\[data-section-layout='sidebar'\]\s*\{([^}]*)\}/.exec(shellCss);
+    expect(sidebar, 'the sidebar layout must be laid out from one rule').not.toBeNull();
+    expect(sidebar![1]).toMatch(/display:\s*grid/);
+    // The hero names the PAGE and spans both columns; the section column spans the toolbar AND the
+    // content, so it reads as one surface beside one working area rather than as a control above a card.
+    expect(sidebar![1]).toMatch(/'hero hero'/);
+    expect(sidebar![1]).toMatch(/'sections toolbar'/);
+    expect(sidebar![1]).toMatch(/'sections content'/);
+    // Every one of the four children is placed explicitly: a grid item left to auto-placement would move
+    // the moment the anatomy gains a part.
+    for (const area of ['hero', 'toolbar', 'content', 'sections']) {
+      expect(shellCss, `nothing places the ${area} area`).toMatch(new RegExp(`grid-area:\\s*${area}`));
+    }
+    // `align-self: start` is what makes the sticky work: a stretched grid item is already as tall as its
+    // containing block and has nowhere to move.
+    const column = /\.workspace-shell\[data-section-layout='sidebar'\] > \.workspace-shell__section-navigation\s*\{([^}]*)\}/.exec(shellCss);
+    expect(column).not.toBeNull();
+    expect(column![1]).toMatch(/position:\s*sticky/);
+    expect(column![1]).toMatch(/top:\s*var\(--section-sidebar-sticky-top\)/);
+    expect(column![1]).toMatch(/align-self:\s*start/);
+    expect(column![1]).toMatch(/max-height:\s*calc\(100dvh/);
+    expect(column![1]).toMatch(/overflow-y:\s*auto/);
+    // Three tokens, no literals: a design restates the width, the gap and the offset without touching a
+    // grid template.
+    const tokens = readFileSync(resolve(process.cwd(), 'app', 'styles', 'tokens.css'), 'utf-8');
+    for (const token of ['--section-sidebar-width', '--section-sidebar-gap', '--section-sidebar-sticky-top']) {
+      expect(tokens, `${token} is read but never declared`).toContain(`${token}:`);
+      expect(shellCss).toContain(`var(${token})`);
+    }
+  });
+
+  it('guards the phone against the wide first paint, from the viewport rather than the container', () => {
+    // The shell reads an unmeasured width as wide, so a phone paints one frame of the two-column grid
+    // before the observer fires. A container query cannot catch it — the shell IS the container being
+    // laid out — and the viewport is known before any JavaScript runs. 48rem is the exact complement of
+    // PHONE_MAX_WIDTH (767px, lib/breakpoints.ts).
+    const phone = atRuleBody(css('workspace-shell'), '@media (width < 48rem)');
+    expect(phone).toMatch(/\.workspace-shell\[data-section-layout='sidebar'\]\s*\{[^}]*display:\s*block/);
+    expect(phone).toMatch(/position:\s*static/);
+    expect(phone).toMatch(/\.segmented__option:not\(\[aria-checked='true'\]\)\s*\{[^}]*display:\s*none/);
+    expect(phone).toMatch(/\.segmented__option\[aria-checked='true'\]\s*\{[^}]*min-height:\s*var\(--touch-target\)/);
+    const coarse = atRuleBody(css('workspace-shell'), '@media (pointer: coarse)');
+    expect(coarse).toMatch(/\[data-layout='select'\] \[role='combobox'\]\s*\{[^}]*min-height:\s*var\(--touch-target\)/);
+  });
+
+  it('keeps the Studio tab treatment off the two layouts that are not a tab row', () => {
+    const studio = readFileSync(resolve(process.cwd(), 'skins', 'studio', 'surfaces.css'), 'utf-8');
+    // `width: fit-content`, `overflow: hidden` and a 2px bottom rule under every option are a treatment
+    // for a HORIZONTAL TRACK. Unscoped they reached the deck's column and its picker too and undid both
+    // one declaration at a time.
+    const unscoped = studio
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => line.includes('.workspace-shell__section-navigation'))
+      .filter((line) => !line.includes("[data-layout='"));
+    expect(unscoped, 'a Studio rule still styles the navigation without naming a layout').toEqual([]);
+    // And both non-tab layouts are actually spoken for, rather than merely excluded.
+    expect(studio).toContain(".workspace-shell__section-navigation[data-layout='sidebar']");
+    expect(studio).toContain(".workspace-shell__section-navigation[data-layout='select']");
   });
 
   it('folds the narrow toolbar and keeps every part of it a touch target', () => {
