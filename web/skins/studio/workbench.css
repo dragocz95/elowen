@@ -32,6 +32,12 @@
   padding-block: 0;
   border-bottom-color: var(--studio-line);
 }
+/* The narrow ASK rail keeps the pre-redesign chat density explicitly. The full /chat surface below stays
+   at its existing 16/26px reading size; only assistant prose inside the 336px rail is compacted. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-panel .chat-markdown {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-gutter {
   inline-size: 100%;
   max-inline-size: none;

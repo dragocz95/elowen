@@ -474,6 +474,12 @@ test('the Studio page bar stays put while the register scrolls under it', async 
 test('Studio opens the reference chat rail only on demand and remembers the choice', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-light');
+  await seed.messages([{
+    id: 'ask-agent-font',
+    role: 'assistant',
+    text: 'The assistant rail keeps its compact reading density.',
+    segments: [{ kind: 'text', text: 'The assistant rail keeps its compact reading density.' }],
+  }]);
   const nav = app.locator('[data-testid="studio-navigation"]');
 
   await app.setViewportSize({ width: 1440, height: 900 });
@@ -489,6 +495,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
   await openStudio(app, REGISTER);
   await expect(app.locator('.advisor-panel')).toBeVisible();
   await expect(nav).toHaveAttribute('data-mode', 'rail');
+  await expect(app.getByText('The assistant rail keeps its compact reading density.')).toBeVisible();
 
   const shellRhythm = await app.evaluate(() => {
     const item = document.querySelector<HTMLElement>('.studio-nav__body .studio-nav__item')!;
@@ -508,6 +515,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     const advisorHeader = document.querySelector<HTMLElement>('.advisor-panel__header')!;
     const advisorControl = advisorHeader.querySelector<HTMLButtonElement>('button')!;
     const advisorControlIcon = advisorControl.querySelector<SVGElement>('svg')!;
+    const advisorText = advisor.querySelector<HTMLElement>('.chat-markdown')!;
     const navToggle = document.querySelector<HTMLElement>('.top-bar__nav-toggle')!;
     const searchStyle = getComputedStyle(search);
     const rowStyle = getComputedStyle(row);
@@ -559,6 +567,11 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
         iconStroke: advisorControlIcon.getAttribute('stroke-width'),
         duration: getComputedStyle(advisorControl).transitionDuration,
       },
+      advisorText: {
+        size: getComputedStyle(advisorText).fontSize,
+        lineHeight: getComputedStyle(advisorText).lineHeight,
+        family: getComputedStyle(advisorText).fontFamily,
+      },
       topBarControlDuration: getComputedStyle(navToggle).transitionDuration,
     };
   });
@@ -582,6 +595,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     advisor: shellRhythm.advisor,
     advisorHeaderHeight: shellRhythm.advisorHeaderHeight,
     advisorControl: shellRhythm.advisorControl,
+    advisorText: shellRhythm.advisorText,
     topBarControlDuration: shellRhythm.topBarControlDuration,
   }).toEqual({
     itemHeight: 32,
@@ -620,10 +634,12 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     },
     advisorHeaderHeight: 50,
     advisorControl: { size: 32, iconWidth: '18', iconStroke: '1.5', duration: '0.075s, 0.075s' },
+    advisorText: { size: '14px', lineHeight: '21px', family: shellRhythm.advisorText.family },
     topBarControlDuration: '0.075s',
   });
   expect(shellRhythm.workspace.shadow).not.toBe('none');
   expect(shellRhythm.bodyFont).toContain('Inter Variable');
+  expect(shellRhythm.advisorText.family).toContain('BlinkMacSystemFont');
 
   await app.getByTestId('studio-nav-collapse').click();
   await expect(nav).toHaveAttribute('data-mode', 'full');
