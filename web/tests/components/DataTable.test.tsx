@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '../../components/ui/DataTable';
+import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow, DataTableSortCell } from '../../components/ui/DataTable';
 
 /** Cells of one row, in DOM order — the same thing a screen reader counts to decide what column it is
  *  announcing. `aria-hidden` cells are excluded on purpose: they are not in the accessibility tree
@@ -198,6 +198,56 @@ describe('DataTableCell', () => {
     );
     const header = screen.getByRole('columnheader', { name: 'Status' });
     expect(header.querySelector('.sr-only')?.textContent).toBe('Status');
+  });
+});
+
+describe('DataTableSortCell', () => {
+  function renderHeader(active: boolean) {
+    return render(
+      <DataTable ariaLabel="Sessions" columns="minmax(0,1fr)">
+        <DataTableRow header>
+          <DataTableSortCell active={active} direction="asc" onSort={() => {}}>Updated</DataTableSortCell>
+        </DataTableRow>
+      </DataTable>,
+    );
+  }
+
+  it('shows the sort affordance without a pointer ever entering the header', () => {
+    // The neutral arrow was `opacity-0` until `group-hover/sort` revealed it, so on a touch device —
+    // where there is no hover at all — nothing distinguished a sortable column from a fixed one and the
+    // feature was undiscoverable. It is the icon a sighted user has to SEE, so opacity is the assertion.
+    const { container } = renderHeader(false);
+    const arrow = container.querySelector('button svg');
+    expect(arrow, 'the inactive column must still draw its arrow').not.toBeNull();
+    expect(arrow!.getAttribute('class')).not.toContain('opacity-0');
+    expect(container.querySelector('button')?.className).not.toContain('group-hover/sort');
+  });
+
+  it('still says which column imposes the current order, and which way', () => {
+    // Visible always does not mean indistinguishable: the active column keeps the accent and a directional
+    // glyph, the inactive one the neutral up/down pair in muted ink.
+    const { container: idle } = renderHeader(false);
+    const { container: sorted } = renderHeader(true);
+
+    expect(idle.querySelector('[role="columnheader"]')).toHaveAttribute('aria-sort', 'none');
+    expect(sorted.querySelector('[role="columnheader"]')).toHaveAttribute('aria-sort', 'ascending');
+    expect(idle.querySelector('button svg')!.getAttribute('class')).toContain('lucide-chevrons-up-down');
+    expect(sorted.querySelector('button svg')!.getAttribute('class')).toContain('lucide-chevron-up');
+    expect(sorted.querySelector('button svg')!.getAttribute('class')).toContain('text-primary');
+    expect(idle.querySelector('button svg')!.getAttribute('class')).not.toContain('text-primary');
+  });
+
+  it('sorts when the header is activated', () => {
+    const onSort = vi.fn();
+    render(
+      <DataTable ariaLabel="Sessions" columns="minmax(0,1fr)">
+        <DataTableRow header>
+          <DataTableSortCell active={false} direction="asc" onSort={onSort}>Updated</DataTableSortCell>
+        </DataTableRow>
+      </DataTable>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Updated' }));
+    expect(onSort).toHaveBeenCalledTimes(1);
   });
 });
 

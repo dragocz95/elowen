@@ -174,11 +174,16 @@ export function DataTableSortCell({ children, active, direction, onSort, priorit
       <button
         type="button"
         onClick={onSort}
-        className={`group/sort -mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${align === 'end' ? 'justify-end' : ''} ${active ? 'text-text' : 'text-text-muted hover:text-text'}`}
+        className={`-mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${align === 'end' ? 'justify-end' : ''} ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
       >
         <span className="truncate">{children}</span>
-        {/* The neutral arrow stays laid out but invisible, so a header does not shift when hovered. */}
-        <Arrow size={DATA_TABLE_ICON_SIZE} aria-hidden className={`shrink-0 ${active ? 'text-primary' : 'opacity-0 transition-opacity group-hover/sort:opacity-60'}`} />
+        {/* The neutral arrow is VISIBLE, not revealed on hover. It was `opacity-0` until the pointer
+            entered the header, which meant that on a touch device — where there is no hover at all — a
+            sortable column was indistinguishable from a fixed one and the whole sorting feature was
+            undiscoverable (WCAG 1.4.1: the affordance may not depend on a pointer capability). It was
+            already laid out, so showing it shifts nothing. It inherits the button's muted ink and
+            brightens with the label on hover, which is what keeps it quieter than the active arrow. */}
+        <Arrow size={DATA_TABLE_ICON_SIZE} aria-hidden className={`shrink-0 ${active ? 'text-primary' : ''}`} />
       </button>
     </DataTableCell>
   );
@@ -216,7 +221,7 @@ export function DataTableCell({ children, header = false, priority = 'always', l
       // A truncated cell hides part of its own content, so the full value has to stay reachable. It can
       // only be recovered when the cell IS the text; a composed cell passes its own `title`.
       title={title ?? (lines === 1 && typeof children === 'string' ? children : undefined)}
-      className={`data-table-cell ${priority === 'wide' ? 'data-table-wide' : priority === 'mobile' ? 'data-table-mobile' : ''} min-w-0 ${header ? 'text-[10px] font-semibold uppercase tracking-wider text-text-muted' : ''} ${className}`}
+      className={`data-table-cell ${priority === 'wide' ? 'data-table-wide' : priority === 'mobile' ? 'data-table-mobile' : ''} min-w-0 ${header ? 'text-[10px] font-semibold uppercase tracking-wider text-muted-foreground' : ''} ${className}`}
       {...rest}
     >
       {labelHidden ? <span className="sr-only">{children}</span> : children}

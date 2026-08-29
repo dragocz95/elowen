@@ -13,6 +13,20 @@ describe('states', () => {
     screen.getByRole('button', { name: 'Retry' }).click();
     expect(onRetry).toHaveBeenCalledOnce();
   });
+
+  it('ErrorState announces the failure and paints it in the destructive tone', () => {
+    // Two halves of the same defect. The block REPLACES the content the request was for, so without a
+    // live region a screen-reader user is left waiting on a region that never fills in — and the message
+    // was painted `text-primary`, which is only error-coloured by coincidence of the built-in ember: under
+    // studio-light the primary is a signal blue, so a failure was announced in the colour of a link.
+    render(<ErrorState message="Could not load memories." />, { wrapper: W });
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Could not load memories.');
+    const title = screen.getByText('Could not load memories.');
+    expect(title.className).toContain('text-destructive');
+    expect(title.className).not.toContain('text-primary');
+  });
 });
 
 // Loading is one of the states a screen reader has to be told about, not just drawn. These check what a

@@ -122,8 +122,16 @@ export function LoadingState({ variant = 'list', height = 'h-28' }: { variant?: 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
   const { t } = useTranslation();
   return (
-    <Empty className="gap-2 py-12">
-      <EmptyTitle className="text-primary">{message}</EmptyTitle>
+    // `role="alert"` because this block REPLACES the content the user asked for: it appears after the
+    // request has failed, and without a live region a screen-reader user is left on a region that simply
+    // never fills in. It is on the wrapper rather than on the title so the retry control is announced with
+    // the message that explains why it is there.
+    <Empty className="gap-2 py-12" role="alert">
+      {/* The message is the failure, so it takes the destructive colour. `text-primary` painted it the
+          brand ember, which on the built-in design is the same hue as danger and reads as an error only
+          by coincidence — under studio-light the ember is a signal BLUE and a failure was announced in
+          the colour that design uses for links. */}
+      <EmptyTitle className="text-destructive">{message}</EmptyTitle>
       {onRetry && <EmptyContent><Button onClick={onRetry}>{t.common.retry}</Button></EmptyContent>}
     </Empty>
   );
