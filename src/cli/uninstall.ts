@@ -162,7 +162,7 @@ function buildPlan(deps: UninstallDeps, info: InstallInfo | null, purge: boolean
       },
       manual: `printf '%s\\n' '{"op":"deny"}' | ${SITE_GATEWAY_HELPER_PATH} && rm -f ${SITE_GATEWAY_DEPLOYMENT_PATH} ${SITE_GATEWAY_HELPER_PATH}`,
     });
-    kept.push('/etc/nginx/conf.d/elowen-sites-gateway.conf and /etc/elowen/sites-tls (deny tombstone for stale wildcard DNS)');
+    kept.push('/etc/nginx/conf.d/elowen-sites-gateway.conf (deny tombstone for stale wildcard DNS) and /var/lib/elowen/site-acme (issued certificates)');
   }
 
   // Globally-installed agent CLIs — only when the record proves this install ran their `npm install -g`.

@@ -1083,15 +1083,12 @@ export interface PublishedSitesGatewayStatus {
  * the helper's stdin and is never placed on a command line. */
 export interface PublishedSitesGatewayControl {
   hostnameBase(): string | null;
-  ensure(input: { certificatePem: string; privateKeyPem: string; gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
-  provisionNamecheap(input: {
-    apiUser: string;
-    apiKey: string;
-    username: string;
-    clientIp: string;
-    email: string;
-    gatewayToken: string;
-  }): Promise<PublishedSitesGatewayStatus>;
+  /** Serve one published site on its own hostname, issuing its certificate through HTTP-01 if needed.
+   *  There is deliberately no wildcard-certificate path: a wildcard can only be issued over DNS-01,
+   *  which would make every deployment depend on registrar API credentials. Per-name issuance needs
+   *  nothing but the wildcard DNS record the operator already pointed at this machine. */
+  ensureSite(input: { slug: string; email: string; gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
+  removeSite(input: { slug: string; gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
   deny(): Promise<PublishedSitesGatewayStatus>;
   status(): Promise<PublishedSitesGatewayStatus>;
   /** Create a root-owned, group-writable directory for one confined runtime to bind its pathname socket. */

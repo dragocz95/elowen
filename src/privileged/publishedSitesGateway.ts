@@ -1,24 +1,19 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { isIP } from 'node:net';
 import { join } from 'node:path';
 import type { PublishedSitesGatewayControl, PublishedSitesGatewayStatus } from '../plugins/api.js';
 import { SITE_GATEWAY_HELPER_PATH, SITE_RUNTIME_SOCKET_ROOT } from '../shared/siteGateway.js';
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const HELPER_TIMEOUT_MS = 30_000;
-const PROVISION_TIMEOUT_MS = 10 * 60_000;
+/** Issuance talks to a certificate authority over the network, so it gets its own budget. */
+const ISSUE_TIMEOUT_MS = 6 * 60_000;
+const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{1,63}$/;
+const SAFE_EMAIL = /^[^\s@]{1,64}@[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$/i;
+const SAFE_TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 
 type HelperRequest =
-  | { op: 'apply'; certificatePem: string; privateKeyPem: string; gatewayToken: string }
-  | {
-    op: 'provision-namecheap';
-    apiUser: string;
-    apiKey: string;
-    username: string;
-    clientIp: string;
-    email: string;
-    gatewayToken: string;
-  }
+  | { op: 'ensure-site'; slug: string; email: string; gatewayToken: string }
+  | { op: 'remove-site'; slug: string; gatewayToken: string }
   | { op: 'deny' }
   | { op: 'status' }
   | { op: 'prepare-runtime-socket'; siteId: string }
@@ -31,6 +26,7 @@ interface HelperResponse {
   hostnameBase?: string | null;
   detail?: string;
   socketPath?: string;
+  slugs?: string[];
 }
 
 export type SiteGatewayHelperInvoker = (request: HelperRequest) => Promise<HelperResponse>;
@@ -101,7 +97,7 @@ function defaultInvoker(request: HelperRequest): Promise<HelperResponse> {
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       finish(new Error('the site gateway helper timed out'));
-    }, request.op === 'provision-namecheap' ? PROVISION_TIMEOUT_MS : HELPER_TIMEOUT_MS);
+    }, request.op === 'ensure-site' ? ISSUE_TIMEOUT_MS : HELPER_TIMEOUT_MS);
     timer.unref?.();
     child.stdin.end(JSON.stringify(request));
   });
@@ -153,26 +149,16 @@ export function createPublishedSitesGatewayControl(options: {
 
   return {
     hostnameBase: () => base,
-    ensure: async ({ certificatePem, privateKeyPem, gatewayToken }) => {
-      if (!certificatePem.includes('BEGIN CERTIFICATE') || certificatePem.length > 256_000) {
-        return unavailable('the wildcard certificate is missing or too large');
-      }
-      if (!privateKeyPem.includes('BEGIN') || !privateKeyPem.includes('PRIVATE KEY') || privateKeyPem.length > 64_000) {
-        return unavailable('the wildcard private key is missing or too large');
-      }
-      if (!/^[A-Za-z0-9_-]{43,128}$/.test(gatewayToken)) {
-        return unavailable('the internal gateway token is malformed');
-      }
-      return call({ op: 'apply', certificatePem, privateKeyPem, gatewayToken });
+    ensureSite: async ({ slug, email, gatewayToken }) => {
+      if (!SAFE_SLUG.test(slug)) return unavailable('the site slug is malformed');
+      if (!SAFE_EMAIL.test(email) || email.length > 254) return unavailable('a contact email is required for certificate issuance');
+      if (!SAFE_TOKEN.test(gatewayToken)) return unavailable('the internal gateway token is malformed');
+      return call({ op: 'ensure-site', slug, email, gatewayToken });
     },
-    provisionNamecheap: async ({ apiUser, apiKey, username, clientIp, email, gatewayToken }) => {
-      const accountField = (value: string): boolean => /^[A-Za-z0-9_.@-]{1,64}$/.test(value);
-      if (!accountField(apiUser) || !accountField(username)) return unavailable('the Namecheap account identity is malformed');
-      if (!/^\S{16,128}$/.test(apiKey)) return unavailable('the Namecheap API key is malformed');
-      if (isIP(clientIp) !== 4) return unavailable('Namecheap requires the whitelisted public IPv4 address');
-      if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 254) return unavailable('the ACME contact email is malformed');
-      if (!/^[A-Za-z0-9_-]{43,128}$/.test(gatewayToken)) return unavailable('the internal gateway token is malformed');
-      return call({ op: 'provision-namecheap', apiUser, apiKey, username, clientIp, email, gatewayToken });
+    removeSite: async ({ slug, gatewayToken }) => {
+      if (!SAFE_SLUG.test(slug)) return unavailable('the site slug is malformed');
+      if (!SAFE_TOKEN.test(gatewayToken)) return unavailable('the internal gateway token is malformed');
+      return call({ op: 'remove-site', slug, gatewayToken });
     },
     deny: () => call({ op: 'deny' }),
     status: () => call({ op: 'status' }),

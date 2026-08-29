@@ -1,32 +1,27 @@
 #!/usr/bin/node
 import { execFileSync } from 'node:child_process';
-import { X509Certificate, createPrivateKey, createPublicKey, timingSafeEqual } from 'node:crypto';
-import { resolve4, resolveTxt } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import {
-  chmodSync, chownSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync,
-  rmSync, writeFileSync,
+  chmodSync, chownSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync,
+  renameSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export const DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
 export const NGINX_PATH = '/etc/nginx/conf.d/elowen-sites-gateway.conf';
-export const TLS_DIR = '/etc/elowen/sites-tls';
-export const CERT_PATH = join(TLS_DIR, 'fullchain.pem');
-export const KEY_PATH = join(TLS_DIR, 'privkey.pem');
 export const STATE_PATH = '/var/lib/elowen/site-gateway.json';
 const LOCK_PATH = '/var/lib/elowen/site-gateway.lock';
 const RUNTIME_SOCKET_ROOT = '/var/lib/elowen/site-runtime-sockets';
-const SELF_PATH = '/usr/local/libexec/elowen-site-gateway';
 const ACME_ROOT = '/var/lib/elowen/site-acme';
 const ACME_CONFIG = join(ACME_ROOT, 'config');
 const ACME_WORK = join(ACME_ROOT, 'work');
 const ACME_LOGS = join(ACME_ROOT, 'logs');
-const NAMECHEAP_API = 'https://api.namecheap.com/xml.response';
+const ACME_WEBROOT = join(ACME_ROOT, 'webroot');
 
-const MAX_INPUT_BYTES = 384 * 1024;
+const MAX_INPUT_BYTES = 8 * 1024;
 const SAFE_HOST = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
 const SAFE_TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
+const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{1,63}$/;
+const SAFE_EMAIL = /^[^\s@]{1,64}@[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$/i;
 
 function fail(message) {
   throw new Error(message);
@@ -45,61 +40,63 @@ export function deploymentFrom(raw) {
   return { appHost, daemonPort, hostnameBase: `sites.${appHost}` };
 }
 
-function commonServerNames(deployment) {
-  return `~^(?<elowen_site_slug>[a-z0-9][a-z0-9-]{1,63})\\.${escapeRegex(deployment.hostnameBase)}$`;
+const MANAGED_HEADER = '# Managed by Elowen. Do not edit: the root-owned site gateway helper rewrites this file.';
+
+function wildcardServerName(deployment) {
+  return `~^[a-z0-9][a-z0-9-]{1,63}\\.${escapeRegex(deployment.hostnameBase)}$`;
 }
 
-function tlsLines() {
+export function lineageFor(deployment, slug) {
+  if (!SAFE_SLUG.test(slug)) fail('site slug is invalid');
+  return `${slug}.${deployment.hostnameBase}`;
+}
+
+function certPathsFor(deployment, slug) {
+  const lineage = lineageFor(deployment, slug);
+  return {
+    lineage,
+    fullchain: join(ACME_CONFIG, 'live', lineage, 'fullchain.pem'),
+    privkey: join(ACME_CONFIG, 'live', lineage, 'privkey.pem'),
+  };
+}
+
+/** The one block that must exist before any certificate does: HTTP-01 answers here, so it is what
+ *  makes issuance possible at all. It covers the whole wildcard rather than one site, because a
+ *  challenge arrives for a name whose certificate does not exist yet. */
+function challengeBlock(deployment) {
   return [
-    '    listen 443 ssl;',
-    '    listen [::]:443 ssl;',
-    `    ssl_certificate ${CERT_PATH};`,
-    `    ssl_certificate_key ${KEY_PATH};`,
-  ];
-}
-
-export function renderDenyConfig(deployment, hasCertificate) {
-  const names = commonServerNames(deployment);
-  const blocks = [
-    '# Managed by Elowen. Do not edit: the root-owned site gateway helper rewrites this file.',
     'server {',
     '    listen 80;',
     '    listen [::]:80;',
-    `    server_name ${names};`,
-    '    return 410;',
-    '}',
-  ];
-  if (hasCertificate) {
-    blocks.push(
-      '',
-      'server {',
-      ...tlsLines(),
-      `    server_name ${names};`,
-      '    return 410;',
-      '}',
-    );
-  }
-  return `${blocks.join('\n')}\n`;
-}
-
-export function renderActiveConfig(deployment, gatewayToken) {
-  if (!SAFE_TOKEN.test(gatewayToken)) fail('gateway token is invalid');
-  const names = commonServerNames(deployment);
-  return [
-    '# Managed by Elowen. Do not edit: the root-owned site gateway helper rewrites this file.',
-    'server {',
-    '    listen 80;',
-    '    listen [::]:80;',
-    `    server_name ${names};`,
-    '    return 308 https://$host$request_uri;',
-    '}',
+    `    server_name ${wildcardServerName(deployment)};`,
     '',
-    'server {',
-    ...tlsLines(),
-    `    server_name ${names};`,
+    '    location /.well-known/acme-challenge/ {',
+    `        root ${ACME_WEBROOT};`,
+    '    }',
     '',
     '    location / {',
-    `        proxy_pass http://127.0.0.1:${deployment.daemonPort}/hooks/sites/s/$elowen_site_slug$request_uri;`,
+    '        return 308 https://$host$request_uri;',
+    '    }',
+    '}',
+  ];
+}
+
+/** One published site = one server block with its OWN certificate. There is no wildcard certificate
+ *  here on purpose: a wildcard can only be issued through DNS-01, which needs write access to the
+ *  zone, and requiring registrar credentials for every deployment is exactly what this design avoids.
+ *  Per-name HTTP-01 needs nothing but the wildcard A/CNAME record the operator already added. */
+function siteBlock(deployment, slug, gatewayToken) {
+  const certs = certPathsFor(deployment, slug);
+  return [
+    'server {',
+    '    listen 443 ssl;',
+    '    listen [::]:443 ssl;',
+    `    server_name ${certs.lineage};`,
+    `    ssl_certificate ${certs.fullchain};`,
+    `    ssl_certificate_key ${certs.privkey};`,
+    '',
+    '    location / {',
+    `        proxy_pass http://127.0.0.1:${deployment.daemonPort}/hooks/sites/s/${slug}$request_uri;`,
     '        proxy_http_version 1.1;',
     '        proxy_set_header Host $host;',
     '        proxy_set_header X-Real-IP $remote_addr;',
@@ -114,8 +111,30 @@ export function renderActiveConfig(deployment, gatewayToken) {
     '        client_max_body_size 64m;',
     '    }',
     '}',
-    '',
-  ].join('\n');
+  ];
+}
+
+/** The tombstone left behind at uninstall. It answers on port 80 only: without a certificate there is
+ *  nothing honest to say on 443, and borrowing some other site's certificate to say it would be worse
+ *  than the TLS error a stale DNS record deserves. */
+export function renderDenyConfig(deployment) {
+  return `${[
+    MANAGED_HEADER,
+    'server {',
+    '    listen 80;',
+    '    listen [::]:80;',
+    `    server_name ${wildcardServerName(deployment)};`,
+    '    return 410;',
+    '}',
+  ].join('\n')}\n`;
+}
+
+export function renderActiveConfig(deployment, gatewayToken, slugs) {
+  if (!SAFE_TOKEN.test(gatewayToken)) fail('gateway token is invalid');
+  const ordered = [...new Set(slugs)].sort();
+  const blocks = [MANAGED_HEADER, ...challengeBlock(deployment)];
+  for (const slug of ordered) blocks.push('', ...siteBlock(deployment, slug, gatewayToken));
+  return `${blocks.join('\n')}\n`;
 }
 
 function readDeployment() {
@@ -159,24 +178,6 @@ function nginxReload() {
   execFileSync('/usr/bin/systemctl', ['reload', 'nginx'], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 20_000 });
 }
 
-function validateCertificate(certificatePem, privateKeyPem, hostnameBase) {
-  let certificate;
-  let privateKey;
-  try {
-    certificate = new X509Certificate(certificatePem);
-    privateKey = createPrivateKey(privateKeyPem);
-  } catch {
-    fail('certificate or private key is not valid PEM');
-  }
-  if (!certificate.checkHost(`probe.${hostnameBase}`)) fail('certificate does not cover the published-sites wildcard');
-  if (Date.parse(certificate.validTo) <= Date.now() + 24 * 3600_000) fail('certificate expires too soon');
-  const fromCertificate = certificate.publicKey.export({ type: 'spki', format: 'der' });
-  const fromPrivateKey = createPublicKey(privateKey).export({ type: 'spki', format: 'der' });
-  if (fromCertificate.length !== fromPrivateKey.length || !timingSafeEqual(fromCertificate, fromPrivateKey)) {
-    fail('certificate and private key do not match');
-  }
-}
-
 function writeState(deployment, active, detail) {
   atomicWrite(STATE_PATH, Buffer.from(`${JSON.stringify({
     active,
@@ -186,55 +187,100 @@ function writeState(deployment, active, detail) {
   }, null, 2)}\n`), 0o600);
 }
 
-function mutate(deployment, nextConfig, certificatePem, privateKeyPem, active) {
-  const previous = {
-    nginx: readMaybe(NGINX_PATH),
-    cert: readMaybe(CERT_PATH),
-    key: readMaybe(KEY_PATH),
-    state: readMaybe(STATE_PATH),
-  };
+function mutate(deployment, nextConfig, active, detail) {
+  const previous = { nginx: readMaybe(NGINX_PATH), state: readMaybe(STATE_PATH) };
   try {
-    if (certificatePem !== undefined && privateKeyPem !== undefined) {
-      atomicWrite(CERT_PATH, Buffer.from(certificatePem), 0o644);
-      atomicWrite(KEY_PATH, Buffer.from(privateKeyPem), 0o600);
-    }
     atomicWrite(NGINX_PATH, Buffer.from(nextConfig), 0o600);
     nginxTest();
     nginxReload();
-    writeState(deployment, active);
+    writeState(deployment, active, detail);
   } catch (error) {
     restore(NGINX_PATH, previous.nginx, 0o600);
-    restore(CERT_PATH, previous.cert, 0o644);
-    restore(KEY_PATH, previous.key, 0o600);
     restore(STATE_PATH, previous.state, 0o600);
     try { nginxTest(); nginxReload(); } catch { /* the original failure is the actionable one */ }
     throw error;
   }
 }
 
-function xmlDecode(value) {
-  return value
-    .replaceAll('&quot;', '"')
-    .replaceAll('&apos;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&amp;', '&');
+/** Which sites this gateway is currently serving, derived from the certificates that actually exist
+ *  rather than from a list this helper would have to keep in step with them. A lineage directory IS
+ *  the fact that a site can be served, so there is nothing to drift. */
+function issuedSlugs(deployment) {
+  const live = join(ACME_CONFIG, 'live');
+  const suffix = `.${deployment.hostnameBase}`;
+  let entries;
+  try { entries = readdirSync(live, { withFileTypes: true }); } catch { return []; }
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.endsWith(suffix))
+    .map((entry) => entry.name.slice(0, -suffix.length))
+    .filter((slug) => SAFE_SLUG.test(slug)
+      && existsSync(join(live, `${slug}${suffix}`, 'fullchain.pem'))
+      && existsSync(join(live, `${slug}${suffix}`, 'privkey.pem')));
 }
 
-function xmlAttributes(raw) {
-  const out = {};
-  for (const match of raw.matchAll(/([A-Za-z][A-Za-z0-9]*)="([^"]*)"/g)) out[match[1]] = xmlDecode(match[2]);
-  return out;
+/** Publish the config that matches the certificates on disk. Called before issuance too, because the
+ *  HTTP-01 challenge needs the port-80 block to already be live. */
+function syncConfig(deployment, gatewayToken, detail) {
+  const slugs = issuedSlugs(deployment);
+  const desired = renderActiveConfig(deployment, gatewayToken, slugs);
+  if (fileEquals(NGINX_PATH, desired)) writeState(deployment, true, detail);
+  else mutate(deployment, desired, true, detail);
+  return slugs;
 }
 
-function namecheapError(xml) {
-  const match = /<Error\b[^>]*>([\s\S]*?)<\/Error>/i.exec(xml);
-  return match ? xmlDecode(match[1].replace(/<[^>]+>/g, '').trim()).slice(0, 300) : 'Namecheap refused the request';
+function certbot(args) {
+  try {
+    execFileSync('/usr/bin/certbot', [
+      ...args,
+      '--non-interactive',
+      '--config-dir', ACME_CONFIG,
+      '--work-dir', ACME_WORK,
+      '--logs-dir', ACME_LOGS,
+    ], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 5 * 60_000, maxBuffer: 2 * 1024 * 1024 });
+  } catch (error) {
+    const stderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr).trim().slice(-600) : '';
+    fail(`certbot failed${stderr ? `: ${stderr}` : ''}`);
+  }
 }
 
-function assertNamecheapOk(xml) {
-  const response = /<ApiResponse\b([^>]*)>/i.exec(xml);
-  if (!response || xmlAttributes(response[1]).Status !== 'OK') fail(namecheapError(xml));
+function ensureSite(request, deployment) {
+  const slug = typeof request.slug === 'string' ? request.slug : '';
+  if (!SAFE_SLUG.test(slug)) fail('site slug is invalid');
+  if (typeof request.gatewayToken !== 'string' || !SAFE_TOKEN.test(request.gatewayToken)) fail('gateway token is invalid');
+  if (typeof request.email !== 'string' || !SAFE_EMAIL.test(request.email) || request.email.length > 254) {
+    fail('a contact email is required for certificate issuance');
+  }
+  const certs = certPathsFor(deployment, slug);
+
+  // The challenge block has to be serving before the CA calls back, so publish the config first.
+  mkdirSync(ACME_WEBROOT, { recursive: true, mode: 0o755 });
+  syncConfig(deployment, request.gatewayToken);
+
+  if (!existsSync(certs.fullchain) || !existsSync(certs.privkey)) {
+    certbot([
+      'certonly', '--webroot', '--webroot-path', ACME_WEBROOT,
+      '--cert-name', certs.lineage, '-d', certs.lineage,
+      '--agree-tos', '--email', request.email, '--keep-until-expiring',
+    ]);
+    if (!existsSync(certs.fullchain) || !existsSync(certs.privkey)) fail('certbot reported success but issued no certificate');
+  }
+
+  const slugs = syncConfig(deployment, request.gatewayToken);
+  return { ok: true, active: true, hostnameBase: deployment.hostnameBase, slugs };
+}
+
+function removeSite(request, deployment) {
+  const slug = typeof request.slug === 'string' ? request.slug : '';
+  if (!SAFE_SLUG.test(slug)) fail('site slug is invalid');
+  if (typeof request.gatewayToken !== 'string' || !SAFE_TOKEN.test(request.gatewayToken)) fail('gateway token is invalid');
+  const certs = certPathsFor(deployment, slug);
+  // Drop the block BEFORE the certificate: nginx refuses to start with an ssl_certificate it cannot read,
+  // so deleting the lineage first would leave the whole gateway unable to reload.
+  const remaining = issuedSlugs(deployment).filter((name) => name !== slug);
+  const desired = renderActiveConfig(deployment, request.gatewayToken, remaining);
+  if (!fileEquals(NGINX_PATH, desired)) mutate(deployment, desired, true);
+  if (existsSync(join(ACME_CONFIG, 'live', certs.lineage))) certbot(['delete', '--cert-name', certs.lineage]);
+  return { ok: true, active: true, hostnameBase: deployment.hostnameBase, slugs: remaining };
 }
 
 const SAFE_SITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -271,221 +317,6 @@ function runtimeSocketRequest(request) {
   fail('runtime socket operation is not supported');
 }
 
-export function zoneFor(deployment) {
-  const labels = deployment.appHost.split('.');
-  if (labels.length < 2) fail('the app hostname has no Namecheap-managed zone');
-  const tld = labels.pop();
-  const sld = labels.pop();
-  const appPrefix = labels.join('.');
-  if (!/^[a-z0-9-]+$/.test(sld) || !/^[a-z0-9-]+$/.test(tld)) fail('the Namecheap zone cannot be derived');
-  const suffix = appPrefix ? `.${appPrefix}` : '';
-  return {
-    sld,
-    tld,
-    wildcardName: `*.sites${suffix}`,
-    challengeName: `_acme-challenge.sites${suffix}`,
-    challengeFqdn: `_acme-challenge.${deployment.hostnameBase}`,
-  };
-}
-
-function credentialsFrom(value) {
-  const credentials = {
-    apiUser: String(value.apiUser || ''),
-    apiKey: String(value.apiKey || ''),
-    username: String(value.username || ''),
-    clientIp: String(value.clientIp || ''),
-  };
-  if (!/^[A-Za-z0-9_.@-]{1,64}$/.test(credentials.apiUser)
-    || !/^[A-Za-z0-9_.@-]{1,64}$/.test(credentials.username)
-    || !/^\S{16,128}$/.test(credentials.apiKey)
-    || isIP(credentials.clientIp) !== 4) fail('Namecheap credentials are malformed');
-  return credentials;
-}
-
-async function namecheapRequest(command, credentials, params) {
-  const query = new URLSearchParams({
-    ApiUser: credentials.apiUser,
-    ApiKey: credentials.apiKey,
-    UserName: credentials.username,
-    ClientIp: credentials.clientIp,
-    Command: command,
-    ...params,
-  });
-  let response;
-  try {
-    response = await fetch(`${NAMECHEAP_API}?${query}`, { signal: AbortSignal.timeout(30_000) });
-  } catch {
-    fail('Namecheap API could not be reached');
-  }
-  const xml = await response.text();
-  if (!response.ok || xml.length > 2 * 1024 * 1024) fail('Namecheap API returned an invalid response');
-  assertNamecheapOk(xml);
-  return xml;
-}
-
-export function parseHosts(xml) {
-  const result = /<DomainDNSGetHostsResult\b([^>]*)>/i.exec(xml);
-  if (!result || xmlAttributes(result[1]).IsUsingOurDNS !== 'true') fail('the domain is not using Namecheap DNS');
-  const records = [];
-  for (const match of xml.matchAll(/<host\b([^>]*)\/?\s*>/gi)) {
-    const attr = xmlAttributes(match[1]);
-    if (!attr.Name || !attr.Type || attr.Address === undefined) fail('Namecheap returned an incomplete DNS record');
-    records.push({
-      name: attr.Name,
-      type: attr.Type.toUpperCase(),
-      address: attr.Address,
-      mxPref: attr.MXPref || '10',
-      ttl: attr.TTL || '1800',
-    });
-  }
-  if (records.length === 0 || records.length > 150) fail('Namecheap returned an implausible DNS zone');
-  return records;
-}
-
-async function getHosts(deployment, credentials) {
-  const zone = zoneFor(deployment);
-  const xml = await namecheapRequest('namecheap.domains.dns.getHosts', credentials, { SLD: zone.sld, TLD: zone.tld });
-  return { zone, records: parseHosts(xml) };
-}
-
-function canonicalRecords(records) {
-  return JSON.stringify(records
-    .map((record) => [record.name, record.type, record.address, record.mxPref, record.ttl])
-    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
-}
-
-export function setHostsParams(zone, records) {
-  if (records.length === 0 || records.length > 150) fail('refusing to replace an empty or oversized DNS zone');
-  const params = { SLD: zone.sld, TLD: zone.tld };
-  records.forEach((record, index) => {
-    const n = String(index + 1);
-    params[`HostName${n}`] = record.name;
-    params[`RecordType${n}`] = record.type;
-    params[`Address${n}`] = record.address;
-    params[`MXPref${n}`] = record.mxPref;
-    params[`TTL${n}`] = record.ttl;
-  });
-  return params;
-}
-
-async function setHosts(zone, records, credentials) {
-  const params = setHostsParams(zone, records);
-  const xml = await namecheapRequest('namecheap.domains.dns.setHosts', credentials, params);
-  const result = /<DomainDNSSetHostsResult\b([^>]*)>/i.exec(xml);
-  if (!result || xmlAttributes(result[1]).IsSuccess !== 'true') fail('Namecheap did not confirm the DNS update');
-}
-
-async function mutateHosts(deployment, credentials, mutateRecords) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const before = await getHosts(deployment, credentials);
-    const next = mutateRecords(before.zone, before.records.map((record) => ({ ...record })));
-    if (canonicalRecords(next) === canonicalRecords(before.records)) return;
-    const current = await getHosts(deployment, credentials);
-    if (canonicalRecords(current.records) !== canonicalRecords(before.records)) continue;
-    await setHosts(before.zone, next, credentials);
-    const verified = await getHosts(deployment, credentials);
-    if (canonicalRecords(verified.records) === canonicalRecords(next)) return;
-    // Something else changed the zone between our write and verification. Retry from that fresh state so
-    // the next replacement preserves it instead of declaring success over a lost concurrent edit.
-    continue;
-  }
-  fail('the DNS zone changed concurrently; no records were replaced');
-}
-
-async function setChallenge(deployment, credentials, validation, present) {
-  await mutateHosts(deployment, credentials, (zone, records) => {
-    if (present) {
-      if (!records.some((record) => record.name === zone.challengeName && record.type === 'TXT' && record.address === validation)) {
-        records.push({ name: zone.challengeName, type: 'TXT', address: validation, mxPref: '10', ttl: '60' });
-      }
-      return records;
-    }
-    return records.filter((record) => !(record.name === zone.challengeName && record.type === 'TXT' && record.address === validation));
-  });
-}
-
-async function waitForChallenge(fqdn, validation) {
-  const deadline = Date.now() + 180_000;
-  while (Date.now() < deadline) {
-    try {
-      const values = (await resolveTxt(fqdn)).map((parts) => parts.join(''));
-      if (values.includes(validation)) return;
-    } catch { /* DNS has not propagated yet */ }
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
-  }
-  fail('the ACME DNS challenge did not propagate within three minutes');
-}
-
-async function acmeHook(present) {
-  const deployment = readDeployment();
-  const credentials = credentialsFrom({
-    apiUser: process.env.ELOWEN_NC_API_USER,
-    apiKey: process.env.ELOWEN_NC_API_KEY,
-    username: process.env.ELOWEN_NC_USERNAME,
-    clientIp: process.env.ELOWEN_NC_CLIENT_IP,
-  });
-  const validation = process.env.CERTBOT_VALIDATION || '';
-  if (!validation || process.env.CERTBOT_DOMAIN !== `*.${deployment.hostnameBase}`) fail('certbot challenge context is invalid');
-  await setChallenge(deployment, credentials, validation, present);
-  if (present) await waitForChallenge(zoneFor(deployment).challengeFqdn, validation);
-}
-
-async function ensureWildcardAddress(deployment, credentials) {
-  const addresses = await resolve4(deployment.appHost);
-  if (addresses.length === 0) fail('the app hostname has no public IPv4 address');
-  const target = [...addresses].sort()[0];
-  await mutateHosts(deployment, credentials, (zone, records) => {
-    const sameName = records.filter((record) => record.name === zone.wildcardName);
-    const conflicting = sameName.find((record) => record.type === 'CNAME' || (record.type === 'A' && record.address !== target));
-    if (conflicting) fail('the wildcard site hostname already points somewhere else');
-    if (!sameName.some((record) => record.type === 'A' && record.address === target)) {
-      records.push({ name: zone.wildcardName, type: 'A', address: target, mxPref: '10', ttl: '300' });
-    }
-    return records;
-  });
-}
-
-async function provisionNamecheap(request, deployment) {
-  const credentials = credentialsFrom(request);
-  if (!/^\S+@\S+\.\S+$/.test(request.email || '') || String(request.email).length > 254) fail('ACME contact email is malformed');
-  if (!SAFE_TOKEN.test(request.gatewayToken || '')) fail('gateway token is invalid');
-  if (!existsSync('/usr/bin/certbot')) fail('certbot is not installed');
-
-  mkdirSync(ACME_CONFIG, { recursive: true, mode: 0o700 });
-  mkdirSync(ACME_WORK, { recursive: true, mode: 0o700 });
-  mkdirSync(ACME_LOGS, { recursive: true, mode: 0o700 });
-  const certName = `elowen-${deployment.hostnameBase.replaceAll('.', '-')}`;
-  const env = {
-    PATH: '/usr/sbin:/usr/bin:/sbin:/bin',
-    ELOWEN_NC_API_USER: credentials.apiUser,
-    ELOWEN_NC_API_KEY: credentials.apiKey,
-    ELOWEN_NC_USERNAME: credentials.username,
-    ELOWEN_NC_CLIENT_IP: credentials.clientIp,
-  };
-  try {
-    execFileSync('/usr/bin/certbot', [
-      'certonly', '--manual', '--preferred-challenges', 'dns',
-      '--manual-auth-hook', `${SELF_PATH} acme-auth`,
-      '--manual-cleanup-hook', `${SELF_PATH} acme-cleanup`,
-      '--non-interactive', '--agree-tos',
-      '--email', request.email, '--keep-until-expiring', '--cert-name', certName,
-      '--config-dir', ACME_CONFIG, '--work-dir', ACME_WORK, '--logs-dir', ACME_LOGS,
-      '-d', `*.${deployment.hostnameBase}`,
-    ], { env, stdio: ['ignore', 'ignore', 'pipe'], timeout: 8 * 60_000, maxBuffer: 2 * 1024 * 1024 });
-  } catch (error) {
-    const stderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr).trim().slice(-800) : '';
-    fail(`certbot could not issue the wildcard certificate${stderr ? `: ${stderr}` : ''}`);
-  }
-
-  const lineage = join(ACME_CONFIG, 'live', certName);
-  const certificatePem = readFileSync(join(lineage, 'fullchain.pem'), 'utf8');
-  const privateKeyPem = readFileSync(join(lineage, 'privkey.pem'), 'utf8');
-  validateCertificate(certificatePem, privateKeyPem, deployment.hostnameBase);
-  await ensureWildcardAddress(deployment, credentials);
-  mutate(deployment, renderActiveConfig(deployment, request.gatewayToken), certificatePem, privateKeyPem, true);
-  return { ok: true, active: true, hostnameBase: deployment.hostnameBase };
-}
-
 export async function applyRequest(request, deployment) {
   if (!request || typeof request !== 'object' || typeof request.op !== 'string') fail('request is invalid');
   if (request.op === 'prepare-runtime-socket' || request.op === 'seal-runtime-socket' || request.op === 'remove-runtime-socket') {
@@ -504,27 +335,14 @@ export async function applyRequest(request, deployment) {
     return { ok: true, active, hostnameBase: deployment.hostnameBase, ...(detail ? { detail } : {}) };
   }
 
-  if (request.op === 'provision-namecheap') return await provisionNamecheap(request, deployment);
+  if (request.op === 'ensure-site') return ensureSite(request, deployment);
+  if (request.op === 'remove-site') return removeSite(request, deployment);
 
   if (request.op === 'deny') {
-    const hasCertificate = existsSync(CERT_PATH) && existsSync(KEY_PATH);
-    const desired = renderDenyConfig(deployment, hasCertificate);
-    if (!fileEquals(NGINX_PATH, desired)) mutate(deployment, desired, undefined, undefined, false);
+    const desired = renderDenyConfig(deployment);
+    if (!fileEquals(NGINX_PATH, desired)) mutate(deployment, desired, false);
     else writeState(deployment, false);
     return { ok: true, active: false, hostnameBase: deployment.hostnameBase };
-  }
-
-  if (request.op === 'apply') {
-    if (typeof request.certificatePem !== 'string' || typeof request.privateKeyPem !== 'string') fail('certificate material is missing');
-    if (typeof request.gatewayToken !== 'string' || !SAFE_TOKEN.test(request.gatewayToken)) fail('gateway token is invalid');
-    validateCertificate(request.certificatePem, request.privateKeyPem, deployment.hostnameBase);
-    const desired = renderActiveConfig(deployment, request.gatewayToken);
-    const unchanged = fileEquals(NGINX_PATH, desired)
-      && fileEquals(CERT_PATH, request.certificatePem)
-      && fileEquals(KEY_PATH, request.privateKeyPem);
-    if (!unchanged) mutate(deployment, desired, request.certificatePem, request.privateKeyPem, true);
-    else writeState(deployment, true);
-    return { ok: true, active: true, hostnameBase: deployment.hostnameBase };
   }
 
   fail('operation is not supported');
@@ -571,10 +389,8 @@ async function readStdin() {
 
 async function main() {
   if (typeof process.getuid === 'function' && process.getuid() !== 0) fail('helper must run as root');
-  if (process.argv[2] === 'acme-auth' || process.argv[2] === 'acme-cleanup') {
-    await acmeHook(process.argv[2] === 'acme-auth');
-    return;
-  }
+  // No command-line modes at all: HTTP-01 needs no auth hook, so the sudoers rule can pin the empty
+  // argument vector and there is no argv surface left to reach.
   if (process.argv.length > 2) fail('helper accepts no command-line arguments');
   const request = await readStdin();
   if (request?.op === 'status'

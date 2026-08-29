@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPublishedSitesGatewayControl } from '../../src/privileged/publishedSitesGateway.js';
 
-const CERTIFICATE = '-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----';
-const PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----';
 const TOKEN = 'a'.repeat(43);
 
 describe('published sites gateway control', () => {
@@ -20,27 +18,29 @@ describe('published sites gateway control', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('sends certificate material over the bounded helper protocol, not as a path or command', async () => {
+  it('asks the helper for one site at a time, by slug, over the bounded protocol', async () => {
     const invoke = vi.fn(async () => ({ ok: true, active: true, hostnameBase: 'sites.agent.example.com' }));
     const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke });
-    expect(await control.ensure({ certificatePem: CERTIFICATE, privateKeyPem: PRIVATE_KEY, gatewayToken: TOKEN }))
+
+    expect(await control.ensureSite({ slug: 'dashboard-abc123', email: 'ops@example.com', gatewayToken: TOKEN }))
       .toEqual({ available: true, active: true, hostnameBase: 'sites.agent.example.com' });
-    expect(invoke).toHaveBeenCalledWith({
-      op: 'apply', certificatePem: CERTIFICATE, privateKeyPem: PRIVATE_KEY, gatewayToken: TOKEN,
-    });
+    await control.removeSite({ slug: 'dashboard-abc123', gatewayToken: TOKEN });
+
+    expect(invoke.mock.calls.map(([request]) => request)).toEqual([
+      { op: 'ensure-site', slug: 'dashboard-abc123', email: 'ops@example.com', gatewayToken: TOKEN },
+      { op: 'remove-site', slug: 'dashboard-abc123', gatewayToken: TOKEN },
+    ]);
   });
 
-  it('passes Namecheap credentials only through stdin and validates them first', async () => {
-    const invoke = vi.fn(async () => ({ ok: true, active: true, hostnameBase: 'sites.agent.example.com' }));
+  it('refuses a malformed slug, email or token before starting sudo', async () => {
+    const invoke = vi.fn();
     const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke });
-    const input = {
-      apiUser: 'operator', apiKey: 'k'.repeat(32), username: 'operator', clientIp: '203.0.113.7',
-      email: 'ops@example.com', gatewayToken: TOKEN,
-    };
-    expect(await control.provisionNamecheap(input)).toEqual({
-      available: true, active: true, hostnameBase: 'sites.agent.example.com',
-    });
-    expect(invoke).toHaveBeenCalledWith({ op: 'provision-namecheap', ...input });
+
+    expect((await control.ensureSite({ slug: '../etc', email: 'ops@example.com', gatewayToken: TOKEN })).available).toBe(false);
+    expect((await control.ensureSite({ slug: 'ok-site', email: 'not-an-email', gatewayToken: TOKEN })).available).toBe(false);
+    expect((await control.ensureSite({ slug: 'ok-site', email: 'ops@example.com', gatewayToken: 'short' })).available).toBe(false);
+    expect((await control.removeSite({ slug: 'UPPER', gatewayToken: TOKEN })).available).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('brokers a fixed root-owned pathname socket for confined runtimes', async () => {
@@ -65,13 +65,6 @@ describe('published sites gateway control', () => {
     });
     await expect(control.prepareRuntimeSocket('123e4567-e89b-12d3-a456-426614174000'))
       .rejects.toThrow(/unexpected runtime socket path/);
-  });
-
-  it('refuses malformed secrets before starting sudo', async () => {
-    const invoke = vi.fn();
-    const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke });
-    expect((await control.ensure({ certificatePem: 'x', privateKeyPem: 'y', gatewayToken: 'short' })).available).toBe(false);
-    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('fails closed when the root helper is configured for another deployment', async () => {

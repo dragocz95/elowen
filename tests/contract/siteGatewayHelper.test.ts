@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 // code after sudo. This contract test imports its pure renderer directly and exercises the bytes shipped.
 // @ts-expect-error the standalone deployment helper intentionally has no TypeScript declaration file
 import {
-  deploymentFrom, parseHosts, renderActiveConfig, renderDenyConfig, runtimeSocketPathFor, setHostsParams, zoneFor,
+  deploymentFrom, lineageFor, renderActiveConfig, renderDenyConfig, runtimeSocketPathFor,
 } from '../../scripts/elowen-site-gateway.mjs';
 
 const deployment = deploymentFrom({ appHost: 'agent.chetty.ai', daemonPort: 4400 });
+const TOKEN = 'a'.repeat(43);
 
 describe('root-owned published-sites gateway helper', () => {
   it('derives one fixed wildcard from the app host', () => {
@@ -19,37 +20,11 @@ describe('root-owned published-sites gateway helper', () => {
     expect(() => deploymentFrom({ appHost: 'agent.chetty.ai', daemonPort: 80 })).toThrow();
   });
 
-  it('derives the Namecheap zone and preserves every returned record in a replacement request', () => {
-    const zone = zoneFor(deployment);
-    expect(zone).toEqual({
-      sld: 'chetty',
-      tld: 'ai',
-      wildcardName: '*.sites.agent',
-      challengeName: '_acme-challenge.sites.agent',
-      challengeFqdn: '_acme-challenge.sites.agent.chetty.ai',
-    });
-    const records = parseHosts(`<?xml version="1.0"?><ApiResponse Status="OK"><CommandResponse>
-      <DomainDNSGetHostsResult IsUsingOurDNS="true">
-        <host HostId="1" Name="@" Type="A" Address="203.0.113.7" MXPref="10" TTL="300" />
-        <host HostId="2" Name="www" Type="CNAME" Address="agent.chetty.ai." MXPref="10" TTL="1800" />
-      </DomainDNSGetHostsResult></CommandResponse></ApiResponse>`);
-    expect(records).toHaveLength(2);
-    expect(setHostsParams(zone, records)).toEqual({
-      SLD: 'chetty', TLD: 'ai',
-      HostName1: '@', RecordType1: 'A', Address1: '203.0.113.7', MXPref1: '10', TTL1: '300',
-      HostName2: 'www', RecordType2: 'CNAME', Address2: 'agent.chetty.ai.', MXPref2: '10', TTL2: '1800',
-    });
-    expect(() => parseHosts('<ApiResponse Status="OK"><DomainDNSGetHostsResult IsUsingOurDNS="false" /></ApiResponse>')).toThrow();
-  });
-
-  it('supports an app on a registrable root domain and derives its sites records inside that zone', () => {
-    expect(zoneFor(deploymentFrom({ appHost: 'example.com', daemonPort: 4400 }))).toEqual({
-      sld: 'example',
-      tld: 'com',
-      wildcardName: '*.sites',
-      challengeName: '_acme-challenge.sites',
-      challengeFqdn: '_acme-challenge.sites.example.com',
-    });
+  it('derives a certificate lineage only from a safe slug', () => {
+    expect(lineageFor(deployment, 'dashboard-abc123')).toBe('dashboard-abc123.sites.agent.chetty.ai');
+    for (const bad of ['../etc', 'UPPER', 'a', 'has space', 'dot.dot', '']) {
+      expect(() => lineageFor(deployment, bad)).toThrow(/slug/);
+    }
   });
 
   it('derives runtime socket paths only from UUID site ids', () => {
@@ -58,27 +33,47 @@ describe('root-owned published-sites gateway helper', () => {
     expect(() => runtimeSocketPathFor('../../run/daemon.sock')).toThrow(/site id/);
   });
 
-  it('renders one wildcard gateway whose slug comes from Host and whose upstream is fixed', () => {
-    const config = renderActiveConfig(deployment, 'a'.repeat(43));
-    expect(config).toContain('server_name ~^(?<elowen_site_slug>');
-    expect(config).toContain('\\.sites\\.agent\\.chetty\\.ai$');
-    expect(config).toContain('proxy_pass http://127.0.0.1:4400/hooks/sites/s/$elowen_site_slug$request_uri;');
+  it('always serves the HTTP-01 challenge, so a first certificate can be issued at all', () => {
+    // The challenge block covers the whole wildcard rather than one site: the CA calls back for a name
+    // whose certificate does not exist yet, so a per-site block could not answer it.
+    const empty = renderActiveConfig(deployment, TOKEN, []);
+    expect(empty).toContain('server_name ~^[a-z0-9][a-z0-9-]{1,63}\\.sites\\.agent\\.chetty\\.ai$');
+    expect(empty).toContain('location /.well-known/acme-challenge/');
+    expect(empty).toContain('root /var/lib/elowen/site-acme/webroot;');
+    expect(empty).toContain('return 308 https://$host$request_uri;');
+    expect(empty).not.toContain('proxy_pass');
+    expect(empty).not.toContain('listen 443 ssl;');
+  });
+
+  it('gives every site its own server block, certificate and fixed upstream slug', () => {
+    const config = renderActiveConfig(deployment, TOKEN, ['beta', 'alpha']);
+
+    // Sorted and de-duplicated, so the same set of sites always renders the same bytes and a no-op
+    // sync does not churn nginx.
+    expect(config.indexOf('server_name alpha.')).toBeLessThan(config.indexOf('server_name beta.'));
+    expect(renderActiveConfig(deployment, TOKEN, ['alpha', 'beta', 'alpha'])).toBe(config);
+
+    for (const slug of ['alpha', 'beta']) {
+      expect(config).toContain(`server_name ${slug}.sites.agent.chetty.ai;`);
+      expect(config).toContain(`ssl_certificate /var/lib/elowen/site-acme/config/live/${slug}.sites.agent.chetty.ai/fullchain.pem;`);
+      // The slug is baked into the upstream rather than captured from Host: nginx already proved which
+      // certificate matched, so there is no request-derived value left to trust here.
+      expect(config).toContain(`proxy_pass http://127.0.0.1:4400/hooks/sites/s/${slug}$request_uri;`);
+    }
     expect(config).toContain('proxy_set_header X-Elowen-Site-Gateway "');
     expect(config).toContain('proxy_set_header Authorization "";');
-    expect(config).not.toContain('$connection_upgrade');
-    expect(config.match(/location \/ \{/g)).toHaveLength(1);
+    expect(config).not.toContain('$elowen_site_slug');
+    expect(() => renderActiveConfig(deployment, TOKEN, ['../etc'])).toThrow(/slug/);
+    expect(() => renderActiveConfig(deployment, 'short', ['alpha'])).toThrow(/token/);
   });
 
   it('keeps a deny tombstone instead of letting old hostnames fall into another vhost', () => {
-    const beforeCertificate = renderDenyConfig(deployment, false);
-    expect(beforeCertificate).toContain('listen 80;');
-    expect(beforeCertificate).toContain('return 410;');
-    expect(beforeCertificate).not.toContain('listen 443 ssl;');
-    expect(beforeCertificate).not.toContain('proxy_pass');
-
-    const afterCertificate = renderDenyConfig(deployment, true);
-    expect(afterCertificate).toContain('listen 443 ssl;');
-    expect(afterCertificate.match(/return 410;/g)).toHaveLength(2);
-    expect(afterCertificate).not.toContain('proxy_pass');
+    const tombstone = renderDenyConfig(deployment);
+    expect(tombstone).toContain('listen 80;');
+    expect(tombstone).toContain('return 410;');
+    expect(tombstone).not.toContain('proxy_pass');
+    // Nothing on 443: without a certificate there is nothing honest to answer with, and borrowing some
+    // other site's certificate to say 410 would be worse than the TLS error a stale record deserves.
+    expect(tombstone).not.toContain('listen 443 ssl;');
   });
 });
