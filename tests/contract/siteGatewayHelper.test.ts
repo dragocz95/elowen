@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 // The installed root helper is deliberately standalone ESM: it cannot import service-user-owned package
 // code after sudo. This contract test imports its pure renderer directly and exercises the bytes shipped.
@@ -75,5 +76,22 @@ describe('root-owned published-sites gateway helper', () => {
     // Nothing on 443: without a certificate there is nothing honest to answer with, and borrowing some
     // other site's certificate to say 410 would be worse than the TLS error a stale record deserves.
     expect(tombstone).not.toContain('listen 443 ssl;');
+  });
+
+  it('renews certificates as well as issuing them, because nothing else on the machine will', () => {
+    // SOURCE CHECK, because the failure is invisible for three months. These lineages live under our own
+    // --config-dir, so the system certbot timer never sees them and the 12-hour sweep calling ensureSite
+    // is the ONLY thing that can renew one. Guarding the certbot call with "the files are missing" —
+    // which is exactly how this shipped — issues each certificate once and lets it expire 90 days later.
+    const source = readFileSync(new URL('../../scripts/elowen-site-gateway.mjs', import.meta.url), 'utf8');
+    const ensure = source.slice(source.indexOf('function ensureSite('), source.indexOf('function syncSites('));
+    expect(ensure).toContain('--keep-until-expiring');
+
+    const issues = ensure.indexOf('certbot([');
+    const checksResult = ensure.indexOf('existsSync(certs.fullchain)');
+    expect(issues).toBeGreaterThan(-1);
+    expect(checksResult).toBeGreaterThan(-1);
+    // certbot runs FIRST and the file check verifies its result. The reverse order is the bug.
+    expect(issues).toBeLessThan(checksResult);
   });
 });

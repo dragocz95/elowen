@@ -256,14 +256,16 @@ function ensureSite(request, deployment) {
   mkdirSync(ACME_WEBROOT, { recursive: true, mode: 0o755 });
   syncConfig(deployment, request.gatewayToken);
 
-  if (!existsSync(certs.fullchain) || !existsSync(certs.privkey)) {
-    certbot([
-      'certonly', '--webroot', '--webroot-path', ACME_WEBROOT,
-      '--cert-name', certs.lineage, '-d', certs.lineage,
-      '--agree-tos', '--email', request.email, '--keep-until-expiring',
-    ]);
-    if (!existsSync(certs.fullchain) || !existsSync(certs.privkey)) fail('certbot reported success but issued no certificate');
-  }
+  // Unconditionally, because this is the RENEWAL path as well as the issuance one. These lineages live
+  // under our own --config-dir, so the system certbot timer never sees them and nothing else will ever
+  // renew them; running only when the files are missing would issue each certificate once and let it
+  // expire 90 days later. `--keep-until-expiring` makes the call a no-op until one is actually due.
+  certbot([
+    'certonly', '--webroot', '--webroot-path', ACME_WEBROOT,
+    '--cert-name', certs.lineage, '-d', certs.lineage,
+    '--agree-tos', '--email', request.email, '--keep-until-expiring',
+  ]);
+  if (!existsSync(certs.fullchain) || !existsSync(certs.privkey)) fail('certbot reported success but issued no certificate');
 
   const slugs = syncConfig(deployment, request.gatewayToken);
   return { ok: true, active: true, hostnameBase: deployment.hostnameBase, slugs };
