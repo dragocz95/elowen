@@ -185,6 +185,11 @@ export class MarketplaceService {
    *  plugin name. Each holds the ONLY copy of the previous version, so it is kept until
    *  `settleDeferredApplies()` can see whether the rebuild actually loaded the plugin. */
   private readonly deferredApplies = new Map<string, { commit: () => void; rollback: () => void }>();
+  /** Uninstalls whose disable reload was deferred. Their plugin and data stay intact until the old
+   * generation has actually stopped; deleting either earlier strands running services inside vanished
+   * directories. A daemon restart loses only this convenience marker — the plugin remains safely disabled
+   * and intact, so retrying uninstall finishes it without data loss. */
+  private readonly deferredUninstalls = new Map<string, { commit: () => void; rollback: () => void }>();
   /** Reentrancy guard for `settleDeferredApplies` — its own rollback reload fires the hook that calls it. */
   private settling = false;
 
@@ -283,26 +288,51 @@ export class MarketplaceService {
     });
   }
 
-  /** Remove a user plugin: disable it, delete its folder AND its persistent data, then hot-reload. Refuses
-   *  built-in plugins (they live in the npm-owned bundled dir). Order matters — disable before deleting so
-   *  no live session imports a half-removed folder, reload last. */
-  async uninstall(name: string): Promise<void> {
+  /** Remove a user plugin only AFTER the rebuilt registry proves its old services have stopped. The old
+   * order deleted code and data first and reloaded last, so a runtime could keep executing from a release
+   * directory that had already vanished. A busy daemon parks the final deletion until its owed reload
+   * lands; until then the plugin is disabled but every byte remains recoverable. */
+  async uninstall(name: string): Promise<PluginApplyOutcome> {
     return this.lock.run('marketplace', async () => {
       this.ensureSafeName(name);
       const existing = this.opts.discovered().find((p) => p.manifest.name === name);
       if (!existing) throw new MarketplaceError(`"${name}" is not installed`, 404);
       if (existing.source !== 'user') throw new MarketplaceError(`"${name}" is a built-in plugin and cannot be removed`, 409);
 
-      const enabled = this.opts.getEnabled();
-      if (enabled.includes(name)) this.opts.setEnabled(enabled.filter((n) => n !== name));
+      const enabledBefore = [...this.opts.getEnabled()];
+      if (enabledBefore.includes(name)) this.opts.setEnabled(enabledBefore.filter((n) => n !== name));
 
-      rmSync(join(this.opts.userPluginsDir, name), { recursive: true, force: true });
-      // A delete removes the files too: drop the plugin's persistent data. `name` is NAME_RE-validated,
-      // so it is a safe single segment under the data root.
-      if (this.opts.pluginDataRoot) rmSync(join(this.opts.pluginDataRoot, name), { recursive: true, force: true });
+      const commit = (): void => {
+        rmSync(join(this.opts.userPluginsDir, name), { recursive: true, force: true });
+        // `name` is NAME_RE-validated, so this is a safe single segment under the data root.
+        if (this.opts.pluginDataRoot) rmSync(join(this.opts.pluginDataRoot, name), { recursive: true, force: true });
+      };
+      const rollback = (): void => {
+        if (enabledBefore.includes(name)) this.opts.setEnabled(enabledBefore);
+      };
 
-      await this.opts.reload();
+      let outcome: PluginApplyOutcome;
+      try {
+        outcome = await this.opts.reload();
+        if (outcome === 'applied' && (await this.opts.loadedNames()).has(name)) {
+          throw new Error(`plugin "${name}" remained loaded after it was disabled`);
+        }
+      } catch (error) {
+        rollback();
+        await this.opts.reload().catch((reloadError) =>
+          log.error(`plugin ${name}: reload after uninstall rollback failed: ${errMsg(reloadError)}`));
+        throw error;
+      }
+
+      if (outcome === 'deferred') {
+        this.deferredUninstalls.set(name, { commit, rollback });
+        log.info(`plugin ${name}: disabled; final deletion waits for the running work to settle`);
+        return 'deferred';
+      }
+
+      commit();
       log.info(`plugin uninstalled: ${name}`);
+      return 'applied';
     });
   }
 
@@ -420,7 +450,7 @@ export class MarketplaceService {
    *  parked in the meantime is unproven either way and belongs to the next real apply, which the brain
    *  already owes it (a deferral re-arms its pending reload). */
   async settleDeferredApplies(): Promise<void> {
-    if (this.settling || !this.deferredApplies.size) return;
+    if (this.settling || (!this.deferredApplies.size && !this.deferredUninstalls.size)) return;
     this.settling = true;
     try {
       const entries = [...this.deferredApplies];
@@ -439,6 +469,21 @@ export class MarketplaceService {
           await this.opts.reload().catch((re) => log.error(`plugin ${name}: reload after rollback failed: ${errMsg(re)}`));
         }
       }
+
+      const uninstalls = [...this.deferredUninstalls];
+      this.deferredUninstalls.clear();
+      for (const [name, operation] of uninstalls) {
+        try {
+          if ((await this.opts.loadedNames()).has(name)) throw new Error('the old plugin generation is still loaded');
+          operation.commit();
+          log.info(`plugin ${name}: deferred uninstall finished after the running work settled`);
+        } catch (error) {
+          operation.rollback();
+          log.error(`plugin ${name}: deferred uninstall failed (${errMsg(error)}) — restored the enabled setting`);
+          await this.opts.reload().catch((reloadError) =>
+            log.error(`plugin ${name}: reload after uninstall rollback failed: ${errMsg(reloadError)}`));
+        }
+      }
     } finally {
       this.settling = false;
     }
@@ -446,7 +491,7 @@ export class MarketplaceService {
 
   /** Names still waiting for a deferred apply to be proven — the honest answer to "is this live yet". */
   pendingApplies(): string[] {
-    return [...this.deferredApplies.keys()];
+    return [...new Set([...this.deferredApplies.keys(), ...this.deferredUninstalls.keys()])];
   }
 
   /** A plugin the operator has ENABLED must be in the rebuilt registry, or the daemon could not run the

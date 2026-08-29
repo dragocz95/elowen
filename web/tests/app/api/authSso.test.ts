@@ -54,7 +54,7 @@ describe('Microsoft SSO start route', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ next: '/dash?tab=one' });
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toContain('login.microsoftonline.com');
-    expect(res.headers.get('set-cookie')).toContain('elowen_sso=flow-123');
+    expect(res.headers.get('set-cookie')).toContain('__Host-elowen_sso=flow-123');
     expect(res.headers.get('set-cookie')).toContain('HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=600');
   });
 });
@@ -64,7 +64,7 @@ describe('Microsoft SSO callback route', () => {
     const res = await callback(request('/api/auth/sso/microsoft/callback?code=code&state=state'));
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/?sso_error=state_expired');
-    expect(res.headers.get('set-cookie')).toContain('elowen_sso=;');
+    expect(res.headers.get('set-cookie')).toContain('__Host-elowen_sso=;');
     expect(res.headers.get('set-cookie')).not.toContain('elowen_session=');
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -78,13 +78,13 @@ describe('Microsoft SSO callback route', () => {
 
     const res = await callback(request(
       '/api/auth/sso/microsoft/callback?code=code&state=state',
-      'elowen_sso=flow-123',
+      '__Host-elowen_sso=flow-123',
     ));
     const cookies = res.headers.get('set-cookie') ?? '';
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/dash?tab=one');
     expect(cookies).toContain(sessionCookie('secret-token', true, 7 * 86400));
-    expect(cookies).toContain('elowen_sso=; HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=0');
+    expect(cookies).toContain('__Host-elowen_sso=; HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=0');
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
       flowId: 'flow-123',
       state: 'state',
@@ -100,12 +100,12 @@ describe('Microsoft SSO callback route', () => {
 
     const res = await callback(request(
       '/api/auth/sso/microsoft/callback?code=code&state=state',
-      'elowen_sso=flow-123',
+      '__Host-elowen_sso=flow-123',
     ));
     const cookies = res.headers.get('set-cookie') ?? '';
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/?sso_error=already_linked');
-    expect(cookies).toContain('elowen_sso=;');
+    expect(cookies).toContain('__Host-elowen_sso=;');
     expect(cookies).not.toContain('elowen_session=');
   });
 

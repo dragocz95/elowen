@@ -23,6 +23,8 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'web-dist', '.next', 
 const DEFAULT_GLOB_MAX = 100;
 const DEFAULT_GREP_MAX_MATCHES = 200;
 const execFileP = promisify(execFile);
+const RIPGREP_REQUIRED = 'Error: ripgrep (rg) is required for content search. Install ripgrep and retry (Ubuntu/Debian: apt install ripgrep; macOS: brew install ripgrep).';
+const commandMissing = (error) => error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
 const ok = (tool, text, details = {}) => ({
   content: [{ type: 'text', text }],
   details: { ok: true, tool, truncated: false, ...details },
@@ -453,7 +455,7 @@ async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
 //
 // We cannot tell a formatter's rewrite from an outsider's, so the two mutations are held to DIFFERENT bars,
 // on one principle: a blind full overwrite is never allowed against bytes the agent has not seen; a targeted
-// edit is, because its `oldText` anchor still has to match the current content to apply at all.
+// edit is, because its `old_string` anchor still has to match the current content to apply at all.
 //   - Write: any divergence refuses. Post-formatter, an overwrite means re-reading first — rare, and
 //     the refusal says exactly that.
 //   - Edit: a divergence from content WE authored (`ours`) is forgiven once and re-baselined — that is
@@ -535,7 +537,7 @@ export function seedReadStateFromHistory(sessionId, messages) {
  *  `tolerateAuthoredDrift` is set by Edit only: see the note above on why an anchored edit may proceed
  *  through the formatter's window while a blind overwrite may not.
  *
- *  PURE — it decides, it never records. A mutation that is allowed here but then FAILS (an `oldText` that
+ *  PURE — it decides, it never records. A mutation that is allowed here but then FAILS (an `old_string` that
  *  no longer matches) must leave the recorded state exactly as it was: baselining the divergent bytes at
  *  decision time would bless content the agent never actually saw, and the blind overwrite it is supposed
  *  to refuse would sail through on the next call. Only a mutation that really lands re-records (markFileRead). */
@@ -548,7 +550,7 @@ export function readGuardError(sessionId, key, current, tolerateAuthoredDrift = 
       + 'risks overwriting content you never reviewed.';
   }
   if (hashOf(current) === entry.hash) return null;
-  // Content we wrote, reshaped afterwards (the formatters hook). An anchored edit may proceed: its `oldText`
+  // Content we wrote, reshaped afterwards (the formatters hook). An anchored edit may proceed: its `old_string`
   // still has to match these current bytes to apply at all, which is what keeps it honest.
   if (entry.ours && tolerateAuthoredDrift) return null;
   return `${display} has changed on disk since you last read it. Read it again before writing — otherwise your `
@@ -563,13 +565,6 @@ function safeRegex(query) {
 function safeRegexSource(query) {
   try { new RegExp(query); return query; }
   catch { return String(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-}
-
-/** Case-SENSITIVE compiled regex for the Grep JS fallback. The rg path searches case-sensitively (no
- *  `-i`), so the fallback must too — otherwise results would differ purely by whether rg is installed. */
-function safeRegexCaseSensitive(query) {
-  try { return new RegExp(query); }
-  catch { return new RegExp(String(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); }
 }
 
 /** Whether the resolved default base is the filesystem root — the daemon's cwd is `/` under systemd, so
@@ -805,14 +800,14 @@ export function register(ctx) {
       'Do not re-read a file you just edited to check the change landed — Edit and Write would have errored if the write failed, so a verification read costs a round and tells you nothing.',
     ].join(' '),
     parameters: Type.Object({
-      path: Type.String({ description: 'Absolute path to the file' }),
+      file_path: Type.String({ description: 'Absolute path to the file' }),
       offset: Type.Optional(Type.Number({ description: 'Line number to start reading from (1-indexed)' })),
       limit: Type.Optional(Type.Number({ description: 'Maximum number of lines to read' })),
       pages: Type.Optional(Type.String({ description: `PDF pages to read: "3", "1-5" or "1,3,5" (max ${pdfMaxPages} per call). Required for a PDF; ignored for any other file.` })),
     }),
     execute: async (_id, p, _signal, _onUpdate, ectx) => {
       try {
-        const abs = ctx.assertPathAllowed(p.path);
+        const abs = ctx.assertPathAllowed(p.file_path);
         const raw = readFileSync(abs);
         const model = ectx?.model ?? ctx.model;
         const supportsImages = !model || (Array.isArray(model.input) ? model.input.includes('image') : true);
@@ -914,12 +909,12 @@ export function register(ctx) {
       'Output includes a human summary, details.diff for review and details.patch (unified) for tooling. Read the diff before you consider an overwrite done.',
     ].join(' '),
     parameters: Type.Object({
-      path: Type.String({ description: 'Absolute path to the file' }),
+      file_path: Type.String({ description: 'Absolute path to the file' }),
       content: Type.String({ description: 'The complete new content of the file' }),
     }),
     execute: async (_id, p) => {
       try {
-        const abs = ctx.assertPathAllowed(p.path);
+        const abs = ctx.assertPathAllowed(p.file_path);
         const sessionId = ctx.currentSessionId?.();
         // Serialize the read-modify-write against other mutations of the SAME file (different files still
         // run in parallel) so a concurrent edit can't slip between the diff-baseline read and the write.
@@ -951,34 +946,35 @@ export function register(ctx) {
     description: [
       'Replace an exact text snippet in a UTF-8 file within the accessible repositories. Use it for a targeted change, after reading enough surrounding context to locate the change precisely.',
       'You must have read the file in this conversation before editing it, and it must not have changed on disk since — an edit written from assumption, or against content that moved, is how work gets silently discarded.',
-      'By default oldText must match exactly ONCE, so the snippet has to be unique — if it appears more than once, include more surrounding context. Matching tolerates smart quotes, Unicode dashes and trailing whitespace, and the file\'s BOM and CRLF line endings are preserved. Set replaceAll when every occurrence really is the same change — e.g. renaming a symbol across the whole file in one call.',
-      'Output includes details.diff for review and details.patch (unified). If oldText is missing or ambiguous, read the file again and give more context.',
+      'By default old_string must match exactly ONCE, so the snippet has to be unique — if it appears more than once, include more surrounding context. Matching tolerates smart quotes, Unicode dashes and trailing whitespace, and the file\'s BOM and CRLF line endings are preserved. Set replace_all when every occurrence really is the same change — e.g. renaming a symbol across the whole file in one call.',
+      'This tool applies ONE replacement per call — there is no batch `edits` array. To make several changes to the same file, call it once per change.',
+      'Output includes details.diff for review and details.patch (unified). If old_string is missing or ambiguous, read the file again and give more context.',
     ].join(' '),
     parameters: Type.Object({
-      path: Type.String({ description: 'Absolute path to the file' }),
-      oldText: Type.String({ description: 'Text to replace (whitespace/quote tolerant)' }),
-      newText: Type.String({ description: 'Replacement text' }),
-      replaceAll: Type.Optional(Type.Boolean({ description: 'Replace every occurrence (default false)' })),
+      file_path: Type.String({ description: 'Absolute path to the file' }),
+      old_string: Type.String({ description: 'Text to replace (whitespace/quote tolerant)' }),
+      new_string: Type.String({ description: 'Replacement text' }),
+      replace_all: Type.Optional(Type.Boolean({ description: 'Replace every occurrence (default false)' })),
     }),
     execute: async (_id, p) => {
       try {
-        const abs = ctx.assertPathAllowed(p.path);
+        const abs = ctx.assertPathAllowed(p.file_path);
         const sessionId = ctx.currentSessionId?.();
         // Serialize the read-modify-write against other mutations of the SAME file (different files still
         // run in parallel) so a concurrent write can't slip between the match read and the write.
         return await withFileMutationQueue(abs, async () => {
           const beforeBuf = readFileSync(abs);
           // `true`: an anchored edit may proceed through a post-write reformat of our OWN content — its
-          // oldText still has to match what is on disk now. A blind overwrite (Write) gets no such pass.
+          // old_string still has to match what is on disk now. A blind overwrite (Write) gets no such pass.
           const display = ctx.displayPath(abs);
           const guard = readGuardError(sessionId, statePath(abs), beforeBuf, true, display);
           if (guard) return ok('Edit', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
           const before = beforeBuf.toString('utf-8');
-          if (p.oldText === p.newText) return ok('Edit', 'Error: oldText and newText are identical.', { ok: false, ...pathMeta(abs) });
-          const plan = planEdit(before, p.oldText, p.newText, p.replaceAll ?? false);
-          if (plan.error === 'empty') return ok('Edit', 'Error: oldText must not be empty.', { ok: false, ...pathMeta(abs) });
-          if (plan.error === 'notfound') return ok('Edit', 'Error: oldText not found in the file. Match it exactly, including whitespace.', { ok: false, ...pathMeta(abs) });
-          if (plan.error === 'ambiguous') return ok('Edit', `Error: oldText matches ${plan.count} times. Provide more context to make it unique, or set replaceAll.`, { ok: false, ...pathMeta(abs), matches: plan.count });
+          if (p.old_string === p.new_string) return ok('Edit', 'Error: old_string and new_string are identical.', { ok: false, ...pathMeta(abs) });
+          const plan = planEdit(before, p.old_string, p.new_string, p.replace_all ?? false);
+          if (plan.error === 'empty') return ok('Edit', 'Error: old_string must not be empty.', { ok: false, ...pathMeta(abs) });
+          if (plan.error === 'notfound') return ok('Edit', 'Error: old_string not found in the file. Match it exactly, including whitespace.', { ok: false, ...pathMeta(abs) });
+          if (plan.error === 'ambiguous') return ok('Edit', `Error: old_string matches ${plan.count} times. Provide more context to make it unique, or set replace_all.`, { ok: false, ...pathMeta(abs), matches: plan.count });
           if (plan.newContent === plan.content) return ok('Edit', 'Error: the replacement produced identical content.', { ok: false, ...pathMeta(abs) });
           writeFileSync(abs, plan.after, 'utf-8');
           const written = Buffer.from(plan.after, 'utf-8');
@@ -1035,33 +1031,20 @@ export function register(ctx) {
         const query = safeRegex(queryText);
         const include = globRegex(p.include);
         const lines = [];
-        let rgOk = false;
         try {
           lines.push(...await rgSearch(abs, root, queryText, p.include, mode, searchMaxMatches));
-          rgOk = true;
-        } catch {
-          // rg is optional on user machines. Fall back to a bounded JS walk when it is unavailable/errors.
-        }
-        // Only walk when rg was unavailable — a successful rg that found zero hits is a real empty result,
-        // not a reason to re-scan. Walking anyway would disagree with rg (rg honors .gitignore, the walk
-        // only SKIP_DIRS), so an otherwise-empty query could surface gitignored files on the fallback path.
-        for (const file of rgOk ? [] : walkFiles(abs)) {
-          const rel = relative(root, file) || file;
-          if (include && !include.test(rel) && !include.test(rel.split('/').at(-1) ?? rel)) continue;
-          if (mode === 'files') {
+        } catch (error) {
+          if (!commandMissing(error)) throw error;
+          // Filename matching stays safe without rg: the bounded walk reads directory entries and stats,
+          // never file contents. Content search must fail closed — reading arbitrary whole files as UTF-8
+          // is exactly how a broad /data search pulled a production SQLite database into the V8 heap.
+          if (mode === 'content') return ok('Search', RIPGREP_REQUIRED, { ok: false, path: abs, mode });
+          for (const file of walkFiles(abs)) {
+            const rel = relative(root, file) || file;
+            if (include && !include.test(rel) && !include.test(rel.split('/').at(-1) ?? rel)) continue;
             if (query.test(rel)) lines.push(rel);
             if (lines.length >= searchMaxMatches) break;
-            continue;
           }
-          let body = '';
-          try { body = readFileSync(file, 'utf-8'); } catch { continue; }
-          const fileLines = body.split('\n');
-          for (let i = 0; i < fileLines.length; i++) {
-            if (!query.test(fileLines[i])) continue;
-            lines.push(`${rel}:${i + 1}: ${fileLines[i]}`);
-            if (lines.length >= searchMaxMatches) break;
-          }
-          if (lines.length >= searchMaxMatches) break;
         }
         // Cap each hit so one minified/very long match line can't flood the result set.
         const formatted = lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text).join('\n');
@@ -1206,7 +1189,6 @@ export function register(ctx) {
         const grepMax = Math.min(Math.max(Number(ctx.config.searchMaxMatches) || DEFAULT_GREP_MAX_MATCHES, 50), 1000);
         let lines;
         let truncated = false;
-        let rgOk = false;
         try {
           const r = await rgGrep(target, root, p.pattern, {
             include: p.glob,
@@ -1220,32 +1202,9 @@ export function register(ctx) {
           });
           lines = r.lines;
           truncated = r.truncated;
-          rgOk = true;
-        } catch { /* rg unavailable — fall back below */ }
-        if (!rgOk) {
-          // Fallback: bounded JS walk for content mode only (files_with_matches/count need rg). Match rg's
-          // case-SENSITIVE semantics so results don't hinge on whether rg is installed.
-          if (outputMode !== 'content') {
-            return ok('Grep', `Error: ripgrep (rg) is required for output_mode "${outputMode}" but is not installed.`, { ok: false });
-          }
-          const query = safeRegexCaseSensitive(p.pattern);
-          const include = globRegex(p.glob);
-          const walkTarget = isDir ? target : dirname(target);
-          const found = [];
-          for (const file of isDir ? walkFiles(walkTarget) : [target]) {
-            const rel = relative(root, file) || file;
-            if (include && !include.test(rel) && !include.test(rel.split('/').at(-1) ?? rel)) continue;
-            let body = '';
-            try { body = readFileSync(file, 'utf-8'); } catch { continue; }
-            const fileLines = body.split('\n');
-            for (let i = 0; i < fileLines.length; i++) {
-              if (query.test(fileLines[i])) found.push(`${rel}:${i + 1}:${fileLines[i]}`);
-            }
-          }
-          const effHead = p.head_limit === 0 ? Infinity : (p.head_limit ?? Infinity);
-          const cap = Math.min(effHead, grepMax);
-          truncated = found.length > cap;
-          lines = found.slice(0, cap);
+        } catch (error) {
+          if (!commandMissing(error)) throw error;
+          return ok('Grep', RIPGREP_REQUIRED, { ok: false, path: root, pattern: p.pattern, outputMode });
         }
         const formatted = lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text).join('\n');
         let text = formatted || 'No matches found.';

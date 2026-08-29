@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import * as p from '../ui/prompts.js';
@@ -14,6 +15,7 @@ import { selfPrefix, reinstallNpmArgs } from '../update.js';
 import { runOnboarding } from '../setup/wizard.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { INSTALL_INFO_PATH, buildInstallInfo, serializeInstallInfo, type InstallArtifacts, type InstallUnit } from '../installInfo.js';
+import { SITE_GATEWAY_DEPLOYMENT_PATH, SITE_GATEWAY_HELPER_PATH } from '../../shared/siteGateway.js';
 import { must, aptInstall, step } from '../provision/exec.js';
 import { type Deployment, isIpAddress, publicUrl, localhostDeploy, ipDeploy, chooseDeployment, provisionProxy } from '../provision/deployment.js';
 import { beginInstaller } from '../ui/installer.js';
@@ -22,6 +24,7 @@ import { flagValue as flag, requireFlagValues } from '../flags.js';
 
 const DAEMON_PORT = Number((process.env.ELOWEN_PORT) ?? 4400);
 const WEB_PORT = Number((process.env.ELOWEN_WEB_PORT) ?? 4500);
+const SITE_GATEWAY_HELPER_SOURCE = fileURLToPath(new URL('../../../scripts/elowen-site-gateway.mjs', import.meta.url));
 
 /** macOS provisions per-user launchd agents (current user, localhost, no sudo) instead of the Linux
  *  root+systemd+service-user model — the platform picks the whole provisioning shape, not one step. */
@@ -82,6 +85,14 @@ async function loginSmokeTest(username: string, password: string): Promise<void>
 }
 
 // ── prompt-free executors (shared by interactive + unattended) ───────────────
+
+/** Install the bounded content-search engine used by the bundled Files plugin. Search/Grep deliberately
+ * fail closed without it: the former JS fallback read arbitrary whole files into the daemon heap. */
+export async function ensureRipgrep(r: Runner, platform = process.platform): Promise<void> {
+  if (await r.which('rg')) return;
+  if (platform === 'darwin') await must(r, 'brew', ['install', 'ripgrep']);
+  else await aptInstall(r, 'ripgrep');
+}
 
 /** Best-effort: enable the real-PTY terminal stream. node-pty (an optional dependency) needs a C
  *  toolchain to compile its native addon when no prebuilt binary matches, so ensure python3/make/g++,
@@ -178,6 +189,23 @@ async function provisionSystemd(r: Runner, user: string, home: string, deploy: D
   ];
 }
 
+/** Install the root-owned helper and its immutable deployment facts. The service user can later invoke
+ * the helper, but cannot modify either file; the helper accepts no arguments and validates the bounded
+ * JSON request arriving on stdin. Domain-independent paths and upstreams remain inside the helper. */
+async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment): Promise<boolean> {
+  if (deploy.mode !== 'domain' || !deploy.domain) return false;
+  const source = await readFile(SITE_GATEWAY_HELPER_SOURCE, 'utf8');
+  const helperTmp = '/tmp/elowen-site-gateway';
+  const deploymentTmp = '/tmp/elowen-site-gateway.json';
+  await r.writeFile(helperTmp, source);
+  await r.writeFile(deploymentTmp, `${JSON.stringify({ appHost: deploy.domain.toLowerCase(), daemonPort: DAEMON_PORT }, null, 2)}\n`);
+  await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH), dirname(SITE_GATEWAY_DEPLOYMENT_PATH)]);
+  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0755', helperTmp, SITE_GATEWAY_HELPER_PATH]);
+  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', deploymentTmp, SITE_GATEWAY_DEPLOYMENT_PATH]);
+  await r.exec('rm', ['-f', helperTmp, deploymentTmp]);
+  return true;
+}
+
 /** Grant the service user passwordless systemctl for its own units, so the auto-update timer (and a
  *  manual `elowen update`) can take a freshly-installed binary live. Validated in a temp file with
  *  `visudo -cf` and only then atomically installed at 0440 — a malformed drop-in would break sudo for
@@ -207,6 +235,7 @@ async function provisionAdmin(answers: SetupAnswers): Promise<void> {
  *  so the caller can build the final URL (a non-fatal certbot failure leaves the site on HTTP). */
 async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> {
   if (plan.installTmux) await step('Installing tmux', () => (MAC ? must(r, 'brew', ['install', 'tmux']) : aptInstall(r, 'tmux')));
+  await step('Installing ripgrep', () => ensureRipgrep(r));
 
   // serviceUserCreated is tri-state — created by useradd / pre-existing / macOS (invoking user, N/A) —
   // and must come from the executor's own result: the plan's create-vs-existing intent is not what ran
@@ -238,17 +267,22 @@ async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> 
 
   let units: InstallUnit[] = [];
   let sudoersCreated = false;
+  let siteGatewayHelperCreated = false;
   if (MAC) {
     units = await step('Configuring launchd agents', () => provisionLaunchd(r, home));
   } else {
     units = await step('Configuring systemd services', () => provisionSystemd(r, plan.user.username, home, plan.deploy));
 
-    // Non-fatal: without the sudoers drop-in the services still run — only in-place self-updates
-    // (auto-update timer + manual `elowen update`) lose the ability to restart the units unattended.
+    await step('Installing published-sites gateway helper', () => provisionSiteGatewayHelper(r, plan.deploy))
+      .then((created) => { siteGatewayHelperCreated = created; })
+      .catch((e) => p.log.warn(`Published-sites gateway helper unavailable: ${(e as Error).message}`));
+
+    // Non-fatal: without the sudoers drop-in the services still run — self-updates cannot restart units,
+    // and a sites plugin cannot ask the root-owned gateway helper to apply its wildcard vhost.
     // macOS needs none of this: the agents run as the invoking user, who can already restart them.
-    await step('Granting self-update permissions', () => provisionSudoers(r, plan.user.username))
+    await step('Granting service permissions', () => provisionSudoers(r, plan.user.username))
       .then(() => { sudoersCreated = true; })
-      .catch((e) => p.log.warn(`Self-update permissions not granted (auto-update can't restart units until fixed): ${(e as Error).message}`));
+      .catch((e) => p.log.warn(`Service permissions not granted (self-update and published-sites gateway unavailable): ${(e as Error).message}`));
   }
 
   const ready = await step('Waiting for the daemon', () => waitForDaemon());
@@ -268,6 +302,7 @@ async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> 
     installedAt: new Date().toISOString(),
     units,
     sudoers: sudoersCreated,
+    siteGatewayHelper: siteGatewayHelperCreated,
     // Only a domain deployment writes a vhost; the path mirrors configureVhost's writes verbatim.
     proxy: proxyKind
       ? { kind: proxyKind, vhostPath: proxyKind === 'nginx' ? '/etc/nginx/sites-available/elowen.conf' : '/etc/apache2/sites-available/elowen.conf', tls: tlsOk }

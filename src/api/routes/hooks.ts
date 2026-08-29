@@ -3,6 +3,7 @@ import { bodyLimitBytes } from '../validation.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginHttpRequest } from '../../plugins/api.js';
+import { pluginResponseHeaders } from './pluginResponse.js';
 
 /** External webhooks are small control notifications (a Teams activity is a few KB); anything larger is
  *  not a webhook. Enforced here because the app has no global body cap. */
@@ -41,9 +42,13 @@ export function registerHookRoutes(app: ElowenApp, ctx: RouteContext): void {
       const res = await match.handler(request);
       const status = (res.status ?? 200) as ContentfulStatusCode;
       const body = res.body;
-      if (body === undefined || typeof body === 'string') return c.body(body ?? '', status, res.headers ?? {});
-      if (body instanceof Uint8Array) return c.body(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, status, res.headers ?? {});
-      return c.json(body, status, res.headers ?? {});
+      const responseHeaders = pluginResponseHeaders(res.headers);
+      if (body === undefined || typeof body === 'string') return new Response(body ?? '', { status, headers: responseHeaders });
+      if (body instanceof Uint8Array) {
+        return new Response(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, { status, headers: responseHeaders });
+      }
+      if (!responseHeaders.has('content-type')) responseHeaders.set('content-type', 'application/json; charset=UTF-8');
+      return new Response(JSON.stringify(body), { status, headers: responseHeaders });
     } catch (error) {
       // The failure detail stays daemon-side: an external caller (or probe) learns nothing about the
       // handler's internals from the response.

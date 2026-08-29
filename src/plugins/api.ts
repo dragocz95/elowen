@@ -356,7 +356,8 @@ export interface PluginHttpRequest {
 export interface PluginHttpResponse {
   /** Defaults to 200. */
   status?: number;
-  headers?: Record<string, string>;
+  /** Arrays preserve duplicate response fields such as multiple Set-Cookie lines. */
+  headers?: Record<string, string | string[]>;
   /** An object body is JSON-serialized with a json content-type; string/bytes pass through. */
   body?: string | Uint8Array | object;
   /** Server-sent-events stream instead of a buffered body (authenticated plugin API only). The
@@ -486,7 +487,12 @@ export interface PluginElowenCli {
 }
 
 /** Read-only user view handed through host stores — identity only, no secrets, no mutation. */
-export interface PluginUserView { id: number; username: string; isAdmin: boolean }
+/** An account as a plugin sees it. `name` and `avatar` are here so a plugin surface can render a person
+ *  the way the rest of the application does — the shared Avatar component takes exactly this shape and
+ *  mints its own signed image link, so a plugin that only knew the username had no way to draw a face and
+ *  fell back to a monogram for everyone. `avatar` is the stored FILENAME, empty when none was uploaded;
+ *  it is a presence flag to the client, never a path it should build a URL from. */
+export interface PluginUserView { id: number; username: string; name: string; avatar: string; isAdmin: boolean }
 
 export interface PluginExternalUserInput {
   provider: string;
@@ -748,6 +754,8 @@ export type PluginUiVisibility = (req: { userId: number | null; isAdmin: boolean
 export interface PluginService {
   /** Short name for logs, unique within the plugin (e.g. 'sync-loop'). */
   name: string;
+  /** Refuse a plugin reload when stop cannot prove that externally reachable work has ended. Default false. */
+  criticalStop?: boolean;
   start(): void | Promise<void>;
   stop(): void | Promise<void>;
 }
@@ -1034,13 +1042,30 @@ export interface SandboxControl {
    *  only honest way to say whose workspaces are meant. Omitting `projectIds` means every project. */
   workspacesFor(input: { userId: number; projectIds?: readonly number[] }): SandboxWorkspace[];
   activeWorkspace(input: { sessionId: string; projectId: number }): SandboxWorkspace | null;
-  prepareExecution(input: {
-    command: SandboxExecutionCommand;
-    cwd: string;
-    leaseKind: 'terminal' | 'github';
-    /** When present, execution is forced into this exact workspace even for an operator/admin. */
-    workspace?: SandboxWorkspaceRef;
-  }): SandboxPreparedExecution | Promise<SandboxPreparedExecution>;
+  prepareExecution(
+    input: {
+      command: SandboxExecutionCommand;
+      cwd: string;
+      leaseKind: 'terminal' | 'github' | 'sites';
+      /** A fresh network namespace has no route to the host loopback or another site's listener. Omitted
+       * keeps the existing shared network for interactive terminal/GitHub work. */
+      network?: 'shared' | 'isolated';
+      /** When present, execution is forced into this exact workspace even for an operator/admin. */
+      workspace?: SandboxWorkspaceRef;
+    },
+    /** For a caller with NO ambient turn to read — a background service has neither an identity nor a
+     *  set of allowed roots. Naming both explicitly is the only honest way to say whose HOME the child
+     *  gets and which directories it may see, and the caller owns the tenancy rule for what it names,
+     *  exactly as it does for `workspacesFor`.
+     *
+     *  There is deliberately no way to ask for UNCONFINED execution: an explicit request is always run
+     *  under bubblewrap, whoever makes it. Direct execution follows from who is driving the turn, and a
+     *  plugin asking for it would be asking for the daemon's whole environment. */
+    options?: {
+      accountUserId: number | null;
+      roots: readonly string[];
+    },
+  ): SandboxPreparedExecution | Promise<SandboxPreparedExecution>;
   gitStatus?(input: { accountUserId: number; workspace: SandboxWorkspaceRef; path?: string }): Promise<{
     branch: string;
     lines: string[];
@@ -1089,6 +1114,40 @@ export interface MicrosoftIdentityControl {
   driveGraphFor(elowenUserId: number): Promise<MicrosoftDriveGraph | null>;
 }
 
+export interface PublishedSitesGatewayStatus {
+  available: boolean;
+  active: boolean;
+  hostnameBase: string | null;
+  detail?: string;
+  /** Which sites currently hold a certificate, for the operations that report or converge on that set. */
+  slugs?: string[];
+}
+
+/** Core-owned privileged boundary for the wildcard gateway used by published sites. The plugin never
+ * receives a command, path, upstream or nginx fragment: core derives the hostname from trusted install
+ * metadata and the root helper owns every system path, every certificate and the whole certbot
+ * invocation. Nothing the plugin sends reaches a command line. */
+export interface PublishedSitesGatewayControl {
+  hostnameBase(): string | null;
+  /** Make the gateway live and report the sites that already hold a certificate. Required before the
+   *  first issuance: HTTP-01 is answered by a port-80 block that has to be serving beforehand. */
+  syncSites(input: { gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
+  /** Serve one published site on its own hostname, issuing its certificate through HTTP-01 if needed.
+   *  There is deliberately no wildcard-certificate path: a wildcard can only be issued over DNS-01,
+   *  which would make every deployment depend on registrar API credentials. Per-name issuance needs
+   *  nothing but the wildcard DNS record the operator already pointed at this machine. */
+  ensureSite(input: { slug: string; email: string; gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
+  removeSite(input: { slug: string; gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
+  deny(): Promise<PublishedSitesGatewayStatus>;
+  status(): Promise<PublishedSitesGatewayStatus>;
+  /** Create a root-owned, group-writable directory for one confined runtime to bind its pathname socket. */
+  prepareRuntimeSocket(siteId: string): Promise<{ path: string }>;
+  /** Revoke directory write permission and prove the runtime created a socket rather than a symlink. */
+  sealRuntimeSocket(siteId: string): Promise<void>;
+  /** Remove the sealed socket directory after the process group is proven gone. */
+  removeRuntimeSocket(siteId: string): Promise<void>;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -1101,6 +1160,7 @@ export interface KnownControls {
   lsp: LspStateControl;
   sandbox: SandboxControl;
   microsoftIdentity: MicrosoftIdentityControl;
+  publishedSitesGateway: PublishedSitesGatewayControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`

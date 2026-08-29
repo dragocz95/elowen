@@ -32,6 +32,27 @@ describe('toolDetail: read ranges', () => {
     expect(toolDetail({ path: 'src/a.ts' }, 'Read')).toBe('src/a.ts');
     expect(toolDetail({ path: 'src', offset: 2, limit: 3 }, 'ListDir')).toBe('src');
   });
+
+  // Read/Write/Edit renamed `path` to `file_path` (the reference spelling the models are trained on), but
+  // every conversation stored before that rename still carries the old key in its argument JSON, and those
+  // rows are replayed verbatim. Both spellings therefore have to keep rendering — a transcript that went
+  // blank on reload would be the visible cost of a rename that changed nothing about the stored data.
+  it('renders both the stored `path` and the current `file_path` spelling', () => {
+    expect(toolDetail({ file_path: 'src/a.ts' }, 'Read')).toBe('src/a.ts');
+    expect(toolDetail({ path: 'src/a.ts' }, 'Read')).toBe('src/a.ts');
+    expect(toolDetail({ file_path: 'src/a.ts', offset: 5, limit: 2 }, 'Read')).toBe('src/a.ts · lines 5–6');
+    // Historical Edit calls carried path + oldText/newText; the path is still what identifies the call.
+    expect(toolDetail({ path: 'src/a.ts', oldText: 'a', newText: 'b' }, 'Edit')).toBe('src/a.ts');
+    expect(toolDetail({ file_path: 'src/a.ts', old_string: 'a', new_string: 'b' }, 'Edit')).toBe('src/a.ts');
+  });
+
+  // The `??` chain became a loop over TOOL_SUBJECT_KEYS when live recall started sharing that list.
+  // A chain stops at the first key PRESENT, so a non-string value claims the slot and yields no detail;
+  // a loop written to seek the first STRING would silently start rendering a later key instead.
+  it('lets a present-but-unrenderable argument claim its slot rather than falling through', () => {
+    expect(toolDetail({ path: 42, command: 'npm test' }, 'Bash')).toBeUndefined();
+    expect(toolDetail({ command: 'npm test' }, 'Bash')).toBe('npm test');
+  });
 });
 
 describe('shapeBrainMessages: compaction divider', () => {

@@ -330,6 +330,24 @@ describe('BrainService', () => {
     expect(connect).toHaveBeenCalledOnce();
   });
 
+  it('keeps the old registry intact when a critical plugin service refuses to stop', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('sites', {}, { info() {}, warn() {}, error() {} });
+    const start = vi.fn(async () => {});
+    const stop = vi.fn(async () => { throw new Error('runtime still alive'); });
+    ctx.registerService({ name: 'site-runtimes', criticalStop: true, start, stop });
+    const plugins = new PluginRegistryProvider(async () => reg);
+    const invalidate = vi.spyOn(plugins, 'invalidate');
+    (d as unknown as { plugins: unknown }).plugins = plugins;
+    const svc = new BrainService(d as never);
+    await svc.startPlatforms();
+
+    await expect(svc.reloadPlugins()).rejects.toThrow(/critical plugin service stop failed.*runtime still alive/);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
   it('reloads only the platform subset started inside a sub-agent runner', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
@@ -5250,7 +5268,7 @@ describe('sub-agent session tap + owner steering', () => {
         toolPolicy: { allow: [], deny: ['Read'] },
       },
       promptAppend: ['focused child'], trusted: false,
-      toolPolicy: { allow: new Set(), deny: new Set(['DiscordApi', 'Read']) },
+      toolPolicy: { allow: new Set(), deny: new Set(['AskUserQuestion', 'DiscordApi', 'Read']) },
       identity: expect.objectContaining({ platform: 'subagent', admin: false, owner: false }),
     }), 'continue');
     const forwarded = send.mock.calls[0]![0] as { policy: { allowedProjectIds: Set<number> | 'all' }; writerUserId?: number };

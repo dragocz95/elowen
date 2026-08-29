@@ -80,4 +80,25 @@ describe('buildBrainCore plugin-host wiring', () => {
       expect(cli.tokenForUser(9999)).toBeUndefined();
     } finally { core.db.close(); }
   });
+
+  it('hands a plugin the display name and avatar, so a plugin page can draw a person', async () => {
+    // Asserted against the REAL wiring rather than a stub of it. Every other test of this seam builds its
+    // own `usersRead` object, so all of them kept passing while the actual mapping dropped both fields —
+    // and a plugin page therefore drew a monogram for someone who had uploaded a photo.
+    const { core, captured } = await bootWith(
+      `export function register(ctx){ globalThis.__hostStores = ctx.host.stores(); }`,
+      { username: 'owner', password: 'pw-for-test-only' },
+    );
+    const stores = captured.__hostStores;
+    if (!stores) throw new Error('the probe plugin never captured the stores seam');
+    try {
+      const owner = core.users.list()[0]!;
+      core.users.setProfile(owner.id, { name: 'Filip Džudža' });
+      core.users.setAvatar(owner.id, `${owner.id}.png`);
+
+      expect(stores.usersRead.list().find((u) => u.id === owner.id)).toEqual({
+        id: owner.id, username: 'owner', name: 'Filip Džudža', avatar: `${owner.id}.png`, isAdmin: true,
+      });
+    } finally { core.db.close(); }
+  });
 });

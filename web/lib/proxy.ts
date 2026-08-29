@@ -1,7 +1,13 @@
 // Server-side BFF proxy helpers. The browser only ever talks to this web origin; these helpers let
 // the route handlers translate the httpOnly session cookie into a daemon bearer token, guard against
 // cross-origin (CSRF) writes, and forward request headers cleanly. None of this runs in the browser.
+/** Plain-HTTP installs cannot use the `__Host-` prefix because that prefix requires `Secure`.
+ *  Production HTTPS uses a different name, not merely different attributes: a sibling site subdomain
+ *  may set `Domain=agent.example` cookies, but browsers refuse to mint a `__Host-` cookie with Domain.
+ *  The app deliberately does NOT fall back to the legacy name on HTTPS — such a fallback would reopen
+ *  cookie tossing for every browser that had not yet received the new cookie. */
 export const COOKIE_NAME = 'elowen_session';
+export const SECURE_COOKIE_NAME = '__Host-elowen_session';
 
 export function daemonUrl(): string {
   return process.env.ELOWEN_DAEMON_URL ?? 'http://localhost:4400';
@@ -18,42 +24,60 @@ export function isHttps(req: Request): boolean {
   return (req.headers.get('x-forwarded-proto') ?? '').split(',')[0].trim().toLowerCase() === 'https';
 }
 
+export const sessionCookieName = (secure: boolean): string => secure ? SECURE_COOKIE_NAME : COOKIE_NAME;
+export const namedCookieName = (name: string, secure: boolean): string => secure ? `__Host-${name}` : name;
+
 /** Mint the httpOnly session cookie. `maxAgeSeconds` MUST match the daemon token's TTL so the browser
  *  keeps the cookie for exactly as long as the daemon will accept the token; without a Max-Age the
  *  browser treats it as a session cookie and drops it on close/suspend (minutes-to-hours on mobile),
  *  logging the user out long before the 30-day token actually expires. */
 export function sessionCookie(token: string, secure: boolean, maxAgeSeconds: number): string {
-  return `${COOKIE_NAME}=${token}; ${ATTRS}${secure ? '; Secure' : ''}; Max-Age=${Math.floor(maxAgeSeconds)}`;
+  return `${sessionCookieName(secure)}=${token}; ${ATTRS}${secure ? '; Secure' : ''}; Max-Age=${Math.floor(maxAgeSeconds)}`;
 }
 
 export function clearCookie(secure: boolean): string {
-  return `${COOKIE_NAME}=; ${ATTRS}${secure ? '; Secure' : ''}; Max-Age=0`;
+  return `${sessionCookieName(secure)}=; ${ATTRS}${secure ? '; Secure' : ''}; Max-Age=0`;
 }
 
 // Impersonation ("sign in as") cookies, set only while an admin views the app as another user:
 //  - RETURN_COOKIE: httpOnly stash of the admin's OWN token, so "stop impersonating" can restore it.
 //  - IMPERSONATING_COOKIE: a JS-readable display hint (the target's name) so the UI can show a banner.
-//    It carries no authority — the session token in COOKIE_NAME is what actually authenticates.
+//    It carries no authority — the session token above is what actually authenticates.
 export const RETURN_COOKIE = 'elowen_return';
 export const IMPERSONATING_COOKIE = 'elowen_as';
 
-/** Build a Set-Cookie string for an arbitrary cookie name. `httpOnly=false` makes it readable by page
- *  JS (used for the non-sensitive impersonation display hint); values are URL-encoded. */
+/** Build a Set-Cookie string for an arbitrary cookie name. HTTPS cookies get the same sibling-domain
+ *  protection as the main session. `httpOnly=false` is reserved for the non-sensitive impersonation
+ *  display hint; `__Host-` does not require HttpOnly, only Secure + Path=/ + no Domain. */
 export function namedCookie(name: string, value: string, secure: boolean, maxAgeSeconds: number, httpOnly = true): string {
   const attrs = `${httpOnly ? 'HttpOnly; ' : ''}SameSite=Lax; Path=/`;
-  return `${name}=${encodeURIComponent(value)}; ${attrs}${secure ? '; Secure' : ''}; Max-Age=${Math.floor(maxAgeSeconds)}`;
+  return `${namedCookieName(name, secure)}=${encodeURIComponent(value)}; ${attrs}${secure ? '; Secure' : ''}; Max-Age=${Math.floor(maxAgeSeconds)}`;
 }
 
 /** Read (and URL-decode) an arbitrary cookie by name from a raw Cookie header, or null when absent.
  *  Anchored so one cookie name can't match as a substring of another. */
 export function readCookieHeader(cookieHeader: string, name: string): string | null {
   const m = cookieHeader.match(new RegExp(`(?:^|; )${name}=([^;]+)`));
-  return m ? decodeURIComponent(m[1]) : null;
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    // Cookie bytes are untrusted input. A malformed percent escape means this cookie is unusable, not
+    // that every BFF route and server-rendered page should throw 500 before reaching its auth guard.
+    return null;
+  }
 }
 
-/** Read (and URL-decode) an arbitrary cookie by name from the request, or null when absent. */
+/** Read (and URL-decode) an arbitrary cookie by its exact name from the request, or null when absent. */
 export function readCookie(req: Request, name: string): string | null {
   return readCookieHeader(req.headers.get('cookie') ?? '', name);
+}
+
+/** Read a BFF-owned named cookie under the name valid for this transport. There is intentionally no
+ *  HTTPS fallback to the unprefixed name: a sibling subdomain can create that legacy cookie for the
+ *  parent host, which is why the authoritative cookie was prefixed in the first place. */
+export function readNamedCookie(req: Request, name: string): string | null {
+  return readCookie(req, namedCookieName(name, isHttps(req)));
 }
 
 /** Same-origin guard for mutating requests (CSRF defense-in-depth on top of SameSite=Lax).
@@ -81,7 +105,7 @@ export function isSameOrigin(req: Request): boolean {
  *  (`xelowen_session`) win the match, so anyone able to set a cookie on the domain — a sibling
  *  subdomain, say — could substitute the session the app then acts as. */
 export function tokenFromCookie(req: Request): string | null {
-  return readCookie(req, COOKIE_NAME);
+  return readCookie(req, sessionCookieName(isHttps(req)));
 }
 
 /** A JSON `{ error }` Response with the given status. The uniform error shape every BFF route

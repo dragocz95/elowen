@@ -20,9 +20,16 @@ const PROGRESS_TAIL_ROWS = 8;
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /** The one line that identifies a failed tool result. Its own `status` ("needs attention") is dropped: the
- *  collapsed row already says Error, and repeating it would spend the only line we have on nothing. */
+ *  collapsed row already says Error, and repeating it would spend the only line we have on nothing.
+ *
+ *  Read from `fullText`, NOT from `text`. `text` is the compacted preview, and compaction keeps the LAST
+ *  few lines — the right choice for command output, where the tail is the result, and exactly wrong for a
+ *  failure, where the first line is the cause. A schema validation error ends with the arguments it
+ *  received, so the preview showed a fragment of raw JSON while "Validation failed for tool X: oldText is
+ *  required" sat just off the top, and the operator read the argument that happened to be printed first as
+ *  the thing that broke. */
 function errorHeadline(output: NonNullable<ToolItem['output']>): string {
-  const first = terminalInlineText(output.text ?? '').trim().replace(/^Error:\s*/i, '');
+  const first = terminalInlineText(output.fullText ?? output.text ?? '').trim().replace(/^Error:\s*/i, '');
   return first || output.status || 'failed';
 }
 

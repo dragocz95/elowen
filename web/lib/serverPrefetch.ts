@@ -1,7 +1,7 @@
 // Server-side only (imported from the root layout — never from client components).
 import { cache } from 'react';
 import { headers } from 'next/headers';
-import { daemonUrl, readCookieHeader, COOKIE_NAME } from './proxy';
+import { daemonUrl, readCookieHeader, sessionCookieName } from './proxy';
 import { dictionaries, type Locale } from './i18n/dictionaries';
 import { DEFAULT_LOCALE } from './i18n';
 import { isSkinChoice, type SkinChoice } from './skins';
@@ -19,6 +19,15 @@ const FAILURE_BACKOFF_MS = 5_000;
  *  after first paint — the exact flash the identity seed exists to remove. */
 const failedAt = new Map<string, number>();
 
+/** The authoritative session name follows the actual browser transport. HTTPS never falls back to the
+ *  legacy unprefixed name: a published sibling subdomain may set a parent-domain cookie under that
+ *  name, while the browser reserves `__Host-` cookies to this exact host. */
+async function callerSessionToken(): Promise<string | null> {
+  const requestHeaders = await headers();
+  const secure = (requestHeaders.get('x-forwarded-proto') ?? '').split(',')[0].trim().toLowerCase() === 'https';
+  return readCookieHeader(requestHeaders.get('cookie') ?? '', sessionCookieName(secure));
+}
+
 /** Fetch a per-caller daemon endpoint for the CURRENT request, translating the caller's own session
  *  cookie into the daemon bearer exactly like the BFF proxy route does — never an ambient/admin
  *  credential, or one user's data would leak into another user's document.
@@ -28,7 +37,7 @@ const failedAt = new Map<string, number>();
  *  fails `accept`. Null means "no server-seeded data": the page renders exactly as it does without
  *  the prefetch and the client query refills it. */
 async function fetchForCaller<T>(path: string, accept: (body: unknown) => body is T): Promise<T | null> {
-  const token = readCookieHeader((await headers()).get('cookie') ?? '', COOKIE_NAME);
+  const token = await callerSessionToken();
   if (!token) return null; // logged-out: nothing to forward, nothing to fetch
   const endpoint = path.split('?')[0];
   const lastFailure = failedAt.get(endpoint);
@@ -87,8 +96,7 @@ export const fetchAllowedSkins = cache(async (): Promise<string[] | null> => {
 
 /** Cookie presence is not authentication, but absence is authoritative: a browser with no session must
  * render the login route on its first frame instead of briefly painting authenticated shell chrome. */
-export const hasSessionCookie = cache(async (): Promise<boolean> =>
-  readCookieHeader((await headers()).get('cookie') ?? '', COOKIE_NAME) != null);
+export const hasSessionCookie = cache(async (): Promise<boolean> => (await callerSessionToken()) != null);
 
 /** Prefetch the caller's /plugins/ui listing so the navigation rail arrives complete in the HTML
  *  (no first-paint pop-in of plugin worlds). Deduped per request via React cache. */

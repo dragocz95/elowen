@@ -1,5 +1,20 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { daemonUrl, sessionCookie, clearCookie, isSameOrigin, isHttps, forwardHeaders, tokenFromCookie, jsonError, requireSameOrigin, COOKIE_NAME } from '../../lib/proxy';
+import {
+  COOKIE_NAME,
+  SECURE_COOKIE_NAME,
+  clearCookie,
+  daemonUrl,
+  forwardHeaders,
+  isHttps,
+  isSameOrigin,
+  jsonError,
+  namedCookie,
+  readCookieHeader,
+  readNamedCookie,
+  requireSameOrigin,
+  sessionCookie,
+  tokenFromCookie,
+} from '../../lib/proxy';
 
 describe('proxy helpers', () => {
   beforeEach(() => { delete process.env.ELOWEN_DAEMON_URL; });
@@ -10,26 +25,40 @@ describe('proxy helpers', () => {
     expect(daemonUrl()).toBe('http://localhost:9999');
   });
 
-  it('sessionCookie is httpOnly + lax, persisted via Max-Age, and Secure only over HTTPS', () => {
+  it('sessionCookie is host-locked on HTTPS and remains usable on direct HTTP', () => {
     const secure = sessionCookie('tok123', true, 30 * 86400);
-    expect(secure).toContain(`${COOKIE_NAME}=tok123`);
+    expect(secure).toContain(`${SECURE_COOKIE_NAME}=tok123`);
     expect(secure).toMatch(/HttpOnly/);
     expect(secure).toMatch(/Secure/);
     expect(secure).toMatch(/SameSite=Lax/);
+    expect(secure).toMatch(/Path=\//);
+    expect(secure).not.toMatch(/Domain=/i);
     // Persisted for the token's TTL, not a session cookie the browser drops on close/suspend.
     expect(secure).toMatch(/Max-Age=2592000/);
-    // Over plain HTTP the cookie must NOT be Secure, or the browser drops it (→ 401 after login).
+
+    // `__Host-` requires Secure, so a localhost/IP deployment retains the legacy name and attributes.
     const insecure = sessionCookie('tok123', false, 7 * 86400);
+    expect(insecure).toContain(`${COOKIE_NAME}=tok123`);
     expect(insecure).toMatch(/HttpOnly/);
     expect(insecure).not.toMatch(/Secure/);
     expect(insecure).toMatch(/Max-Age=604800/);
   });
 
-  it('clearCookie expires the cookie and matches the Secure attr', () => {
+  it('clearCookie expires the authoritative name for the current transport', () => {
+    expect(clearCookie(true)).toContain(`${SECURE_COOKIE_NAME}=;`);
     expect(clearCookie(true)).toMatch(/Max-Age=0/);
-    expect(clearCookie(true)).toContain(`${COOKIE_NAME}=;`);
     expect(clearCookie(true)).toMatch(/Secure/);
+    expect(clearCookie(false)).toContain(`${COOKIE_NAME}=;`);
     expect(clearCookie(false)).not.toMatch(/Secure/);
+  });
+
+  it('named authority cookies are also host-locked on HTTPS', () => {
+    expect(namedCookie('elowen_return', 'admin-token', true, 60)).toContain('__Host-elowen_return=admin-token');
+    expect(namedCookie('elowen_return', 'admin-token', false, 60)).toContain('elowen_return=admin-token');
+  });
+
+  it('treats a malformed encoded cookie as absent instead of throwing from every BFF route', () => {
+    expect(readCookieHeader('other=1; elowen_session=%E0%A4%A', 'elowen_session')).toBeNull();
   });
 
   it('isHttps reads X-Forwarded-Proto from the reverse proxy', () => {
@@ -100,23 +129,37 @@ describe('proxy helpers', () => {
     expect(enc.get('accept-encoding')).toBeNull();
   });
 
-  it('tokenFromCookie reads the session token from the cookie header, or null', () => {
-    const withTok = new Request('https://web.example/api/x', { headers: { cookie: `other=1; ${COOKIE_NAME}=abc123; x=2` } });
-    expect(tokenFromCookie(withTok)).toBe('abc123');
+  it('tokenFromCookie reads the name authoritative for the transport', () => {
+    const directHttp = new Request('http://web.example/api/x', { headers: { cookie: `other=1; ${COOKIE_NAME}=abc123; x=2` } });
+    expect(tokenFromCookie(directHttp)).toBe('abc123');
+
+    const proxiedHttps = new Request('http://web.example/api/x', {
+      headers: { 'x-forwarded-proto': 'https', cookie: `${COOKIE_NAME}=ATTACKER; ${SECURE_COOKIE_NAME}=real-secure` },
+    });
+    expect(tokenFromCookie(proxiedHttps)).toBe('real-secure');
     expect(tokenFromCookie(new Request('https://web.example/api/x'))).toBeNull();
-    expect(tokenFromCookie(new Request('https://web.example/api/x', { headers: { cookie: 'other=1' } }))).toBeNull();
   });
 
-  // A cookie whose name merely ENDS with ours must not win the match. Anyone able to set a cookie on the
-  // domain — a sibling subdomain, say — could otherwise substitute the session the app then acts as.
-  it('tokenFromCookie ignores a cookie whose name only ends with the session name', () => {
-    const shadowed = new Request('https://web.example/api/x', {
+  it('HTTPS never falls back to a sibling-settable legacy session cookie', () => {
+    const attackerOnly = new Request('http://web.example/api/x', {
+      headers: { 'x-forwarded-proto': 'https', cookie: `${COOKIE_NAME}=ATTACKER` },
+    });
+    expect(tokenFromCookie(attackerOnly)).toBeNull();
+
+    const named = new Request('http://web.example/api/x', {
+      headers: { 'x-forwarded-proto': 'https', cookie: 'elowen_return=ATTACKER; __Host-elowen_return=REAL' },
+    });
+    expect(readNamedCookie(named, 'elowen_return')).toBe('REAL');
+  });
+
+  // A cookie whose name merely ENDS with ours must not win the match either.
+  it('tokenFromCookie ignores a cookie whose name only ends with the direct-HTTP session name', () => {
+    const shadowed = new Request('http://web.example/api/x', {
       headers: { cookie: `x${COOKIE_NAME}=ATTACKER; ${COOKIE_NAME}=REAL` },
     });
     expect(tokenFromCookie(shadowed)).toBe('REAL');
 
-    // Present ONLY under a suffixed name → no session at all, rather than the attacker's value.
-    const onlyShadow = new Request('https://web.example/api/x', { headers: { cookie: `x${COOKIE_NAME}=ATTACKER` } });
+    const onlyShadow = new Request('http://web.example/api/x', { headers: { cookie: `x${COOKIE_NAME}=ATTACKER` } });
     expect(tokenFromCookie(onlyShadow)).toBeNull();
   });
 

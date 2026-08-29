@@ -353,9 +353,10 @@ describe('a delegated turn is narrowed by the account grant wherever it is route
     });
     await svc.send(opts as never, 'go');
 
-    expect(opts.toolPolicy).toEqual({ allow: new Set(['Read']) });
+    // The executing policy also carries the interactive deny every delegated turn gets unconditionally.
+    expect(opts.toolPolicy).toEqual({ allow: new Set(['Read']), deny: new Set(['AskUserQuestion']) });
     // …and the channel service does not widen it back to the frozen scope on the way in.
-    expect(policy).toEqual({ allow: new Set(['Read']) });
+    expect(policy).toEqual({ allow: new Set(['Read']), deny: new Set(['AskUserQuestion']) });
     expect(session.activeNames()).toEqual([BUILTIN, 'Read']);
   });
 });

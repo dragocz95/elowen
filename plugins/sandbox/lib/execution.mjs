@@ -145,11 +145,12 @@ function shellWord(word) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function buildBubblewrap(command, cwd, roots, home) {
+function buildBubblewrap(command, cwd, roots, home, network = 'shared') {
   const binds = bindableRoots(roots);
   if (binds.length === 0) throw new Error('no accessible project directory is available for confined execution');
   const args = [
     '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup',
+    ...(network === 'isolated' ? ['--unshare-net'] : []),
     '--die-with-parent', '--new-session',
     '--ro-bind', '/usr', '/usr',
     '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib',
@@ -258,6 +259,9 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
     let launch;
     let displayCwd = cwd;
     let sanitizeOutput = (text) => String(text);
+    // An explicit workspace is the strongest claim there is — it pins the child into one worktree and
+    // hides the host path behind a guest root, so it is decided before either shortcut into direct
+    // execution is even considered.
     if (explicitWorkspace) {
       const probe = bubblewrapProbe();
       if (!probe.available) throw new Error(`confined execution is unavailable: ${probe.reason || 'bubblewrap probe failed'}`);
@@ -267,7 +271,14 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
       displayCwd = prepared.guestCwd;
       const prefixes = [realpathSync(explicitWorkspace.path), resolve(explicitWorkspace.path)];
       sanitizeOutput = (text) => prefixes.reduce((value, prefix) => value.split(prefix).join(WORKSPACE_GUEST_ROOT), String(text));
-    } else if (owner || (accountUserId !== null && ctx.config.confineNonOperators === false)) {
+    // `forceConfined` is what a plugin's background work asks for, and it overrides BOTH shortcuts into
+    // direct execution — the operator turn it may happen to run inside, and the instance-wide
+    // `confineNonOperators: false`. Neither is a statement about the plugin: the first is about who is
+    // driving the turn, the second about the interactive shells this operator runs on their own machine.
+    // A long-lived process a plugin supervises is neither, so it either gets a namespace or it does not
+    // start — refusing is the honest answer, silently running it with the daemon's whole environment is
+    // not.
+    } else if (!options.forceConfined && (owner || (accountUserId !== null && ctx.config.confineNonOperators === false))) {
       mode = 'direct';
       launch = input.command.type === 'shell'
         ? { type: 'shell', command: input.command.command, env: cleanHostEnv(home) }
@@ -277,7 +288,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
       const probe = bubblewrapProbe();
       if (!probe.available) throw new Error(`confined execution is unavailable: ${probe.reason || 'bubblewrap probe failed'}`);
       mode = 'confined';
-      launch = buildBubblewrap(input.command, cwd, roots, accountUserId === null ? null : home);
+      launch = buildBubblewrap(input.command, cwd, roots, accountUserId === null ? null : home, input.network);
     }
 
     const mintLease = () => createExecutionLease(db, {

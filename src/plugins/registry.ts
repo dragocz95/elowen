@@ -115,6 +115,10 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   lsp: ['diagnosticsEnabled'],
   sandbox: ['workspaceRoots', 'resolveWorkspace', 'acquireDelegationLease', 'workspacesFor', 'activeWorkspace', 'prepareExecution'],
   microsoftIdentity: ['identityFor', 'driveGraphFor'],
+  publishedSitesGateway: [
+    'hostnameBase', 'syncSites', 'ensureSite', 'removeSite', 'deny', 'status',
+    'prepareRuntimeSocket', 'sealRuntimeSocket', 'removeRuntimeSocket',
+  ],
 };
 
 /** A missing account is not plugin-access open mode: shared channels and unlinked callers
@@ -743,6 +747,16 @@ export class PluginRegistry {
     if (!methods) return true; // a control core does not call by key — presence is all there is to check
     const blob = raw as Record<string, unknown>;
     return !methods.some((method) => typeof blob[method] !== 'function');
+  }
+
+  /** Install a core-owned control after plugin loading. Core always wins this reserved key: an
+   * admin-installed plugin must not be able to impersonate the privileged boundary another plugin will
+   * call. This method is intentionally absent from PluginContext — only bootstrap can invoke it. */
+  registerHostControl<K extends keyof KnownControls>(name: K, control: KnownControls[K]): void {
+    if (this.controls.has(name)) log.warn(`plugin control "${name}" replaced by the core-owned host control`);
+    this.controls.set(name, control as unknown as PluginControl);
+    this.controlOwner.set(name, 'core');
+    this.controlRequires.delete(name);
   }
 
   /** Resolve a KNOWN plugin control already narrowed to its typed contract, or undefined when no plugin

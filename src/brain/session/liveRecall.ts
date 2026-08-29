@@ -2,8 +2,9 @@ import { isDeepStrictEqual } from 'node:util';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { PiAgentMessage } from './historyImageStripping.js';
 import { isMetaUserMessage, isUserTurn } from './userTurn.js';
-import { frameUntrusted } from '../messageView.js';
+import { frameUntrusted, TOOL_SUBJECT_KEYS } from '../messageView.js';
 import { memoryAgeDays, memoryStalenessNote } from '../memoryStaleness.js';
+import { collapseWhitespace } from '../../shared/text.js';
 import { logger } from '../../shared/logger.js';
 
 /** Recall that runs WHILE a turn is working, not only at its start.
@@ -81,7 +82,37 @@ const PENDING_ABANDON_MS = 30_000;
  *  last few thousand characters of actual work is what carries the topic. */
 const QUERY_SOURCE_CHARS = 2000;
 
-/** Flatten whatever pi puts in `content` into plain text, ignoring images and other non-text parts. */
+/** How much of one argument value may reach the query. Long enough for a deep path, short enough that
+ *  a shell one-liner cannot crowd out the rest of the turn. */
+const ARGUMENT_CHARS = 200;
+
+/** What a tool call contributes: the model's own statement of intent, plus every argument that NAMES
+ *  the work. Both are data the call already carries, so nothing is inferred from the shape of the text
+ *  and a plugin published tomorrow needs no change here.
+ *
+ *  This matters because a turn spends most of itself in tool calls, and until this existed the query
+ *  saw none of them — it searched with prose and tool OUTPUT while the paths, patterns and skill names
+ *  that actually name the work went unread. */
+function toolCallSubject(part: Record<string, unknown>): string {
+  const args = part.arguments;
+  if (!args || typeof args !== 'object') return '';
+  const a = args as Record<string, unknown>;
+  const bits: string[] = [];
+  const reason = a._reason;
+  if (typeof reason === 'string' && reason.trim()) bits.push(collapseWhitespace(reason));
+  for (const key of TOOL_SUBJECT_KEYS) {
+    const value = a[key];
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const one = collapseWhitespace(value);
+    bits.push(one.length > ARGUMENT_CHARS ? `${one.slice(0, ARGUMENT_CHARS)}…` : one);
+  }
+  if (!bits.length) return '';
+  const name = typeof part.name === 'string' && part.name ? part.name : 'tool';
+  return `${name}: ${bits.join(' ')}`;
+}
+
+/** Flatten whatever pi puts in `content` into plain text, ignoring images and other non-text parts.
+ *  Tool calls have no `text` of their own and contribute their subject instead. */
 function textOf(message: ContextMessage): string {
   const { content } = message;
   if (typeof content === 'string') return content;
@@ -91,7 +122,11 @@ function textOf(message: ContextMessage): string {
     if (typeof part === 'string') { parts.push(part); continue; }
     if (part && typeof part === 'object') {
       const text = (part as { text?: unknown }).text;
-      if (typeof text === 'string') parts.push(text);
+      if (typeof text === 'string') { parts.push(text); continue; }
+      if ((part as { type?: unknown }).type === 'toolCall') {
+        const subject = toolCallSubject(part as Record<string, unknown>);
+        if (subject) parts.push(subject);
+      }
     }
   }
   return parts.join('\n');

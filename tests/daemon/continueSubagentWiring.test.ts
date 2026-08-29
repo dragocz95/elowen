@@ -119,8 +119,10 @@ describe('DelegateContinue wiring — plugin tool to the brain core', () => {
     expect(opts.idleRolloverMs).toBe(Number.POSITIVE_INFINITY);
     expect(opts.model).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5' });
     // The current turn's tool denies are layered onto the resumed child's policy — they ride the chain
-    // from the toolPolicy the registry read out of the turn scope, down to the send opts.
-    expect(opts.toolPolicy).toEqual({ deny: new Set(['Bash']) });
+    // from the toolPolicy the registry read out of the turn scope, down to the send opts. AskUserQuestion
+    // rides along on top: delegatedToolPolicy() denies interactive tools unconditionally, because a
+    // resumed child runs unattended and a question it parks on would never reach a person.
+    expect(opts.toolPolicy).toEqual({ deny: new Set(['AskUserQuestion', 'Bash']) });
 
     // The progress callback is the SAME object wired end to end: the plugin's onEvent → brain narrowing
     // → the send-opts onEvent → back into the plugin's rail state → the host's updates. Driving the send

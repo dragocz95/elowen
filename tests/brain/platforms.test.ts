@@ -556,7 +556,8 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     } as never, 'inspect');
 
     expect(sent?.identity).toMatchObject({ admin: true, owner: false });
-    expect(sent?.toolPolicy).toEqual({ allow: new Set(), deny: new Set(['DiscordApi']) });
+    // AskUserQuestion rides along on every delegated policy: an unattended child cannot park on a question.
+    expect(sent?.toolPolicy).toEqual({ allow: new Set(), deny: new Set(['AskUserQuestion', 'DiscordApi']) });
     expect(sent?.delegatedAccess).toEqual({
       admin: true, projectIds: [], owner: false,
       permissionBoundary: null,
@@ -594,7 +595,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       permissionBoundary: null,
       toolPolicy: { allow: ['Read'], deny: ['terminal_exec'] },
     });
-    expect(sent?.toolPolicy).toEqual({ allow: new Set(['Read']), deny: new Set(['terminal_exec']) });
+    expect(sent?.toolPolicy).toEqual({ allow: new Set(['Read']), deny: new Set(['AskUserQuestion', 'terminal_exec']) });
   });
 
   it('carries a linked non-owner granular deny into the immutable child scope', async () => {
@@ -741,7 +742,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     // The captured scope still records what the child was minted with (the normalizer sorts it)…
     expect(sortedAllow(sent)).toEqual(['Grep', 'Read']);
     // …but the policy the turn actually executes under is that scope ∩ the account's grant right now.
-    expect(sent.toolPolicy).toEqual({ allow: new Set(['Read']) });
+    expect(sent.toolPolicy).toEqual({ allow: new Set(['Read']), deny: new Set(['AskUserQuestion']) });
   });
 
   it('reads the current grant from the captured settings account, not the room owner', async () => {
@@ -757,7 +758,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
 
     expect(authorityIds).toEqual([3]);
     expect(sent.delegatedAccess).toMatchObject({ settingsUserId: 3, contributionUserId: 3 });
-    expect(sent.toolPolicy).toEqual({ allow: new Set(['Read']) });
+    expect(sent.toolPolicy).toEqual({ allow: new Set(['Read']), deny: new Set(['AskUserQuestion']) });
   });
 
   it('a bare read_only delegation (no type) takes the same host-side read-only path', async () => {

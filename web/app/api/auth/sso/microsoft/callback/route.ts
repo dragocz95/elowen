@@ -5,7 +5,7 @@ import {
   IMPERSONATING_COOKIE,
   isHttps,
   namedCookie,
-  readCookie,
+  readNamedCookie,
   RETURN_COOKIE,
   sessionCookie,
 } from '../../../../../../lib/proxy';
@@ -21,7 +21,7 @@ function redirectWithError(req: Request, code: unknown): Response {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const flowId = readCookie(req, SSO_FLOW_COOKIE);
+  const flowId = readNamedCookie(req, SSO_FLOW_COOKIE);
   if (!flowId) return redirectWithError(req, 'state_expired');
 
   const query = new URL(req.url).searchParams;

@@ -60,6 +60,20 @@ describe('hook routes', () => {
     expect(seen).toEqual([{ path: '', method: 'POST', body: { type: 'message' } }]);
   });
 
+  it('preserves duplicate response headers such as multiple site cookies', async () => {
+    const registry = registryWith([{
+      plugin: 'sites', declared: ['s'],
+      route: { path: 's', handler: async () => ({
+        headers: { 'set-cookie': ['session=one; Path=/', 'preference=two; Path=/'] },
+        body: 'ok',
+      }) },
+    }]);
+    const { app } = setup(registry);
+    const res = await app.request('/hooks/sites/s/demo');
+    expect(res.status).toBe(200);
+    expect(res.headers.getSetCookie()).toEqual(['session=one; Path=/', 'preference=two; Path=/']);
+  });
+
   it('routes a longer path to the longest declared prefix, passing the remainder', async () => {
     const paths: string[] = [];
     const registry = registryWith([{

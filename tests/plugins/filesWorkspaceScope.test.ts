@@ -47,16 +47,18 @@ describe('Files tools in an explicit workspace PathView', () => {
   const scoped = <T>(fn: () => T): T => scopedAt('ws_files', root, fn);
 
   it('reads, writes, edits, lists and searches with relative paths and no host prefix in results', async () => {
-    const read = await scoped(() => runTool(reg, 'Read', { path: 'src/same.ts' }));
+    const read = await scoped(() => runTool(reg, 'Read', { file_path: 'src/same.ts' }));
     expect(read.content[0]!.text).toContain('value = 1');
     expect(JSON.stringify(read)).not.toContain(root);
+    // The RESULT still reports `path`: read-state recovery keys on details.path, so the rename of the
+    // input parameters deliberately left the output shape alone.
     expect(read.details).toMatchObject({ path: 'src/same.ts', workspaceId: 'ws_files' });
 
-    const edit = await scoped(() => runTool(reg, 'Edit', { path: 'src/same.ts', oldText: 'value = 1', newText: 'value = 2' }));
+    const edit = await scoped(() => runTool(reg, 'Edit', { file_path: 'src/same.ts', old_string: 'value = 1', new_string: 'value = 2' }));
     expect(JSON.stringify(edit)).not.toContain(root);
     expect(readFileSync(join(root, 'src', 'same.ts'), 'utf8')).toContain('value = 2');
 
-    const write = await scoped(() => runTool(reg, 'Write', { path: 'src/new.ts', content: 'export {};\n' }));
+    const write = await scoped(() => runTool(reg, 'Write', { file_path: 'src/new.ts', content: 'export {};\n' }));
     expect(JSON.stringify(write)).not.toContain(root);
     const listed = await scoped(() => runTool(reg, 'ListDir', { path: 'src' }));
     expect(listed.content[0]!.text).toContain('new.ts');
@@ -66,14 +68,14 @@ describe('Files tools in an explicit workspace PathView', () => {
   });
 
   it('does not let the same relative path in one worktree vouch for a sibling worktree', async () => {
-    await scoped(() => runTool(reg, 'Read', { path: 'src/same.ts' }));
+    await scoped(() => runTool(reg, 'Read', { file_path: 'src/same.ts' }));
     const refused = await scopedAt('ws_second', secondRoot, () => runTool(reg, 'Edit', {
-      path: 'src/same.ts', oldText: 'value = 10', newText: 'value = 11',
+      file_path: 'src/same.ts', old_string: 'value = 10', new_string: 'value = 11',
     }));
     expect(refused.content[0]!.text).toContain('has not been read in this conversation');
-    await scopedAt('ws_second', secondRoot, () => runTool(reg, 'Read', { path: 'src/same.ts' }));
+    await scopedAt('ws_second', secondRoot, () => runTool(reg, 'Read', { file_path: 'src/same.ts' }));
     await scopedAt('ws_second', secondRoot, () => runTool(reg, 'Edit', {
-      path: 'src/same.ts', oldText: 'value = 10', newText: 'value = 11',
+      file_path: 'src/same.ts', old_string: 'value = 10', new_string: 'value = 11',
     }));
     expect(readFileSync(join(secondRoot, 'src', 'same.ts'), 'utf8')).toContain('value = 11');
   });
@@ -102,10 +104,10 @@ describe('Files tools in an explicit workspace PathView', () => {
   });
 
   it('rejects absolute paths and traversal even under an admin policy', async () => {
-    const absolute = await scoped(() => runTool(reg, 'Read', { path: join(root, 'src', 'same.ts') }));
+    const absolute = await scoped(() => runTool(reg, 'Read', { file_path: join(root, 'src', 'same.ts') }));
     expect(absolute.content[0]!.text).toContain('absolute paths are unavailable');
     expect(JSON.stringify(absolute)).not.toContain(root);
-    const traversal = await scoped(() => runTool(reg, 'Read', { path: '../secret' }));
+    const traversal = await scoped(() => runTool(reg, 'Read', { file_path: '../secret' }));
     expect(traversal.content[0]!.text).toContain('outside the assigned workspace');
   });
 });

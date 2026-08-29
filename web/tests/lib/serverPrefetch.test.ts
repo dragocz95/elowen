@@ -4,8 +4,12 @@ import type { PluginUiListing } from '../../lib/types';
 // The module under test reads the caller's Cookie header through next/headers; each test sets what the
 // "current request" carries.
 let cookieHeader: string | null = null;
+let forwardedProto: string | null = null;
 vi.mock('next/headers', () => ({
-  headers: async () => new Headers(cookieHeader ? { cookie: cookieHeader } : {}),
+  headers: async () => new Headers({
+    ...(cookieHeader ? { cookie: cookieHeader } : {}),
+    ...(forwardedProto ? { 'x-forwarded-proto': forwardedProto } : {}),
+  }),
 }));
 
 const LISTING: PluginUiListing[] = [
@@ -16,7 +20,7 @@ const LISTING: PluginUiListing[] = [
 // instance — and fetch is always stubbed: a test hitting the real daemon would silently change
 // meaning with whatever happens to run on the box.
 describe('fetchPluginUiListing', () => {
-  beforeEach(() => { vi.resetModules(); cookieHeader = null; });
+  beforeEach(() => { vi.resetModules(); cookieHeader = null; forwardedProto = null; });
   afterEach(() => vi.unstubAllGlobals());
 
   const importFresh = async () => (await import('../../lib/serverPrefetch')).fetchPluginUiListing;
@@ -37,6 +41,20 @@ describe('fetchPluginUiListing', () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain('/plugins/ui?lang=en');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer token-of-alice');
+  });
+
+  it('uses only the host-locked cookie behind HTTPS', async () => {
+    forwardedProto = 'https';
+    cookieHeader = 'elowen_session=attacker; __Host-elowen_session=token-of-alice';
+    const fetchMock = vi.fn(async () => okResponse(LISTING));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await (await importFresh())('en')).toEqual(LISTING);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>).authorization).toBe('Bearer token-of-alice');
+
+    vi.resetModules();
+    cookieHeader = 'elowen_session=attacker';
+    expect(await (await importFresh())('en')).toBeNull();
   });
 
   it('never caches across callers: two users get their own listings, each fetched with their own token', async () => {
@@ -102,7 +120,7 @@ describe('fetchPluginUiListing', () => {
 });
 
 describe('readLocale', () => {
-  beforeEach(() => { vi.resetModules(); cookieHeader = null; });
+  beforeEach(() => { vi.resetModules(); cookieHeader = null; forwardedProto = null; });
 
   const importFresh = async () => (await import('../../lib/serverPrefetch')).readLocale;
 
@@ -125,7 +143,7 @@ describe('readLocale', () => {
 });
 
 describe('fetchMe', () => {
-  beforeEach(() => { vi.resetModules(); cookieHeader = null; });
+  beforeEach(() => { vi.resetModules(); cookieHeader = null; forwardedProto = null; });
   afterEach(() => vi.unstubAllGlobals());
 
   const importFresh = async () => (await import('../../lib/serverPrefetch')).fetchMe;

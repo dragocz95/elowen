@@ -51,6 +51,9 @@ export interface InstallArtifacts {
   /** `/etc/sudoers.d/elowen` was written (Linux only — false on macOS, or when the step failed
    *  non-fatally). */
   sudoers: boolean;
+  /** Root-owned bounded helper + deployment record for a wildcard published-sites gateway. Optional only
+   *  on install records written before this artifact existed. */
+  siteGatewayHelper?: boolean;
   /** Vhost written for a domain deployment; absent = none. */
   proxy?: InstallProxy;
   /** The user the services run as: true = this install created it (useradd ran), false = a pre-existing
@@ -91,6 +94,7 @@ function isArtifacts(v: unknown): v is InstallArtifacts {
   const a = v as Record<string, unknown>;
   if (!Array.isArray(a.units) || !a.units.every(isUnit)) return false;
   if (typeof a.sudoers !== 'boolean') return false;
+  if (a.siteGatewayHelper !== undefined && typeof a.siteGatewayHelper !== 'boolean') return false;
   if (!Array.isArray(a.agentClis) || !a.agentClis.every((c) => typeof c === 'string')) return false;
   // serviceUserCreated is tri-state on purpose: true created it, false reused one, null = macOS.
   if (!(a.serviceUserCreated === true || a.serviceUserCreated === false || a.serviceUserCreated === null)) return false;

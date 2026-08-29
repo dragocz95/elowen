@@ -1851,6 +1851,13 @@ export class BrainService {
         // Defensive hooks now normally see no work. They remain fail-safe for a plugin whose liveness signal
         // regresses, so an unreachable old closure is terminalized rather than orphaned.
         if (before) await new PluginHookBus({ hooks: before.hooks }).emit('plugin.reload.before', {});
+        // A critical service is allowed to REFUSE replacement. Prove every such service stopped while the
+        // old registry, sessions and adapters are still intact; invalidating first would strand the old
+        // closure beside a new generation when stop failed.
+        if (this.pluginRuntimeStarted && this.pluginServicesStarted) await this.pluginServices.stopAll();
+        if (this.pluginRuntimeStarted) this.platforms.stopAll();
+        before?.disposeEventSubscriptions();
+
         this.d.plugins?.invalidate();
         for (const userId of this.sessions.activeUserIds()) await this.restart(userId);
         const activeIds = this.sessions.activeIds();
@@ -1861,15 +1868,10 @@ export class BrainService {
         // The old runners are idle now, but still hold the old tool registry; reset so the next delegation
         // forks against the new build/config without interrupting any work.
         this.d.subagentRunner?.reset('plugins reloaded');
-        // Old plugin services hold pre-swap closures — stop them before the registry swap takes effect
-        // for the adapters, and bring the NEW registry's services up only after its reconciles ran
-        // (reconciles are idempotent by contract; a reload replays them like a boot). The old
-        // generation's bus subscriptions detach with them, so a stale closure never double-handles
-        // events beside its replacement.
-        before?.disposeEventSubscriptions();
+        // Bring the NEW registry's services up only after its reconciles ran (reconciles are idempotent by
+        // contract; a reload replays them like a boot). The old generation's subscriptions were detached
+        // above only after its critical services had proved they were gone.
         if (this.pluginRuntimeStarted) {
-          if (this.pluginServicesStarted) await this.pluginServices.stopAll();
-          this.platforms.stopAll();
           if (this.pluginServicesStarted) await this.pluginServices.runBootReconciles();
           await this.platforms.startAll(undefined, this.pluginPlatformFilter);
           if (this.pluginServicesStarted) await this.pluginServices.startAll();
