@@ -100,11 +100,15 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, st
               </HelpTip>
             ) : null}
           </span>
-          {status ? <div className="settings-row__status">{status}</div> : null}
         </div>
       </div>
-      {children ? <div className="settings-row__control">{children}</div> : null}
-      {actions ? <div className="settings-row__actions">{actions}</div> : null}
+      {status || children || actions ? (
+        <div className="settings-row__trailing">
+          {status ? <div className="settings-row__status">{status}</div> : null}
+          {children ? <div className="settings-row__control">{children}</div> : null}
+          {actions ? <div className="settings-row__actions">{actions}</div> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

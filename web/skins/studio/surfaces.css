@@ -537,7 +537,6 @@
    its track narrow and gives the room back to the text, while everything wider than 20rem is held at
    20rem so the column edge stays put. A record with no control at all resolves the track to 0. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row,
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
   grid-template-columns: minmax(0, 1fr) minmax(0, 20rem) auto;
 }
@@ -545,6 +544,27 @@
   gap: 0.75rem 1rem;
   padding: 0.75rem clamp(1rem, 1.6vw, 1.25rem);
   border-bottom-color: var(--color-border);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing {
+  display: flex;
+  min-width: 0;
+  grid-column: 2 / 4;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem 0.75rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__status {
+  margin-top: 0;
+  white-space: nowrap;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__control {
+  min-width: 0;
+  flex: 1 1 10rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__actions {
+  flex: 0 1 auto;
+  justify-content: flex-end;
 }
 /* The accent edge goes. It marked which record the pointer was on, in the loudest colour the design
    owns, on a surface where the pointer is already unmistakable — and it was the second of two hover
@@ -574,54 +594,76 @@
   font-size: 0.8125rem;
   line-height: 1.5;
 }
-/* A fixed 20rem control track needs a page wide enough to hold it beside the text. Below that the row
-   stacks: what it is, then the control under it, full width. On a 45rem page a 20rem track leaves the
-   description around 15rem to wrap in, which is four words a line.
-   The range STARTS at 38.75rem because that is where the base stylesheet already collapses the record to
-   a single track (spatial-deck.css) — an open-ended query would win against that rule and put a second
-   column back on a phone. It ends at 48rem, which is where 20rem stops crowding what is beside it. */
-@container workspace-shell (38.75rem <= width < 48rem) {
+/* Narrow pages keep the same two-column table grammar: setting on the left, its current value and actions
+   on the right. Only the ratio tightens; controls never fall underneath the record they describe. */
+@container workspace-shell (width < 48rem) {
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__control {
-    grid-column: 1 / -1;
-  }
-  /* The actions slot is pinned to column 3 by the base (spatial-deck.css). Left pinned against a
-     two-track row it opens an implicit third column of its own, so "Choose skins" stayed beside the
-     control instead of following it down. The base's own collapse block releases both slots; this one
-     has to as well. */
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__actions {
-    grid-column: auto;
-    justify-self: start;
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing {
+    grid-column: 2;
   }
 }
 
-/* The Studio three-track declaration above is more specific than the shared phone collapse. Restate the
-   single-track contract at the same specificity so labels, controls and actions each receive the full
-   row instead of squeezing the label into a one-word-wide column. */
 @container workspace-shell (width < 38.75rem) {
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row,
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
-    grid-template-columns: minmax(0, 1fr);
-  }
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row {
     gap: 0.625rem;
     padding-inline: 1rem;
   }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__control,
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__actions {
-    width: 100%;
-    grid-column: auto;
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing {
+    flex-wrap: nowrap;
+    gap: 0.375rem;
   }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__actions {
-    justify-self: stretch;
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__control {
+    flex-basis: 0;
   }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__actions > * {
+}
+@container workspace-shell (width < 22rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing [data-selection-manage] {
+    gap: 0.25rem;
+    padding-inline: 0.25rem;
+  }
+}
+
+/* Model rows remain a compact table on a phone: icon, truncated identity and a fixed trailing control
+   cluster. Provider badges truncate inside their column instead of floating over the model name. */
+@container (width < 28rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row {
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__icon {
+    width: 2rem;
+    height: 2rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__identity {
+    width: auto;
+    min-width: 0;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__controls {
+    display: flex;
+    min-width: 0;
+    margin-left: 0;
+    gap: 0.25rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__provider {
+    max-width: 5.5rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__provider .badge {
     max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__context {
+    padding-inline: 0.25rem;
+  }
+}
+@container (width < 22rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__provider {
+    display: none;
   }
 }
 

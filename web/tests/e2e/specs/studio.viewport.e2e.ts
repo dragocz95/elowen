@@ -270,6 +270,16 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
     return { leadTop: lead.top, headTop: head.top };
   });
   expect(mobileOrder.leadTop).toBeLessThan(mobileOrder.headTop);
+  const modelColumns = await app.locator('.settings-model-row--elowen:visible').evaluateAll((rows) => rows.map((row) => {
+    const identity = row.querySelector<HTMLElement>('.settings-model-row__identity')!.getBoundingClientRect();
+    const controls = row.querySelector<HTMLElement>('.settings-model-row__controls')!.getBoundingClientRect();
+    return { identityRight: identity.right, controlsLeft: controls.left, rowRight: row.getBoundingClientRect().right, controlsRight: controls.right };
+  }));
+  expect(modelColumns.length).toBeGreaterThan(0);
+  for (const column of modelColumns) {
+    expect(column.identityRight).toBeLessThanOrEqual(column.controlsLeft + 1);
+    expect(column.controlsRight).toBeLessThanOrEqual(column.rowRight + 1);
+  }
 
   await app.getByRole('radio', { name: 'System' }).click();
   await expect(app.getByRole('heading', { level: 1, name: 'System' })).toBeVisible();
@@ -285,12 +295,16 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
   expect(mobileActions.actionsTop).toBeGreaterThanOrEqual(mobileActions.headTop);
 
   await expect(app.locator('.settings-row__description')).toHaveCount(0);
-  const rowWidths = await app.locator('.settings-row:visible').evaluateAll((rows) => rows.map((row) => {
-    const rowBox = row.getBoundingClientRect();
-    const labelBox = row.querySelector<HTMLElement>('.settings-row__label')!.getBoundingClientRect();
-    return { row: rowBox.width, label: labelBox.width };
+  const rowColumns = await app.locator('.settings-row:visible:has(.settings-row__trailing)').evaluateAll((rows) => rows.map((row) => {
+    const label = row.querySelector<HTMLElement>('.settings-row__label')!.getBoundingClientRect();
+    const trailing = row.querySelector<HTMLElement>('.settings-row__trailing')!.getBoundingClientRect();
+    return { labelRight: label.right, trailingLeft: trailing.left, trailingRight: trailing.right, rowRight: row.getBoundingClientRect().right };
   }));
-  for (const width of rowWidths) expect(width.label).toBeGreaterThanOrEqual(width.row - 40);
+  expect(rowColumns.length).toBeGreaterThan(0);
+  for (const column of rowColumns) {
+    expect(column.labelRight).toBeLessThanOrEqual(column.trailingLeft + 1);
+    expect(column.trailingRight).toBeLessThanOrEqual(column.rowRight + 1);
+  }
 
   const pushRow = app.locator('.settings-row').filter({ hasText: 'Push notification contact' });
   await pushRow.getByRole('button', { name: 'Help' }).click();

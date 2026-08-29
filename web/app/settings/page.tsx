@@ -455,11 +455,11 @@ export default function SettingsPage() {
                     {cliItems.map((p) => {
                       const isCustom = !isPresetExec(p.exec);
                       return (
-                        <div data-testid="model-row" key={p.exec} className="settings-model-row group flex min-w-0 items-center gap-3 transition-colors">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center text-text-muted">
+                        <div data-testid="model-row" key={p.exec} className="settings-model-row settings-model-row--cli group flex min-w-0 items-center gap-3 transition-colors">
+                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-text-muted">
                             <ModelIcon name={p.exec} size={20} />
                           </span>
-                          <div className="min-w-0 @2xl:w-56 @2xl:shrink-0">
+                          <div className="settings-model-row__identity min-w-0 @2xl:w-56 @2xl:shrink-0">
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="truncate text-sm font-medium text-text">{p.label}</span>
                               {!isCustom ? <span className="text-[9px] uppercase tracking-wide text-text-muted/70">{t.settings.presetTag}</span> : null}
@@ -474,7 +474,7 @@ export default function SettingsPage() {
                           >
                             {modelNotes[p.exec]?.trim() || t.settings.modelNoteAdd}
                           </button>
-                          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                          <div className="settings-model-row__controls ml-auto flex shrink-0 items-center gap-1.5">
                             <button
                               type="button"
                               aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
@@ -506,20 +506,20 @@ export default function SettingsPage() {
                       const override = modelWindows[winKey];
                       const overridden = override != null;
                       return (
-                      <div data-testid="model-row" key={m.exec} className="settings-model-row flex min-w-0 items-center gap-3 transition-colors">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center text-text-muted"><ModelIcon name={m.model} size={20} /></span>
-                          <div className="min-w-0 flex-1">
-                            <span className="truncate text-sm font-medium text-text">{m.model}</span>
+                      <div data-testid="model-row" key={m.exec} className="settings-model-row settings-model-row--elowen flex min-w-0 items-center gap-3 transition-colors">
+                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-text-muted"><ModelIcon name={m.model} size={20} /></span>
+                          <div className="settings-model-row__identity min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-text">{m.model}</span>
                             <span className="block truncate font-mono text-[11px] text-text-muted">{m.exec}</span>
                           </div>
-                          <div className="ml-auto flex shrink-0 items-center gap-2">
-                            <Badge>{m.providerLabel}</Badge>
+                          <div className="settings-model-row__controls ml-auto flex shrink-0 items-center gap-2">
+                            <span className="settings-model-row__provider min-w-0"><Badge>{m.providerLabel}</Badge></span>
                             <button
                               type="button"
                               onClick={() => setCtxFor({ model: m.model, key: winKey, effective: m.contextWindow })}
                               title={`${t.brain.contextWindowEdit} · ${formatTokens(override ?? m.contextWindow)}`}
                               aria-label={`${t.brain.contextWindowEdit}: ${m.model}`}
-                              className={`inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-accent' : 'text-text-muted hover:text-text'}`}
+                              className={`settings-model-row__context inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-accent' : 'text-text-muted hover:text-text'}`}
                             >
                               <Gauge size={12} aria-hidden />
                               {formatTokens(override ?? m.contextWindow)}

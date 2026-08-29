@@ -227,8 +227,15 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 .settings-row__title { display: block; color: var(--color-text); font-size: 0.82rem; font-weight: 580; letter-spacing: -0.005em; }
 .settings-row__description { margin-top: 0.16rem; color: var(--color-text-muted); font-size: 0.7rem; line-height: 1.45; }
 .settings-row__status { margin-top: 0.3rem; color: var(--color-text-muted); font-size: 0.68rem; line-height: 1.45; }
-/* Pinned to their tracks rather than auto-placed. A record with actions but no control (the update
-   check) would otherwise fall into the control track and sit left of every restart button beneath it. */
+/* One trailing cell owns status, control and actions, so every row has the same two logical columns even
+   when a record carries more than one trailing value. It spans the control/action tracks of the shared
+   subgrid; skins may retune the tracks without changing the DOM contract. */
+.settings-row__trailing { display: flex; min-width: 0; grid-column: 2 / 4; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem 0.75rem; }
+.settings-row__trailing .settings-row__status { margin-top: 0; white-space: nowrap; }
+.settings-row__trailing .settings-row__control { min-width: 0; flex: 1 1 10rem; }
+.settings-row__trailing .settings-row__actions { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 0.5rem; }
+/* Legacy direct slots retain their tracks for plugin bundles compiled against the earlier anatomy. The
+   descendant specificity intentionally matches the phone reset below, whose later rule must release it. */
 .settings-row__control { min-width: 0; grid-column: 2; }
 .settings-row__actions { grid-column: 3; }
 
@@ -296,6 +303,7 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
   /* One track: release the pinned columns, or each slot would open an implicit column of its own. */
   .settings-row__control, .settings-row__actions { grid-column: auto; }
   .settings-row__actions { justify-self: start; }
+  .settings-row__trailing { width: 100%; grid-column: auto; justify-content: flex-start; }
   .spatial-identity { align-items: flex-start; flex-wrap: wrap; }
   .settings-model-row { padding-inline: 1rem; }
 }

@@ -672,8 +672,8 @@ function WorkModePill({ mode, full }: { mode: BrainWorkMode; full?: boolean }) {
  *  deliberately NOT here — it is changed often enough that burying it behind two taps was the complaint.
  *  A transient popover (outside-pointer / Escape dismiss, same grammar as ModelPicker), never a persistent
  *  panel. Desktop keeps every control inline and never mounts this. */
-function BarOverflowMenu({ workMode, hasTodos, onOpenTodos }: {
-  workMode: BrainWorkMode; hasTodos: boolean; onOpenTodos: () => void;
+function BarOverflowMenu({ workMode, onOpenTasks }: {
+  workMode: BrainWorkMode; onOpenTasks: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -703,13 +703,11 @@ function BarOverflowMenu({ workMode, hasTodos, onOpenTodos }: {
           {/* Where the agent works belongs beside what it is: the phone folds both away, so both come back
               here rather than leaving the directory reachable only on a desktop. */}
           <div className="px-1 pb-1"><ProjectPicker variant="full" /></div>
-          {/* The narrow bar has no room for a TODO control of its own, so the menu is the way to reach it. */}
-          {hasTodos ? (
-            <button type="button" onClick={() => { setOpen(false); onOpenTodos(); }} className={rowClass}>
-              <ListChecks size={16} className="text-text-muted" aria-hidden />
-              <span>{t.chat.todos}</span>
-            </button>
-          ) : null}
+          {/* The mobile entry opens the same task manager as `/tasks`; there is one modal and one data path. */}
+          <button type="button" onClick={() => { setOpen(false); onOpenTasks(); }} className={rowClass}>
+            <ListChecks size={16} className="text-text-muted" aria-hidden />
+            <span>{t.chat.todos}</span>
+          </button>
           {workMode !== 'build' ? (
             <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-text-muted">
               <span>{t.brainChat.workModeLabel}:</span><WorkModePill mode={workMode} full />
@@ -803,7 +801,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     const items = cd.items ?? [];
     return items.length === 0 ? true : !items.every((i) => i.status === 'completed');
   });
-  const [todosOpen, setTodosOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1064,8 +1061,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             <div className={mobile ? '' : 'chat-page-toolbar__overflow'}>
               <BarOverflowMenu
                 workMode={workMode}
-                hasTodos={todoCards.length > 0}
-                onOpenTodos={() => setTodosOpen(true)}
+                onOpenTasks={() => setTasksOpen(true)}
               />
             </div>
           ) : null}
@@ -1164,17 +1160,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         ) : null}
         {modelOpen ? (
           <ModelModal onClose={() => setModelOpen(false)} />
-        ) : null}
-        {todosOpen ? (
-          <Modal title={t.chat.todos} onClose={() => setTodosOpen(false)} size="md" icon={ListChecks}>
-            <ModalBody>
-              {/* Outside the transcript there is no wrapper to inherit from, so the modal states the
-                  same monospace type itself. */}
-              <div className="flex flex-col gap-3 font-mono text-tiny">
-                {todoCards.map((card) => <CardBlock key={card.id} card={card} live={busy} />)}
-              </div>
-            </ModalBody>
-          </Modal>
         ) : null}
         {/* Plan mode's decision point: the model submitted a plan and the turn settled. The controller
             derives it from the DAEMON's answer, so it also appears for a plan submitted from the CLI and

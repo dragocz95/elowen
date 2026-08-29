@@ -32,6 +32,7 @@ const server = setupServer(
   http.get('*/api/brain/processes', () => HttpResponse.json([])),
   http.get('*/api/brain/sessions', () => HttpResponse.json([{ id: 'brain-1', title: 'Chat', model: 'm', updated_at: '2026-07-08', active: true, attached: 0 }])),
   http.get('*/api/brain/commands', () => HttpResponse.json({ commands: [] })),
+  http.get('*/api/plugins/todo/api/tasks', () => HttpResponse.json({ tasks: [] })),
 );
 
 beforeAll(() => {
@@ -83,6 +84,16 @@ describe('conversation bar controls', () => {
       return el as HTMLElement;
     });
     expect(popover.textContent).not.toContain('Reasoning');
+  });
+
+  it('opens the same Tasks modal as `/tasks` from the phone overflow', async () => {
+    setViewport(true);
+    renderSurface();
+    fireEvent.click(await screen.findByRole('button', { name: 'More options' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Tasks' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Filter tasks' })).toBeInTheDocument();
   });
 
   it('keeps the wide controls inline and reserves a CSS-gated overflow fallback off a phone', async () => {
