@@ -124,10 +124,13 @@ function SelectItem({ className = '', children, icon, ...props }: React.Componen
       data-slot="select-item"
       className={cn(
         'relative flex w-full min-w-0 cursor-default select-none items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm outline-none transition-colors',
-        // `elevated` is the token a hovered row would normally take, but in this design it sits 6/255
-        // above `surface` — which is what the menu panel itself is painted with — so the highlight was
-        // applied and invisible. `overlay` is the next step up and the first one that actually reads.
-        'text-text data-[highlighted]:bg-overlay data-[state=checked]:bg-accent/10 data-[state=checked]:text-accent',
+        // The highlight is a wash of the TEXT colour, not a surface step. `elevated` and `overlay` are
+        // the tokens a hovered row would normally take, but a skin is free to collapse the surface
+        // ramp — studio-oled paints surface, elevated and overlay with one card fill (#080d0f), and the
+        // built-in design separates them by 6/255 — so a surface step is a highlight that a design can
+        // silently erase. A wash of `--color-text` is relative to the contrast the design already
+        // guarantees, so it reads on every skin.
+        'text-text data-[highlighted]:bg-text/10 data-[state=checked]:bg-accent/10 data-[state=checked]:text-accent',
         'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
         className,
       )}
