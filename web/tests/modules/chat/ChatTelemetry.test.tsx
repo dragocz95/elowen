@@ -207,6 +207,27 @@ describe('chat telemetry panel', () => {
     expect(screen.queryByTestId('telemetry-column')).toBeNull();
   });
 
+  // The drawer used to answer Escape from a React handler on its own layer, which only fires once focus
+  // is already inside it — and nothing put it there, so the key did nothing. On the dialog primitive the
+  // surface takes focus on open and Escape reaches the layer from the document, which is also what makes
+  // handing focus back on close a promise worth asserting.
+  it('takes focus on open, closes on Escape and returns focus to the control that opened it', async () => {
+    setViewport(true);
+    renderChat(<ChatView />);
+    await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
+    const opener = screen.getByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const drawer = await screen.findByTestId('telemetry-drawer');
+    expect(drawer).toHaveFocus();
+
+    fireEvent.keyDown(drawer, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('telemetry-drawer')).toBeNull());
+    // Radix's focus scope releases a tick after the surface is gone.
+    await waitFor(() => expect(screen.getByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i })).toHaveFocus());
+  });
+
   it('never mounts the desktop column on mobile — not even for the pre-effect first commit', async () => {
     setViewport(true);
     const columnWasMounted = watchMounts('[data-testid="telemetry-column"]');

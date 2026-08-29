@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,11 +52,13 @@ describe('WorkspaceTakeover', () => {
     const { onBack } = open();
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(onBack).toHaveBeenCalledTimes(1);
-    fireEvent.keyDown(window, { key: 'Escape' });
+    // Raised on the surface, not on `window`: Escape is Radix's dismissable layer now, and it reads the
+    // key off the document the event bubbles through — which is the path a real Escape takes.
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Project editor' }), { key: 'Escape' });
     expect(onBack).toHaveBeenCalledTimes(2);
   });
 
-  it('moves focus into the surface, traps it, and restores it on close', () => {
+  it('moves focus into the surface, traps it, and restores it on close', async () => {
     const opener = document.createElement('button');
     document.body.appendChild(opener);
     opener.focus();
@@ -70,13 +72,15 @@ describe('WorkspaceTakeover', () => {
     const back = screen.getByRole('button', { name: 'Back' });
     const revert = screen.getByRole('button', { name: 'Revert' });
     revert.focus();
-    fireEvent.keyDown(window, { key: 'Tab' });
+    fireEvent.keyDown(revert, { key: 'Tab' });
     expect(back).toHaveFocus();
-    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+    fireEvent.keyDown(back, { key: 'Tab', shiftKey: true });
     expect(revert).toHaveFocus();
 
     unmount();
-    expect(document.activeElement).toBe(opener);
+    // Radix's focus scope releases a tick after the surface is gone, so that its own trap is already
+    // torn down and cannot pull the restored focus back inside the dialog it is unmounting.
+    await waitFor(() => expect(opener).toHaveFocus());
     opener.remove();
   });
 

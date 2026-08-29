@@ -1,10 +1,12 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft, Library } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
+import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
+import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
 import { elowenClient } from '../../lib/elowenClient';
 import { formatTaskTime } from '../../lib/format';
 import type { BrainSearchHit } from '../../lib/types';
@@ -25,6 +27,56 @@ function Highlight({ text, query }: { text: string; query: string }) {
 }
 
 const MENU_ITEM = 'flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-text-muted transition-colors hover:bg-elevated hover:text-text';
+
+/** The phone slide-over, on the shadcn `Dialog` (Radix): the dialog role, the focus trap, Escape and the
+ *  layer order among several open overlays are Radix's, so this file no longer writes any of them.
+ *
+ *  It is the one overlay shape in the app that does NOT take `useOverlayIsolation`: that stack isolates
+ *  the background by marking every OTHER child of <body> inert, which needs an overlay portalled to the
+ *  body. This drawer renders inside the chat shell, so its own body-level ancestor is what would be
+ *  marked — the drawer would disable itself. Radix's `aria-hidden` sweep walks the ancestor chain
+ *  instead and reaches the same surfaces from in here. What the stack still owns and Radix cannot is
+ *  where focus goes on the way out, because there is no `Dialog.Trigger` to hand it back to. */
+function HistoryDrawer({ label, onClose, children }: { label: string; onClose?: () => void; children: ReactNode }) {
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const { restoreFocus } = useReturnFocus();
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose?.(); }}>
+      <div
+        className="overlay-layer-drawer fixed inset-0"
+        // Radix's modal content sets `pointer-events: none` on <body> and re-enables them on itself;
+        // this layer would inherit the block and the backdrop below would stop answering the click that
+        // dismisses the drawer. Opting back in is what `DialogOverlay` does for the same reason.
+        style={{ pointerEvents: 'auto' }}
+      >
+        <div className="absolute inset-0 bg-bg/50" onClick={onClose} aria-hidden />
+        <DialogContent
+          ref={surfaceRef}
+          // A left rail, which none of the primitive's presentations describes; the geometry stays here.
+          presentation={null}
+          aria-label={label}
+          aria-describedby={undefined}
+          className="absolute inset-y-0 left-0 w-72 max-w-[85%] border-r border-border bg-surface shadow-xl"
+          // The backdrop above already owns dismissal, and it is the only owner that knows a nested
+          // overlay's backdrop must not close its parent.
+          onInteractOutside={(event) => event.preventDefault()}
+          // Focus lands in the search input, which asks for it with `[data-autofocus]`; Radix would take
+          // the first control in the tab order (the dashboard link or "new chat") instead.
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            if (surfaceRef.current) focusOverlaySurface(surfaceRef.current);
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus();
+          }}
+        >
+          {children}
+        </DialogContent>
+      </div>
+    </Dialog>
+  );
+}
 
 /** The single source for the conversation history: list + fulltext search + switch / new / rename /
  *  export / delete. Rendered three ways — the persistent left `rail` on /chat desktop, the mobile
@@ -170,7 +222,11 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t.brainChat.searchPlaceholder}
           aria-label={t.brainChat.searchPlaceholder}
-          autoFocus={variant !== 'rail'}
+          // One owner per variant. The dropdown is a plain popover and focuses itself on mount; the
+          // drawer is a dialog, where the surface's focus policy runs after mount and anchors on the
+          // surface unless a control asks for the focus by name — so it asks.
+          autoFocus={variant === 'dropdown'}
+          data-autofocus={variant === 'drawer' ? '' : undefined}
           className="w-full bg-transparent py-1.5 text-sm text-text placeholder:text-text-muted focus:outline-none"
         />
       </div>
@@ -303,21 +359,9 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   if (variant === 'drawer') {
     // Mounted only while open: a closed drawer keeps no focusable controls in the DOM (no tabbing into an
     // off-screen panel, no autofocus popping the mobile keyboard on page load). Escape and the backdrop
-    // close it; focus lands in the search input on open (its autoFocus now fires on open, not on mount).
+    // close it; focus lands in the search input on open.
     if (!open) return null;
-    return (
-      <div className="overlay-layer-drawer fixed inset-0" onKeyDown={(e) => { if (e.key === 'Escape') onClose?.(); }}>
-        <div className="absolute inset-0 bg-bg/50" onClick={onClose} aria-hidden />
-        <aside
-          role="dialog"
-          aria-modal="true"
-          aria-label={t.chat.openHistory}
-          className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col border-r border-border bg-surface shadow-xl"
-        >
-          {body}
-        </aside>
-      </div>
-    );
+    return <HistoryDrawer label={t.chat.openHistory} onClose={onClose}>{body}</HistoryDrawer>;
   }
 
   return <aside aria-label={t.chat.historyTitle} className={`min-h-0 flex-col border-r border-border ${className ?? ''}`}>{body}</aside>;

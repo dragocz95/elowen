@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Compass, Cpu, Hammer, MessageSquarePlus, PenLine, Shrink, Workflow, X, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { useDialogOverlay } from '../../components/ui/overlayStack';
+import { focusOverlaySurface, useOverlayIsolation } from '../../components/ui/overlayStack';
+import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
 import { useMobileViewport } from '../../lib/useMobile';
 import { MascotGlyph } from '../../components/ui/SpatialMascot';
 import { appendFilament, lightFilament } from '../../lib/cosmosFilaments';
@@ -96,7 +97,7 @@ export function CommandOrbit({ onClose }: { onClose: () => void }) {
   // The layout branches on the viewport, so the dialog waits for the first measurement rather than
   // mounting the desktop ring on a phone for one commit.
   const ready = mounted && mobile !== undefined;
-  useDialogOverlay({ enabled: ready, rootRef: overlayRef, dialogRef, onClose });
+  const { restoreFocus } = useOverlayIsolation({ enabled: ready, rootRef: overlayRef });
 
   const field = t.brainChat.commandField;
   const labels: Record<string, string> = {
@@ -187,68 +188,97 @@ export function CommandOrbit({ onClose }: { onClose: () => void }) {
   };
 
   return createPortal(
-    <div ref={overlayRef} className="overlay-layer-modal fixed inset-0">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <div
-        data-testid="command-orbit-backdrop"
-        className="absolute inset-0 bg-bg/80"
-        style={{
-          backdropFilter: 'var(--command-orbit-backdrop-filter, none)',
-          WebkitBackdropFilter: 'var(--command-orbit-backdrop-filter, none)',
-        }}
-        onClick={onClose}
-        aria-hidden
-      />
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={field.title}
-        tabIndex={-1}
-        data-testid="command-orbit"
-        data-layout={mobile ? 'arc' : 'orbit'}
-        className="cmd-orbit"
+        ref={overlayRef}
+        className="overlay-layer-modal fixed inset-0"
+        // Radix's modal content sets `pointer-events: none` on <body> and re-enables them on itself;
+        // this layer would inherit the block and the backdrop below would stop answering the click that
+        // dismisses the field. Opting back in is what `DialogOverlay` does for the same reason.
+        style={{ pointerEvents: 'auto' }}
       >
-        <p className="cmd-orbit__hint">{field.hint}</p>
-        <button
-          type="button"
+        <div
+          data-testid="command-orbit-backdrop"
+          className="absolute inset-0 bg-bg/80"
+          style={{
+            backdropFilter: 'var(--command-orbit-backdrop-filter, none)',
+            WebkitBackdropFilter: 'var(--command-orbit-backdrop-filter, none)',
+          }}
           onClick={onClose}
-          data-testid="command-orbit-close"
-          aria-label={t.common.close}
-          title={t.common.close}
-          className="cmd-orbit__close overlay-touch-target"
+          aria-hidden
+        />
+        <DialogContent
+          ref={dialogRef}
+          // The field's shape is its own (`.cmd-orbit`, command-orbit.css) — a viewport-sized,
+          // pointer-transparent frame the pods and the close control opt back into — so the primitive's
+          // geometry variants are declined rather than merged over the top of it.
+          presentation={null}
+          aria-label={field.title}
+          aria-describedby={undefined}
+          data-testid="command-orbit"
+          data-layout={mobile ? 'arc' : 'orbit'}
+          className="cmd-orbit"
+          // Restated inline because Radix re-enables pointer events on the layer it dismisses from, and
+          // an inline style beats `.cmd-orbit`'s own rule. Without it this frame — which covers the
+          // viewport — would swallow every press meant for the backdrop underneath it.
+          style={{ pointerEvents: 'none' }}
+          // The backdrop above already owns dismissal, and it is the only owner that knows a nested
+          // overlay's backdrop must not close its parent.
+          onInteractOutside={(event) => event.preventDefault()}
+          // Focus policy stays the app's: the surface (or whatever asked for `[data-autofocus]`) on the
+          // way in, the opener on the way out — Radix would take the first pod and then hand focus to a
+          // trigger that does not exist.
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            if (dialogRef.current) focusOverlaySurface(dialogRef.current);
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus();
+          }}
         >
-          <X size={18} aria-hidden />
-        </button>
-        <div ref={fieldRef} className="cmd-orbit__field">
-          <svg ref={svgRef} className="cmd-orbit__filaments" aria-hidden />
-          <div ref={coreRef} className="cmd-orbit__core">
-            <MascotGlyph state={busy ? 'saving' : 'idle'} />
+          <p className="cmd-orbit__hint">{field.hint}</p>
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="command-orbit-close"
+            aria-label={t.common.close}
+            title={t.common.close}
+            className="cmd-orbit__close overlay-touch-target"
+          >
+            <X size={18} aria-hidden />
+          </button>
+          <div ref={fieldRef} className="cmd-orbit__field">
+            <svg ref={svgRef} className="cmd-orbit__filaments" aria-hidden />
+            <div ref={coreRef} className="cmd-orbit__core">
+              <MascotGlyph state={busy ? 'saving' : 'idle'} />
+            </div>
+            <div ref={podsRef} className="cmd-orbit__pods">
+              {pods.map(({ command, icon: Icon, label }) => {
+                const isMode = command.kind === 'mode';
+                const active = isMode && command.name === workMode;
+                return (
+                  <button
+                    key={command.name}
+                    type="button"
+                    data-pod={command.name}
+                    data-kind={command.kind}
+                    data-testid={`command-orbit-pod-${command.name}`}
+                    aria-pressed={isMode ? active : undefined}
+                    aria-label={active ? `${label} — ${field.activeMode}` : label}
+                    className={`cmd-orbit__pod${active ? ' cmd-orbit__pod--active' : ''}`}
+                    onClick={() => run(command)}
+                  >
+                    <span className="cmd-orbit__orb"><Icon size={18} aria-hidden /></span>
+                    <span className="cmd-orbit__label">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div ref={podsRef} className="cmd-orbit__pods">
-            {pods.map(({ command, icon: Icon, label }) => {
-              const isMode = command.kind === 'mode';
-              const active = isMode && command.name === workMode;
-              return (
-                <button
-                  key={command.name}
-                  type="button"
-                  data-pod={command.name}
-                  data-kind={command.kind}
-                  data-testid={`command-orbit-pod-${command.name}`}
-                  aria-pressed={isMode ? active : undefined}
-                  aria-label={active ? `${label} — ${field.activeMode}` : label}
-                  className={`cmd-orbit__pod${active ? ' cmd-orbit__pod--active' : ''}`}
-                  onClick={() => run(command)}
-                >
-                  <span className="cmd-orbit__orb"><Icon size={18} aria-hidden /></span>
-                  <span className="cmd-orbit__label">{label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        </DialogContent>
       </div>
-    </div>,
+    </Dialog>,
     document.body,
   );
 }
