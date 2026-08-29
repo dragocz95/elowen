@@ -1,6 +1,6 @@
 'use client';
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags, Trash2, RotateCcw, Layers, SlidersHorizontal, Clock, Activity, CheckCircle2, Archive } from 'lucide-react';
+import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags, Trash2, RotateCcw, Layers, Clock, Activity, CheckCircle2, Archive } from 'lucide-react';
 import type { Memory, MemoryCategory } from '../../lib/types';
 import { useMemories, useMemoryCategories } from '../../lib/queries';
 import { useCreateMemory, useMergeMemories, useDeleteMemory, useRestoreMemory, usePurgeMemories, useEmptyTrash, useSetMemoryCategory } from '../../lib/mutations';
@@ -10,6 +10,7 @@ import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { Field } from '../../components/ui/Field';
 import { Checkbox } from '../../components/ui/Checkbox';
+import { Toggle } from '../../components/ui/Toggle';
 import { SelectMenu, type SelectMenuOption } from '../../components/ui/SelectMenu';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -17,9 +18,11 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states
 import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow, DataTableSortCell } from '../../components/ui/DataTable';
 import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { ModuleHeader } from '../../components/ui/ModuleHeader';
+import type { PageFilterField } from '../../components/ui/PageFilters';
 import { Pager } from '../../components/ui/Pager';
 import { RegisterSearch } from '../../components/ui/RegisterSearch';
-import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
+import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState } from '../../components/ui/ControlSurface';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { useToast } from '../../components/ui/Toast';
 import { interpolate, useTranslation } from '../../lib/i18n';
@@ -55,6 +58,18 @@ function memoryExcerpt(body: string): string {
   return flat.length > ROW_LABEL_MAX ? `${flat.slice(0, ROW_LABEL_MAX).trimEnd()}…` : flat;
 }
 
+/** States one toolbar filter as the discriminated union `PageFilters` requires, so a field that is
+ *  narrowing the register always carries both its chip wording and its undo. Written once here because
+ *  this register has five of them and the union cannot be produced by spreading a conditional object. */
+function filterField(
+  base: { id: string; label: string; control: ReactNode },
+  active: boolean,
+  activeLabel: string,
+  onReset: () => void,
+): PageFilterField {
+  return active ? { ...base, active: true, activeLabel, onReset } : { ...base, active: false };
+}
+
 /** Memory module: a searchable master/detail list of the caller's private memories, a retrieval
  *  inspector, and (for admins) the workspace embedding settings. All data via React Query. */
 export function MemoryView() {
@@ -74,7 +89,6 @@ export function MemoryView() {
     'elowen.memory.category', 'all', (value) => value === 'all' || value === 'none' || /^\d+$/.test(value),
   );
   const [showCategories, setShowCategories] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [creating, setCreating] = useState(false);
@@ -260,7 +274,63 @@ export function MemoryView() {
       icon: <span style={{ color: categorySwatch(category.color) }}><CategoryIcon name={category.icon} size={14} /></span>,
     })),
   ];
-  const filterCount = Number(kind !== 'all') + Number(categoryFilter !== 'all') + Number(layout === 'grouped');
+  // Everything that narrows or reshapes the register, declared once. The toolbar derives the active
+  // count, the chips and every reset from this list, so a filter can no longer be added without also
+  // becoming visible and undoable — the hand-kept tally it replaces counted three of the five.
+  const statusChipValue = status === 'all' ? t.memory.statusAll : memoryStatusLabel(t, status);
+  const categoryChipValue = CATEGORY_OPTIONS.find((option) => option.value === categoryFilter)?.label ?? categoryFilter;
+  const filterFields: PageFilterField[] = [
+    filterField(
+      {
+        id: 'status',
+        label: t.memory.filterStatus,
+        control: <SelectMenu value={status} onChange={setStatus} options={STATUS_OPTIONS} label={t.memory.filterStatus} variant="line" />,
+      },
+      status !== 'active',
+      `${t.memory.filterStatus}: ${statusChipValue}`,
+      () => setStatus('active'),
+    ),
+    filterField(
+      {
+        id: 'kind',
+        label: t.memory.filterKind,
+        control: <SelectMenu value={kind} onChange={setKind} options={KIND_OPTIONS} label={t.memory.filterKind} variant="line" />,
+      },
+      kind !== 'all',
+      `${t.memory.filterKind}: ${kind}`,
+      () => setKind('all'),
+    ),
+    filterField(
+      {
+        id: 'category',
+        label: t.memory.categoryFilter,
+        control: <SelectMenu value={categoryFilter} onChange={setCategoryFilter} options={CATEGORY_OPTIONS} label={t.memory.categoryFilter} variant="line" />,
+      },
+      categoryFilter !== 'all',
+      `${t.memory.categoryFilter}: ${categoryChipValue}`,
+      () => setCategoryFilter('all'),
+    ),
+    filterField(
+      {
+        id: 'layout',
+        label: t.memory.groupByCategory,
+        control: <Toggle checked={layout === 'grouped'} onChange={(next) => setLayout(next ? 'grouped' : 'flat')} label={t.memory.groupByCategory} />,
+      },
+      layout === 'grouped',
+      t.memory.groupByCategory,
+      () => setLayout('flat'),
+    ),
+    filterField(
+      {
+        id: 'categories',
+        label: t.memory.categoriesTitle,
+        control: <Toggle checked={showCategories} onChange={setShowCategories} label={t.memory.categoriesTitle} />,
+      },
+      showCategories,
+      t.memory.categoriesTitle,
+      () => setShowCategories(false),
+    ),
+  ];
 
   const row = (m: Memory) => (
     <MotionLayoutItem
@@ -292,6 +362,7 @@ export function MemoryView() {
 
   return (
     <>
+      <ModuleHeader title={t.page.memory} count={allMemories.data?.length} icon={Brain} />
       <WorkspaceShell
         variant="register"
         hero={{
@@ -314,6 +385,26 @@ export function MemoryView() {
           </>,
         }}
         navigation={{ sections: TAB_OPTIONS, value: tab, onChange: (value) => setTab(value as Tab), ariaLabel: t.page.memory }}
+        // The toolbar narrows the LIST. The brain map and the retrieval inspector read none of these
+        // controls, so they get the empty row the stylesheet collapses rather than filters that would
+        // silently do nothing on the section the reader is looking at.
+        toolbar={tab === 'list' ? {
+          search: (
+            <RegisterSearch
+              value={query}
+              onChange={setQuery}
+              placeholder={t.memory.searchPlaceholder}
+              onClear={() => setQuery('')}
+              clearLabel={t.memory.searchClear}
+            />
+          ),
+          filters: filterFields,
+          // Emptying the trash is a destructive act on what is currently on screen, not a way to narrow
+          // it — it stays in the open beside the search rather than two clicks deep behind Filters.
+          actions: status === 'deleted' && filtered.length > 0
+            ? <Button variant="danger" icon={Trash2} onClick={() => setConfirmEmptyTrash(true)}>{t.memory.emptyTrash}</Button>
+            : undefined,
+        } : undefined}
       >
         <ControlSurfaceDocument>
         {tab === 'retrieval' ? <RetrievalDebugPanel />
@@ -327,78 +418,6 @@ export function MemoryView() {
           : (
           <div className="workspace-master-detail" data-detail={selectedId != null}>
           <div className="flex min-w-0 flex-col gap-4">
-            <ControlSurfaceToolbar layout="stacked">
-              <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
-                <RegisterSearch
-                  value={query}
-                  onChange={setQuery}
-                  placeholder={t.memory.searchPlaceholder}
-                  onClear={() => setQuery('')}
-                  clearLabel={t.memory.searchClear}
-                />
-                <SelectMenu
-                  value={status}
-                  onChange={setStatus}
-                  options={STATUS_OPTIONS}
-                  label={t.memory.filterStatus}
-                  className="min-w-[9.5rem]"
-                />
-                <Button
-                  variant={filtersOpen || filterCount > 0 ? 'accent' : 'ghost'}
-                  icon={SlidersHorizontal}
-                  aria-expanded={filtersOpen}
-                  onClick={() => setFiltersOpen((open) => !open)}
-                >
-                  {t.memory.filters}{filterCount > 0 ? ` · ${filterCount}` : ''}
-                </Button>
-                {status === 'deleted' && filtered.length > 0 ? (
-                  <Button variant="danger" icon={Trash2} onClick={() => setConfirmEmptyTrash(true)}>{t.memory.emptyTrash}</Button>
-                ) : null}
-              </div>
-
-              {filtersOpen ? (
-                <div className="grid gap-4 border-t border-border/70 py-4 @2xl:grid-cols-2 @5xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto_auto] @5xl:items-end">
-                  <Field label={t.memory.filterKind}>
-                    <SelectMenu
-                      value={kind}
-                      onChange={setKind}
-                      options={KIND_OPTIONS}
-                      label={t.memory.filterKind}
-                      variant="line"
-                    />
-                  </Field>
-                  <Field label={t.memory.categoryFilter}>
-                    <SelectMenu
-                      value={categoryFilter}
-                      onChange={setCategoryFilter}
-                      options={CATEGORY_OPTIONS}
-                      label={t.memory.categoryFilter}
-                      variant="line"
-                    />
-                  </Field>
-                  <Button
-                    variant={layout === 'grouped' ? 'accent' : 'ghost'}
-                    icon={Layers}
-                    aria-pressed={layout === 'grouped'}
-                    onClick={() => setLayout(layout === 'grouped' ? 'flat' : 'grouped')}
-                  >
-                    {t.memory.groupByCategory}
-                  </Button>
-                  <Button
-                    variant={showCategories ? 'accent' : 'ghost'}
-                    icon={Tags}
-                    aria-pressed={showCategories}
-                    onClick={() => setShowCategories((v) => !v)}
-                  >
-                    {t.memory.categoriesTitle}
-                  </Button>
-                  {filterCount > 0 ? (
-                    <Button variant="ghost" onClick={() => { setKind('all'); setCategoryFilter('all'); setLayout('flat'); }}>{t.memory.clearFilters}</Button>
-                  ) : null}
-                </div>
-              ) : null}
-            </ControlSurfaceToolbar>
-
             <ControlSurfaceRegister className="flex flex-col gap-4">
             {showCategories ? <CategoryManager memories={memories.data ?? []} /> : null}
 

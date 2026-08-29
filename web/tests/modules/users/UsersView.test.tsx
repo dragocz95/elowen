@@ -29,6 +29,18 @@ describe('UsersView', () => {
     expect(screen.getByTestId('users-register')).not.toHaveClass('border-t-0');
   });
 
+  // The directory narrows on one text query and nothing else. A page with no filter fields must not
+  // carry a Filters control at all — a trigger that opens an empty panel is a dead end.
+  it('puts its search in the canonical toolbar row and offers no empty Filters control', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
+
+    await screen.findAllByText('alice');
+    expect(screen.getByPlaceholderText('Search users…').closest('.page-toolbar')).toBeInTheDocument();
+    expect(screen.queryByTestId('page-filters-trigger')).toBeNull();
+    expect(screen.queryByTestId('page-filter-chips')).toBeNull();
+  });
+
   // A row opens through a real button spanning it, so Enter and Space come from the platform. The action
   // menu is a sibling of that button, never inside it, so working the menu must not open the row.
   it('opens a row from its own named button and keeps the action menu independent', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { ProjectsView } from '../../../modules/projects/ProjectsView';
@@ -43,7 +43,11 @@ describe('ProjectsView', () => {
     expect(screen.getByTestId('projects-register').closest('.control-surface-register')).toBeInTheDocument();
     expect(screen.getByTestId('projects-register')).not.toHaveClass('border-t-0');
     expect(row.closest('[role="row"]')).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('dialog', { name: 'Project detail' })).toBeInTheDocument();
+    // The rail names the record and states its path in the ONE header it already draws. It used to be
+    // titled "Project detail" and then repeat the slug and path in a header band of its own.
+    const rail = screen.getByRole('dialog', { name: 'elowen' });
+    expect(within(rail).getByText('/var/www/elowen')).toHaveAttribute('data-slot', 'dialog-description');
+    expect(within(rail).getAllByRole('heading', { name: 'elowen' })).toHaveLength(1);
   });
 
   it('manages member access from the selected Project', async () => {
@@ -123,6 +127,19 @@ describe('ProjectsView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open project elowen' }));
     expect(await screen.findByText('master')).toBeInTheDocument();
     expect(screen.queryByText('Edit project')).toBeNull();
+  });
+
+  // The register narrows on one text query and nothing else. A page with no filter fields must not
+  // carry a Filters control at all — a trigger that opens an empty panel is a dead end.
+  it('puts its search in the canonical toolbar row and offers no empty Filters control', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    await screen.findByText('elowen');
+    const search = screen.getByPlaceholderText('Search projects, paths or notes…');
+    expect(search.closest('.page-toolbar')).toBeInTheDocument();
+    expect(screen.queryByTestId('page-filters-trigger')).toBeNull();
+    expect(screen.queryByTestId('page-filter-chips')).toBeNull();
   });
 
   it('filters the project register without losing the workspace layout', async () => {
