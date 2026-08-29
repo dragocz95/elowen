@@ -27,9 +27,11 @@ export function CompactThresholdsDrawer({ models, thresholds, defaultPct, onDefa
   const { t } = useTranslation();
   return (
     <WorkspaceDetailRail label={onDefaultChange ? t.cli.autoCompact : t.cli.compactByModelTitle} closeLabel={t.common.close} onClose={onClose}>
-      <p className="mb-4 text-xs leading-relaxed text-muted-foreground">{t.help.cliCompactByModel}</p>
+      {/* The rail body owns the vertical rhythm between its blocks, so nothing here adds a margin of its
+          own on top of it. */}
+      <p className="text-xs leading-relaxed text-muted-foreground">{t.help.cliCompactByModel}</p>
       {onDefaultChange ? (
-        <div className="mb-5 border-b border-border pb-5">
+        <div className="border-b border-border pb-5">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-foreground">{t.cli.autoCompactAt}</span>
             <span className="font-mono text-sm tabular-nums text-primary">{defaultPct}%</span>

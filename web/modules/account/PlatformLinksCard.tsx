@@ -2,7 +2,6 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { Link2 } from 'lucide-react';
 import { SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { LinkedAccountRow } from '../../components/ui/LinkedAccountRow';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { PlatformIcon } from '../../components/ui/PlatformIcon';
@@ -70,28 +69,43 @@ export function PlatformLinksCard({ available, values, onChange, connectors = []
 
   return (
     <>
-      <SpatialRow title={t.account.linkedAccounts} icon={Link2} description={t.help.accountPlatformLinks}>
-        {/* The count line speaks only for the chat platforms it can actually count; with none of them
-            offered it would be a sentence about an empty set sitting over a connector that may well be
-            connected. */}
-        <SelectionSummary
-          countText={shown.length > 0 && linked.length === 0 ? t.account.linkedAccountsNone : ''}
-          samples={linked.map((key) => ({
-            label: copy[key].title,
-            icon: <PlatformIcon platform={PLATFORM_LINK_INPUTS[key].platform} size={12} />,
-          }))}
-          moreCount={0}
-          extraSamples={connectors.map((connector) => <Fragment key={connector.id}>{connector.chip}</Fragment>)}
-          onManage={() => setOpen(true)}
-          manageLabel={t.managePicker.manage}
-          manageAriaLabel={t.account.linkedAccounts}
-        />
-      </SpatialRow>
+      {/* WHICH identities are claimed is the record's value, and a stack of brand marks says it in the
+          width a status has: one line, no wrap, no card of its own. The names ride along as the stack's
+          accessible text, so a screen reader hears the platforms rather than a row of decorations.
+          The empty sentence speaks only for the chat platforms it can actually count — with none of them
+          offered it would be a claim about an empty set sitting over a connector that may well be
+          linked. */}
+      <SpatialRow
+        title={t.account.linkedAccounts}
+        icon={Link2}
+        description={t.help.accountPlatformLinks}
+        status={(
+          <span className="flex min-w-0 items-center gap-1.5">
+            {linked.map((key) => (
+              <span key={key} className="flex shrink-0 items-center" title={copy[key].title}>
+                <PlatformIcon platform={PLATFORM_LINK_INPUTS[key].platform} size={14} />
+                <span className="sr-only">{copy[key].title}</span>
+              </span>
+            ))}
+            {connectors.map((connector) => <Fragment key={connector.id}>{connector.chip}</Fragment>)}
+            {shown.length > 0 && linked.length === 0 ? <span className="truncate">{t.account.linkedAccountsNone}</span> : null}
+          </span>
+        )}
+        control={(
+          <button
+            type="button"
+            className="spatial-inline-action"
+            aria-label={t.account.linkedAccounts}
+            onClick={() => setOpen(true)}
+          >
+            <Link2 size={14} aria-hidden />{t.managePicker.manage}
+          </button>
+        )}
+      />
       {open ? (
+        /* The rail's header names the surface and the row carries the explanation, so the body opens on
+           the fields themselves. */
         <WorkspaceDetailRail label={t.account.linkedAccounts} closeLabel={t.common.close} onClose={() => setOpen(false)}>
-          {/* Chat-platform copy, so it stands over the chat rows only — a drawer holding nothing but a
-              plugin connector is not "paste the sender id this platform reports". */}
-          {shown.length > 0 ? <p className="mb-4 text-xs leading-relaxed text-muted-foreground">{t.help.accountPlatformLinks}</p> : null}
           <div className="flex flex-col divide-y divide-border">
             {shown.map((key) => {
               const value = values[key] ?? '';

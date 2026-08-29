@@ -106,10 +106,10 @@ describe('AccountView', () => {
     expect(await screen.findByText('GitHub device flow')).toBeInTheDocument();
   });
 
-  // A connected connector has to announce itself in the CLOSED summary the way a chat platform does —
-  // otherwise the row reads "no chat account linked" while GitHub sits linked behind it, which is exactly
-  // what it did. Whether it is linked is a fact only the bundle holds, so it registers the chip itself.
-  it('shows a connector chip in the closed summary without mounting the panel behind it', async () => {
+  // A connected connector has to announce itself in the row's own status the way a chat platform's mark
+  // does — otherwise the row reads "no chat account linked" while GitHub sits linked behind it, which is
+  // exactly what it did. Whether it is linked is a fact only the bundle holds, so it registers the chip.
+  it('shows a connector chip in the row status without mounting the panel behind it', async () => {
     loadPluginUi.mockResolvedValue({
       requiresApiVersion: 7,
       account: { connection: () => <div>GitHub device flow</div> },
@@ -125,10 +125,10 @@ describe('AccountView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
-    // Anchored on the Manage button, because the Account page carries several summaries and the first in
-    // the DOM is the model picker's.
-    const summary = (await screen.findByRole('button', { name: 'Linked accounts' })).closest('[data-selection-summary]') as HTMLElement;
-    await waitFor(() => expect(summary.textContent).toContain('GitHub'));
+    // Anchored on the record's own manage control, because the Account page carries several rows whose
+    // trailing side opens something.
+    const row = (await screen.findByRole('button', { name: 'Linked accounts' })).closest('.settings-row') as HTMLElement;
+    await waitFor(() => expect(row.querySelector('.settings-row__status')?.textContent).toContain('GitHub'));
     // The chip is not the panel: asking for one must not drag the drawer's contents onto the page.
     expect(screen.queryByText('GitHub device flow')).not.toBeInTheDocument();
   });

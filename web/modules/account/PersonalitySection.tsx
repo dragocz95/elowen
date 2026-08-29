@@ -9,7 +9,6 @@ import { defineEditorThemes, editorTheme } from '../../lib/monaco/oledTheme';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { Modal, ModalFooter } from '../../components/ui/Modal';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
@@ -70,22 +69,31 @@ export function PersonalitySection({ onSaveState }: { onSaveState?: (section: st
   return (
     <div className="flex flex-col gap-4">
       <SpatialGroup>
-        {/* The pill strip reads noisy inside a pod — the pod shows the current style as a chip and
-            picks in the shared drawer picker instead. */}
-        <SpatialRow title={t.personality.styleLabel} icon={Sparkles}>
-          <ChoiceField title={t.personality.styleLabel} options={styleOptions} value={advisorStyle} onChange={setAdvisorStyle} />
-        </SpatialRow>
-        {/* Global user instructions — a snippet chip; the orb opens the Monaco drawer. */}
-        <SpatialRow title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Pencil}>
-          <SelectionSummary
-            countText=""
-            samples={hasInstructions ? [{ label: userInstructions.trim().slice(0, 42) }] : []}
-            moreCount={0}
-            onManage={() => setEditing(true)}
-            manageLabel={hasInstructions ? t.personality.bodyEdit : t.personality.bodyAdd}
-            manageAriaLabel={t.personality.bodyLabel}
-          />
-        </SpatialRow>
+        {/* Four choices is past what a segmented track can hold in a record's trailing cell, so the field
+            shows the current style and picks in the shared searchable picker. */}
+        <SpatialRow
+          title={t.personality.styleLabel}
+          icon={Sparkles}
+          control={<ChoiceField title={t.personality.styleLabel} options={styleOptions} value={advisorStyle} onChange={setAdvisorStyle} />}
+        />
+        {/* Global user instructions. The first words are the record's value — a short trailing string the
+            row ellipses — and the button that opens the Monaco editor is its one control. */}
+        <SpatialRow
+          title={t.personality.bodyLabel}
+          description={t.personality.bodyHint}
+          icon={Pencil}
+          status={hasInstructions ? <span title={userInstructions.trim()}>{userInstructions.trim().slice(0, 42)}</span> : undefined}
+          control={(
+            <button
+              type="button"
+              className="spatial-inline-action"
+              aria-label={t.personality.bodyLabel}
+              onClick={() => setEditing(true)}
+            >
+              <Pencil size={14} aria-hidden />{hasInstructions ? t.personality.bodyEdit : t.personality.bodyAdd}
+            </button>
+          )}
+        />
       </SpatialGroup>
 
       {editing ? (

@@ -162,88 +162,111 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
   return (
     <div className="flex flex-col gap-4">
       <SpatialGroup columns={2}>
-      <SpatialRow title={t.cli.thinkingLabel} icon={Gauge} description={t.help.cliThinking}>
-        <ReasoningScale
-          ariaLabel={t.cli.thinkingLabel}
-          value={thinkingLevel}
-          onChange={setThinkingLevel}
-          options={['', ...reasoningLevels].map((lv) => ({
-            value: lv,
-            label: lv === '' ? t.cli.thinkingDefault : (activeModel?.reasoningLabels?.[lv] ?? lv),
-          }))}
-        />
-      </SpatialRow>
+      <SpatialRow
+        title={t.cli.thinkingLabel}
+        icon={Gauge}
+        description={t.help.cliThinking}
+        control={(
+          <ReasoningScale
+            ariaLabel={t.cli.thinkingLabel}
+            value={thinkingLevel}
+            onChange={setThinkingLevel}
+            options={['', ...reasoningLevels].map((lv) => ({
+              value: lv,
+              label: lv === '' ? t.cli.thinkingDefault : (activeModel?.reasoningLabels?.[lv] ?? lv),
+            }))}
+          />
+        )}
+      />
 
-      <SpatialRow title={t.cli.visionModelLabel} icon={Eye} description={t.help.cliVisionModel}>
-        <BrainModelField
-          value={visionSelection}
-          onChange={setVisionSelection}
-          models={models.data ?? []}
-          title={t.cli.visionModelLabel}
-          subtitle={t.help.cliVisionModel}
-          defaultLabel={t.cli.visionModelDefault}
-          keyOf={(m) => `${m.provider}::${m.model}`}
-          manageAriaLabel={`${t.managePicker.manage}: ${t.cli.visionModelLabel}`}
-        />
-      </SpatialRow>
+      <SpatialRow
+        title={t.cli.visionModelLabel}
+        icon={Eye}
+        description={t.help.cliVisionModel}
+        control={(
+          <BrainModelField
+            value={visionSelection}
+            onChange={setVisionSelection}
+            models={models.data ?? []}
+            title={t.cli.visionModelLabel}
+            subtitle={t.help.cliVisionModel}
+            defaultLabel={t.cli.visionModelDefault}
+            keyOf={(m) => `${m.provider}::${m.model}`}
+            manageAriaLabel={`${t.managePicker.manage}: ${t.cli.visionModelLabel}`}
+          />
+        )}
+      />
 
-      <SpatialRow title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.help.cliAutoCompact}>
-        <div className="flex items-center gap-3">
-          <Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />
-          {autoCompact ? <span className="font-mono text-sm tabular-nums text-foreground">{autoCompactAt}%</span> : null}
-          <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setThresholdsOpen(true)}>
+      {/* The percentage is the value this switch reads at, so it belongs in the record's status rather
+          than crowding the control; the per-model overrides are the row's one action. */}
+      <SpatialRow
+        title={t.cli.autoCompact}
+        icon={SlidersHorizontal}
+        description={t.help.cliAutoCompact}
+        status={autoCompact ? <span className="font-mono tabular-nums text-foreground">{autoCompactAt}%</span> : undefined}
+        control={<Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />}
+        actions={(
+          <button type="button" className="spatial-inline-action" onClick={() => setThresholdsOpen(true)}>
             <SlidersHorizontal size={14} aria-hidden />{t.cli.compactByModelTitle}
           </button>
-        </div>
-      </SpatialRow>
+        )}
+      />
 
-      <SpatialRow title={t.cli.compactModelLabel} icon={Shrink} description={t.help.cliCompactModel}>
-        <BrainModelField
-          value={compactSelection}
-          onChange={setCompactSelection}
-          models={models.data ?? []}
-          title={t.cli.compactModelLabel}
-          subtitle={t.help.cliCompactModel}
-          defaultLabel={t.cli.compactModelDefault}
-          keyOf={(m) => `${m.provider}::${m.model}`}
-          manageAriaLabel={`${t.managePicker.manage}: ${t.cli.compactModelLabel}`}
-        />
-      </SpatialRow>
+      <SpatialRow
+        title={t.cli.compactModelLabel}
+        icon={Shrink}
+        description={t.help.cliCompactModel}
+        control={(
+          <BrainModelField
+            value={compactSelection}
+            onChange={setCompactSelection}
+            models={models.data ?? []}
+            title={t.cli.compactModelLabel}
+            subtitle={t.help.cliCompactModel}
+            defaultLabel={t.cli.compactModelDefault}
+            keyOf={(m) => `${m.provider}::${m.model}`}
+            manageAriaLabel={`${t.managePicker.manage}: ${t.cli.compactModelLabel}`}
+          />
+        )}
+      />
 
-      <SpatialRow title={t.cli.fastModeTitle} icon={Bolt} description={t.help.cliFastMode}>
-        <label className="flex items-center gap-3 text-sm text-foreground">
-          <Toggle checked={fastMode} onChange={setFastMode} disabled={!anyFastRoute} label={t.cli.fastModeToggle} />
-          <span>
-            {!anyFastRoute
-              ? t.cli.fastModeUnavailable
-              : fastMode && !activeFastSupported
-                ? t.cli.fastModeCurrentUnsupported
-                : t.cli.fastModeToggle}
-          </span>
-        </label>
-      </SpatialRow>
+      {/* The switch's own label named the row a second time; only the caveat is worth a trailing word,
+          and a caveat about the CURRENT model is exactly what a status is for. */}
+      <SpatialRow
+        title={t.cli.fastModeTitle}
+        icon={Bolt}
+        description={t.help.cliFastMode}
+        status={!anyFastRoute
+          ? t.cli.fastModeUnavailable
+          : fastMode && !activeFastSupported ? t.cli.fastModeCurrentUnsupported : undefined}
+        control={<Toggle checked={fastMode} onChange={setFastMode} disabled={!anyFastRoute} label={t.cli.fastModeToggle} />}
+      />
 
-      {/* The warning reads as inline text like every other row here — a lone HelpTip button on one row
-          of the section was the only "?" on the page and drew the eye to the wrong place. */}
-      <SpatialRow title={t.cli.yoloTitle} icon={Zap} description={t.cli.yoloWarning}>
-        <label className="flex items-center gap-3 text-sm text-foreground">
-          <Toggle checked={yolo} onChange={(next) => next ? setConfirmYolo(true) : setYolo(false)} label={t.cli.yoloToggle} />
-          <span>{t.cli.yoloToggle}</span>
-        </label>
-      </SpatialRow>
+      {/* The warning lives behind the row's help affordance like every other explanation on this surface. */}
+      <SpatialRow
+        title={t.cli.yoloTitle}
+        icon={Zap}
+        description={t.cli.yoloWarning}
+        control={<Toggle checked={yolo} onChange={(next) => next ? setConfirmYolo(true) : setYolo(false)} label={t.cli.yoloToggle} />}
+      />
 
-      <SpatialRow title={t.cli.unattendedTitle} icon={MoonStar} description={t.help.cliUnattendedAsks}>
-        <Segmented
-          value={unattendedAsks}
-          onChange={(v) => setUnattendedAsks(v === 'deny' ? 'deny' : 'allow')}
-          options={[
-            { value: 'allow', label: t.cli.unattendedAllow },
-            { value: 'deny', label: t.cli.unattendedDeny },
-          ]}
-          aria-label={t.cli.unattendedTitle}
-        />
-      </SpatialRow>
-      {/* Permission rules join the orbit as a pod (drawer editor). */}
+      <SpatialRow
+        title={t.cli.unattendedTitle}
+        icon={MoonStar}
+        description={t.help.cliUnattendedAsks}
+        control={(
+          <Segmented
+            value={unattendedAsks}
+            onChange={(v) => setUnattendedAsks(v === 'deny' ? 'deny' : 'allow')}
+            options={[
+              { value: 'allow', label: t.cli.unattendedAllow },
+              { value: 'deny', label: t.cli.unattendedDeny },
+            ]}
+            aria-label={t.cli.unattendedTitle}
+          />
+        )}
+      />
+      {/* Permission rules are one more record of this card; the rule editor itself opens in a drawer. */}
       <PermissionRulesCard />
       </SpatialGroup>
       <ConfirmDialog

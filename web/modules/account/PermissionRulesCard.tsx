@@ -2,7 +2,6 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { Plus, Shield, Trash2 } from 'lucide-react';
 import { SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
@@ -140,7 +139,7 @@ export function PermissionRulesCard() {
   );
 
   const editor = (
-    <div className="flex flex-col gap-4 py-4">
+    <div className="flex flex-col gap-4">
       {bashRules.length === 0 ? (
         <p className="text-xs text-muted-foreground">{t.cli.permEmpty}</p>
       ) : (
@@ -185,22 +184,32 @@ export function PermissionRulesCard() {
     />
   );
 
-  const all = [...bashRules, ...toolsRules];
+  const ruleCount = bashRules.length + toolsRules.length;
   return (
     <>
-      <SpatialRow title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions}>
-        <SelectionSummary
-          countText=""
-          samples={all.slice(0, 2).map((r) => ({ label: r.pattern }))}
-          moreCount={Math.max(0, all.length - 2)}
-          onManage={() => setDrawerOpen(true)}
-          manageLabel={t.managePicker.manage}
-          manageAriaLabel={t.cli.permTitle}
-        />
-      </SpatialRow>
+      {/* A rule list is not a value a record can carry: the chips it used to show were the first two
+          patterns of a set the user cannot read from here anyway. The count is the fact worth reading at
+          a glance, and the editor is one click behind it. */}
+      <SpatialRow
+        title={t.cli.permTitle}
+        icon={Shield}
+        description={t.help.cliPermissions}
+        status={ruleCount > 0 ? <span className="font-mono tabular-nums">{ruleCount}</span> : undefined}
+        control={(
+          <button
+            type="button"
+            className="spatial-inline-action"
+            aria-label={t.cli.permTitle}
+            onClick={() => setDrawerOpen(true)}
+          >
+            <Shield size={14} aria-hidden />{t.managePicker.manage}
+          </button>
+        )}
+      />
       {drawerOpen ? (
+        /* The rail's header already names this surface and the row carries the explanation, so the body
+           starts on the rules themselves. */
         <WorkspaceDetailRail label={t.cli.permTitle} closeLabel={t.common.close} onClose={() => setDrawerOpen(false)}>
-          <p className="mb-2 text-xs leading-relaxed text-muted-foreground">{t.help.cliPermissions}</p>
           {editor}
         </WorkspaceDetailRail>
       ) : null}
