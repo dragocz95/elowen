@@ -84,6 +84,7 @@ const EXTERNALLY_SET: Record<string, string> = {
   '--ui-scale': 'lib/useUiScale.tsx sets it on the document root',
   '--data-table-columns': 'components/ui/DataTable.tsx, inline style per table',
   '--data-table-compact-columns': 'components/ui/DataTable.tsx, inline style per table',
+  '--data-table-mobile-columns': 'components/ui/DataTable.tsx, inline style per table',
   '--i': 'modules/dashboard/HeroCosmos.tsx, modules/advisor/CommandOrbit.tsx, lib/cosmosFilaments.ts',
   '--k': 'modules/advisor/CommandOrbit.tsx, the arc layout scale',
   '--fx': 'modules/dashboard/HeroCosmos.tsx, modules/advisor/CommandOrbit.tsx, pod entry offset',

@@ -79,7 +79,7 @@ const DEFAULT_PAINT: DocumentPaint = { background: '#000000', colorScheme: 'dark
 const SKIN_PAINT: Record<SkinName, DocumentPaint> = {
   midnight: { background: '#05070b', colorScheme: 'dark' },
   'studio-light': { background: '#ffffff', colorScheme: 'light' },
-  'studio-oled': { background: '#000000', colorScheme: 'dark' },
+  'studio-oled': { background: '#03080a', colorScheme: 'dark' },
 };
 
 const documentPaint = (skin: SkinName | null): DocumentPaint => (skin ? SKIN_PAINT[skin] : DEFAULT_PAINT);
