@@ -47,6 +47,8 @@ import { MorePill } from '../../../components/ui/MorePill';
 import { MotionReveal } from '../../../components/ui/Motion';
 import { OutcomeBadge } from '../../../components/ui/OutcomeBadge';
 import { Pager } from '../../../components/ui/Pager';
+import { PageToolbar } from '../../../components/ui/PageToolbar';
+import type { PageFilterField } from '../../../components/ui/PageFilters';
 import { PatchView } from '../../../components/ui/PatchView';
 import { PlatformIcon } from '../../../components/ui/PlatformIcon';
 import { ProgressRibbon } from '../../../components/ui/ProgressRibbon';
@@ -57,6 +59,7 @@ import { ProviderPicker } from '../../../components/ui/ProviderPicker';
 import { ReasoningScale } from '../../../components/ui/ReasoningScale';
 import { RegisterSearch } from '../../../components/ui/RegisterSearch';
 import { ResizeHandle } from '../../../components/ui/ResizeHandle';
+import { RowPicker } from '../../../components/ui/RowPicker';
 import { Segmented } from '../../../components/ui/Segmented';
 import { SelectMenu } from '../../../components/ui/SelectMenu';
 import { SelectionSummary, SummaryChip } from '../../../components/ui/SelectionSummary';
@@ -268,6 +271,7 @@ function Gallery() {
   const [sliderMid, setSliderMid] = useState(50);
   const [reasoning, setReasoning] = useState('medium');
   const [search, setSearch] = useState('digest');
+  const [galleryFilter, setGalleryFilter] = useState(false);
 
   // Register state
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -282,6 +286,21 @@ function Gallery() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const sortedRows = [...TABLE_ROWS].sort((a, b) => (sortDirection === 'asc' ? 1 : -1) * a.name.localeCompare(b.name));
+  const galleryFilters: PageFilterField[] = [galleryFilter
+    ? {
+        id: 'archived',
+        label: 'Archived rows',
+        control: <Toggle checked={galleryFilter} onChange={setGalleryFilter} label="Archived rows" />,
+        active: true,
+        activeLabel: 'Archived rows shown',
+        onReset: () => setGalleryFilter(false),
+      }
+    : {
+        id: 'archived',
+        label: 'Archived rows',
+        control: <Toggle checked={galleryFilter} onChange={setGalleryFilter} label="Archived rows" />,
+        active: false,
+      }];
 
   return (
     <div className="flex flex-col gap-6">
@@ -603,7 +622,7 @@ function Gallery() {
               onChange={setChoiceInline}
             />
           </Specimen>
-          <Specimen label='ChoiceField picker="auto", 5 options → summary + picker modal (click Manage)' layout="block">
+          <Specimen label='ChoiceField picker="auto", 5 options → compact RowPicker + searchable modal' layout="block">
             <ChoiceField
               title="Model"
               manageAriaLabel="Manage the model choice"
@@ -613,6 +632,19 @@ function Gallery() {
                 { value: 'gpt', label: 'gpt-4o', icon: <ModelIcon name="gpt-4o" size={13} /> },
                 { value: 'gemini', label: 'gemini-2.5-pro', icon: <ModelIcon name="gemini-2.5-pro" size={13} /> },
                 { value: 'llama', label: 'llama-3.3-70b', icon: <ModelIcon name="llama-3.3-70b" size={13} /> },
+              ]}
+              value={choicePicker}
+              onChange={setChoicePicker}
+            />
+          </Specimen>
+          <Specimen label="RowPicker — one compact settings-row control opening ManageSelectionModal" layout="block">
+            <RowPicker
+              label="Default model"
+              summary={choicePicker}
+              items={[
+                { id: 'sonnet', label: 'claude-sonnet-4', group: '' },
+                { id: 'opus', label: 'claude-opus-4', group: '' },
+                { id: 'gpt', label: 'gpt-4o', group: '' },
               ]}
               value={choicePicker}
               onChange={setChoicePicker}
@@ -1065,8 +1097,15 @@ function Gallery() {
         <Section
           id="surfaces"
           title="Page surfaces"
-          note="ControlSurfaceToolbar and SettingsToolbar normally portal themselves above the page title through WorkspaceLeadPortal; here they carry promote={false} so they render in place and can be seen."
+          note="PageToolbar is the canonical row below the heading, metric rail and section navigation. Legacy ControlSurfaceToolbar and SettingsToolbar portal into its shared slot; promote={false} keeps these specimens local."
         >
+          <Specimen label="PageToolbar — search, condensed Filters, active chip and action" layout="block" wide>
+            <PageToolbar
+              search={<RegisterSearch value={search} onChange={setSearch} placeholder="Search rows…" label="Search gallery rows" />}
+              filters={galleryFilters}
+              actions={<AppButton variant="accent" icon={Plus}>New row</AppButton>}
+            />
+          </Specimen>
           <Specimen label="ControlSurface — document + toolbar + register + state" layout="block" wide>
             <ControlSurfaceDocument>
               <ControlSurfaceToolbar promote={false}>
