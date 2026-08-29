@@ -136,8 +136,10 @@ test('Studio OLED keeps the chat full-width, left-aligned and in its own top bar
     const composerElement = document.querySelector<HTMLElement>('[data-variant="full"] .chat-composer')!;
     const composer = composerElement.getBoundingClientRect();
     const user = document.querySelector<HTMLElement>('[data-role="you"] .chat-user-message')!;
+    const userBox = user.getBoundingClientRect();
     const assistantTurn = document.querySelector<HTMLElement>('[data-role="assistant"]')!.getBoundingClientRect();
     const assistant = document.querySelector<HTMLElement>('[data-role="assistant"] .chat-markdown')!;
+    const assistantBox = assistant.getBoundingClientRect();
     const userStyle = getComputedStyle(user);
     const assistantStyle = getComputedStyle(assistant);
     const composerStyle = getComputedStyle(composerElement);
@@ -150,6 +152,8 @@ test('Studio OLED keeps the chat full-width, left-aligned and in its own top bar
       right: surface.right - transcript.right,
       composerLeft: composer.left - surface.left,
       composerRight: surface.right - composer.right,
+      userLeft: userBox.left - transcript.left,
+      assistantLeft: assistantBox.left - transcript.left,
       userBackground: userStyle.backgroundColor,
       userRadius: userStyle.borderRadius,
       userMaxWidth: userStyle.maxInlineSize,
@@ -167,6 +171,7 @@ test('Studio OLED keeps the chat full-width, left-aligned and in its own top bar
   expect(Math.abs(geometry.left)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.right)).toBeLessThanOrEqual(1);
   expect(geometry.composerLeft).toBeCloseTo(geometry.composerRight, 0);
+  expect(geometry.userLeft).toBeCloseTo(geometry.assistantLeft, 0);
   expect(geometry.userBackground).toBe('rgb(23, 62, 118)');
   expect(geometry.userRadius).toBe('22px');
   expect(geometry.userMaxWidth).toBe('70%');

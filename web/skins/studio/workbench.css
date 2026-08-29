@@ -111,7 +111,7 @@
   line-height: 1.625;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-turn--you .chat-turn__body {
-  align-items: flex-end;
+  align-items: flex-start;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-user-message {
   max-inline-size: 70%;
@@ -127,7 +127,7 @@
   color: inherit;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-turn--you .chat-turn-meta {
-  align-self: flex-end;
+  align-self: flex-start;
 }
 
 /* Code and markdown tables use the same neutral working surface as the composer. */
