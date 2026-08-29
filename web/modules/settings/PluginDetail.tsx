@@ -16,7 +16,6 @@ import { PluginHooksPanel } from './PluginHooksPanel';
 import { PluginPermissionsPanel } from './PluginPermissionsPanel';
 import { PluginDataPanel } from './PluginDataPanel';
 import { PluginLogsPanel } from './PluginLogsPanel';
-import { PluginLivePreview } from './PluginLivePreview';
 import { usePluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsState, SettingsToolbar } from '../../components/ui/SettingsSurface';
 
@@ -35,17 +34,6 @@ function WorkspacePanel({ id, active, visited, children }: {
     <ReactActivity mode={id === active ? 'visible' : 'hidden'}>
       <MotionReveal data-plugin-panel={id}>{children}</MotionReveal>
     </ReactActivity>
-  );
-}
-
-/** Document-like configuration with a contextual preview rail. The rail only appears beside the
- *  editor when its real container is wide enough; narrower settings layouts keep a single flow. */
-function PluginEditorLayout({ preview, children }: { preview: ReactNode; children: ReactNode }) {
-  return (
-    <div data-testid="plugin-editor-layout" className="@container grid min-w-0 gap-6 @4xl:grid-cols-[minmax(0,1fr)_19rem] @5xl:grid-cols-[minmax(0,1fr)_21rem]">
-      <div className="flex min-w-0 flex-col gap-4">{children}</div>
-      <aside data-testid="plugin-preview-rail" className="min-w-0 self-start @4xl:sticky @4xl:top-20">{preview}</aside>
-    </div>
   );
 }
 
@@ -101,7 +89,6 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
     { value: 'advanced', label: t.pluginDetail.tabAdvanced, icon: Sparkles },
   ];
   const editorProps = { name, detail, fieldLabel, fieldHint, fieldOptions, riskText, draft };
-  const preview = <PluginLivePreview detail={detail} values={draft.values} fieldLabel={fieldLabel} />;
 
   return (
     <>
@@ -124,44 +111,42 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
         </SettingsToolbar>
         <div className="p-5 sm:p-6">
           <WorkspacePanel id="setup" active={tab} visited={visitedTabs}>
-        <PluginEditorLayout preview={preview}>
-          <SettingsGroup
-            className="plugin-card"
-            icon={Check}
-            title={t.pluginDetail.setupChecklist}
-            description={t.pluginDetail.setupChecklistHint}
-            actions={<span className={`text-xs font-medium ${missingRequired.length ? 'text-warning' : 'text-success'}`}>{missingRequired.length ? t.pluginDetail.setupMissing.replace('{n}', String(missingRequired.length)) : t.pluginDetail.setupComplete}</span>}
-          >
-            <div className="settings-group__panel flex flex-wrap gap-2">
-              {detail.configSchema.filter((field) => field.required).map((field) => {
-                const missing = missingRequired.includes(field);
-                return <span key={field.key} className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">{missing ? <Circle size={10} className="text-warning" aria-hidden /> : <Check size={11} className="text-success" aria-hidden />}{fieldLabel(field)}</span>;
-              })}
-              {detail.configSchema.every((field) => !field.required) ? <span className="text-xs text-muted-foreground">{t.pluginDetail.setupNoRequired}</span> : null}
+            <div className="flex min-w-0 flex-col gap-4">
+              <SettingsGroup
+                className="plugin-card"
+                icon={Check}
+                title={t.pluginDetail.setupChecklist}
+                description={t.pluginDetail.setupChecklistHint}
+                actions={<span className={`text-xs font-medium ${missingRequired.length ? 'text-warning' : 'text-success'}`}>{missingRequired.length ? t.pluginDetail.setupMissing.replace('{n}', String(missingRequired.length)) : t.pluginDetail.setupComplete}</span>}
+              >
+                <div className="settings-group__panel flex flex-wrap gap-2">
+                  {detail.configSchema.filter((field) => field.required).map((field) => {
+                    const missing = missingRequired.includes(field);
+                    return <span key={field.key} className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">{missing ? <Circle size={10} className="text-warning" aria-hidden /> : <Check size={11} className="text-success" aria-hidden />}{fieldLabel(field)}</span>;
+                  })}
+                  {detail.configSchema.every((field) => !field.required) ? <span className="text-xs text-muted-foreground">{t.pluginDetail.setupNoRequired}</span> : null}
+                </div>
+              </SettingsGroup>
+              <PluginConfigEditor {...editorProps} mode="setup" />
             </div>
-          </SettingsGroup>
-          <PluginConfigEditor {...editorProps} mode="setup" />
-        </PluginEditorLayout>
           </WorkspacePanel>
 
           <WorkspacePanel id="behavior" active={tab} visited={visitedTabs}>
-        <PluginEditorLayout preview={preview}>
-          <PluginConfigEditor {...editorProps} mode="behavior" />
-        </PluginEditorLayout>
+            <PluginConfigEditor {...editorProps} mode="behavior" />
           </WorkspacePanel>
           <WorkspacePanel id="capabilities" active={tab} visited={visitedTabs}>
-        <div className="flex flex-col gap-4">
-          <PluginToolsPanel contributions={contributions} />
-          <PluginHooksPanel contributions={contributions} hookExecutions={hookExecutions} />
-          <PluginPermissionsPanel detail={detail} fieldLabel={fieldLabel} riskText={riskText} toolCount={toolCount} platformCount={platformCount} />
-        </div>
+            <div className="flex flex-col gap-4">
+              <PluginToolsPanel contributions={contributions} />
+              <PluginHooksPanel contributions={contributions} hookExecutions={hookExecutions} />
+              <PluginPermissionsPanel detail={detail} fieldLabel={fieldLabel} riskText={riskText} toolCount={toolCount} platformCount={platformCount} />
+            </div>
           </WorkspacePanel>
           <WorkspacePanel id="activity" active={tab} visited={visitedTabs}><PluginLogsPanel logs={logs} /></WorkspacePanel>
           <WorkspacePanel id="advanced" active={tab} visited={visitedTabs}>
-        <div className="flex flex-col gap-4">
-          <PluginConfigEditor {...editorProps} mode="advanced" />
-          <PluginDataPanel name={name} summary={detail.data} />
-        </div>
+            <div className="flex flex-col gap-4">
+              <PluginConfigEditor {...editorProps} mode="advanced" />
+              <PluginDataPanel name={name} summary={detail.data} />
+            </div>
           </WorkspacePanel>
         </div>
       </SettingsGroup>

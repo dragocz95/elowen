@@ -18,13 +18,24 @@ const useBrainModels = vi.hoisted(() => vi.fn());
 const useUsers = vi.hoisted(() => vi.fn());
 const useNotificationDestinations = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useUsers, useNotificationDestinations }));
+// The debounced draft writes through this one mutation, so a shared mock is what lets a test prove that
+// editing a record — or the editor inside its modal — actually reaches the server.
+const savePluginConfig = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/mutations', () => ({
-  useSavePluginConfig: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({ ok: true }), isPending: false }),
+  useSavePluginConfig: () => ({ mutate: savePluginConfig, mutateAsync: savePluginConfig, isPending: false }),
   useTogglePlugin: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
   useInstallPlugin: () => ({ mutate: vi.fn(), isPending: false }),
   useClearPluginData: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
+// Monaco is browser-only (web workers) and never mounts under jsdom; stub it with a plain textarea that
+// forwards value/onChange so a `code`/`prompt` field stays exercisable.
+vi.mock('../../../lib/monaco/monacoLoader', () => ({
+  MonacoEditor: ({ value, onChange, options }: { value: string; onChange: (v: string) => void; options?: { ariaLabel?: string } }) => (
+    <textarea data-testid="monaco" aria-label={options?.ariaLabel} value={value} onChange={(e) => onChange(e.target.value)} />
+  ),
+  MonacoDiffEditor: () => null,
+}));
 
 import { PluginDetail } from '../../../modules/settings/PluginDetail';
 
@@ -39,11 +50,15 @@ const renderDetail = () => {
   return render(<EffectsProvider><ThemeProvider><LanguageProvider><SettingsDocument><PluginDetail name="testy" onBack={() => {}} /></SettingsDocument></LanguageProvider></ThemeProvider></EffectsProvider>);
 };
 
+/** The record a field owns, found by its label. */
+const rowOf = (label: string) => screen.getByText(label).closest('.settings-row') as HTMLElement;
+
 beforeEach(() => {
   // A workspace tab switch stamps the tab into window.location.hash, which PluginDetail reads back on
   // mount — clear it so a test that ends on a non-default tab can't pin the next test's initial tab.
   window.history.replaceState(null, '', window.location.pathname);
   usePluginDetail.mockReset(); usePlugins.mockReset();
+  savePluginConfig.mockReset(); savePluginConfig.mockResolvedValue({ ok: true });
   usePluginContributions.mockReturnValue({ data: undefined });
   usePluginLogs.mockReturnValue({ data: undefined });
   usePluginHookExecutions.mockReturnValue({ data: undefined });
@@ -102,7 +117,7 @@ describe('PluginDetail workspace', () => {
     expect(screen.getByRole('heading', { name: en.pluginDetail.permissions })).toBeInTheDocument();
   });
 
-  it('exposes the five focused workspace tabs and a live preview', () => {
+  it('exposes the five focused workspace tabs', () => {
     usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
     renderDetail();
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabSetup })).toBeInTheDocument();
@@ -110,22 +125,18 @@ describe('PluginDetail workspace', () => {
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabCapabilities })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabActivity })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabAdvanced })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: en.pluginDetail.livePreview })).toBeInTheDocument();
   });
 
-  it('places the live preview in a responsive context rail beside the config document', () => {
+  it('gives the config document the whole width — no live-preview rail beside it', () => {
     usePluginDetail.mockReturnValue({ data: detail([
       { key: 'message', label: 'Message', type: 'string' },
     ], { message: 'Hello' }), isLoading: false });
     renderDetail();
 
-    const layout = screen.getByTestId('plugin-editor-layout');
-    expect(layout).toHaveClass('@4xl:grid-cols-[minmax(0,1fr)_19rem]');
-    expect(screen.getByTestId('plugin-preview-rail')).toHaveClass('@4xl:sticky');
-    expect(within(layout).getByRole('region', { name: en.pluginDetail.livePreview })).toBeInTheDocument();
-    expect(within(layout).getByRole('textbox')).toBeInTheDocument();
-    // The old overview "Status" block stays gone from the editor layout.
-    expect(screen.queryByText('Status')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('plugin-editor-layout')).toBeNull();
+    expect(screen.queryByTestId('plugin-preview-rail')).toBeNull();
+    expect(screen.queryByRole('region', { name: /preview/i })).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Hello');
   });
 
   it('opens Setup first when a required secret is missing', () => {
@@ -135,23 +146,11 @@ describe('PluginDetail workspace', () => {
     expect(screen.getByText(en.pluginDetail.setupMissing.replace('{n}', '1'))).toBeInTheDocument();
   });
 
-  it('previews Discord per-tool layout and rolling output as separate bubbles', () => {
-    usePluginDetail.mockReturnValue({ data: detail([
-      { key: 'toolActivity', label: 'Tool activity', type: 'enum', options: [{ value: 'status', label: 'Status' }, { value: 'live', label: 'Live' }] },
-      { key: 'toolOutput', label: 'Tool output', type: 'enum', options: [{ value: 'hidden', label: 'Hidden' }, { value: 'summary', label: 'Summary' }, { value: 'tail', label: 'Tail' }] },
-      { key: 'toolMessageMode', label: 'Tool layout', type: 'enum', options: [{ value: 'single', label: 'Single' }, { value: 'per_tool', label: 'Per tool' }] },
-    ], { toolActivity: 'live', toolOutput: 'tail', toolMessageMode: 'per_tool' }, 'discord'), isLoading: false });
-    renderDetail();
-    expect(screen.getAllByTestId('discord-tool-bubble')).toHaveLength(2);
-    expect(screen.getByText(/\$ npm test/)).toBeInTheDocument();
-    expect(screen.getByTestId('discord-preview-layout')).toHaveClass('@lg:grid-cols-[minmax(0,1.35fr)_minmax(0,.65fr)]');
-  });
-
   it('keeps required non-secret fields reachable on Setup', () => {
     usePluginDetail.mockReturnValue({ data: detail([{ key: 'workspace', label: 'Workspace', type: 'string', required: true }], {}), isLoading: false });
     renderDetail();
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabSetup })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByRole('textbox')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Workspace' })).toBeInTheDocument();
   });
 
   it('keeps terminal informational sections visible', () => {
@@ -159,48 +158,91 @@ describe('PluginDetail workspace', () => {
     renderDetail();
     expect(screen.getByText('Embedding model')).toBeInTheDocument();
   });
+});
 
-  it('retains local editor disclosure state across workspace tab switches', async () => {
+describe('PluginDetail config field layout', () => {
+  it('renders every field as a settings record carrying one compact control', () => {
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'destination', label: 'Destination', type: 'destination' },
+      { key: 'code', label: 'Code', type: 'code' },
+      { key: 'notes', label: 'Notes', type: 'textarea' },
+      { key: 'name', label: 'Name', type: 'string' },
+      { key: 'streaming', label: 'Streaming', type: 'boolean' },
+    ], {}), isLoading: false });
+    const { container } = renderDetail();
+
+    const panel = container.querySelector('[data-plugin-panel="behavior"]') as HTMLElement;
+    expect(panel.querySelectorAll('.settings-row')).toHaveLength(5);
+    for (const label of ['Destination', 'Code', 'Notes', 'Name', 'Streaming']) {
+      expect(rowOf(label).querySelectorAll('.settings-row__control')).toHaveLength(1);
+    }
+    // The document-shaped fields keep their editor behind the record's trigger instead of expanding the
+    // form: the only inline text control left is the plain string input.
+    expect(screen.queryByTestId('monaco')).toBeNull();
+    expect(within(panel).getAllByRole('textbox')).toHaveLength(1);
+    for (const label of ['Code', 'Notes']) {
+      expect(within(rowOf(label)).getByRole('button', { name: label })).toHaveAttribute('aria-haspopup', 'dialog');
+    }
+  });
+
+  it('saves a value edited directly in a record', async () => {
+    usePluginDetail.mockReturnValue({ data: detail([{ key: 'streaming', label: 'Streaming', type: 'boolean' }], { streaming: false }), isLoading: false });
+    renderDetail();
+
+    fireEvent.click(within(rowOf('Streaming')).getByRole('switch', { name: 'Streaming' }));
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({ name: 'testy', values: { streaming: true } }), { timeout: 3000 });
+  });
+});
+
+describe('PluginDetail document-shaped fields', () => {
+  it('summarises a text field in its record and saves what the modal editor changes', async () => {
+    usePluginDetail.mockReturnValue({ data: detail([{ key: 'notes', label: 'Notes', type: 'textarea' }], { notes: 'one\ntwo' }), isLoading: false });
+    renderDetail();
+
+    expect(screen.getByText(en.pluginCfg.editorLines.replace('{n}', '2'))).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Notes' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Notes' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'one\ntwo\nthree' } });
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({ name: 'testy', values: { notes: 'one\ntwo\nthree' } }), { timeout: 3000 });
+  });
+
+  it('reports an empty document rather than an empty editor', () => {
+    usePluginDetail.mockReturnValue({ data: detail([{ key: 'prompt', label: 'Prompt', type: 'prompt' }], {}), isLoading: false });
+    renderDetail();
+    expect(screen.getByText(en.pluginCfg.editorEmpty)).toBeInTheDocument();
+    expect(screen.queryByTestId('monaco')).toBeNull();
+  });
+
+  it('flags invalid JSON on the record and keeps the editor behind the modal', () => {
+    usePluginDetail.mockReturnValue({ data: detail([{ key: 'payload', label: 'Payload', type: 'json' }], { payload: '{ nope' }), isLoading: false });
+    renderDetail();
+    expect(within(rowOf('Payload')).getByRole('alert')).toHaveTextContent(en.pluginCfg.invalidJson);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Payload' }));
+    expect(screen.getByRole('textbox', { name: 'Payload' })).toHaveValue('{ nope');
+  });
+
+  it('opens the structured roles editor in a modal, ignoring legacy stored fields', async () => {
     usePluginDetail.mockReturnValue({ data: detail(
       [{ key: 'rolePolicies', label: 'Roles', type: 'rolePolicies' }],
       { rolePolicies: [{ roleId: '1', name: 'dev', prompt: 'Keep it short.', projectIds: [7], tools: ['Bash'], elowenUser: 'legacy' }] },
     ), isLoading: false });
     renderDetail();
 
+    expect(screen.getByText(en.pluginCfg.editorItems.replace('{n}', '1'))).toBeInTheDocument();
+    expect(screen.queryByText('dev')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Roles' }));
     fireEvent.click(screen.getByText('dev'));
-    const prompt = screen.getByDisplayValue('Keep it short.');
-    await waitFor(() => expect(prompt).toBeVisible());
+    await waitFor(() => expect(screen.getByDisplayValue('Keep it short.')).toBeVisible());
     expect(screen.queryByText('legacy')).toBeNull();
     expect(screen.queryByText('Bash')).toBeNull();
-
-    fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabCapabilities }));
-    await waitFor(() => expect(prompt).not.toBeVisible());
-
-    fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabBehavior }));
-    await waitFor(() => expect(prompt).toBeVisible());
-  });
-});
-
-describe('PluginDetail config field layout', () => {
-  it('gives self-contained controls the full row while keeping plain inputs compact', () => {
-    usePluginDetail.mockReturnValue({ data: detail([
-      { key: 'destination', label: 'Destination', type: 'destination' },
-      { key: 'code', label: 'Code', type: 'code' },
-      { key: 'notes', label: 'Notes', type: 'textarea' },
-      { key: 'name', label: 'Name', type: 'string' },
-    ], {}), isLoading: false });
-    renderDetail();
-
-    const fieldWrapper = (label: string) => screen.getAllByText(label).map((node) => node.closest('.animate-fade-up')).find(Boolean);
-    for (const label of ['Destination', 'Code', 'Notes']) {
-      expect(fieldWrapper(label)).toHaveClass('@lg:col-span-2');
-    }
-    expect(fieldWrapper('Name')).not.toHaveClass('@lg:col-span-2');
   });
 });
 
 describe('PluginDetail secret field', () => {
-  it('shows stored status and requires an explicit replace action before editing', () => {
+  it('reports a stored secret as a compact status and requires an explicit replace action', () => {
     usePluginDetail.mockReturnValue({ data: detail(
       [{ key: 'token', label: 'Token', type: 'secret' }],
       {},
@@ -210,11 +252,13 @@ describe('PluginDetail secret field', () => {
     const { container } = renderDetail();
     fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabSetup }));
 
-    expect(screen.getByText(en.pluginCfg.secretSet)).toBeInTheDocument();
-    expect(screen.getByText(en.pluginCfg.secretKeepHint)).toBeInTheDocument();
+    const row = rowOf('Token');
+    expect(within(row).getByText(en.pluginCfg.secretSet)).toBeInTheDocument();
     expect(container.querySelector('input[type="password"]')).toBeNull();
+    // The keep-hint sits behind the record's help affordance instead of adding a second line to it.
+    expect(screen.queryByText(en.pluginCfg.secretKeepHint)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: en.pluginCfg.secretReplace }));
+    fireEvent.click(within(row).getByRole('button', { name: en.pluginCfg.secretReplace }));
     expect(container.querySelector('input[type="password"]')).toHaveAttribute('placeholder', en.pluginCfg.secretReplacementPlaceholder);
   });
 });
@@ -224,12 +268,11 @@ describe('PluginDetail multiSelect field', () => {
     { key: 'langs', label: 'Languages', type: 'multiSelect', options: [{ value: 'cs', label: 'Czech' }, { value: 'en', label: 'English' }] },
   ];
 
-  it('renders a selection summary and a one-list modal without a group-filter row', () => {
+  it('renders a count trigger and a one-list modal without a group-filter row', () => {
     usePluginDetail.mockReturnValue({ data: detail(schema, { langs: ['cs'] }), isLoading: false });
     renderDetail();
     expect(screen.getByText('1 selected')).toBeInTheDocument();
-    expect(screen.getByText('Czech')).toBeInTheDocument(); // sample chip
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
+    fireEvent.click(screen.getByRole('button', { name: 'Languages' }));
     // Single ungrouped list: no filter chips, no group headers.
     expect(screen.queryByRole('tablist')).toBeNull();
     expect(screen.queryByRole('heading', { name: /Czech|English/ })).toBeNull();
@@ -240,7 +283,7 @@ describe('PluginDetail multiSelect field', () => {
   it('toggling options and saving updates the summary count', async () => {
     usePluginDetail.mockReturnValue({ data: detail(schema, { langs: ['cs'] }), isLoading: false });
     renderDetail();
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
+    fireEvent.click(screen.getByRole('button', { name: 'Languages' }));
     fireEvent.click(screen.getByRole('button', { name: 'English' }));
     fireEvent.click(screen.getByRole('button', { name: en.managePicker.saveChanges }));
     await waitFor(() => expect(screen.queryByRole('button', { name: en.managePicker.saveChanges })).toBeNull());
@@ -250,7 +293,7 @@ describe('PluginDetail multiSelect field', () => {
   it('a saved value the manifest no longer offers stays visible in the modal', () => {
     usePluginDetail.mockReturnValue({ data: detail(schema, { langs: ['gone'] }), isLoading: false });
     renderDetail();
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
+    fireEvent.click(screen.getByRole('button', { name: 'Languages' }));
     expect(screen.getByRole('button', { name: 'gone' })).toHaveAttribute('aria-pressed', 'true');
   });
 });
@@ -267,7 +310,7 @@ describe('PluginDetail destination field', () => {
     ), isLoading: false });
     renderDetail();
     expect(screen.getAllByText('#general').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
+    fireEvent.click(screen.getByRole('button', { name: 'Notification conversation' }));
     expect(screen.getByRole('heading', { name: 'Discord' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Microsoft Teams · Direct chats' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Filip' }));
@@ -297,4 +340,3 @@ describe('PluginDetail config density', () => {
     expect(screen.getByText('A longer explanation that should stay behind the help affordance.')).toBeInTheDocument();
   });
 });
-
