@@ -10,6 +10,27 @@ const stack: OverlayEntry[] = [];
 const priorState = new Map<HTMLElement, PriorState>();
 let priorBodyOverflow = '';
 
+/** A body-level surface that must stay LIVE over an open overlay instead of being isolated behind it.
+ *
+ *  The sweep below is deliberately blunt — every other child of <body> goes `inert` — because that is
+ *  what makes an overlay the only thing on the page. One kind of surface has to contradict it: a toast.
+ *  The stacking order already says so (`--z-toast` 130 sits above `--z-modal` 100 in tokens.css) exactly
+ *  so that a message about what just happened stays readable over the thing that caused it, and a
+ *  confirmation or an error raised BY a dialog is the case that band was designed for. Without an
+ *  exemption the toast paints above the dialog and is unclickable and unannounced — the isolation
+ *  silently winning an argument the z-scale had already settled.
+ *
+ *  It is an opt-in attribute rather than a list of component names here, because the stack is a generic
+ *  service and should not learn what a toast is; and it is NOT a stack registration, because registering
+ *  would make the toast the top of the stack and inert the dialog underneath it — a toast coexists with
+ *  the overlay it appears over, it does not take over from it.
+ *
+ *  An exempt node is never recorded in `priorState` either, so nothing is written to it and nothing is
+ *  restored onto it. Note that this only answers for THIS sweep: Radix's modal dialog runs its own
+ *  `aria-hidden` pass over the same body children, and that one spares `[aria-live]`. A surface that has
+ *  to survive both must carry both attributes. */
+const LIVE_OVER_OVERLAYS = 'data-overlay-exempt';
+
 function syncIsolation() {
   const top = stack.at(-1)?.root ?? null;
   if (stack.length === 0) {
@@ -27,6 +48,7 @@ function syncIsolation() {
 
   for (const node of Array.from(document.body.children)) {
     if (!(node instanceof HTMLElement)) continue;
+    if (node.hasAttribute(LIVE_OVER_OVERLAYS)) continue;
     if (!priorState.has(node)) priorState.set(node, { inert: node.inert || node.hasAttribute('inert'), ariaHidden: node.getAttribute('aria-hidden') });
     const isolated = node !== top;
     node.inert = isolated;

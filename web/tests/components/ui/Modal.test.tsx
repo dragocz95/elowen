@@ -333,6 +333,35 @@ describe('Modal', () => {
     background.remove();
   });
 
+  // The toast dock is the one surface that has to contradict the isolation: `--z-toast` (130) sits above
+  // `--z-modal` (100) precisely so a message about what just happened stays readable over the thing that
+  // caused it, and an error raised BY a dialog is that case. Swept up with the rest of the page it paints
+  // above the dialog while being unclickable and unannounced.
+  //
+  // Two independent sweeps hide the page behind a dialog and each has its own opt-out, so a surface that
+  // has to survive BOTH says so twice: `data-overlay-exempt` for this app's stack, and `aria-live` for
+  // the `hideOthers()` pass Radix runs from inside its modal content, which spares live regions and
+  // nothing else. With only the first, the node comes out interactive but still `aria-hidden` — which is
+  // the same defect wearing a different attribute.
+  it('leaves a surface marked live-over-overlays out of the isolation sweep', () => {
+    const live = document.body.appendChild(document.createElement('div'));
+    live.setAttribute('data-overlay-exempt', '');
+    live.setAttribute('aria-live', 'polite');
+    const ordinary = document.body.appendChild(document.createElement('div'));
+
+    const { unmount } = render(<Modal title="Isolating" onClose={vi.fn()}><span>body</span></Modal>, { wrapper: W });
+    expect(ordinary).toHaveAttribute('inert');
+    expect(live).not.toHaveAttribute('inert');
+    expect(live).not.toHaveAttribute('aria-hidden');
+
+    unmount();
+    // And nothing was recorded against it, so nothing is written back to it either.
+    expect(live).not.toHaveAttribute('inert');
+    expect(live).not.toHaveAttribute('aria-hidden');
+    live.remove();
+    ordinary.remove();
+  });
+
   it('keeps the phone fullscreen presentation on the Radix surface', () => {
     asPhone();
     render(<Modal title="Phone dialog" onClose={vi.fn()}><span>body</span></Modal>, { wrapper: W });
