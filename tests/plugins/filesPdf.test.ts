@@ -99,7 +99,7 @@ describe('Read — PDF', () => {
     runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', params), { sessionId: 'brain-pdf' });
 
   it('reads the requested pages as text, labelled by page', async () => {
-    const res = await read({ path: pdf, pages: '1-2' });
+    const res = await read({ file_path: pdf, pages: '1-2' });
     const text = res.content[0].text!;
     expect(text).toContain('--- page 1 ---');
     expect(text).toContain('Hello page one');
@@ -110,15 +110,15 @@ describe('Read — PDF', () => {
   });
 
   it('reads a single page and a discontiguous list', async () => {
-    expect((await read({ path: pdf, pages: '2' })).content[0].text).toContain('Second page here');
-    const list = (await read({ path: pdf, pages: '1,3' })).content[0].text!;
+    expect((await read({ file_path: pdf, pages: '2' })).content[0].text).toContain('Second page here');
+    const list = (await read({ file_path: pdf, pages: '1,3' })).content[0].text!;
     expect(list).toContain('Hello page one');
     expect(list).toContain('Third page text');
     expect(list).not.toContain('Second page here');
   });
 
   it('demands `pages` for a PDF instead of handing back decoded binary', async () => {
-    const res = await read({ path: pdf });
+    const res = await read({ file_path: pdf });
     expect(res.content[0].text).toContain('This is a PDF');
     expect(res.content[0].text).toContain('pages=');
     expect(res.details).toMatchObject({ ok: false, pdf: true });
@@ -127,7 +127,7 @@ describe('Read — PDF', () => {
   });
 
   it('renders a page with no text layer as an image — the only way a scan reaches the model', async () => {
-    const res = await read({ path: scanned, pages: '1-2' });
+    const res = await read({ file_path: scanned, pages: '1-2' });
     const text = res.content[0].text!;
     expect(text).toContain('Cover page text');                       // page 1 had a text layer
     expect(text).toContain('--- page 2 (no text layer — rendered as an image below) ---');
@@ -138,19 +138,19 @@ describe('Read — PDF', () => {
   });
 
   it('skips pages the PDF does not have, and says which', async () => {
-    const res = await read({ path: pdf, pages: '2,9' });
+    const res = await read({ file_path: pdf, pages: '2,9' });
     expect(res.content[0].text).toContain('Second page here');
     expect(res.content[0].text).toContain('Skipped page(s) 9: the PDF has 3.');
   });
 
   it('errors when NONE of the requested pages exist', async () => {
-    const res = await read({ path: pdf, pages: '8-9' });
+    const res = await read({ file_path: pdf, pages: '8-9' });
     expect(res.content[0].text).toMatch(/none of the requested pages exist/);
     expect(res.details).toMatchObject({ ok: false });
   });
 
   it('surfaces a bad `pages` spec as an actionable error', async () => {
-    const res = await read({ path: pdf, pages: '1-99' });
+    const res = await read({ file_path: pdf, pages: '1-99' });
     expect(res.content[0].text).toMatch(/Invalid pages/);
     expect(res.content[0].text).toMatch(/more than 20 pages/);
   });
@@ -158,7 +158,7 @@ describe('Read — PDF', () => {
   it('leaves `pages` inert for a non-PDF file (backwards compatible)', async () => {
     const txt = join(dir, 'plain.txt');
     writeFileSync(txt, 'line one\nline two\n');
-    const res = await read({ path: txt, pages: '1-5' });
+    const res = await read({ file_path: txt, pages: '1-5' });
     expect(res.content[0].text).toContain('line one');
     expect(res.details).not.toMatchObject({ pdf: true });
   });

@@ -70,7 +70,7 @@ describe('files — pdfMaxPages', () => {
     const reg = await load({ pdfMaxPages: 5 });
     const res = await runWithPolicy(
       userPolicy([dir]),
-      () => toolOf(reg, 'Read').execute('t', { path: pdf, pages: '1-6' }),
+      () => toolOf(reg, 'Read').execute('t', { file_path: pdf, pages: '1-6' }),
       { sessionId: 'brain-pdf-cap' },
     );
     expect(res.content[0]?.text).toContain('more than 5 pages');
@@ -83,7 +83,7 @@ describe('files — pdfMaxPages', () => {
     const reg = await load({ pdfMaxPages: 50 });
     const res = await runWithPolicy(
       userPolicy([dir]),
-      () => toolOf(reg, 'Read').execute('t', { path: pdf }),
+      () => toolOf(reg, 'Read').execute('t', { file_path: pdf }),
       { sessionId: 'brain-pdf-hint' },
     );
     expect(res.content[0]?.text).toContain('max 50 per call');

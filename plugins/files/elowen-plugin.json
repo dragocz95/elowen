@@ -1,6 +1,6 @@
 {
   "name": "files",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": "1",
   "description": "Read, write, and list files within the user's accessible Elowen repositories.",
   "entry": "index.mjs",
