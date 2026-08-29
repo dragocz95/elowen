@@ -45,14 +45,14 @@ describe('BrainLimitsModal', () => {
       screen.getByRole('slider', { name: sliderName }).closest('div')?.parentElement?.textContent ?? undefined;
     expect(rowLabel('Question timeout')).toContain('360 min');
     expect(rowLabel('Tool output — tokens')).toContain('≈ 10k tokens');
-    fireEvent.change(screen.getByRole('slider', { name: 'Question timeout' }), { target: { value: '10' } });
-    fireEvent.change(screen.getByRole('slider', { name: 'Tool output — tokens' }), { target: { value: '6000' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Question timeout' }), { key: 'Home' });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Tool output — tokens' }), { key: 'ArrowRight' });
 
     const durationUpdate = updates[0];
     const sizeUpdate = updates[1];
     if (!durationUpdate || !sizeUpdate) throw new Error('slider changes did not reach onChange');
-    expect(durationUpdate(BRAIN_LIMIT_DEFAULTS).elicitationTimeoutMs).toBe(600000);
-    expect(sizeUpdate(BRAIN_LIMIT_DEFAULTS).toolOutputMaxChars).toBe(24000);
+    expect(durationUpdate(BRAIN_LIMIT_DEFAULTS).elicitationTimeoutMs).toBe(30_000);
+    expect(sizeUpdate(BRAIN_LIMIT_DEFAULTS).toolOutputMaxChars).toBe(41_500);
   });
 
   it('keeps slider changes inside the canonical field bounds', () => {
@@ -62,14 +62,12 @@ describe('BrainLimitsModal', () => {
         <BrainLimitsModal limits={BRAIN_LIMIT_DEFAULTS} onChange={(update) => updates.push(update)} onClose={() => {}} />
       </LanguageProvider>,
     );
-    const timeout = screen.getByRole('slider', { name: 'Question timeout' }) as HTMLInputElement;
-    expect(timeout.min).toBe('0.5');
-    expect(timeout.max).toBe('360'); // 6 hours, in the slider's own unit (minutes)
+    const timeout = screen.getByRole('slider', { name: 'Question timeout' });
+    expect(timeout).toHaveAttribute('aria-valuemin', '0.5');
+    expect(timeout).toHaveAttribute('aria-valuemax', '360'); // 6 hours, in the slider's own unit (minutes)
 
-    // Clamped from BELOW, because this field's default already sits on its ceiling: a value pushed past
-    // the top would come back as the value the slider already holds, and an input whose value did not
-    // change fires no event at all — the assertion would then be waiting on a change that never happens.
-    fireEvent.change(timeout, { target: { value: '0.1' } });
+    // The default sits at the ceiling, so Home exercises the opposite bound through Radix's keyboard API.
+    fireEvent.keyDown(timeout, { key: 'Home' });
 
     const update = updates[0];
     if (!update) throw new Error('slider change did not reach onChange');

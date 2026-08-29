@@ -278,11 +278,11 @@ describe('BrainSection — OAuth account model picker', () => {
     fireEvent.click(screen.getByRole('button', { name: en.brain.retention.manage }));
     expect(screen.getByRole('dialog', { name: en.brain.retention.title })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole('slider', { name: en.brain.retention.graceDays }), { target: { value: '30' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: en.brain.retention.graceDays }), { key: 'ArrowRight' });
     // The RuntimeLimits-style autosave PUTs the whole runtime block after the debounce — retention included.
     await waitFor(() => expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
       runtime: expect.objectContaining({
-        memoryRetention: expect.objectContaining({ graceDays: 30 }),
+        memoryRetention: expect.objectContaining({ graceDays: 15 }),
       }),
     })), { timeout: 3000 });
   });

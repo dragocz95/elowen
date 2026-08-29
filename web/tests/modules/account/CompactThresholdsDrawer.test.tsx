@@ -28,12 +28,12 @@ describe('CompactThresholdsDrawer', () => {
     expect(screen.getByText(en.cli.compactByModelDefault)).toBeTruthy(); // ant/claude-x inherits the global default
   });
 
-  it('dragging a slider sets an override keyed provider/model; reset clears it', () => {
+  it('moving a slider sets an override keyed provider/model; reset clears it', () => {
     const { onChange } = renderDrawer();
     // Row order follows MODELS: [0] relay/gpt-x (tuned), [1] ant/claude-x (untuned).
     const sliders = screen.getAllByRole('slider');
-    fireEvent.change(sliders[1]!, { target: { value: '70' } });
-    expect(onChange).toHaveBeenCalledWith('ant/claude-x', 70);
+    fireEvent.keyDown(sliders[1]!, { key: 'ArrowLeft' });
+    expect(onChange).toHaveBeenCalledWith('ant/claude-x', 75);
     // The tuned row exposes a reset control that clears its override (null → inherit the global).
     fireEvent.click(screen.getByRole('button', { name: `${en.cli.compactByModelReset}: Relay gpt-x` }));
     expect(onChange).toHaveBeenCalledWith('relay/gpt-x', null);

@@ -59,19 +59,19 @@ describe('BrainSection limits — collapsed into a drawer', () => {
     renderBrain();
     fireEvent.click(await screen.findByRole('button', { name: 'Edit limits' }));
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
-    fireEvent.change(screen.getByRole('slider', { name: 'Memory recall — count' }), { target: { value: '9' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Memory recall — count' }), { key: 'ArrowRight' });
     await waitFor(
-      () => expect((putBody as { brain: { limits: { memoryRecallCount: number } } })?.brain?.limits?.memoryRecallCount).toBe(9),
+      () => expect((putBody as { brain: { limits: { memoryRecallCount: number } } })?.brain?.limits?.memoryRecallCount).toBe(7),
       { timeout: 3000 },
     );
   });
 
-  // The daemon clamps every limit to its bound and answers with the config it actually stored. Here it
-  // answers 6 to a slider set to 9 — the state that used to leave the operator believing the change stuck.
+  // The daemon answers 6 to a slider moved to 7 — the state that used to leave the operator believing
+  // the change stuck even though the server kept a different value.
   it('says which value the daemon kept when a save comes back clamped', async () => {
     renderBrain();
     fireEvent.click(await screen.findByRole('button', { name: 'Edit limits' }));
-    fireEvent.change(screen.getByRole('slider', { name: 'Memory recall — count' }), { target: { value: '9' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Memory recall — count' }), { key: 'ArrowRight' });
     await waitFor(
       () => expect(screen.getByText('Saved as 6 — the value you set was outside the allowed range.')).toBeTruthy(),
       { timeout: 3000 },

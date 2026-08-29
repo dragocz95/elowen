@@ -70,7 +70,9 @@ describe('TerminalSection', () => {
 
   it('autosaves the patched fields after a change', async () => {
     renderSection();
-    fireEvent.change(first(screen.getAllByRole('slider'), 'slider'), { target: { value: '18' } }); // fontSize slider
+    const fontSize = first(screen.getAllByRole('slider'), 'slider');
+    fireEvent.keyDown(fontSize, { key: 'ArrowRight' });
+    fireEvent.keyDown(fontSize, { key: 'ArrowRight' });
     await waitFor(() => expect(mutate).toHaveBeenCalled(), { timeout: 1500 });
     expect((first(mutate.mock.calls, 'save call')[0] as TerminalSettings).fontSize).toBe(18);
   });
@@ -81,15 +83,15 @@ describe('TerminalSection', () => {
     renderSection();
     const depth = screen.getByRole('slider', { name: 'Prompt history' });
     const window = screen.getByRole('slider', { name: 'Double Esc window' });
-    expect(depth).toHaveValue('250');
-    expect(window).toHaveValue('2.5'); // stored in milliseconds, edited in seconds
+    expect(depth).toHaveAttribute('aria-valuenow', '250');
+    expect(window).toHaveAttribute('aria-valuenow', '2.5'); // stored in milliseconds, edited in seconds
     expect(screen.getByText('250 lines')).toBeTruthy();
     expect(screen.getByText('2.5 s')).toBeTruthy();
 
-    fireEvent.change(depth, { target: { value: '400' } });
+    fireEvent.keyDown(depth, { key: 'ArrowRight' });
     await waitFor(() => expect(mutate).toHaveBeenCalled(), { timeout: 1500 });
     const saved = first(mutate.mock.calls, 'save call')[0] as TerminalSettings;
-    expect(saved.promptHistoryDepth).toBe(400);
+    expect(saved.promptHistoryDepth).toBe(260);
     expect(saved.interruptConfirmMs).toBe(2500); // the untouched sibling travels at its stored value
   });
 });
