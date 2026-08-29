@@ -784,7 +784,7 @@ function Gallery() {
         <Section
           id="overlays"
           title="Modals and confirmations"
-          note="Each trigger opens the real overlay. `presentation=auto` is the app's own rule — it resolves from overlay depth and the window size, so on a phone it becomes the full viewport and on a desktop the first level is a right-hand drawer."
+          note="Each trigger opens the real overlay. `presentation=auto` is the app's own rule — it resolves from overlay depth and the window size, so on a phone it becomes the full viewport and on a desktop the first level is a right-hand drawer. `sheet` and `fullscreen` are the same full-bleed shape on a phone; at this width a sheet is a bounded panel raised from the bottom edge and a fullscreen dialog takes the screen."
         >
           {MODAL_PRESENTATIONS.map((presentation) => (
             <Specimen key={presentation} label={`Modal presentation="${presentation}" — one trigger per size`}>

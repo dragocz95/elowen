@@ -75,6 +75,24 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   animation: overlay-sheet-in var(--motion-base) var(--ease-out) both;
 }
+/* With room, the phone geometry alone is not a sheet. Full bleed at 1440px is a fullscreen surface that
+   happens to stop 12dvh short of the top, so the two presentations were telling themselves apart by an
+   inset and nothing a reader could name. A sheet is a bounded panel raised from the bottom edge OVER a
+   page that stays visible, so here it takes the width a first-level drawer takes — deliberately the same
+   expression as `presentation: 'drawer', width: 'default'` in components/ui/shadcn/dialog.tsx, because
+   one bounded panel raised over the page should be one width — and centres itself in the viewport. It
+   keeps the bottom edge and the top-only radius: it still rises from the edge, it just no longer claims
+   the whole screen doing it. 768px is PHONE_MAX_WIDTH + 1. */
+@media (min-width: 768px) {
+  .overlay-surface[data-presentation='sheet'] {
+    width: min(38rem, calc(100vw - 3rem));
+    /* Over-constrained on purpose: the rule above already pins both inline edges, so `auto` margins
+       resolve to equal halves and that is what centres a fixed surface. */
+    margin-inline: auto;
+    /* The inline edges are visible now that the surface no longer runs into them, so they are drawn. */
+    border-inline: var(--hairline);
+  }
+}
 
 /* A focused editing surface takes the screen. Safe-area PADDING rather than an inset, so the surface
    still paints edge to edge while its header stays clear of the notch and its footer clear of the home
