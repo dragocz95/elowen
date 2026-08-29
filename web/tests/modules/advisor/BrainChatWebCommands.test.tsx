@@ -262,7 +262,9 @@ describe('web slash commands: work mode + rename', () => {
     await waitFor(() => expect(sessionTasks[0]?.status).toBe('completed'));
 
     fireEvent.click(within(dialog).getAllByRole('button', { name: 'Delete' })[0]!);
-    const confirm = await screen.findByRole('dialog', { name: 'Delete this task?' });
+    // `alertdialog`, not `dialog`: a confirmation is an alert dialog now, which is what makes it
+    // undismissable by a stray press outside it.
+    const confirm = await screen.findByRole('alertdialog', { name: 'Delete this task?' });
     await act(async () => { fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' })); });
     await waitFor(() => expect(sessionTasks.map((task) => task.id)).toEqual(['2']));
     await waitFor(() => expect(screen.queryByText('Inspect auth')).toBeNull());

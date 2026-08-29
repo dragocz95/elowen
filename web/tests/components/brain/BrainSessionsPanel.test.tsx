@@ -118,14 +118,16 @@ describe('BrainSessionsPanel (conversation register)', () => {
     await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
 
     fireEvent.click(await screen.findByRole('button', { name: 'Delete all' }));
-    const wide = await screen.findByRole('dialog');
+    // `alertdialog`, not `dialog`: a confirmation is an alert dialog now, which is what makes it
+    // undismissable by a stray press outside it.
+    const wide = await screen.findByRole('alertdialog');
     expect(within(wide).getByText(/every account/i)).toBeInTheDocument();
     fireEvent.click(within(wide).getByRole('button', { name: 'Cancel' }));
 
     fireEvent.click(screen.getByRole('radio', { name: 'Just mine' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Delete all' }));
     // The personal view keeps the personal wording -- clearing your own history is a different act.
-    const mine = await screen.findByRole('dialog');
+    const mine = await screen.findByRole('alertdialog');
     expect(within(mine).queryByText(/every account/i)).toBeNull();
   });
 });

@@ -47,7 +47,9 @@ describe('CliSection — YOLO default toggle', () => {
     renderSection();
     fireEvent.click(screen.getByRole('switch', { name: en.cli.yoloToggle }));
     expect(savePermissions).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog', { name: en.cli.yoloConfirmTitle })).toBeTruthy();
+    // `alertdialog`, not `dialog`: a confirmation is an alert dialog now, which is what makes it
+    // undismissable by a stray press outside it.
+    expect(screen.getByRole('alertdialog', { name: en.cli.yoloConfirmTitle })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: en.cli.yoloConfirm }));
     await waitFor(() => expect(savePermissions).toHaveBeenCalled(), { timeout: 1500 });
     expect(savePermissions.mock.calls[0]![0]).toEqual({ yolo: true });
