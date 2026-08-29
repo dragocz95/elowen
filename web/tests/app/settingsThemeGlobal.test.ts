@@ -67,8 +67,7 @@ describe('settings row layout contract', () => {
   const studio = stripComments(readFileSync(join(webRoot, 'skins', 'studio', 'surfaces.css'), 'utf8'));
   const PHONE = '@container workspace-shell (width < 38.75rem)';
 
-  // Leading newline: `.settings-row {` on its own also ends `.settings-group__panel .settings-row {`,
-  // which is a different rule about a record nested in a padded panel.
+  // Leading newline keeps the lookup pinned to the standalone record selector.
   const BASE_ROW = '\n.settings-row {';
 
   it('gives every record the same floor so a card reads as evenly ruled', () => {

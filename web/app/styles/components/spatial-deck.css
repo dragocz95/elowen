@@ -159,10 +159,6 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 /* A padded body for grouped content that is a free block (pill lists, log tails, config field grids)
    rather than a stack of records — inset matched to the card header. */
 .settings-group__panel { padding: 1.05rem clamp(1rem, 1.6vw, 1.4rem) 1.3rem; }
-/* A record nested inside a padded panel must not double its inset — the panel already provides the
-   horizontal padding, so the record only keeps its vertical rhythm. */
-.settings-group__panel .settings-row { padding-inline: 0; }
-
 /* Plugin-detail cards already read as discrete surfaces; the base card provides that now, so the
    modifier only has to stop the header tint from fighting the rounded corner. */
 .settings-group.plugin-card > .settings-group__header { background: transparent; }
