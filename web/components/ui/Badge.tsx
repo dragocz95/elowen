@@ -1,15 +1,24 @@
 import type { ReactNode } from 'react';
 import type { Tone } from './tone';
 
-const TONES: Record<Tone, string> = {
-  default: 'border-border bg-elevated text-text-muted',
-  accent: 'border-primary/40 bg-primary/10 text-primary',
-  muted: 'border-border bg-elevated text-text-muted',
-  danger: 'border-danger/40 bg-danger/10 text-danger',
-  success: 'border-success/40 bg-success/10 text-success',
-  warning: 'border-warning/40 bg-warning/10 text-warning',
-};
+import { Badge as ShadcnBadge, badgeVariants } from './shadcn/badge';
+
+/** The app-shaped badge, composed from the shadcn/ui `Badge` in `./shadcn/badge.tsx`.
+ *
+ *  Only the vocabulary is this file's. The app colours a badge by TONE — the shared `Tone` union that the
+ *  timeline, the event stream and the dashboard signals all read from `./tone.ts` — where shadcn names a
+ *  badge by role. The two are not the same axis: `success` and `warning` are tones with no shadcn variant
+ *  at all, and every tone here is the soft form rather than shadcn's solid one. This map is what keeps
+ *  all 21 call sites untouched, and it goes away with this wrapper in a later phase. */
+const TONE_VARIANT = {
+  default: 'secondary',
+  muted: 'secondary',
+  accent: 'soft-primary',
+  danger: 'soft-destructive',
+  success: 'soft-success',
+  warning: 'soft-warning',
+} as const satisfies Record<Tone, NonNullable<Parameters<typeof badgeVariants>[0]>['variant']>;
 
 export function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: Tone }) {
-  return <span className={`badge inline-flex whitespace-nowrap items-center rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium ${TONES[tone]}`}>{children}</span>;
+  return <ShadcnBadge variant={TONE_VARIANT[tone]}>{children}</ShadcnBadge>;
 }
