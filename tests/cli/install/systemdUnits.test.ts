@@ -148,4 +148,7 @@ describe('install/systemdUnits.elowenSudoers', () => {
   it('pins the exact self-reinstall command for the service user', () => {
     expect(s).toMatch(/^elowen ALL=\(root\) NOPASSWD: \/usr\/bin\/npm install -g elowen@latest --prefix \/usr$/m);
   });
+  it('allows the site gateway helper only with an empty argument vector', () => {
+    expect(s).toMatch(/^elowen ALL=\(root\) NOPASSWD: \/usr\/local\/libexec\/elowen-site-gateway ""$/m);
+  });
 });

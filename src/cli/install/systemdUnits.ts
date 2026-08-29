@@ -141,7 +141,7 @@ export function elowenSudoers(user: string, reinstallCmd: string): string {
   return `# Managed by elowen install — lets the ${user} service user restart its own units and self-update in place (auto-update + manual update).
 ${user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${units}, /usr/bin/systemctl is-active ${units}
 ${user} ALL=(root) NOPASSWD: ${reinstallCmd}
-${user} ALL=(root) NOPASSWD: ${SITE_GATEWAY_HELPER_PATH}
+${user} ALL=(root) NOPASSWD: ${SITE_GATEWAY_HELPER_PATH} ""
 `;
 }
 
