@@ -29,12 +29,12 @@ describe('RuntimeLimitsModal', () => {
     // 200 per mille is the operator-facing 0.20 — displaying the raw 200 would be meaningless on a
     // similarity scale, and writing 0.2 back would be rounded to zero by the daemon's clamp.
     expect(screen.getByText('0.20')).toBeTruthy();
-    const floor = screen.getByRole('slider', { name: 'Memory relevance floor' }) as HTMLInputElement;
-    expect(floor.min).toBe('0.1');
-    expect(floor.max).toBe('0.8');
+    const floor = screen.getByRole('slider', { name: 'Memory relevance floor' });
+    expect(floor).toHaveAttribute('aria-valuemin', '0.1');
+    expect(floor).toHaveAttribute('aria-valuemax', '0.8');
 
-    fireEvent.change(floor, { target: { value: '0.55' } });
-    expect(apply(0).limits.memorySemanticFloorPerMille).toBe(550);
+    fireEvent.keyDown(floor, { key: 'ArrowRight' });
+    expect(apply(0).limits.memorySemanticFloorPerMille).toBe(210);
   });
 
   it('shows a duration in seconds and a retention in days, and writes canonical units back', () => {
@@ -44,20 +44,20 @@ describe('RuntimeLimitsModal', () => {
     // Two retention knobs share the days unit (activity log, IP address), so the value alone is ambiguous.
     expect(screen.getAllByText('30 days')).toHaveLength(2);
 
-    fireEvent.change(screen.getByRole('slider', { name: 'Local shell timeout' }), { target: { value: '90' } });
-    expect(apply(0).limits.localShellTimeoutMs).toBe(90000);
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Local shell timeout' }), { key: 'ArrowRight' });
+    expect(apply(0).limits.localShellTimeoutMs).toBe(35000);
 
-    fireEvent.change(screen.getByRole('slider', { name: 'Activity log retention' }), { target: { value: '7' } });
-    expect(apply(1).limits.eventRetentionDays).toBe(7);
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Activity log retention' }), { key: 'ArrowLeft' });
+    expect(apply(1).limits.eventRetentionDays).toBe(29);
 
-    fireEvent.change(screen.getByRole('slider', { name: 'IP address retention' }), { target: { value: '14' } });
-    expect(apply(2).limits.originIpRetentionDays).toBe(14);
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'IP address retention' }), { key: 'ArrowRight' });
+    expect(apply(2).limits.originIpRetentionDays).toBe(31);
   });
 
   it('keeps a slider change inside the canonical field bounds', () => {
     const { apply } = renderModal();
-    fireEvent.change(screen.getByRole('slider', { name: 'Local shell timeout' }), { target: { value: '9000' } });
-    expect(apply(0).limits.localShellTimeoutMs).toBe(300000); // the daemon's ceiling, not the typed value
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Local shell timeout' }), { key: 'End' });
+    expect(apply(0).limits.localShellTimeoutMs).toBe(300000); // the slider and daemon share this ceiling
   });
 
   it('reports a clamped field with the value the daemon actually applied', () => {

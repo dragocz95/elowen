@@ -45,14 +45,14 @@ describe('ProviderCompatibilityModal', () => {
   it('saves switches, the temperature slider and the token-limit field as one typed value', () => {
     const { onSave } = renderModal();
     fireEvent.click(screen.getByRole('switch', { name: 'Override model temperature' }));
-    fireEvent.change(screen.getByRole('slider', { name: 'Temperature' }), { target: { value: '1.2' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Temperature' }), { key: 'ArrowRight' });
     fireEvent.click(screen.getByRole('switch', { name: '24-hour prompt cache' }));
     fireEvent.click(screen.getByRole('switch', { name: 'Strict tool schemas' }));
     fireEvent.click(screen.getByRole('radio', { name: 'max_tokens' }));
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
 
     expect(onSave).toHaveBeenCalledWith({
-      temperature: '1.2',
+      temperature: '0.8',
       compatibility: {
         ...DEFAULT_PROVIDER_COMPATIBILITY,
         supportsLongCacheRetention: true,

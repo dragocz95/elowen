@@ -53,18 +53,18 @@ describe('MemoryRetentionModal', () => {
     let next = apply(0);
     expect(next.memoryRetention?.enabled).toBe(false);
 
-    fireEvent.change(screen.getByRole('slider', { name: 'Grace period' }), { target: { value: '30' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Grace period' }), { key: 'ArrowRight' });
     next = apply(1);
-    expect(next.memoryRetention?.graceDays).toBe(30);
+    expect(next.memoryRetention?.graceDays).toBe(15);
     expect(next.memoryRetention?.vitalityFloor).toBe(10); // untouched fields stay
 
-    fireEvent.change(screen.getByRole('slider', { name: 'Vitality floor' }), { target: { value: '40' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Vitality floor' }), { key: 'ArrowRight' });
     next = apply(2);
-    expect(next.memoryRetention?.vitalityFloor).toBe(40);
+    expect(next.memoryRetention?.vitalityFloor).toBe(11);
 
-    fireEvent.change(screen.getByRole('slider', { name: 'Half-life — importance 2' }), { target: { value: '0.5' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Half-life — importance 2' }), { key: 'ArrowLeft' });
     next = apply(3);
-    expect(next.memoryRetention?.halfLifeByImportance[2]).toBe(0.5);
+    expect(next.memoryRetention?.halfLifeByImportance[2]).toBe(6.9);
     expect(next.memoryRetention?.halfLifeByImportance[1]).toBe(3);
   });
 
