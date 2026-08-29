@@ -654,27 +654,6 @@
   padding: 0.75rem clamp(1rem, 1.6vw, 1.25rem);
   border-bottom-color: var(--studio-line);
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing {
-  display: flex;
-  min-width: 0;
-  grid-column: 2 / 4;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem 0.75rem;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__status {
-  margin-top: 0;
-  white-space: nowrap;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__control {
-  min-width: 0;
-  flex: 1 1 10rem;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__actions {
-  flex: 0 1 auto;
-  justify-content: flex-end;
-}
 /* The accent edge goes. It marked which record the pointer was on, in the loudest colour the design
    owns, on a surface where the pointer is already unmistakable — and it was the second of two hover
    signals on the same element. The ground alone carries it now, and neutrally. */
@@ -855,8 +834,6 @@
 
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-surface {
   border-color: var(--studio-line);
-  background: var(--color-popover);
-  box-shadow: var(--shadow-raised);
 }
 /* A menu item is a control, so it takes the ladder's control step and the shared hover fill — the same
    move a register row and a settings record make. */
