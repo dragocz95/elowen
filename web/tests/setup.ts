@@ -36,6 +36,18 @@ if (typeof Element !== 'undefined' && !Element.prototype.setPointerCapture) {
   Element.prototype.releasePointerCapture = () => {};
 }
 
+// Radix primitives probe these two before they will move focus into an open overlay, and jsdom
+// implements neither: `hasPointerCapture` decides whether a pointer interaction is still being
+// tracked, and `scrollIntoView` is how a highlighted item is brought into view. Missing, the first
+// throws and the second is simply absent, and in both cases the item never receives focus — which
+// looks in a test exactly like a keyboard contract that does not work.
+if (typeof Element !== 'undefined' && !Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+}
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 // jsdom does not implement window.matchMedia — provide a stub that defaults to
 // non-mobile (matches: false) so existing tests are unaffected.
 if (typeof window !== 'undefined' && !window.matchMedia) {
