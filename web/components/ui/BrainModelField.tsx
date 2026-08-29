@@ -1,33 +1,30 @@
 'use client';
-import { useState } from 'react';
 import { ModelIcon } from './ModelIcon';
-import { ManageSelectionModal, type ManageSelectionItem } from './ManageSelectionModal';
-import { SelectionSummary } from './SelectionSummary';
-import { useTranslation } from '../../lib/i18n';
+import { type ManageSelectionItem } from './ManageSelectionModal';
+import { RowPicker } from './RowPicker';
 import type { BrainModelOption } from '../../lib/types';
 
-/** Single-select brain-model picker: a compact summary chip + a Manage modal that groups the brain
- *  catalog by provider. Every group header carries the provider's brand logo and every row its model
- *  brand icon (both via ModelIcon, matching the users-admin allowed-models modal). A pinned row (id
- *  `''`) is the "default" pick when enabled; a saved model the catalog no longer lists stays visible as a pinned,
- *  selected row so a save can never silently drop it. `keyOf` bridges the caller's id encoding
- *  (`provider/model` vs `provider::model`) — the empty string always means "default". */
+/** Single-select brain-model picker: a compact row trigger naming the current model + a Manage modal
+ *  that groups the brain catalog by provider. Every group header carries the provider's brand logo and
+ *  every row its model brand icon (both via ModelIcon, matching the users-admin allowed-models modal). A
+ *  pinned row (id `''`) is the "default" pick when enabled; a saved model the catalog no longer lists
+ *  stays visible as a pinned, selected row so a save can never silently drop it. `keyOf` bridges the
+ *  caller's id encoding (`provider/model` vs `provider::model`) — the empty string always means
+ *  "default". */
 export function BrainModelField({ value, onChange, models, title, subtitle, defaultLabel, keyOf, allowDefault = true, manageAriaLabel }: {
   value: string;
   onChange: (key: string) => void;
   models: BrainModelOption[];
   title: string;
   subtitle?: string;
-  /** Label of the pinned id-`''` row and the summary chip when nothing concrete is picked. */
+  /** Label of the pinned id-`''` row and of the trigger when nothing concrete is picked. */
   defaultLabel: string;
   keyOf: (m: BrainModelOption) => string;
   /** Whether the modal should offer the empty/default choice. */
   allowDefault?: boolean;
-  /** Optional context-specific accessible name when the page contains several Manage buttons. */
+  /** Optional context-specific accessible name when the page contains several pickers. */
   manageAriaLabel?: string;
 }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
   const selected = models.find((m) => keyOf(m) === value);
 
   const items: ManageSelectionItem[] = [
@@ -48,29 +45,18 @@ export function BrainModelField({ value, onChange, models, title, subtitle, defa
       .map(([provider, label]) => [provider, <ModelIcon key={provider} name={label} size={14} />]),
   );
 
+  const summary = value ? selected?.model ?? value : defaultLabel;
   return (
-    <>
-      <SelectionSummary
-        countText=""
-        samples={[value
-          ? { label: selected?.model ?? value, icon: <ModelIcon name={selected?.model ?? value} size={13} /> }
-          : { label: defaultLabel }]}
-        moreCount={0}
-        onManage={() => setOpen(true)}
-        manageLabel={t.managePicker.manage}
-        manageAriaLabel={manageAriaLabel}
-      />
-      <ManageSelectionModal
-        title={title}
-        subtitle={subtitle}
-        open={open}
-        onClose={() => setOpen(false)}
-        items={items}
-        selected={new Set([value])}
-        single
-        groupIcons={groupIcons}
-        onSave={(next) => onChange([...next][0] ?? '')}
-      />
-    </>
+    <RowPicker
+      label={manageAriaLabel ?? title}
+      title={title}
+      subtitle={subtitle}
+      summary={summary}
+      icon={value ? <ModelIcon name={summary} size={13} /> : undefined}
+      items={items}
+      value={value}
+      onChange={onChange}
+      groupIcons={groupIcons}
+    />
   );
 }

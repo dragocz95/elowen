@@ -75,11 +75,9 @@ describe('MemorySection — categorization model picker', () => {
 
   it('picks a provider-scoped model in the modal (rows carry icons) and autosaves it', async () => {
     renderSection();
-    // The provider chips and both catalog fields render a Manage button each (embedding provider,
-    // embedding model, categorization provider, categorization model) — the categorization MODEL
-    // is the fourth, scoped to its "anthropic" provider.
-    const manageButtons = screen.getAllByRole('button', { name: en.managePicker.manage });
-    fireEvent.click(manageButtons[3]);
+    // Each of the four pickers on this card is named for its own field now, so the categorization
+    // MODEL is reachable by name instead of by its index among four identical "Manage" buttons.
+    fireEvent.click(screen.getByRole('button', { name: en.categorization.modelLabel }));
     // The catalog is provider-scoped (anthropic) → the model row shows with its brand icon.
     const row = await screen.findByRole('button', { name: 'claude-haiku' });
     expect(row.querySelector('img')).toBeTruthy();
@@ -92,8 +90,7 @@ describe('MemorySection — categorization model picker', () => {
 
   it('the pinned "None" row clears the model back to empty', async () => {
     renderSection();
-    const manageButtons = screen.getAllByRole('button', { name: en.managePicker.manage });
-    fireEvent.click(manageButtons[3]);
+    fireEvent.click(screen.getByRole('button', { name: en.categorization.modelLabel }));
     // No model saved → the pinned None row is the current pick.
     expect(await screen.findByRole('button', { name: en.managePicker.none })).toHaveAttribute('aria-pressed', 'true');
   });

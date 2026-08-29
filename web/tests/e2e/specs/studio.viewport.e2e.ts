@@ -359,15 +359,28 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
   expect(mobileActions.actionsTop).toBeGreaterThanOrEqual(mobileActions.headTop);
 
   await expect(app.locator('.settings-row__description')).toHaveCount(0);
-  const rowColumns = await app.locator('.settings-row:visible:has(.settings-row__trailing)').evaluateAll((rows) => rows.map((row) => {
+  // THE TWO-LINE BAND. A phone gives a settings card ~358px, and the value column it used to hold there
+  // was ~120px — enough for a switch and for nothing else, which is what crushed every picker and meter
+  // on this page. A record folds instead: its name and help on the first line, its control, status and
+  // actions together on the second. Two lines, never three, and nothing past the card's edge.
+  const rowBands = await app.locator('.settings-row:visible:has(.settings-row__trailing)').evaluateAll((rows) => rows.map((row) => {
     const label = row.querySelector<HTMLElement>('.settings-row__label')!.getBoundingClientRect();
     const trailing = row.querySelector<HTMLElement>('.settings-row__trailing')!.getBoundingClientRect();
-    return { labelRight: label.right, trailingLeft: trailing.left, trailingRight: trailing.right, rowRight: row.getBoundingClientRect().right };
+    const rect = row.getBoundingClientRect();
+    return {
+      name: row.querySelector<HTMLElement>('.settings-row__title')?.textContent?.trim() ?? '',
+      labelLeft: label.left, labelBottom: label.bottom,
+      trailingTop: trailing.top, trailingLeft: trailing.left, trailingRight: trailing.right,
+      rowLeft: rect.left, rowRight: rect.right,
+    };
   }));
-  expect(rowColumns.length).toBeGreaterThan(0);
-  for (const column of rowColumns) {
-    expect(column.labelRight).toBeLessThanOrEqual(column.trailingLeft + 1);
-    expect(column.trailingRight).toBeLessThanOrEqual(column.rowRight + 1);
+  expect(rowBands.length).toBeGreaterThan(0);
+  for (const band of rowBands) {
+    expect(band.trailingTop, `${band.name} still puts its value beside its name`).toBeGreaterThanOrEqual(band.labelBottom - 1);
+    // Both lines start at the same edge; the trailing one is not indented into a leftover column.
+    expect(Math.abs(band.trailingLeft - band.labelLeft)).toBeLessThanOrEqual(1);
+    expect(band.labelLeft).toBeGreaterThanOrEqual(band.rowLeft - 1);
+    expect(band.trailingRight, `${band.name} draws past its own row`).toBeLessThanOrEqual(band.rowRight + 1);
   }
 
   const pushRow = app.locator('.settings-row').filter({ hasText: 'Push notification contact' });
@@ -915,8 +928,9 @@ async function seedBrainSettings(seed: Seed): Promise<void> {
 //
 // So the assertions are the two halves of that: a stacked record's parts each get a line of their own
 // inside the card (nothing negative, nothing past the edge, no box overlapping the title), and a meter is
-// actually a meter. The inline records in the same page are measured alongside, because the fix must not
-// buy this by flattening the `label | value` table the rest of Settings reads as.
+// actually a meter. The inline records in the same page are measured alongside — they fold to the same
+// single track now, because the two-column table a phone was holding is what left every record's value
+// in ~120px, and the canonical record answers that with a two-line band instead of a narrower column.
 for (const size of [{ width: 390, height: 844 }, { width: 320, height: 700 }]) {
   test(`Studio keeps account and provider records readable at ${size.width}px`, async ({ browser, seed }, testInfo) => {
     authedOnly(testInfo);
@@ -983,14 +997,16 @@ for (const size of [{ width: 390, height: 844 }, { width: 320, height: 700 }]) {
         expect(row.collidesWithTitle, `${row.label} draws a value over its own name`).toBe(false);
       }
 
-      // And the structure underneath it: a stacked record gets the card's full width rather than a share
-      // of the two-column table, while every one-value record KEEPS that table.
-      for (const row of stacked) {
+      // And the structure underneath it: at this width EVERY record gets the card's full width and lays
+      // itself out as a two-line band. A stacked record then gives each of its several values a line;
+      // an inline one keeps its control, status and actions together on the single line below its name.
+      expect(inline.length).toBeGreaterThan(0);
+      for (const row of [...stacked, ...inline]) {
         expect(row.columns.split(' '), `${row.label} is still in the narrow value column`).toHaveLength(1);
       }
-      expect(inline.length).toBeGreaterThan(0);
       for (const row of inline) {
-        expect(row.columns.split(' ').length, `${row.label} lost the settings table`).toBeGreaterThan(1);
+        expect(row.spill, `${row.label} draws part of itself outside its row`).toBe(0);
+        expect(row.collidesWithTitle, `${row.label} draws a value over its own name`).toBe(false);
       }
     } finally {
       await context.close();

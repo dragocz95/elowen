@@ -291,7 +291,7 @@ describe('AccountView', () => {
     // PROTOTYPE(constellation): the style is a drawer-picked choice — wait for the seeded 'Concise'
     // chip, then open the picker and switch to Friendly.
     await waitFor(() => expect(screen.getByText('Concise')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Communication style' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Friendly' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.getByText('Friendly')).toBeInTheDocument());

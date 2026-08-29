@@ -27,18 +27,35 @@ export function SpatialGroup({ title, description, icon, columns = 1, children, 
   );
 }
 
-export function SpatialRow({ title, description, hint, icon, children, className = '' }: {
+/** The account page's spelling of {@link SettingsRow}, and the same record: one control, an optional
+ *  short status and at most two actions, folding to the same two-line band in a narrow container.
+ *  `title` is this surface's word for the row's label and `children` remains an alias of `control`, so
+ *  no account call site has to change to reach the canonical anatomy. */
+export function SpatialRow({ title, description, hint, icon, control, status, actions, trailingLayout = 'inline', children, className = '' }: {
   title: string;
   description?: string;
   hint?: string;
   icon?: LucideIcon;
-  children: ReactNode;
+  control?: ReactNode;
+  status?: ReactNode;
+  actions?: ReactNode;
+  trailingLayout?: 'inline' | 'stack';
+  /** Alias of `control` — see {@link SettingsRow}. */
+  children?: ReactNode;
   className?: string;
 }) {
   return (
-    <SettingsRow label={title} description={description} hint={hint} icon={icon} className={className}>
-      {children}
-    </SettingsRow>
+    <SettingsRow
+      label={title}
+      description={description}
+      hint={hint}
+      icon={icon}
+      control={control ?? children}
+      status={status}
+      actions={actions}
+      trailingLayout={trailingLayout}
+      className={className}
+    />
   );
 }
 

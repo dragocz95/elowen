@@ -720,11 +720,32 @@
     gap: 0.625rem;
     padding-inline: 1rem;
   }
-  /* `nowrap` holds a one-value record on its label's line, which is the whole point of the table above.
-     It is applied to the INLINE record only: forcing a single line on a record carrying a badge, two
-     usage meters and two buttons does not compress them, it makes them overrun the row — the account
-     name, the "Connected" badge, the window labels and the percentages all landed on top of each other,
-     and the provider rows lost their names behind their badges entirely. */
+  /* THE TWO-LINE BAND. Studio held its two-column value table down to the narrowest phone (see the
+     `< 48rem` block), and that rule is more specific than the base stylesheet's own phone collapse — so
+     no record here ever got the single column the base design gives it. A one-value record had to fit
+     its control into ~120px, and a multi-value one had to fit a meter rail plus two buttons into the
+     same. Every record folds at this width instead: the label and its help on the first line, everything
+     trailing on the second. The opt-out is declared here rather than left to the base rule, which cannot
+     win this cascade.
+     `[data-trailing]` — which every record carries — is there for SPECIFICITY, not for selection: the
+     record takes its tracks from the base stylesheet's subgrid rule, and a bare `.settings-row` ties with
+     it and leaves the winner to sheet order. Same reason the stacked opt-out below spells its own
+     attribute out. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing] .settings-row__label,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing] .settings-row__trailing {
+    grid-column: 1;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  /* And the second line is ONE line. `nowrap` is applied to the INLINE record only: forcing a single
+     line on a record carrying a badge, two usage meters and two buttons does not compress them, it makes
+     them overrun the row — the account name, the "Connected" badge, the window labels and the
+     percentages all landed on top of each other, and the provider rows lost their names behind their
+     badges entirely. `flex-basis: 0` lets the control give room back to a status or an action instead of
+     claiming 10rem and pushing them past the edge. */
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing {
     flex-wrap: nowrap;
     gap: 0.375rem;
@@ -733,21 +754,8 @@
     flex-basis: 0;
   }
 
-  /* THE STACKED RECORD. Studio keeps its two-column value table down to the narrowest phone (see the
-     `< 48rem` block), and that rule is more specific than the base stylesheet's own phone collapse — so
-     a multi-value record never got the single column the base design gives it, and had to fit a meter
-     rail plus two buttons into ~120px. A record that declared `trailingLayout="stack"` opts out here,
-     explicitly, instead of the base rule being expected to win a cascade it cannot. */
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__label,
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__trailing {
-    grid-column: 1;
-    width: 100%;
-    justify-content: flex-start;
-  }
-  /* Each trailing value takes the row's full width: a meter that is a flex item of a shared value column
+  /* THE STACKED RECORD keeps the opt-out it always had on top of the band: each trailing value takes the
+     row's full width rather than sharing the line. A meter that is a flex item of a shared value column
      resolves to zero width, and a zero-width meter reads as an empty rail rather than as usage. */
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__status,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__control,
@@ -765,8 +773,12 @@
     white-space: normal;
   }
 }
+/* The narrowest card there is. Both trailing affordances — the record's picker trigger and the summary
+   card still rendered by the surfaces that are not records — give up their padding before they give up
+   their label. */
 @container workspace-shell (width < 22rem) {
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing [data-selection-manage] {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing [data-selection-manage],
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing [data-row-picker] {
     gap: 0.25rem;
     padding-inline: 0.25rem;
   }

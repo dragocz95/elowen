@@ -1,24 +1,27 @@
 'use client';
-import { useMemo, useState, type ReactNode } from 'react';
-import { ManageSelectionModal, type ManageSelectionItem } from './ManageSelectionModal';
+import { useMemo, type ReactNode } from 'react';
+import { type ManageSelectionItem } from './ManageSelectionModal';
+import { RowPicker } from './RowPicker';
 import { Segmented } from './Segmented';
-import { SelectionSummary } from './SelectionSummary';
-import { useTranslation } from '../../lib/i18n';
 
 /** Canonical single-choice field: two or three choices stay inline; larger catalogs use the shared
  *  searchable picker. Unknown persisted values remain selectable so opening the UI never drops data.
  *  `picker="always"` skips the inline form even for short lists (constellation pods pick in the
- *  drawer regardless of count). */
+ *  drawer regardless of count).
+ *
+ *  Both presentations are now ROW CONTROLS: a Segmented track or a RowPicker trigger, each one line
+ *  tall and the width of the record's trailing cell. The picker branch used to render a
+ *  `SelectionSummary` card — a bordered block with a chip and a "Manage" button — which is a section
+ *  summary rather than a field, and wrapped to two or three lines inside a record. */
 export function ChoiceField({ title, options, value, onChange, picker = 'auto', manageAriaLabel }: {
   title: string;
   options: { value: string; label: string; icon?: ReactNode }[];
   value: string;
   onChange: (value: string) => void;
   picker?: 'auto' | 'always';
+  /** More specific accessible name when several choices share one page. Defaults to `title`. */
   manageAriaLabel?: string;
 }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
   const items = useMemo<ManageSelectionItem[]>(() => {
     const known = new Set(options.map((option) => option.value));
     return [
@@ -39,24 +42,14 @@ export function ChoiceField({ title, options, value, onChange, picker = 'auto', 
   }
   const selected = items.find((item) => item.id === value);
   return (
-    <>
-      <SelectionSummary
-        countText=""
-        samples={selected ? [{ label: selected.label }] : []}
-        moreCount={0}
-        onManage={() => setOpen(true)}
-        manageLabel={t.managePicker.manage}
-        manageAriaLabel={manageAriaLabel}
-      />
-      <ManageSelectionModal
-        title={title}
-        open={open}
-        onClose={() => setOpen(false)}
-        items={items}
-        selected={new Set(value ? [value] : [])}
-        single
-        onSave={(next) => onChange([...next][0] ?? '')}
-      />
-    </>
+    <RowPicker
+      label={manageAriaLabel ?? title}
+      title={title}
+      summary={selected?.label ?? value}
+      icon={selected?.icon}
+      items={items}
+      value={value}
+      onChange={onChange}
+    />
   );
 }

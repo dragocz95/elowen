@@ -1,5 +1,5 @@
 'use client';
-import { Children, type ReactNode } from 'react';
+import { Children, Fragment, isValidElement, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { HelpTip } from './HelpTip';
 import { WorkspaceLeadPortal } from './WorkspaceShell';
@@ -69,10 +69,36 @@ function splitIntoColumns(children: ReactNode, columns: 1 | 2): ReactNode {
   );
 }
 
-/** A label/control record inside a section card. Explanatory copy lives behind the shared HelpTip so the
- * row remains scannable on a phone; `description` gives the short meaning and `hint` adds long-form or
- * cautionary detail in the same click/hover surface. */
-export function SettingsRow({ label, description, hint, icon: Icon, iconNode, status, actions, trailingLayout = 'inline', children, className = '' }: {
+/** How many trailing actions a record may carry beside its control. Two is the ceiling because the
+ *  trailing side is ONE line: a record with three buttons stops being a record and becomes a toolbar,
+ *  which belongs in the section header where there is room for it. */
+export const MAX_ROW_ACTIONS = 2;
+
+/** Trailing slots in a node, counting THROUGH fragments. `Children.count` reports `<><A/><B/><C/></>`
+ *  as one, which is the shape most call sites hand in, so counting without this would report every
+ *  overloaded row as compliant. */
+function countSlots(node: ReactNode): number {
+  return Children.toArray(node).reduce<number>((total, child) => (
+    isValidElement(child) && child.type === Fragment
+      ? total + countSlots((child.props as { children?: ReactNode }).children)
+      : total + 1
+  ), 0);
+}
+
+/** A label/control record inside a section card, and the canonical anatomy every settings and account
+ *  row is built from.
+ *
+ *  THE CONTRACT. A record is a label and ONE control, optionally a SHORT status and at most
+ *  {@link MAX_ROW_ACTIONS} actions. On a wide card the whole thing is one grid row borrowed from the
+ *  stack through subgrid; in a narrow container it folds to a two-line band — the label and its help on
+ *  the first line, the control, status and actions together on a second line that does not wrap. There
+ *  is deliberately no third line: a record that needs one is carrying several values and should declare
+ *  `trailingLayout="stack"`, which opts out of the band and gives each part the row's full width.
+ *
+ *  Explanatory copy lives behind the shared HelpTip so the row remains scannable on a phone;
+ *  `description` gives the short meaning and `hint` adds long-form or cautionary detail in the same
+ *  click/hover surface. */
+export function SettingsRow({ label, description, hint, icon: Icon, iconNode, control, status, actions, trailingLayout = 'inline', children, className = '' }: {
   label: string;
   description?: string;
   hint?: string;
@@ -80,7 +106,14 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, st
   /** A record whose badge is an image rather than a glyph — a provider's own favicon, say. Wins over
    *  `icon`, so a caller can hand in something that falls back to a glyph on its own. */
   iconNode?: ReactNode;
+  /** THE control of the record: one switch, one select, one picker. Canonical spelling of what used to
+   *  be passed as `children`, which remains an alias below. */
+  control?: ReactNode;
+  /** A SHORT trailing value — a state word, a count, a timestamp. It shares one line with the control
+   *  and the actions, so anything that needs to wrap belongs in `description`/`hint` instead. */
   status?: ReactNode;
+  /** At most {@link MAX_ROW_ACTIONS} buttons. Development builds warn when a call site exceeds it
+   *  rather than letting the row quietly overflow its line. */
   actions?: ReactNode;
   /** How much room the trailing side needs.
    *
@@ -96,9 +129,17 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, st
    *
    *  It changes nothing above the phone breakpoint — a wide card has the room for the inline form. */
   trailingLayout?: 'inline' | 'stack';
+  /** Alias of `control`, kept because `SettingsRow` is published to plugin bundles through
+   *  `window.ElowenUiRuntime.components` and every existing bundle passes its control as children. The
+   *  rendered DOM is identical either way. */
   children?: ReactNode;
   className?: string;
 }) {
+  const controlNode = control ?? children;
+  if (process.env.NODE_ENV !== 'production' && countSlots(actions) > MAX_ROW_ACTIONS) {
+    // eslint-disable-next-line no-console
+    console.warn(`SettingsRow "${label}" carries more than ${MAX_ROW_ACTIONS} actions; move the extras into the section header.`);
+  }
   return (
     <div className={`settings-row ${className}`} data-trailing={trailingLayout}>
       <div className="settings-row__label">
@@ -116,10 +157,10 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, st
           </span>
         </div>
       </div>
-      {status || children || actions ? (
+      {status || controlNode || actions ? (
         <div className="settings-row__trailing">
           {status ? <div className="settings-row__status">{status}</div> : null}
-          {children ? <div className="settings-row__control">{children}</div> : null}
+          {controlNode ? <div className="settings-row__control">{controlNode}</div> : null}
           {actions ? <div className="settings-row__actions">{actions}</div> : null}
         </div>
       ) : null}

@@ -1,8 +1,8 @@
 'use client';
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { ModelIcon } from './ModelIcon';
-import { ManageSelectionModal, type ManageSelectionItem } from './ManageSelectionModal';
-import { SelectionSummary } from './SelectionSummary';
+import { type ManageSelectionItem } from './ManageSelectionModal';
+import { RowPicker } from './RowPicker';
 import { providerMeta } from '../../modules/settings/providers';
 import { execProvider, brainModelId, SOURCE_BADGE, type ProviderId } from '../../lib/modelProvider';
 import { useBrainModels, useConfig } from '../../lib/queries';
@@ -18,7 +18,7 @@ function WorkerGroupIcon({ provider }: { provider: ProviderId }) {
   );
 }
 
-/** Per-role reasoning backend picker: a compact summary chip + a Manage modal that reuses the
+/** Per-role reasoning backend picker: a compact row trigger + a Manage modal that reuses the
  *  ExecutorPicker split — a "Workers" group per CLI engine (engine logo on the header, model brand
  *  icon per row) and one group per configured Elowen AI provider (provider brand logo on the header,
  *  OAuth accounts badged). Single-select: a row click replaces the pick. When `allowRelay`, a pinned
@@ -39,7 +39,6 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
   const { t } = useTranslation();
   const config = useConfig();
   const brain = useBrainModels();
-  const [open, setOpen] = useState(false);
 
   // Elowen AI models gated by the global allow-list (what may run as an executor), grouped by their real
   // provider — same rule as ExecutorPicker's `kind='all'` Elowen AI section.
@@ -86,29 +85,18 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
 
   // The relay row's id is '' so `value &&` excludes it — an empty value always shows the relay label.
   const selected = value ? items.find((it) => it.id === value) : undefined;
+  const heading = title ?? t.settings.executor;
   return (
-    <>
-      <SelectionSummary
-        countText=""
-        samples={[value && selected
-          ? { label: selected.label, icon: selected.icon }
-          : { label: relayLabel }]}
-        moreCount={0}
-        onManage={() => setOpen(true)}
-        manageLabel={t.managePicker.manage}
-        manageAriaLabel={manageAriaLabel}
-      />
-      <ManageSelectionModal
-        title={title ?? t.settings.executor}
-        open={open}
-        onClose={() => setOpen(false)}
-        items={items}
-        selected={new Set([value])}
-        single
-        groupIcons={groupIcons}
-        emptySelectionHint={relayLabel}
-        onSave={(next) => onChange([...next][0] ?? '')}
-      />
-    </>
+    <RowPicker
+      label={manageAriaLabel ?? heading}
+      title={heading}
+      summary={selected?.label ?? relayLabel}
+      icon={selected?.icon}
+      items={items}
+      value={value}
+      onChange={onChange}
+      groupIcons={groupIcons}
+      emptySelectionHint={relayLabel}
+    />
   );
 }

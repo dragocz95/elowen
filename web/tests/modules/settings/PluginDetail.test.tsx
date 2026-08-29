@@ -73,7 +73,7 @@ describe('PluginDetail model field', () => {
     ] });
     usePluginDetail.mockReturnValue({ data: detail([{ key: 'visionModel', label: 'Vision model', type: 'model', hint: 'Used for images.' }], { visionModel: 'elowen:anthropic/claude-opus' }), isLoading: false });
     renderDetail();
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
+    fireEvent.click(screen.getByRole('button', { name: 'Vision model' }));
     expect(screen.getByRole('searchbox', { name: en.managePicker.searchPlaceholder })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Anthropic' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'claude-opus' })).toHaveAttribute('aria-pressed', 'true');

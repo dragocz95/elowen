@@ -41,10 +41,10 @@ function mount(props: React.ComponentProps<typeof Harness>) {
 }
 
 describe('ExecutorPicker', () => {
-  it('uses the shared selection summary instead of inline provider and model pills', async () => {
+  it('uses one compact row picker instead of inline provider and model pills', async () => {
     mount({ onChange: vi.fn() });
 
-    expect(await screen.findByRole('button', { name: 'Manage' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Executor' })).toBeInTheDocument();
     expect(screen.getByText('Default executor')).toBeInTheDocument();
     expect(screen.queryByRole('tablist')).toBeNull();
   });
@@ -53,7 +53,7 @@ describe('ExecutorPicker', () => {
     const onChange = vi.fn();
     mount({ onChange });
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Executor' }));
     expect(await screen.findByRole('heading', { name: 'Claude Code' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Elowen AI' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /GPT-5 Codex/ }));
