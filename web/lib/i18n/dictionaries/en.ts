@@ -137,6 +137,8 @@ export const en = {
     searchCommands: 'Search commands…',
     noCommands: 'No commands',
     dismiss: 'Dismiss',
+    notification: 'Notification',
+    notifications: 'Notifications ({hotkey})',
     loading: 'Loading…',
     help: 'Help',
     actions: 'Actions',

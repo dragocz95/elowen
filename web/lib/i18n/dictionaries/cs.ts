@@ -134,6 +134,8 @@ export const cs = {
     searchCommands: 'Hledat příkazy…',
     noCommands: 'Žádné příkazy',
     dismiss: 'Zavřít',
+    notification: 'Oznámení',
+    notifications: 'Oznámení ({hotkey})',
     loading: 'Načítání…',
     help: 'Nápověda',
     actions: 'Akce',

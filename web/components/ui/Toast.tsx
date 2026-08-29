@@ -121,7 +121,11 @@ export function ToastProvider({ children, durationMs = DEFAULT_TOAST_MS }: { chi
           alike. Radix renders each toast into the viewport below via its own portal — into that node,
           not into <body> — so the dock stays a sibling of the app tree rather than of an open modal,
           and nothing can trap it inside the modal's stacking context. */}
-      <ToastRoot duration={durationMs}>
+      {/* Radix names both the per-toast announcement and the viewport landmark, and both default to
+          English. They are the only words a screen-reader user hears before the message itself, so they
+          follow the app's language like every other piece of copy. `{hotkey}` inside the landmark name
+          is Radix's own placeholder — it substitutes the key combination that focuses the viewport. */}
+      <ToastRoot duration={durationMs} label={t.common.notification}>
         {children}
         {items.map((item) => (
           <ToastCard
@@ -133,7 +137,7 @@ export function ToastProvider({ children, durationMs = DEFAULT_TOAST_MS }: { chi
             onDismiss={() => dismiss(item.id)}
           />
         ))}
-        <ToastViewport />
+        <ToastViewport label={t.common.notifications} />
       </ToastRoot>
     </Ctx.Provider>
   );

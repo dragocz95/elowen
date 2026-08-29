@@ -134,6 +134,8 @@ export const sk = {
     searchCommands: 'Hľadať príkazy…',
     noCommands: 'Žiadne príkazy',
     dismiss: 'Zavrieť',
+    notification: 'Oznámenie',
+    notifications: 'Oznámenia ({hotkey})',
     loading: 'Načítava sa…',
     help: 'Pomocník',
     actions: 'Akcie',
