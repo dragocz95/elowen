@@ -117,7 +117,7 @@ The shell is OLED dark and uses the tokens in `web/app/globals.css` and `web/app
 
 Reuse shared primitives such as `ModuleShell`, `WorkspacePage`, `SpatialWorkspaceLayout`, `ControlSurface*`, `WorkspaceDetailRail`, `Modal`, `MenuSurface`, `HelpTip`, and the shared state components. Use semantic theme tokens rather than feature-local colors. Preserve visible focus, keyboard operation, reduced-motion handling, and safe-area behavior on small screens.
 
-`SpatialMascot` is lazy-loaded with a static fallback. It honors the effects preference and reduced-motion media query, pauses when offscreen, and ignores pointer input so it cannot block the actual controls.
+`MascotGlyph` renders the instance's themeable mascot artwork with a per-state ember ring. It is sized in percentages so it is correct in any box, and it ignores pointer input so it cannot block the actual controls.
 
 ## Type and dependency boundaries
 
