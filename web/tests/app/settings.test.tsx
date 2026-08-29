@@ -8,6 +8,7 @@ import SettingsPage from '../../app/settings/page';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 import { en } from '../../lib/i18n/dictionaries/en';
+import { formatBytes } from '../../lib/format';
 
 let putBody: unknown = null;
 const config = {
@@ -28,6 +29,13 @@ const server = setupServer(
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', name: 'Admin', is_admin: true } })),
   http.get('*/api/plugins/ui', () => HttpResponse.json([])),
   http.get('*/api/brain/debug/sessions', () => HttpResponse.json({ items: [], nextCursor: null, captureStartedAt: Date.UTC(2026, 7, 1, 10, 0, 0) })),
+  http.get('*/api/system/logs', () => HttpResponse.json({
+    dir: '/var/log/elowen',
+    files: [
+      { name: 'daemon-2026-08-29.log', source: 'daemon', bytes: 1_000, modifiedAt: 2 },
+      { name: 'web-2026-08-29.log', source: 'web', bytes: 2_000, modifiedAt: 1 },
+    ],
+  })),
   http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json(config); }),
 );
 beforeEach(() => localStorage.setItem('elowen.settings.category', 'models'));
@@ -136,6 +144,64 @@ describe('SettingsPage', () => {
 
     fireEvent.click(link);
     expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+  });
+
+  /** The canonical anatomy is heading → metric rail → toolbar, on EVERY page and every section of one.
+   *  The deck used to open the rail for System alone, so five of the six settings sections went straight
+   *  from the title to their records and read as a different kind of page than the registers. */
+  it('opens every settings section with a metric rail of its own', async () => {
+    for (const [cat, heading] of [
+      ['system', 'System'], ['brain', 'Elowen AI'], ['models', 'Models'],
+      ['plugins', 'Plugins'], ['memory', 'Memory'], ['data', 'Data'],
+    ] as const) {
+      localStorage.setItem('elowen.settings.category', cat);
+      const { wrapper: Wrapper } = createWrapper();
+      const { container, unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+      await screen.findByRole('heading', { level: 1, name: heading });
+
+      const rail = container.querySelector('[data-testid="workspace-hero-metrics"]');
+      expect(rail, `${cat} opens with no metric rail`).not.toBeNull();
+      expect(rail!.querySelectorAll('.workspace-metric').length, `${cat} rail carries no figures`).toBeGreaterThan(0);
+      unmount();
+    }
+  });
+
+  it('keeps the rail between the heading and the one toolbar row', async () => {
+    localStorage.setItem('elowen.settings.category', 'models');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'Models' });
+
+    const shell = container.querySelector('.workspace-shell')!;
+    const anatomy = Array.from(shell.querySelectorAll('h1, [data-testid="workspace-hero-metrics"], .page-toolbar__row'));
+    expect(anatomy).toHaveLength(3);
+    expect(anatomy[0]!.tagName).toBe('H1');
+    expect(anatomy[1]).toBe(shell.querySelector('[data-testid="workspace-hero-metrics"]'));
+    expect(anatomy[2]!.className).toContain('page-toolbar__row');
+  });
+
+  /** A rail is only worth the strip it occupies if the figures are the section's own. Data is asserted in
+   *  full — it reads four different sources (the log summary, its byte total, the runtime capture flag and
+   *  the retention setting) and none of them is the System instance state the rail used to show
+   *  everywhere. */
+  it('fills a non-system rail from that section\'s own data', async () => {
+    localStorage.setItem('elowen.settings.category', 'data');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'Data' });
+
+    const rail = container.querySelector('[data-testid="workspace-hero-metrics"]')!;
+    await waitFor(() => expect(rail.textContent).toContain(formatBytes(3_000)));
+    const readings = Array.from(rail.querySelectorAll('.workspace-metric')).map((metric) => [
+      metric.querySelector('.workspace-metric__label')!.textContent,
+      metric.querySelector('.workspace-metric__value')!.textContent,
+    ]);
+    expect(readings).toEqual([
+      [en.settings.metric.logFiles, '2'],
+      [en.settings.metric.logVolume, formatBytes(3_000)],
+      [en.settings.metric.requestCapture, en.settings.on],
+      [en.settings.metric.conversationCleanup, en.settings.off],
+    ]);
   });
 
   it('leaves the toolbar row empty for a section with no page-level controls', async () => {

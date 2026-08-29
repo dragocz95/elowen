@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { DashboardView } from '../../../modules/dashboard/DashboardView';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import { EffectsProvider } from '../../../lib/useEffects';
+import { en } from '../../../lib/i18n/dictionaries/en';
+import { formatCost, formatTokens } from '../../../lib/format';
 
 const server = setupServer(
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', is_admin: true } })),
@@ -73,5 +75,27 @@ describe('DashboardView', () => {
     expect(screen.queryByRole('link', { name: /Filip/ })).toBeNull();
     expect(screen.getByRole('img', { name: /Elowen: /i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/what can i do for you/i)).toBeInTheDocument();
+  });
+
+  /** Heading, then the divider rail — the same anatomy every other page opens with. The figures come from
+   *  the pulse response the page already fetches for presence, so the rail costs no request of its own. */
+  it('opens with the metric rail under the greeting', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1 });
+
+    const rail = container.querySelector('[data-testid="workspace-hero-metrics"]')!;
+    expect(rail).not.toBeNull();
+    await waitFor(() => expect(rail.textContent).toContain(formatTokens(1500)));
+    const readings = Array.from(rail.querySelectorAll('.workspace-metric')).map((metric) => [
+      metric.querySelector('.workspace-metric__label')!.textContent,
+      metric.querySelector('.workspace-metric__value')!.textContent,
+    ]);
+    expect(readings).toEqual([
+      [en.dashboard.pulseColTurns, '2'],
+      [en.dashboard.pulseColTokens, formatTokens(1500)],
+      [en.dashboard.pulseColCost, formatCost(3.5, 2)],
+      [en.dashboard.workingNow, '1'],
+    ]);
   });
 });

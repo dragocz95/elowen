@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 // Aliased: `dynamic` is already this route's Next segment-config export, two lines up.
 import nextDynamic from 'next/dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
-import { SlidersHorizontal, X, Pencil, Gauge, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer } from 'lucide-react';
+import { SlidersHorizontal, X, Pencil, Gauge, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Tags, Timer, ToggleRight } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
@@ -371,10 +371,79 @@ export default function SettingsPage() {
   // navigation and its settings sections are pages of that world.
   const deckSections = SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: id === 'brain' ? agentAiLabel : t.settings[id], description: sectionHints[id] }));
   const diagnostics = system.data?.diagnostics;
+  const activeSection = deckSections.find((section) => section.id === category) ?? deckSections[0]!;
+
+  // THE METRIC RAIL, one set per section. Every figure is read from state or from a query this page
+  // ALREADY holds — the config, the brain catalog, the plugin listing, the model form state, and (only
+  // while Data is on screen) the log summary. No section adds a request of its own, and none reports a
+  // number it cannot also explain in the records below it. A value that has not arrived yet is an em
+  // dash rather than a zero, because "no answer yet" and "none" are different answers.
+  const brainProviders = config.data?.brain?.providers ?? [];
+  const brainCatalog = brainModels.data ?? [];
+  const catalogExecs = [...models.map((m) => m.exec), ...brainCatalog.map((m) => m.exec)];
+  const pluginEntries = pluginUi.data ?? [];
+  const logBytes = logFiles.data?.files.reduce((sum, file) => sum + file.bytes, 0);
+  const sectionMetrics: Record<Category, ReactNode> = {
+    system: (
+      <>
+        <WorkspaceMetric label={t.settings.version.replace('{productName}', brand.appName)} value={<span className="font-mono">{system.data?.version ?? '—'}</span>} icon={Sparkles} />
+        <WorkspaceMetric label={t.settings.serviceDaemon} value={system.isError ? t.settings.serviceDown : t.settings.serviceUp} icon={Server} />
+        <WorkspaceMetric label={t.settings.diagnosticMemory} value={diagnostics ? `${Math.round((diagnostics.memoryUsedBytes / diagnostics.memoryTotalBytes) * 100)} %` : '—'} icon={MemoryStick} />
+        <WorkspaceMetric label={t.settings.diagnosticUptime} value={diagnostics ? formatUptime(diagnostics.uptimeSeconds) : '—'} icon={Timer} />
+      </>
+    ),
+    brain: (
+      <>
+        <WorkspaceMetric label={t.settings.metric.accounts} value={brainProviders.length} icon={Server} />
+        {/* An OAuth account carries no API key, so "has a key" would report every connected Claude or
+            Codex account as unconfigured. Both halves of the union count as connected. */}
+        <WorkspaceMetric label={t.settings.metric.connected} value={brainProviders.filter((p) => p.apiKeySet || p.type.startsWith('oauth-')).length} icon={KeyRound} />
+        <WorkspaceMetric label={t.settings.metric.aiModels} value={brainCatalog.length} icon={Boxes} />
+      </>
+    ),
+    models: (
+      <>
+        <WorkspaceMetric label={t.settings.metric.catalog} value={catalogExecs.length} icon={Boxes} />
+        <WorkspaceMetric label={t.settings.metric.enabled} value={catalogExecs.filter((exec) => allowed.includes(exec)).length} icon={ToggleRight} />
+        <WorkspaceMetric label={t.settings.metric.custom} value={customModels.length} icon={Pencil} />
+        <WorkspaceMetric label={t.settings.metric.overrides} value={Object.keys(modelWindows).length} icon={Gauge} />
+      </>
+    ),
+    plugins: (
+      <>
+        {/* What this page can see is the UI listing, so the labels say exactly that rather than implying
+            a total installed count the deck never fetched. */}
+        <WorkspaceMetric label={t.settings.metric.pluginWorlds} value={pluginEntries.length} icon={Boxes} />
+        <WorkspaceMetric label={t.settings.metric.pluginPages} value={pluginEntries.reduce((n, entry) => n + entry.nav.length, 0)} icon={Blocks} />
+        <WorkspaceMetric label={t.settings.metric.pluginSections} value={pluginEntries.reduce((n, entry) => n + entry.settings.length, 0)} icon={SlidersHorizontal} />
+      </>
+    ),
+    memory: (
+      <>
+        {/* The two catalogs this section picks from, counted the same way MemorySection filters them:
+            an OAuth account exposes no embeddings endpoint, so it can never be an embedding model. */}
+        <WorkspaceMetric label={t.settings.metric.embeddingProviders} value={brainProviders.filter((p) => !p.type.startsWith('oauth-')).length} icon={Server} />
+        <WorkspaceMetric label={t.settings.metric.embeddingModels} value={brainCatalog.filter((m) => m.source !== 'oauth').length} icon={Boxes} />
+        <WorkspaceMetric label={t.settings.metric.categorizationModels} value={brainCatalog.length} icon={Tags} />
+      </>
+    ),
+    data: (
+      <>
+        <WorkspaceMetric label={t.settings.metric.logFiles} value={logFiles.data?.files.length ?? '—'} icon={ScrollText} />
+        <WorkspaceMetric label={t.settings.metric.logVolume} value={logBytes === undefined ? '—' : formatBytes(logBytes)} icon={HardDrive} />
+        <WorkspaceMetric label={t.settings.metric.requestCapture} value={config.data?.runtime?.providerRequestCaptureEnabled === false ? t.settings.off : t.settings.on} icon={MessageSquareText} />
+        <WorkspaceMetric
+          label={t.settings.metric.conversationCleanup}
+          value={retention.enabled ? `${retention.days} ${t.settings.retention.days}` : t.settings.off}
+          icon={CalendarClock}
+        />
+      </>
+    ),
+  };
+
   // The hero answers "is this instance healthy right now" on every settings tab, and carries the one
   // action an operator reaches for after changing something. Restarting still goes through the same
   // confirmation as the row in the System section — this is a second door to it, not a second path.
-  const activeSection = deckSections.find((section) => section.id === category) ?? deckSections[0]!;
   const deckHero = {
     eyebrow: t.page.settings,
     title: activeSection.label,
@@ -393,14 +462,9 @@ export default function SettingsPage() {
         </Button>
       </>
     ) : undefined,
-    metrics: category === 'system' ? (
-      <>
-        <WorkspaceMetric label={t.settings.version.replace('{productName}', brand.appName)} value={<span className="font-mono">{system.data?.version ?? '—'}</span>} icon={Sparkles} />
-        <WorkspaceMetric label={t.settings.serviceDaemon} value={system.isError ? t.settings.serviceDown : t.settings.serviceUp} icon={Server} />
-        <WorkspaceMetric label={t.settings.diagnosticMemory} value={diagnostics ? `${Math.round((diagnostics.memoryUsedBytes / diagnostics.memoryTotalBytes) * 100)} %` : '—'} icon={MemoryStick} />
-        <WorkspaceMetric label={t.settings.diagnosticUptime} value={diagnostics ? formatUptime(diagnostics.uptimeSeconds) : '—'} icon={Timer} />
-      </>
-    ) : undefined,
+    // Keyed on the section actually on screen, not on the stored `category`: a remembered plugin section
+    // renders the System deck for the one paint before the redirect, and its rail must agree with it.
+    metrics: sectionMetrics[activeSection.id],
   } satisfies WorkspaceHeroProps;
 
   // The page's ONE row of controls, in the canonical toolbar under the section navigation. It is keyed on

@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useEffect } from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { useEffect, type ComponentType, type ReactNode } from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { createWrapper } from '../test-utils';
 import PluginHostPage from '../../app/p/[plugin]/[[...rest]]/page';
 import { en } from '../../lib/i18n/dictionaries/en';
 import { PageHeaderProvider, usePageHeader } from '../../lib/pageHeader';
-import type { PluginUiRegistration } from '../../lib/pluginUi';
+import { ensurePluginUiRuntime, type PluginUiRegistration } from '../../lib/pluginUi';
+
+const SHELL_CSS = readFileSync(
+  join(import.meta.dirname, '..', '..', 'app', 'styles', 'components', 'workspace-shell.css'),
+  'utf8',
+);
 
 const route = vi.hoisted(() => ({ plugin: 'skills', rest: [] as string[] }));
 vi.mock('next/navigation', () => ({
@@ -56,6 +63,37 @@ describe('plugin host route', () => {
     expect(page).not.toBeNull();
     expect(page!.contains(screen.getByTestId('section'))).toBe(true);
     expect(container.querySelector('[data-settings-document]')).toBeNull(); // the mock section renders none
+  });
+
+  /** The route wraps a section in its entrance animation, which puts ONE element between the page column
+   *  and the hero the section heads itself with. The shell's top breathing room is a child combinator off
+   *  `.workspace-page`, so that wrapper silently swallowed it: every plugin settings page opened flush
+   *  against the top bar while every core page kept its 2rem. Asserted against the DOM the real route
+   *  builds around the real `PluginPageFrame` — a mock `<div>` section has no hero to miss. */
+  it('keeps a settings section hero on the page spacing through the route entrance', async () => {
+    route.rest = ['settings', 'skills'];
+    ensurePluginUiRuntime();
+    const PluginPageFrame = window.ElowenUiRuntime!.components.PluginPageFrame as unknown as
+      ComponentType<{ surface: 'page' | 'deck'; title: string; children: ReactNode }>;
+    registration.value = {
+      pages: {},
+      settings: {
+        skills: () => (
+          <PluginPageFrame surface="page" title="Skills"><div data-testid="section">section</div></PluginPageFrame>
+        ),
+      },
+    } as unknown as PluginUiRegistration;
+    const { container } = mount();
+    await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
+
+    const hero = container.querySelector('.workspace-hero');
+    expect(hero).not.toBeNull();
+    expect(hero!.matches('.workspace-page > .workspace-page__lead > .workspace-hero')).toBe(true);
+    // …and that exact chain is what the stylesheet pads, at both the wide and the narrow value. Without
+    // this half the DOM could keep its shape while the rule that needs it drifts away.
+    expect(SHELL_CSS).toContain('.workspace-page > .workspace-page__lead > .workspace-hero { padding-block-start: 2rem; }');
+    const narrow = SHELL_CSS.slice(SHELL_CSS.indexOf('@container workspace-shell (width < 34rem)'));
+    expect(narrow).toContain('.workspace-page > .workspace-page__lead > .workspace-hero { padding-block-start: 1rem; }');
   });
 
   // Landing on the address of a plugin that is not in YOUR listing means two different things. An admin

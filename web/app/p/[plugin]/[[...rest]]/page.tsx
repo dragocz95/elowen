@@ -127,7 +127,10 @@ export default function PluginHostPage() {
         <ModuleHeader title={section.label} icon={pluginLucideIcon(section.icon)}>
           <AutoSaveStatus status={save.status} onRetry={save.retry} />
         </ModuleHeader>
-        <MotionReveal>{rendered}</MotionReveal>
+        {/* The class is structural, not decorative: it tells the page shell that this entrance is the
+            one wrapper standing between the page and its hero, so the hero still gets the shell's
+            top breathing room (app/styles/components/workspace-shell.css). */}
+        <MotionReveal className="workspace-page__lead">{rendered}</MotionReveal>
       </WorkspacePage>
     ) : settingsComponent && section ? (
       <>

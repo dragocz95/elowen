@@ -233,9 +233,15 @@ describe('the shell stylesheets carry one authority per decision', () => {
 
   it('gives the page room below the top bar, and less of it in a narrow region', () => {
     const shell = css('workspace-shell');
-    expect(shell).toMatch(/\.workspace-shell > \.workspace-hero,\s*\n\.workspace-page > \.workspace-hero\s*\{\s*padding-block-start:\s*2rem/);
+    expect(shell).toMatch(/\.workspace-shell > \.workspace-hero,\s*\n\.workspace-page > \.workspace-hero,\s*\n\.workspace-page > \.workspace-page__lead > \.workspace-hero\s*\{\s*padding-block-start:\s*2rem/);
     const narrow = atRuleBody(shell, '@container workspace-shell (width < 34rem)');
     expect(narrow).toMatch(/padding-block-start:\s*1rem/);
+    expect(narrow).toContain('.workspace-page > .workspace-page__lead > .workspace-hero');
+    // The spacing reaches through the ONE named wrapper a page may put in front of its hero (the plugin
+    // host's route entrance) and no further. A descendant combinator would also pad a hero a plugin
+    // bundle mounts deep inside its own content, which is a different hero doing a different job.
+    // Comments are stripped first — the rule's own note names that combinator to explain why it is wrong.
+    expect(shell.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/\.workspace-page \.workspace-hero/);
     // Padding rather than a margin: the shell declares no top padding of its own, so a margin on the
     // first child would collapse straight out through it.
     expect(shell).not.toMatch(/\.workspace-hero\s*\{[^}]*margin-block-start/);
