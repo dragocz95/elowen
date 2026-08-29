@@ -479,13 +479,16 @@ export function packDelegatedPromptAppend(sections: readonly string[]): PackedDe
   return { promptAppend: chunks, truncated, dropped };
 }
 
+/** Tools that require a live user must never reach an unattended delegated turn. */
+const DELEGATED_INTERACTIVE_TOOL_DENIES = ['AskUserQuestion'] as const;
+
 /** Rehydrate the execution-time plugin-tool policy. An empty allow-list is preserved as a real empty Set. */
 export function delegatedToolPolicy(
   scope: DelegatedExecutionScope,
   currentDenied: Iterable<string> = [],
   currentAllow?: Iterable<string>,
 ): ToolPolicy | undefined {
-  const narrowed = withDelegatedDeniedTools(scope, currentDenied);
+  const narrowed = withDelegatedDeniedTools(scope, [...currentDenied, ...DELEGATED_INTERACTIVE_TOOL_DENIES]);
   const deny = narrowed.toolPolicy?.deny;
   // The captured scope stays authoritative, but the spawning ACCOUNT's current grant may still narrow it:
   // a tool an admin has since revoked must not keep reaching a long-lived child through its frozen

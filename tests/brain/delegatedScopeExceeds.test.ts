@@ -185,47 +185,52 @@ describe('scopeExceedsCurrentAccess', () => {
 describe('delegatedToolPolicy', () => {
   const child = (over: Partial<DelegatedExecutionScope> = {}): DelegatedExecutionScope =>
     scope({ toolPolicy: { allow: ['Read', 'Bash'] }, ...over });
+  const expected = (allow?: string[], deny: string[] = []) => ({
+    ...(allow !== undefined ? { allow: new Set(allow) } : {}),
+    deny: new Set([...deny, 'AskUserQuestion']),
+  });
 
   it('intersects the captured scope with the spawning account\'s current grant', () => {
     expect(delegatedToolPolicy(child(), [], ['Read', 'Write']))
-      .toEqual({ allow: new Set(['Read']) }); // Write is granted but was never in the child's scope
+      .toEqual(expected(['Read'])); // Write is granted but was never in the child's scope
   });
 
   it('stops handing the child a tool the account has since lost', () => {
     // Bash was legitimately captured at spawn; the admin has since revoked it from the account.
-    expect(delegatedToolPolicy(child(), [], ['Read'])).toEqual({ allow: new Set(['Read']) });
+    expect(delegatedToolPolicy(child(), [], ['Read'])).toEqual(expected(['Read']));
     // Revoke everything and the child reaches no plugin tool at all, rather than falling back to its scope.
-    expect(delegatedToolPolicy(child(), [], [])).toEqual({ allow: new Set() });
+    expect(delegatedToolPolicy(child(), [], [])).toEqual(expected([]));
   });
 
   it('never lets an account grant WIDEN what the child was spawned with', () => {
     expect(delegatedToolPolicy(child({ toolPolicy: { allow: ['Read'] } }), [], ['Read', 'Bash', 'Write']))
-      .toEqual({ allow: new Set(['Read']) });
+      .toEqual(expected(['Read']));
   });
 
-  it('narrows an unrestricted child to the account grant, and leaves it alone when there is none', () => {
+  it('narrows an unrestricted child to the account grant, and denies interactive tools even without one', () => {
     // A scope with no allow-list is unrestricted; an account grant is still authority over it.
-    expect(delegatedToolPolicy(scope(), [], ['Read'])).toEqual({ allow: new Set(['Read']) });
-    // No grant at all (an admin parent) → the captured scope stands unchanged.
-    expect(delegatedToolPolicy(child(), [])).toEqual({ allow: new Set(['Read', 'Bash']) });
-    expect(delegatedToolPolicy(scope(), [])).toBeUndefined();
+    expect(delegatedToolPolicy(scope(), [], ['Read'])).toEqual(expected(['Read']));
+    // No grant at all (an admin parent) keeps the captured scope, except for tools an unattended child
+    // cannot complete because no user is attached to answer them.
+    expect(delegatedToolPolicy(child(), [])).toEqual(expected(['Read', 'Bash']));
+    expect(delegatedToolPolicy(scope(), [])).toEqual(expected());
   });
 
   // Both sides of the intersection are PATTERN lists, and an exact one is wrong in both directions.
   it('honours a wildcard on either side of the intersection', () => {
     // Pre-migration the account's grant is the `*` marker: it restricts nothing, so the scope stands.
-    expect(delegatedToolPolicy(child(), [], ['*'])).toEqual({ allow: new Set(['Read', 'Bash']) });
+    expect(delegatedToolPolicy(child(), [], ['*'])).toEqual(expected(['Read', 'Bash']));
     // A scope holding an MCP FAMILY narrows to the members the account was actually granted — the family
     // name itself can never equal a concrete grant, and dropping it lost the child MCP entirely.
     expect(delegatedToolPolicy(child({ toolPolicy: { allow: ['Read', 'mcp__*'] } }), [], ['Read', 'mcp__github__issue']))
-      .toEqual({ allow: new Set(['Read', 'mcp__github__issue']) });
+      .toEqual(expected(['Read', 'mcp__github__issue']));
     // …and it is still a narrowing: a member outside the family stays out.
     expect(delegatedToolPolicy(child({ toolPolicy: { allow: ['mcp__*'] } }), [], ['Bash', 'mcp__github__issue']))
-      .toEqual({ allow: new Set(['mcp__github__issue']) });
+      .toEqual(expected(['mcp__github__issue']));
   });
 
-  it('applies the account\'s current denies on top of the intersection', () => {
+  it('applies the account\'s current denies on top of the mandatory interactive-tool deny', () => {
     expect(delegatedToolPolicy(child(), ['Bash'], ['Read', 'Bash']))
-      .toEqual({ allow: new Set(['Read', 'Bash']), deny: new Set(['Bash']) });
+      .toEqual(expected(['Read', 'Bash'], ['Bash']));
   });
 });
