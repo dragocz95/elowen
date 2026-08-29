@@ -47,8 +47,8 @@ function SelectTrigger({
         'flex h-9 w-full min-w-0 items-center gap-2 text-sm transition-[border-color,background-color,box-shadow]',
         'group focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
         variant === 'line'
-          ? 'border-b border-border bg-transparent px-1 text-text hover:border-border-strong data-[state=open]:border-primary data-[state=open]:text-primary'
-          : 'rounded-md border border-border bg-surface px-3 text-text hover:border-border-strong hover:bg-elevated data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_rgb(var(--primary-rgb)/0.08)]',
+          ? 'border-b border-input bg-transparent px-1 text-foreground hover:border-border-strong data-[state=open]:border-primary data-[state=open]:text-primary'
+          : 'rounded-md border border-input bg-card px-3 text-foreground hover:border-border-strong hover:bg-accent data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_rgb(var(--primary-rgb)/0.08)]',
         className,
       )}
       {...props}
@@ -58,7 +58,7 @@ function SelectTrigger({
         <ChevronDown
           size={13}
           aria-hidden
-          className="shrink-0 text-text-muted transition-transform group-data-[state=open]:rotate-180"
+          className="shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
         />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
@@ -86,7 +86,7 @@ function SelectContent({
       // opens from.
       className={cn(
         'overlay-layer-menu max-h-96 w-max min-w-[var(--radix-select-trigger-width)] max-w-80 overflow-y-auto overflow-x-hidden',
-        'rounded-xl border border-border bg-surface p-1.5 shadow-[var(--shadow-raised)]',
+        'rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-[var(--shadow-raised)]',
         'data-[state=open]:animate-fade-up',
         position === 'popper' && 'data-[side=bottom]:translate-y-2 data-[side=top]:-translate-y-2',
         className,
@@ -108,7 +108,7 @@ function SelectLabel({ className = '', ...props }: React.ComponentProps<typeof S
   return (
     <SelectPrimitive.Label
       data-slot="select-label"
-      className={cn('px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted', className)}
+      className={cn('px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground', className)}
       {...props}
     />
   );
@@ -124,13 +124,13 @@ function SelectItem({ className = '', children, icon, ...props }: React.Componen
       data-slot="select-item"
       className={cn(
         'relative flex w-full min-w-0 cursor-default select-none items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm outline-none transition-colors',
-        // The highlight is a wash of the TEXT colour, not a surface step. `elevated` and `overlay` are
-        // the tokens a hovered row would normally take, but a skin is free to collapse the surface
-        // ramp — studio-oled paints surface, elevated and overlay with one card fill (#080d0f), and the
-        // built-in design separates them by 6/255 — so a surface step is a highlight that a design can
-        // silently erase. A wash of `--color-text` is relative to the contrast the design already
-        // guarantees, so it reads on every skin.
-        'text-text data-[highlighted]:bg-text/10 data-[state=checked]:bg-primary/10 data-[state=checked]:text-primary',
+        // `accent` is the shadcn token for exactly this — the interactive surface — and in this app it
+        // resolves to a wash of the foreground rather than a step up the surface ramp. That matters:
+        // a surface step is a highlight a design can silently erase, and both designs here do erase it
+        // (studio-oled paints surface, elevated and overlay with one card fill; the built-in design
+        // separates them by 6/255), which is how this row once highlighted invisibly. A skin may
+        // collapse the surface ramp but may not lower text contrast, so the wash reads by construction.
+        'text-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[state=checked]:bg-primary/10 data-[state=checked]:text-primary',
         'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
         className,
       )}
@@ -159,7 +159,7 @@ function SelectScrollUpButton({ className = '', ...props }: React.ComponentProps
   return (
     <SelectPrimitive.ScrollUpButton
       data-slot="select-scroll-up-button"
-      className={cn('flex cursor-default items-center justify-center py-1 text-text-muted', className)}
+      className={cn('flex cursor-default items-center justify-center py-1 text-muted-foreground', className)}
       {...props}
     >
       <ChevronUp size={13} aria-hidden />
@@ -174,7 +174,7 @@ function SelectScrollDownButton({
   return (
     <SelectPrimitive.ScrollDownButton
       data-slot="select-scroll-down-button"
-      className={cn('flex cursor-default items-center justify-center py-1 text-text-muted', className)}
+      className={cn('flex cursor-default items-center justify-center py-1 text-muted-foreground', className)}
       {...props}
     >
       <ChevronDown size={13} aria-hidden />
