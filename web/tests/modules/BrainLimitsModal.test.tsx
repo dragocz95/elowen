@@ -51,7 +51,9 @@ describe('BrainSection limits — collapsed into a drawer', () => {
     }
     expect(screen.getByText('5 min')).toBeTruthy();
     expect(screen.getByText('≈ 7.5k tokens')).toBeTruthy();
-    fireEvent.keyDown(window, { key: 'Escape' });
+    // Raised inside the drawer, the way a real Escape arrives: the dialog is Radix-driven now and listens
+    // on the document, which `window` sits above rather than inside.
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Memory recall — count' }), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('slider', { name: 'Memory recall — count' })).toBeNull());
   });
 

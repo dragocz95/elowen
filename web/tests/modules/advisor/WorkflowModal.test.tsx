@@ -105,7 +105,9 @@ describe('workflow DAG modal', () => {
   it('closes on Escape', async () => {
     const es = await renderChat();
     await openDag(es);
-    await act(async () => { fireEvent.keyDown(window, { key: 'Escape' }); });
+    // Raised inside the modal, the way a real Escape arrives: the dialog is Radix-driven now and listens
+    // on the document, which `window` sits above rather than inside.
+    await act(async () => { fireEvent.keyDown(screen.getByTestId('workflow-modal'), { key: 'Escape' }); });
     await waitFor(() => expect(screen.queryByTestId('workflow-modal')).toBeNull());
   });
 

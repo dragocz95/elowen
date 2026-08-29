@@ -210,7 +210,9 @@ describe('ConversationDiagnosticsModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
     const sessionsDrawer = await screen.findByRole('dialog', { name: 'Sessions' });
     expect(within(sessionsDrawer).getByTestId('diagnostics-session-rail')).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: 'Escape' });
+    // Raised inside the drawer, the way a real Escape arrives: the dialog is Radix-driven now and listens
+    // on the document, which `window` sits above rather than inside.
+    fireEvent.keyDown(sessionsDrawer, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Sessions' })).not.toBeInTheDocument());
     expect(screen.getByRole('dialog', { name: 'Conversation diagnostics' })).toBeInTheDocument();
 
