@@ -72,9 +72,10 @@
   --studio-chat-code: #f4f4f5;
   --studio-chat-composer-radius: 28px;
   --studio-chat-user-radius: 22px;
-  /* Geist is the shipped metric-compatible counterpart to the reference's Inter working face. */
-  --font-sans: var(--font-geist-sans), Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display: var(--font-sans);
+  /* Inter is the reference UI face. Waldenburg is proprietary, so Geist remains the licensed display
+     substitute while preserving the same compact grotesk proportions. */
+  --font-sans: "Inter Variable", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-geist-sans), "Inter Variable", Inter, ui-sans-serif, sans-serif;
   --studio-chat-font: -apple-system-body, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 
   /* Status fills. --color-on-status is the ink that sits ON one of them, and on a light design it has to
@@ -126,10 +127,12 @@
   --studio-fill-active: color-mix(in srgb, var(--color-text) 7%, transparent);
 
   /* ---- Chrome rhythm -------------------------------------------------------------------------
-     The icon rail is 56px with 40px rows; toolbar fields, buttons and filters share the reference's
-     40px control height. Both are read by shared stylesheets rather than restated per rule. */
-  --studio-rail-width: 3.5rem;
+     The icon rail is the reference's measured 57px; toolbar fields, buttons and filters share a 40px
+     control height. Both are read by shared stylesheets rather than restated per rule. */
+  --studio-rail-width: 57px;
   --studio-control-height: 2.5rem;
+  --studio-ask-ground: #f4f4f5;
+  --studio-ask-shadow: 0 0 0 1px rgb(9 9 11 / 0.075), 0 4px 6px -2px rgb(16 24 40 / 0.03), 0 12px 16px -4px rgb(16 24 40 / 0.08);
 
   /* Depth comes from hairlines, not from shadow. What is left is the minimum needed to lift a menu or a
      dialog off the page. */
@@ -140,8 +143,11 @@
   --glow-soft: none;
   --hairline: 1px solid rgb(9 9 11 / 0.08);
 
-  /* Motion is a 120-180ms opacity/translate and nothing else. */
-  --motion-fast: 120ms;
-  --motion-base: 160ms;
-  --motion-slow: 180ms;
+  /* ElevenLabs' interaction ladder: controls 75ms, navigation 150ms, surfaces 200ms. */
+  --motion-fast: 75ms;
+  --motion-base: 150ms;
+  --motion-slow: 200ms;
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --studio-ask-panel-motion: 300ms;
+  --studio-ask-panel-ease: cubic-bezier(0, 0, 0.2, 1);
 }

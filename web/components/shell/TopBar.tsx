@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ChevronRight, LogOut, Menu, Search, User } from 'lucide-react';
+import { ChevronRight, LogOut, Menu, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Search, User } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useMe } from '../../lib/queries';
 import { useSignOut } from '../../lib/mutations';
@@ -25,8 +25,11 @@ import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
 export type PageBarVariant = 'floating' | 'bar';
 
 /** Page chrome: the reader's location plus the universal actions. */
-export function TopBar({ onMenuClick, showLocation = true, variant = 'floating', hideOnPhone = false }: {
+export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide = 'left', showLocation = true, variant = 'floating', hideOnPhone = false }: {
   onMenuClick?: () => void;
+  onNavToggle?: () => void;
+  navCollapsed?: boolean;
+  navSide?: 'left' | 'right';
   showLocation?: boolean;
   variant?: PageBarVariant;
   /** Withhold the whole bar below 768px. /chat carries its own conversation bar there, and stacking the
@@ -53,6 +56,8 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
       ? t.nav.system
       : undefined;
   const bar = variant === 'bar';
+  const NavOpenIcon = navSide === 'right' ? PanelRightOpen : PanelLeftOpen;
+  const NavCloseIcon = navSide === 'right' ? PanelRightClose : PanelLeftClose;
 
   // The two variants differ in what the row IS — a floating cluster over the canvas versus a ruled bar
   // that content scrolls under — so the geometry is chosen here rather than patched on afterwards.
@@ -67,7 +72,7 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
         ? 'top-bar top-bar--bar sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-bg px-4'
         : 'top-bar relative z-30 flex min-h-16 shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-3'}${hideOnPhone ? ' max-[767px]:hidden' : ''}`}
     >
-      <div className={`top-bar__leading min-w-0 items-center gap-2 ${bar || showLocation || onMenuClick ? 'flex' : 'hidden'} ${bar ? 'flex-1' : 'items-start gap-3'}`}>
+      <div className={`top-bar__leading min-w-0 items-center gap-2 ${bar || showLocation || onMenuClick || onNavToggle ? 'flex' : 'hidden'} ${bar ? 'flex-1' : 'items-start gap-3'}`}>
         {onMenuClick ? (
           <button
             type="button"
@@ -77,12 +82,28 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
               ? 'top-bar__menu -ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]'
               : 'top-bar__menu mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-bg/55 text-text-muted backdrop-blur-md transition-colors hover:border-accent/40 hover:text-accent'}
           >
-            <Menu size={bar ? 17 : 19} aria-hidden />
+            <Menu size={bar ? 18 : 19} strokeWidth={bar ? 1.5 : 2} aria-hidden />
+          </button>
+        ) : null}
+        {bar && onNavToggle ? (
+          <button
+            type="button"
+            onClick={onNavToggle}
+            data-testid="studio-nav-collapse"
+            data-nav-side={navSide}
+            aria-label={navCollapsed ? t.common.expandNav : t.common.collapseNav}
+            title={`${navCollapsed ? t.common.expandNav : t.common.collapseNav} · ${t.nav.collapseShortcut}`}
+            aria-keyshortcuts="Control+Backslash Meta+Backslash"
+            className="top-bar__nav-toggle flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+          >
+            {navCollapsed
+              ? <NavOpenIcon size={20} strokeWidth={1.5} aria-hidden />
+              : <NavCloseIcon size={20} strokeWidth={1.5} aria-hidden />}
           </button>
         ) : null}
         {bar && showLocation && title ? (
           <div className="top-bar__location flex min-w-0 shrink-0 items-center gap-2">
-            {Icon ? <Icon size={15} strokeWidth={1.75} aria-hidden /> : null}
+            {Icon ? <Icon size={18} strokeWidth={1.5} aria-hidden /> : null}
             <span className="truncate text-sm font-medium text-text">{title}</span>
             {count !== undefined ? <span className="font-mono text-xs text-text-muted">{count}</span> : null}
           </div>
@@ -111,7 +132,7 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
           aria-label={t.common.openCommandPalette}
           className="top-bar__search flex h-8 min-w-0 items-center gap-2 rounded-md border border-border bg-bg px-3 text-text-muted transition-colors hover:border-border-strong hover:text-text"
         >
-          <Search size={15} aria-hidden />
+          <Search size={18} strokeWidth={1.5} aria-hidden />
           <span className="min-w-0 flex-1 truncate text-left text-xs">{t.common.searchCommands}</span>
           <span className="shrink-0 font-mono text-[10px] text-text-muted/70">⌘ K</span>
         </button>
@@ -146,7 +167,7 @@ export function TopBar({ onMenuClick, showLocation = true, variant = 'floating',
             title={t.common.logout}
             className={`flex w-9 items-center justify-center disabled:opacity-50 ${control}`}
           >
-            <LogOut size={17} aria-hidden />
+            <LogOut size={18} strokeWidth={1.5} aria-hidden />
           </button>
         ) : null}
         <SkinSwitcher collapsed={Boolean(onMenuClick)} />

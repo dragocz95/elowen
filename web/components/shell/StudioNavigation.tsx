@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, MoreHorizontal, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
+import { ChevronRight, MoreHorizontal, X } from 'lucide-react';
 import { useBrand } from '../../lib/brand';
 import { useHealth, useMe } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
@@ -127,15 +127,13 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
 
   const hidden = drawer && !drawerOpen;
   const mode = drawer ? 'drawer' : compact ? 'rail' : 'full';
-  const collapseLabel = compact ? t.common.expandNav : t.common.collapseNav;
   const user = me.data?.user;
 
   /** One destination row, at either depth.
    *
-   *  The label text is dropped only in the icon column, so `aria-label` names the row exactly where the
-   *  text is NOT on screen. `title` is on BOTH: expanded it keeps a truncated label readable, folded it
-   *  is the tooltip that says what an unlabelled 16px glyph leads to — which is the whole reason an icon
-   *  sidebar is usable at all. */
+   *  The label stays mounted so the 150ms opacity/translate collapse can finish, but is aria-hidden in the
+   *  icon column; `aria-label` names the row exactly where the text is not presented. `title` is on both:
+   *  expanded it keeps a truncated label readable, folded it explains the otherwise unlabelled 18px glyph. */
   const destination = (entry: NavEntry, onContextMenu?: (event: React.MouseEvent) => void, body?: React.ReactNode) => {
     const active = entryIsActive(entry, pathname);
     // A multi-page world's desktop row points at its default page while the TopBar carries the exact peer.
@@ -159,8 +157,8 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
       >
         {body !== undefined ? <span className="studio-nav__item-body" aria-hidden>{body}</span> : (
           <>
-            <span className="studio-nav__item-icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span>
-            {compact ? null : <span className="studio-nav__item-label">{entry.label}</span>}
+            <span className="studio-nav__item-icon" aria-hidden><Icon size={18} strokeWidth={1.5} /></span>
+            <span className="studio-nav__item-label" aria-hidden={compact || undefined}>{entry.label}</span>
           </>
         )}
       </Link>
@@ -209,31 +207,18 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
             aria-label={t.common.close}
             className="studio-nav__close overlay-touch-target"
           >
-            <X size={18} aria-hidden />
+            <X size={18} strokeWidth={1.5} aria-hidden />
           </button>
         ) : null}
 
         <header className="studio-nav__header">
-          <img className="studio-nav__brand-mark" src={iconSrc} alt="" width={20} height={20} />
-          {compact ? null : <span className="studio-nav__brand-name">{appName}</span>}
-          {/* The build, beside the name it belongs to. Nothing else in this header is live: a status dot
-              here repeated what a failing request already says, in the loudest colour the design owns. */}
-          {compact || !health.data?.version ? null : (
-            <span className="studio-nav__version">{`v${health.data.version}`}</span>
-          )}
-          {onToggleCollapse ? (
-            <button
-              type="button"
-              className="studio-nav__trigger overlay-touch-target"
-              data-testid="studio-nav-collapse"
-              aria-label={collapseLabel}
-              title={`${collapseLabel} · ${t.nav.collapseShortcut}`}
-              aria-keyshortcuts="Control+Backslash Meta+Backslash"
-              onClick={onToggleCollapse}
-            >
-              {compact ? <PanelLeftOpen size={16} aria-hidden /> : <PanelLeftClose size={16} aria-hidden />}
-            </button>
-          ) : null}
+          <div className="studio-nav__brand-lockup">
+            <img className="studio-nav__brand-mark" src={iconSrc} alt="" width={20} height={20} />
+            <span className="studio-nav__brand-name" aria-hidden={compact || undefined}>{appName}</span>
+            {/* The build stays attached to the brand lockup. In rail mode the whole lockup remains at full
+                width and the sidebar clips it, matching the reference's partial wordmark treatment. */}
+            {health.data?.version ? <span className="studio-nav__version" aria-hidden={compact || undefined}>{`v${health.data.version}`}</span> : null}
+          </div>
         </header>
 
         <div className="studio-nav__body">
@@ -267,7 +252,7 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
                     onClick={() => toggleGroup(key)}
                     onContextMenu={onEntryMenu}
                   >
-                    <span className="studio-nav__item-icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span>
+                    <span className="studio-nav__item-icon" aria-hidden><Icon size={18} strokeWidth={1.5} /></span>
                     <span className="studio-nav__item-label">{entry.label}</span>
                     <ChevronRight className="studio-nav__chevron" size={14} aria-hidden />
                   </button>
@@ -296,13 +281,11 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
                     bottom of an icon column readable as "you" rather than as one more destination. */}
                 {user
                   ? <Avatar user={user} size={24} />
-                  : <span className="studio-nav__item-icon"><userEntry.icon size={16} strokeWidth={1.75} /></span>}
-                {compact ? null : (
-                  <span className="studio-nav__user-identity">
-                    <span className="studio-nav__user-name">{user ? (user.name || user.username) : t.common.daemon}</span>
-                    {user?.name ? <span className="studio-nav__user-meta">{user.username}</span> : null}
-                  </span>
-                )}
+                  : <span className="studio-nav__item-icon"><userEntry.icon size={18} strokeWidth={1.5} /></span>}
+                <span className="studio-nav__user-identity" aria-hidden={compact || undefined}>
+                  <span className="studio-nav__user-name">{user ? (user.name || user.username) : t.common.daemon}</span>
+                  {user?.name ? <span className="studio-nav__user-meta">{user.username}</span> : null}
+                </span>
               </>
             )) : null}
             <button
@@ -315,7 +298,7 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
                 customization.openSurfaceMenu(box.left + box.width / 2, box.top);
               }}
             >
-              <MoreHorizontal size={16} aria-hidden />
+              <MoreHorizontal size={18} strokeWidth={1.5} aria-hidden />
             </button>
           </div>
         </footer>

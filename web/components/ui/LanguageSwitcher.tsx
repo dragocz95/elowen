@@ -75,7 +75,7 @@ export function LanguageSwitcher({ collapsed = false }: { collapsed?: boolean })
           : 'flex h-9 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text'}
         style={{ transitionDuration: 'var(--motion-fast)' }}
       >
-        <Languages size={collapsed ? 14 : 16} aria-hidden />
+        <Languages size={collapsed ? 16 : 18} strokeWidth={1.5} aria-hidden />
         {!collapsed && <span className="font-mono uppercase tracking-wide">{locale}</span>}
       </button>
       {open && (

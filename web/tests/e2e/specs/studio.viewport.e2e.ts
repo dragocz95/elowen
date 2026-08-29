@@ -33,10 +33,10 @@ const REGISTER = '/memory';
  *  number because a test asserts against a measured box, not against the token. */
 const TOUCH_TARGET = 44;
 
-/** Studio's two desktop columns, from `skins/studio/shared.css`: 256px expanded and a 56px reference
- *  rail holding one 40px row inside 2 × 8px of air. Restated because the browser test measures pixels. */
+/** Studio's two desktop columns, from `skins/studio/shared.css`: 256px expanded and the measured 57px
+ *  reference rail holding a 32px row. Restated because the browser test measures pixels. */
 const NAV_FULL = 256;
-const NAV_RAIL = 56;
+const NAV_RAIL = 57;
 
 /** Put a context into a Studio skin.
  *
@@ -123,7 +123,7 @@ test('Studio matches the reference typography, toolbar and settings density', as
   });
   expect(pageStyle.size).toBe('24px');
   expect(pageStyle.weight).toBe('400');
-  expect(pageStyle.spacing).toBe('normal');
+  expect(pageStyle.spacing).toBe('-0.15px');
   expect(pageStyle.family).toContain('Geist');
 
   const toolbar = app.locator('.workspace-hero__lead .control-surface-toolbar');
@@ -471,7 +471,7 @@ test('the Studio page bar stays put while the register scrolls under it', async 
     'the sticky column names clear the bar exactly').toBe(Math.round(geometry.bar));
 });
 
-test('Studio defaults to the full reference sidebar and chat rail, then becomes a sheet below 1024px', async ({ app, seed }, testInfo) => {
+test('Studio opens the reference chat rail only on demand and remembers the choice', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-light');
   const nav = app.locator('[data-testid="studio-navigation"]');
@@ -480,41 +480,172 @@ test('Studio defaults to the full reference sidebar and chat rail, then becomes 
   await openStudio(app, REGISTER);
   await expect(nav).toHaveAttribute('data-mode', 'full');
   expect(Math.round((await nav.boundingBox())!.width), 'the default reference column').toBe(NAV_FULL);
+  await expect(app.locator('.advisor-panel')).toHaveCount(0);
+
+  await app.getByRole('button', { name: 'Open assistant' }).click();
   await expect(app.locator('.advisor-panel')).toBeVisible();
-  expect(Math.round((await app.locator('.advisor-panel').boundingBox())!.width), 'the reference chat rail').toBe(344);
+  await expect(nav).toHaveAttribute('data-mode', 'rail');
+  expect(Math.round((await app.locator('.advisor-panel').boundingBox())!.width), 'the reference chat rail').toBe(336);
+  await openStudio(app, REGISTER);
+  await expect(app.locator('.advisor-panel')).toBeVisible();
+  await expect(nav).toHaveAttribute('data-mode', 'rail');
+
   const shellRhythm = await app.evaluate(() => {
     const item = document.querySelector<HTMLElement>('.studio-nav__body .studio-nav__item')!;
+    const itemIcon = item.querySelector<SVGElement>('svg')!;
     const footerItem = document.querySelector<HTMLElement>('.studio-nav__footer > div:not(.studio-nav__user) .studio-nav__item')!;
+    const navElement = document.querySelector<HTMLElement>('.studio-nav')!;
+    const brandLockup = document.querySelector<HTMLElement>('.studio-nav__brand-lockup')!;
+    const brandMark = document.querySelector<HTMLElement>('.studio-nav__brand-mark')!;
     const search = document.querySelector<HTMLElement>('.top-bar__search')!;
+    const searchIcon = search.querySelector<SVGElement>('svg')!;
     const skinButton = document.querySelector<HTMLElement>('.skin-switcher__button')!;
     const skinLabel = skinButton.querySelector<HTMLElement>('.skin-switcher__name')!;
+    const row = document.querySelector<HTMLElement>('.shell-workspace-row')!;
+    const workspace = document.querySelector<HTMLElement>('.shell-workspace')!;
+    const slot = document.querySelector<HTMLElement>('.studio-advisor-slot')!;
+    const advisor = document.querySelector<HTMLElement>('.advisor-panel')!;
     const advisorHeader = document.querySelector<HTMLElement>('.advisor-panel__header')!;
+    const advisorControl = advisorHeader.querySelector<HTMLButtonElement>('button')!;
+    const advisorControlIcon = advisorControl.querySelector<SVGElement>('svg')!;
+    const navToggle = document.querySelector<HTMLElement>('.top-bar__nav-toggle')!;
     const searchStyle = getComputedStyle(search);
+    const rowStyle = getComputedStyle(row);
+    const workspaceStyle = getComputedStyle(workspace);
+    const navStyle = getComputedStyle(navElement);
+    const advisorStyle = getComputedStyle(advisor);
+    const workspaceBox = workspace.getBoundingClientRect();
+    const advisorBox = advisor.getBoundingClientRect();
     return {
       itemHeight: Math.round(item.getBoundingClientRect().height),
+      itemIcon: { width: itemIcon.getAttribute('width'), stroke: itemIcon.getAttribute('stroke-width') },
       footerItemHeight: Math.round(footerItem.getBoundingClientRect().height),
+      navWidth: Math.round(navElement.getBoundingClientRect().width),
+      navTransition: { duration: navStyle.transitionDuration, easing: navStyle.transitionTimingFunction },
+      brandClipped: brandLockup.getBoundingClientRect().right > navElement.getBoundingClientRect().right,
+      brandMarkWidth: Math.round(brandMark.getBoundingClientRect().width),
       searchWidth: Math.round(search.getBoundingClientRect().width),
       searchHeight: Math.round(search.getBoundingClientRect().height),
       searchBorder: searchStyle.borderTopWidth,
       searchRadius: searchStyle.borderRadius,
+      searchIcon: { width: searchIcon.getAttribute('width'), stroke: searchIcon.getAttribute('stroke-width') },
       skinHeight: Math.round(skinButton.getBoundingClientRect().height),
       skinBorder: getComputedStyle(skinButton).borderTopWidth,
       skinFont: getComputedStyle(skinLabel).fontSize,
+      bodyFont: getComputedStyle(document.body).fontFamily,
+      workspace: {
+        x: Math.round(workspaceBox.x),
+        y: Math.round(workspaceBox.y),
+        radius: workspaceStyle.borderRadius,
+        shadow: workspaceStyle.boxShadow,
+        transition: rowStyle.transitionDuration,
+        easing: rowStyle.transitionTimingFunction,
+      },
+      advisor: {
+        width: Math.round(advisorBox.width),
+        y: Math.round(advisorBox.y),
+        slotWidth: Math.round(slot.getBoundingClientRect().width),
+        gap: Math.round(advisorBox.left - workspaceBox.right),
+        opacity: advisorStyle.opacity,
+        translate: advisorStyle.translate,
+        scale: advisorStyle.scale,
+        transition: advisorStyle.transitionDuration,
+        easing: advisorStyle.transitionTimingFunction,
+      },
       advisorHeaderHeight: Math.round(advisorHeader.getBoundingClientRect().height),
+      advisorControl: {
+        size: Math.round(advisorControl.getBoundingClientRect().width),
+        iconWidth: advisorControlIcon.getAttribute('width'),
+        iconStroke: advisorControlIcon.getAttribute('stroke-width'),
+        duration: getComputedStyle(advisorControl).transitionDuration,
+      },
+      topBarControlDuration: getComputedStyle(navToggle).transitionDuration,
     };
   });
-  expect(shellRhythm).toEqual({
+  expect({
+    itemHeight: shellRhythm.itemHeight,
+    itemIcon: shellRhythm.itemIcon,
+    footerItemHeight: shellRhythm.footerItemHeight,
+    navWidth: shellRhythm.navWidth,
+    navTransition: shellRhythm.navTransition,
+    brandClipped: shellRhythm.brandClipped,
+    brandMarkWidth: shellRhythm.brandMarkWidth,
+    searchWidth: shellRhythm.searchWidth,
+    searchHeight: shellRhythm.searchHeight,
+    searchBorder: shellRhythm.searchBorder,
+    searchRadius: shellRhythm.searchRadius,
+    searchIcon: shellRhythm.searchIcon,
+    skinHeight: shellRhythm.skinHeight,
+    skinBorder: shellRhythm.skinBorder,
+    skinFont: shellRhythm.skinFont,
+    workspace: shellRhythm.workspace,
+    advisor: shellRhythm.advisor,
+    advisorHeaderHeight: shellRhythm.advisorHeaderHeight,
+    advisorControl: shellRhythm.advisorControl,
+    topBarControlDuration: shellRhythm.topBarControlDuration,
+  }).toEqual({
     itemHeight: 32,
+    itemIcon: { width: '18', stroke: '1.5' },
     footerItemHeight: 32,
+    navWidth: NAV_RAIL,
+    navTransition: { duration: '0.15s', easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
+    brandClipped: true,
+    brandMarkWidth: 24,
     searchWidth: 256,
     searchHeight: 32,
     searchBorder: '1px',
     searchRadius: '12px',
+    searchIcon: { width: '18', stroke: '1.5' },
     skinHeight: 32,
     skinBorder: '1px',
     skinFont: '13px',
+    workspace: {
+      x: 16,
+      y: 16,
+      radius: '20px',
+      shadow: shellRhythm.workspace.shadow,
+      transition: '0.2s, 0.2s, 0.2s',
+      easing: 'cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1)',
+    },
+    advisor: {
+      width: 336,
+      y: 0,
+      slotWidth: 344,
+      gap: 15,
+      opacity: '1',
+      translate: '0px',
+      scale: '1',
+      transition: '0.3s, 0.3s, 0.3s',
+      easing: 'cubic-bezier(0, 0, 0.2, 1), cubic-bezier(0, 0, 0.2, 1), cubic-bezier(0, 0, 0.2, 1)',
+    },
     advisorHeaderHeight: 50,
+    advisorControl: { size: 32, iconWidth: '18', iconStroke: '1.5', duration: '0.075s, 0.075s' },
+    topBarControlDuration: '0.075s',
   });
+  expect(shellRhythm.workspace.shadow).not.toBe('none');
+  expect(shellRhythm.bodyFont).toContain('Inter Variable');
+
+  await app.getByTestId('studio-nav-collapse').click();
+  await expect(nav).toHaveAttribute('data-mode', 'full');
+  await expect.poll(async () => Math.round((await nav.boundingBox())!.width)).toBe(NAV_FULL);
+  await app.getByTestId('studio-nav-collapse').click();
+  await expect(nav).toHaveAttribute('data-mode', 'rail');
+  await expect.poll(async () => Math.round((await nav.boundingBox())!.width)).toBe(NAV_RAIL);
+
+  await app.locator('.advisor-panel').getByRole('button', { name: 'Dock position' }).click();
+  await app.getByRole('button', { name: 'Dock left' }).click();
+  await expect(nav).toHaveAttribute('data-side', 'right');
+  await expect(app.getByTestId('studio-nav-collapse')).toHaveAttribute('data-nav-side', 'right');
+  await app.locator('.advisor-panel').getByRole('button', { name: 'Dock position' }).click();
+  await app.getByRole('button', { name: 'Dock right' }).click();
+  await expect(nav).toHaveAttribute('data-side', 'left');
+  await expect(app.getByTestId('studio-nav-collapse')).toHaveAttribute('data-nav-side', 'left');
+
+  await app.locator('.advisor-panel').getByRole('button', { name: 'Close' }).click();
+  await expect(app.locator('.advisor-panel')).toHaveAttribute('aria-hidden', 'true');
+  await expect.poll(() => app.locator('.advisor-panel').evaluate((panel) => getComputedStyle(panel).opacity)).toBe('0');
+  await openStudio(app, REGISTER);
+  await expect(app.locator('.advisor-panel')).toHaveCount(0);
 
   // Folding is still available on a roomy desktop and is persisted under Studio's own key, without
   // changing the spatial design's sidebar preference.

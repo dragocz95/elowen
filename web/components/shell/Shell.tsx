@@ -101,6 +101,24 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const studioDockViewport = useStudioDockViewport();
   const onChat = usePathname() === '/chat';
   const dock = useDockState(profile);
+  const studioRightAvailable = profile === 'command'
+    && studioDockViewport === true
+    && !onChat
+    && dock.state.side === 'right';
+  const studioAskOpen = studioRightAvailable && dock.state.open;
+  const [studioAdvisorMounted, setStudioAdvisorMounted] = useState(studioAskOpen);
+  const [studioAdvisorVisible, setStudioAdvisorVisible] = useState(false);
+  const [studioAskNavExpanded, setStudioAskNavExpanded] = useState(false);
+  useEffect(() => {
+    let frame: number | undefined;
+    if (studioAskOpen) {
+      setStudioAdvisorMounted(true);
+      frame = requestAnimationFrame(() => setStudioAdvisorVisible(true));
+    } else {
+      setStudioAdvisorVisible(false);
+    }
+    return () => { if (frame !== undefined) cancelAnimationFrame(frame); };
+  }, [studioAskOpen]);
   // Studio's reference chat rail is a desktop workspace column. Withhold it until the viewport is known,
   // below 1440px and on the full chat route, where it would duplicate the same controller beside itself.
   const docked = dock.state.open && !onChat && (profile !== 'command' || studioDockViewport === true);
@@ -139,6 +157,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // clearance the page keeps for it read this ONE flag, so a page can never reserve the corner for a
   // control that is not there, nor run its last row under one that is.
   const launcherVisible = !docked && !onChat;
+  const studioAskPanelMounted = studioRightAvailable && studioAdvisorMounted;
 
   // Measure the region the sidebar + content actually share (everything but a left/right dock). The
   // sidebar's mode (full / rail / drawer) and the mobile top bar key off THIS, so the chrome reacts to
@@ -151,7 +170,15 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const [commandPin, setCommandPin] = usePersistentState<NavPin>('elowen.nav.command.pin', 'full', NAV_PINS);
   const pin = profile === 'command' ? commandPin : spatialPin;
   const setPin = profile === 'command' ? setCommandPin : setSpatialPin;
-  const { mode, pinnable } = resolveNav(regionW, pin, profile);
+  const navResolution = resolveNav(regionW, pin, profile);
+  const studioAskControlsNav = studioAskOpen && navResolution.mode !== 'drawer';
+  const mode = studioAskControlsNav ? (studioAskNavExpanded ? 'full' : 'rail') : navResolution.mode;
+  const pinnable = navResolution.pinnable;
+  const toggleNav = studioAskControlsNav
+    ? () => setStudioAskNavExpanded((expanded) => !expanded)
+    : pinnable
+      ? () => setPin(pin === 'rail' ? 'full' : 'rail')
+      : undefined;
   // Widening past the drawer breakpoint replaces the drawer with a column, but the open flag would
   // survive — so narrowing again, without ever touching the menu, would slide it back out on its own.
   useEffect(() => { if (mode !== 'drawer') setDrawerOpen(false); }, [mode]);
@@ -165,7 +192,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
     drawer: mode === 'drawer',
     drawerOpen,
     onDrawerClose: () => setDrawerOpen(false),
-    onToggleCollapse: pinnable ? () => setPin(pin === 'rail' ? 'full' : 'rail') : undefined,
+    onToggleCollapse: toggleNav,
   };
   // THE ONLY THING A SHELL PROFILE SWAPS. Everything else below — the brain-chat provider, the viewport
   // box, <main> and its scroll position, the route content, the command palette, the advisor launcher —
@@ -184,6 +211,9 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const topBar = (
     <TopBar
       onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
+      onNavToggle={profile === 'command' && mode !== 'drawer' ? toggleNav : undefined}
+      navCollapsed={mode === 'rail'}
+      navSide={dockLeft ? 'right' : 'left'}
       showLocation={profile === 'command'}
       variant={profile === 'command' ? 'bar' : 'floating'}
       hideOnPhone={onChat}
@@ -257,16 +287,24 @@ function ShellLayout({ children }: { children: ReactNode }) {
           leave a dead strip. The division survives because the Account UI-scale preference still puts a
           `zoom` on <html>: a `100dvh` box under `zoom: z` renders at z×viewport, so filling the screen
           means asking for `100dvh / z`. At the default scale of 1 it is plain `100dvh`. */}
-      <div className="flex flex-col overflow-hidden" style={{ height: 'calc(100dvh / var(--ui-scale, 1))' }}>
+      <div className="shell-viewport flex flex-col overflow-hidden" style={{ height: 'calc(100dvh / var(--ui-scale, 1))' }}>
         <ImpersonationBanner />
         {dockTop ? <AdvisorPanel dock={dock} /> : null}
-        <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="shell-workspace-row flex min-h-0 flex-1 overflow-hidden" data-studio-ask-open={studioAskOpen || undefined}>
           {dockLeft ? <AdvisorPanel dock={dock} /> : null}
           {/* The sidebar + content region — the dock sits OUTSIDE it, so this width = window − dock. */}
-          <div ref={regionRef} className="flex min-w-0 flex-1 overflow-hidden">
+          <div ref={regionRef} className="shell-workspace flex min-w-0 flex-1 overflow-hidden" data-studio-ask-open={studioAskOpen || undefined}>
             {dockLeft ? <>{content}{navigation}</> : <>{navigation}{content}</>}
           </div>
-          {docked && dock.state.side === 'right' ? <AdvisorPanel dock={dock} /> : null}
+          {studioAskPanelMounted ? (
+            <div
+              className="studio-advisor-slot flex h-full shrink-0"
+              data-open={studioAskOpen || undefined}
+              style={{ width: studioAskOpen ? `${dock.state.width + 8}px` : 0 }}
+            >
+              <AdvisorPanel dock={dock} visible={studioAdvisorVisible} presentation="studio-ask" />
+            </div>
+          ) : docked && dock.state.side === 'right' ? <AdvisorPanel dock={dock} /> : null}
         </div>
         {dockBottom ? <AdvisorPanel dock={dock} /> : null}
       </div>

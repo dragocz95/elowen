@@ -105,7 +105,7 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero h1 {
   font-size: 1.5rem;
   font-weight: 400;
-  letter-spacing: normal;
+  letter-spacing: -0.15px;
   line-height: 1.25;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__count {
@@ -448,6 +448,10 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__actions {
   justify-self: end;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar :is(button, a) {
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .skin-switcher__button {
   height: 2rem;

@@ -19,6 +19,10 @@
  * --------------------------------------------------------------------------------------------------- */
 
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) :is(.chat-gutter, .advisor-panel) {
+  --motion-fast: 140ms;
+  --motion-base: 240ms;
+  --motion-slow: 420ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   font-family: var(--studio-chat-font);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-panel__header {

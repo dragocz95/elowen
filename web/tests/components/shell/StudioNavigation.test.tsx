@@ -242,15 +242,6 @@ describe('StudioNavigation fold control', () => {
     expect(onToggleCollapse).toHaveBeenCalledTimes(2);
   });
 
-  it('announces the shortcut on the control, so it is discoverable without documentation', () => {
-    const onToggleCollapse = vi.fn();
-    mount({ onToggleCollapse });
-    const control = screen.getByTestId('studio-nav-collapse');
-    expect(control).toHaveAttribute('aria-keyshortcuts', 'Control+Backslash Meta+Backslash');
-    expect(control.getAttribute('title')).toContain('Ctrl / ⌘ + \\');
-    fireEvent.click(control);
-    expect(onToggleCollapse).toHaveBeenCalledTimes(1);
-  });
 
   it('offers neither control nor shortcut where folding is not the user\'s call', () => {
     const onToggleCollapse = vi.fn();

@@ -37,6 +37,83 @@
   --studio-top-bar-height: 3.125rem;
 }
 
+/* ASK turns the application into one inset working card beside the chat rail. These are the measured
+   ElevenLabs timings and geometry: shell 200ms, panel 300ms, 16px inset, 15px total separator lane. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace-row {
+  gap: 0;
+  padding: 0;
+  background: var(--color-bg);
+  transition: gap var(--motion-slow) var(--ease-out), padding var(--motion-slow) var(--ease-out), background-color var(--motion-slow) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace-row[data-studio-ask-open] {
+  gap: 7px;
+  padding: 16px 0 16px 16px;
+  background: var(--studio-ask-ground);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace {
+  border-radius: 0;
+  background: var(--color-bg);
+  box-shadow: none;
+  transition: border-radius var(--motion-slow) var(--ease-out), box-shadow var(--motion-slow) var(--ease-out), background-color var(--motion-slow) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace[data-studio-ask-open] {
+  border-radius: 20px;
+  background: var(--color-bg);
+  box-shadow: var(--studio-ask-shadow);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-advisor-slot {
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  transition: width var(--motion-slow) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-advisor-slot[data-open] {
+  height: calc(100% + 32px);
+  margin-block: -16px;
+  pointer-events: auto;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-panel--studio-ask {
+  opacity: 0;
+  translate: 80px;
+  scale: 1.02;
+  transform-origin: right center;
+  transition: opacity var(--studio-ask-panel-motion) var(--studio-ask-panel-ease), translate var(--studio-ask-panel-motion) var(--studio-ask-panel-ease), scale var(--studio-ask-panel-motion) var(--studio-ask-panel-ease);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-panel--studio-ask[data-visible] {
+  opacity: 1;
+  translate: 0;
+  scale: 1;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-panel--studio-ask .advisor-panel__header button {
+  width: 2rem;
+  height: 2rem;
+  transition: color 75ms cubic-bezier(0.4, 0, 0.2, 1), background-color 75ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-advisor-slot .advisor-panel__resize {
+  position: relative;
+  width: 8px;
+  background: transparent;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-advisor-slot .advisor-panel__resize::after {
+  position: absolute;
+  inset-block: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--studio-line);
+  content: '';
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-launcher {
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-launcher:is(:hover, :active),
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-launcher:hover .advisor-launcher__icon {
+  transform: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-launcher__ambient {
+  animation: none;
+}
+
 /* ---------------------------------------------------------------------------------------------------
  * The Studio navigation column (components/shell/StudioNavigation.tsx).
  *
@@ -59,7 +136,7 @@
  * rules to match. The ember canvas is hidden above in any case, for the surfaces that DO mount it.
  * --------------------------------------------------------------------------------------------------- */
 
-/* 256px expanded like the reference, 56px folded to icons. The column is inset from the content by a
+/* 256px expanded like the reference, 57px folded to icons. The column is inset from the content by a
    hairline, never by a shadow, and sits on its own ground — one step quieter than the content beside it. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav {
   position: relative;
@@ -93,9 +170,9 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-side='right'] {
   border-left: 1px solid var(--color-sidebar-border);
 }
-/* The icon column is 56px holding a 40px row — 8px of air either side. It was 48px, which is the row
-   plus 2 × 4px and leaves the glyph looking wedged against both rules; a dense operating console gives
-   its rail the row plus 2 × 8px, and at that proportion the folded column reads as a column rather than
+/* The icon column is 57px holding a 32px row — roughly 12px of air either side. It was 48px, which is the row
+   plus 2 × 8px and leaves the glyph looking wedged against both rules; the reference gives
+   its rail the row plus roughly 2 × 12px, and at that proportion the folded column reads as a column rather than
    as a clipped menu. The row itself is unchanged, so a folded row is still the same square the expanded
    row opens from.
    `tests/e2e/specs/studio.viewport.e2e.ts` measures this (NAV_RAIL). */
@@ -156,22 +233,24 @@
   color: var(--color-text);
 }
 
-/* The header: one 40px row holding the product mark, its name and the fold control. It carries the
-   column's ONLY top rule and nothing live — a status beacon here was a coloured dot repeating what the
-   app already says when a request fails, and it was the loudest pixel in a design whose whole argument
-   is that nothing should be. */
+/* The 50px brand row stays full-size while the rail clips it. That is the reference's signature collapsed
+   treatment: the mark remains visible and the rest of the lockup disappears behind the 57px edge. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__header {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 0.5rem;
-  height: 2.5rem;
-  padding-inline: 0.5rem;
+  height: var(--studio-top-bar-height);
+  padding-inline: 0.25rem;
   border-bottom: 1px solid var(--color-sidebar-border);
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__header {
-  justify-content: center;
-  padding-inline: 0;
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-lockup {
+  display: flex;
+  width: max-content;
+  min-width: 10rem;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+  transition: translate var(--motion-base) var(--ease-out);
 }
 /* Only the sheet carries a close control, and it is absolutely positioned into this header's trailing
    corner — 44×44 on a coarse pointer, which is every pointer that gets a sheet. The header gives way
@@ -181,8 +260,8 @@
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-mark {
   flex: none;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
   object-fit: contain;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-name {
@@ -252,8 +331,8 @@
   opacity: 1;
 }
 
-/* One destination row: 40px, a 16px glyph, a sentence-case label. Active is a change of GROUND and one
-   weight step — no accent bar down the edge, no coloured text. The bar was the design's loudest element
+/* One destination row: 32px on a fine pointer, an 18px/1.5px glyph and a sentence-case label. Active is a
+   change of GROUND and one weight step — no accent bar down the edge, no coloured text. The bar was the design's loudest element
    and it was drawn on the column's inner edge, which meant every nested row needed a correction rule to
    line its own marker up with the others. A fill needs no such correction because it is the row. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item {
@@ -270,15 +349,16 @@
   font-size: 0.875rem;
   line-height: 1.25rem;
   text-decoration: none;
-  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  transition: gap var(--motion-base) var(--ease-out), background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item {
   justify-content: center;
   width: 2.5rem;
+  gap: 0;
   padding-inline: 0;
 }
 /* A FOLDED row is a 32px square, not the 40px the expanded row uses. The reference draws its icon rail
-   exactly this way — a 32px target centred in a 56px column, 12px of air either side — and at 40px the
+   exactly this way — a 32px target centred in a 57px column, roughly 12px of air either side — and at 40px the
    folded column reads as a list of buttons rather than as a rail of marks.
    Gated on `pointer: fine` and nothing else. The coarse-pointer rule further down grows every row to
    --touch-target, and it must keep winning: shrinking a finger target to 32px would be an
@@ -313,15 +393,24 @@
   display: grid;
   flex: none;
   place-items: center;
-  width: 1rem;
-  height: 1rem;
+  width: 1.125rem;
+  height: 1.125rem;
   color: var(--color-text-subtle);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-label {
   min-width: 0;
+  max-width: 14rem;
   overflow: hidden;
+  opacity: 1;
+  translate: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: max-width var(--motion-base) var(--ease-out), opacity var(--motion-base) var(--ease-out), translate var(--motion-base) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item-label {
+  max-width: 0;
+  opacity: 0;
+  translate: 4px;
 }
 /* A row that replaces its glyph-and-label pair with something of its own — today only the account row,
    which draws a face and two lines of identity. It keeps the row's own rhythm rather than inventing a
@@ -332,9 +421,11 @@
   flex: 1 1 auto;
   align-items: center;
   gap: 0.5rem;
+  transition: gap var(--motion-base) var(--ease-out);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item-body {
   flex: none;
+  gap: 0;
 }
 
 /* A group: a sentence-case header over its pages. The header is not a link — every page of the group,
@@ -417,8 +508,18 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user-identity {
   display: flex;
   min-width: 0;
+  max-width: 12rem;
+  overflow: hidden;
   flex-direction: column;
   gap: 0.0625rem;
+  opacity: 1;
+  translate: 0;
+  transition: max-width var(--motion-base) var(--ease-out), opacity var(--motion-base) var(--ease-out), translate var(--motion-base) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__user-identity {
+  max-width: 0;
+  opacity: 0;
+  translate: 4px;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user-name {
   overflow: hidden;
@@ -436,7 +537,7 @@
   white-space: nowrap;
 }
 
-/* The folded rail cannot hold that row SIDE BY SIDE. Even at 56px the footer's 0.5rem inset leaves a
+/* The folded rail cannot hold that row SIDE BY SIDE. Even at 57px the footer's 0.5rem inset leaves a
    40px track for a 40px account row plus a gap plus the arrangement trigger — 28px on a mouse and 44px
    on a finger. `.studio-nav { overflow: hidden }` then clipped
    whatever did not fit, and the trigger is the documented last resort when the reader has hidden every
@@ -484,13 +585,24 @@
   }
 }
 
-/* Motion is a courtesy, never a requirement: everything above resolves to its end state at once for a
-   reader who asked for less of it. */
+/* Motion is a courtesy, never a requirement: reduced and off are explicit peers because `off` must never
+   animate more than `reduced`, even when the operating system itself does not request reduced motion. */
+html:is([data-skin='studio-light'], [data-skin='studio-oled']):is([data-effects='reduced'], [data-effects='off']) :is(.shell-workspace-row, .shell-workspace, .studio-advisor-slot, .advisor-panel--studio-ask, .studio-nav, .studio-nav__brand-lockup, .studio-nav__scrim, .studio-nav__body, .studio-nav__item, .studio-nav__item-label, .studio-nav__item-body, .studio-nav__user-identity, .studio-nav__group-toggle, .studio-nav__chevron, .studio-nav__trigger, .studio-nav__close) {
+  transition-duration: 1ms;
+}
 @media (prefers-reduced-motion: reduce) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace-row,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-workspace,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-advisor-slot,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .advisor-panel--studio-ask,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-lockup,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__scrim,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__body,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-label,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-body,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__user-identity,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__group-toggle,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__chevron,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__trigger,
