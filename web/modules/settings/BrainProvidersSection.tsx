@@ -572,27 +572,37 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
                   // to three buttons — the same multi-value record as an account above.
                   trailingLayout="stack"
                   iconNode={<DomainFavicon baseUrl={p.baseUrl} fallback={<BrainCircuit size={15} strokeWidth={1.75} />} />}
+                  // Badges REPORT — they are not actions, and carrying them in the actions slot put six
+                  // slots in a cell whose ceiling is two. The hosted-search badge is also its own verify
+                  // control: it already states the answer, so a separate button beside it said the same
+                  // thing twice.
                   status={(
                     <span className="flex flex-col gap-1">
                       {p.baseUrl ? <span className="truncate font-mono">{p.baseUrl}</span> : null}
                       <span>{p.models.length > 0 ? t.brain.modelCount.replace('{n}', String(p.models.length)) : t.brain.modelsAuto}</span>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <Badge>{t.brain.types[p.type]}</Badge>
+                        {p.apiKeySet ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
+                        {azure ? (
+                          <button
+                            type="button"
+                            className="rounded-full transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-60"
+                            aria-label={`${t.brain.hostedSearchVerify}: ${p.label}`}
+                            title={t.brain.hostedSearchVerify}
+                            disabled={p.models.length === 0 || verifyingProvider === p.id}
+                            onClick={() => verifyHostedSearch(p)}
+                          >
+                            <Badge tone={hostedState === 'supported' ? 'accent' : hostedState === 'unsupported' ? 'danger' : 'default'}>
+                              <ShieldCheck size={10} className="mr-1" aria-hidden />
+                              {verifyingProvider === p.id ? t.brain.hostedSearchVerifying : hostedLabel}
+                            </Badge>
+                          </button>
+                        ) : null}
+                      </span>
                     </span>
                   )}
                   actions={(
                     <>
-                    <Badge>{t.brain.types[p.type]}</Badge>
-                    {p.apiKeySet ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
-                    {azure ? <Badge tone={hostedState === 'supported' ? 'accent' : hostedState === 'unsupported' ? 'danger' : 'default'}>{hostedLabel}</Badge> : null}
-                    {azure ? (
-                      <Button
-                        variant="ghost"
-                        icon={ShieldCheck}
-                        disabled={p.models.length === 0 || verifyingProvider === p.id}
-                        onClick={() => verifyHostedSearch(p)}
-                      >
-                        {verifyingProvider === p.id ? t.brain.hostedSearchVerifying : t.brain.hostedSearchVerify}
-                      </Button>
-                    ) : null}
                     <Button variant="ghost" icon={Pencil} aria-label={`${t.brain.editProvider}: ${p.label}`} onClick={() => setModal({
                       id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, models: p.models.join('\n'),
                       apiKey: '', api: p.api ?? '', temperature: p.temperature === undefined ? '' : String(p.temperature),

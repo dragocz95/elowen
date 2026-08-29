@@ -10,7 +10,8 @@ import { PluginIcon } from './PluginIcon';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ActionMenu } from '../../components/ui/ActionMenu';
-import { Input } from '../../components/ui/Input';
+import { RegisterSearch } from '../../components/ui/RegisterSearch';
+import { PageFilterChips, PageFilters, type PageFilterField } from '../../components/ui/PageFilters';
 import { Segmented } from '../../components/ui/Segmented';
 import { Toggle } from '../../components/ui/Toggle';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -317,6 +318,29 @@ export function PluginsSection() {
     { value: 'installed', label: t.plugins.tabInstalled, icon: Package },
     { value: 'available', label: t.plugins.tabAvailable, icon: Download },
   ];
+  // The category axis has no name of its own in the plugin dictionary — only the value labels ("All",
+  // "Tools", …) — so the filter borrows the app's existing word for exactly this concept. The Segmented
+  // used to be named "All" here, which is a value and not what the control chooses.
+  const categoryAxisLabel = t.memory.categoryFilter;
+  const categoryControl = (
+    /* No scroll axis here on purpose. Segmented wraps unless asked not to, so this track never needs to
+       scroll sideways — but declaring `overflow-x: auto` promoted the OTHER axis out of `visible` too, and
+       then any sub-pixel row height overflowed by a fraction of a pixel and drew a full vertical scrollbar
+       beside the filters. `flex` keeps the inline-flex track off a line box, so its height stays exact. */
+    <div className="flex min-w-0">
+      <Segmented variant="line" value={category} onChange={(v) => setCategory(v as Category | 'all')} options={categoryOptions} aria-label={categoryAxisLabel} />
+    </div>
+  );
+  const categoryField: PageFilterField = category === 'all'
+    ? { id: 'plugin-category', label: categoryAxisLabel, control: categoryControl, active: false }
+    : {
+      id: 'plugin-category',
+      label: categoryAxisLabel,
+      control: categoryControl,
+      active: true,
+      activeLabel: `${categoryAxisLabel}: ${t.plugins[CATEGORY_META[category].key]}`,
+      onReset: () => setCategory('all'),
+    };
   // Whether the plugin pending removal is bundled (soft-remove) vs user (hard uninstall) — drives the confirm copy.
   const removeIsBundled = plugins.find((p) => p.name === confirmRemove)?.source === 'bundled';
 
@@ -341,29 +365,19 @@ export function PluginsSection() {
   return (
     <>
       <SettingsGroup density="compact">
+        {/* The section's controls belong to the page, so they go up into the canonical toolbar row through
+            its portal. Search and the installed/available switch stay VISIBLE — they are the two controls
+            every visit uses — and only the category axis folds behind the shared filter control. */}
         <SettingsToolbar>
-          <div className="flex min-w-0 flex-1 flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <Segmented variant="line" value={view} onChange={(v) => { setView(v as 'installed' | 'available'); setCategory('all'); }} options={viewOptions} aria-label={t.plugins.tabInstalled} />
-              <HelpTip>{t.help.pluginsManage}</HelpTip>
-            </div>
-            <div className="flex min-w-0 flex-col gap-3 @xl:flex-row @xl:items-center">
-              <div className="relative w-full @xl:max-w-xs">
-                <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.plugins.searchPlaceholder} className="pl-9" />
-              </div>
-              {/* No scroll axis here on purpose. Segmented wraps unless asked not to, so this track never
-                  needs to scroll sideways — but declaring `overflow-x: auto` promoted the OTHER axis out of
-                  `visible` too, and then any sub-pixel row height (routine once the shell's zoom scales the
-                  layout) overflowed by a fraction of a pixel and drew a full vertical scrollbar beside the
-                  filters. It only showed up at some window widths, which is exactly what a rounding artefact
-                  looks like. `flex` keeps the inline-flex track off a line box, so its height stays exact. */}
-              <div className="flex min-w-0">
-                <Segmented variant="line" value={category} onChange={(v) => setCategory(v as Category | 'all')} options={categoryOptions} aria-label={t.plugins.catAll} />
-              </div>
-            </div>
-          </div>
+          <RegisterSearch value={query} onChange={setQuery} placeholder={t.plugins.searchPlaceholder} label={t.plugins.searchPlaceholder} />
+          <Segmented variant="line" value={view} onChange={(v) => { setView(v as 'installed' | 'available'); setCategory('all'); }} options={viewOptions} aria-label={t.plugins.tabInstalled} />
+          <HelpTip>{t.help.pluginsManage}</HelpTip>
+          <PageFilters fields={[categoryField]} />
         </SettingsToolbar>
+        {/* The chips are their own line under the row, not part of it: the toolbar sits in the shell above
+            this surface, so they render at the top of the section body — directly beneath it either way,
+            and without making the row reflow every time a category is picked. */}
+        <PageFilterChips fields={[categoryField]} />
 
         {view === 'installed' ? (
           installed.length === 0 ? <SettingsState><EmptyState title={t.plugins.empty} /></SettingsState>

@@ -139,7 +139,9 @@ describe('BrainSection — OAuth account model picker', () => {
 
     renderSection();
     expect(await screen.findByText(en.brain.hostedSearchUnverified)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: en.brain.hostedSearchVerify }));
+    // The status badge IS the verify control now, so it names the provider it would check rather than
+    // sitting beside a second button that said the same thing.
+    fireEvent.click(screen.getByRole('button', { name: `${en.brain.hostedSearchVerify}: Azure production` }));
     await waitFor(() => expect(hostedMocks.probe).toHaveBeenCalledWith({ providerId: 'azure', modelId: 'deployment' }));
     await waitFor(() => expect(screen.getAllByText(en.brain.hostedSearchVerified).length).toBeGreaterThan(0));
   });
@@ -155,7 +157,7 @@ describe('BrainSection — OAuth account model picker', () => {
       .mockResolvedValue({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'supported', checkedAt: 1 }] }] });
 
     renderSection();
-    fireEvent.click(screen.getByRole('button', { name: en.brain.hostedSearchVerify }));
+    fireEvent.click(screen.getByRole('button', { name: `${en.brain.hostedSearchVerify}: Azure production` }));
     await waitFor(() => expect(screen.getAllByText(en.brain.hostedSearchVerified).length).toBeGreaterThan(0));
     await act(async () => resolveInitial({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] }] }));
     expect(screen.queryByText(en.brain.hostedSearchUnverified)).not.toBeInTheDocument();

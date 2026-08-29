@@ -110,4 +110,64 @@ describe('MarkdownAssetEditor register', () => {
     expect(within(deleteCell).getByRole('button', { name: labels.remove })).toBeInTheDocument();
     expect(deleteCell.dataset.lines).toBe('auto');
   });
+
+  /** Search and the add action are what every visit reaches for, so they stay in the row; the one
+   *  narrowing control folds behind the shared filter surface and reports itself as a chip. */
+  it('keeps search and the add action visible and folds the source filter behind the filter control', async () => {
+    renderEditor(assets, { addAction: <button type="button">New entry</button> });
+
+    expect(screen.getByLabelText(en.assetEditor.search)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New entry' })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: en.assetEditor.filterBuiltin })).toBeNull();
+
+    fireEvent.click(screen.getByTestId('page-filters-trigger'));
+    fireEvent.click(await screen.findByRole('radio', { name: en.assetEditor.filterUser }));
+
+    const chips = await screen.findByTestId('page-filter-chips');
+    expect(within(chips).getByText(`${en.assetEditor.colSource}: ${en.assetEditor.filterUser}`)).toBeInTheDocument();
+    expect(screen.getByText('alpha-skill')).toBeInTheDocument();
+    expect(screen.queryByText('bundled-skill')).toBeNull();
+
+    fireEvent.click(within(chips).getByRole('button'));
+    expect(screen.getByText('bundled-skill')).toBeInTheDocument();
+    expect(screen.queryByTestId('page-filter-chips')).toBeNull();
+  });
+
+  /** An asset type with ownership scopes narrows the same set more finely, so it gets ONE filter — its
+   *  scopes — and never the coarse source filter beside it. */
+  it('offers the ownership scope as the only filter when the caller declares one', async () => {
+    renderEditor(assets, {
+      ownership: {
+        header: 'Scope',
+        label: () => 'Instance',
+        scopes: [{ value: 'mine', label: 'Mine', matches: (item: TestAsset) => item.source === 'user' }],
+      },
+    });
+
+    fireEvent.click(screen.getByTestId('page-filters-trigger'));
+    expect(await screen.findByRole('radio', { name: 'Mine' })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: en.assetEditor.filterBuiltin })).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Mine' }));
+    const chips = await screen.findByTestId('page-filter-chips');
+    expect(within(chips).getByText('Scope: Mine')).toBeInTheDocument();
+    expect(screen.queryByText('bundled-skill')).toBeNull();
+  });
+
+  /** The form is the shared dialog's body and footer. The actions used to be the last child of the scroll
+   *  region behind a hand-drawn top rule — the divider the footer already paints. */
+  it('pins the form actions in the dialog footer instead of the scrolling body', () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getAllByRole('button', { name: openName('alpha-skill') })[0]);
+
+    const save = screen.getByRole('button', { name: labels.save });
+    const footer = save.closest('.border-t');
+    expect(footer).not.toBeNull();
+    expect(within(footer as HTMLElement).getByRole('button', { name: labels.cancel })).toBeInTheDocument();
+    expect(within(footer as HTMLElement).getByRole('button', { name: labels.remove })).toBeInTheDocument();
+    // The body scrolls; the footer does not live inside it.
+    const body = container.ownerDocument.querySelector('.overflow-y-auto.overscroll-contain');
+    expect(body).not.toBeNull();
+    expect(body!.contains(save)).toBe(false);
+  });
 });

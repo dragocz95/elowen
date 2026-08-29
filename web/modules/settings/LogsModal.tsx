@@ -2,7 +2,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollText, Trash2 } from 'lucide-react';
 import type { OnMount } from '@monaco-editor/react';
-import { Modal } from '../../components/ui/Modal';
+import { Modal, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -130,44 +130,35 @@ export function LogsModal({ onClose }: { onClose: () => void }) {
             130px for the editor inside the fullscreen presentation a phone gets. Container, not
             viewport: the same dialog is a drawer on a wide screen. */}
         <div className="@container flex min-h-0 flex-1 flex-col gap-4 p-4 @2xl:flex-row">
-          <div className="flex max-h-52 shrink-0 flex-col gap-2 @2xl:max-h-none @2xl:w-64">
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border">
-              {files.length === 0 ? (
-                <EmptyState title={t.settings.logsEmpty} icon={ScrollText} />
-              ) : (
-                files.map((f) => (
-                  <div
-                    key={f.name}
-                    className={`flex items-center gap-2 border-b border-border px-3 py-2 last:border-b-0 ${f.name === selected ? 'bg-accent' : ''}`}
+          <div className="max-h-52 min-h-0 shrink-0 overflow-auto rounded-md border border-border @2xl:max-h-none @2xl:w-64">
+            {files.length === 0 ? (
+              <EmptyState title={t.settings.logsEmpty} icon={ScrollText} />
+            ) : (
+              files.map((f) => (
+                <div
+                  key={f.name}
+                  className={`flex items-center gap-2 border-b border-border px-3 py-2 last:border-b-0 ${f.name === selected ? 'bg-accent' : ''}`}
+                >
+                  <button type="button" aria-current={f.name === selected} className="min-w-0 flex-1 text-left" onClick={() => pick(f.name)}>
+                    <div className="truncate text-xs text-foreground">{f.name}</div>
+                    <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <Badge>{f.source}</Badge>
+                      <span>{formatBytes(f.bytes)}</span>
+                      <span>{new Date(f.modifiedAt).toLocaleTimeString(locale)}</span>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t.settings.logsDeleteFile}
+                    title={t.settings.logsDeleteFile}
+                    className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
+                    onClick={() => setPendingDelete(f.name)}
                   >
-                    <button type="button" aria-current={f.name === selected} className="min-w-0 flex-1 text-left" onClick={() => pick(f.name)}>
-                      <div className="truncate text-xs text-foreground">{f.name}</div>
-                      <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                        <Badge>{f.source}</Badge>
-                        <span>{formatBytes(f.bytes)}</span>
-                        <span>{new Date(f.modifiedAt).toLocaleTimeString(locale)}</span>
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={t.settings.logsDeleteFile}
-                      title={t.settings.logsDeleteFile}
-                      className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
-                      onClick={() => setPendingDelete(f.name)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-            {/* Below the list, not above it: a destructive action that clears everything belongs after the
-                thing it destroys, where it cannot be hit on the way to picking a file. */}
-            <div className="flex items-center justify-end gap-2">
-              <Button variant="danger" icon={Trash2} disabled={files.length === 0 || deleteAll.isPending} onClick={() => setDeleteAllOpen(true)}>
-                {t.settings.logsDeleteAll}
-              </Button>
-            </div>
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
 
           <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -257,6 +248,13 @@ export function LogsModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         </div>
+        {/* The dialog's own pinned action row. This used to be a hand-drawn row inside the file column,
+            which put a destructive control in the same scroll region as the list it clears. */}
+        <ModalFooter>
+          <Button variant="danger" icon={Trash2} disabled={files.length === 0 || deleteAll.isPending} onClick={() => setDeleteAllOpen(true)}>
+            {t.settings.logsDeleteAll}
+          </Button>
+        </ModalFooter>
       </Modal>
 
       <ConfirmDialog

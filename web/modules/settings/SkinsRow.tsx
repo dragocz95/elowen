@@ -1,12 +1,12 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Palette } from 'lucide-react';
+import { ChevronDown, Palette } from 'lucide-react';
 import { useConfig } from '../../lib/queries';
 import { useUpdateConfig } from '../../lib/mutations';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { SettingsRow } from '../../components/ui/SettingsSurface';
-import { SelectionSummary } from '../../components/ui/SelectionSummary';
+import { Button } from '../../components/ui/Button';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SKIN_CHOICES, skinDisplayName, type SkinChoice } from '../../lib/skins';
 
@@ -56,16 +56,33 @@ export function SkinsRow() {
 
   return (
     <>
-      <SettingsRow label={t.settings.skins.label} description={t.settings.skins.hint} icon={Palette}>
-        <SelectionSummary
-          countText={chosen.length ? t.managePicker.selectedCount.replace('{n}', String(chosen.length)) : t.settings.skins.none}
-          samples={chosen.slice(0, 3).map((name) => ({ label: label(name) }))}
-          moreCount={Math.max(0, chosen.length - 3)}
-          onManage={() => setOpen(true)}
-          manageLabel={t.settings.skins.manage}
-          variant="line"
-        />
-      </SettingsRow>
+      {/* ONE control, the width of the record's trailing cell. It used to be a `SelectionSummary`: a count
+       *  line above up to three name chips and a "+N", with the manage button beside them — four lines of
+       *  content in a cell that is one grid row tall, so the record wrapped and its value ended up under
+       *  its own label. The chips also named skins the reader cannot see from here, which is what the
+       *  dialog behind this button is for. The count IS the summary. */}
+      <SettingsRow
+        label={t.settings.skins.label}
+        description={t.settings.skins.hint}
+        icon={Palette}
+        control={(
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={t.settings.skins.manage}
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            onClick={() => setOpen(true)}
+            className="w-full justify-between font-normal"
+          >
+            <span className="min-w-0 truncate text-left">
+              {chosen.length ? t.managePicker.selectedCount.replace('{n}', String(chosen.length)) : t.settings.skins.none}
+            </span>
+            <ChevronDown size={14} aria-hidden className="opacity-60" />
+          </Button>
+        )}
+      />
       <ManageSelectionModal
         title={t.settings.skins.label}
         subtitle={t.settings.skins.hint}

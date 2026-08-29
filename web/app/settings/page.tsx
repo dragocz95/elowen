@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 // Aliased: `dynamic` is already this route's Next segment-config export, two lines up.
 import nextDynamic from 'next/dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
-import { SlidersHorizontal, X, Pencil, Gauge, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Search, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer } from 'lucide-react';
+import { SlidersHorizontal, X, Pencil, Gauge, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
@@ -35,12 +35,14 @@ import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
 import { WorkspaceLeadScope, WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { type PageToolbarProps } from '../../components/ui/PageToolbar';
+import { RegisterSearch } from '../../components/ui/RegisterSearch';
 import { WorkspaceMetric, type WorkspaceHeroProps } from '../../components/ui/WorkspaceHero';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
-import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../components/ui/SettingsSurface';
+import { SettingsDocument, SettingsGroup, SettingsRow, SettingsState } from '../../components/ui/SettingsSurface';
 import { SkinsRow } from '../../modules/settings/SkinsRow';
 import { MotionReveal } from '../../components/ui/Motion';
-import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
+import { Modal, ModalBody } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -54,8 +56,6 @@ const SystemDiagnostics = nextDynamic(
   () => import('../../modules/settings/SystemDiagnostics').then((m) => m.SystemDiagnostics),
   { ssr: false, loading: () => <LoadingState variant="block" height="h-[150px]" /> },
 );
-
-const inputClass = 'w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground transition-colors focus:border-primary';
 
 function formatMemory(used: number, total: number): string {
   const gb = (value: number) => `${(value / 1_000_000_000).toFixed(1)} GB`;
@@ -403,6 +403,27 @@ export default function SettingsPage() {
     ) : undefined,
   } satisfies WorkspaceHeroProps;
 
+  // The page's ONE row of controls, in the canonical toolbar under the section navigation. It is keyed on
+  // the active section rather than declared per panel, because the panels stay mounted while hidden: a
+  // toolbar owned by each panel would leave the retained ones competing for the same row. Sections that
+  // carry no page-level control (System, Memory, Data) pass nothing and the row collapses.
+  // Plugins is the exception: its search, view and category filter are the section's own state, so it
+  // fills the row through the toolbar's portal instead (see PluginsSection).
+  const toolbar: PageToolbarProps | undefined =
+    category === 'models' ? {
+      search: (
+        <RegisterSearch
+          value={modelQuery}
+          onChange={setModelQuery}
+          placeholder={t.settings.modelSearchPlaceholder}
+          label={t.settings.modelSearchPlaceholder}
+        />
+      ),
+    } : category === 'brain' ? {
+      // Cross-link to the model catalog (enable / context-window per model) — the Models section.
+      actions: <Button variant="ghost" size="sm" icon={Boxes} onClick={() => setCategory('models')}>{t.settings.brainModelsLink}</Button>,
+    } : undefined;
+
   return (
     <ModuleShell moduleId="settings">
       <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
@@ -412,22 +433,10 @@ export default function SettingsPage() {
         variant="deck"
         hero={deckHero}
         navigation={{ sections: deckSections, value: activeSection.id, onChange: setCategory, ariaLabel: t.settings.sectionsNav }}
+        toolbar={toolbar}
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>
           <>
-            <SettingsToolbar>
-              <div className="relative w-full">
-                <Search size={15} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  type="search"
-                  value={modelQuery}
-                  onChange={(event) => setModelQuery(event.target.value)}
-                  placeholder={t.settings.modelSearchPlaceholder}
-                  aria-label={t.settings.modelSearchPlaceholder}
-                  className="pl-9"
-                />
-              </div>
-            </SettingsToolbar>
             {/* One catalog, grouped by the engine that runs the model — the same grouping the
              *  executor picker uses, so what admins configure here matches what users pick. */}
             {visibleProviders.map((prov) => {
@@ -602,10 +611,18 @@ export default function SettingsPage() {
                         {updateBadge}
                       </button>
                       {system.data?.updateAvailable ? (
-                        <button type="button" className="spatial-inline-action text-primary" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
-                          onSuccess: () => toast(t.settings.updateStarted),
-                          onError: (e) => toast(String(e), 'error'),
-                        })}>{systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}<RefreshCw size={13} className={systemUpdate.isPending ? 'animate-spin' : ''} aria-hidden /></button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={RefreshCw}
+                          disabled={systemUpdate.isPending}
+                          onClick={() => systemUpdate.mutate(undefined, {
+                            onSuccess: () => toast(t.settings.updateStarted),
+                            onError: (e) => toast(String(e), 'error'),
+                          })}
+                        >
+                          {systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}
+                        </Button>
                       ) : null}
                     </>
                   )}
@@ -621,44 +638,71 @@ export default function SettingsPage() {
                 <SettingsRow
                   key={service.port}
                   label={service.name}
-                  status={<span className="font-mono">{service.port}</span>}
                   icon={Server}
-                >
-                  <span className={`settings-control-row__status ${service.up ? '' : 'settings-control-row__status--down'}`}><i aria-hidden />{service.up ? t.settings.serviceUp : t.settings.serviceDown}</span>
-                </SettingsRow>
+                  // Port and state are ONE trailing value, not a status beside a control: neither half is
+                  // operable, and splitting them put a reading in the cell the record's control belongs in.
+                  status={(
+                    <span className="flex items-center gap-2">
+                      <span className="font-mono">{service.port}</span>
+                      <span className={`settings-control-row__status ${service.up ? '' : 'settings-control-row__status--down'}`}><i aria-hidden />{service.up ? t.settings.serviceUp : t.settings.serviceDown}</span>
+                    </span>
+                  )}
+                />
               ));
               const rowAutoUpdate = (
-                <SettingsRow label={t.settings.autoUpdate} icon={RefreshCw}>
-                  <Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} />
-                </SettingsRow>
+                <SettingsRow
+                  label={t.settings.autoUpdate}
+                  icon={RefreshCw}
+                  control={<Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} />}
+                />
               );
               const rowPushContact = (
-                <SettingsRow label={t.settings.pushContact} description={t.help.pushContact} icon={BellRing}>
-                  <input value={pushContact} onChange={(e) => setPushContact(e.target.value)} placeholder={t.settings.pushContactPlaceholder} className={inputClass} aria-label={t.settings.pushContact} />
-                </SettingsRow>
+                <SettingsRow
+                  label={t.settings.pushContact}
+                  description={t.help.pushContact}
+                  icon={BellRing}
+                  control={<Input value={pushContact} onChange={(e) => setPushContact(e.target.value)} placeholder={t.settings.pushContactPlaceholder} aria-label={t.settings.pushContact} />}
+                />
               );
               const rowTokenTtl = (
-                <SettingsRow label={t.settings.tokenTtl} description={t.help.tokenTtl} icon={KeyRound}>
-                  <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} aria-label={t.settings.tokenTtl} />
-                </SettingsRow>
+                <SettingsRow
+                  label={t.settings.tokenTtl}
+                  description={t.help.tokenTtl}
+                  icon={KeyRound}
+                  control={<Input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} aria-label={t.settings.tokenTtl} />}
+                />
               );
               // The row stays minimal (toggle + the current threshold); the full composite lives
               // in the side drawer behind the manage button.
               const rowRetention = (
-                <SettingsRow label={t.settings.retention.label} description={t.settings.retention.hint} icon={CalendarClock}>
-                  <div className="flex items-center gap-3">
-                    <Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />
-                    {retention.enabled ? <span className="whitespace-nowrap font-mono text-sm tabular-nums text-foreground">{retention.days} {t.settings.retention.days}</span> : null}
-                    <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setRetentionOpen(true)}>
-                      <CalendarClock size={14} aria-hidden />{t.managePicker.manage}
-                    </button>
-                  </div>
-                </SettingsRow>
+                <SettingsRow
+                  label={t.settings.retention.label}
+                  description={t.settings.retention.hint}
+                  icon={CalendarClock}
+                  control={<Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />}
+                  status={retention.enabled ? <span className="whitespace-nowrap font-mono tabular-nums">{retention.days} {t.settings.retention.days}</span> : undefined}
+                  actions={(
+                    <Button variant="ghost" size="sm" icon={CalendarClock} onClick={() => setRetentionOpen(true)}>
+                      {t.managePicker.manage}
+                    </Button>
+                  )}
+                />
               );
+              // The drawer is the shared dialog with its own description and body — the hint used to be
+              // repeated as a paragraph inside the scroll region, under a header that already had a slot
+              // for it, and the body carried a second helping of the padding `ModalBody` supplies.
               const retentionDrawer = retentionOpen ? (
-                <WorkspaceDetailRail label={t.settings.retention.label} closeLabel={t.common.close} onClose={() => setRetentionOpen(false)}>
-                  <p className="mb-4 text-xs leading-relaxed text-muted-foreground">{t.settings.retention.hint}</p>
-                  <div className="flex flex-col gap-5 py-2">
+                <Modal
+                  title={t.settings.retention.label}
+                  description={t.settings.retention.hint}
+                  icon={CalendarClock}
+                  closeLabel={t.common.close}
+                  intent="inspect"
+                  size="md"
+                  drawerWidth="default"
+                  onClose={() => setRetentionOpen(false)}
+                >
+                  <ModalBody>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-sm text-foreground">{t.settings.retention.label}</span>
                       <Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />
@@ -680,8 +724,8 @@ export default function SettingsPage() {
                         <span className="text-xs text-muted-foreground">{t.settings.retention.days}</span>
                       </div>
                     </div>
-                  </div>
-                </WorkspaceDetailRail>
+                  </ModalBody>
+                </Modal>
               ) : null;
               const diagnosticsGroup = (
                 <SettingsGroup title={t.settings.systemDiagnostics} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics">
@@ -713,15 +757,7 @@ export default function SettingsPage() {
         </SettingsPanel>
 
         <SettingsPanel id="brain" active={category} visited={visitedCategories}>
-          
-            {/* Cross-link to the model catalog (enable / context-window per model) — the Models section. */}
-            <SettingsToolbar promote={false}>
-              <button type="button" onClick={() => setCategory('models')} className="font-medium text-primary hover:underline">
-                {t.settings.brainModelsLink}
-              </button>
-            </SettingsToolbar>
-            <BrainSection onSaveState={reportSaveState} />
-          
+          <BrainSection onSaveState={reportSaveState} />
         </SettingsPanel>
 
         <SettingsPanel id="memory" active={category} visited={visitedCategories}>

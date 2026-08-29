@@ -42,15 +42,37 @@ describe('PluginsSection catalog', () => {
     useMarketplace.mockReturnValue({ data: { plugins: [] }, isLoading: false });
   });
 
-  it('renders one compact row per installed plugin with the category filter', () => {
+  it('renders one compact row per installed plugin', () => {
     usePlugins.mockReturnValue({ data: [plugin({ name: 'files' }), plugin({ name: 'discord', provides: { platforms: ['discord'] } })], isLoading: false });
     renderSection();
     expect(screen.getByText('files')).toBeInTheDocument();
     expect(screen.getByText('discord')).toBeInTheDocument();
     expect(screen.getByTestId('installed-plugins-list')).toHaveAttribute('role', 'list');
     expect(screen.getByTestId('installed-plugins-list').children).toHaveLength(2);
-    expect(screen.getByRole('radio', { name: en.plugins.catAll })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: en.plugins.catPlatforms })).toBeInTheDocument();
+  });
+
+  it('keeps search and the installed/available switch in the row and folds the category axis behind the filter control', async () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'files' }), plugin({ name: 'discord', provides: { platforms: ['discord'] } })], isLoading: false });
+    renderSection();
+
+    // Visible: the two controls every visit uses.
+    expect(screen.getByLabelText(en.plugins.searchPlaceholder)).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: en.plugins.tabInstalled })).toBeInTheDocument();
+    // Behind the shared filter control, not in the row.
+    expect(screen.queryByRole('radio', { name: en.plugins.catPlatforms })).toBeNull();
+
+    fireEvent.click(screen.getByTestId('page-filters-trigger'));
+    expect(await screen.findByRole('radio', { name: en.plugins.catAll })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: en.plugins.catPlatforms }));
+
+    // A narrowing filter announces itself as a chip that names the axis and can undo it.
+    const chips = await screen.findByTestId('page-filter-chips');
+    expect(within(chips).getByText(`${en.memory.categoryFilter}: ${en.plugins.catPlatforms}`)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('installed-plugins-list').children).toHaveLength(1));
+
+    fireEvent.click(within(chips).getByRole('button'));
+    await waitFor(() => expect(screen.getByTestId('installed-plugins-list').children).toHaveLength(2));
+    expect(screen.queryByTestId('page-filter-chips')).toBeNull();
   });
 
   it('uses the shared settings document, group and toolbar grammar', () => {

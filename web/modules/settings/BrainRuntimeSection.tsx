@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrainCircuit, SlidersHorizontal, Gauge, ShieldCheck, Boxes } from 'lucide-react';
+import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Slider } from '../../components/ui/Slider';
 import { BrainLimitsModal, BRAIN_LIMIT_DEFAULTS } from './BrainLimitsModal';
@@ -160,11 +161,16 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
       {/* Identity + step ceiling on one row: the assistant's name (everywhere it speaks) and the max
           agent steps per run (Discord shows "Step N / MAX"). */}
       <SettingsGroup icon={BrainCircuit} columns={2}>
-        <SettingsRow label={t.brain.agentName} icon={BrainCircuit}>
-          <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="Elowen" aria-label={t.brain.agentName} />
-        </SettingsRow>
-        <SettingsRow label={t.brain.maxSteps} description={t.brain.maxStepsHint} icon={Gauge}>
-          <div className="flex items-center gap-3">
+        <SettingsRow
+          label={t.brain.agentName}
+          icon={BrainCircuit}
+          control={<Input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="Elowen" aria-label={t.brain.agentName} />}
+        />
+        <SettingsRow
+          label={t.brain.maxSteps}
+          description={t.brain.maxStepsHint}
+          icon={Gauge}
+          control={(
             <Slider
               min={100} max={1000} step={100}
               value={Math.min(1000, Math.max(100, Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200))}
@@ -172,37 +178,42 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
               aria-label={t.brain.maxSteps}
               className="w-40"
             />
-            <span className="w-10 text-right tabular-nums text-sm text-muted-foreground">{Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200}</span>
-          </div>
-        </SettingsRow>
+          )}
+          status={<span className="tabular-nums">{Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200}</span>}
+        />
+        {/* Each of these four records IS one action — it opens the editor that owns the group of knobs —
+            so the button sits in the actions slot rather than posing as the record's control. */}
         {limits ? (
-          <SettingsRow label={t.brain.limits.title} description={t.brain.limits.hint} icon={SlidersHorizontal}>
-            {/* data-selection-manage: in a pod the button hides and the orb becomes the trigger. */}
-            <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setLimitsOpen(true)}>
-              <SlidersHorizontal size={14} aria-hidden />{t.brain.limits.manage}
-            </button>
-          </SettingsRow>
+          <SettingsRow
+            label={t.brain.limits.title}
+            description={t.brain.limits.hint}
+            icon={SlidersHorizontal}
+            actions={<Button variant="ghost" size="sm" icon={SlidersHorizontal} onClick={() => setLimitsOpen(true)}>{t.brain.limits.manage}</Button>}
+          />
         ) : null}
         {runtime ? (
-          <SettingsRow label={t.brain.runtime.title} description={t.brain.runtime.hint} icon={Gauge}>
-            <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setRuntimeOpen(true)}>
-              <Gauge size={14} aria-hidden />{t.brain.runtime.manage}
-            </button>
-          </SettingsRow>
+          <SettingsRow
+            label={t.brain.runtime.title}
+            description={t.brain.runtime.hint}
+            icon={Gauge}
+            actions={<Button variant="ghost" size="sm" icon={Gauge} onClick={() => setRuntimeOpen(true)}>{t.brain.runtime.manage}</Button>}
+          />
         ) : null}
         {runtime ? (
-          <SettingsRow label={t.brain.toolLoading.title} description={t.brain.toolLoading.hint} icon={Boxes}>
-            <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setToolLoadingOpen(true)}>
-              <Boxes size={14} aria-hidden />{t.brain.toolLoading.manage}
-            </button>
-          </SettingsRow>
+          <SettingsRow
+            label={t.brain.toolLoading.title}
+            description={t.brain.toolLoading.hint}
+            icon={Boxes}
+            actions={<Button variant="ghost" size="sm" icon={Boxes} onClick={() => setToolLoadingOpen(true)}>{t.brain.toolLoading.manage}</Button>}
+          />
         ) : null}
         {runtime ? (
-          <SettingsRow label={t.brain.retention.title} description={t.brain.retention.hint} icon={ShieldCheck}>
-            <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setRetentionOpen(true)}>
-              <ShieldCheck size={14} aria-hidden />{t.brain.retention.manage}
-            </button>
-          </SettingsRow>
+          <SettingsRow
+            label={t.brain.retention.title}
+            description={t.brain.retention.hint}
+            icon={ShieldCheck}
+            actions={<Button variant="ghost" size="sm" icon={ShieldCheck} onClick={() => setRetentionOpen(true)}>{t.brain.retention.manage}</Button>}
+          />
         ) : null}
       </SettingsGroup>
       {limits && limitsOpen ? (

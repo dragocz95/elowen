@@ -11,7 +11,8 @@ import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '../../components/ui/DataTable';
-import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
+import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
+import { PageFilterChips, PageFilters, type PageFilterField } from '../../components/ui/PageFilters';
 import { ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
@@ -191,42 +192,58 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
     setPendingDelete(null);
   };
 
+  // ONE filter, never two: an asset type with ownership scopes already splits the same set more finely
+  // (mine / instance / bundled), so offering the coarse source filter beside it would give two controls
+  // whose answers overlap — and "Built-in" in both of them.
+  const scopeLabel = ownership?.scopes.find((sc) => sc.value === scope)?.label ?? '';
+  const sourceLabel = source === 'user' ? t.assetEditor.filterUser : t.assetEditor.filterBuiltin;
+  const filterName = ownership ? ownership.header : t.assetEditor.colSource;
+  const filterControl = ownership ? (
+    <Segmented
+      value={scope}
+      onChange={setScope}
+      options={[{ value: 'all', label: t.assetEditor.filterAll }, ...ownership.scopes.map((sc) => ({ value: sc.value, label: sc.label }))]}
+      aria-label={ownership.header}
+    />
+  ) : (
+    <Segmented
+      value={source}
+      onChange={(value) => setSource(value as SourceFilter)}
+      options={[
+        { value: 'all', label: t.assetEditor.filterAll },
+        { value: 'user', label: t.assetEditor.filterUser },
+        { value: 'builtin', label: t.assetEditor.filterBuiltin },
+      ]}
+      aria-label={t.assetEditor.colSource}
+    />
+  );
+  const filterActive = ownership ? scope !== 'all' : source !== 'all';
+  const filterField: PageFilterField = filterActive
+    ? {
+      id: 'asset-filter',
+      label: filterName,
+      control: filterControl,
+      active: true,
+      activeLabel: `${filterName}: ${ownership ? scopeLabel : sourceLabel}`,
+      onReset: () => { if (ownership) setScope('all'); else setSource('all'); },
+    }
+    : { id: 'asset-filter', label: filterName, control: filterControl, active: false };
+
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      {/* `w-full` on the row, NOT `items-stretch` on the toolbar: `.control-surface-toolbar` sets
-          `align-items: center` unlayered, and every Tailwind utility lives in `@layer utilities`, so the
-          stretch lost silently. The row then took its max-content width and ran 42px past the surface at
-          320px, clipping the last filter — the same specificity trap the register's sticky header hit. */}
+      {/* Search and the add action stay VISIBLE in the page's toolbar row; the one narrowing control folds
+          behind the shared filter surface. `w-full` on the row, NOT `items-stretch` on the toolbar:
+          `.control-surface-toolbar` sets `align-items: center` unlayered, and every Tailwind utility lives
+          in `@layer utilities`, so the stretch lost silently. The row then took its max-content width and
+          ran 42px past the surface at 320px, clipping the last filter. */}
       <ControlSurfaceToolbar>
         <div className="flex w-full min-w-0 flex-wrap items-center gap-2 py-3">
           <RegisterSearch value={search} onChange={setSearch} placeholder={t.assetEditor.search} label={t.assetEditor.search} />
-          {/* One filter row, never two: an asset type with ownership scopes already splits the same set
-              more finely (mine / instance / bundled), so showing the coarse source filter beside it would
-              offer two controls whose answers overlap — and "Built-in" in both of them. */}
-          {ownership ? (
-            <Segmented
-              value={scope}
-              onChange={setScope}
-              options={[{ value: 'all', label: t.assetEditor.filterAll }, ...ownership.scopes.map((sc) => ({ value: sc.value, label: sc.label }))]}
-              aria-label={ownership.header}
-              nowrap
-            />
-          ) : (
-            <Segmented
-              value={source}
-              onChange={(value) => setSource(value as SourceFilter)}
-              options={[
-                { value: 'all', label: t.assetEditor.filterAll },
-                { value: 'user', label: t.assetEditor.filterUser },
-                { value: 'builtin', label: t.assetEditor.filterBuiltin },
-              ]}
-              aria-label={t.assetEditor.filterAll}
-              nowrap
-            />
-          )}
+          <PageFilters fields={[filterField]} />
           {addAction}
         </div>
       </ControlSurfaceToolbar>
+      <PageFilterChips fields={[filterField]} />
 
       <ControlSurfaceRegister className="flex flex-col gap-4">
         {items.length === 0 ? <EmptyState title={labels.empty} />
@@ -333,13 +350,21 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
           )}
       </ControlSurfaceRegister>
 
+      {/* The shared dialog's own body and footer: the actions used to be the last child of the scroll
+          region behind a hand-drawn top rule, which is the divider `ModalFooter` already paints — and it
+          scrolled away with the form it belonged to. `intent="inspect"` with the rail's own width keeps
+          the presentation the register had. */}
       {form ? (
-        <WorkspaceDetailRail
-          label={form.editing !== null ? form.editing : labels.addTitle}
+        <Modal
+          title={form.editing !== null ? form.editing : labels.addTitle}
+          description={form.editing !== null ? form.description || undefined : undefined}
           closeLabel={t.common.close}
+          intent="inspect"
+          size="md"
+          drawerWidth="default"
           onClose={closeForm}
         >
-          <div className="flex flex-col gap-3">
+          <ModalBody gap={4}>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label={labels.name} hint={labels.nameHint}>
                 <Input
@@ -359,15 +384,16 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
               <textarea value={form.body} onChange={(e) => setForm((cur) => (cur ? { ...cur, body: e.target.value } : cur))} rows={14} className={textareaClass} placeholder={labels.bodyPlaceholder} />
             </Field>
             {renderFieldsAfterBody?.(form, patch)}
-            <div className="flex items-center gap-2 border-t border-border pt-3">
-              <Button onClick={submit} disabled={!savable || saving}>{labels.save}</Button>
-              <Button variant="ghost" onClick={closeForm}>{labels.cancel}</Button>
-              {editing !== null ? (
-                <Button variant="ghost-danger" icon={Trash2} className="ml-auto" onClick={() => setPendingDelete(editing)}>{labels.remove}</Button>
-              ) : null}
-            </div>
-          </div>
-        </WorkspaceDetailRail>
+          </ModalBody>
+          <ModalFooter
+            status={editing !== null ? (
+              <Button variant="ghost-danger" icon={Trash2} onClick={() => setPendingDelete(editing)}>{labels.remove}</Button>
+            ) : undefined}
+          >
+            <Button variant="ghost" onClick={closeForm}>{labels.cancel}</Button>
+            <Button onClick={submit} disabled={!savable || saving}>{labels.save}</Button>
+          </ModalFooter>
+        </Modal>
       ) : null}
 
       <ConfirmDialog
