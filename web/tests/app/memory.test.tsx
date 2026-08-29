@@ -119,7 +119,7 @@ describe('MemoryPage', () => {
     expect(kind).toBeInTheDocument();
     fireEvent.click(kind);
     const menu = screen.getByRole('listbox', { name: 'Kind' });
-    expect(menu).toHaveClass('bg-surface');
+    expect(menu).toHaveClass('bg-popover');
     expect(screen.getByRole('option', { name: 'preference' }).querySelector('svg')).toBeTruthy();
   });
 

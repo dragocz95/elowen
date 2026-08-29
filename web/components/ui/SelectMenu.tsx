@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react';
 
-import { Select, SelectContent, SelectItem, SelectTrigger } from './select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from './shadcn/select';
 
 export interface SelectMenuOption<T extends string = string> {
   value: T;

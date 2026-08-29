@@ -53,7 +53,7 @@
     "packages/plugin-shared/lifecycle.mjs": [
       "exports"
     ],
-    "web/components/ui/select.tsx": [
+    "web/components/ui/shadcn/select.tsx": [
       "exports"
     ]
   },

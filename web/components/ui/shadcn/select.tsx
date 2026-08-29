@@ -2,9 +2,10 @@
 
 import * as React from 'react';
 import * as SelectPrimitive from '@radix-ui/react-select';
+import { cva, type VariantProps } from 'class-variance-authority';
 import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 
-import { cn } from '../../lib/utils';
+import { cn } from '../../../lib/utils';
 
 /** The shadcn/ui Select, on Radix `@radix-ui/react-select`.
  *
@@ -33,24 +34,31 @@ function SelectValue({ ...props }: React.ComponentProps<typeof SelectPrimitive.V
 
 /** `line` is this app's borderless variant, used where a picker sits inside a toolbar rather than in a
  *  form. It is an extra variant on the shadcn part, not a second component. */
+const selectTriggerVariants = cva(
+  'group flex h-9 w-full min-w-0 items-center gap-2 text-sm transition-[border-color,background-color,box-shadow] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
+  {
+    variants: {
+      variant: {
+        default:
+          'rounded-md border border-input bg-card px-3 text-foreground hover:border-border-strong hover:bg-accent data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_rgb(var(--primary-rgb)/0.08)]',
+        line: 'border-b border-input bg-transparent px-1 text-foreground hover:border-border-strong data-[state=open]:border-primary data-[state=open]:text-primary',
+      },
+    },
+    defaultVariants: { variant: 'default' },
+  },
+);
+
 function SelectTrigger({
   className = '',
   variant = 'default',
   children,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Trigger> & { variant?: 'default' | 'line' }) {
+}: React.ComponentProps<typeof SelectPrimitive.Trigger> & VariantProps<typeof selectTriggerVariants>) {
   return (
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       data-variant={variant}
-      className={cn(
-        'flex h-9 w-full min-w-0 items-center gap-2 text-sm transition-[border-color,background-color,box-shadow]',
-        'group focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
-        variant === 'line'
-          ? 'border-b border-input bg-transparent px-1 text-foreground hover:border-border-strong data-[state=open]:border-primary data-[state=open]:text-primary'
-          : 'rounded-md border border-input bg-card px-3 text-foreground hover:border-border-strong hover:bg-accent data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_rgb(var(--primary-rgb)/0.08)]',
-        className,
-      )}
+      className={cn(selectTriggerVariants({ variant }), className)}
       {...props}
     >
       {children}
