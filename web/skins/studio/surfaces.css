@@ -562,11 +562,13 @@
   display: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
   font-size: 0.875rem;
   font-weight: 500;
   letter-spacing: normal;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__description,
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__status {
   max-width: min(100%, 68ch);
   font-size: 0.8125rem;
@@ -594,6 +596,32 @@
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__actions {
     grid-column: auto;
     justify-self: start;
+  }
+}
+
+/* The Studio three-track declaration above is more specific than the shared phone collapse. Restate the
+   single-track contract at the same specificity so labels, controls and actions each receive the full
+   row instead of squeezing the label into a one-word-wide column. */
+@container workspace-shell (width < 38.75rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row {
+    gap: 0.625rem;
+    padding-inline: 1rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__control,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__actions {
+    width: 100%;
+    grid-column: auto;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__actions {
+    justify-self: stretch;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__actions > * {
+    max-width: 100%;
   }
 }
 

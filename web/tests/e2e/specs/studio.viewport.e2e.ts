@@ -283,6 +283,18 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
   });
   expect(mobileActions.actionsRight).toBeLessThanOrEqual(mobileActions.headRight + 1);
   expect(mobileActions.actionsTop).toBeGreaterThanOrEqual(mobileActions.headTop);
+
+  await expect(app.locator('.settings-row__description')).toHaveCount(0);
+  const rowWidths = await app.locator('.settings-row:visible').evaluateAll((rows) => rows.map((row) => {
+    const rowBox = row.getBoundingClientRect();
+    const labelBox = row.querySelector<HTMLElement>('.settings-row__label')!.getBoundingClientRect();
+    return { row: rowBox.width, label: labelBox.width };
+  }));
+  for (const width of rowWidths) expect(width.label).toBeGreaterThanOrEqual(width.row - 40);
+
+  const pushRow = app.locator('.settings-row').filter({ hasText: 'Push notification contact' });
+  await pushRow.getByRole('button', { name: 'Help' }).click();
+  await expect(app.getByRole('tooltip')).toContainText('The address used to sign push notifications');
 });
 
 test('nothing on a Studio page is laid out wider than the 320px it has', async ({ app, seed }, testInfo) => {
@@ -505,6 +517,25 @@ test('Studio chat composer buttons keep the touch floor on a short coarse-pointe
       expect(size.width, 'a composer button is wide enough to tap').toBeGreaterThanOrEqual(TOUCH_TARGET);
       expect(size.height, 'a composer button is tall enough to tap').toBeGreaterThanOrEqual(TOUCH_TARGET);
     }
+  } finally {
+    await context.close();
+  }
+});
+
+test('Studio settings help buttons stay tappable on a coarse-pointer phone', async ({ browser, seed }, testInfo) => {
+  authedOnly(testInfo);
+  const { context, page } = await studioTouchPage(browser, seed, 'studio-oled', { width: 390, height: 844 });
+  try {
+    await openStudio(page, '/settings');
+    const help = page.getByRole('button', { name: 'Help' }).first();
+    await expect(help).toBeVisible();
+    const box = await help.boundingBox();
+    expect(box?.width).toBeGreaterThanOrEqual(TOUCH_TARGET);
+    expect(box?.height).toBeGreaterThanOrEqual(TOUCH_TARGET);
+    await help.click();
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toBeVisible();
+    await expect(help).toHaveAttribute('aria-describedby', await tooltip.getAttribute('id') ?? '');
   } finally {
     await context.close();
   }

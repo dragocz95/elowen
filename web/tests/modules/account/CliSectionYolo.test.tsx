@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
@@ -32,12 +32,13 @@ const renderSection = () => render(<ToastProvider><CliSection /></ToastProvider>
 beforeEach(() => { saveCli.mockClear(); savePermissions.mockClear(); });
 
 describe('CliSection — YOLO default toggle', () => {
-  it('states the YOLO warning inline like every other row, seeded off', () => {
+  it('keeps the YOLO warning behind the row help affordance, seeded off', () => {
     renderSection();
-    // The warning is read, not discovered: it sits in the row description the same way the neighbouring
-    // rows explain themselves, so the section carries no lone help button to hunt for.
-    expect(screen.getByText(en.cli.yoloWarning)).toBeInTheDocument();
-    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(screen.queryByText(en.cli.yoloWarning)).toBeNull();
+    const row = screen.getByText(en.cli.yoloToggle).closest('.settings-row');
+    expect(row).not.toBeNull();
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: en.common.help }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent(en.cli.yoloWarning);
     const toggle = screen.getByRole('switch', { name: en.cli.yoloToggle });
     expect(toggle.getAttribute('aria-checked')).toBe('false');
   });

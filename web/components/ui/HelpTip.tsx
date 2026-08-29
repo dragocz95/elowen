@@ -1,5 +1,5 @@
 'use client';
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { HelpCircle } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
@@ -8,9 +8,10 @@ import { useTranslation } from '../../lib/i18n';
 // doesn't make it flicker.
 const CLOSE_DELAY_MS = 120;
 
-/** A small "?" that reveals a custom tooltip on hover/focus. For inline field help. */
+/** A small "?" that reveals inline help on hover, focus or tap. */
 export function HelpTip({ children, align = 'right' }: { children: ReactNode; align?: 'left' | 'right' }) {
   const [open, setOpen] = useState(false);
+  const tooltipId = useId();
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const tooltipRef = useRef<HTMLSpanElement>(null);
@@ -73,6 +74,7 @@ export function HelpTip({ children, align = 'right' }: { children: ReactNode; al
       // underneath. It stays open only while the trigger itself is hovered or focused.
       <span
         ref={tooltipRef}
+        id={tooltipId}
         role="tooltip"
         className={`overlay-layer-menu pointer-events-none fixed w-64 rounded-md border border-border bg-surface p-3 text-xs font-normal normal-case leading-relaxed tracking-normal text-text-muted${position ? '' : ' invisible'}`}
         style={{ left: position?.left ?? 0, top: position?.top ?? 0, boxShadow: 'var(--shadow-raised)' }}
@@ -93,10 +95,11 @@ export function HelpTip({ children, align = 'right' }: { children: ReactNode; al
         ref={triggerRef}
         type="button"
         aria-label={t.common.help}
+        aria-describedby={open ? tooltipId : undefined}
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); show(); }}
         onFocus={show}
         onBlur={scheduleClose}
-        className="inline-flex h-4 w-4 items-center justify-center text-text-muted transition-colors hover:text-text"
+        className="inline-flex h-4 w-4 items-center justify-center text-text-muted transition-colors hover:text-text pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]"
       >
         <HelpCircle size={14} aria-hidden />
       </button>

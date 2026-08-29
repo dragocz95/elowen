@@ -69,15 +69,9 @@ function splitIntoColumns(children: ReactNode, columns: 1 | 2): ReactNode {
   );
 }
 
-/** A label/control record inside a section card: a ringed icon badge, the name with its explanation
- *  directly beneath it, and the control on the trailing edge.
- *
- *  TWO kinds of explanation, deliberately kept apart. `description` is the one-line plain-text gloss
- *  that belongs in the layout — a setting whose meaning hides behind a hover target is a setting people
- *  change by guessing. `hint` is the long-form or cautionary text (a plugin field's full help, a
- *  destructive-mode warning) and stays behind the shared HelpTip, which is what keeps plugin config
- *  calm and compact. Passing a paragraph as `description` would push every neighbouring row off the
- *  screen; passing a five-word gloss as `hint` would hide it for no reason. */
+/** A label/control record inside a section card. Explanatory copy lives behind the shared HelpTip so the
+ * row remains scannable on a phone; `description` gives the short meaning and `hint` adds long-form or
+ * cautionary detail in the same click/hover surface. */
 export function SettingsRow({ label, description, hint, icon: Icon, iconNode, status, actions, children, className = '' }: {
   label: string;
   description?: string;
@@ -97,8 +91,15 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, st
         {iconNode ? <span className="settings-row__icon" aria-hidden>{iconNode}</span>
           : Icon ? <span className="settings-row__icon" aria-hidden><Icon size={15} strokeWidth={1.75} /></span> : null}
         <div className="min-w-0">
-          <span className="settings-row__title">{label}{hint ? <HelpTip align="left">{hint}</HelpTip> : null}</span>
-          {description ? <p className="settings-row__description">{description}</p> : null}
+          <span className="settings-row__title">
+            <span>{label}</span>
+            {description || hint ? (
+              <HelpTip align="left">
+                {description ? <span className="block">{description}</span> : null}
+                {hint ? <span className={`block ${description ? 'mt-2' : ''}`}>{hint}</span> : null}
+              </HelpTip>
+            ) : null}
+          </span>
           {status ? <div className="settings-row__status">{status}</div> : null}
         </div>
       </div>

@@ -22,6 +22,8 @@ describe('HelpTip', () => {
 
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip.parentElement).toBe(document.body);
+    expect(trigger).toHaveAttribute('aria-describedby', tooltip.id);
+    expect(trigger).toHaveClass('pointer-coarse:h-[var(--touch-target)]', 'pointer-coarse:w-[var(--touch-target)]');
     expect(tooltip.style.left).toBe('36px');
   });
 
