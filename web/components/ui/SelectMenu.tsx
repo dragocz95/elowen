@@ -39,11 +39,12 @@ export function SelectMenu<T extends string>({ id, value, onChange, options, lab
       </SelectTrigger>
       <SelectContent aria-label={label}>
         {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.icon ? (
-              <span className="flex shrink-0 text-text-muted group-data-[state=checked]:text-accent" aria-hidden>{option.icon}</span>
-            ) : null}
-            <span className="min-w-0 flex-1 truncate">{option.label}</span>
+          <SelectItem
+            key={option.value}
+            value={option.value}
+            icon={option.icon ? <span className="flex shrink-0 text-text-muted" aria-hidden>{option.icon}</span> : null}
+          >
+            {option.label}
           </SelectItem>
         ))}
       </SelectContent>
