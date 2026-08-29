@@ -1,31 +1,39 @@
 import type { ButtonHTMLAttributes } from 'react';
 import type { LucideIcon } from 'lucide-react';
 
-type Variant = 'default' | 'accent' | 'ghost' | 'danger' | 'ghost-danger';
-const VARIANTS: Record<Variant, string> = {
-  default: 'bg-elevated border-border text-text hover:border-border-strong hover:bg-elevated/80',
-  accent: 'bg-primary border-primary text-bg hover:opacity-90',
-  ghost: 'bg-transparent border-transparent text-text-muted hover:bg-elevated hover:text-text',
-  danger: 'bg-danger border-danger text-bg hover:opacity-90',
-  // A destructive action that has to sit quietly in a row or a form: it reads as a ghost until the
-  // pointer is on it, and only then admits what it does. A filled danger button in every row would
-  // shout the one thing the user is least likely to want.
-  'ghost-danger': 'bg-transparent border-transparent text-text-muted hover:bg-danger/10 hover:text-danger hover:border-danger/40',
-};
+import { cn } from '../../lib/utils';
+import { Button as ShadcnButton, buttonVariants } from './shadcn/button';
 
+/** The app-shaped button, composed from the shadcn/ui `Button` in `./shadcn/button.tsx`.
+ *
+ *  Only the vocabulary is this file's: the app names its variants by emphasis (`accent` is the brand
+ *  fill, `default` is the quiet one) where shadcn names them by role (`default` IS the brand). The two
+ *  disagree on the meaning of the word `default`, so they cannot be merged into one prop type without
+ *  making 39 call sites ambiguous — this map is what keeps every one of them untouched. It is temporary:
+ *  a later phase moves the call sites onto the shadcn names and deletes the map with this wrapper. */
+type Variant = 'default' | 'accent' | 'ghost' | 'danger' | 'ghost-danger';
+
+const SHADCN_VARIANT = {
+  default: 'secondary',
+  accent: 'default',
+  ghost: 'ghost',
+  danger: 'destructive',
+  'ghost-danger': 'ghost-destructive',
+} as const satisfies Record<Variant, NonNullable<Parameters<typeof buttonVariants>[0]>['variant']>;
+
+/** The button's classes without the button — for the handful of places that need the same control on an
+ *  `<a>` or a `<label>`. Callers append their own overrides through `className`, and going through `cn()`
+ *  means an override actually WINS: the old template-literal version emitted both `h-9` and the caller's
+ *  `h-10` and left the winner to stylesheet order. */
 export function buttonClassName(variant: Variant = 'default', className = ''): string {
-  const extra = className.trim();
-  return `inline-flex h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap border px-3.5 text-sm font-medium rounded-md transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 ${VARIANTS[variant]}${extra ? ` ${extra}` : ''}`;
+  return cn(buttonVariants({ variant: SHADCN_VARIANT[variant] }), className);
 }
 
 export function Button({ variant = 'default', icon: Icon, className = '', children, ...rest }: { variant?: Variant; icon?: LucideIcon } & ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button
-      className={buttonClassName(variant, className)}
-      {...rest}
-    >
+    <ShadcnButton variant={SHADCN_VARIANT[variant]} className={className} {...rest}>
       {Icon ? <Icon size={14} aria-hidden /> : null}
       {children}
-    </button>
+    </ShadcnButton>
   );
 }

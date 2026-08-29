@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { elowenClient } from '../../lib/elowenClient';
+import { Avatar as AvatarRoot, AvatarFallback, AvatarImage } from './shadcn/avatar';
 
 // Deterministic monogram colour so a given user always gets the same chip.
 const COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
@@ -19,7 +20,13 @@ const initialsOf = (s: string) => {
 };
 const colorFor = (s: string) => COLORS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
 
-/** A user's avatar: the uploaded image when present, else a coloured initials monogram. */
+/** A user's avatar: the uploaded image when present, else a coloured initials monogram.
+ *
+ *  Composed from the shadcn/ui `Avatar` parts in `./shadcn/avatar.tsx`. What is this file's is only the app's
+ *  policy — which label to show, which two letters it becomes, which of eight identity colours backs it,
+ *  and where the image URL comes from. The load/error handling under it is Radix's: `AvatarImage` paints
+ *  only once the source has decoded and hands back to the fallback if it never does, so a broken avatar
+ *  degrades to the monogram instead of a blank square, which the hand-rolled version did not do. */
 export function Avatar({ user, size = 36 }: { user: { id: number; username: string; name?: string; avatar?: string }; size?: number }) {
   const label = user.name?.trim() || user.username;
   // The avatar URL is a short-lived signed link minted on demand (finding W2) — fetch it when the
@@ -31,24 +38,20 @@ export function Avatar({ user, size = 36 }: { user: { id: number; username: stri
     elowenClient.avatarUrl(user.id).then((u) => { if (live) setSrc(u); }).catch(() => { if (live) setSrc(null); });
     return () => { live = false; };
   }, [user.id, user.avatar]);
-  if (user.avatar && src) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={src}
-        alt={label}
-        className="shrink-0 rounded-full border border-border object-cover"
-        style={{ width: size, height: size }}
-      />
-    );
-  }
   return (
-    <span
-      className="inline-flex shrink-0 items-center justify-center rounded-full font-mono font-semibold text-white"
-      style={{ width: size, height: size, fontSize: size * 0.38, background: colorFor(label) }}
-      aria-label={label}
-    >
-      {initialsOf(label)}
-    </span>
+    // The accessible name sits on the ROOT rather than on the image, because the root is the element
+    // that is always present: Radix swaps image and fallback underneath it, and a name attached to the
+    // image would disappear for exactly the users who have no image.
+    // `inline-flex` rather than stock shadcn's block-level `flex`: an avatar here sits beside a name in
+    // running text as often as it sits in a grid cell, and a block box there would break the line.
+    <AvatarRoot aria-label={label} className="inline-flex" style={{ width: size, height: size }}>
+      {user.avatar && src ? <AvatarImage src={src} alt={label} className="rounded-full border border-border" /> : null}
+      <AvatarFallback
+        className="font-mono font-semibold text-white"
+        style={{ fontSize: size * 0.38, background: colorFor(label) }}
+      >
+        {initialsOf(label)}
+      </AvatarFallback>
+    </AvatarRoot>
   );
 }
