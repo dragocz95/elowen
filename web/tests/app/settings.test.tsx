@@ -111,4 +111,43 @@ describe('SettingsPage', () => {
       expect(screen.getByRole('button', { name: label }).parentElement).toBe(actions);
     }
   });
+
+  /** The page's controls live in ONE row, below the section navigation — not promoted above the title and
+   *  not re-declared per section. The row is mounted on every section because it carries the portal slot,
+   *  so a section with nothing to put in it must leave the row genuinely empty rather than draw a band. */
+  it('puts the model search in the canonical toolbar row', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByLabelText('Claude Opus');
+
+    const search = screen.getByLabelText(en.settings.modelSearchPlaceholder);
+    expect(container.querySelector('.page-toolbar__search')).toContainElement(search);
+    // The row is under the section navigation, and the hero above it is not a control surface.
+    expect(container.querySelector('.workspace-hero')!.contains(search)).toBe(false);
+  });
+
+  it('hangs the Elowen AI cross-link off the toolbar actions', async () => {
+    localStorage.setItem('elowen.settings.category', 'brain');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+
+    const link = await screen.findByRole('button', { name: en.settings.brainModelsLink });
+    expect(container.querySelector('.page-toolbar__actions')).toContainElement(link);
+
+    fireEvent.click(link);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+  });
+
+  it('leaves the toolbar row empty for a section with no page-level controls', async () => {
+    localStorage.setItem('elowen.settings.category', 'system');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'System' });
+
+    const row = container.querySelector('.page-toolbar__row');
+    expect(row).not.toBeNull();
+    // Only the portal slot, and nothing in it — which is what the stylesheet collapses the row on.
+    expect(Array.from(row!.children).map((node) => node.className)).toEqual(['page-toolbar__slot']);
+    expect(row!.querySelector('.page-toolbar__slot')!.children).toHaveLength(0);
+  });
 });

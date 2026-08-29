@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Boxes, FlaskConical, Hash, PenLine, RefreshCw, Server, Tags } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { ChoiceField } from '../../components/ui/ChoiceField';
@@ -151,77 +152,114 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
   const embBadge = embedding.configured ? <Badge tone="accent">{t.memory.embeddingConfigured}</Badge> : <Badge>{t.memory.embeddingUnconfigured}</Badge>;
   const catBadge = categorization.configured ? <Badge tone="accent">{t.categorization.configured}</Badge> : <Badge>{t.categorization.notConfigured}</Badge>;
   const testButton = (
-    <button type="button" className="spatial-inline-action" disabled={testing} onClick={onTest}>
-      <FlaskConical size={14} aria-hidden />{testing ? t.memory.embeddingTesting : t.memory.embeddingTest}
-    </button>
+    <Button variant="ghost" size="sm" icon={FlaskConical} disabled={testing} onClick={onTest}>
+      {testing ? t.memory.embeddingTesting : t.memory.embeddingTest}
+    </Button>
   );
-  // In pods a many-provider Segmented strip grows far too tall — show the pick as a chip + drawer.
+  // A many-provider Segmented strip grows far too tall for a record's trailing cell — the pick opens a
+  // picker instead.
   const rowEmbProvider = (
-    <SettingsRow label={t.memory.embeddingProvider} description={t.help.embeddingProvider} icon={Server}
-      status={embBadge} actions={testButton}>
-      {embeddingProviders.length > 0
+    <SettingsRow
+      label={t.memory.embeddingProvider}
+      description={t.help.embeddingProvider}
+      icon={Server}
+      status={embBadge}
+      actions={testButton}
+      control={embeddingProviders.length > 0
         ? <ChoiceField title={t.memory.embeddingProvider} options={embeddingProviders.map((p) => ({ value: p.id, label: p.label }))} value={embProvider} onChange={setEmbProvider} picker="always" />
         : <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />}
-    </SettingsRow>
+    />
   );
   const rowEmbModel = (
-    <SettingsRow label={t.memory.embeddingModel} description={t.help.embeddingIntro} icon={Boxes}>
-      <ModelCatalogField value={embModel} onChange={setEmbModel} catalog={embCatalog} title={t.memory.embeddingModel} subtitle={t.help.embeddingIntro} variant="line" />
-    </SettingsRow>
+    <SettingsRow
+      label={t.memory.embeddingModel}
+      description={t.help.embeddingIntro}
+      icon={Boxes}
+      control={<ModelCatalogField value={embModel} onChange={setEmbModel} catalog={embCatalog} title={t.memory.embeddingModel} subtitle={t.help.embeddingIntro} variant="line" />}
+    />
   );
   const rowEmbCustom = (
-    <SettingsRow label={t.memory.embeddingModelCustom} description={t.help.embeddingModelCustom} icon={PenLine}>
-      <Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" variant="line" />
-    </SettingsRow>
+    <SettingsRow
+      label={t.memory.embeddingModelCustom}
+      description={t.help.embeddingModelCustom}
+      icon={PenLine}
+      control={<Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" variant="line" />}
+    />
   );
   const rowDimensions = (
-    <SettingsRow label={t.memory.embeddingDimensions} description={t.help.embeddingDimensions} icon={Hash}>
-      <Input
-        type="number"
-        inputMode="numeric"
-        value={dimensions}
-        onChange={(e) => setDimensions(e.target.value)}
-        placeholder="1536"
-        className="max-w-40 font-mono"
-        variant="line"
-      />
-    </SettingsRow>
+    <SettingsRow
+      label={t.memory.embeddingDimensions}
+      description={t.help.embeddingDimensions}
+      icon={Hash}
+      control={(
+        <Input
+          type="number"
+          inputMode="numeric"
+          value={dimensions}
+          onChange={(e) => setDimensions(e.target.value)}
+          placeholder="1536"
+          className="max-w-40 font-mono"
+          variant="line"
+        />
+      )}
+    />
   );
   const rowReindex = (
-    <SettingsRow label={t.memory.reindex} description={embedding.configured ? t.memory.reindexConfirmBody : t.memory.reindexUnconfigured} icon={RefreshCw}>
-      <button
-        type="button"
-        className="spatial-inline-action"
-        disabled={!embedding.configured || reindex.isPending}
-        onClick={() => setReindexOpen(true)}
-      >
-        <RefreshCw size={14} aria-hidden />{t.memory.reindex}
-      </button>
-    </SettingsRow>
+    <SettingsRow
+      label={t.memory.reindex}
+      description={embedding.configured ? t.memory.reindexConfirmBody : t.memory.reindexUnconfigured}
+      icon={RefreshCw}
+      // The whole record is one action, so it belongs in the actions slot rather than posing as the
+      // record's control.
+      actions={(
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={RefreshCw}
+          disabled={!embedding.configured || reindex.isPending}
+          onClick={() => setReindexOpen(true)}
+        >
+          {t.memory.reindex}
+        </Button>
+      )}
+    />
   );
   const rowCatProvider = (
-    <SettingsRow label={t.categorization.providerLabel} description={interpolate(t.help.categorizationProvider, { agentName })} icon={Server} status={catBadge}>
-      {providers.length > 0
+    <SettingsRow
+      label={t.categorization.providerLabel}
+      description={interpolate(t.help.categorizationProvider, { agentName })}
+      icon={Server}
+      status={catBadge}
+      control={providers.length > 0
         ? <ChoiceField title={t.categorization.providerLabel} options={providers.map((p) => ({ value: p.id, label: p.label }))} value={catProvider} onChange={setCatProvider} picker="always" />
         : <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />}
-    </SettingsRow>
+    />
   );
   const rowCatModel = (
-    <SettingsRow label={t.categorization.modelLabel} description={t.help.categorizationIntro} icon={Tags}>
-      <ModelCatalogField value={catModel ?? ''} onChange={(v) => setCatModel(v || null)} catalog={catCatalog} title={t.categorization.modelLabel} subtitle={t.help.categorizationIntro} variant="line" />
-    </SettingsRow>
+    <SettingsRow
+      label={t.categorization.modelLabel}
+      description={t.help.categorizationIntro}
+      icon={Tags}
+      control={<ModelCatalogField value={catModel ?? ''} onChange={(v) => setCatModel(v || null)} catalog={catCatalog} title={t.categorization.modelLabel} subtitle={t.help.categorizationIntro} variant="line" />}
+    />
   );
   const rowReclassify = (
-    <SettingsRow label={t.categorization.reclassify} description={t.categorization.reclassifyHint} icon={RefreshCw}>
-      <button
-        type="button"
-        className="spatial-inline-action"
-        disabled={!categorization.configured || reclassify.isPending}
-        onClick={onReclassify}
-      >
-        <RefreshCw size={14} aria-hidden />{t.categorization.reclassify}
-      </button>
-    </SettingsRow>
+    <SettingsRow
+      label={t.categorization.reclassify}
+      description={t.categorization.reclassifyHint}
+      icon={RefreshCw}
+      actions={(
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={RefreshCw}
+          disabled={!categorization.configured || reclassify.isPending}
+          onClick={onReclassify}
+        >
+          {t.categorization.reclassify}
+        </Button>
+      )}
+    />
   );
 
   return (

@@ -1,0 +1,69 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { LanguageProvider } from '../../../lib/i18n';
+import { en } from '../../../lib/i18n/dictionaries/en';
+import { SettingsDocument, SettingsGroup } from '../../../components/ui/SettingsSurface';
+
+const useConfig = vi.hoisted(() => vi.fn());
+const mutateAsync = vi.hoisted(() => vi.fn());
+vi.mock('../../../lib/queries', () => ({ useConfig }));
+vi.mock('../../../lib/mutations', () => ({ useUpdateConfig: () => ({ mutateAsync, isPending: false }) }));
+vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
+
+import { SkinsRow } from '../../../modules/settings/SkinsRow';
+
+const renderRow = () => render(
+  <LanguageProvider>
+    <SettingsDocument><SettingsGroup><SkinsRow /></SettingsGroup></SettingsDocument>
+  </LanguageProvider>,
+);
+
+describe('SkinsRow', () => {
+  beforeEach(() => {
+    useConfig.mockReset();
+    mutateAsync.mockReset();
+    mutateAsync.mockResolvedValue({});
+  });
+
+  /** The record's trailing side is ONE control. It used to be a `SelectionSummary`: a count line above
+   *  sample chips and a "+N", with the manage button beside them — content that cannot share the single
+   *  grid row a settings record is, so the row wrapped and its value fell under its own label. */
+  it('carries exactly one control and no sample chips', () => {
+    useConfig.mockReturnValue({ data: { allowedSkins: ['studio-light', 'studio-oled'] } });
+    const { container } = renderRow();
+
+    const row = container.querySelector('.settings-row');
+    expect(row).not.toBeNull();
+    expect(row!.querySelectorAll('.settings-row__control')).toHaveLength(1);
+    expect(row!.querySelectorAll('.settings-row__control button')).toHaveLength(1);
+    expect(row!.querySelector('.settings-row__actions')).toBeNull();
+    expect(container.querySelector('[data-selection-summary]')).toBeNull();
+
+    // The count IS the summary — the names live in the dialog the control opens.
+    const trigger = screen.getByRole('button', { name: en.settings.skins.manage });
+    expect(trigger).toHaveTextContent(en.managePicker.selectedCount.replace('{n}', '2'));
+    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText(en.common.skinNames.studioLight)).toBeNull();
+  });
+
+  it('summarises an empty allowlist as switching disabled and opens the picker', () => {
+    useConfig.mockReturnValue({ data: { allowedSkins: [] } });
+    renderRow();
+
+    const trigger = screen.getByRole('button', { name: en.settings.skins.manage });
+    expect(trigger).toHaveTextContent(en.settings.skins.none);
+
+    fireEvent.click(trigger);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  /** A skin name left behind by a deployment that no longer ships it must not be counted as a live pick. */
+  it('ignores stored skins this build does not compile', () => {
+    useConfig.mockReturnValue({ data: { allowedSkins: ['studio-light', 'retired-skin'] } });
+    renderRow();
+
+    expect(screen.getByRole('button', { name: en.settings.skins.manage }))
+      .toHaveTextContent(en.managePicker.selectedCount.replace('{n}', '1'));
+  });
+});
