@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { SlidersHorizontal, X } from 'lucide-react';
 
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useMobile } from '../../lib/useMobile';
 import { Button } from './Button';
+import { HelpTip } from './HelpTip';
 import { Modal, ModalBody } from './Modal';
-import { Segmented } from './Segmented';
 import { Popover, PopoverContent, PopoverTrigger } from './shadcn/popover';
 
 /** The ONE condensed filter control of the canonical page toolbar.
@@ -15,65 +15,94 @@ import { Popover, PopoverContent, PopoverTrigger } from './shadcn/popover';
  *  WHAT IT IS NOT: a search box. A register's text search is a permanent control that narrows rows as
  *  you type; it lives in the toolbar's own `search` slot and never appears in here or as a chip. Folding
  *  it in would put the page's most-used control two clicks away and give it a chip that cannot be read
- *  at a glance. A FILTER is a choice from a known set — a status, a kind, a provider — and that is the
- *  only thing this component holds.
+ *  at a glance.
  *
- *  The page owns every value. This component renders the trigger, the panel and the active chips from
- *  what it is given and reports each change straight back, so filter state stays where the query that
- *  consumes it lives (and stays serialisable into the URL) instead of being trapped inside a popover. */
-export interface PageFilterOption {
-  value: string;
-  label: string;
-  /** How many records the option leads to. Rendered as the quiet suffix `Segmented` already draws. */
-  count?: number;
-}
-
-export interface PageFilterField {
+ *  IT OWNS ALMOST NOTHING, and that is the design. It owns the trigger, whether the panel is open, and
+ *  the arithmetic of how many filters are active. It does NOT own what a filter IS. A page hands it a
+ *  rendered `control` and says whether that control is currently filtering; the control can be a
+ *  Segmented, a Toggle, `DateRangeFilter`, `ProjectFilterPills`, a pair of number inputs, or anything a
+ *  page grows next.
+ *
+ *  The first version of this component took `options` + `value` + `onChange` and decided "active" by
+ *  comparing the value to a neutral option. That is a single-select picker wearing a filter's name, and
+ *  every real filter in the app already fails it: Memory's grouping and show-category filters are
+ *  booleans with no option list, `DateRangeFilter` is a preset plus two dates, `ProjectFilterPills` is a
+ *  pill row over live data. Each of those would have had to be flattened into a synthetic option list to
+ *  pass through, and the flattening — not the filter — would then decide whether the page was filtered.
+ *
+ *  So the page states it. `active` is a fact only the page can know, `activeLabel` is the wording only
+ *  the page can write, and `onReset` is the undo only the page can perform. The union below makes the
+ *  three inseparable: an active field that cannot say what it is doing, or cannot be switched off, does
+ *  not typecheck. */
+interface PageFilterFieldBase {
   /** Stable identity — the chip key and the panel's field key. */
   id: string;
+  /** Names the filter in the panel, and is what the chip's wording should echo. */
   label: string;
-  options: PageFilterOption[];
-  /** Owned by the page. */
-  value: string;
-  onChange: (value: string) => void;
-  /** The value that means "not filtering". It never produces a chip and it is what a chip's reset and
-   *  "clear filters" return to. Defaults to the FIRST option, which is the "All" entry every existing
-   *  register already puts there. */
-  neutralValue?: string;
+  /** The page's own control, already rendered and already wired to the page's state. */
+  control: ReactNode;
+  /** Optional guidance beside the label, behind the shared help affordance. */
+  hint?: string;
 }
 
-/** The value a field falls back to. Empty string when a caller passes no options at all, which is a
- *  degenerate field rather than an error: it renders an empty group and is never active. */
-function neutralValueOf(field: PageFilterField): string {
-  return field.neutralValue ?? field.options[0]?.value ?? '';
+/** A filter that is currently narrowing the page. It MUST be able to say so and MUST be undoable —
+ *  a chip that cannot name its filter tells the reader nothing, and one that cannot clear it is a
+ *  dead end. */
+interface ActivePageFilterField extends PageFilterFieldBase {
+  active: true;
+  /** The chip's wording, written by the page. It has to name WHICH filter is on, not merely its value:
+   *  "Failed" alone does not say whether the page is filtered by status or by outcome, so a status
+   *  filter writes "Status: Failed" and a boolean writes "Grouped by category". */
+  activeLabel: string;
+  /** Returns this one filter to its neutral state. The chip and "clear filters" both call it. */
+  onReset: () => void;
 }
 
-function isActive(field: PageFilterField): boolean {
-  return field.value !== neutralValueOf(field);
+interface InactivePageFilterField extends PageFilterFieldBase {
+  active: false;
+  /** Declared as `never` so the union is enforced in BOTH directions: a field that supplies a chip
+   *  wording while claiming to be inactive is a page that has lost track of its own state, and the
+   *  compiler says so instead of the chip silently never appearing. */
+  activeLabel?: never;
+  onReset?: never;
 }
 
-/** `label: option` — the whole point of a chip is that it names WHICH filter is on, not merely that one
- *  is. "Failed" alone does not say whether the page is filtered by status or by outcome. */
-function chipName(field: PageFilterField): string {
-  const option = field.options.find((candidate) => candidate.value === field.value);
-  return `${field.label}: ${option?.label ?? field.value}`;
+export type PageFilterField = ActivePageFilterField | InactivePageFilterField;
+
+/** The active fields, as a narrowed type so the chip code reaches `activeLabel` and `onReset` without
+ *  an optional chain that would quietly render a chip nobody can dismiss.
+ *
+ *  Note what it CANNOT do: it has no access to any control's value — a control is an opaque node here —
+ *  so "is this page filtered" is answered by the page's own flag and by nothing else. */
+function activeFieldsOf(fields: PageFilterField[]): ActivePageFilterField[] {
+  return fields.filter((field): field is ActivePageFilterField => field.active);
+}
+
+/** The shared label shell every filter control sits in, so a Toggle, a Segmented and a date range all
+ *  read as the same kind of thing in one panel.
+ *
+ *  It is deliberately NOT `components/ui/Field.tsx`. That field wraps its control in a `<label>`, which
+ *  is right for one input and wrong for most filters: a wrapping label binds to the first labelable
+ *  descendant, so a radio group would have the field's name attached to its first radio and a two-input
+ *  date range to whichever input came first. A labelled `group` names the whole control, whatever the
+ *  control turns out to be. */
+function PageFilterFieldShell({ field }: { field: PageFilterField }) {
+  const labelId = useId();
+  return (
+    <div className="page-filters__field" role="group" aria-labelledby={labelId}>
+      <span className="page-filters__field-label">
+        <span id={labelId}>{field.label}</span>
+        {field.hint ? <HelpTip align="left">{field.hint}</HelpTip> : null}
+      </span>
+      <div className="page-filters__field-control">{field.control}</div>
+    </div>
+  );
 }
 
 function FilterFields({ fields }: { fields: PageFilterField[] }) {
   return (
     <div className="page-filters__fields">
-      {fields.map((field) => (
-        <div key={field.id} className="page-filters__field">
-          <span className="page-filters__field-label">{field.label}</span>
-          <Segmented
-            aria-label={field.label}
-            variant="menu"
-            value={field.value}
-            onChange={field.onChange}
-            options={field.options.map((option) => ({ value: option.value, label: option.label, count: option.count }))}
-          />
-        </div>
-      ))}
+      {fields.map((field) => <PageFilterFieldShell key={field.id} field={field} />)}
     </div>
   );
 }
@@ -84,7 +113,7 @@ export function PageFilters({ fields }: { fields: PageFilterField[] }) {
   const { t } = useTranslation();
   const phone = useMobile();
   const [open, setOpen] = useState(false);
-  const activeCount = fields.filter(isActive).length;
+  const activeCount = activeFieldsOf(fields).length;
 
   if (fields.length === 0) return null;
 
@@ -147,33 +176,30 @@ export function PageFilters({ fields }: { fields: PageFilterField[] }) {
   );
 }
 
-/** The active-filter chips, one line below the toolbar row. Each chip names its filter and resets it;
- *  past one active filter the group also offers a single reset for all of them. Nothing renders while
- *  nothing is filtering. */
+/** The active-filter chips, one line below the toolbar row. Each chip carries its field's own wording
+ *  and its own reset; past one active filter the group also offers a single reset for all of them.
+ *  Nothing renders while nothing is filtering. */
 export function PageFilterChips({ fields }: { fields: PageFilterField[] }) {
   const { t } = useTranslation();
-  const active = fields.filter(isActive);
+  const active = activeFieldsOf(fields);
   if (active.length === 0) return null;
 
   return (
     <div className="page-filters__chips" role="group" aria-label={t.common.filtersActive} data-testid="page-filter-chips">
-      {active.map((field) => {
-        const name = chipName(field);
-        return (
-          <button
-            key={field.id}
-            type="button"
-            className="page-filters__chip"
-            aria-label={interpolate(t.common.filterRemove, { name })}
-            onClick={() => field.onChange(neutralValueOf(field))}
-          >
-            <span className="page-filters__chip-name">{name}</span>
-            <X size={12} aria-hidden />
-          </button>
-        );
-      })}
+      {active.map((field) => (
+        <button
+          key={field.id}
+          type="button"
+          className="page-filters__chip"
+          aria-label={interpolate(t.common.filterRemove, { name: field.activeLabel })}
+          onClick={field.onReset}
+        >
+          <span className="page-filters__chip-name">{field.activeLabel}</span>
+          <X size={12} aria-hidden />
+        </button>
+      ))}
       {active.length > 1 ? (
-        <Button variant="ghost" size="sm" className="page-filters__clear" onClick={() => { for (const field of active) field.onChange(neutralValueOf(field)); }}>
+        <Button variant="ghost" size="sm" className="page-filters__clear" onClick={() => { for (const field of active) field.onReset(); }}>
           {t.common.filtersClear}
         </Button>
       ) : null}

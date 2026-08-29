@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
+import { Segmented } from '../../../components/ui/Segmented';
 import {
   PageToolbar,
   PageToolbarPortal,
@@ -12,9 +13,10 @@ import type { PageFilterField } from '../../../components/ui/PageFilters';
 const statusField: PageFilterField = {
   id: 'status',
   label: 'Status',
-  options: [{ value: 'all', label: 'All' }, { value: 'failed', label: 'Failed' }],
-  value: 'failed',
-  onChange: vi.fn(),
+  control: <Segmented aria-label="Status" variant="menu" value="failed" onChange={vi.fn()} options={[{ value: 'all', label: 'All' }, { value: 'failed', label: 'Failed' }]} />,
+  active: true,
+  activeLabel: 'Status: Failed',
+  onReset: vi.fn(),
 };
 
 const parts = (element: Element | null): string[] =>

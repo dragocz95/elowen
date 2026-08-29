@@ -70,15 +70,22 @@
    only fight. The viewport clamp is what keeps the panel on screen on a small laptop window; the phone
    never reaches it, because there the same fields open as a sheet. */
 .page-filters__panel { width: 20rem; max-width: calc(100vw - 2rem); }
+/* One shell per field, whatever the field's control turns out to be — a Segmented, a Toggle, a date
+   range, a pill row. The panel's job is that they all read as the same kind of thing; the control's own
+   look stays the control's. */
 .page-filters__fields { display: flex; min-width: 0; flex-direction: column; gap: 1rem; }
 .page-filters__field { display: flex; min-width: 0; flex-direction: column; gap: 0.4rem; }
 .page-filters__field-label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
   color: var(--color-muted-foreground);
   font-size: 0.66rem;
   font-weight: 620;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
+.page-filters__field-control { min-width: 0; }
 
 /* The chips are a line of their own under the row. They name WHICH filter is on and reset it; a chip is
    therefore a control, not a label, and it wears a control's hover and focus. */
