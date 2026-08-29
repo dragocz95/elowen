@@ -174,6 +174,26 @@ function assertReadable(design: string, tokens: Record<string, string>) {
     .toBeGreaterThan(on('--color-text-subtle'));
 }
 
+/** The shadcn pairing rule, as a measurement. tokens.css states it in prose — "a base token names a
+ *  SURFACE and its `-foreground` names the text and icons that sit on it" — and every component is
+ *  written against it: `bg-muted text-muted-foreground`, `bg-primary text-primary-foreground`. Nothing
+ *  checked that the pairs are actually READABLE, because the ramp check above measures the palette names
+ *  (--color-text*) against the surface names, and a pair like muted/muted-foreground is only those same
+ *  colours by way of two aliases a skin is free to move independently.
+ *
+ *  `accent` is deliberately absent: it is a wash of the foreground (`color-mix(… transparent)`) rather
+ *  than an opaque surface, so what it composites over is whatever is behind it — which is the property
+ *  that makes it legible on every design by construction, and which no static pair can express. */
+const SHADCN_PAIRS = [
+  ['--color-background', '--color-foreground'],
+  ['--color-card', '--color-card-foreground'],
+  ['--color-popover', '--color-popover-foreground'],
+  ['--color-primary', '--color-primary-foreground'],
+  ['--color-secondary', '--color-secondary-foreground'],
+  ['--color-muted', '--color-muted-foreground'],
+  ['--color-destructive', '--color-destructive-foreground'],
+] as const;
+
 describe('text contrast', () => {
   it('resolves a derived surface rather than skipping it', () => {
     // The resolver is load-bearing: if it silently returned null for a `color-mix` the gate would fail
@@ -203,6 +223,48 @@ describe('text contrast', () => {
 
   it.each([...SKINS])('skin "%s" keeps every text step at WCAG AA on its own surfaces', (skin) => {
     assertReadable(skin, palette(skin));
+  });
+});
+
+describe('shadcn surface/foreground pairs', () => {
+  function assertPairsReadable(design: string, tokens: Record<string, string>) {
+    for (const [surface, foreground] of SHADCN_PAIRS) {
+      const hex = (token: string) => {
+        const value = tokens[token];
+        // A pair that names a token nobody declares is a component painting from nothing — the utility
+        // resolves to an empty custom property and the element inherits whatever is around it.
+        expect(value, `${design}: ${token} is not defined`).toBeTruthy();
+        const resolved = resolveColour(value!, tokens);
+        expect(resolved, `${design}: ${token} must resolve to a literal colour, got "${value}"`).toMatch(HEX_COLOUR);
+        return resolved!;
+      };
+      const ratio = contrast(hex(foreground), hex(surface));
+      expect(
+        ratio,
+        `${design}: ${foreground} on ${surface} is ${ratio.toFixed(2)}:1, below WCAG AA (${AA_NORMAL_TEXT}:1)`,
+      ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    }
+  }
+
+  it('the built-in design pairs every surface with a legible foreground', () => {
+    assertPairsReadable('default', palette(null));
+  });
+
+  it.each([...SKINS])('skin "%s" pairs every surface with a legible foreground', (skin) => {
+    assertPairsReadable(skin, palette(skin));
+  });
+
+  it('measures the pair a component actually renders, not the alias it is spelled with', () => {
+    // The guard is only worth having if it FAILS on an unreadable pair, and both aliases have to be
+    // followed for it to see one: --color-muted-foreground on --color-muted is two var() hops away from
+    // the colours involved, which is exactly how a pair gets reviewed by reading the prose instead of the
+    // numbers. A palette where the quiet ink has been lightened onto the card fill must not pass.
+    const broken = {
+      ...baseTokens,
+      '--color-text-muted': '#2a2a2a',
+      '--color-elevated': '#0d0d0d',
+    };
+    expect(() => assertPairsReadable('broken', broken)).toThrow(/--color-muted-foreground on --color-muted/);
   });
 });
 
