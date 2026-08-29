@@ -17,7 +17,7 @@ const writeTheme = (name: string) => {
   mkdirSync(join(dir, name), { recursive: true });
   writeFileSync(join(dir, name, 'theme.json'), JSON.stringify({
     displayName: 'Acme', brand: { agentName: 'Acme Bot', productName: 'Acme' },
-    colors: { accent: '#ff0000' }, text: { cs: { appName: 'Acme' } },
+    colors: { primary: '#ff0000' }, text: { cs: { appName: 'Acme' } },
   }));
   writeFileSync(join(dir, name, 'logo.png'), Buffer.from('png'));
 };
@@ -47,7 +47,7 @@ describe('GET /public/theme', () => {
       text: Record<string, Record<string, string>>; assets: { logo?: string }; v: string;
     };
     expect(body.brand).toEqual({ agentName: 'Acme Bot', productName: 'Acme' });
-    expect(body.colors.accent).toBe('#ff0000');
+    expect(body.colors.primary).toBe('#ff0000');
     expect(body.text.cs!.appName).toBe('Acme');
     expect(body.assets.logo).toMatch(/^\/public\/theme\/assets\/logo\.png\?v=[0-9a-f]{16}$/);
     expect(body.v).toMatch(/^[0-9a-f]{16}$/);

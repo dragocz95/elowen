@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
@@ -134,6 +134,19 @@ describe('skin registry contract', () => {
     // No orphan import either — an @import without a registry entry ships unreachable CSS.
     const imports = [...index.matchAll(/@import "\.\/([^/]+)\/skin\.css";/g)].map((m) => m[1]);
     expect(imports.sort()).toEqual([...SKINS].sort());
+  });
+
+  it('ships no stylesheet for a skin the registry does not list', () => {
+    // The registry test above reads `skins/<id>/skin.css` for each SKINS entry and the @imports beside
+    // them, so it walks the list — never the directory. Retiring a skin by taking it out of SKINS and
+    // out of index.css therefore leaves its folder on disk with nothing complaining: unreachable CSS in
+    // the tree, and a name that looks alive to the next reader deciding what the app supports.
+    const families = new Set(SKIN_FAMILY_SHEETS.map(({ sharedStylesheets }) => sharedStylesheets.map((path) => path.split('/')[0]!)).flat());
+    const folders = readdirSync(join(root, 'skins'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !families.has(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    expect(folders, 'a skin folder that no longer belongs to any registry entry').toEqual([...SKINS].sort());
   });
 
   it('every rule in every skin is scoped under its own data-skin attribute', () => {
