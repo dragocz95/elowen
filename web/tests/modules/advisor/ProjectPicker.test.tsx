@@ -95,8 +95,12 @@ describe('ProjectPicker', () => {
     }));
 
     mount();
-    fireEvent.click(await screen.findByRole('button'));
-    fireEvent.click(await screen.findByRole('option', { name: /kolin/ }));
+    const trigger = await screen.findByRole('button');
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    const option = await screen.findByRole('menuitemradio', { name: /kolin/ });
+    await waitFor(() => expect(option).toHaveFocus());
+    fireEvent.keyDown(option, { key: 'Enter' });
 
     await waitFor(() => expect(asked).toEqual({ dir: '/var/www/kolin', session: 'brain-1-a' }));
     await waitFor(() => expect(screen.getByRole('button').textContent).toContain('kolin'));

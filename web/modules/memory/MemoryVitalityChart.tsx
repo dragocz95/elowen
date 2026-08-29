@@ -35,7 +35,7 @@ const AXIS_TICK = { fontSize: 10, fill: 'var(--color-text-muted)', fontFamily: '
 
 const TONE_STROKE: Record<ReturnType<typeof vitalityTone>, string> = {
   default: 'var(--color-text-muted)',
-  accent: 'var(--color-accent)',
+  accent: 'var(--color-primary)',
   muted: 'var(--color-text-muted)',
   danger: 'var(--color-danger)',
   success: 'var(--color-success)',
@@ -168,7 +168,7 @@ export function MemoryVitalityChart({ memoryId, vitality }: { memoryId: number; 
                 x={ms}
                 y={3}
                 r={2}
-                fill="var(--color-accent)"
+                fill="var(--color-primary)"
                 stroke="none"
                 ifOverflow="hidden"
               />

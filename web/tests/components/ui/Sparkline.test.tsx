@@ -8,7 +8,7 @@ import { Sparkline } from '../../../components/ui/Sparkline';
  *  box and renders no geometry whatsoever — a test claiming to check the curve would pass against a
  *  blank screen. The shape itself is checked in a browser. */
 
-const props = { colour: 'var(--color-accent)' };
+const props = { colour: 'var(--color-primary)' };
 
 describe('Sparkline', () => {
   it('draws nothing for a series that never leaves zero', () => {

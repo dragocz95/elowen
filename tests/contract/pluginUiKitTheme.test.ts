@@ -11,8 +11,15 @@ import { fileURLToPath } from 'node:url';
 // This test is the only thing that makes that drift loud.
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-/** Every `@theme { … }` block of a stylesheet, brace-balanced, in source order. */
-function themeBlocks(css: string): string[] {
+/** Every `@theme { … }` block of a stylesheet, brace-balanced, in source order.
+ *
+ *  Comments are stripped first. The scan looks for the literal string, so a comment that MENTIONS the
+ *  at-rule — "deliberately in `:root` and not in the theme block", which is exactly the kind of note a
+ *  token outside the mirror needs — opened a phantom block that swallowed the rest of the file and
+ *  reported the whole of `:root` as host theme tokens. The failure then pointed at the mirror, which was
+ *  correct, and said nothing about the comment that caused it. */
+function themeBlocks(source: string): string[] {
+  const css = source.replace(/\/\*[\s\S]*?\*\//g, '');
   const out: string[] = [];
   let i = 0;
   while ((i = css.indexOf('@theme', i)) !== -1) {

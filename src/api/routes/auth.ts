@@ -144,8 +144,8 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; msteamsUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown };
-    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; msteamsUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean } = {};
+    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; msteamsUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown; fastMode?: unknown };
+    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; msteamsUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean; fastMode?: boolean } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
     if (typeof b.visionModel === 'string') patch.visionModel = b.visionModel.trim();
@@ -162,6 +162,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (typeof b.autoRecall === 'boolean') patch.autoRecall = b.autoRecall;
     if (typeof b.autoLiveRecall === 'boolean') patch.autoLiveRecall = b.autoLiveRecall;
     if (typeof b.autoSave === 'boolean') patch.autoSave = b.autoSave;
+    if (typeof b.fastMode === 'boolean') patch.fastMode = b.fastMode;
     // Platform links, one loop over the identity descriptors: the route only checks that a string was
     // sent — the descriptor's own normalize/validate decides what is stored and what clears the link.
     const links: Partial<Record<PlatformLinkKey, string>> = {};
@@ -205,10 +206,15 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       }
       throw e;
     }
+    // Fast is request-time account state. Saving only that field must not respawn or re-threshold any
+    // conversation: every existing session and runner reads the row before its next provider request.
+    const fastOnly = patch.fastMode !== undefined
+      && Object.keys(patch).every((key) => key === 'fastMode')
+      && Object.keys(links).length === 0;
     // The auto-compact threshold applies to the RUNNING conversations right away — the respawn below only
     // covers this user's active chat, so without this a change would silently miss their other live
     // conversations and every channel session they own (Discord), which is where it matters most.
-    d.brain?.applyAutoCompactSettings(u.id);
+    if (!fastOnly) d.brain?.applyAutoCompactSettings(u.id);
     // Apply live in the BACKGROUND: a running brain respawns with the new settings (history rehydrates
     // from SQLite) so a model/persona change takes effect immediately instead of on the next chat restart.
     // Changed user instructions feed the system prompt on EVERY platform, so they also drop the shared
@@ -224,10 +230,12 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // pin must NOT survive the save that changes the model setting itself, or the page would report one
     // model while the chat kept using another — so this restart says so explicitly.
     const modelChanged = patch.model !== undefined || patch.modelProvider !== undefined;
-    const reapply = patch.personalityBody !== undefined
-      ? d.brain?.applyUserInstructionsChange(u.id)
-      : d.brain?.restart(u.id, { reapplyModelPreference: modelChanged });
-    void Promise.resolve(reapply).catch((e) => console.warn(`cli-settings: live re-apply for user ${u.id} failed: ${e instanceof Error ? e.message : String(e)}`));
+    const reapply = fastOnly
+      ? undefined
+      : patch.personalityBody !== undefined
+        ? d.brain?.applyUserInstructionsChange(u.id)
+        : d.brain?.restart(u.id, { reapplyModelPreference: modelChanged });
+    if (reapply) void Promise.resolve(reapply).catch((e) => console.warn(`cli-settings: live re-apply for user ${u.id} failed: ${e instanceof Error ? e.message : String(e)}`));
     const saved = d.userSettings.cliSettings(u.id);
     return c.json({ ...saved, userInstructions: saved.personalityBody, serverDefault: serverDefaultModel() });
   });

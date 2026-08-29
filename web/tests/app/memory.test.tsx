@@ -52,7 +52,9 @@ describe('MemoryPage', () => {
 
     await screen.findByTestId('memory-row');
     fireEvent.click(screen.getByRole('button', { name: 'New category' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Planning' } });
+    // "Required" belongs to the accessible name: the field states its required state for a screen
+    // reader with an sr-only word beside the visual asterisk.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name Required' }), { target: { value: 'Planning' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(created).toMatchObject({ name: 'Planning', icon: 'Folder' }));
@@ -62,8 +64,9 @@ describe('MemoryPage', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getAllByText('Filip prefers pnpm over npm').length).toBeGreaterThan(0));
-    // Selecting the row opens the detail pane, which shows the memory id (#1).
-    fireEvent.click(screen.getAllByText('Filip prefers pnpm over npm')[0]);
+    // Opening the row opens the detail pane, which shows the memory id (#1). The row's open control is a
+    // single button whose accessible name is an EXCERPT of the body, never the whole record.
+    fireEvent.click(screen.getByRole('button', { name: 'Open memory: Filip prefers pnpm over npm' }));
     await waitFor(() => expect(screen.getByText('#1')).toBeInTheDocument());
     expect(screen.getByRole('dialog', { name: 'Memory detail' })).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: 'Memory' })).toBeNull();
@@ -89,10 +92,10 @@ describe('MemoryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Importance' }));
     await waitFor(() => expect(within(screen.getAllByTestId('memory-row')[0]!).getByText('Higher importance')).toBeInTheDocument());
 
-    const higher = screen.getByRole('button', { name: 'Higher importance' });
+    const higher = screen.getByRole('button', { name: 'Open memory: Higher importance' });
     higher.focus();
     fireEvent.keyDown(higher, { key: 'ArrowDown' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Lower importance' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open memory: Lower importance' })).toHaveFocus());
   });
 
   it('renders the shared compact register, keeps advanced filters collapsed, and always shows the pager', async () => {
@@ -116,7 +119,7 @@ describe('MemoryPage', () => {
     expect(kind).toBeInTheDocument();
     fireEvent.click(kind);
     const menu = screen.getByRole('listbox', { name: 'Kind' });
-    expect(menu).toHaveClass('bg-surface');
+    expect(menu).toHaveClass('bg-popover');
     expect(screen.getByRole('option', { name: 'preference' }).querySelector('svg')).toBeTruthy();
   });
 
@@ -161,6 +164,20 @@ describe('MemoryPage', () => {
     fireEvent.click(screen.getByText('Next'));
     await waitFor(() => expect(screen.getByText('21–25 of 25')).toBeInTheDocument());
     expect(screen.getByText('Memory 01')).toBeInTheDocument();
+  });
+
+  // The row used to BE a button wrapped around the body, so its accessible name was the whole record —
+  // over 3000 characters read out before the user learned that the control opens a memory.
+  it('names a row open control with a short excerpt, never the whole memory body', async () => {
+    const body = 'A'.repeat(3000);
+    server.use(http.get('*/api/memory', () => HttpResponse.json([{ ...MEMORY, body }])));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
+
+    const open = await screen.findByRole('button', { name: /^Open memory: / });
+    expect(open.getAttribute('aria-label')!.length).toBeLessThan(100);
+    // The full body stays reachable on the cell that renders it.
+    expect(within(screen.getByTestId('memory-row')).getByText(body)).toBeInTheDocument();
   });
 
   it('groups the list into category sections when toggled', async () => {

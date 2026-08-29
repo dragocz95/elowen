@@ -32,11 +32,17 @@ export interface McpServersResponse {
 }
 
 type AnyComponent = ComponentType<any>;
+
+/** Every icon inside a register is this size, mirroring the host's own `DATA_TABLE_ICON_SIZE`. The
+ *  constant is private to the host's DataTable module and the runtime publishes components only, so the
+ *  value is restated here rather than imported — a bundle may not compile against `web/`. */
+export const DATA_TABLE_ICON_SIZE = 12;
+
 interface McpRuntime {
   /** The host's own workspace kit — the same components the built-in pages compose, so this page is
    *  the app's register table and detail drawer rather than a second look-alike of them. */
   components: {
-    SpatialWorkspaceLayout: AnyComponent;
+    WorkspaceShell: AnyComponent;
     WorkspaceMetric: AnyComponent;
     WorkspaceDetailRail: AnyComponent;
     ControlSurfaceDocument: AnyComponent;
@@ -46,6 +52,9 @@ interface McpRuntime {
     DataTable: AnyComponent;
     DataTableRow: AnyComponent;
     DataTableCell: AnyComponent;
+    DataTableChevronCell: AnyComponent;
+    Pager: AnyComponent;
+    RegisterSearch: AnyComponent;
     Segmented: AnyComponent;
     Button: AnyComponent;
     Input: AnyComponent;

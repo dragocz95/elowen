@@ -3,11 +3,16 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
-import type { CliSettings, PermissionSettings } from '../../../lib/types';
+import type { BrainModelOption, CliSettings, PermissionSettings } from '../../../lib/types';
 
 // Mutable query state so a test can flip in a fresh server object (a refetch) and assert the seed
 // guard does NOT re-seed over a local edit.
-const state = vi.hoisted(() => ({ cli: null as CliSettings | null, perm: null as PermissionSettings | null, cliError: false }));
+const state = vi.hoisted(() => ({
+  cli: null as CliSettings | null,
+  perm: null as PermissionSettings | null,
+  cliError: false,
+  models: [] as BrainModelOption[],
+}));
 const mocks = vi.hoisted(() => ({ saveCli: vi.fn(), savePermissions: vi.fn(), refetchCli: vi.fn() }));
 
 vi.mock('../../../lib/mutations', () => ({
@@ -18,18 +23,7 @@ vi.mock('../../../lib/queries', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useMyCliSettings: () => ({ data: state.cliError ? undefined : state.cli, isLoading: false, isError: state.cliError, refetch: mocks.refetchCli }),
   useMyPermissions: () => ({ data: state.perm, isLoading: false }),
-  useBrainModels: () => ({ data: [
-    {
-      provider: 'plain', providerLabel: 'Plain', model: 'catalog-first', exec: 'elowen:plain/catalog-first',
-      source: 'api-key', contextWindow: 32000, contextWindowSet: false,
-    },
-    {
-      provider: 'openai', providerLabel: 'OpenAI', model: 'gpt-5.6-sol', exec: 'elowen:openai/gpt-5.6-sol',
-      source: 'oauth', contextWindow: 372000, contextWindowSet: false, default: true,
-      reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
-      reasoningLabels: { xhigh: 'ultra', max: 'max' },
-    },
-  ] }),
+  useBrainModels: () => ({ data: state.models }),
 }));
 
 import { CliSection } from '../../../modules/account/CliSection';
@@ -37,7 +31,7 @@ import { CliSection } from '../../../modules/account/CliSection';
 const CLI: CliSettings = {
   model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '',
   autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '',
-  autoRecall: true, autoLiveRecall: true, autoSave: true,
+  autoRecall: true, autoLiveRecall: true, autoSave: true, fastMode: false,
 };
 const PERMISSIONS: PermissionSettings = { tools: {}, bash: {}, yolo: false, unattendedAsks: 'allow' };
 
@@ -47,6 +41,18 @@ beforeEach(() => {
   state.cli = { ...CLI };
   state.perm = { ...PERMISSIONS };
   state.cliError = false;
+  state.models = [
+    {
+      provider: 'plain', providerLabel: 'Plain', model: 'catalog-first', exec: 'elowen:plain/catalog-first',
+      source: 'api-key', contextWindow: 32000, contextWindowSet: false,
+    },
+    {
+      provider: 'openai', providerLabel: 'OpenAI', model: 'gpt-5.6-sol', exec: 'elowen:openai/gpt-5.6-sol',
+      source: 'api-key', contextWindow: 372000, contextWindowSet: false, default: true, fastAvailable: true,
+      reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      reasoningLabels: { xhigh: 'ultra', max: 'max' },
+    },
+  ];
   mocks.saveCli.mockReset();
   mocks.savePermissions.mockReset();
   mocks.refetchCli.mockReset();
@@ -95,6 +101,30 @@ describe('CliSection — seed guard', () => {
     fireEvent.change(scale, { target: { value: '3' } });
     await waitFor(() => expect(mocks.saveCli).toHaveBeenCalled(), { timeout: 1500 });
     expect(mocks.saveCli.mock.calls.at(-1)![0]).toMatchObject({ thinkingLevel: 'high' });
+  });
+
+  it('persists Fast for the account when a configured route supports it', async () => {
+    renderSection();
+    const toggle = screen.getByRole('switch', { name: en.cli.fastModeToggle });
+    expect(toggle).not.toBeDisabled();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(mocks.saveCli.mock.calls.some(([patch]) => JSON.stringify(patch) === '{"fastMode":true}')).toBe(true), { timeout: 1500 });
+  });
+
+  it('keeps Fast selectable but explains that the current model cannot use it', () => {
+    state.cli = { ...CLI, model: 'catalog-first', modelProvider: 'plain', fastMode: true };
+    renderSection();
+    const toggle = screen.getByRole('switch', { name: en.cli.fastModeToggle });
+    expect(toggle).not.toBeDisabled();
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByText(en.cli.fastModeCurrentUnsupported)).toBeInTheDocument();
+  });
+
+  it('disables Fast honestly when no configured route supports it', () => {
+    state.models = state.models.map(({ fastAvailable: _fastAvailable, ...model }) => model);
+    renderSection();
+    expect(screen.getByRole('switch', { name: en.cli.fastModeToggle })).toBeDisabled();
+    expect(screen.getByText(en.cli.fastModeUnavailable)).toBeInTheDocument();
   });
 
   it('preserves a failed YOLO value so the user can retry it', async () => {

@@ -95,8 +95,8 @@ export function ProviderCompatibilityModal({ value, onSave, onClose }: {
       onClose={onClose}
     >
       <ModalBody gap={4}>
-        <div className="mb-2 flex items-start gap-3 rounded-lg border border-accent/25 bg-accent/5 px-3.5 py-3">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
+        <div className="mb-2 flex items-start gap-3 rounded-lg border border-primary/25 bg-primary/5 px-3.5 py-3">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
             <ShieldCheck size={17} aria-hidden />
           </span>
           <div className="min-w-0">
@@ -129,7 +129,7 @@ export function ProviderCompatibilityModal({ value, onSave, onClose }: {
                   aria-label={t.brain.temperature}
                   aria-valuetext={temperature.toFixed(1)}
                 />
-                <span className="w-8 shrink-0 text-right font-mono text-sm tabular-nums text-accent">{temperature.toFixed(1)}</span>
+                <span className="w-8 shrink-0 text-right font-mono text-sm tabular-nums text-primary">{temperature.toFixed(1)}</span>
               </div>
             ) : null}
           </SettingRow>

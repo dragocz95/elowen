@@ -13,23 +13,23 @@ const writeTheme = (name: string, manifest: unknown) => {
   mkdirSync(join(dir, name), { recursive: true });
   writeFileSync(join(dir, name, 'theme.json'), JSON.stringify(manifest));
 };
-const valid = { displayName: 'Acme', brand: { agentName: 'Acme Bot', productName: 'Acme' }, colors: { accent: '#ff0000', 'accent-rgb': '255 0 0' } };
+const valid = { displayName: 'Acme', brand: { agentName: 'Acme Bot', productName: 'Acme' }, colors: { primary: '#ff0000', 'primary-rgb': '255 0 0' } };
 
 describe('sanitizeThemeManifest', () => {
   it('accepts a full valid manifest and normalizes it', () => {
     const m = sanitizeThemeManifest({ ...valid, fonts: { sans: "'Inter', sans-serif" }, text: { cs: { appName: 'Acme' } } });
     expect(m.brand).toEqual({ agentName: 'Acme Bot', productName: 'Acme' });
-    expect(m.colors.accent).toBe('#ff0000');
+    expect(m.colors.primary).toBe('#ff0000');
     expect(m.fonts.sans).toBe("'Inter', sans-serif");
     expect(m.text.cs!.appName).toBe('Acme');
   });
 
   // The payload lands unauthenticated inside a server-rendered <style> block, so every rejection here
   // is a security boundary, not a lint: proven by mutation (each value WOULD otherwise flow through).
-  it('rejects an unknown color key, a non-hex color and a malformed accent-rgb triple', () => {
+  it('rejects an unknown color key, a non-hex color and a malformed primary-rgb triple', () => {
     expect(() => sanitizeThemeManifest({ ...valid, colors: { evil: '#fff' } })).toThrow(/unknown color key/);
-    expect(() => sanitizeThemeManifest({ ...valid, colors: { accent: 'red;}</style>' } })).toThrow(/hex color/);
-    expect(() => sanitizeThemeManifest({ ...valid, colors: { 'accent-rgb': 'rgb(1,2,3)' } })).toThrow(/triple/);
+    expect(() => sanitizeThemeManifest({ ...valid, colors: { primary: 'red;}</style>' } })).toThrow(/hex color/);
+    expect(() => sanitizeThemeManifest({ ...valid, colors: { 'primary-rgb': 'rgb(1,2,3)' } })).toThrow(/triple/);
   });
 
   it('rejects a font stack carrying CSS-breaking characters', () => {
@@ -75,8 +75,8 @@ describe('sanitizeThemeManifest', () => {
     expect(() => sanitizeThemeManifest({ ...valid, fonts: { sans: '"Inter' } })).toThrow(/balanced/);
   });
 
-  it('rejects an accent-rgb component above 255', () => {
-    expect(() => sanitizeThemeManifest({ ...valid, colors: { 'accent-rgb': '999 0 0' } })).toThrow(/triple/);
+  it('rejects an primary-rgb component above 255', () => {
+    expect(() => sanitizeThemeManifest({ ...valid, colors: { 'primary-rgb': '999 0 0' } })).toThrow(/triple/);
   });
 });
 
@@ -170,10 +170,10 @@ describe('ThemeStore', () => {
 // otherwise a theme could carry dead keys the UI silently ignores, or the web could rename a token
 // and orphan every existing theme without anyone noticing.
 describe('theme color keys contract', () => {
-  it('every THEME_COLOR_KEY except accent-rgb exists as --color-* in web tokens.css', () => {
+  it('every THEME_COLOR_KEY except primary-rgb exists as --color-* in web tokens.css', () => {
     const css = readFileSync(join(__dirname, '..', '..', 'web', 'app', 'styles', 'tokens.css'), 'utf-8');
     for (const key of THEME_COLOR_KEYS) {
-      if (key === 'accent-rgb') continue; // composed variable, introduced by the theme injection itself
+      if (key === 'primary-rgb') continue; // composed variable, introduced by the theme injection itself
       expect(css, `--color-${key} missing from tokens.css`).toContain(`--color-${key}:`);
     }
   });
@@ -187,7 +187,7 @@ describe('theme color keys contract', () => {
     expect(shape, 'key-shape regex not found in web/lib/brandServer.ts').toBeTruthy();
     const webKeyRe = new RegExp(shape!);
     for (const key of THEME_COLOR_KEYS) {
-      if (key === 'accent-rgb') continue; // handled by its own branch on both sides
+      if (key === 'primary-rgb') continue; // handled by its own branch on both sides
       expect(webKeyRe.test(key), `key "${key}" would be dropped by the web boundary`).toBe(true);
     }
   });

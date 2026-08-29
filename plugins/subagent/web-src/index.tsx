@@ -8,8 +8,12 @@ import { registerSubagentUi } from './runtime';
 import { SubagentsSettings } from './SubagentsSettings';
 
 registerSubagentUi({
-  requiresApiVersion: 1,
+  // 8: `ownsPageFrame` plus the WorkspaceShell and AutoSaveStatus the page below composes.
+  requiresApiVersion: 8,
   settings: {
     'subagents': SubagentsSettings,
   },
+  // This is the plugin's SOLE section, so the host serves it as /p/subagent. It renders its own
+  // WorkspaceShell there — the host's page column and masthead on top of that were a second frame.
+  ownsPageFrame: ['subagents'],
 });

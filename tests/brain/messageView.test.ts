@@ -73,15 +73,16 @@ describe('shapeBrainMessages: display metadata', () => {
   it('surfaces timestamps and optional settled turn duration without requiring it on legacy rows', () => {
     const views = shapeBrainMessages([
       { role: 'user', content: JSON.stringify({ role: 'user', content: 'question' }), created_at: '2026-08-21 14:00:00' },
-      { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'answer' }] }), created_at: '2026-08-21 14:01:23', turn_duration_ms: 83_000 },
-      { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'legacy' }] }), created_at: '2026-08-20 10:00:00' },
+      { role: 'assistant', content: JSON.stringify({ role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'answer' }] }), created_at: '2026-08-21 14:01:23', turn_duration_ms: 83_000 },
+      { role: 'assistant', content: JSON.stringify({ role: 'assistant', model: 123, content: [{ type: 'text', text: 'legacy' }] }), created_at: '2026-08-20 10:00:00' },
       { role: 'user', content: JSON.stringify({ role: 'user', content: 'row from before the column' }) },
     ]);
     // A user message is a turn of its own, and the chat stamps its bubble from this field alone. Dropping
     // it here (the assistant branch always kept it) left every sent message in the transcript timeless.
     expect(views[0]).toMatchObject({ role: 'user', text: 'question', createdAt: '2026-08-21 14:00:00' });
-    expect(views[1]).toMatchObject({ role: 'assistant', createdAt: '2026-08-21 14:01:23', durationMs: 83_000 });
+    expect(views[1]).toMatchObject({ role: 'assistant', createdAt: '2026-08-21 14:01:23', durationMs: 83_000, model: 'claude-opus-5' });
     expect(views[2]).not.toHaveProperty('durationMs');
+    expect(views[2]).not.toHaveProperty('model');
     expect(views[3]).not.toHaveProperty('createdAt');
   });
 });

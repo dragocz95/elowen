@@ -81,4 +81,15 @@ describe('SelectMenu', () => {
     render(<SelectMenu value="three" onChange={vi.fn()} options={options} label="Choice" />);
     expect(screen.getByRole('combobox', { name: 'Choice' })).toHaveTextContent('Three');
   });
+
+  /** The caller's class sizes the CONTROL, not the trigger. The trigger is `w-full` by shadcn's shape —
+   *  which is right, it should fill whatever box it is given — so a caller's class landing on it makes
+   *  the trigger itself the sized box. Dropped into a flex toolbar that claims the whole line and folds
+   *  every sibling filter onto a row of its own, which is exactly what happened to the memory page. */
+  it('puts the caller class on a wrapper, so the full-width trigger fills it instead of the toolbar', () => {
+    render(<SelectMenu value="one" onChange={vi.fn()} options={options} label="Choice" className="min-w-[9.5rem]" />);
+    const trigger = screen.getByRole('combobox', { name: 'Choice' });
+    expect(trigger).not.toHaveClass('min-w-[9.5rem]');
+    expect(trigger.parentElement).toHaveClass('min-w-[9.5rem]');
+  });
 });

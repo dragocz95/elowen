@@ -28,7 +28,7 @@ const END_ANGLE = -40;
 function toneFor(percent: number): string {
   if (percent >= 90) return 'var(--color-danger)';
   if (percent >= 70) return 'var(--color-warning)';
-  return 'var(--color-accent)';
+  return 'var(--color-primary)';
 }
 
 /** One card: a label, a dial or a plain figure, and a caption line. The caption keeps its height even

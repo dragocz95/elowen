@@ -23,8 +23,15 @@ interface MutationResult<TVars> {
   mutate(vars: TVars, cb?: { onSuccess?: () => void; onError?: (e: unknown) => void }): void;
   mutateAsync(vars: TVars): Promise<unknown>;
   isPending: boolean;
+  /** The last settled outcome. The page owns its save indicator (see `ownsPageFrame`), and these are
+   *  what it reports — react-query keeps them until the next mutation starts. */
+  isError: boolean;
+  isSuccess: boolean;
   variables?: TVars;
 }
+
+/** The host's autosave states, mirrored structurally: the bundle passes one to `AutoSaveStatus`. */
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 /** The host dictionary, narrowed to what this bundle reads (nested string maps). */
 type Dict = Record<string, Record<string, string>>;
@@ -45,7 +52,7 @@ interface SubagentComponents {
   Badge: AnyComponent; Input: AnyComponent; Field: AnyComponent; SettingsGroup: AnyComponent; PluginSection: AnyComponent;
   SelectMenu: AnyComponent; MarkdownAssetEditor: AnyComponent; Button: AnyComponent;
   ControlSurfaceDocument: AnyComponent;
-  SpatialWorkspaceLayout: AnyComponent; WorkspaceMetric: AnyComponent;
+  WorkspaceShell: AnyComponent; WorkspaceMetric: AnyComponent; AutoSaveStatus: AnyComponent;
 }
 
 interface SubagentRuntime {
@@ -57,6 +64,8 @@ type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string
 interface SubagentRegistration {
   requiresApiVersion: number;
   settings?: Record<string, PluginPageComponent>;
+  /** Settings sections that draw their own page frame, so the host wraps them in none of its own. */
+  ownsPageFrame?: string[];
 }
 interface HostWindow {
   ElowenUiRuntime?: unknown;

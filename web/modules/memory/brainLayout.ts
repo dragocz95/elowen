@@ -177,7 +177,7 @@ export function buildBrainGraph(memories: Memory[], categories: MemoryCategory[]
   const catCounts = cats.map((c) => (byCat.get(c.id)?.length ?? 0));
   const maxCount = Math.max(0, ...catCounts, uncategorized.length);
 
-  const core: CoreNode = { id: CORE_ID, kind: 'core', x: CORE_X, y: CORE_Y, color: 'var(--color-accent)', total: memories.length };
+  const core: CoreNode = { id: CORE_ID, kind: 'core', x: CORE_X, y: CORE_Y, color: 'var(--color-primary)', total: memories.length };
 
   const hubs: CategoryNode[] = cats.map((c, i) => {
     const pos = hubAnchor(i);

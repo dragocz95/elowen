@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
-import { ChevronDown, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, MoreHorizontal, X } from 'lucide-react';
 import { useHealth } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { useShellNavigation } from './useShellNavigation';
@@ -12,32 +12,19 @@ import { CollapseHandle } from './CollapseHandle';
 import { EmberFall } from './EmberFall';
 import { useElementHeight } from '../../lib/useElementWidth';
 import { entryIsActive, type NavEntry } from './navEntry';
+import { NAV_ROUTE_ORDER, navOrderIndex } from './navOrder';
+import { useNavDrawerFocus } from '../ui/focusCycle';
 
-/** Top to bottom: where you land, then project context and automation, then administration.
- *  This is only the untouched default; a user's own arrangement overrides it entirely. Unknown plugin
- *  worlds stay dynamic and fall after the named platform integrations rather than being special-cased. */
-const SPATIAL_ROUTE_ORDER = [
-  '/dash', '/chat',
-  '/projects', '/p/editor',
-  '/p/subagent', '/p/cronjob', '/p/skills',
-  '/memory', '/p/stats',
-  '/account', '/users', '/settings',
-];
-/** Where an entry parks on the axis. Prefix matching lets a plugin's nested pages share its slot; an
- *  unmatched dynamic plugin falls after the administration block. */
-function spatialOrderIndex(href: string | undefined): number {
-  if (!href) return Number.MAX_SAFE_INTEGER;
-  const index = SPATIAL_ROUTE_ORDER.findIndex((route) => href === route || href.startsWith(`${route}/`));
-  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
-}
 /** Whether the axis names this page by its own address rather than through its world. That is what
  *  decides which worlds the rail opens up: a world whose pages have their own slots contributes those
  *  pages (the work register, the board, the timeline, the spend stats each own one), and every other
  *  world contributes its face. The order above is the single place that says so — before, the two
  *  expanded worlds were hardcoded by id here, which stopped being expressible the moment a world could
- *  arrive from a plugin. */
+ *  arrive from a plugin. It is the RAIL's rule — a grouped presentation renders a world's pages beneath
+ *  the world instead of flattening them onto one axis — so it stays private here while the order it reads
+ *  is shared. */
 function isAxisPage(href: string | undefined): boolean {
-  return href !== undefined && SPATIAL_ROUTE_ORDER.includes(href);
+  return href !== undefined && NAV_ROUTE_ORDER.includes(href);
 }
 
 /** A rail destination plus the world it came from, which is the unit the navigation layout addresses. */
@@ -65,14 +52,22 @@ const DRAG_THRESHOLD = 6;
 /** How long a finger has to rest before a press becomes a menu rather than a tap or a scroll. */
 const LONG_PRESS_MS = 500;
 
-/** The public site's rail spacing — the look this rail matches. */
-const SPACING = 66;
+/** The rail's resting spacing. Measured in REAL screen pixels.
+ *
+ *  Two corrections, in order. The original 66 was chosen when an automatic `zoom` shrank the whole app
+ *  to roughly 72% and put it on the glass at about 48; read natively, twelve destinations needed 806px
+ *  of axis and the rail scrolled on every 1280×800 laptop. Dropping it to 48 fixed the overflow and
+ *  overshot: at 48 the nodes sat close enough to read as a stripe and the whole rail shrank with them.
+ *  60 is the value that satisfies both — twelve destinations still fit a 1280×720 axis without
+ *  scrolling (see the case in tests/components/shell/OrbitalNav.test.tsx), and the destinations stay
+ *  discrete. */
+const SPACING = 60;
 /** Vertical room the largest (active) node needs, so the end destinations never clip. It is the
- *  diameter of the active node (4.65rem), and it only works because the items are anchored at exactly
+ *  diameter of the active node (3.75rem), and it only works because the items are anchored at exactly
  *  half the axis: `getStableOffsets` spreads them symmetrically around the centre, so an anchor even
  *  one percent off centre spends that much of this headroom and clips the first node on a short
  *  screen — which is what a phone is. */
-const NODE_HEADROOM = 80;
+const NODE_HEADROOM = 60;
 
 /** Where each destination is parked on the axis: a fixed, centered order that does NOT depend on which
  *  route is active. Only scale/opacity/blur react to the active route, so the rail never re-shuffles. */
@@ -82,8 +77,16 @@ export function getStableOffsets(count: number, spacing: number): number[] {
 }
 
 /** Below this the destinations stop being separate things and start being a stripe, so the axis
- *  scrolls instead of tightening any further. */
-const MIN_SPACING = 46;
+ *  scrolls instead of tightening any further.
+ *
+ *  It is `--touch-target` (web/app/styles/tokens.css) restated as a number, and that is the whole
+ *  reason for the value. Every destination carries `.overlay-touch-target`, which grows the ROW to 44px
+ *  on a coarse pointer — but the rows are absolutely positioned siblings, so a spacing under 44 does not
+ *  shrink them, it OVERLAPS them: the later row in the DOM covers the top of the one before it and a
+ *  finger aiming at a destination hits its neighbour. A floor at the touch target is therefore the hit
+ *  geometry, not a legibility preference; at 34 the app shipped up to 10px of every touch target
+ *  covered. Past this floor the answer is to scroll the axis, never to tighten it further. */
+const MIN_SPACING = 44;
 
 /** The public rail carries 8 destinations at SPACING; this one carries more, which overflows a
  *  laptop-height axis. Keep SPACING wherever it fits and otherwise tighten — but only down to a
@@ -93,8 +96,10 @@ export function railSpacing(count: number, stageHeight: number): number {
   return Math.min(SPACING, Math.max(MIN_SPACING, (stageHeight - NODE_HEADROOM) / (count - 1)));
 }
 
-/** How far the axis may travel in each direction. */
-function railScrollRange(count: number, spacing: number, stageHeight: number): number {
+/** How far the axis may travel in each direction. Zero means the destinations fit and the rail does not
+ *  scroll at all, which is the property the geometry is actually tuned for — so it is exported and
+ *  asserted rather than inferred from a spacing number. */
+export function railScrollRange(count: number, spacing: number, stageHeight: number): number {
   if (stageHeight <= 0 || count < 2) return 0;
   const span = (count - 1) * spacing + NODE_HEADROOM;
   return Math.max(0, (span - stageHeight) / 2);
@@ -135,7 +140,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         : [world];
       return entries.map((entry) => ({ ...entry, worldId: world.id, worldIndex }));
     });
-    const axisRank = (entry: RailEntry) => spatialOrderIndex(entry.href);
+    const axisRank = (entry: RailEntry) => navOrderIndex(entry.href);
     // An untouched menu keeps the spatial axis, which carries meaning of its own (where you land, the
     // work, what it runs on, administration). Once the user has arranged the menu, their order wins.
     if (layout.order.length === 0) return all.sort((a, b) => axisRank(a) - axisRank(b));
@@ -145,7 +150,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
   // The sequence of worlds as the rail presents them, which is what an edit must build the stored order
   // from — otherwise the first hide or move would re-sort the rail into registry order under the user.
   const railWorldOrder = useMemo(() => [...worlds]
-    .sort((a, b) => spatialOrderIndex(a.href) - spatialOrderIndex(b.href))
+    .sort((a, b) => navOrderIndex(a.href) - navOrderIndex(b.href))
     .flatMap((world) => (world.id ? [world.id] : [])), [worlds]);
   // Until the arrangement is known the rail would paint in registry order and then visibly re-sort
   // itself, on every single page load. Showing nothing for that one frame is the honest option: the
@@ -174,23 +179,10 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
   // How far the axis has been moved from its centred rest position. It only ever leaves zero when the
   // destinations genuinely outgrow the stage.
   const navRef = useRef<HTMLElement | null>(null);
-  // An overlay that the keyboard cannot close, and that focus never enters, is a layer only the mouse
-  // knows about. Focus goes in on open and returns to whatever opened it on close.
-  const returnFocusTo = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!drawer) return;
-    if (drawerOpen) {
-      returnFocusTo.current = document.activeElement as HTMLElement | null;
-      navRef.current?.querySelector<HTMLElement>('a[href], button')?.focus();
-      const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onDrawerClose?.(); };
-      window.addEventListener('keydown', onKey);
-      return () => window.removeEventListener('keydown', onKey);
-    }
-    // Only take focus back if it is still inside the drawer; the user may have clicked elsewhere.
-    if (navRef.current?.contains(document.activeElement)) returnFocusTo.current?.focus();
-    returnFocusTo.current = null;
-    return undefined;
-  }, [drawer, drawerOpen, onDrawerClose]);
+  // An overlay that the keyboard cannot close, that focus never enters and that Tab walks straight out
+  // of, is a layer only the mouse knows about — and `aria-modal` below would be a promise this drawer
+  // does not keep. The shared hook owns all of it, identically here and in the Studio sheet.
+  useNavDrawerFocus({ enabled: drawer, open: drawerOpen, containerRef: navRef, onClose: onDrawerClose });
 
   const [axisOffset, setAxisOffset] = useState(0);
   const scrollRange = railScrollRange(routeEntries.length, spacing, stageHeight);
@@ -384,7 +376,11 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     if (next?.href && nextIndex !== activeIndex) router.push(next.href);
   };
 
-  const axis = compact ? '2.2rem' : '2.5rem';
+  // The axis is the CENTRE of the icon column, so it is exactly half that column's width — and the icon
+  // column is 4rem in BOTH modes, because the node drawn on it is the same size in both. One value
+  // therefore serves both: the spine, the node centres and the folded column's own centre all coincide,
+  // which is what stops the folded rail from drawing its spine off to one side of its own icons.
+  const axis = '2rem';
 
   const hidden = drawer && !drawerOpen;
 
@@ -394,13 +390,20 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         <div
           aria-hidden
           onClick={onDrawerClose}
-          className={`fixed inset-0 z-40 bg-black/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+          className={`overlay-layer-nav-drawer fixed inset-0 bg-bg/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       ) : null}
+    {/* Match the established Chetty shell: 17rem gives the labelled rail its original visual weight.
+        The folded rail stays 4rem because its current nodes are drawn on that exact icon column. */}
     <nav
       ref={navRef}
       data-side={side}
       data-testid="future-navigation"
+      // As a drawer this is a layer over the page that takes focus and traps Escape, so it says so:
+      // a panel with no role is an overlay only the mouse knows about. `aria-modal` is claimed only
+      // while it is actually open — a closed drawer is inert chrome, not a dialog nobody can leave.
+      role={drawer ? 'dialog' : undefined}
+      aria-modal={drawer && drawerOpen ? true : undefined}
       aria-label={t.common.primaryNav}
       aria-hidden={hidden ? true : undefined}
       inert={hidden ? true : undefined}
@@ -412,13 +415,26 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
       onPointerMove={endSurfacePress}
       onPointerUp={endSurfacePress}
       onPointerCancel={endSurfacePress}
-      className={`overflow-hidden border-border/45 bg-black ${drawer
-        ? `fixed inset-y-0 z-50 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
+      className={`overflow-hidden border-border/45 bg-bg ${drawer
+        ? `overlay-layer-nav-drawer overlay-nav-drawer fixed inset-y-0 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
           ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
           : `left-0 border-r ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}`
-        : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4.75rem]' : 'w-[17rem]'}`}`}
+        : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4rem]' : 'w-[17rem]'}`}`}
       style={drawer ? { transitionTimingFunction: 'var(--ease-out)' } : undefined}
     >
+      {/* A dialog needs a way out that is not "guess that the strip of backdrop is a target". Tapping
+          the backdrop and picking a destination were the only two exits, and neither is discoverable.
+          First in the DOM so the open effect below lands focus on it. */}
+      {drawer ? (
+        <button
+          type="button"
+          onClick={onDrawerClose}
+          aria-label={t.common.close}
+          className="overlay-touch-target absolute right-2 top-2 z-30 grid place-items-center rounded-full text-text-muted transition-colors hover:bg-elevated hover:text-text"
+        >
+          <X size={18} aria-hidden />
+        </button>
+      ) : null}
       {/* Ambient sparks behind the rail. The nav is already `relative` + `overflow-hidden`, so it is the
           containing block that both sizes and clips them; every item below sits on z-10, above the canvas. */}
       <EmberFall />
@@ -430,7 +446,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         // menu away from the keyboard and from a screen reader for a whole round trip on a first visit
         // — a menu in registry order beats no menu at all, and the gate exists to avoid showing a
         // re-sort, not to withhold navigation. `tests/app/navPrefetch.test.tsx` pins that first paint.
-        className={`absolute inset-x-0 bottom-24 top-0 ${layoutReady ? 'opacity-100' : 'opacity-0'} before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-accent/45 before:to-accent/10`}
+        className={`absolute inset-x-0 bottom-[4.5rem] top-0 ${layoutReady ? 'opacity-100' : 'opacity-0'} before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-primary/45 before:to-primary/10`}
         style={{ ['--rail-axis' as string]: axis }}
       >
         {routeEntries.map((entry, index) => {
@@ -474,14 +490,29 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                 draggable={false}
                 aria-label={compact ? entry.label : undefined}
                 aria-current={active ? 'page' : undefined}
-                className={`group flex items-center gap-2 whitespace-nowrap ${active ? 'text-accent' : 'text-text-muted hover:text-text'}`}
+                // Tabbing to a destination parked off the stage would otherwise focus something the
+                // reader cannot see: the axis moves by transform, so the browser has no scroll box to
+                // bring into view on its own. Keyboard focus only — `:focus-visible` keeps a click from
+                // yanking the rail out from under the pointer that is already on the right entry.
+                onFocus={(event) => {
+                  if (scrollRange <= 0 || !event.currentTarget.matches(':focus-visible')) return;
+                  setAxisOffset(clampAxis(-(positions[index] ?? 0)));
+                }}
+                // A resting destination is drawn as a 2.25rem node, which is under the 44px a finger
+                // needs. The node keeps its size; the row it sits in grows to the floor around it, and
+                // MIN_SPACING keeps two such rows from overlapping once the axis tightens.
+                className={`overlay-touch-target group flex items-center gap-2 whitespace-nowrap ${active ? 'text-primary' : 'text-text-muted hover:text-text'}`}
                 title={compact ? undefined : entry.label}
               >
-                <span className={`flex shrink-0 justify-center ${compact ? 'w-[4.4rem]' : 'w-[5rem]'}`} aria-hidden>
-                  <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-black transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
-                    ? `orbit-node-active border-accent ${compact ? 'h-[4.35rem] w-[4.35rem]' : 'h-[4.65rem] w-[4.65rem]'}`
-                    : `border-border-strong/80 ${compact ? 'h-[2.45rem] w-[2.45rem]' : 'h-[2.65rem] w-[2.65rem]'}`}`}>
-                    <Icon size={active ? 24 : 17} strokeWidth={1.45} />
+                {/* The icon column is twice `axis`, because `axis` is where the spine is drawn. The node
+                    inside it is the same size folded or not: the fold takes the LABELS away, not the
+                    destinations, and a rail whose icons shrank as well would read as a different menu
+                    rather than as the same one with its names hidden. */}
+                <span className="flex w-[4rem] shrink-0 justify-center" aria-hidden>
+                  <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-bg transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
+                    ? 'orbit-node-active border-primary h-[3.75rem] w-[3.75rem]'
+                    : 'border-border-strong/80 h-[2.25rem] w-[2.25rem]'}`}>
+                    <Icon size={active ? 20 : 15} strokeWidth={1.45} />
                   </span>
                 </span>
                 {/* The active entry renders ~40% larger, so a label that fits at rest can outgrow the
@@ -489,20 +520,29 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
                     word cut off mid-glyph against the rail's `overflow-hidden`; the `title` above keeps
                     the full text reachable. Plugin labels are translated by their own authors, so no
                     length is guaranteed. */}
-                {!compact ? <span className={`min-w-0 truncate ${active ? 'text-[1.65rem] font-medium' : 'text-[1.16rem]'} tracking-[-0.03em]`}>{entry.label}</span> : null}
+                {!compact ? <span className={`min-w-0 truncate ${active ? 'text-[1.0625rem] font-medium' : 'text-[0.9375rem]'} tracking-[-0.03em]`}>{entry.label}</span> : null}
               </Link>
             </div>
           );
         })}
       </div>
-      {!compact ? (
-        <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center bg-gradient-to-t from-black via-black to-transparent pb-5 pt-8">
-          <div className="spatial-scroll-cue mb-3 flex flex-col items-center font-mono text-[8px] font-semibold tracking-[.24em] text-text-muted/45" aria-hidden>
-            <span>SCROLL</span>
-            <span className="mt-1 h-3 w-px bg-gradient-to-b from-accent/45 to-transparent" />
-            <ChevronDown size={11} className="-mt-0.5 text-accent/55" />
-          </div>
-          <div className="flex justify-center font-mono text-[9px] tracking-[.14em] text-text-muted/35"><span>&lt;</span><span className="mx-3">{health.data?.version ? `v${health.data.version}` : '—'}</span><span>&gt;</span></div>
+      {/* The axis travels by transform rather than by native scrolling — see `onWheel` — so the browser
+          draws no scrollbar and nothing says the rail continues past the bottom. The cue is that signal,
+          and it now appears exactly when there IS something below: it was previously shown in the full
+          rail whether or not the destinations overflowed (a promise the rail could not keep) and never in
+          the icon rail, which is the width that overflows soonest. */}
+      {!compact || scrollRange > 0 ? (
+        <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center bg-gradient-to-t from-bg via-bg to-transparent pb-4 pt-6">
+          {scrollRange > 0 ? (
+            <div className="spatial-scroll-cue mb-2 flex flex-col items-center font-mono text-[8px] font-semibold tracking-[.24em] text-text-muted/45" aria-hidden>
+              {!compact ? <span>SCROLL</span> : null}
+              <span className="mt-1 h-3 w-px bg-gradient-to-b from-primary/45 to-transparent" />
+              <ChevronDown size={11} className="-mt-0.5 text-primary/55" />
+            </div>
+          ) : null}
+          {!compact ? (
+            <div className="flex justify-center font-mono text-[9px] tracking-[.14em] text-text-muted/35"><span>&lt;</span><span className="mx-3">{health.data?.version ? `v${health.data.version}` : '—'}</span><span>&gt;</span></div>
+          ) : null}
         </div>
       ) : null}
       {/* The keyboard's way into the menu that the right-click and the long press open. It has to exist
@@ -515,7 +555,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           const box = event.currentTarget.getBoundingClientRect();
           customization.openSurfaceMenu(box.left + box.width / 2, box.top);
         }}
-        className="absolute bottom-1 left-1/2 z-30 -translate-x-1/2 rounded-full p-1.5 text-text-muted/40 transition-colors hover:text-text focus-visible:text-text"
+        className="overlay-touch-target absolute bottom-0 left-1/2 z-30 grid -translate-x-1/2 place-items-center rounded-full p-1.5 text-text-muted/40 transition-colors hover:text-text focus-visible:text-text"
       >
         <MoreHorizontal size={13} />
       </button>

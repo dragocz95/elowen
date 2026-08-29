@@ -1,25 +1,30 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { BrainLimitsModal, BRAIN_LIMIT_DEFAULTS } from '../../../modules/settings/BrainLimitsModal';
 
-/** The modal's own stacking layer, read from the real stylesheet — jsdom loads no CSS, so a computed
- *  z-index would be empty for both elements and prove nothing. Reading the shipped value keeps the test
- *  honest: if the layers are ever renumbered, this follows them instead of pinning a stale literal. */
-function modalLayerZ(): number {
-  const css = readFileSync(resolve(process.cwd(), 'app/styles/components.css'), 'utf8');
-  const z = /\.overlay-layer-modal\s*\{[^}]*z-index:\s*(\d+)/.exec(css)?.[1];
-  if (!z) throw new Error('.overlay-layer-modal z-index not found in components.css');
+/** A stacking layer, read from the real stylesheets — jsdom loads no CSS, so a computed z-index would
+ *  be empty for both elements and prove nothing. Reading the shipped value keeps the test honest: if the
+ *  layers are ever renumbered, this follows them instead of pinning a stale literal. Two hops, because
+ *  the layer is a token now: the overlay rule names `--z-modal`, tokens.css sets it. */
+function layerZ(layerClass: string): number {
+  const css = readFileSync(resolve(process.cwd(), 'app/styles/components/primitives.css'), 'utf8');
+  const token = new RegExp(`\\.${layerClass}\\s*\\{[^}]*z-index:\\s*var\\(\\s*(--[a-z0-9-]+)\\s*\\)`).exec(css)?.[1];
+  if (!token) throw new Error(`.${layerClass} z-index not found in components/primitives.css`);
+  const tokens = readFileSync(resolve(process.cwd(), 'app/styles/tokens.css'), 'utf8');
+  const z = new RegExp(`${token}\\s*:\\s*(\\d+)`).exec(tokens)?.[1];
+  if (!z) throw new Error(`${token} not defined in tokens.css`);
   return Number(z);
 }
 
-/** The z-index the tooltip actually carries (a Tailwind arbitrary value, e.g. `z-[130]`). */
+/** The layer the tooltip actually sits on. It names a class from the shared scale rather than a literal,
+ *  so the value has to be resolved through the stylesheet the same way the browser resolves it. */
 function tooltipZ(tooltip: HTMLElement): number {
-  const z = /(?:^|\s)z-\[(\d+)\]/.exec(tooltip.className)?.[1];
-  if (!z) throw new Error(`the help tooltip carries no z-index class: ${tooltip.className}`);
-  return Number(z);
+  const layerClass = /(?:^|\s)(overlay-layer-[a-z-]+)(?:\s|$)/.exec(tooltip.className)?.[1];
+  if (!layerClass) throw new Error(`the help tooltip names no shared overlay layer: ${tooltip.className}`);
+  return layerZ(layerClass);
 }
 
 describe('BrainLimitsModal', () => {
@@ -40,14 +45,14 @@ describe('BrainLimitsModal', () => {
       screen.getByRole('slider', { name: sliderName }).closest('div')?.parentElement?.textContent ?? undefined;
     expect(rowLabel('Question timeout')).toContain('360 min');
     expect(rowLabel('Tool output — tokens')).toContain('≈ 10k tokens');
-    fireEvent.change(screen.getByRole('slider', { name: 'Question timeout' }), { target: { value: '10' } });
-    fireEvent.change(screen.getByRole('slider', { name: 'Tool output — tokens' }), { target: { value: '6000' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Question timeout' }), { key: 'Home' });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Tool output — tokens' }), { key: 'ArrowRight' });
 
     const durationUpdate = updates[0];
     const sizeUpdate = updates[1];
     if (!durationUpdate || !sizeUpdate) throw new Error('slider changes did not reach onChange');
-    expect(durationUpdate(BRAIN_LIMIT_DEFAULTS).elicitationTimeoutMs).toBe(600000);
-    expect(sizeUpdate(BRAIN_LIMIT_DEFAULTS).toolOutputMaxChars).toBe(24000);
+    expect(durationUpdate(BRAIN_LIMIT_DEFAULTS).elicitationTimeoutMs).toBe(30_000);
+    expect(sizeUpdate(BRAIN_LIMIT_DEFAULTS).toolOutputMaxChars).toBe(41_500);
   });
 
   it('keeps slider changes inside the canonical field bounds', () => {
@@ -57,14 +62,12 @@ describe('BrainLimitsModal', () => {
         <BrainLimitsModal limits={BRAIN_LIMIT_DEFAULTS} onChange={(update) => updates.push(update)} onClose={() => {}} />
       </LanguageProvider>,
     );
-    const timeout = screen.getByRole('slider', { name: 'Question timeout' }) as HTMLInputElement;
-    expect(timeout.min).toBe('0.5');
-    expect(timeout.max).toBe('360'); // 6 hours, in the slider's own unit (minutes)
+    const timeout = screen.getByRole('slider', { name: 'Question timeout' });
+    expect(timeout).toHaveAttribute('aria-valuemin', '0.5');
+    expect(timeout).toHaveAttribute('aria-valuemax', '360'); // 6 hours, in the slider's own unit (minutes)
 
-    // Clamped from BELOW, because this field's default already sits on its ceiling: a value pushed past
-    // the top would come back as the value the slider already holds, and an input whose value did not
-    // change fires no event at all — the assertion would then be waiting on a change that never happens.
-    fireEvent.change(timeout, { target: { value: '0.1' } });
+    // The default sits at the ceiling, so Home exercises the opposite bound through Radix's keyboard API.
+    fireEvent.keyDown(timeout, { key: 'Home' });
 
     const update = updates[0];
     if (!update) throw new Error('slider change did not reach onChange');
@@ -90,7 +93,7 @@ describe('BrainLimitsModal', () => {
     expect(screen.getAllByText(/^Saved as /)).toHaveLength(1);
   });
 
-  it('opens field help as a floating layer above the limits modal', () => {
+  it('opens field help as a floating layer above the limits modal', async () => {
     render(
       <LanguageProvider>
         <BrainLimitsModal limits={BRAIN_LIMIT_DEFAULTS} onChange={() => {}} onClose={() => {}} />
@@ -99,18 +102,25 @@ describe('BrainLimitsModal', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Help' })[0]!);
 
-    const tooltip = screen.getByRole('tooltip');
+    const tooltip = await screen.findByRole('tooltip');
     const dialog = screen.getByRole('dialog');
     // "Above the modal" has two halves, and BOTH must hold or the help is unreadable:
-    // 1. it escapes the modal's clipping/stacking context (portaled to <body>, painted after it), and
-    // 2. it outranks the modal's stacking layer — the half a portal alone does NOT give you.
-    expect(tooltip.parentElement).toBe(document.body);
-    expect(dialog.compareDocumentPosition(tooltip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(tooltipZ(tooltip)).toBeGreaterThan(modalLayerZ());
+    // 1. it escapes the modal's clipping context — it is positioned `fixed`, so no ancestor's overflow
+    //    can cut it off, and
+    // 2. it outranks the modal's stacking layer — the half that position alone does NOT give you.
+    //
+    // It stays INSIDE the dialog rather than being portaled to <body>: opening an overlay marks every
+    // other child of <body> inert and aria-hidden and traps focus in the dialog, so a portaled tip is
+    // one the reader can be shut out of. Being a descendant is what keeps it part of the modal.
+    expect(dialog).toContainElement(tooltip);
+    expect(tooltip.closest<HTMLElement>('[data-radix-popper-content-wrapper]')?.style.position).toBe('fixed');
+    expect(tooltipZ(tooltip)).toBeGreaterThan(layerZ('overlay-layer-modal'));
   });
 
-  it('flips the help body above the trigger so it stays inside the viewport near the fold', () => {
+  it('flips the help body above the trigger so it stays inside the viewport near the fold', async () => {
     // A real 120px help body opened near the bottom of jsdom's 768px viewport would spill past it.
+    // The flip is Radix's collision handling now rather than this component's own arithmetic, so what
+    // is asserted is the side it actually resolved to — measured from the same stubbed geometry.
     vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(120);
     render(
       <LanguageProvider>
@@ -125,10 +135,8 @@ describe('BrainLimitsModal', () => {
 
     fireEvent.click(trigger);
 
-    const top = Number.parseInt(screen.getByRole('tooltip').style.top, 10);
-    const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
-    expect(top).toBeLessThanOrEqual(700);
-    expect(top + 120).toBeLessThanOrEqual(viewportHeight);
-    expect(top).toBeGreaterThanOrEqual(12);
+    const tooltip = await screen.findByRole('tooltip');
+    // Opened below, 120px of body would end at 844 in a 768px viewport — so it opens upward instead.
+    await waitFor(() => expect(tooltip).toHaveAttribute('data-side', 'top'));
   });
 });

@@ -11,7 +11,7 @@ import { useTranslation } from '../../lib/i18n';
 import { useUpdateConfig } from '../../lib/mutations';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import type { BrainLimits, ElowenConfig, RuntimeConfig, RuntimeLimits, MemoryRetentionConfig } from '../../lib/types';
-import { SettingsGroup, SettingsRow } from './SettingsSurface';
+import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 
 /** The importance levels the retention block carries a half-life for (mirrors the daemon's clamp keys). */
 const RETENTION_IMPORTANCE_KEYS = [1, 2, 3, 4, 5] as const;
@@ -172,7 +172,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
               aria-label={t.brain.maxSteps}
               className="w-40"
             />
-            <span className="w-10 text-right tabular-nums text-sm text-muted">{Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200}</span>
+            <span className="w-10 text-right tabular-nums text-sm text-muted-foreground">{Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200}</span>
           </div>
         </SettingsRow>
         {limits ? (

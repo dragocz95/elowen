@@ -191,7 +191,7 @@ export function PulseRings({ people, month, t }: {
   const contextTotal = contextSlices.reduce((n, s) => n + s.value, 0);
 
   return (
-    <div className="grid grid-cols-1 gap-x-4 gap-y-6 @md:grid-cols-2 @4xl:grid-cols-4">
+    <div data-testid="pulse-rings" className="grid grid-cols-1 gap-x-4 gap-y-6 @md:grid-cols-2 @4xl:grid-cols-4">
       <PulseRing
         title={t.dashboard.pulseRingPeople}
         slices={peopleSlices}

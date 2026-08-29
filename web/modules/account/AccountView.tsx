@@ -29,7 +29,8 @@ import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 import { ChoiceField } from '../../components/ui/ChoiceField';
-import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
+import { WorkspaceLeadScope, WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { MotionReveal } from '../../components/ui/Motion';
@@ -58,10 +59,12 @@ function AccountPanel({ id, active, visited, children }: {
 }) {
   if (id !== active && !visited.has(id)) return null;
   return (
-    <Activity mode={id === active ? 'visible' : 'hidden'}>
-      {/* data-constellation drops the card frame so sections float on the page background. */}
-      <MotionReveal data-account-panel={id} data-constellation="">{children}</MotionReveal>
-    </Activity>
+    <WorkspaceLeadScope active={id === active}>
+      <Activity mode={id === active ? 'visible' : 'hidden'}>
+        {/* No frame of its own: the section cards inside carry the chrome, exactly as on /settings. */}
+        <MotionReveal data-account-panel={id}>{children}</MotionReveal>
+      </Activity>
+    </WorkspaceLeadScope>
   );
 }
 
@@ -77,11 +80,10 @@ export function AccountView() {
   const { toast } = useToast();
   const { t, locale } = useTranslation();
   const pluginUi = usePluginUi(locale);
-  const { scale, preference, setPreference } = useUiScale();
+  const { preference, setPreference } = useUiScale();
   const effects = useEffects();
   const fileRef = useRef<HTMLInputElement>(null);
   const prefPct = Math.round(preference * 100);
-  const appliedPct = Math.round(scale * 100);
   const [section, setSection] = usePersistentState<AccountSection>('elowen.account.section', 'profile', isAccountSection);
   const [visitedSections, setVisitedSections] = useState<Set<AccountSection>>(() => new Set([section]));
   const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<AccountSection, SaveFeedback>>>({});
@@ -314,8 +316,13 @@ export function AccountView() {
   // Who this account is and what it may run — the four facts every section below is about. All of it is
   // already loaded for the sections themselves, so the hero costs no extra request and, unlike the
   // per-user stats in the Users directory, needs no admin rights to read.
+  const activeSection = spatialSections.find((item) => item.id === section) ?? spatialSections[0]!;
   const deckHero = {
-    mascotState: (me.isError ? 'error' : activeFeedback.status === 'saving' ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
+    eyebrow: t.account.title,
+    title: activeSection.label,
+    description: activeSection.description,
+    status: <AutoSaveStatus status={activeFeedback.status} onRetry={activeFeedback.retry} />,
+    mascot: (me.isError ? 'error' : activeFeedback.status === 'saving' ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
     metrics: (
       <>
         <WorkspaceMetric label={t.users.role} value={u.is_admin ? t.users.admin : t.users.member} icon={ShieldCheck} />
@@ -330,15 +337,15 @@ export function AccountView() {
     <div className="flex w-full min-w-0 flex-col">
       <ModuleHeader title={t.account.title} icon={UserCog} />
 
-      <SpatialControlDeck
-        eyebrow={t.account.title}
-        ariaLabel={t.account.sectionsNav}
-        sections={spatialSections}
-        value={section}
-        onChange={(v) => setSection(v as typeof section)}
+      <WorkspaceShell
+        variant="deck"
         hero={deckHero}
-        status={activeFeedback.status}
-        onRetry={activeFeedback.retry}
+        navigation={{
+          sections: spatialSections,
+          value: activeSection.id,
+          onChange: (v) => setSection(v as typeof section),
+          ariaLabel: t.account.sectionsNav,
+        }}
       >
       {deckPluginSections.map((item) => (
         <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
@@ -389,17 +396,13 @@ export function AccountView() {
           </SpatialRow>
         );
         // Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. The
-        // slider sets the personal factor; the window width supplies an automatic base underneath it, so
-        // the applied zoom is shown alongside whenever the two disagree — otherwise a slider reading
-        // 100% on a visibly shrunken app looks like a bug.
+        // slider is the only input: nothing scales the app underneath it, so what it reads is what the
+        // app renders at.
         const rowUiScale = (
           <SpatialRow title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
             <div className="flex min-w-0 flex-wrap items-center justify-center gap-3">
               <Slider value={prefPct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setPreference(v / 100)} aria-label={t.account.uiScale} />
               <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{prefPct}%</span>
-              {appliedPct !== prefPct && (
-                <span className="shrink-0 font-mono text-sm tabular-nums text-text-muted" title={t.account.uiScaleApplied}>→ {appliedPct}%</span>
-              )}
               <button type="button" className="spatial-inline-action" onClick={() => setPreference(DEFAULT_SCALE)} disabled={prefPct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</button>
             </div>
           </SpatialRow>
@@ -572,7 +575,7 @@ export function AccountView() {
           
         ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>}
       </AccountPanel>
-      </SpatialControlDeck>
+      </WorkspaceShell>
     </div>
   );
 }

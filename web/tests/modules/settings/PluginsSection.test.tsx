@@ -4,7 +4,7 @@ import { LanguageProvider } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { PluginInfo, MarketplaceEntry } from '../../../lib/types';
 import { EffectsProvider } from '../../../lib/useEffects';
-import { SettingsDocument } from '../../../modules/settings/SettingsSurface';
+import { SettingsDocument } from '../../../components/ui/SettingsSurface';
 
 const usePlugins = vi.hoisted(() => vi.fn());
 const useMarketplace = vi.hoisted(() => vi.fn());

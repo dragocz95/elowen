@@ -6,14 +6,103 @@ import {
   BUILTIN_SKIN,
   SKINS,
   SKIN_CHOICES,
+  SKIN_DEFINITIONS,
+  SKIN_FAMILY_SHEETS,
   allowedSkinChoices,
   currentSkinChoice,
   nextSkinChoice,
   resolveSkin,
+  skinDisplayName,
 } from '../../lib/skins';
 import { activeSkin } from '../../lib/skinEnv';
+import { dictionaries } from '../../lib/i18n/dictionaries';
+import { en } from '../../lib/i18n/dictionaries/en';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/** Split a selector list on its TOP-LEVEL commas only.
+ *
+ *  A plain `split(',')` cuts inside `:is()`, `:where()` and `:not()` too, and each fragment it produces
+ *  then looks like a bare unscoped selector. A correctly scoped rule such as
+ *  `:root[data-skin='x'] :is(.a, .b) .c` was therefore reported as an unscoped `.b` — a false alarm
+ *  that says the skin leaks into every instance, which is the one thing this check exists to catch. */
+const splitSelectorList = (selector: string): string[] => {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of selector) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (ch === ',' && depth === 0) { parts.push(current); current = ''; continue; }
+    current += ch;
+  }
+  parts.push(current);
+  return parts;
+};
+
+/** Every selector fragment in a stylesheet, comments stripped and selector lists flattened. One parser
+ *  for both guards below — the per-skin one and the shared-stylesheet one — so the false alarm above
+ *  stays fixed in exactly one place.
+ *
+ *  Brace-counting rather than a regex, deliberately. The regex this replaced anchored each selector on
+ *  the `}` that closed the previous rule, so the FIRST rule inside every `@media` / `@container` block —
+ *  which is preceded by `{` — was never extracted and never checked. Nothing had slipped through it yet,
+ *  but a guard whose whole purpose is stopping a skin from leaking into every other design cannot have a
+ *  shape of rule it silently cannot see. */
+const selectorFragments = (css: string): string[] => {
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const fragments: string[] = [];
+  let prelude = '';
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i]!;
+    // Quoted text is copied through whole: a selector's `[data-skin='x']` must survive intact, and a
+    // brace inside a string is not a block boundary.
+    if (ch === '"' || ch === "'") {
+      const end = source.indexOf(ch, i + 1);
+      const close = end === -1 ? source.length : end;
+      prelude += source.slice(i, close + 1);
+      i = close;
+      continue;
+    }
+    if (ch === '{') {
+      const head = prelude.trim();
+      // An at-rule prelude (`@media (...)`) is a condition, not a selector; the rules inside it are
+      // reached on their own next time round. A declaration block cannot contain `{`, so anything else
+      // arriving here is a selector list.
+      if (head && !head.startsWith('@')) fragments.push(...splitSelectorList(head).map((part) => part.trim()));
+      prelude = '';
+      continue;
+    }
+    if (ch === '}') { prelude = ''; continue; }
+    prelude += ch;
+  }
+  return fragments;
+};
+
+describe('the scope guards can see every rule they claim to check', () => {
+  // The extractor IS the guard: a rule it does not return is a rule nothing below checks, and the leak
+  // it exists to catch would ship green. The first rule inside an at-rule block is the case the previous
+  // regex could not reach.
+  it('extracts the first rule inside an at-rule block, and every rule after it', () => {
+    const css = `
+      @media (pointer: coarse) {
+        .leaked-first { min-height: 44px; }
+        :root[data-skin='x'] .second { min-height: 44px; }
+      }
+      :root[data-skin='x'] .top-level { color: red; }
+    `;
+    expect(selectorFragments(css)).toEqual(['.leaked-first', ":root[data-skin='x'] .second", ":root[data-skin='x'] .top-level"]);
+  });
+
+  it('keeps a selector list whole through :is(), and ignores comments and declarations', () => {
+    const css = `
+      /* .commented-out { } */
+      :root:is([data-skin='a'], [data-skin='b']) .one,
+      :root[data-skin='a'] .two { content: '}'; background: url("a{b"); }
+    `;
+    expect(selectorFragments(css)).toEqual([":root:is([data-skin='a'], [data-skin='b']) .one", ":root[data-skin='a'] .two"]);
+  });
+});
 
 describe('activeSkin', () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -47,39 +136,14 @@ describe('skin registry contract', () => {
     expect(imports.sort()).toEqual([...SKINS].sort());
   });
 
-  /** Split a selector list on its TOP-LEVEL commas only.
-   *
-   *  A plain `split(',')` cuts inside `:is()`, `:where()` and `:not()` too, and each fragment it produces
-   *  then looks like a bare unscoped selector. A correctly scoped rule such as
-   *  `:root[data-skin='x'] :is(.a, .b) .c` was therefore reported as an unscoped `.b` — a false alarm
-   *  that says the skin leaks into every instance, which is the one thing this check exists to catch. */
-  const splitSelectorList = (selector: string): string[] => {
-    const parts: string[] = [];
-    let depth = 0;
-    let current = '';
-    for (const ch of selector) {
-      if (ch === '(') depth++;
-      else if (ch === ')') depth--;
-      if (ch === ',' && depth === 0) { parts.push(current); current = ''; continue; }
-      current += ch;
-    }
-    parts.push(current);
-    return parts;
-  };
-
   it('every rule in every skin is scoped under its own data-skin attribute', () => {
     for (const skin of SKINS) {
-      const css = readFileSync(join(root, 'skins', skin, 'skin.css'), 'utf-8');
-      // Strip comments, then require each selector head to carry the scope. An unscoped rule would
-      // leak into every instance built from this repo, whatever design they actually run.
-      const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
-      const selectors = [...bare.matchAll(/(^|\})\s*([^@{}]+)\{/g)].map((m) => m[2]!.trim());
-      expect(selectors.length).toBeGreaterThan(0);
-      for (const selector of selectors) {
-        for (const part of splitSelectorList(selector)) {
-          expect(part.trim(), `unscoped selector in ${skin}/skin.css: "${part.trim()}"`)
-            .toContain(`[data-skin='${skin}']`);
-        }
+      // Require each selector head to carry the scope. An unscoped rule would leak into every instance
+      // built from this repo, whatever design they actually run.
+      const fragments = selectorFragments(readFileSync(join(root, 'skins', skin, 'skin.css'), 'utf-8'));
+      expect(fragments.length).toBeGreaterThan(0);
+      for (const part of fragments) {
+        expect(part, `unscoped selector in ${skin}/skin.css: "${part}"`).toContain(`[data-skin='${skin}']`);
       }
     }
   });
@@ -94,6 +158,99 @@ describe('skin registry contract', () => {
     // skin" would be the same value and nothing downstream could tell them apart.
     expect(SKINS as readonly string[]).not.toContain(BUILTIN_SKIN);
     expect(SKIN_CHOICES).toEqual([BUILTIN_SKIN, ...SKINS]);
+  });
+
+  it('carries exactly one definition per compiled skin, and none for a skin that does not exist', () => {
+    // SKINS stays a tuple of ids because that is what the app consumes — a directory name, a data-skin
+    // value, a member test. The metadata lives beside it, and the two drifting apart is what this pins:
+    // a Record over SkinName makes the compiler reject most of it, but a duplicated id in SKINS would
+    // collapse two entries into one silently.
+    expect(Object.keys(SKIN_DEFINITIONS).sort()).toEqual([...SKINS].sort());
+    expect(new Set(SKINS).size, 'a skin id is listed twice').toBe(SKINS.length);
+    for (const [id, definition] of Object.entries(SKIN_DEFINITIONS)) expect(definition.id).toBe(id);
+  });
+
+  it('names every skin in every shipped locale, and never shows a raw id', () => {
+    // The id is a directory and an attribute value: "studio-oled" is not a name to put in front of
+    // anyone. A definition pointing at a key one dictionary is missing would render `undefined`.
+    for (const [locale, dictionary] of Object.entries(dictionaries)) {
+      for (const definition of Object.values(SKIN_DEFINITIONS)) {
+        const name = dictionary.common.skinNames[definition.nameKey];
+        expect(name, `${locale} does not name skin "${definition.id}"`).toBeTruthy();
+        expect(name, `${locale} shows the raw id for "${definition.id}"`).not.toBe(definition.id);
+      }
+    }
+  });
+
+  it('resolves the built-in choice — and no choice at all — to the built-in name', () => {
+    expect(skinDisplayName(en, BUILTIN_SKIN)).toBe(en.common.skinBuiltIn);
+    expect(skinDisplayName(en, null)).toBe(en.common.skinBuiltIn);
+    expect(skinDisplayName(en, 'studio-oled')).toBe('Studio OLED');
+  });
+});
+
+// A shared stylesheet has no directory name to be scoped by, so the per-skin guard above cannot reach it:
+// it reads exactly one file per SKINS entry and never walks the skins/ tree. These checks close that hole
+// against the family declaration in lib/skins.ts, which is the only place that says which ids such a file
+// is allowed to target.
+describe('shared family stylesheets', () => {
+  const index = readFileSync(join(root, 'skins', 'index.css'), 'utf-8');
+  const sheets = SKIN_FAMILY_SHEETS.flatMap(({ family, members, sharedStylesheets }) =>
+    sharedStylesheets.map((path) => ({ family, members, path })),
+  );
+
+  it('declares at least one shared stylesheet, over real skins, with no id in two families', () => {
+    // A declaration that describes nothing passes every check below forever.
+    expect(sheets.length, 'no shared stylesheet is declared — the guard would scan nothing').toBeGreaterThan(0);
+    const claimed: string[] = [];
+    for (const { family, members } of SKIN_FAMILY_SHEETS) {
+      expect(members.length, `family "${family}" has no members`).toBeGreaterThan(0);
+      for (const member of members) {
+        expect(SKINS as readonly string[], `family "${family}" claims unknown skin "${member}"`).toContain(member);
+        expect(claimed, `skin "${member}" belongs to two families`).not.toContain(member);
+        claimed.push(member);
+      }
+    }
+  });
+
+  it('imports every shared stylesheet from skins/index.css exactly once, and nothing else', () => {
+    for (const { path } of sheets) {
+      const line = `@import "./${path}";`;
+      expect(readFileSync(join(root, 'skins', path), 'utf-8').length, `${path} is empty`).toBeGreaterThan(0);
+      expect(index.split(line).length - 1, `${path} must be imported exactly once from index.css`).toBe(1);
+    }
+    // Both directions: a shared file added and never imported ships nothing, a file imported without
+    // being declared is CSS no guard covers. The per-skin @imports are pinned by the registry test above.
+    const imported = [...index.matchAll(/@import "\.\/([^"]+)";/g)].map((m) => m[1]!);
+    const expected = [...SKINS.map((skin) => `${skin}/skin.css`), ...sheets.map((s) => s.path)];
+    expect(imported.sort()).toEqual(expected.sort());
+  });
+
+  it('scopes every shared rule to its own family, and never reaches outside it', () => {
+    for (const { family, members, path } of sheets) {
+      const fragments = selectorFragments(readFileSync(join(root, 'skins', path), 'utf-8'));
+      expect(fragments.length, `${path} has no rules`).toBeGreaterThan(0);
+      const outsiders = (SKINS as readonly string[]).filter((id) => !(members as readonly string[]).includes(id));
+      const targeted = new Set<string>();
+
+      for (const part of fragments) {
+        // Reaching outside the family is reported first: a rule scoped to the wrong skin IS scoped, and
+        // calling it unscoped would send the reader looking for a missing attribute that is right there.
+        for (const outsider of outsiders) {
+          expect(part, `${path} targets "${outsider}", which is outside family "${family}": "${part}"`)
+            .not.toContain(`[data-skin='${outsider}']`);
+        }
+        const hit = members.filter((id) => part.includes(`[data-skin='${id}']`));
+        // Unscoped here is exactly as bad as unscoped in a skin.css: the rule applies to every instance.
+        expect(hit.length, `unscoped selector in ${path}: "${part}"`).toBeGreaterThan(0);
+        for (const id of hit) targeted.add(id);
+      }
+
+      // Across the file as a whole, every member must be targeted by something. A variant that no shared
+      // rule reaches is a half-added skin: it inherits the palette and none of the structure.
+      expect([...targeted].sort(), `${path} never targets every member of family "${family}"`)
+        .toEqual([...members].sort());
+    }
   });
 });
 

@@ -85,6 +85,17 @@ describe('a room turn settles like an owner turn', () => {
     expect(row.last_writer_user_id).toBe(2); // …and the register names who actually wrote in it
   });
 
+  it('clears request identity when persisting the resume envelope fails before the prompt', async () => {
+    const { store, svc, opts, registry } = setup();
+    vi.spyOn(store, 'savePlatformTurnEnvelope').mockImplementation(() => { throw new Error('disk full'); });
+    await expect(svc.send({
+      ...opts,
+      identity: { platform: 'discord', userId: '7', admin: false, owner: false, conversation: 'shared' },
+      historyPlatform: 'discord',
+    }, 'hello')).rejects.toThrow('disk full');
+    expect(registry.channelGet('discord-settle')?.turnWriterUserId).toBeNull();
+  });
+
   it('names a brand-new room from the sender\'s own words and never renames it afterwards', async () => {
     const { store, svc, sessionId, opts } = setup();
 
@@ -161,8 +172,9 @@ describe('a room turn settles like an owner turn', () => {
 describe('a room compacts a provably cold context before paying to re-cache it', () => {
   /** One channel turn against a session whose last message is `ageMs` old, with the assessment wired. */
   const runAged = async (aged: string, eligible: boolean) => {
-    const compact = vi.fn(async () => {});
     let brain!: Brain;
+    const compactWriters: (number | null)[] = [];
+    const compact = vi.fn(async () => { compactWriters.push(brain.turnWriterUserId ?? null); });
     const store = new BrainStore(openDb(':memory:'));
     const registry = new LiveSessionRegistry<Brain>();
     const cards = new CardRegistry(() => store);
@@ -183,7 +195,7 @@ describe('a room compacts a provably cold context before paying to re-cache it',
     const opts = {
       // Rollover would otherwise archive the room long before the cache gate opens; a cron channel that
       // must keep continuity across runs disables it exactly like this, which is where this bites.
-      channelId: 'cron-aged', ownerUserId: 1, idleRolloverMs: Infinity,
+      channelId: 'cron-aged', ownerUserId: 1, writerUserId: 2, idleRolloverMs: Infinity,
       policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
       identity: { userId: 7 },
     };
@@ -191,19 +203,23 @@ describe('a room compacts a provably cold context before paying to re-cache it',
     // Age the transcript past (or not past) the gate — the longest cache TTL pi-ai uses, plus its buffer.
     store.db.prepare(`UPDATE brain_messages SET created_at = datetime('now', ?)`).run(aged);
     await svc.send(opts, 'second');
-    return compact;
+    return { compact, compactWriters, brain };
+
   };
 
-  it('compacts at the start of the turn that follows an expired prompt cache', async () => {
-    expect(await runAged('-3 hours', true)).toHaveBeenCalledOnce();
+  it('compacts with the current writer, then clears the request identity after the turn', async () => {
+    const result = await runAged('-3 hours', true);
+    expect(result.compact).toHaveBeenCalledOnce();
+    expect(result.compactWriters).toEqual([2]);
+    expect(result.brain.turnWriterUserId).toBeNull();
   });
 
   it('leaves a warm context alone', async () => {
-    expect(await runAged('-1 minute', true)).not.toHaveBeenCalled();
+    expect((await runAged('-1 minute', true)).compact).not.toHaveBeenCalled();
   });
 
   it('respects the session\'s own auto-compact verdict rather than compacting on age alone', async () => {
-    expect(await runAged('-3 hours', false)).not.toHaveBeenCalled();
+    expect((await runAged('-3 hours', false)).compact).not.toHaveBeenCalled();
   });
 });
 

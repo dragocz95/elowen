@@ -116,6 +116,43 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent?.identity).toMatchObject({ elowenUserId: 2, admin: false, owner: false, conversation: 'shared' });
   });
 
+  it('reads and writes Fast for the invoking linked account, with per-user isolation', async () => {
+    let control: PlatformControlApi | undefined;
+    const fast = new Map<number, boolean>();
+    const identity = new IdentityResolver({
+      platformOwner: () => 1,
+      resolvePlatformUser: (_platform, platformUserId) => platformUserId === 'D2'
+        ? { id: 2, name: 'Amy', admin: false }
+        : platformUserId === 'D3' ? { id: 3, name: 'Bob', admin: false } : null,
+      users,
+    });
+    const adapter = {
+      name: 'discord', listen: () => {}, connect: async () => {},
+      control: (api: PlatformControlApi) => { control = api; },
+    };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      identity,
+      fastMode: (userId) => fast.get(userId) === true,
+      setFastMode: (userId, on) => {
+        const next = on ?? !(fast.get(userId) === true);
+        fast.set(userId, next);
+        return next;
+      },
+      channels: { status: () => ({ fastAvailable: true }) } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+    const ref = { platform: 'discord', channelId: 'c1' };
+
+    expect(control!.setAccountFast!(ref, 'D2', true)).toEqual({ fast: true, fastAvailable: true });
+    expect(control!.fastStatus!(ref, 'D2')).toEqual({ fast: true, fastAvailable: true });
+    expect(control!.fastStatus!(ref, 'D3')).toEqual({ fast: false, fastAvailable: true });
+    expect(control!.setAccountFast!(ref, 'D3')).toEqual({ fast: true, fastAvailable: true });
+    expect(control!.setAccountFast!(ref, 'unknown', true)).toBeNull();
+  });
+
   it('anchors a delegated child to its non-owner parent account, never the platform owner', async () => {
     let sent: ChannelSendOpts | undefined;
     let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
@@ -147,6 +184,35 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     // a child spawned from a shared room inherits the operator as row owner.
     expect(sent?.identity).toMatchObject({ admin: true, owner: false, conversation: 'delegated' });
     expect(sent?.identity?.elowenUserId).toBeUndefined();
+  });
+
+  it('mints only a durable workspace ref and never forwards the resolved host path to dispatch', async () => {
+    let request: DelegatedTurnRequest | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'subagent', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const resolver = linkedResolver(false);
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      identity: resolver,
+      channels: { sessionOwnerUserId: () => 1 } as never,
+      sandbox: () => ({
+        workspacesFor: () => [{ workspaceId: 'ws_explicit', projectId: 3, path: '/host/secret/ws', label: 'w', branch: 'b', baseRef: 'main' }],
+        resolveWorkspace: () => ({ accountUserId: 1, workspaceId: 'ws_explicit', projectId: 3, path: '/host/secret/ws' }),
+      }) as never,
+      dispatch: { send: async (value) => { request = value; return 'ok'; } },
+    });
+    await orch.startAll();
+    await handler!({
+      platform: 'subagent', userId: 'subagent', channelId: 'sub-workspace', roleIds: [],
+      access: {
+        admin: true, projectIds: [], parentSessionId: 'brain-1', permissionBoundary: null,
+        contributionUserId: 1, workspaceId: 'ws_explicit', cwd: '/host/parent',
+      },
+    } as never, 'inspect');
+    expect(request?.delegatedAccess.workspaceRef).toEqual({ workspaceId: 'ws_explicit', projectId: 3 });
+    expect(request).not.toHaveProperty('clientCwd');
+    expect(JSON.stringify(request)).not.toContain('/host/secret/ws');
   });
 
   // A shared room is anchored on the operator because it has no single author, so the owner column alone
@@ -675,6 +741,22 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     // The captured scope still records what the child was minted with (the normalizer sorts it)…
     expect(sortedAllow(sent)).toEqual(['Grep', 'Read']);
     // …but the policy the turn actually executes under is that scope ∩ the account's grant right now.
+    expect(sent.toolPolicy).toEqual({ allow: new Set(['Read']) });
+  });
+
+  it('reads the current grant from the captured settings account, not the room owner', async () => {
+    const authorityIds: number[] = [];
+    const sent = await runTypedDelegate({
+      admin: false, owner: false, projectIds: [3], parentSessionId: 'brain-owner',
+      agentType: 'explore', toolPolicy: { allow: ['Read', 'Grep'] }, permissionBoundary: null,
+      settingsUserId: 3, contributionUserId: 3,
+    }, (userId) => {
+      authorityIds.push(userId);
+      return { allow: new Set(['Read']) };
+    });
+
+    expect(authorityIds).toEqual([3]);
+    expect(sent.delegatedAccess).toMatchObject({ settingsUserId: 3, contributionUserId: 3 });
     expect(sent.toolPolicy).toEqual({ allow: new Set(['Read']) });
   });
 

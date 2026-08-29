@@ -76,7 +76,7 @@ describe('UserDetailPane', () => {
       ])),
     );
     mount(user(), [], ['elowen:anthropic/claude-opus-5', 'elowen:relay/claude-opus-5']);
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage allowed models' }));
     const rows = await screen.findAllByRole('button', { name: /claude-opus-5/ });
     expect(rows).toHaveLength(2);
     // The clean model name is shown; the raw spec is not what the admin reads.
@@ -98,7 +98,7 @@ describe('UserDetailPane', () => {
     // `alibaba/qwen3.8-max` is exactly the shape the operator's config is in: still in allowedExecs,
     // no longer backed by any provider, so absent from /brain/models.
     mount(user(), [], ['sonnet', 'anthropic/claude-opus-5', 'alibaba/qwen3.8-max']);
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage allowed models' }));
     expect(await screen.findByRole('button', { name: /claude-opus-5/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Claude Sonnet 4\.5/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /qwen3\.8-max/ })).toBeNull();
@@ -126,7 +126,7 @@ describe('UserDetailPane', () => {
       }),
     );
     mount(user(), [], ['sonnet', 'codex:gpt-5.4']);
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage allowed models' }));
     // Models group by provider inside the modal.
     expect(await screen.findByRole('heading', { name: 'Claude Code' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Codex' })).toBeTruthy();
@@ -175,8 +175,7 @@ describe('UserDetailPane', () => {
     );
     mount(user(), [project(1, 'alpha'), project(2, 'beta')]);
     expect(await screen.findByText('1 of 2 projects assigned')).toBeTruthy();
-    // With no execs (models block renders "—") the projects summary owns the only Manage button.
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Manage project access' }));
     // Single group → no filter chips row.
     expect(screen.queryByRole('tablist')).toBeNull();
     fireEvent.click(await screen.findByRole('button', { name: /beta/ })); // assign beta
@@ -184,6 +183,31 @@ describe('UserDetailPane', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(assignedTo).toEqual([2]));
     await waitFor(() => expect(unassigned).toEqual([1]));
+  });
+
+  // The pane stacks four managed selections. They all read "Manage", so a screen reader user heard the
+  // same button name four times with nothing to tell them apart — each one has to name what it manages.
+  it('gives every manage button in the drawer its own accessible name', async () => {
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/users/2/tools', () => HttpResponse.json([
+        { name: 'ReadFile', label: 'ReadFile', icon: '💻', plugin: 'sandbox', group: 'plugin', state: 'allowed', toggleable: true },
+      ])),
+      http.get('*/api/plugins', () => HttpResponse.json([
+        { name: 'sandbox', version: '1.0.0', enabled: true, removed: false, userGrantable: true },
+      ])),
+    );
+    mount(user(), [project(1, 'alpha')], ['sonnet']);
+
+    // Every block loads from its own query, so wait until all four have arrived before comparing.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Manage / })).toHaveLength(4));
+    const names = screen.getAllByRole('button', { name: /^Manage / }).map((b) => b.getAttribute('aria-label'));
+    expect(names).toEqual([
+      'Manage project access',
+      'Manage allowed models',
+      'Manage granted plugins',
+      'Manage tool access',
+    ]);
   });
 });
 

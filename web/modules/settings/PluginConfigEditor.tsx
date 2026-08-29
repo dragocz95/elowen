@@ -24,7 +24,7 @@ import { useConfig, useBrainModels, useNotificationDestinations, usePlugins, use
 import type { BrainModelOption, NotificationDestinationOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from '../../lib/usePluginConfigDraft';
-import { SettingsGroup, SettingsRow } from './SettingsSurface';
+import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 
 
 // A settings-group icon for an author-declared config section, inferred from its key/label. Falls back to

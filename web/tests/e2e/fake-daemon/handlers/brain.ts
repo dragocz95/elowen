@@ -10,6 +10,8 @@ import {
   brainModels,
   brainCommands,
   brainMessages,
+  brainOauthStatus,
+  brainRateLimits,
   DEFAULT_SESSION_ID,
 } from '../../seed/fixtures.ts';
 import type { BrainMessage } from '../../../../lib/types.ts';
@@ -90,6 +92,11 @@ export function registerBrainRoutes(app: Hono): void {
   app.get('/brain/sessions', (c) => c.json(getResponse('brain/sessions', brainSessions)));
   app.get('/brain/models', (c) => c.json(getResponse('brain/models', brainModels)));
   app.get('/brain/commands', (c) => c.json(getResponse('brain/commands', { commands: brainCommands })));
+
+  // Settings → Brain. `oauth/status` is what the accounts card enumerates its rows FROM, and
+  // `rate-limits/all` supplies the usage rail a connected row renders in its control slot.
+  app.get('/brain/oauth/status', (c) => c.json(getResponse('brain/oauth/status', brainOauthStatus)));
+  app.get('/brain/rate-limits/all', (c) => c.json(getResponse('brain/rate-limits/all', brainRateLimits)));
 
   app.get('/brain/messages', (c) => {
     const session = c.req.query('session') ?? DEFAULT_SESSION_ID;
@@ -179,8 +186,8 @@ export function registerBrainRoutes(app: Hono): void {
   });
 
   // Scriptable live stream. Registers the open connection keyed by client+session; the control channel
-  // writes scripted frames into it. Honors `snapshot=1` with a minimal snapshot frame, then keeps the
-  // connection open (heartbeat comments) until the client disconnects.
+  // writes scripted frames into it. Honors `snapshot=1` with the same paginated history shape the real
+  // daemon sends, then keeps the connection open (heartbeat comments) until the client disconnects.
   app.get('/brain/stream', (c) => {
     const session = c.req.query('session');
     const client = c.req.query('client');
@@ -196,7 +203,19 @@ export function registerBrainRoutes(app: Hono): void {
       const detach = (): void => unregisterStream(open);
       c.req.raw.signal.addEventListener('abort', detach, { once: true });
       if (snapshot && session) {
-        await stream.writeSSE({ event: 'snapshot', data: JSON.stringify({ cursor: 0 }), id: '0' });
+        const markers = markersBySession.get(session) ?? [];
+        const source = markers.length ? [...getMessages(brainMessages), ...markers] : getMessages(brainMessages);
+        const requested = Number(c.req.query('history'));
+        const limit = Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : 50;
+        const page = messagesPage(source, limit);
+        await stream.writeSSE({
+          event: 'snapshot',
+          data: JSON.stringify({
+            type: 'snapshot', sessionId: session, history: page.items, events: [],
+            hasMore: page.hasMore, nextBefore: page.nextBefore,
+          }),
+          id: '0',
+        });
       }
       // Comment flush so the SSE channel connects through the BFF proxy on a quiet system.
       await stream.write(': connected\n\n');

@@ -1,9 +1,9 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { CalendarDays, ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { useDismiss } from '../../lib/useDismiss';
 import { Input } from './Input';
+import { Popover, PopoverContent, PopoverTrigger } from './shadcn/popover';
 import type { DateRange, RangePreset } from '../../lib/dateRange';
 
 /** The default preset set (the custom from/to picker rides the `custom` entry). Callers restrict it via
@@ -17,8 +17,6 @@ const DEFAULT_PRESETS: RangePreset[] = ['today', '7d', '30d', '90d', 'all', 'cus
 export function DateRangeFilter({ value, onChange, compact = false, presets = DEFAULT_PRESETS }: { value: DateRange; onChange: (r: DateRange) => void; compact?: boolean; presets?: RangePreset[] }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useDismiss(ref, open, () => setOpen(false));
 
   const presetLabel: Record<RangePreset, string> = {
     '7d': t.common.rangeLast7, '30d': t.common.rangeLast30, '90d': t.common.rangeLast90,
@@ -36,49 +34,46 @@ export function DateRangeFilter({ value, onChange, compact = false, presets = DE
   const setTo = (to: string) => onChange({ preset: 'custom', from: value.from, to: to || null });
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-bg px-3 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-elevated"
-      >
-        <CalendarDays size={compact ? 13 : 14} aria-hidden className="text-text-muted" />
-        <span className={`${compact ? 'max-w-36' : 'max-w-[14rem]'} truncate`}>{label}</span>
-        <ChevronDown size={compact ? 13 : 14} aria-hidden className="text-text-muted" />
-      </button>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="group inline-flex h-9 items-center gap-2 rounded-md border border-input bg-card px-3 text-sm font-medium text-foreground transition-[border-color,background-color,box-shadow] hover:border-border-strong hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-primary/60 data-[state=open]:bg-primary/10 data-[state=open]:text-primary data-[state=open]:shadow-[0_0_0_3px_rgb(var(--primary-rgb)/0.08)]"
+        >
+          <CalendarDays size={compact ? 13 : 14} aria-hidden className="text-muted-foreground" />
+          <span className={`${compact ? 'max-w-36' : 'max-w-[14rem]'} truncate`}>{label}</span>
+          <ChevronDown size={compact ? 13 : 14} aria-hidden className="text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+        </button>
+      </PopoverTrigger>
 
-      {open && (
-        <div role="dialog" aria-label={t.common.rangeLabel} className="absolute right-0 z-30 mt-2 w-64 rounded-lg border border-border bg-surface p-3 shadow-[var(--shadow-raised)]">
-          <div className="flex flex-col gap-1">
-            {PRESETS.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => pickPreset(p)}
-                aria-pressed={value.preset === p}
-                className={`flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${value.preset === p ? 'bg-accent/[0.1] font-medium text-accent' : 'text-text hover:bg-elevated'}`}
-              >
-                {presetLabel[p]}
-              </button>
-            ))}
-          </div>
-          {allowCustom && (
-            <div className="mt-3 border-t border-border pt-3">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">{t.common.rangeCustom}</p>
-              <label className="mb-2 flex items-center gap-2 text-xs text-text-muted">
-                <span className="w-7 shrink-0">{t.common.rangeFrom}</span>
-                <Input type="date" value={value.from ?? ''} max={value.to ?? undefined} onChange={(e) => setFrom(e.target.value)} className="h-8" />
-              </label>
-              <label className="flex items-center gap-2 text-xs text-text-muted">
-                <span className="w-7 shrink-0">{t.common.rangeTo}</span>
-                <Input type="date" value={value.to ?? ''} min={value.from ?? undefined} onChange={(e) => setTo(e.target.value)} className="h-8" />
-              </label>
-            </div>
-          )}
+      <PopoverContent role="dialog" aria-label={t.common.rangeLabel} align="end" className="w-64 p-3">
+        <div className="flex flex-col gap-1">
+          {PRESETS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => pickPreset(p)}
+              aria-pressed={value.preset === p}
+              className="flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground aria-pressed:bg-primary/10 aria-pressed:font-medium aria-pressed:text-primary"
+            >
+              {presetLabel[p]}
+            </button>
+          ))}
         </div>
-      )}
-    </div>
+        {allowCustom && (
+          <div className="mt-3 border-t border-border pt-3">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t.common.rangeCustom}</p>
+            <label className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="w-7 shrink-0">{t.common.rangeFrom}</span>
+              <Input type="date" value={value.from ?? ''} max={value.to ?? undefined} onChange={(e) => setFrom(e.target.value)} className="h-8" />
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="w-7 shrink-0">{t.common.rangeTo}</span>
+              <Input type="date" value={value.to ?? ''} min={value.from ?? undefined} onChange={(e) => setTo(e.target.value)} className="h-8" />
+            </label>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }

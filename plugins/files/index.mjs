@@ -491,8 +491,8 @@ function recordHash(sessionId, abs, hash, ours) {
 
 /** Record that this conversation now knows `abs` holds exactly `content`. `ours` marks content WE just
  *  wrote (as opposed to read), which is what earns the one post-write formatter forgiveness above. */
-export function markFileRead(sessionId, abs, content, ours = false) {
-  recordHash(sessionId, abs, hashOf(content), ours);
+export function markFileRead(sessionId, key, content, ours = false) {
+  recordHash(sessionId, key, hashOf(content), ours);
 }
 
 /** Which tool results vouch for a file's content, and whether that content counts as OURS — the `ours`
@@ -523,7 +523,10 @@ export function seedReadStateFromHistory(sessionId, messages) {
     if (!d || d.ok !== true || typeof d.path !== 'string' || typeof d.contentHash !== 'string') continue;
     const ours = VOUCHING_TOOLS[d.tool];
     if (ours === undefined) continue; // some other tool's result that happens to carry a path
-    recordHash(sessionId, d.path, d.contentHash, ours);
+    const key = typeof d.workspaceId === 'string' && d.workspaceId
+      ? `${d.workspaceId}\0${d.path}`
+      : d.path;
+    recordHash(sessionId, key, d.contentHash, ours);
     seeded++;
   }
   return seeded;
@@ -538,19 +541,19 @@ export function seedReadStateFromHistory(sessionId, messages) {
  *  no longer matches) must leave the recorded state exactly as it was: baselining the divergent bytes at
  *  decision time would bless content the agent never actually saw, and the blind overwrite it is supposed
  *  to refuse would sail through on the next call. Only a mutation that really lands re-records (markFileRead). */
-export function readGuardError(sessionId, abs, current, tolerateAuthoredDrift = false) {
+export function readGuardError(sessionId, key, current, tolerateAuthoredDrift = false, display = key) {
   if (!sessionId) return null;  // no turn scope to key on — inert, not wrong
   if (current === null) return null; // new file: nothing was there to overwrite
-  const entry = readState.get(sessionId)?.get(abs);
+  const entry = readState.get(sessionId)?.get(key);
   if (!entry) {
-    return `${abs} has not been read in this conversation. Read it first — editing a file you have not seen `
+    return `${display} has not been read in this conversation. Read it first — editing a file you have not seen `
       + 'risks overwriting content you never reviewed.';
   }
   if (hashOf(current) === entry.hash) return null;
   // Content we wrote, reshaped afterwards (the formatters hook). An anchored edit may proceed: its `old_string`
   // still has to match these current bytes to apply at all, which is what keeps it honest.
   if (entry.ours && tolerateAuthoredDrift) return null;
-  return `${abs} has changed on disk since you last read it. Read it again before writing — otherwise your `
+  return `${display} has changed on disk since you last read it. Read it again before writing — otherwise your `
     + 'change is based on stale content and would discard whatever else was written.';
 }
 
@@ -753,6 +756,20 @@ export function register(ctx) {
   // The bounds MUST mirror the manifest's: the server stores plugin config unvalidated, so this clamp is
   // the only one there is.
   const pdfMaxPages = Math.min(Math.max(Number(ctx.config.pdfMaxPages) || DEFAULT_PDF_MAX_PAGES, 5), 50);
+  const pathMeta = (abs) => {
+    const path = ctx.displayPath(abs);
+    const workspaceId = ctx.currentAccess().workspaceRef?.workspaceId;
+    return { path, ...(workspaceId ? { workspaceId } : {}) };
+  };
+  const statePath = (abs) => ctx.pathStateKey(abs);
+  const safeError = (error) => new Error(ctx.sanitizePathOutput(error instanceof Error ? error.message : String(error)));
+  const sanitizeResult = (result, abs) => ({
+    ...result,
+    content: result.content?.map((item) => item?.type === 'text'
+      ? { ...item, text: ctx.sanitizePathOutput(item.text) }
+      : item),
+    details: { ...(result.details ?? {}), ...pathMeta(abs) },
+  });
 
   // A conversation coming back after a daemon restart brings its history with it — and with it every
   // file this session has already seen. Replay that into the read state so the guard picks up where the
@@ -762,6 +779,15 @@ export function register(ctx) {
     run: (payload) => { seedReadStateFromHistory(payload?.sessionId, payload?.messages); },
   });
 
+  // Every path tool below is declared `workspaceSafe`, which is what lets a sub-agent confined to one
+  // Sandbox worktree have file tools at all. The declaration is not a promise made here — it states that
+  // these tools route their paths through the host's workspace machinery instead of touching disk on
+  // their own: `ctx.assertPathAllowed` resolves through the active PathView BEFORE the admin all-access
+  // branch (so an admin parent cannot widen a confined child), `ctx.defaultCwd` is the workspace root,
+  // and results leave through displayPath/pathStateKey/sanitizePathOutput so no host prefix crosses the
+  // boundary. The spawner rewrites their "path must be absolute" wording and their `path` parameter into
+  // the workspace-relative contract, so the descriptions stay true in both modes.
+  // Without the declaration the spawner drops them fail-closed and the child has no file access at all.
   ctx.registerTool(defineTool({
     name: 'Read', label: 'Read file',
     description: [
@@ -789,22 +815,22 @@ export function register(ctx) {
           // A PDF has no meaningful line-based read, so `pages` is not optional here — decoding it as UTF-8
           // would hand the model a screenful of binary and look like a successful read.
           if (p.pages === undefined) {
-            return fail('Read', new Error(`This is a PDF. Pass \`pages\` to read it — e.g. pages="1-5" (max ${pdfMaxPages} per call).`), { path: abs, pdf: true });
+            return fail('Read', new Error(`This is a PDF. Pass \`pages\` to read it — e.g. pages="1-5" (max ${pdfMaxPages} per call).`), { ...pathMeta(abs), pdf: true });
           }
-          const result = await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages);
+          const result = sanitizeResult(await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages), abs);
           // Only a read that actually SHOWED the agent something counts. A bad `pages` spec, an encrypted
           // PDF or a missing poppler must not leave the file marked as read — that would license a later
           // blind Write over a document nobody ever saw.
           if (!result.details?.ok) return result;
-          markFileRead(ctx.currentSessionId?.(), abs, raw);
+          markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
           // The hash rides the RESULT so a later process can re-seed the read state from this very
           // message (see seedReadStateFromHistory) instead of demanding the file be read again.
           return { ...result, details: { ...result.details, contentHash: hashOf(raw) } };
         }
         const mime = detectImageMime(raw);
         if (mime) {
-          markFileRead(ctx.currentSessionId?.(), abs, raw);
-          const details = { ok: true, tool: 'Read', truncated: false, path: abs, bytes: raw.length, image: true, mimeType: mime, contentHash: hashOf(raw) };
+          markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
+          const details = { ok: true, tool: 'Read', truncated: false, ...pathMeta(abs), bytes: raw.length, image: true, mimeType: mime, contentHash: hashOf(raw) };
           const resized = await resizeImage(raw, mime, { maxWidth: 2000, maxHeight: 2000 }).catch(() => null);
           let data = resized?.data;
           let outMime = resized?.mimeType ?? mime;
@@ -835,7 +861,7 @@ export function register(ctx) {
         }
         // Record the WHOLE file's bytes, not just the slice returned: the guard tracks what is on disk, and
         // a paginated read still tells the agent this file exists and what it currently is.
-        markFileRead(ctx.currentSessionId?.(), abs, raw);
+        markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
         const body = raw.toString('utf-8');
         const allLines = body.split('\n');
         // A trailing newline yields a phantom empty final element — it terminates the last line, it is not a
@@ -844,7 +870,7 @@ export function register(ctx) {
         // reads back nothing.
         const total = allLines.length - (body.endsWith('\n') && allLines.length > 1 ? 1 : 0);
         const start = p.offset ? Math.max(0, Math.floor(p.offset) - 1) : 0;
-        if (start >= total) return fail('Read', new Error(`Offset ${p.offset} is beyond end of file (${total} lines total)`), { path: abs });
+        if (start >= total) return fail('Read', new Error(`Offset ${p.offset} is beyond end of file (${total} lines total)`), pathMeta(abs));
         const endLine = p.limit !== undefined ? Math.min(start + Math.max(0, Math.floor(p.limit)), total) : total;
         const selected = allLines.slice(start, endLine).join('\n');
         const r = truncateHead(selected, { maxBytes: readCap, maxLines: Infinity });
@@ -868,10 +894,10 @@ export function register(ctx) {
         } else if (truncated) {
           text += `\n\n[Showing lines ${start + 1}-${endShown} of ${total}. Use offset=${endShown + 1} to continue.]`;
         }
-        return ok('Read', text, { path: abs, bytes: Buffer.byteLength(body), truncated, contentHash: hashOf(raw) });
-      } catch (e) { return fail('Read', e); }
+        return ok('Read', text, { ...pathMeta(abs), bytes: Buffer.byteLength(body), truncated, contentHash: hashOf(raw) });
+      } catch (e) { return fail('Read', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'Write', label: 'Write file',
@@ -897,22 +923,23 @@ export function register(ctx) {
         return await withFileMutationQueue(abs, async () => {
           let beforeBuf = null;
           try { beforeBuf = readFileSync(abs); } catch { /* new file */ }
-          const guard = readGuardError(sessionId, abs, beforeBuf);
-          if (guard) return ok('Write', `Error: ${guard}`, { ok: false, path: abs });
+          const display = ctx.displayPath(abs);
+          const guard = readGuardError(sessionId, statePath(abs), beforeBuf, false, display);
+          if (guard) return ok('Write', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
           writeFileSync(abs, p.content, 'utf-8');
           const written = Buffer.from(p.content, 'utf-8');
-          markFileRead(sessionId, abs, written, true);
+          markFileRead(sessionId, statePath(abs), written, true);
           const base = beforeBuf?.toString('utf-8') ?? '';
           const diff = displayDiff(base, p.content);
-          const patch = unifiedPatch(abs, base, p.content);
-          return ok('Write', `Wrote ${Buffer.byteLength(p.content)} bytes to ${abs}`, {
-            path: abs, bytes: Buffer.byteLength(p.content), contentHash: hashOf(written),
+          const patch = unifiedPatch(display, base, p.content);
+          return ok('Write', `Wrote ${Buffer.byteLength(p.content)} bytes to ${display}`, {
+            ...pathMeta(abs), bytes: Buffer.byteLength(p.content), contentHash: hashOf(written),
             ...(diff ? { diff } : {}), ...(patch ? { patch } : {}),
           });
         });
-      } catch (e) { return fail('Write', e); }
+      } catch (e) { return fail('Write', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'Edit', label: 'Edit file',
@@ -939,27 +966,28 @@ export function register(ctx) {
           const beforeBuf = readFileSync(abs);
           // `true`: an anchored edit may proceed through a post-write reformat of our OWN content — its
           // old_string still has to match what is on disk now. A blind overwrite (Write) gets no such pass.
-          const guard = readGuardError(sessionId, abs, beforeBuf, true);
-          if (guard) return ok('Edit', `Error: ${guard}`, { ok: false, path: abs });
+          const display = ctx.displayPath(abs);
+          const guard = readGuardError(sessionId, statePath(abs), beforeBuf, true, display);
+          if (guard) return ok('Edit', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
           const before = beforeBuf.toString('utf-8');
-          if (p.old_string === p.new_string) return ok('Edit', 'Error: old_string and new_string are identical.', { ok: false, path: abs });
+          if (p.old_string === p.new_string) return ok('Edit', 'Error: old_string and new_string are identical.', { ok: false, ...pathMeta(abs) });
           const plan = planEdit(before, p.old_string, p.new_string, p.replace_all ?? false);
-          if (plan.error === 'empty') return ok('Edit', 'Error: old_string must not be empty.', { ok: false, path: abs });
-          if (plan.error === 'notfound') return ok('Edit', 'Error: old_string not found in the file. Match it exactly, including whitespace.', { ok: false, path: abs });
-          if (plan.error === 'ambiguous') return ok('Edit', `Error: old_string matches ${plan.count} times. Provide more context to make it unique, or set replace_all.`, { ok: false, path: abs, matches: plan.count });
-          if (plan.newContent === plan.content) return ok('Edit', 'Error: the replacement produced identical content.', { ok: false, path: abs });
+          if (plan.error === 'empty') return ok('Edit', 'Error: old_string must not be empty.', { ok: false, ...pathMeta(abs) });
+          if (plan.error === 'notfound') return ok('Edit', 'Error: old_string not found in the file. Match it exactly, including whitespace.', { ok: false, ...pathMeta(abs) });
+          if (plan.error === 'ambiguous') return ok('Edit', `Error: old_string matches ${plan.count} times. Provide more context to make it unique, or set replace_all.`, { ok: false, ...pathMeta(abs), matches: plan.count });
+          if (plan.newContent === plan.content) return ok('Edit', 'Error: the replacement produced identical content.', { ok: false, ...pathMeta(abs) });
           writeFileSync(abs, plan.after, 'utf-8');
           const written = Buffer.from(plan.after, 'utf-8');
-          markFileRead(sessionId, abs, written, true);
+          markFileRead(sessionId, statePath(abs), written, true);
           const diff = displayDiff(plan.content, plan.newContent);
-          const patch = unifiedPatch(abs, plan.content, plan.newContent);
-          return ok('Edit', `Edited ${abs} (${plan.count > 1 ? `${plan.count} replacements` : '1 replacement'})`, {
-            path: abs, replacements: plan.count, contentHash: hashOf(written), ...(diff ? { diff } : {}), ...(patch ? { patch } : {}),
+          const patch = unifiedPatch(display, plan.content, plan.newContent);
+          return ok('Edit', `Edited ${display} (${plan.count > 1 ? `${plan.count} replacements` : '1 replacement'})`, {
+            ...pathMeta(abs), replacements: plan.count, contentHash: hashOf(written), ...(diff ? { diff } : {}), ...(patch ? { patch } : {}),
           });
         });
-      } catch (e) { return fail('Edit', e); }
+      } catch (e) { return fail('Edit', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'ListDir', label: 'List directory',
@@ -975,10 +1003,10 @@ export function register(ctx) {
         const entries = readdirSync(abs).map((n) => {
           try { return statSync(join(abs, n)).isDirectory() ? `${n}/` : n; } catch { return n; }
         });
-        return ok('ListDir', entries.join('\n') || '(empty)', { path: abs, count: entries.length });
-      } catch (e) { return fail('ListDir', e); }
+        return ok('ListDir', entries.join('\n') || '(empty)', { ...pathMeta(abs), count: entries.length });
+      } catch (e) { return fail('ListDir', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'Search', label: 'Search files',
@@ -997,7 +1025,7 @@ export function register(ctx) {
       try {
         const abs = ctx.assertPathAllowed(p.path);
         const mode = p.mode === 'files' ? 'files' : 'content';
-        if (!String(p.query ?? '').trim()) return ok('Search', 'Error: query is required.', { ok: false, path: abs });
+        if (!String(p.query ?? '').trim()) return ok('Search', 'Error: query is required.', { ok: false, ...pathMeta(abs) });
         const root = statSync(abs).isDirectory() ? abs : dirname(abs);
         const queryText = String(p.query);
         const query = safeRegex(queryText);
@@ -1021,10 +1049,10 @@ export function register(ctx) {
         // Cap each hit so one minified/very long match line can't flood the result set.
         const formatted = lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text).join('\n');
         const truncated = lines.length >= searchMaxMatches;
-        return ok('Search', formatted || 'No matches found.', { path: abs, mode, matches: lines.length, truncated });
-      } catch (e) { return fail('Search', e); }
+        return ok('Search', formatted || 'No matches found.', { ...pathMeta(abs), mode, matches: lines.length, truncated });
+      } catch (e) { return fail('Search', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'FileInfo', label: 'File info',
@@ -1038,11 +1066,11 @@ export function register(ctx) {
       try {
         const abs = ctx.assertPathAllowed(p.path);
         const s = statSync(abs);
-        const info = { path: abs, type: s.isDirectory() ? 'directory' : s.isFile() ? 'file' : 'other', bytes: s.size, modifiedAt: s.mtime.toISOString() };
+        const info = { ...pathMeta(abs), type: s.isDirectory() ? 'directory' : s.isFile() ? 'file' : 'other', bytes: s.size, modifiedAt: s.mtime.toISOString() };
         return ok('FileInfo', JSON.stringify(info, null, 2), info);
-      } catch (e) { return fail('FileInfo', e); }
+      } catch (e) { return fail('FileInfo', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'GitStatus', label: 'Git status',
@@ -1055,6 +1083,21 @@ export function register(ctx) {
     execute: async (_id, p) => {
       try {
         const abs = ctx.assertPathAllowed(p.path);
+        const access = ctx.currentAccess();
+        if (access.workspaceRef) {
+          const sandbox = ctx.control('sandbox');
+          if (!sandbox?.gitStatus || !Number.isSafeInteger(access.contributionUserId)) {
+            throw new Error('GitStatus is unavailable because Sandbox workspace Git support is not loaded');
+          }
+          const status = await sandbox.gitStatus({
+            accountUserId: access.contributionUserId,
+            workspace: access.workspaceRef,
+            path: ctx.displayPath(abs),
+          });
+          const lines = status.lines;
+          const out = [`branch ${status.branch}`, 'root .', lines.length ? '' : 'clean', ...lines.slice(0, 120)];
+          return ok('GitStatus', out.join('\n'), { root: '.', workspaceId: access.workspaceRef.workspaceId, branch: status.branch, dirtyFiles: lines.length, truncated: lines.length > 120 });
+        }
         const cwd = statSync(abs).isDirectory() ? abs : dirname(abs);
         const run = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
         const root = run(['rev-parse', '--show-toplevel']);
@@ -1064,9 +1107,9 @@ export function register(ctx) {
         const lines = porcelain.split('\n').filter(Boolean);
         const out = [`branch ${branch}`, `root ${root}`, lines.length ? '' : 'clean', ...lines.slice(0, 120)];
         return ok('GitStatus', out.join('\n'), { root, branch, dirtyFiles: lines.length, truncated: lines.length > 120 });
-      } catch (e) { return fail('GitStatus', e); }
+      } catch (e) { return fail('GitStatus', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'Glob', label: 'Find files by pattern',
@@ -1103,11 +1146,11 @@ export function register(ctx) {
         const truncated = matched.length > globMax;
         const walkTruncated = files.length >= WALK_CAP; // the traversal itself hit the file cap
         return ok('Glob', results.join('\n') || 'No files matched.', {
-          path: abs, pattern: p.pattern, matches: results.length, truncated, walkTruncated,
+          ...pathMeta(abs), pattern: p.pattern, matches: results.length, truncated, walkTruncated,
         });
-      } catch (e) { return fail('Glob', e); }
+      } catch (e) { return fail('Glob', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.registerTool(defineTool({
     name: 'Grep', label: 'Search file contents',
@@ -1169,11 +1212,11 @@ export function register(ctx) {
         // silently). Wording mirrors the Claude reference's pagination note.
         if (truncated && lines.length) text += `\n\n[Showing results with pagination — output truncated at ${lines.length} results; narrow the pattern or raise head_limit for more.]`;
         return ok('Grep', text, {
-          path: root, pattern: p.pattern, outputMode, matches: lines.length, truncated,
+          ...pathMeta(root), pattern: p.pattern, outputMode, matches: lines.length, truncated,
         });
-      } catch (e) { return fail('Grep', e); }
+      } catch (e) { return fail('Grep', safeError(e)); }
     },
-  }));
+  }), { workspaceSafe: true });
 
   ctx.logger.info('registered Read, Write, Edit, ListDir, Search, FileInfo, GitStatus, Glob, Grep');
 }

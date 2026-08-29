@@ -28,9 +28,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// ../elowen/packages/plugin-ui-kit/shims/react.cjs
+// packages/plugin-ui-kit/shims/react.cjs
 var require_react = __commonJS({
-  "../elowen/packages/plugin-ui-kit/shims/react.cjs"(exports, module) {
+  "packages/plugin-ui-kit/shims/react.cjs"(exports, module) {
     "use strict";
     var runtime2 = typeof window !== "undefined" ? window.ElowenUiRuntime : void 0;
     if (!runtime2) throw new Error("elowen-plugin-ui-kit: window.ElowenUiRuntime is missing \u2014 plugin bundles only run inside the Elowen web app");
@@ -38,9 +38,9 @@ var require_react = __commonJS({
   }
 });
 
-// ../elowen/packages/plugin-ui-kit/shims/jsx-runtime.cjs
+// packages/plugin-ui-kit/shims/jsx-runtime.cjs
 var require_jsx_runtime = __commonJS({
-  "../elowen/packages/plugin-ui-kit/shims/jsx-runtime.cjs"(exports, module) {
+  "packages/plugin-ui-kit/shims/jsx-runtime.cjs"(exports, module) {
     "use strict";
     var runtime2 = typeof window !== "undefined" ? window.ElowenUiRuntime : void 0;
     if (!runtime2) throw new Error("elowen-plugin-ui-kit: window.ElowenUiRuntime is missing \u2014 plugin bundles only run inside the Elowen web app");
@@ -49,6 +49,7 @@ var require_jsx_runtime = __commonJS({
 });
 
 // plugins/mcp/web-src/runtime.ts
+var DATA_TABLE_ICON_SIZE = 12;
 function runtime() {
   const value = window.ElowenUiRuntime;
   if (!value) throw new Error("ElowenUiRuntime is not installed");
@@ -135,14 +136,16 @@ var createLucideIcon = (iconName, iconNode) => {
   return Component;
 };
 
-// web/node_modules/lucide-react/dist/esm/icons/chevron-left.js
-var ChevronLeft = createLucideIcon("ChevronLeft", [
-  ["path", { d: "m15 18-6-6 6-6", key: "1wnfg3" }]
-]);
-
-// web/node_modules/lucide-react/dist/esm/icons/chevron-right.js
-var ChevronRight = createLucideIcon("ChevronRight", [
-  ["path", { d: "m9 18 6-6-6-6", key: "mthhwq" }]
+// web/node_modules/lucide-react/dist/esm/icons/blocks.js
+var Blocks = createLucideIcon("Blocks", [
+  ["rect", { width: "7", height: "7", x: "14", y: "3", rx: "1", key: "6d4xhi" }],
+  [
+    "path",
+    {
+      d: "M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3",
+      key: "1fpvtg"
+    }
+  ]
 ]);
 
 // web/node_modules/lucide-react/dist/esm/icons/plug-zap.js
@@ -288,31 +291,40 @@ function statusDot(server) {
 function scopeLabel(scope, strings) {
   return scope === "instance" ? strings.scopeInstance : strings.scopePersonal;
 }
-function McpServerRow({ server, showScope, selected, onSelect }) {
+function McpServerRow({ server, showScope, selected, onOpen }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings("mcp");
   const label = statusLabel(server, s);
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.DataTableRow, { interactive: true, selected, "aria-selected": selected, className: "group", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.DataTableCell, { className: "flex items-center justify-center", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-2 w-2 rounded-full ${statusDot(server)}`, title: label, "aria-hidden": true }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "sr-only", children: label })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { type: "button", onClick: onSelect, className: "flex w-full min-w-0 items-center gap-2 text-left", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "truncate text-sm text-text", children: server.name }),
-      !server.enabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { tone: "muted", children: s.statusDisabled }) : null
-    ] }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", className: "whitespace-nowrap", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { children: server.transport.toUpperCase() }) }),
-    showScope ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", title: scopeLabel(server.scope, s), className: "truncate text-xs text-text-muted", children: scopeLabel(server.scope, s) }) : null,
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", className: "whitespace-nowrap text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex items-center gap-1.5", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: 12, "aria-hidden": true }),
-      server.toolCount
-    ] }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", title: server.lastError ?? label, className: "truncate text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex min-w-0 items-center gap-1.5", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "shrink-0", children: server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(TriangleAlert, { size: 12, "aria-hidden": true }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PlugZap, { size: 12, "aria-hidden": true }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `truncate ${server.lastError ? "text-danger" : ""}`, children: server.lastError ?? label })
-    ] }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { "aria-hidden": true, className: "text-text-muted/50 transition-colors group-hover:text-text", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { size: 15 }) })
-  ] });
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    C.DataTableRow,
+    {
+      selected,
+      "aria-selected": selected,
+      onOpen,
+      openLabel: s.openServer.replace("{name}", server.name),
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.DataTableCell, { lines: "auto", title: label, className: "flex items-center justify-center", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-2 w-2 rounded-full ${statusDot(server)}`, "aria-hidden": true }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "sr-only", children: label })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { lines: 1, title: server.name, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex w-full min-w-0 items-center gap-2", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "truncate text-sm text-text", children: server.name }),
+          !server.enabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { tone: "muted", children: s.statusDisabled }) : null
+        ] }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: "auto", className: "whitespace-nowrap", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { children: server.transport.toUpperCase() }) }),
+        showScope ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, className: "text-xs text-text-muted", children: scopeLabel(server.scope, s) }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, className: "text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex items-center gap-1.5", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: DATA_TABLE_ICON_SIZE, "aria-hidden": true }),
+          server.toolCount
+        ] }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", lines: 1, title: server.lastError ?? label, className: "text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex min-w-0 items-center gap-1.5", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "shrink-0", children: server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(TriangleAlert, { size: DATA_TABLE_ICON_SIZE, "aria-hidden": true }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PlugZap, { size: DATA_TABLE_ICON_SIZE, "aria-hidden": true }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `truncate ${server.lastError ? "text-danger" : ""}`, children: server.lastError ?? label })
+        ] }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableChevronCell, {})
+      ]
+    }
+  );
 }
 function ServerEditor({ server, draft, saving, busy, error, canManageInstance, onChange, onSave, onReconnect, onRemove, onShowTools }) {
   const { components: C, hooks } = runtime();
@@ -515,13 +527,12 @@ function McpServersPage() {
         compactColumns: "2rem minmax(0,1fr) 1.25rem",
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.DataTableRow, { header: true, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "sr-only", children: s.colStatus }) }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, children: s.name }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.transport }),
-            canManageInstance ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.scope }) : null,
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.tools }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", className: "whitespace-nowrap", children: s.colStatus }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, role: "presentation", "aria-hidden": true, children: null })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, labelHidden: true, lines: 1, children: s.colStatus }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, lines: 1, children: s.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", lines: 1, children: s.transport }),
+            canManageInstance ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", lines: 1, children: s.scope }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", lines: 1, children: s.tools }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", lines: 1, children: s.colStatus })
           ] }),
           pageItems.map((server) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             McpServerRow,
@@ -529,34 +540,26 @@ function McpServersPage() {
               server,
               showScope: canManageInstance,
               selected: editor?.key === serverKey(server),
-              onSelect: () => openServer(server)
+              onOpen: () => openServer(server)
             },
             serverKey(server)
           ))
         ]
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-2 border-b border-border/80 pb-3 sm:flex-row sm:items-center sm:justify-between", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "font-mono text-xs text-text-muted", children: s.pageRange.replace("{from}", String(clampedPage * PAGE_SIZE + 1)).replace("{to}", String(clampedPage * PAGE_SIZE + pageItems.length)).replace("{total}", String(filtered.length)) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex items-center gap-1", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost", icon: ChevronLeft, disabled: clampedPage === 0, onClick: () => setPage(clampedPage - 1), children: s.prevPage }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "min-w-24 text-center font-mono text-xs text-text-muted", children: s.pageLabel.replace("{page}", String(clampedPage + 1)).replace("{pages}", String(pageCount)) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.Button, { variant: "ghost", disabled: clampedPage >= pageCount - 1, onClick: () => setPage(clampedPage + 1), children: [
-          s.nextPage,
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { size: 15, className: "ml-1", "aria-hidden": true })
-        ] })
-      ] })
-    ] })
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Pager, { page: clampedPage, pageSize: PAGE_SIZE, total: filtered.length, onPageChange: setPage, ariaLabel: s.title })
   ] });
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-    C.SpatialWorkspaceLayout,
+    C.WorkspaceShell,
     {
+      variant: "register",
       hero: {
         eyebrow: t.pluginUi.eyebrow,
         title: s.title,
         count: rows.length,
         description: s.description,
-        mascotState: loadError ? "error" : loading ? "saving" : "idle",
+        icon: Blocks,
+        mascot: loadError ? "error" : loading ? "saving" : "idle",
         status: !loading && !loadError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "workspace-status", children: s.workspaceReady }) : void 0,
         action: addButton,
         metrics: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
@@ -567,11 +570,18 @@ function McpServersPage() {
       },
       children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceDocument, { children: loadError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceState, { tone: "danger", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ErrorState, { message: s.loadError, onRetry: () => void load() }) }) : loading || !data ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceState, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.LoadingState, { variant: "cards" }) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 flex-col gap-4", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceToolbar, { className: "flex-col items-stretch", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 flex-wrap items-center gap-2 py-3", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "relative min-w-[15rem] flex-1", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, { size: 14, "aria-hidden": true, className: "pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { value: query, onChange: (event) => setQuery(event.target.value), placeholder: s.searchPlaceholder, className: "pl-9" })
-            ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceToolbar, { layout: "stacked", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 flex-wrap items-center gap-2 py-3", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              C.RegisterSearch,
+              {
+                value: query,
+                onChange: setQuery,
+                placeholder: s.searchPlaceholder,
+                label: s.searchPlaceholder,
+                onClear: () => setQuery(""),
+                clearLabel: s.searchClear
+              }
+            ),
             canManageInstance ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               C.Segmented,
               {
@@ -637,6 +647,7 @@ function McpServersPage() {
 
 // plugins/mcp/web-src/index.tsx
 registerMcpUi({
-  requiresApiVersion: 2,
+  // 8: the register composes WorkspaceShell, Pager, RegisterSearch and DataTableChevronCell.
+  requiresApiVersion: 8,
   pages: { "": McpServersPage }
 });

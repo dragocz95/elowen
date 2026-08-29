@@ -5,7 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { ResolvedTheme } from '../../lib/useTheme';
 import type { TerminalSettings } from '../../lib/types';
-import { xtermTheme } from './xtermTheme';
+import { xtermBackground, xtermTheme } from './xtermTheme';
 import { FONT_STACKS } from './palettes';
 
 // A fixed sample that exercises the whole palette: a shell prompt (foreground + named colours), the 3
@@ -20,8 +20,10 @@ const SAMPLE = [
   '\x1b[32m➜\x1b[0m \x1b[36m~/elowen\x1b[0m ',
 ].join('\r\n');
 
-// macOS-style titlebar traffic lights — deliberately literal (terminal chrome, not app theme).
-const DOTS = ['#ff5f57', '#febc2e', '#28c840'];
+// macOS-style titlebar traffic lights. The three hues carry no meaning here — they are window chrome —
+// so they take the design's own three status tones rather than the macOS literals they imitate, and a
+// skin repaints the preview frame along with everything else.
+const DOTS = ['var(--color-danger)', 'var(--color-warning)', 'var(--color-success)'];
 
 /** Whether a `#rrggbb` background is light — picks the titlebar chrome colour (the frame is filled with
  *  the terminal's own background, which is independent of the app theme). */
@@ -74,13 +76,19 @@ export function TerminalPreview({ settings, resolvedTheme }: { settings: Termina
     term.write(SAMPLE);
   }, [settings, resolvedTheme]);
 
-  const bg = xtermTheme(resolvedTheme, settings).background ?? (resolvedTheme === 'light' ? '#ffffff' : '#000000');
-  const chrome = isLightBg(bg) ? 'rgba(0,0,0,' : 'rgba(255,255,255,';
+  const bg = xtermBackground(resolvedTheme, settings);
+  // The frame's hairline and its caption are a wash over the TERMINAL's background, not over an app
+  // surface, so neither can come from a design token: a light palette inside a dark app needs dark
+  // chrome and vice versa. Mixed INTO that background rather than layered over it with an alpha —
+  // against an opaque backdrop the two produce the identical colour, and the mix keeps the extremes as
+  // the CSS keywords they are instead of two more colour literals in the component tree.
+  const ink = isLightBg(bg) ? 'black' : 'white';
+  const chrome = (percent: number) => `color-mix(in srgb, ${ink} ${percent}%, ${bg})`;
   return (
     <div data-testid="terminal-preview" className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border" style={{ backgroundColor: bg }}>
-      <div className="flex items-center gap-1.5 px-3.5 py-2.5" style={{ borderBottom: `1px solid ${chrome}0.1)` }}>
+      <div className="flex items-center gap-1.5 px-3.5 py-2.5" style={{ borderBottom: `1px solid ${chrome(10)}` }}>
         {DOTS.map((c) => <span key={c} className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c }} aria-hidden />)}
-        <span className="ml-2 truncate font-mono text-[10px]" style={{ color: `${chrome}0.45)` }}>elowen</span>
+        <span className="ml-2 truncate font-mono text-[10px]" style={{ color: chrome(45) }}>elowen</span>
       </div>
       <div className="min-w-0 overflow-hidden px-3.5 py-3">
         <div ref={ref} className="h-40 min-w-0 max-w-full overflow-hidden [&_.xterm]:max-w-full [&_.xterm-screen]:max-w-full [&_.xterm-viewport]:[scrollbar-width:none] [&_.xterm-viewport::-webkit-scrollbar]:hidden" />

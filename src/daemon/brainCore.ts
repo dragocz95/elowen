@@ -103,8 +103,8 @@ export function createDelegatedChildren(
       if (!brain) throw new Error('the brain is not available on this deployment');
       return brain.readSubagent(parentSessionId, childSessionId);
     },
-    continue: (parentSessionId, childSessionId, text, access, onEvent, model, promote) => brain
-      ? brain.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote)
+    continue: (parentSessionId, childSessionId, text, access, onEvent, model, promote, workspaceId) => brain
+      ? brain.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote, workspaceId)
       : Promise.reject(new Error('the brain is not available on this deployment')),
     stop: (parentSessionId, childSessionId) => brain
       ? brain.stopSubagent(parentSessionId, childSessionId)
@@ -690,6 +690,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         hookAudit,
         policy: (userId) => resolvePolicy({ userProjects, projects, supplementalPaths: sandboxWorkspaceRoots }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
+        fastMode: (userId) => userSettings.fastMode(userId),
+        setFastMode: (userId, on) => on === undefined ? userSettings.toggleFastMode(userId) : userSettings.setFastMode(userId, on),
         projectModelPreference: (userId, projectRoot) => userSettings.projectModelPreference(userId, projectRoot),
         setProjectModelPreference: (userId, projectRoot, selection) => { userSettings.setProjectModelPreference(userId, projectRoot, selection); },
         // Granular tool permissions (allow/ask/deny rules + the persisted YOLO default) and the

@@ -34,9 +34,10 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
-import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
-import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
-import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../modules/settings/SettingsSurface';
+import { WorkspaceLeadScope, WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { WorkspaceMetric, type WorkspaceHeroProps } from '../../components/ui/WorkspaceHero';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
+import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../components/ui/SettingsSurface';
 import { SkinsRow } from '../../modules/settings/SkinsRow';
 import { MotionReveal } from '../../components/ui/Motion';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
@@ -54,7 +55,7 @@ const SystemDiagnostics = nextDynamic(
   { ssr: false, loading: () => <LoadingState variant="block" height="h-[150px]" /> },
 );
 
-const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
+const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-primary';
 
 function formatMemory(used: number, total: number): string {
   const gb = (value: number) => `${(value / 1_000_000_000).toFixed(1)} GB`;
@@ -91,11 +92,13 @@ function SettingsPanel({ id, active, visited, children }: {
 }) {
   if (id !== active && !visited.has(id)) return null;
   return (
-    <Activity mode={id === active ? 'visible' : 'hidden'}>
-      <MotionReveal data-settings-panel={id} data-constellation={ORBITAL_CATEGORIES.has(id) ? '' : undefined}>
-        <SettingsDocument>{children}</SettingsDocument>
-      </MotionReveal>
-    </Activity>
+    <WorkspaceLeadScope active={id === active}>
+      <Activity mode={id === active ? 'visible' : 'hidden'}>
+        <MotionReveal data-settings-panel={id} data-constellation={ORBITAL_CATEGORIES.has(id) ? '' : undefined}>
+          <SettingsDocument>{children}</SettingsDocument>
+        </MotionReveal>
+      </Activity>
+    </WorkspaceLeadScope>
   );
 }
 
@@ -371,9 +374,16 @@ export default function SettingsPage() {
   // The hero answers "is this instance healthy right now" on every settings tab, and carries the one
   // action an operator reaches for after changing something. Restarting still goes through the same
   // confirmation as the row in the System section — this is a second door to it, not a second path.
+  const activeSection = deckSections.find((section) => section.id === category) ?? deckSections[0]!;
   const deckHero = {
-    mascotState: (system.isError ? 'error' : systemRestart.isPending ? 'saving' : 'idle') as 'error' | 'saving' | 'idle',
-    action: (
+    eyebrow: t.page.settings,
+    title: activeSection.label,
+    description: activeSection.description,
+    status: <AutoSaveStatus status={activeFeedback.status} onRetry={activeFeedback.retry} />,
+    // Instance health and restart actions belong to System. Repeating them over Models, Plugins or Memory
+    // made every mobile section open with unrelated controls before its own content.
+    mascot: category === 'system' ? (system.isError ? 'error' : systemRestart.isPending ? 'saving' : 'idle') as 'error' | 'saving' | 'idle' : false,
+    action: category === 'system' ? (
       <>
         <Button icon={RotateCcw} disabled={systemRestart.isPending} onClick={() => setRestartTarget('daemon')}>
           {t.settings.restartDaemon}
@@ -382,31 +392,26 @@ export default function SettingsPage() {
           {t.settings.restartWeb}
         </Button>
       </>
-    ),
-    metrics: (
+    ) : undefined,
+    metrics: category === 'system' ? (
       <>
         <WorkspaceMetric label={t.settings.version.replace('{productName}', brand.appName)} value={<span className="font-mono">{system.data?.version ?? '—'}</span>} icon={Sparkles} />
         <WorkspaceMetric label={t.settings.serviceDaemon} value={system.isError ? t.settings.serviceDown : t.settings.serviceUp} icon={Server} />
         <WorkspaceMetric label={t.settings.diagnosticMemory} value={diagnostics ? `${Math.round((diagnostics.memoryUsedBytes / diagnostics.memoryTotalBytes) * 100)} %` : '—'} icon={MemoryStick} />
         <WorkspaceMetric label={t.settings.diagnosticUptime} value={diagnostics ? formatUptime(diagnostics.uptimeSeconds) : '—'} icon={Timer} />
       </>
-    ),
-  };
+    ) : undefined,
+  } satisfies WorkspaceHeroProps;
 
   return (
     <ModuleShell moduleId="settings">
       <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
 
       <div className="flex w-full min-w-0 flex-col">
-      <SpatialControlDeck
-        eyebrow={t.page.settings}
-        ariaLabel={t.settings.sectionsNav}
-        sections={deckSections}
-        value={category}
-        onChange={setCategory}
-        status={activeFeedback.status}
-        onRetry={activeFeedback.retry}
+      <WorkspaceShell
+        variant="deck"
         hero={deckHero}
+        navigation={{ sections: deckSections, value: activeSection.id, onChange: setCategory, ariaLabel: t.settings.sectionsNav }}
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>
           <>
@@ -450,11 +455,11 @@ export default function SettingsPage() {
                     {cliItems.map((p) => {
                       const isCustom = !isPresetExec(p.exec);
                       return (
-                        <div data-testid="model-row" key={p.exec} className="settings-model-row group flex min-w-0 items-center gap-3 transition-colors">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center text-text-muted">
+                        <div data-testid="model-row" key={p.exec} className="settings-model-row settings-model-row--cli group flex min-w-0 items-center gap-3 transition-colors">
+                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-text-muted">
                             <ModelIcon name={p.exec} size={20} />
                           </span>
-                          <div className="min-w-0 @2xl:w-56 @2xl:shrink-0">
+                          <div className="settings-model-row__identity min-w-0 @2xl:w-56 @2xl:shrink-0">
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="truncate text-sm font-medium text-text">{p.label}</span>
                               {!isCustom ? <span className="text-[9px] uppercase tracking-wide text-text-muted/70">{t.settings.presetTag}</span> : null}
@@ -469,7 +474,7 @@ export default function SettingsPage() {
                           >
                             {modelNotes[p.exec]?.trim() || t.settings.modelNoteAdd}
                           </button>
-                          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                          <div className="settings-model-row__controls ml-auto flex shrink-0 items-center gap-1.5">
                             <button
                               type="button"
                               aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
@@ -501,20 +506,20 @@ export default function SettingsPage() {
                       const override = modelWindows[winKey];
                       const overridden = override != null;
                       return (
-                      <div data-testid="model-row" key={m.exec} className="settings-model-row flex min-w-0 items-center gap-3 transition-colors">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center text-text-muted"><ModelIcon name={m.model} size={20} /></span>
-                          <div className="min-w-0 flex-1">
-                            <span className="truncate text-sm font-medium text-text">{m.model}</span>
+                      <div data-testid="model-row" key={m.exec} className="settings-model-row settings-model-row--elowen flex min-w-0 items-center gap-3 transition-colors">
+                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-text-muted"><ModelIcon name={m.model} size={20} /></span>
+                          <div className="settings-model-row__identity min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-text">{m.model}</span>
                             <span className="block truncate font-mono text-[11px] text-text-muted">{m.exec}</span>
                           </div>
-                          <div className="ml-auto flex shrink-0 items-center gap-2">
-                            <Badge>{m.providerLabel}</Badge>
+                          <div className="settings-model-row__controls ml-auto flex shrink-0 items-center gap-2">
+                            <span className="settings-model-row__provider min-w-0"><Badge>{m.providerLabel}</Badge></span>
                             <button
                               type="button"
                               onClick={() => setCtxFor({ model: m.model, key: winKey, effective: m.contextWindow })}
                               title={`${t.brain.contextWindowEdit} · ${formatTokens(override ?? m.contextWindow)}`}
                               aria-label={`${t.brain.contextWindowEdit}: ${m.model}`}
-                              className={`inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-accent' : 'text-text-muted hover:text-text'}`}
+                              className={`settings-model-row__context inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-primary' : 'text-text-muted hover:text-text'}`}
                             >
                               <Gauge size={12} aria-hidden />
                               {formatTokens(override ?? m.contextWindow)}
@@ -597,7 +602,7 @@ export default function SettingsPage() {
                         {updateBadge}
                       </button>
                       {system.data?.updateAvailable ? (
-                        <button type="button" className="spatial-inline-action text-accent" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
+                        <button type="button" className="spatial-inline-action text-primary" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
                           onSuccess: () => toast(t.settings.updateStarted),
                           onError: (e) => toast(String(e), 'error'),
                         })}>{systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}<RefreshCw size={13} className={systemUpdate.isPending ? 'animate-spin' : ''} aria-hidden /></button>
@@ -710,8 +715,8 @@ export default function SettingsPage() {
         <SettingsPanel id="brain" active={category} visited={visitedCategories}>
           
             {/* Cross-link to the model catalog (enable / context-window per model) — the Models section. */}
-            <SettingsToolbar>
-              <button type="button" onClick={() => setCategory('models')} className="font-medium text-accent hover:underline">
+            <SettingsToolbar promote={false}>
+              <button type="button" onClick={() => setCategory('models')} className="font-medium text-primary hover:underline">
                 {t.settings.brainModelsLink}
               </button>
             </SettingsToolbar>
@@ -745,7 +750,7 @@ export default function SettingsPage() {
 
         </SettingsPanel>
 
-      </SpatialControlDeck>
+      </WorkspaceShell>
       </div>
 
       {logsOpen ? <LogsModal onClose={() => setLogsOpen(false)} /> : null}

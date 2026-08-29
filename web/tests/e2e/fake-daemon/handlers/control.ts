@@ -12,6 +12,7 @@ import type { BrainMessage } from '../../../../lib/types.ts';
 import type { OverrideKey } from '../overrides.ts';
 import { setResponseOverride, setMessagesOverride, resetOverrides } from '../overrides.ts';
 import { setSetupMode, needsSetup, resetSetup } from '../setup.ts';
+import { realPlugins } from '../realPlugins.ts';
 
 export function registerControlRoutes(app: Hono): void {
   // Push one arbitrary BrainEvent into every stream matching {client?, session?} (both omitted =
@@ -80,6 +81,13 @@ export function registerControlRoutes(app: Hono): void {
     if (body.messages !== undefined) setMessagesOverride(body.messages ?? undefined);
     return c.json({ ok: true });
   });
+
+  // The `/plugins/ui` rows DERIVED from the real plugin manifests on disk (see realPlugins.ts). A spec
+  // reads this and feeds what it wants back through `POST /__test/seed`, so arming real plugin UI stays
+  // an explicit per-test act and the default listing is still empty for every other spec. Returned
+  // rather than armed here so the spec can see which plugins the checkout actually built and skip the
+  // pages it has no bundle for, instead of asserting against a page that was never served.
+  app.get('/__test/real-plugins', (c) => c.json({ plugins: [...realPlugins().values()].map((p) => p.listing) }));
 
   // Clear per-test recorded state AND seed overrides (call from a spec's beforeEach / afterEach).
   app.post('/__test/reset', (c) => {

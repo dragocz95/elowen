@@ -56,7 +56,7 @@ WhatsApp does not rely on native buttons or lists. Model, reasoning, and context
 | `/stop` | Stop the running turn. |
 | `/stats` | Show model, context usage, and usage. |
 | `/compact` | Summarize the conversation to free context. |
-| `/fast` | Toggle OpenAI OAuth priority processing; its optional value is `on` or `off`. |
+| `/fast` | Set the linked account Fast preference; its optional value is `on`, `off`, or `status`. |
 | `/restart` | Restart the daemon; admin only. |
 | `/help` | Show the commands available to the current sender. |
 

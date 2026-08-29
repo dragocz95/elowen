@@ -30,6 +30,7 @@
       "columnProject": "Projekt",
       "columnBranch": "Větev",
       "columnState": "Stav",
+      "openWorkspace": "Otevřít pracovní prostor {name}",
       "emptyWorkspaces": "Tomuto filtru neodpovídá žádný pracovní prostor.",
       "loading": "Načítání dat Sandboxu…",
       "loadError": "Data Sandboxu se nepodařilo načíst.",

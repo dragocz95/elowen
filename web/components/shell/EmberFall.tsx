@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useEffects } from '../../lib/useEffects';
+import { useSkin } from '../../lib/skinContext';
 
 /** Ambient ember drizzle — tiny red sparks slowly falling down the navigation rail behind its items.
  *  Scoped to the rail rather than the whole app: over a full viewport the same density reads as dust on
@@ -13,6 +14,10 @@ import { useEffects } from '../../lib/useEffects';
  *  containing block — no dimensions are passed in and none are read off the window. */
 export function EmberFall() {
   const { resolvedMode } = useEffects();
+  // A canvas paints with colour STRINGS and cannot read a CSS custom property, so the two ember tones
+  // are resolved off the live document below. The skin choice is a dependency of that effect: switching
+  // the design re-runs it, instead of leaving the drizzle burning in the previous palette's accent.
+  const { choice: skin } = useSkin();
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -20,6 +25,10 @@ export function EmberFall() {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
+
+    const token = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const warmTone = token('--color-ember');
+    const hotTone = token('--color-primary');
 
     interface Ember { x: number; y: number; r: number; fall: number; sway: number; phase: number; opacity: number; warm: boolean }
     let embers: Ember[] = [];
@@ -69,15 +78,21 @@ export function EmberFall() {
           e.x = Math.random() * width;
         }
         const twinkle = e.opacity * (0.55 + 0.45 * Math.sin(now / 1100 + e.phase));
+        const tone = e.warm ? warmTone : hotTone;
         ctx.beginPath();
         ctx.arc(e.x + Math.sin(now / 2600 + e.phase) * e.sway, e.y, e.r, 0, Math.PI * 2);
-        ctx.fillStyle = e.warm ? `rgb(255 154 98 / ${twinkle.toFixed(3)})` : `rgb(255 82 54 / ${twinkle.toFixed(3)})`;
-        // A whisper of glow so the spark reads as an ember, not a dead pixel.
-        ctx.shadowColor = e.warm ? 'rgb(255 154 98 / 0.5)' : 'rgb(255 82 54 / 0.5)';
+        // The twinkle rides on globalAlpha rather than being composed into the colour string, so the
+        // tone can stay exactly what the token resolved to — whatever notation the skin spelled it in.
+        ctx.globalAlpha = twinkle;
+        ctx.fillStyle = tone;
+        // A whisper of glow so the spark reads as an ember, not a dead pixel. It shares the spark's
+        // alpha, so the halo breathes with the ember instead of holding a constant ring around it.
+        ctx.shadowColor = tone;
         ctx.shadowBlur = e.r * 3;
         ctx.fill();
         ctx.shadowBlur = 0;
       }
+      ctx.globalAlpha = 1;
       raf = requestAnimationFrame(tick);
     };
 
@@ -91,7 +106,7 @@ export function EmberFall() {
       cancelAnimationFrame(raf);
       observer.disconnect();
     };
-  }, [resolvedMode]);
+  }, [resolvedMode, skin]);
 
   if (resolvedMode !== 'full') return null;
   return <canvas ref={canvasRef} className="ember-fall" aria-hidden="true" />;

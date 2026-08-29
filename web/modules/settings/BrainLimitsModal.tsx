@@ -105,7 +105,7 @@ export function BrainLimitsModal({ limits, applied, onChange, onClose, presentat
                     {t.brain.limits[field.key]}
                     <HelpTip>{t.brain.limits[`${field.key}Hint`]}</HelpTip>
                   </span>
-                  <span className="shrink-0 font-mono text-sm tabular-nums text-accent">{valueLabel}</span>
+                  <span className="shrink-0 font-mono text-sm tabular-nums text-primary">{valueLabel}</span>
                 </div>
                 <Slider
                   value={value}

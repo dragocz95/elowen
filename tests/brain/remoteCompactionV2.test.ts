@@ -145,6 +145,12 @@ describe('remote compaction v2 — request body', () => {
   it('mirrors the fields pi-ai sends, so the blob describes the conversation the session actually has', () => {
     const body = buildCompactionRequestBody({ model: MODEL, systemPrompt: 'sys', messages: [] });
     expect(body).toMatchObject({ model: 'gpt-5.5', store: false, stream: true, instructions: 'sys', include: ['reasoning.encrypted_content'] });
+    expect(body).not.toHaveProperty('service_tier');
+  });
+
+  it('applies the account Fast preference to the direct Codex compaction request', () => {
+    expect(buildCompactionRequestBody({ model: MODEL, systemPrompt: 'sys', messages: [], fast: true }))
+      .toMatchObject({ service_tier: 'priority' });
   });
 });
 

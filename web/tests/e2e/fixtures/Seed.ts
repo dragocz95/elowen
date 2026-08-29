@@ -13,6 +13,8 @@ import type {
   BrainModelOption,
   SlashCommandDef,
   ElowenConfig,
+  PluginUiListing,
+  ProviderUsage,
 } from '../../../lib/types.ts';
 import type { OverrideKey } from '../fake-daemon/overrides.ts';
 import {
@@ -21,6 +23,8 @@ import {
   brainModels as defaultBrainModels,
   brainCommands as defaultBrainCommands,
   config as defaultConfig,
+  brainOauthStatus as defaultBrainOauthStatus,
+  brainRateLimits as defaultBrainRateLimits,
 } from '../seed/fixtures.ts';
 import { DAEMON_URL } from './env.ts';
 
@@ -70,6 +74,20 @@ export class Seed {
     return this.response('brain/commands', { commands });
   }
 
+  /** Replace `GET /brain/oauth/status` — the map the settings accounts card enumerates its rows from.
+   *  Keys are the supported OAuth types, values whether that account is connected. */
+  brainOauthStatus(status: Record<string, boolean>): Promise<void> {
+    return this.response('brain/oauth/status', { ...defaultBrainOauthStatus, ...status });
+  }
+
+  /** Replace `GET /brain/rate-limits/all` — the per-account usage rails, keyed by provider entry id. */
+  brainRateLimits(usage: Record<string, ProviderUsage>): Promise<void> {
+    return this.response('brain/rate-limits/all', usage);
+  }
+
+  /** The stock usage rails, for a spec that wants the defaults spelled out. */
+  static get rateLimitDefaults(): Record<string, ProviderUsage> { return defaultBrainRateLimits; }
+
   /** Patch the app `GET /config`. */
   config(patch: Partial<ElowenConfig>): Promise<void> {
     return this.response('config', { ...defaultConfig, ...patch });
@@ -81,6 +99,22 @@ export class Seed {
    *  Routed through the dedicated `POST /__test/setup` control endpoint. */
   async needsSetup(on = true): Promise<void> {
     await this.request.post(`${DAEMON_URL}/__test/setup`, { data: { needsSetup: on } });
+  }
+
+  /** Arm `GET /plugins/ui` with the REAL plugin bundles this checkout has built, so `/p/<plugin>` renders
+   *  a plugin's actual UI in the browser instead of the host's "unavailable" notice. The rows are derived
+   *  from each plugin's own `elowen-plugin.json`; the fake daemon serves the built bundle and stylesheet
+   *  on the content-hash URLs those rows point at.
+   *
+   *  Returns the plugin names that were armed. A registry plugin lives in another repository and is only
+   *  present when the harness was pointed at that checkout (`E2E_PLUGIN_DIRS`), so a caller MUST check the
+   *  returned list and skip what is not there rather than assume a page exists. */
+  async realPlugins(only?: readonly string[]): Promise<string[]> {
+    const res = await this.request.get(`${DAEMON_URL}/__test/real-plugins`);
+    const { plugins } = await res.json() as { plugins: PluginUiListing[] };
+    const armed = only ? plugins.filter((p) => only.includes(p.name)) : plugins;
+    await this.response('plugins/ui', armed);
+    return armed.map((p) => p.name);
   }
 
   /** Reference to the shared seed defaults, for a spec that wants to build on them. */

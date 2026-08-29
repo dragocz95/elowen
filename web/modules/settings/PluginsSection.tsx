@@ -24,7 +24,7 @@ import { useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib
 import { usePluginConsent } from './usePluginConsent';
 import type { PluginInfo, MarketplaceEntry } from '../../lib/types';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
-import { SettingsGroup, SettingsState, SettingsToolbar } from './SettingsSurface';
+import { SettingsGroup, SettingsState, SettingsToolbar } from '../../components/ui/SettingsSurface';
 
 /** Marketplace categories, derived from a plugin's `provides`/name (see `categorize`). */
 type Category = 'platforms' | 'tools' | 'memory' | 'automation' | 'ui' | 'security' | 'development';
@@ -101,7 +101,7 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
         <button
           type="button"
           onClick={onDetail}
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-1 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-1 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
         >
           <span className="relative shrink-0">
             <PluginIcon name={p.name} hasIcon={p.hasIcon} size={38} />
@@ -109,11 +109,11 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-semibold text-text transition-colors group-hover:text-accent">{p.name}</span>
+              <span className="truncate text-sm font-semibold text-text transition-colors group-hover:text-primary">{p.name}</span>
               <span className="flex shrink-0 items-center gap-1 font-mono text-[9px] text-text-muted" title={p.source === 'bundled' ? t.plugins.bundled : t.plugins.user}>
                 {p.source === 'bundled' ? <Package size={10} aria-hidden /> : <UserIcon size={10} aria-hidden />}v{p.version}
               </span>
-              {updatable ? <span className="hidden text-[10px] font-medium text-accent @sm:inline">{t.plugins.updateAvailable}</span> : null}
+              {updatable ? <span className="hidden text-[10px] font-medium text-primary @sm:inline">{t.plugins.updateAvailable}</span> : null}
             </span>
             <span className="mt-0.5 block truncate text-xs text-text-muted" title={description}>{description}</span>
           </span>
@@ -129,7 +129,7 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
           <ActionMenu
             label={`${p.name}: ${t.common.actions}`}
             trigger={<MoreHorizontal size={16} aria-hidden />}
-            triggerClassName="inline-flex h-9 w-9 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            triggerClassName="inline-flex h-9 w-9 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
             items={[
               { label: t.plugins.detail, icon: Eye, onSelect: onDetail },
               ...(updatable ? [{ label: t.plugins.update, icon: ArrowUpCircle, onSelect: onUpdate }] : []),

@@ -1,5 +1,10 @@
 import './globals.css';
-import '../modules/settings/theme.css';
+import '@fontsource-variable/inter';
+// The wordmark's face. Declared globally because @font-face is inert until a rule asks for the family —
+// only a design that names it (`--studio-brand-font`) makes a browser fetch the file — and self-hosted
+// because a brand lockup that arrives one network round trip after the menu it belongs to is worse than
+// no wordmark at all.
+import '@fontsource-variable/space-grotesk';
 import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import type { ReactNode } from 'react';
@@ -8,7 +13,7 @@ import { Shell } from '../components/shell/Shell';
 import { fetchThemePayload, buildThemeStyle, themeIcon } from '../lib/brandServer';
 import { fetchPluginUiListing, fetchMe, hasSessionCookie, readLocale, readSkinChoice, fetchAllowedSkins } from '../lib/serverPrefetch';
 import { activeSkin } from '../lib/skinEnv';
-import { allowedSkinChoices, resolveSkin } from '../lib/skins';
+import { allowedSkinChoices, resolveSkin, type SkinChoice, type SkinName } from '../lib/skins';
 
 // Every route renders per request — the brand payload is fetched live, so a theme switch must land on
 // the next reload. This CANNOT be left to the `no-store` fetch inside fetchThemePayload: its failure
@@ -52,16 +57,67 @@ export async function generateMetadata() {
   };
 }
 
-// Elowen is intentionally OLED-only. Browser chrome follows the same black canvas on every device.
+/** What the document paints with before any stylesheet has been parsed, and what the browser's own
+ *  chrome uses forever after. `background` is the anti-FOUC fill on <html>/<body>: it MUST equal the
+ *  design's own `--color-bg`, because the moment the stylesheet lands the element repaints with the
+ *  token and any disagreement is visible as a flash. `colorScheme` drives UA-rendered widgets and the
+ *  default canvas; `themeColor` is the same colour again, reported to the address bar and the task
+ *  switcher, so the two can never drift apart. */
+type DocumentPaint = { background: string; colorScheme: 'dark' | 'light' };
+
+/** The built-in Ember design — the ABSENCE of a skin — and the fallback for anything unrecognised. */
+const DEFAULT_PAINT: DocumentPaint = { background: '#000000', colorScheme: 'dark' };
+
+/** Per-skin first frame. These are the only colour literals the app is allowed to hold outside a token,
+ *  and they exist because the first frame happens before `--color-bg` is defined: nothing can be read
+ *  from the cascade yet, so the value has to be duplicated here and kept in step with the skin by hand.
+ *  `Record<SkinName, …>` makes that duplication mechanical: adding a skin without deciding what it paints
+ *  is a type error rather than a black flash, and `tests/app/layoutDynamic.test.ts` compares each entry
+ *  against the `--color-bg` its stylesheet declares. The natural home for this is the skin registry in
+ *  `lib/skins.ts`; it stays here while that module is imported by CLIENT components, which have no use
+ *  for a server-only first-frame value. */
+const SKIN_PAINT: Record<SkinName, DocumentPaint> = {
+  midnight: { background: '#05070b', colorScheme: 'dark' },
+  'studio-light': { background: '#ffffff', colorScheme: 'light' },
+  'studio-oled': { background: '#03080a', colorScheme: 'dark' },
+};
+
+const documentPaint = (skin: SkinName | null): DocumentPaint => (skin ? SKIN_PAINT[skin] : DEFAULT_PAINT);
+
+type SkinResolution = {
+  choice: SkinChoice | null;
+  allowed: SkinChoice[];
+  fallback: SkinName | null;
+  /** What `data-skin` must be: a compiled skin, or null for the built-in design. */
+  skin: SkinName | null;
+};
+
+/** The one resolution of "which design is this document wearing", shared by the viewport and the markup
+ *  so the browser chrome cannot disagree with the page. Both reads underneath are request-scoped through
+ *  React `cache`, so calling this from both places costs one cookie read and one config fetch. */
+async function resolveDocumentSkin(): Promise<SkinResolution> {
+  const [choice, allowedSkins] = await Promise.all([readSkinChoice(), fetchAllowedSkins()]);
+  const allowed = allowedSkinChoices(allowedSkins);
+  const fallback = activeSkin();
+  return { choice, allowed, fallback, skin: resolveSkin(choice, allowed, fallback) };
+}
+
+// Browser chrome follows the ACTIVE design's canvas, not a fixed black one: a light skin that reported
+// `#000000` here would keep a dark address bar and a dark task-switcher card permanently, long after the
+// first frame is gone. It has to be `generateViewport` rather than a static `viewport` object for exactly
+// that reason — the skin is per account and per request, which a module-level constant cannot express.
 // `viewportFit: cover` lays the app edge-to-edge so `env(safe-area-inset-*)` resolves (notch / home
 // indicator, incl. the installed PWA); `interactiveWidget: resizes-content` shrinks the layout viewport
 // (and therefore `100dvh`) when the soft keyboard opens, so a sticky bottom composer stays above it.
-export const viewport = {
-  colorScheme: 'dark' as const,
-  themeColor: '#000000',
-  viewportFit: 'cover' as const,
-  interactiveWidget: 'resizes-content' as const,
-};
+export async function generateViewport() {
+  const paint = documentPaint((await resolveDocumentSkin()).skin);
+  return {
+    colorScheme: paint.colorScheme,
+    themeColor: paint.background,
+    viewportFit: 'cover' as const,
+    interactiveWidget: 'resizes-content' as const,
+  };
+}
 
 // Apply the per-device effects preference before first paint. This prevents an opted-out device from
 // briefly playing entrance or ambient motion while React hydrates. Theme is fixed in the markup.
@@ -81,18 +137,18 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // key. Null — logged out, 401/403, daemon down — renders exactly as before and the client queries
   // fill it in.
   const locale = await readLocale();
-  const [pluginUi, me, sessionPresent, allowedSkins] = await Promise.all([
-    fetchPluginUiListing(locale), fetchMe(), hasSessionCookie(), fetchAllowedSkins(),
-  ]);
   // Every skin ships in every build, scoped under `:root[data-skin='…']`; without the attribute none of
   // their rules match, so a skinless instance renders byte-identical markup to a build from before skins
-  // existed. WHICH one applies is resolved here, on the server, from the account's cookie against the
-  // instance allow-list, with the operator's ELOWEN_SKIN as the floor — so the document arrives already
-  // wearing the right design instead of visibly changing colour once hydration reads localStorage.
-  const skinChoice = await readSkinChoice();
-  const allowed = allowedSkinChoices(allowedSkins);
-  const skinDefault = activeSkin();
-  const skin = resolveSkin(skinChoice, allowed, skinDefault);
+  // existed. WHICH one applies is resolved on the server, from the account's cookie against the instance
+  // allow-list, with the operator's ELOWEN_SKIN as the floor — so the document arrives already wearing
+  // the right design instead of visibly changing colour once hydration reads localStorage.
+  const [pluginUi, me, sessionPresent, skinState] = await Promise.all([
+    fetchPluginUiListing(locale), fetchMe(), hasSessionCookie(), resolveDocumentSkin(),
+  ]);
+  const { choice: skinChoice, allowed, fallback: skinDefault, skin } = skinState;
+  // The first frame, before globals.css has been parsed. Both elements carry it: <html> is what the
+  // browser paints the canvas from, and <body> keeps the fill while the sheet is still loading.
+  const paint = documentPaint(skin);
   return (
     <html
       lang={locale}
@@ -101,14 +157,14 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       {...(skin ? { 'data-skin': skin } : {})}
       data-effects-mode="auto"
       data-effects="full"
-      style={{ backgroundColor: '#000000' }}
+      style={{ backgroundColor: paint.background }}
       suppressHydrationWarning
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_EFFECTS }} />
         {themeStyle ? <style id="theme-overrides" dangerouslySetInnerHTML={{ __html: themeStyle }} /> : null}
       </head>
-      <body style={{ backgroundColor: '#000000' }}><Shell theme={theme} pluginUiSeed={pluginUi ? { locale, listing: pluginUi } : null} meSeed={me} sessionPresent={sessionPresent} initialLocale={locale} skinSeed={{ choice: skinChoice, allowed, fallback: skinDefault }}>{children}</Shell></body>
+      <body style={{ backgroundColor: paint.background }}><Shell theme={theme} pluginUiSeed={pluginUi ? { locale, listing: pluginUi } : null} meSeed={me} sessionPresent={sessionPresent} initialLocale={locale} skinSeed={{ choice: skinChoice, allowed, fallback: skinDefault }}>{children}</Shell></body>
     </html>
   );
 }

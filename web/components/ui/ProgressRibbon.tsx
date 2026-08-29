@@ -6,8 +6,8 @@ export interface ProgressRibbonPhase {
 
 /** One ribbon segment per phase, coloured by its generic lifecycle status. */
 const phaseColor = (status: string, active: boolean): string =>
-  status === 'closed' ? (active ? 'bg-accent' : 'bg-accent/40')
-  : status === 'in_progress' ? (active ? 'bg-accent/60' : 'bg-accent/30')
+  status === 'closed' ? (active ? 'bg-primary' : 'bg-primary/40')
+  : status === 'in_progress' ? (active ? 'bg-primary/60' : 'bg-primary/30')
   : status === 'blocked' ? 'bg-danger'
   : status === 'cancelled' ? 'bg-elevated'
   : 'bg-border-strong';

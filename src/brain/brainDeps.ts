@@ -78,7 +78,11 @@ export interface BrainDeps {
   policy?: (userId: number) => Policy;
   /** Per-user CLI/brain settings: an optional model override (empty → configured default) + auto-compact
    *  toggle and its user-tunable threshold percentage. */
-  userSettings?: (userId: number) => { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean };
+  userSettings?: (userId: number) => { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean; fastMode?: boolean };
+  /** Durable account Fast mode, sampled for every provider request. Unknown identities resolve false. */
+  fastMode?: (userId: number) => boolean;
+  /** Atomic explicit set/toggle used by slash commands and platform controls. */
+  setFastMode?: (userId: number, on?: boolean) => boolean;
   /** The CLI's per-user model choice for a canonical, policy-authorized Git project root. */
   projectModelPreference?: (userId: number, projectRoot: string) => ProjectModelPreference | undefined;
   setProjectModelPreference?: (userId: number, projectRoot: string, selection: ProjectModelPreference) => void;

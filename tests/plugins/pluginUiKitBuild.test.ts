@@ -76,8 +76,8 @@ describe('elowen-plugin-ui-kit css build', () => {
   });
 
   it('puts every rule inside @layer utilities', () => {
-    // Without the layer, plugin rules would sit unlayered and beat the host's layered utilities
-    // GLOBALLY — one installed plugin restyling the whole app.
+    // Without the layer, plugin rules would sit unlayered and beat the host's layered utilities globally.
+    // The runtime loader inserts this sheet before host styles so equal-specificity host utilities still win.
     expect(css).toContain('@layer utilities {');
     // Strip the layer block(s) and the leading banner comment; nothing rule-shaped may remain outside.
     const outside = stripLayer(css).replace(/\/\*[\s\S]*?\*\//g, '').replace(/@layer [a-z, ]+;/g, '').trim();

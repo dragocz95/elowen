@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Target, TerminalSquare, Users, Workflow, X } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
@@ -10,6 +10,8 @@ import { formatTokens, formatCost } from '../../lib/format';
 import { OAuthUsageRail, usageFillClass } from '../settings/OAuthUsageRail';
 import { MascotGlyph } from '../../components/ui/SpatialMascot';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
+import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
+import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
 import { railTypeVars, useTelemetryRailWidth, RAIL_MIN_WIDTH, RAIL_MAX_WIDTH } from '../../lib/useTelemetryRailWidth';
 import { workflowLabel, workflowProgress } from '../../lib/workflowDag';
 import { useBrainChat } from './BrainChatProvider';
@@ -83,10 +85,63 @@ function TelemetryMascot({ busy }: { busy: boolean }) {
  *  beats @layer utilities regardless of specificity. */
 const RAIL_SCROLL = 'telemetry-rail-scroll overflow-y-auto overflow-x-hidden';
 
+/** The phone slide-over, on the shadcn `Dialog` (Radix): the dialog role, the focus trap, Escape and the
+ *  layer order among several open overlays are Radix's, so this file no longer writes any of them.
+ *
+ *  Like the history drawer it does NOT take `useOverlayIsolation`: that stack isolates the background by
+ *  marking every OTHER child of <body> inert, which needs an overlay portalled to the body, and this one
+ *  renders inside the chat shell — its own body-level ancestor is what would be marked, so the drawer
+ *  would disable itself. Radix's `aria-hidden` sweep walks the ancestor chain instead. What the stack
+ *  still owns and Radix cannot is where focus goes on the way out: there is no `Dialog.Trigger` to hand
+ *  it back to. */
+function TelemetryDrawer({ label, onClose, children }: { label: string; onClose?: () => void; children: ReactNode }) {
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const { restoreFocus } = useReturnFocus();
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose?.(); }}>
+      <div
+        className="overlay-layer-drawer fixed inset-0"
+        // Radix's modal content sets `pointer-events: none` on <body> and re-enables them on itself;
+        // this layer would inherit the block and the backdrop below would stop answering the click that
+        // dismisses the drawer. Opting back in is what `DialogOverlay` does for the same reason.
+        style={{ pointerEvents: 'auto' }}
+      >
+        <div className="absolute inset-0 bg-bg/50" onClick={onClose} aria-hidden />
+        <DialogContent
+          ref={surfaceRef}
+          // A right rail that is also its own scroll box, which none of the primitive's presentations
+          // describes; the geometry stays here.
+          presentation={null}
+          aria-label={label}
+          aria-describedby={undefined}
+          data-testid="telemetry-drawer"
+          className={`animate-drawer-in absolute inset-y-0 right-0 w-72 max-w-[85%] border-l border-border bg-surface shadow-xl ${RAIL_SCROLL}`}
+          // The backdrop above already owns dismissal, and it is the only owner that knows a nested
+          // overlay's backdrop must not close its parent — the rail raises both a process modal and the
+          // command field from inside itself.
+          onInteractOutside={(event) => event.preventDefault()}
+          // The panel is something to read, so focus anchors on the surface rather than on the close
+          // button Radix would pick; the opener gets it back on the way out.
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            if (surfaceRef.current) focusOverlaySurface(surfaceRef.current);
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus();
+          }}
+        >
+          {children}
+        </DialogContent>
+      </div>
+    </Dialog>
+  );
+}
+
 /** A section heading: a quiet label with an optional right-aligned meta value, mirroring the CLI rail. */
 function SectionHead({ label, meta }: { label: string; meta?: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-2 text-tiny uppercase tracking-wide text-text-subtle">
+    <div className="telemetry-section-head flex items-baseline justify-between gap-2 text-tiny uppercase tracking-wide text-text-subtle">
       {/* The label truncates like the meta does: it is a translated string, and at the narrow end of the
           rail an uppercase heading like "OTHER PROCESSES" is otherwise a width floor the row cannot go
           under, pushing the whole section past the column. */}
@@ -237,7 +292,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
         <section className="flex flex-col gap-1" data-testid="telemetry-goal">
           <SectionHead label={t.telemetry.goal} meta={goalTurns} />
           <p className="flex items-center gap-1.5 text-tiny">
-            <Target size={11} className="shrink-0 text-accent" aria-hidden />
+            <Target size={11} className="shrink-0 text-primary" aria-hidden />
             <span className="min-w-0 truncate text-text" title={activeGoal.goal}>{activeGoal.goal}</span>
           </p>
           {subgoals ? (
@@ -261,7 +316,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           <ul className="flex flex-col gap-0.5">
             {runningWorkflows.map((wf) => (
               <li key={wf.id} className="flex items-center gap-1.5">
-                <Workflow size={11} className="shrink-0 text-accent" aria-hidden />
+                <Workflow size={11} className="shrink-0 text-primary" aria-hidden />
                 <LiveRow
                   label={workflowLabel(wf)}
                   meta={workflowProgress(wf)}
@@ -378,7 +433,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
             // already follows.
             <p className="flex items-baseline gap-1 font-mono text-tiny text-text-muted">
               <span className="shrink-0">{t.telemetry.branch}</span>
-              <span className="min-w-0 truncate text-accent" title={project.branch}>{project.branch}</span>
+              <span className="min-w-0 truncate text-primary" title={project.branch}>{project.branch}</span>
             </p>
           ) : null}
         </section>
@@ -443,30 +498,21 @@ export function TelemetryPanel({ variant, open = false, onClose, onOpenWorkflow 
     // Mounted only while open, like the history drawer: a closed drawer leaves nothing focusable behind.
     if (!open) return null;
     return (
-      <div className="fixed inset-0 z-[60]" onKeyDown={(e) => { if (e.key === 'Escape') onClose?.(); }}>
-        <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
-        <aside
-          role="dialog"
-          aria-modal="true"
-          aria-label={t.telemetry.title}
-          data-testid="telemetry-drawer"
-          className={`animate-drawer-in absolute inset-y-0 right-0 flex w-72 max-w-[85%] flex-col border-l border-border bg-surface shadow-xl ${RAIL_SCROLL}`}
-        >
-          <div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
-            <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{t.telemetry.title}</span>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label={t.telemetry.close}
-              title={t.telemetry.close}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
-            >
-              <X size={16} aria-hidden />
-            </button>
-          </div>
-          <TelemetryBody onOpenWorkflow={onOpenWorkflow} />
-        </aside>
-      </div>
+      <TelemetryDrawer label={t.telemetry.title} onClose={onClose}>
+        <div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{t.telemetry.title}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t.telemetry.close}
+            title={t.telemetry.close}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+          >
+            <X size={16} aria-hidden />
+          </button>
+        </div>
+        <TelemetryBody onOpenWorkflow={onOpenWorkflow} />
+      </TelemetryDrawer>
     );
   }
 

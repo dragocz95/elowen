@@ -1,0 +1,1082 @@
+/* Studio's page frame, registers, forms and overlays — the second shared stylesheet of the family,
+ * beside studio/shared.css which owns the navigation column.
+ *
+ * The same two constraints hold here, and both are enforced (this file is declared in lib/skins.ts as a
+ * `studio` family stylesheet, which is what lets the guards read it):
+ *  - every selector is scoped to the family and names no id outside it — tests/lib/skins.test.ts;
+ *  - no colour literal outside a custom-property declaration — tests/lib/designTokens.test.ts. `rgb()`
+ *    and `hsl()` count as literals even when their arguments are tokens, so a derived colour is written
+ *    with `color-mix()`, which does not.
+ *
+ * Nothing here is expressed in utility classes. The stylesheet tree is UNLAYERED, so every rule below
+ * already outranks the whole of Tailwind's `@layer utilities` whatever its specificity — a class on an
+ * element could never override one of these, and the two would drift apart on every edit. Conditional
+ * behaviour is therefore expressed as a selector on an attribute or class the component already sets.
+ */
+
+/* ---------------------------------------------------------------------------------------------------
+ * The page frame.
+ *
+ * The page bar is no longer restated here. It used to be: the built-in design's chrome is a pill-shaped,
+ * blurred cluster of pill-shaped buttons floating over the canvas, and this file undid it declaration by
+ * declaration — a border-radius against a `rounded-full`, an opaque background against a `bg-bg/45`
+ * wash, `backdrop-filter: none` against a `backdrop-blur-xl`. Four rules undoing four rules is not a
+ * design decision, it is a fight, and whichever side is edited next the two drift apart.
+ * The bar is now a typed variant of the component (`TopBar variant="bar"`), chosen from the shell
+ * profile, so the markup that ships IS the bar: 48px, sticky, one rule, route-owned controls on the left
+ * and global ghost controls on the right. Nothing is left here to override.
+ *
+ * The gutter is the one page-frame value Studio still states, because it is a NUMBER rather than an
+ * arrangement: 24px, once, on the shell's own inset — and the shell wrapper's 8px is given back so the
+ * page has one gutter rather than the sum of two.
+ * --------------------------------------------------------------------------------------------------- */
+
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) {
+  --shell-gutter: 1.5rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-content {
+  padding-inline: 0;
+}
+
+/* ---------------------------------------------------------------------------------------------------
+ * The masthead (components/ui/WorkspaceHero.tsx).
+ *
+ * Every route composes WorkspaceShell, which hard-mounts the hero, so Studio cannot simply not render
+ * one — and would not want to: the title, description and actions ARE the masthead it wants. What it
+ * does not want is the furniture around them. The hero already renders each part as its own element and
+ * pages already pass them as props, so compacting the rhythm, dropping the decorative panel and reading
+ * the metrics as an inline strip is the whole change, with no page forked to do it.
+ * --------------------------------------------------------------------------------------------------- */
+
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero {
+  display: flex;
+  flex-direction: column;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__head {
+  order: 2;
+  display: grid;
+  min-height: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+  padding-block: 0.75rem 1.25rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead {
+  order: 1;
+  min-width: 0;
+  padding-block: 0.75rem 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead:empty {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead .control-surface-toolbar {
+  position: static;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* The page's glyph reads as a drawn mark rather than a lit disc: a hairline square on the neutral ink,
+   sized to the title beside it instead of to a hero panel. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-top: 0.125rem;
+  border: 1px solid var(--studio-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__icon svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* The eyebrow does not paint. It named the reader's location — "Usage telemetry", "Account directory" —
+   in 9px uppercase mono over the title, while the page's own controls now occupy the top rule one row
+   above. Two answers to "where am I" a centimetre apart is one
+   too many, and the eyebrow is the one that cannot be clicked. It stays in the DOM because a page
+   states it as a prop and Studio forks no page. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__eyebrow {
+  display: none;
+}
+/* Working-page titles match the reference's restrained 24px regular step. Geist is bundled, so 400 has
+   stable metrics across platforms rather than depending on each operating system's font synthesis. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero h1 {
+  font-size: 1.5rem;
+  font-weight: 400;
+  letter-spacing: -0.15px;
+  line-height: 1.25;
+}
+/* The dashboard's title is a GREETING, not the name of a register — it is the one page whose heading is
+   addressed to the reader — so it carries the same weight as the clock it sits beside instead of the
+   restrained step every working page uses. The date beside the clock stays light; the pair is a strong
+   figure with a quiet qualifier, twice on the same line. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .workspace-hero h1 {
+  font-weight: 600;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__count {
+  color: var(--color-text-subtle);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+/* Full-width page, capped MEASURE: --content-max stays the single width authority for the shell, and
+   this is a reading limit on one paragraph, in characters, which is a different thing. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__description {
+  max-width: min(100%, 68ch);
+  margin-top: 0.375rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions {
+  width: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  justify-self: end;
+  gap: 0.5rem;
+  margin-inline-start: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions > :not(.workspace-hero__status) {
+  flex: 0 1 auto;
+}
+/* The "ready"/"synchronized" pill does not paint either. Three registers pass one — a green dot with a
+   glow and a word confirming that a page which has just rendered its rows did in fact load them — and
+   it is the only element in the masthead that says nothing the reader cannot already see. It is a page
+   prop like the eyebrow, so it is withheld here rather than removed from three modules; the dashboard's
+   status slot carries a CLOCK, which is a real fact, and is deliberately untouched. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-status {
+  display: none;
+}
+
+/* The decorative panel belongs to the ember identity. It stays in the DOM — a page states its mascot as
+   a prop and Studio does not fork pages — and simply does not paint, the same move shared.css makes for
+   `.ember-fall` and `.dash-beam`.
+
+   Hiding it leaves the body's two-column grid with an empty first track, so the body is re-declared as
+   a plain block: `:not(:has(.workspace-hero__mascot))` cannot help here, the element is still there. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__mascot {
+  display: none;
+}
+/* No rule above the body either. Between the description and the section tabs there used to be three
+   horizontal rules within 90px of each other, none of which separated anything the reader was about to
+   compare. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__body {
+  order: 0;
+  display: block;
+  min-height: 0;
+  padding-block: 1rem 0.25rem;
+  border-top: 0;
+}
+
+/* The metrics become a SENTENCE of readings, not a band of cells. They were boxed compartments divided
+   by vertical hairlines, which is the "command grid" this design was asked to stop being: four boxes
+   under the title on every register, saying "4 users", "1 administrator", "0 projects". The facts are
+   worth keeping and the frame around each one is not, so the rules and the padding go and the strip
+   becomes a spaced row that wraps.
+   The mono goes with them. A metric's value is not always a number — the settings strip reports
+   "Running" and an em dash — and a proportional face with tabular figures keeps the digits aligned
+   without setting an English word in a typewriter. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  overflow: visible;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric {
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.375rem;
+  padding: 0;
+  border: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric__value {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: normal;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric__label {
+  margin-top: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+/* Studio keeps page actions on the title edge instead of inheriting the spatial shell's full-width,
+   stretched button row. The phone uses one deliberate second row when text actions cannot fit beside the
+   heading; they remain right-aligned and keep their intrinsic width. */
+@container workspace-hero (width < 48rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions {
+    width: auto;
+    justify-content: flex-end;
+    margin-inline-start: 0;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions > :not(.workspace-hero__status) {
+    flex: 0 1 auto;
+  }
+}
+@container workspace-hero (width < 34rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__head {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.625rem;
+    padding-block: 0.75rem 1rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__body {
+    padding-top: 0.75rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead {
+    padding-top: 0.625rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics {
+    flex-wrap: nowrap;
+    gap: 1rem;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------------
+ * The register: a bordered card holding a precise table.
+ *
+ * The load-bearing parts of the table are deliberately untouched: the container-query column collapse,
+ * the absolutely positioned open cell and open header that claim no grid track, and the pointer-events
+ * pairing that keeps a nested row action clickable. Only rhythm, weight and state colour change here.
+ * --------------------------------------------------------------------------------------------------- */
+
+/* ONE card, around the table alone.
+
+   The surface used to be a card holding everything: a bordered container whose first band was the search
+   and filters, whose body was another bordered box holding the table, and whose footer was the pager —
+   three nested frames for one register. The toolbar is not part of the table; it is what you use to
+   decide what the table shows. So the outer container stops drawing chrome entirely and the toolbar sits
+   on the page above the card, which leaves exactly one border on screen.
+
+   No page is forked to do it. The elements are already in that order — toolbar, register, pager — and
+   this only decides which of them is a card.
+
+   The settings document is excluded by its own attribute rather than by cascade luck: it deliberately
+   draws NO chrome (its cards carry it instead). */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-document:not([data-settings-document]) {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* Search and filters on the left, actions on the right, on the page rather than in a band. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-toolbar {
+  gap: 0.5rem;
+  padding: 0 0 0.75rem;
+  border-bottom: 0;
+  background: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-register {
+  padding: 0;
+}
+/* The search field stops growing at a field's width. It is declared `flex-1` so it gives a narrow
+   toolbar its room back, which is right — but on a capped 84rem page with two filters beside it that
+   made a 900px text box, and a text box that wide reads as the page rather than as a control. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-toolbar .register-search {
+  max-width: 24rem;
+}
+/* Toolbar controls share the reference's 40px rhythm. They stay compact enough to read as chrome while
+   aligning search, filters and actions on one baseline; coarse pointers still inherit the 44px touch floor.
+   `Button` and `Input` carry their height as Tailwind utilities and this stylesheet is unlayered, so a
+   rule here reaches them; neither component has a class hook to target instead. */
+@media (pointer: fine) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-toolbar :is(button, [role='combobox'], select) {
+    height: var(--studio-control-height);
+    min-height: var(--studio-control-height);
+    border-radius: var(--radius-md);
+  }
+}
+/* Text fields use the same 40px control line with the roomier 12px field radius and 14px desktop text.
+   The font size is pointer-gated because a text input under 16px makes iOS zoom the page on focus. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-toolbar :is(input, textarea) {
+  height: 2.5rem;
+  min-height: 2.5rem;
+  border-radius: var(--radius-lg);
+}
+@media (pointer: fine) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-toolbar :is(input, textarea) {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+}
+
+/* A loading, error or empty surface takes the CARD the table would have taken. Without this the state
+   floats on the canvas where the register was, and a page waiting for its rows looks like a page with
+   nothing on it. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-state {
+  padding: 2rem clamp(0.75rem, 1.5vw, 1rem);
+  border: 1px solid var(--studio-line);
+  border-radius: var(--radius-xl);
+  background: var(--color-document);
+  font-size: 0.875rem;
+}
+
+/* The table's own frame — the one card on the page. `[role='table']` is what DataTable puts on its root:
+   a host-owned contract, unlike the utility classes beside it, which this rule outranks anyway.
+
+   `overflow: clip`, not `hidden`. Both clip the rounded corner; only `hidden` makes the element a scroll
+   container, and the header inside is `position: sticky` against the page scroller. Under `hidden` it
+   would stick to this box instead and the column names would scroll away with the rows. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) [role='table']:has(.data-table-grid) {
+  overflow: clip;
+  border: 1px solid var(--studio-line);
+  border-radius: var(--radius-xl);
+  background: var(--color-document);
+}
+/* And the empty state that REPLACES a table takes the same frame, so a register with no rows is the same
+   shape as a register with rows.
+   Two selectors because a register states its empty state at two depths. Memory's "nothing here yet"
+   is a direct child; its "nothing MATCHES" stands inside the column that otherwise holds the table and
+   the pager, and is that column's only element once the pager returns null. The second selector is
+   deliberately `> * >` and not a free descendant: an empty state nested deeper belongs to something
+   inside the register rather than standing in for it, and framing that would draw a card inside a
+   card — which is the fault this whole section exists to undo. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-register > .empty-state,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-register > * > .empty-state:only-child {
+  border: 1px solid var(--studio-line);
+  border-radius: var(--radius-xl);
+  background: var(--color-document);
+}
+/* "No results" is a sentence, not a heading on a machine. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .empty-state__title {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .empty-state__description {
+  font-size: 0.8125rem;
+}
+
+/* 48px rows over a 40px header, taken from min-height so an avatar row and a text row still measure the
+   same. 48 is also above `--touch-target` on its own, which is what retires the pointer-gated bump the
+   44px rhythm needed: the row-open control is `inset: 0` inside the row and used to measure 43px. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-grid {
+  --data-table-row: 3rem;
+  --data-table-row-tall: 4.25rem;
+  --data-table-row-header: 2.5rem;
+
+  padding-block: 0;
+  border-bottom: 1px solid var(--studio-line);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-grid:last-child {
+  border-bottom: 0;
+}
+/* The trailing chevron is an affordance for something the whole row already does, drawn on every row of
+   every register at once. The row is the control; the cue is noise. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-chevron {
+  display: none;
+}
+/* And a bar beside a number that states the same value is the number said twice. The figure stays. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-meter {
+  display: none;
+}
+
+/* The sticky header stays OPAQUE — rows scroll under it. --color-surface-sticky is derived from
+   --color-document, so it follows the variant instead of being a fixed tint: on the light canvas it
+   resolves to a solid paper grey (#f0f0f0), on OLED to a solid near-black (#141414).
+   Being derived, it is LIGHTER than --color-elevated on the light variant, which makes it that palette's
+   worst surface rather than the one the token block was tuned against, so the whole text ramp has to
+   clear 4.5:1 on it. Both skins state their measurement against this token, and
+   tests/lib/designTokens.test.ts measures it.
+
+   Inside `.shell-content` it sticks one Studio top-bar height down rather than at 0: the page bar is
+   sticky at the top of that same scroller, so a header stuck at 0 slides underneath it and the column
+   names disappear behind the breadcrumb.
+   The `.shell-content` scope is what keeps the offset off every OTHER register. A table inside a modal
+   is portalled to <body> (components/ui/Modal.tsx) and scrolls in a box of its own with no page bar
+   anywhere near it — the sessions panel is one — and there any offset would leave a hole above the
+   column names. Only the tint and the rule are unconditional, because those are true of a sticky header
+   wherever it is. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header {
+  border-bottom-color: var(--studio-line);
+  background: var(--color-surface-sticky);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .shell-content .data-table-header {
+  top: var(--studio-top-bar-height);
+}
+/* A column name is a NAME. It was set as 10px mono at 0.1em of tracking — a treatment for a machine
+   identifier, applied to the words "Created" and "Owner" — which is what made every register read as a
+   log dump. 12px, medium, sentence case, in the sans the rest of the page is set in.
+   The descendant selector is load-bearing and not defensive: a SORTABLE column is a <button> inside the
+   cell carrying its own copy of the uppercase utility, so restating the cell alone left "Memory" and
+   "Category" in sentence case beside "UPDATED" and "VITALITY" in caps — the register's own header
+   disagreeing with itself, column by column. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header .data-table-cell,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-header .data-table-cell :is(button, span) {
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-cell {
+  font-size: 0.875rem;
+}
+
+/* The reference chrome is a 50px ruled strip. This stays skin-owned: the shared bar remains 48px for
+   spatial designs, while Studio's sticky registers offset from the same token below. */
+/* Three regions: where you are on the left, what the PAGE offers in the middle, the universal actions on
+   the right. The middle track used to hold a full-width command field — the widest slot in the app's
+   chrome spent on a control the keyboard opens — and the page's own toolbar was crammed into the left
+   cluster beside it. Swapping them is what puts a conversation's controls above the conversation: the
+   bar spans the same workspace the centred content column does, so centred here is centred over the page.
+   Every track is `minmax(0, …)` so a long title shrinks its own region instead of pushing a neighbour. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar {
+  display: grid;
+  height: var(--studio-top-bar-height);
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+  gap: 0.75rem;
+  border-bottom-color: var(--studio-line);
+  padding-inline: 0.75rem;
+}
+/* The leading column must NOT clip. Every picker in a portaled page toolbar — project, model, the
+   conversation list — opens as an absolutely positioned listbox anchored to its own trigger, and the bar
+   is 50px tall: `overflow: hidden` here left those menus rendered, focusable and completely invisible,
+   because they begin below the box that was clipping them. Width is held instead by the grid track
+   (`minmax(0, 1fr)`) and by each control truncating its own label, which is what a bar should do anyway. */
+/* Each region names its own column. Placement CANNOT be left to document order: the page slot carries
+   `empty:hidden`, and a `display: none` box is not a grid item at all — so on every route that portals
+   nothing (the dashboard, the registers) the action cluster slid into the middle track and the avatar,
+   sign-out and search ended up centred in the bar. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__leading {
+  grid-column: 1;
+  min-width: 0;
+}
+/* Centred, and held to its own track. `justify-self: center` stops the slot stretching, which means it is
+   sized from its CONTENT — and a toolbar wider than the middle track then hangs out over its neighbours
+   instead of letting its controls truncate. The percentage resolves against the grid area, so this is the
+   one declaration that turns "as wide as it wants" back into "at most the room it has". */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__page-slot {
+  grid-column: 2;
+  justify-self: center;
+  max-width: 100%;
+}
+/* Below the tablet boundary there is no room left to centre anything: an `auto` middle track keeps its
+   content at max-content and the tabs of a sectioned page then run out past the window instead of
+   scrolling inside their own track. So the middle becomes the flexible one and the two clusters take only
+   what they need — the toolbar still scrolls and truncates inside it, and the pickers still open freely
+   because nothing in this file clips the row. */
+@media (max-width: 63.99rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar {
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, auto);
+  }
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__actions {
+  grid-column: 3;
+  justify-self: end;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar :is(button, a) {
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .skin-switcher__button {
+  height: 2rem;
+  border: 1px solid var(--studio-line);
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__actions > .relative > button {
+  border: 0;
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+}
+/* Page sections are plain tabs in the shell's top rule at every width, never a second pill-shaped control
+   below the heading. The track scrolls horizontally when a phone cannot fit every label. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 0 1rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__page-slot .workspace-shell__section-navigation {
+  height: 3rem;
+  padding: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented {
+  width: fit-content;
+  max-width: 100%;
+  gap: 1rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  scrollbar-width: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented::-webkit-scrollbar {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__option {
+  height: 2.25rem;
+  padding-inline: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar__page-slot .workspace-shell__section-navigation .segmented__option {
+  height: 3rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__option[aria-checked='true'] {
+  border-bottom-color: var(--color-text);
+  background: transparent;
+  color: var(--color-text);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation .segmented__count {
+  color: inherit;
+  opacity: 0.65;
+}
+
+/* State is a change of ground and nothing else — two neutral steps of the same ink, never a tint. The
+   selected row used to take 7% of the signal blue, which put a coloured block in the middle of a table
+   whose whole point is that the DATA is the only colour on it. */
+/* The two steps are the shared --studio-fill-* tokens rather than a mix restated per rule, so a row,
+   a settings record and a menu item all move by the same amount. They are stated as ink at an alpha
+   over `transparent`, which composites onto whatever the row is actually sitting on — the document on
+   a register, the sticky tint under the header — instead of assuming --color-document. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-grid.interactive-row:hover {
+  background: var(--studio-fill-hover);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-grid[data-state='selected'] {
+  background: var(--studio-fill-active);
+}
+/* ---------------------------------------------------------------------------------------------------
+ * Forms, fields and settings.
+ *
+ * `.field*` is the anatomy components/ui/Field.tsx renders: the label, the required marker, the
+ * persistent description and the validation message. The base look of each is carried by utilities on
+ * the element so every design gets one; these rules are Studio's reading of it.
+ * --------------------------------------------------------------------------------------------------- */
+
+/* A field label names the thing you are about to type into, so it is set like a label and not like a
+   category header: 14px medium in full ink, sentence case. The base carries `uppercase tracking-wide` as
+   utilities on the element, which this rule outranks (the stylesheet tree is unlayered) — hence the
+   explicit `none`/`normal` rather than simply not saying anything. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .field__label {
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .field__description {
+  max-width: min(100%, 68ch);
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .field__error {
+  color: var(--color-danger);
+  font-size: 0.75rem;
+}
+
+/* An invalid control says so on its own edge, not only in the message under it. `aria-invalid` is the
+   state the field already wires onto the control, so the paint and the announcement cannot disagree. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) :is(input, select, textarea)[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+/* A settings section is a CARD: a header naming it over a body of records, and one border around the
+   pair. It was a card containing a second bordered box containing the records — the same nesting the
+   register carried, and wrong for the same reason. The body goes full-bleed, so a record's rule runs
+   edge to edge like a table row and the card's own border is the only one on screen. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group {
+  border-color: var(--studio-line);
+  border-radius: var(--radius-xl);
+  background: var(--color-document);
+  box-shadow: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__header {
+  min-height: 0;
+  padding: 1rem clamp(1rem, 1.6vw, 1.25rem);
+  border-bottom-color: var(--studio-line);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__heading h2 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__heading p {
+  margin-top: 0.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+/* The section glyph reads as a mark on the neutral ink rather than as the accent: the accent in this
+   design means state, and every section header carrying one made "important" the default. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__icon {
+  color: var(--color-text-muted);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-group__column) {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+/* The reference keeps settings in one reading column. Two semantic stacks remain in the shared component,
+   but Studio places them vertically so labels and controls use the same 1152px row grammar. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-group__column) {
+  grid-template-columns: minmax(0, 1fr);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column + .settings-group__column {
+  border-top: 1px solid var(--studio-line);
+  border-left: 0;
+}
+
+/* ONE record: what it is on the left, the control on the right, in a track wide enough to hold a select
+   or a model picker without either side moving between rows. The base gives the control a FRACTIONAL
+   share of the row, so a long description on one record narrowed the control on that record alone and
+   nothing lined up down the card.
+   `minmax(0, 20rem)` is a ceiling and not a fixed width: a record whose control is a single switch keeps
+   its track narrow and gives the room back to the text, while everything wider than 20rem is held at
+   20rem so the column edge stays put. A record with no control at all resolves the track to 0. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 20rem) auto;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row {
+  gap: 0.75rem 1rem;
+  padding: 0.75rem clamp(1rem, 1.6vw, 1.25rem);
+  border-bottom-color: var(--studio-line);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing {
+  display: flex;
+  min-width: 0;
+  grid-column: 2 / 4;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem 0.75rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__status {
+  margin-top: 0;
+  white-space: nowrap;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__control {
+  min-width: 0;
+  flex: 1 1 10rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing .settings-row__actions {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+/* The accent edge goes. It marked which record the pointer was on, in the loudest colour the design
+   owns, on a surface where the pointer is already unmistakable — and it was the second of two hover
+   signals on the same element. The ground alone carries it now, and neutrally. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row::before {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row:hover {
+  background: var(--studio-fill-hover);
+}
+/* No boxed icon. Every record drew a 33px accent-ringed disc beside its title, which turned a settings
+   card into a column of badges and spent the accent on decoration one record at a time. The title is
+   the record's identity. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__icon {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: normal;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__status {
+  max-width: min(100%, 68ch);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+/* Narrow pages keep the same two-column table grammar: setting on the left, its current value and actions
+   on the right. Only the ratio tightens; controls never fall underneath the record they describe. */
+@container workspace-shell (width < 48rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing {
+    grid-column: 2;
+  }
+}
+
+@container workspace-shell (width < 38.75rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row {
+    gap: 0.625rem;
+    padding-inline: 1rem;
+  }
+  /* `nowrap` holds a one-value record on its label's line, which is the whole point of the table above.
+     It is applied to the INLINE record only: forcing a single line on a record carrying a badge, two
+     usage meters and two buttons does not compress them, it makes them overrun the row — the account
+     name, the "Connected" badge, the window labels and the percentages all landed on top of each other,
+     and the provider rows lost their names behind their badges entirely. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing {
+    flex-wrap: nowrap;
+    gap: 0.375rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control {
+    flex-basis: 0;
+  }
+
+  /* THE STACKED RECORD. Studio keeps its two-column value table down to the narrowest phone (see the
+     `< 48rem` block), and that rule is more specific than the base stylesheet's own phone collapse — so
+     a multi-value record never got the single column the base design gives it, and had to fit a meter
+     rail plus two buttons into ~120px. A record that declared `trailingLayout="stack"` opts out here,
+     explicitly, instead of the base rule being expected to win a cascade it cannot. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__label,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__trailing {
+    grid-column: 1;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  /* Each trailing value takes the row's full width: a meter that is a flex item of a shared value column
+     resolves to zero width, and a zero-width meter reads as an empty rail rather than as usage. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__status,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__control,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__actions {
+    width: 100%;
+    flex: 1 1 100%;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+  /* The inline record pins its status to one line so the table's rows stay level. A stacked record has
+     its own line already, so the pin is released and a two-part status (a provider's endpoint above its
+     model count) lays out as the two lines it is. The endpoint itself still truncates — that belongs to
+     the endpoint, which carries `truncate`, not to the status wrapper. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='stack'] .settings-row__status {
+    white-space: normal;
+  }
+}
+@container workspace-shell (width < 22rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing [data-selection-manage] {
+    gap: 0.25rem;
+    padding-inline: 0.25rem;
+  }
+}
+
+/* Model rows remain a compact table on a phone: icon, truncated identity and a fixed trailing control
+   cluster. Provider badges truncate inside their column instead of floating over the model name. */
+@container (width < 28rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row {
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__icon {
+    width: 2rem;
+    height: 2rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__identity {
+    width: auto;
+    min-width: 0;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__controls {
+    display: flex;
+    min-width: 0;
+    margin-left: 0;
+    gap: 0.25rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__provider {
+    max-width: 5.5rem;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__provider .badge {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__context {
+    padding-inline: 0.25rem;
+  }
+}
+@container (width < 22rem) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__provider {
+    display: none;
+  }
+}
+
+/* A badge is a small STATE — "Up to date", "Running", "Beta" — set in the page's own face rather than
+   the mono one this design reserves for identifiers and machine output. It is also the one element
+   here that is genuinely a pill: a state has no reading order and no edge to align to, so a capsule is
+   the honest shape for it, and it is what keeps a badge from reading as a very small card. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .badge {
+  border-radius: var(--studio-radius-pill);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+}
+
+/* There is no danger-zone rule here, and that is a finding rather than an omission. No settings page in
+   this app renders `SettingsGroup tone="danger"` — the only `danger` tone in the module is a
+   `SettingsState` on the plugin detail's error branch (modules/settings/PluginDetail.tsx), and the only
+   danger-toned GROUP anywhere is a test fixture. A design cannot give a section a treatment the pages
+   never ask for, so styling one would have been a rule that matches nothing.
+   An earlier revision also pulled such a section to the bottom with `order`. That was wrong on its own
+   terms: `order` moves the paint and not the DOM, so the reader would have tabbed into the destructive
+   controls in the middle of the page while seeing them at the end of it (WCAG 1.3.2, 2.4.3). If a
+   danger zone is wanted, the page states it last. */
+
+/* ---------------------------------------------------------------------------------------------------
+ * Overlays.
+ *
+ * Geometry is owned centrally by `.overlay-surface[data-presentation]` in
+ * app/styles/components/primitives.css, resolved from useOverlayPresentation(). Nothing here touches
+ * position, inset, size, radius or which presentation is chosen — only what the surface is made of.
+ * --------------------------------------------------------------------------------------------------- */
+
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-surface {
+  border-color: var(--studio-line);
+  background: var(--color-overlay);
+  box-shadow: var(--shadow-raised);
+}
+/* A menu item is a control, so it takes the ladder's control step and the shared hover fill — the same
+   move a register row and a settings record make. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-menu-item {
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-menu-item:hover {
+  background: var(--studio-fill-hover);
+}
+/* A dialog's own three parts: the title, the sentence under it and the row of controls at the bottom.
+   The elements are the ones every Modal already renders — this only settles what they are set at, so a
+   confirm dialog and a create dialog open with the same rhythm. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-surface h2 {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-surface h2 + p {
+  margin-top: 0.375rem;
+  max-width: min(100%, 68ch);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* The scrim. `.overlay-layer-modal` IS the backdrop in this app — every consumer is a `fixed inset-0`
+   layer that paints the veil on itself (Modal, the command palette, the advisor's blocking layer) — so
+   the layer is where the veil belongs.
+   The consumers spell it `bg-bg/70`, which is right on a design whose canvas is black and paints
+   NOTHING on one whose canvas is white: 70% of #ffffff over #ffffff left the dialog on a 1.27:1
+   hairline with no darkening behind it at all. The utility is untouched — Ember and midnight keep their
+   scrim exactly — and this rule, being unlayered, replaces it for Studio with a veil derived per variant
+   from --color-scrim (measured on light: the page reads 3.68:1 darker, a white dialog stands 3.84:1 off
+   the veil). */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-layer-modal {
+  background: var(--color-scrim);
+}
+
+/* Floating menus. `.overlay-surface` above carries the raised shadow, but a menu is not one of those —
+   it is a bare panel on `.overlay-layer-menu` — and on the light variant its fill measured 1.05:1
+   against the page it floats over, with a 1.22:1 border: a menu that visually merged with the page
+   behind it. It needs the same two things any floating thing needs, a stronger edge and a shadow.
+   `SelectMenu` and `ProjectFilterPills` already asked for the raised shadow through a utility and are
+   simply re-stated here; `ContextMenu`, `ActionMenu`, `LanguageSwitcher` and `HelpTip` are the ones
+   that gain it. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-layer-menu {
+  border-color: var(--studio-line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raised);
+}
+
+/* The pointer-gated row bump is gone, and deliberately so rather than by oversight. The row's open
+   control is `position: absolute; inset: 0` (data-table.css), so its height is the row's CONTENT box:
+   at the previous 44px rhythm that left a 43px target, one pixel under `--touch-target`, and a finger
+   had to be given the extra pixel back. At 48px the control measures 47px and clears the floor on its
+   own, on every pointer, which is the better answer to the same problem.
+   `tests/e2e/specs/studio.viewport.e2e.ts` measures it. */
+
+/* ---------------------------------------------------------------------------------------------------
+ * /dash.
+ *
+ * The dashboard was the page where the two designs disagreed most. It drew a mascot at the centre of a
+ * 20rem field, three pods hung off it at fixed angles, curved SVG filaments tying each one back to the
+ * core, and a glowing accent-ringed orb on every pod — an orrery, on the page whose job is to state
+ * four numbers. `HeroCosmos` answers this by giving the `command` profile a `grid` mode with no core,
+ * no filaments and no orbit maths, which is what leaves the pods for a stylesheet to arrange.
+ *
+ * What they become is the anatomy the rest of this design already uses: bordered cards, a muted label,
+ * a figure, a line of detail.
+ * --------------------------------------------------------------------------------------------------- */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__filaments,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__core {
+  display: none;
+}
+/* No accent wash behind the hero, and no room held open for an orbit that is not drawn. The tile
+   reserved 22rem for the field and 18rem for the column inside it — measurements for a mascot with
+   three pods circling it — which in the flat layout is 350px of empty page between the composer and the
+   first section heading. The content sets the height now. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-aura {
+  background: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-now__field,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-now__signals {
+  min-height: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .hero-now {
+  padding: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .hero-now__field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .hero-now__field > div:first-child {
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--studio-line);
+  border-radius: var(--radius-xl);
+  background: var(--color-document);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .home-composer {
+  min-height: 10rem;
+  border-color: var(--studio-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-elevated);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .home-composer:focus-within {
+  border-color: var(--studio-line-strong);
+}
+/* The composer's 70px accent bloom goes with it. A focused input in this design says so with its ring;
+   a second, coloured halo underneath is the ember language leaking through the one control on the page
+   the reader is most likely to be looking at. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .home-composer,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .home-composer:focus-within {
+  box-shadow: none;
+}
+/* `auto-fit` rather than a fixed count: the pod SET is not fixed either — `cron` appears only where the
+   scheduler plugin is installed — so a three-column rule would leave a hole on the instances that have
+   two. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pods {
+  position: relative;
+  inset: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod {
+  position: relative;
+  translate: none;
+  width: auto;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 1rem;
+  border: 1px solid var(--studio-line);
+  border-radius: var(--radius-xl);
+  background: var(--color-document);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod:hover,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod:focus-visible {
+  border-color: var(--studio-line-strong);
+  background: var(--studio-fill-quiet);
+  transform: none;
+}
+/* A glyph, not an orb. The pod's icon carried a 2.4rem accent ring, an outer radial bloom, four
+   flickering embers and a triple box-shadow — five decorations on a 14px symbol whose whole job is to
+   say which reading this card holds. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb {
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--studio-line);
+  border-radius: var(--radius);
+  background: var(--color-elevated);
+  color: var(--color-text-muted);
+  box-shadow: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb::before,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb::after {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__label {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__value {
+  font-family: var(--font-sans);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__detail {
+  font-size: 0.8125rem;
+}
+/* The alert pod keeps its meaning and loses its glow: the warning tone moves onto the border and the
+   figure, where it is still unmistakable and no longer lights up a third of the card. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod--alert {
+  border-color: color-mix(in srgb, var(--color-warning) 55%, var(--studio-line));
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod--alert .hero-cosmos__orb {
+  border-color: color-mix(in srgb, var(--color-warning) 55%, var(--studio-line));
+  background: var(--color-elevated);
+  color: var(--color-warning);
+  box-shadow: none;
+}
+
+/* A section heading on the dashboard. `.dash-label` is 10.5px of ember-coloured mono at 0.22em of
+   tracking with a glow behind it — the design's loudest possible way to write the word "Activity". It
+   is a heading, and every other heading in this design is sentence-case sans on the page's own ink. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-label {
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-shadow: none;
+  text-transform: none;
+}
+/* "Live" beside that heading is a state, and this design writes a state as a quiet word on the muted
+   ink rather than as a 9px accent-outlined capsule. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-live {
+  padding: 0;
+  border: 0;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* Two labels elsewhere in the app carry the same treatment and the same correction: the skin switcher's
+   name in the page bar, and the telemetry rail's section heads. Both are words — "Studio Light",
+   "Context", "Other processes" — and neither is a machine identifier. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .skin-switcher__name,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .telemetry-section-head {
+  letter-spacing: normal;
+  text-transform: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .skin-switcher__name {
+  font-size: 0.8125rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .telemetry-section-head {
+  font-size: 0.75rem;
+}
+
+/* Motion is a courtesy: the transitions introduced above resolve at once for a reader who asked for
+   less of it. */
+@media (prefers-reduced-motion: reduce) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-grid.interactive-row,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row {
+    transition-duration: 1ms;
+  }
+}

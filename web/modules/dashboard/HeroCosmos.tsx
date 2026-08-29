@@ -10,17 +10,30 @@ import { formatCost } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import { usePulse, useModelUsage, useUsageByDay, useCronJobs, useMe, usePluginPresent } from '../../lib/queries';
 import { Sparkline as SharedSparkline } from '../../components/ui/Sparkline';
+import { useShellProfile } from '../../lib/shellProfile';
 import { ElowenPresence } from './ElowenPresence';
 import type { PresenceState } from './usePresence';
 
 /** The hero mini-cosmos: the Elowen presence mascot as the core of a small orbital field whose four
  *  pods carry the operational signals (who is working, next run, month cost). Pods are links —
  *  the dashboard navigates, it doesn't configure — tied to the core by the same curved filaments as
- *  the settings constellation. Below the orbit threshold the pods collapse into beam-docked rows. */
+ *  the settings constellation. Below the orbit threshold the pods collapse into beam-docked rows.
+ *
+ *  Under a `command` shell profile the field is a `grid` instead: the same three pods, the same links
+ *  and the same readings, laid out as plain stat cards with no core, no filaments and no orbit. That
+ *  profile's whole premise is that the interface is a dashboard rather than a place, and an orbiting
+ *  mascot is the single loudest contradiction of it. It is a MODE and not a fork — one component, one
+ *  set of pods, one source for each figure — and the layout effect below simply has nothing to do in
+ *  it, which is also why the pods can then be positioned by CSS alone. */
 
-/** 0.5rem slack under the hero's 26rem cosmos column so subpixel rounding can't flap the mode. */
-const ORBIT_MIN_WIDTH_PX = 408;
-const ORBIT_MIN_HEIGHT_PX = 336;
+/** 0.5rem slack under the hero's 20rem cosmos column and its 18rem reserved height, so subpixel
+ *  rounding cannot flap the mode. Both mirror HeroNowTile's `@3xl:` grid; the pair moved down together
+ *  when the column stopped being sized for a page that was afterwards shrunk to ~72%.
+ *
+ *  Orbit mode's own `min-height` (20rem, dashboard-cosmos.css) sits ABOVE the height threshold on
+ *  purpose: entering orbit must not immediately measure a box that fails the test that let it in. */
+const ORBIT_MIN_WIDTH_PX = 312;
+const ORBIT_MIN_HEIGHT_PX = 280;
 
 type PodId = 'people' | 'cron' | 'cost';
 
@@ -61,6 +74,7 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   presenceLabel: string;
 }) {
   const { t, locale } = useTranslation();
+  const flat = useShellProfile() === 'command';
   const rootRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const podsRef = useRef<HTMLElement>(null);
@@ -72,7 +86,9 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   const pulse = usePulse();
   const people = pulse.data?.people ?? [];
   const working = people.filter((person) => person.working).length;
-  const turnsToday = pulse.data?.totals.turns ?? 0;
+  // Guarded section by section rather than only at `data`: the response is an external payload, and a
+  // pod that reads "0 turns" is a far better failure than an exception taking the whole route down.
+  const turnsToday = pulse.data?.totals?.turns ?? 0;
 
   const me = useMe();
   // Without the cron plugin there is no schedule to read: asking anyway earns a 503 and would render an
@@ -143,6 +159,27 @@ export function HeroCosmos({ now, state, presenceLabel }: {
     const svg = svgRef.current;
     const podsLayer = podsRef.current;
     if (!root || !svg || !podsLayer) return;
+    // The flat mode has no geometry to compute: no core to orbit, no filaments to draw, and pods that
+    // CSS lays out. Returning before the observer is even attached is what leaves the DOM clean enough
+    // for a stylesheet to own the arrangement — the orbit path writes inline `left`/`top` onto every
+    // pod, and inline styles are not something a design can override.
+    //
+    // It has to CLEAR that geometry first, not merely stop producing it. Switching skin does not remount
+    // this subtree — Shell.tsx keeps one mount across a skin change so a live conversation survives it —
+    // so arriving here from Ember's orbit means every pod still carries the `left`/`top` the last layout
+    // pass wrote. The grid rule sets `position: relative`, at which point those absolute coordinates
+    // become real offsets and the cards land off the page until a reload.
+    if (flat) {
+      root.dataset.mode = 'grid';
+      svg.replaceChildren();
+      for (const pod of podsLayer.querySelectorAll<HTMLElement>(':scope > .hero-cosmos__pod')) {
+        pod.style.left = '';
+        pod.style.top = '';
+        pod.style.removeProperty('--fx');
+        pod.style.removeProperty('--fy');
+      }
+      return;
+    }
 
     const layout = () => {
       const podEls = Array.from(podsLayer.querySelectorAll<HTMLElement>(':scope > .hero-cosmos__pod'));
@@ -207,7 +244,7 @@ export function HeroCosmos({ now, state, presenceLabel }: {
     // Re-run when the pod SET changes (a pod appears once /plugins/ui confirms its plugin):
     // the ResizeObserver only fires on size changes, so a DOM-only pod addition would otherwise keep
     // stale orbit positions.
-  }, [cron, stats]);
+  }, [cron, stats, flat]);
 
   // The waiting state re-tones the people filament amber to match the presence aura. The layout
   // pass re-applies it via alertRef because a redraw recreates the paths.
@@ -221,7 +258,7 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   }, [state]);
 
   return (
-    <div ref={rootRef} className="hero-cosmos" data-mode="stack" data-testid="hero-cosmos">
+    <div ref={rootRef} className="hero-cosmos" data-mode={flat ? 'grid' : 'stack'} data-testid="hero-cosmos">
       <svg ref={svgRef} className="hero-cosmos__filaments" aria-hidden="true" />
       <div className="hero-cosmos__core">
         <ElowenPresence state={state} label={presenceLabel} />
@@ -257,7 +294,7 @@ function Sparkline({ days }: { days: { day: string; tokens: number }[] }) {
   return (
     <SharedSparkline
       values={days.map((day) => day.tokens)}
-      colour="var(--color-accent)"
+      colour="var(--color-primary)"
       variant="bar"
       highlightLast
       className="mt-1.5 h-5 w-full"

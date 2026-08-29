@@ -29,7 +29,7 @@ The menu comes from the daemon and is filtered by surface, account, and enabled 
 | --- | --- | --- | --- |
 | `/model` | `[name]` | CLI, Web, channels | Opens the model picker. With a name, switches directly when it matches a configured model; otherwise the picker opens. |
 | `/reasoning` | `[level\|show]` | CLI, Web, channels | Opens the reasoning-effort picker, or applies a model-supported level directly. In CLI and Web, `/reasoning show` toggles Thought rows. |
-| `/fast` | `[on\|off]` | CLI, Web, channels | Enables or disables OpenAI OAuth priority processing when it is available for the active model and account. In the CLI, `/fast status` reports availability and state. |
+| `/fast` | `[on\|off\|status]` | CLI, Web, channels | Sets the durable account Fast preference. Every conversation and sub-agent reads it live; unsupported current routes keep the preference without sending a Fast wire field. |
 
 ## Saved conversations
 

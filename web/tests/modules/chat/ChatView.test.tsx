@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -58,6 +58,15 @@ describe('ChatView (/chat page)', () => {
     expect(screen.queryByText('Second chat')).toBeNull();
     // …and exactly one stream is opened (no second controller / no reconnect).
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
+  });
+
+  // /chat was the one route in the app with no level-1 heading at all: its title was a styled span, and
+  // the hero carrying it was withheld from small screens entirely, so a screen reader had nothing to
+  // orient by. The heading is deliberately compact — visual size and semantic level are independent —
+  // and it must be present at every width, so the hero mounts unconditionally.
+  it('gives the page a real level-1 heading', async () => {
+    renderChat(<ChatView />);
+    expect(await screen.findByRole('heading', { level: 1, name: /^(Chat)$/ })).toBeInTheDocument();
   });
 
   it('opens one stream even with the dock chat surface AND /chat mounted together', async () => {
@@ -134,5 +143,68 @@ describe('ChatView (/chat page)', () => {
     expect(container.querySelector('[data-variant="full"]')).toBe(surface);
     expect(FakeES.instances.length).toBe(1);
     expect(composer.value).toBe('draft survives');
+  });
+
+  it('opens a selected conversation at its newest message', async () => {
+    server.use(http.post('*/api/brain/start', async ({ request }) => {
+      const body = await request.json() as { session?: string };
+      return HttpResponse.json({ sessionId: body.session ?? 'brain-1' }, { status: 201 });
+    }));
+    const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(
+      <Wrapper><ToastProvider><BrainChatProvider><main><ChatView /></main></BrainChatProvider></ToastProvider></Wrapper>,
+    );
+    await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
+    const main = container.querySelector('main')!;
+    Object.defineProperty(main, 'scrollHeight', { configurable: true, value: 1400 });
+    scrollTo.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: /Conversation history|Historie konverzací/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Second chat/i }));
+
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1400 }));
+    scrollTo.mockRestore();
+  });
+
+  it('keeps the newest message pinned while the composer grows', async () => {
+    const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(
+      <Wrapper><ToastProvider><BrainChatProvider><main><ChatView /></main></BrainChatProvider></ToastProvider></Wrapper>,
+    );
+    const composer = await screen.findByPlaceholderText(/Write a message|Napište zprávu/i) as HTMLTextAreaElement;
+    const main = container.querySelector('main')!;
+    Object.defineProperty(main, 'scrollHeight', { configurable: true, value: 1600 });
+    Object.defineProperty(composer, 'scrollHeight', { configurable: true, value: 120 });
+    scrollTo.mockClear();
+
+    fireEvent.change(composer, { target: { value: 'A long wrapped message that grows the composer.' } });
+
+    expect(composer.style.height).toBe('120px');
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1600 });
+    scrollTo.mockRestore();
+  });
+
+  it('keeps the chat fill height stable when a phone resizes while scrolled', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(
+      <Wrapper><ToastProvider><BrainChatProvider><main><ChatView /></main></BrainChatProvider></ToastProvider></Wrapper>,
+    );
+    await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
+
+    const transcript = screen.getByTestId('chat-transcript');
+    const host = transcript.parentElement!.parentElement!.parentElement!;
+    const main = container.querySelector('main')!;
+    const innerHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
+    Object.defineProperty(main, 'scrollTop', { configurable: true, value: 900, writable: true });
+    vi.spyOn(main, 'getBoundingClientRect').mockReturnValue({ top: 0 } as DOMRect);
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ top: -800 } as DOMRect);
+
+    fireEvent(window, new Event('resize'));
+
+    await waitFor(() => expect(host.style.minHeight).toBe('744px'));
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
   });
 });

@@ -78,10 +78,14 @@ describe('ToolPills', () => {
     expect(screen.getByText('built-in')).toBeTruthy();
   });
 
-  it('renders a sample chip with the manifest emoji icon', async () => {
+  // The chip icon is derived from the tool's NAME, never from `icon`: that field is whatever emoji a
+  // plugin manifest declared, and it put a question mark, a laptop and a recycling symbol into a drawer
+  // whose every other icon is a monochrome Lucide glyph.
+  it('draws a sample chip with a Lucide icon and ignores the manifest emoji', async () => {
     mountWith([tool({ name: 'discord_send', label: 'Send', icon: '💬', plugin: 'discord' })]);
-    expect(await screen.findByText('discord_send')).toBeTruthy();
-    expect(screen.getByText('💬')).toBeTruthy();
+    const chip = (await screen.findByText('discord_send')).closest('span')!.parentElement!;
+    expect(chip.querySelector('svg.lucide')).toBeTruthy();
+    expect(chip.textContent).not.toContain('💬');
   });
 
   it('shows an empty state when the user has no tools', async () => {
@@ -95,7 +99,7 @@ describe('ToolPills', () => {
       tool({ name: 'wa_send', plugin: 'whatsapp' }),
       tool({ name: 'MemorySearch', group: 'memory', state: 'inherited', toggleable: false }),
     ]);
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage tool access' }));
     expect(await screen.findByRole('heading', { name: 'discord' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'whatsapp' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Memory' })).toBeTruthy();
@@ -109,7 +113,7 @@ describe('ToolPills', () => {
       tool({ name: 'discord_send', plugin: 'discord', state: 'allowed' }),
       tool({ name: 'discord_read', plugin: 'discord', state: 'allowed' }),
     ], account({ allowed_tools: ['discord_send', 'discord_read'] }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage tool access' }));
     fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(captured.body?.allowed_tools).toEqual(['discord_read']));
@@ -122,7 +126,7 @@ describe('ToolPills', () => {
       tool({ name: 'discord_send', plugin: 'discord', state: 'disabled' }),
       tool({ name: 'discord_read', plugin: 'discord', state: 'disabled' }),
     ], account({ allowed_tools: [], disabled_tools: ['discord_send', 'discord_read'] }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage tool access' }));
     fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(captured.body?.allowed_tools).toEqual(['discord_send']));
@@ -139,7 +143,7 @@ describe('ToolPills', () => {
       tool({ name: 'discord_send', plugin: 'discord', state: 'allowed' }),
       tool({ name: 'discord_gone', plugin: 'discord', state: 'unavailable', toggleable: false }),
     ], account({ allowed_tools: ['discord_send', 'discord_gone'] }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage tool access' }));
     fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(captured.body?.allowed_tools).toEqual(['discord_gone']));
@@ -153,7 +157,7 @@ describe('ToolPills', () => {
       tool({ name: 'discord_read', plugin: 'discord', state: 'allowed' }),
       tool({ name: 'MemorySearch', group: 'memory', state: 'inherited', toggleable: false }),
     ], account({ allowed_tools: ['*'] }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage tool access' }));
     fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     // Only the plugin tools become concrete: the inherited built-in is not part of the grant.

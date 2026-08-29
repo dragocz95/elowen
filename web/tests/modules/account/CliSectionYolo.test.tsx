@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
@@ -32,12 +32,13 @@ const renderSection = () => render(<ToastProvider><CliSection /></ToastProvider>
 beforeEach(() => { saveCli.mockClear(); savePermissions.mockClear(); });
 
 describe('CliSection — YOLO default toggle', () => {
-  it('states the YOLO warning inline like every other row, seeded off', () => {
+  it('keeps the YOLO warning behind the row help affordance, seeded off', () => {
     renderSection();
-    // The warning is read, not discovered: it sits in the row description the same way the neighbouring
-    // rows explain themselves, so the section carries no lone help button to hunt for.
-    expect(screen.getByText(en.cli.yoloWarning)).toBeInTheDocument();
-    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(screen.queryByText(en.cli.yoloWarning)).toBeNull();
+    const row = screen.getByText(en.cli.yoloToggle).closest('.settings-row');
+    expect(row).not.toBeNull();
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: en.common.help }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent(en.cli.yoloWarning);
     const toggle = screen.getByRole('switch', { name: en.cli.yoloToggle });
     expect(toggle.getAttribute('aria-checked')).toBe('false');
   });
@@ -46,7 +47,9 @@ describe('CliSection — YOLO default toggle', () => {
     renderSection();
     fireEvent.click(screen.getByRole('switch', { name: en.cli.yoloToggle }));
     expect(savePermissions).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog', { name: en.cli.yoloConfirmTitle })).toBeTruthy();
+    // `alertdialog`, not `dialog`: a confirmation is an alert dialog now, which is what makes it
+    // undismissable by a stray press outside it.
+    expect(screen.getByRole('alertdialog', { name: en.cli.yoloConfirmTitle })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: en.cli.yoloConfirm }));
     await waitFor(() => expect(savePermissions).toHaveBeenCalled(), { timeout: 1500 });
     expect(savePermissions.mock.calls[0]![0]).toEqual({ yolo: true });

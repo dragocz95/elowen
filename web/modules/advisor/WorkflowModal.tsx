@@ -22,13 +22,13 @@ type WorkflowNode = WorkflowState['nodes'][number];
 const NODE_GLYPH: Record<WorkflowNode['status'], string> = { pending: '○', running: '●', done: '✓', error: '✗' };
 const NODE_TONE: Record<WorkflowNode['status'], string> = {
   pending: 'border-dashed border-border text-text-muted',
-  running: 'border-accent text-text wf-dag__node--running',
+  running: 'border-primary text-text wf-dag__node--running',
   done: 'border-success/60 text-text',
   error: 'border-danger/70 text-text',
 };
 const GLYPH_TONE: Record<WorkflowNode['status'], string> = {
   pending: 'text-text-muted',
-  running: 'text-accent',
+  running: 'text-primary',
   done: 'text-success',
   error: 'text-danger',
 };
@@ -108,7 +108,7 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
       style={style}
       className={`${className} flex flex-col justify-center rounded-lg border text-left transition-colors ${
         full ? 'gap-0.5 bg-elevated px-2.5 py-1.5' : 'gap-0 border-transparent bg-transparent px-1.5 hover:border-border'
-      } ${full ? NODE_TONE[node.status] : 'text-text-muted'} ${node.id === selected?.id ? 'ring-1 ring-accent' : ''}`}
+      } ${full ? NODE_TONE[node.status] : 'text-text-muted'} ${node.id === selected?.id ? 'ring-1 ring-primary' : ''}`}
     >
       <span className="flex items-center gap-1.5">
         <span aria-hidden className={`wf-dag__pulse shrink-0 text-tiny ${GLYPH_TONE[node.status]}`}>{NODE_GLYPH[node.status]}</span>
@@ -116,7 +116,7 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
       </span>
       {full ? (
         <>
-          <span className="truncate text-tiny text-accent">{node.detail || node.task}</span>
+          <span className="truncate text-tiny text-primary">{node.detail || node.task}</span>
           <span className="truncate text-tiny text-text-muted">{nodeVitals(node)}</span>
         </>
       ) : null}
@@ -229,6 +229,8 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
       onClose={onClose}
       size="lg"
       icon={Workflow}
+      // `inspect`: the DAG is read, not edited — picking a node only opens its detail below the graph.
+      intent="inspect"
     >
       <div data-testid="workflow-modal" className="flex min-h-0 flex-1 flex-col">
         {body()}

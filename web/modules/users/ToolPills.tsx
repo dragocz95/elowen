@@ -1,6 +1,5 @@
 'use client';
 import { useState } from 'react';
-import { Wrench } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useUserTools } from '../../lib/queries';
 import { useUpdateUser } from '../../lib/mutations';
@@ -10,9 +9,14 @@ import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { useTranslation } from '../../lib/i18n';
 import type { User, UserPatch, UserToolPill } from '../../lib/types';
 import { LoadingLine } from '../../components/ui/states';
+import { toolLucideIcon } from '../../lib/toolGlyph';
 
+/** The tool's picture, derived from its name. The pill list sits two blocks under a column of monochrome
+ *  Lucide icons, so it may not render `tool.icon`: that field is whatever emoji a plugin manifest happens
+ *  to declare, and it put a question mark, a laptop and a recycling symbol into the same drawer. */
 function Icon({ tool }: { tool: UserToolPill }) {
-  return <span aria-hidden className="shrink-0 text-[13px] leading-none">{tool.icon ?? <Wrench size={12} className="inline" />}</span>;
+  const Glyph = toolLucideIcon(tool.name);
+  return <Glyph size={13} aria-hidden className="shrink-0" />;
 }
 
 /** The user's effective tool access: a compact summary (enabled vs total + plugin count) with a
@@ -109,6 +113,7 @@ export function ToolPills({ user }: { user: User }) {
         moreCount={Math.max(0, enabled.length - 3)}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
+        manageAriaLabel={t.users.manageTools}
       />
       <ManageSelectionModal
         title={t.users.tools}

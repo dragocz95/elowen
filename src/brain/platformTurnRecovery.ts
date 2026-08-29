@@ -429,7 +429,6 @@ export async function resumePlatformTurn(
       scheduled: false,
       ...(envelope.model ? { model: envelope.model } : {}),
       ...(envelope.thinkingLevel !== undefined ? { thinkingLevel: envelope.thinkingLevel } : {}),
-      ...(envelope.fast !== undefined ? { fast: envelope.fast } : {}),
       // A resume CONTINUES the interrupted transcript by definition; the idle-rollover check would see
       // the pre-restart quiet time and archive the very conversation the continuation needs.
       idleRolloverMs: Infinity,

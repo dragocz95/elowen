@@ -44,7 +44,10 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <Modal title={t.skillsModal.modalTitle} onClose={onClose} size="md" icon={BookOpen}>
+      {/* Browse the loaded skills and push one into the conversation — a bottom sheet on a phone. The
+          delete confirmation raised from a row is a level deeper and takes the screen, which is what a
+          destructive question should do. */}
+      <Modal title={t.skillsModal.modalTitle} onClose={onClose} size="md" icon={BookOpen} intent="inspect">
         <ModalBody gap={4}>
           <Input
             value={filter}

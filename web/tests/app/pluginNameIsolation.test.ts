@@ -38,7 +38,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'app/editor/page.tsx': {
     '/p/editor': 'Legacy /editor bookmarks redirect to the optional editor plugin route.',
   },
-  'components/shell/OrbitalNav.tsx': {
+  'components/shell/navOrder.ts': {
     '/p/editor': 'The default nav order gives the optional editor integration a stable slot.',
     '/p/subagent': 'The default nav order gives the bundled subagent integration a stable slot.',
     '/p/cronjob': 'The default nav order gives the bundled scheduler integration a stable slot.',

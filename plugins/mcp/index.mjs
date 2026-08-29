@@ -488,7 +488,10 @@ function registerBridgedTool(ctx, getClient, spec, tool) {
         return mapResult(res);
       } catch (e) { return fail(e); }
     },
-  }), spec.ownerUserId == null ? undefined : { ownerUserId: spec.ownerUserId });
+  }), {
+    ...(spec.ownerUserId == null ? {} : { ownerUserId: spec.ownerUserId }),
+    ...(transportKind(spec) === 'stdio' ? { hostFilesystem: true } : {}),
+  });
 }
 
 /** Register bridged tools for several servers in ONE deterministic order. Tool order is part of the

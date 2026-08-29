@@ -59,7 +59,6 @@ describe('host ↔ plugin boundary', () => {
   it('web/lib reaches into a feature module only for the components that module owns', () => {
     const allowed = [
       'modules/settings/providers',
-      'modules/settings/SettingsSurface',
       'modules/settings/PluginConfigEditor',
       'modules/settings/MarkdownAssetEditor',
     ];

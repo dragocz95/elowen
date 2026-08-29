@@ -1,8 +1,9 @@
-import { realpathSync } from 'node:fs';
-import { resolve, sep, dirname, basename, join } from 'node:path';
-import { currentContributionUserId, currentIdentity, currentPolicy, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
+import { basename, dirname, join } from 'node:path';
+import { currentContributionUserId, currentIdentity, currentPathView, currentPolicy, currentSessionId, currentSettingsUserId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
 import { noninteractivePermissionBoundary, type NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import { planFilePath, sessionToolResultSpillDir } from '../shared/paths.js';
+import { realAbs, realPathWithin } from './pathUtils.js';
+export { realPathWithin } from './pathUtils.js';
 
 /** The repo roots the current session may operate in. Empty for an admin (all-access) or outside a
  *  prompt turn. A tool uses this to default a working directory. */
@@ -15,7 +16,7 @@ export function allowedRoots(): string[] {
  *  daemon's own cwd (admin all-access carries no roots). The bound path lives on the per-run turn
  *  scope, so it re-asserts itself at the start of every run regardless of where the agent moved. */
 export function defaultCwd(): string {
-  return currentWorkDir() ?? allowedRoots()[0] ?? process.cwd();
+  return currentPathView()?.root ?? currentWorkDir() ?? allowedRoots()[0] ?? process.cwd();
 }
 
 /** Whether the current session has unrestricted (admin) access to the filesystem. */
@@ -39,10 +40,11 @@ export function isAllAccess(): boolean {
  *  choice. Only the second one is a permanent lock (see DelegatedExecutionScope.readOnlyOrigin).
  *  `principal` identifies whose turn this is, so a child records who spawned it and only that same
  *  identity can later widen it. */
-export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; contributionUserId: number | null; readOnly?: boolean; planMode?: boolean; principal?: string } {
+export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId: number | null; contributionUserId: number | null; readOnly?: boolean; planMode?: boolean; principal?: string; workspaceRef?: { workspaceId: string; projectId: number } } {
   const p = currentPolicy();
   const principal = turnPrincipal(currentIdentity());
   const tools = currentToolPolicy();
+  const pathView = currentPathView();
   const toolPolicy = tools ? {
     ...(tools.allow ? { allow: [...tools.allow] } : {}),
     ...(tools.deny ? { deny: [...tools.deny] } : {}),
@@ -52,48 +54,13 @@ export function currentAccess(): { projectIds: number[]; admin: boolean; owner: 
     admin: p?.allowedProjectIds === 'all',
     owner: currentIdentity()?.owner === true,
     permissionBoundary: noninteractivePermissionBoundary(currentTurnPermissions()),
+    settingsUserId: currentSettingsUserId(),
     contributionUserId: currentContributionUserId(),
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(currentTurnMode() === 'plan' ? { readOnly: true, planMode: true } : {}),
     ...(principal ? { principal } : {}),
+    ...(pathView ? { workspaceRef: pathView.workspace } : {}),
   };
-}
-
-/** Resolve to the REAL absolute path (symlinks followed), so a link inside an allowed repo pointing
- *  outside it can't smuggle access past the prefix check. A not-yet-existing target (a new file)
- *  resolves through its closest existing ancestor instead. */
-function realAbs(path: string): string {
-  const abs = resolve(path);
-  // Walk up to the CLOSEST existing ancestor and resolve that, then re-append the missing tail. Trying
-  // only the target and its immediate parent would fall back to the lexical path for anything deeper —
-  // and a lexical path hides a symlinked ancestor, so `<root>/link/a/b` (link → outside) would read as
-  // inside the root while every write through it lands outside.
-  const missing: string[] = [];
-  let cur = abs;
-  for (;;) {
-    try {
-      const real = realpathSync(cur);
-      return missing.length ? join(real, ...missing) : real;
-    } catch {
-      const parent = dirname(cur);
-      if (parent === cur) return abs; // nothing on this path exists — any disk op will ENOENT anyway
-      missing.unshift(basename(cur));
-      cur = parent;
-    }
-  }
-}
-
-/** `path` resolved to its real absolute form when it lies inside one of `roots`, else null. The
- *  explicit-roots variant of {@link assertPathAllowed} for callers OUTSIDE a policy turn scope
- *  (e.g. validating a client-reported cwd against a Policy before the scope is established). */
-export function realPathWithin(path: string, roots: string[]): string | null {
-  const abs = realAbs(path);
-  const within = (root: string): boolean => {
-    const real = realAbs(root); // the root itself may be reached via a symlink
-    const base = real.endsWith(sep) ? real.slice(0, -1) : real;
-    return abs === base || abs.startsWith(base + sep);
-  };
-  return roots.some(within) ? abs : null;
 }
 
 /** Is `candidate` exactly this session's plan file?
@@ -146,6 +113,8 @@ export function isSessionPlanPath(sessionId: string, candidate: string): boolean
  *  session can ever reach another session's spills. Writes there can't corrupt clearing either —
  *  an EEXIST survivor is latched only when its bytes match the output being spilled. */
 export function assertPathAllowed(path: string): string {
+  const pathView = currentPathView();
+  if (pathView) return pathView.resolve(path);
   if (isAllAccess()) return realAbs(path);
   const abs = realPathWithin(path, allowedRoots());
   if (abs) return abs;
@@ -159,4 +128,19 @@ export function assertPathAllowed(path: string): string {
     if (spill) return spill;
   }
   throw new Error(`path not allowed: "${path}" is outside your accessible repositories`);
+}
+
+/** Model-facing path for a host path already validated by {@link assertPathAllowed}. */
+export function displayPath(path: string): string {
+  return currentPathView()?.display(path) ?? path;
+}
+
+/** Stable read-before-edit identity. Workspace-scoped turns include the durable workspace id. */
+export function pathStateKey(path: string): string {
+  return currentPathView()?.stateKey(path) ?? path;
+}
+
+/** Scrub exact verified workspace prefixes from filesystem/library diagnostics. */
+export function sanitizePathOutput(text: string): string {
+  return currentPathView()?.sanitize(text) ?? text;
 }

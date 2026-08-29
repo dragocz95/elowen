@@ -25,8 +25,10 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
     return all.filter((c) => c.name.toLowerCase().includes(needle) || (c.description ?? '').toLowerCase().includes(needle));
   }, [commands, filter]);
 
+  // `inspect`: a catalog you skim and dismiss, so on a phone it comes up as a bottom sheet rather than
+  // taking the whole screen — the conversation you are asking about stays visible behind it.
   return (
-    <Modal title={t.helpModal.modalTitle} onClose={onClose} size="md" icon={HelpCircle}>
+    <Modal title={t.helpModal.modalTitle} onClose={onClose} size="md" icon={HelpCircle} intent="inspect">
       <ModalBody gap={4}>
         <Input
           value={filter}

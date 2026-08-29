@@ -1,0 +1,156 @@
+/* "studio-light" — the light variant of the Studio design.
+ *
+ * Studio is a professional operating studio for working with AI: high information signal, calm geometry,
+ * precise tables, hairline structure. It ships as TWO skins sharing ONE design; everything structural
+ * lives in ../studio/shared.css and everything that differs is the token block below.
+ *
+ * The token block MUST stay in this file. tests/lib/designTokens.test.ts resolves a skin's palette by
+ * reading `skins/<id>/skin.css` and nothing else, so a token declared in the shared stylesheet would be
+ * invisible to the WCAG gate and the gate would silently measure the built-in ember palette instead.
+ *
+ * Every value here is measured, not eyeballed: all fifteen text/surface pairs clear WCAG AA (4.5:1) and
+ * the three text steps stay ordered. The tightest pair is --color-text-subtle on the derived
+ * --color-surface-sticky at 4.70:1, which is why the third step is #6A6A73 rather than something
+ * lighter. */
+
+:root[data-skin='studio-light'] {
+  /* A light document. The browser has to be told, or form controls, scrollbars and the caret keep
+     rendering in the dark scheme the base document declares. */
+  color-scheme: light;
+
+  /* The reference uses one clean white canvas; depth comes from quiet fills and hairlines. */
+  --color-bg: #ffffff;
+  --color-document: #ffffff;
+  --color-surface: #ffffff;
+  --color-elevated: #f4f4f5;
+  --color-overlay: #ffffff;
+  --color-border: #e4e4e7;
+  --color-border-strong: #d4d4d8;
+
+  /* The navigation column, one step quieter than the canvas it insets from, with its own row fill and
+     its own rule. It is deliberately NOT --color-elevated: that step belongs to the content cards and
+     moves with them, and a sidebar row taking the card fill made the menu read as a stack of cards.
+     Measured: subtle text 5.00:1 on the column, 4.54:1 on the row fill — both clear AA. */
+  --color-sidebar: #f7f7f8;
+  --color-sidebar-accent: #ececef;
+  --color-sidebar-border: #e6e6e9;
+
+  /* Ink. --color-text-muted is #52525b rather than the lighter grey a light UI reaches for by reflex:
+     #71717a measures 4.40:1 on --color-elevated and fails AA outright.
+     --color-text-subtle is measured against the WORST surface a light design has, which is not
+     --color-elevated but --color-surface-sticky: that token is derived (94% document + 6% ink) and
+     resolves here to #f0f0f0, lighter than #f4f4f5, and it is what the register's sticky header is
+     painted with. #6e6e77 measured 4.43:1 there — below AA on 10px uppercase mono. #6a6a73 clears it.
+     Measured: on --color-surface-sticky text 17.46:1, muted 6.78:1, subtle 4.70:1; on
+     --color-elevated text 18.10:1, muted 7.04:1, subtle 4.87:1. */
+  --color-text: #09090b;
+  --color-text-muted: #52525b;
+  --color-text-subtle: #6a6a73;
+
+  /* The overlay veil. The inherited token mixes --color-bg, which on this canvas is near-white: at 70%
+     over a near-white page it darkened nothing and left a dialog floating on a hairline. On a light
+     design the veil has to come from the INK instead, which is also what keeps it following a repaint.
+     At 50% the page reads 3.68:1 darker and a white dialog stands 3.84:1 off it. */
+  --color-scrim: color-mix(in srgb, var(--color-text) 50%, transparent);
+
+  /* Signal blue. #0070f3 is the design's blue, but as body text it measures 4.14:1 on --color-elevated,
+     so the base accent is one step darker (4.70:1) and #0070f3 becomes the hot/hover step — the ramp
+     keeps the intended colour and links stay readable. */
+  --color-primary: #0068e1;
+  --color-primary-hot: #0070f3;
+  --primary-rgb: 0 104 225;
+
+  /* Studio has no ember. The two-stop ramp those tokens carry is repainted onto the signal blue so
+     charts and heat scales stay coherent instead of glowing orange inside a blue design. */
+  --color-ember: #4c8dff;
+  --color-ember-bright: #93b8ff;
+
+  /* The Studio chat uses shared full-width geometry; only its semantic colours invert. */
+  --studio-chat-user-bg: #0068e1;
+  --studio-chat-user-text: #ffffff;
+  --studio-chat-composer: #f4f4f5;
+  --studio-chat-code: #f4f4f5;
+  --studio-chat-composer-radius: 28px;
+  --studio-chat-user-radius: 22px;
+  /* Inter is the reference UI face. Waldenburg is proprietary, so Geist remains the licensed display
+     substitute while preserving the same compact grotesk proportions. */
+  --font-sans: "Inter Variable", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-geist-sans), "Inter Variable", Inter, ui-sans-serif, sans-serif;
+  --studio-chat-font: -apple-system-body, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  /* The wordmark alone. Space Grotesk's shorter, squarer grotesk cut reads as a mark beside Inter's
+     interface text without pretending to be another UI face — nothing else in the design uses it. */
+  --studio-brand-font: "Space Grotesk Variable", var(--font-display);
+
+  /* Status fills. --color-on-status is the ink that sits ON one of them, and on a light design it has to
+     be white rather than near-black: white measures 5.26:1 on danger, 5.28:1 on success, 5.02:1 on
+     warning, 5.64:1 on info and 6.32:1 on cancelled. Each fill is also dark enough to serve as TEXT on
+     --color-elevated (danger 4.79:1, success 4.81:1, warning 4.57:1, info 5.13:1, cancelled 5.75:1). */
+  --color-danger: #ce2b1e;
+  --color-error: #ce2b1e;
+  --color-success: #0a7c42;
+  --color-approve: #0a7c42;
+  --color-warning: #b45309;
+  --color-info: #0761d9;
+  --color-cancelled: #5f5f68;
+  --color-on-status: #ffffff;
+
+  /* A real ladder — 6 / 8 / 10 / 12 / 16 — rather than the flat 6/8/12 this design started with. Each
+     step belongs to a size of thing: 6 an inline mark, 8 a navigation row, 10 a control, 12 a code
+     block, 16 a card. A studio still reads as drawn rather than as a set of pills, so nothing here
+     rounds past 16 and the pill radius below is reserved for genuinely circular things (avatars, the
+     composer's send control).
+     --radius-sm and --radius-lg are deliberately UNCHANGED: the chat surface is frozen by
+     tests/e2e/specs/studio.viewport.e2e.ts and reads both (inline code at 6, code blocks and markdown
+     tables at 12). Moving either would repaint a surface this redesign is not allowed to touch. */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 16px;
+  --studio-radius-pill: 999px;
+
+  /* ---- Alpha-ink structure -------------------------------------------------------------------
+     Hairlines and quiet fills are stated as INK AT AN ALPHA, not as fixed greys, so one token reads
+     correctly on every surface it can land on. A fixed #e4e4e7 rule is a different contrast against
+     the canvas, a card and the sticky register header; the same ink at 11% composites against
+     whatever is behind it and stays a hairline on all three.
+     7.5% is the reference's own hairline (rgba(0,0,0,0.075)) rather than a match for the #e4e4e7 this
+     design used to draw: measured against the real app, 11% was visibly the heavier line, and on a
+     near-white canvas a card is separated by the fact that it is a card, not by the weight of its edge.
+     --studio-line-strong stays at 18% and is deliberately NOT lowered to match — it is what a floating
+     menu uses, and that surface measured 1.22:1 against the page it floats over before it was
+     strengthened. A menu needs the stronger edge; a card does not.
+     --color-border keeps its opaque value and is NOT retired: the frozen chat surface reads it, and
+     freezing that surface is a hard requirement of this change. */
+  --studio-line: color-mix(in srgb, var(--color-text) 7.5%, transparent);
+  --studio-line-strong: color-mix(in srgb, var(--color-text) 18%, transparent);
+  --studio-fill-quiet: color-mix(in srgb, var(--color-text) 4%, transparent);
+  --studio-fill-hover: color-mix(in srgb, var(--color-text) 3.5%, transparent);
+  --studio-fill-active: color-mix(in srgb, var(--color-text) 7%, transparent);
+
+  /* ---- Chrome rhythm -------------------------------------------------------------------------
+     The icon rail is the reference's measured 57px; toolbar fields, buttons and filters share a 40px
+     control height. Both are read by shared stylesheets rather than restated per rule. */
+  --studio-rail-width: 57px;
+  --studio-control-height: 2.5rem;
+  --studio-ask-ground: #f4f4f5;
+  --studio-ask-shadow: 0 0 0 1px rgb(9 9 11 / 0.075), 0 4px 6px -2px rgb(16 24 40 / 0.03), 0 12px 16px -4px rgb(16 24 40 / 0.08);
+
+  /* Depth comes from hairlines, not from shadow. What is left is the minimum needed to lift a menu or a
+     dialog off the page. */
+  --shadow-card: 0 1px 2px rgb(9 9 11 / 0.05);
+  --shadow-raised: 0 8px 24px rgb(9 9 11 / 0.08);
+  --shadow-ember: none;
+  --glow-active: 0 0 0 1px rgb(var(--primary-rgb) / 0.45);
+  --glow-soft: none;
+  --hairline: 1px solid rgb(9 9 11 / 0.08);
+
+  /* ElevenLabs' interaction ladder: controls 75ms, navigation 150ms, surfaces 200ms. */
+  --motion-fast: 75ms;
+  --motion-base: 150ms;
+  --motion-slow: 200ms;
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --studio-ask-panel-motion: 300ms;
+  --studio-ask-panel-ease: cubic-bezier(0, 0, 0.2, 1);
+}

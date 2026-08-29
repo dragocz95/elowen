@@ -26,13 +26,13 @@
 }
 
 @keyframes live-ring {
-  0% { box-shadow: 0 0 0 0 var(--live-ring, rgb(50 201 134 / 0.48)); }
+  0% { box-shadow: 0 0 0 0 var(--live-ring, color-mix(in srgb, var(--color-success) 48%, transparent)); }
   72%, 100% { box-shadow: 0 0 0 6px transparent; }
 }
 
 @keyframes flow-pulse {
   0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 42%, transparent); }
+  50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 42%, transparent); }
 }
 
 .animate-fade-up { animation: fade-up var(--motion-slow) var(--ease-out) both; }

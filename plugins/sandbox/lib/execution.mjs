@@ -10,6 +10,8 @@ import { activeExecutionLeases, createExecutionLease, withRepoLease } from './db
 const BWRAP = '/usr/bin/bwrap';
 const CMD_VAR = 'ELOWEN_SANDBOX_CMD';
 const EPHEMERAL_HOME = '/tmp/elowen-home';
+const WORKSPACE_GUEST_ROOT = '/workspace';
+const WORKSPACE_GUEST_HOME = '/home/elowen';
 const GENERATION_FILE = '.home-generation';
 const ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'];
 const ETC_ALLOWLIST = [
@@ -174,6 +176,47 @@ function buildBubblewrap(command, cwd, roots, home, network = 'shared') {
   return { type: 'argv', file: BWRAP, args: [...args, command.file, ...command.args], env };
 }
 
+function workspaceGitStub(dataDir, workspace) {
+  const dir = ensurePrivateDir(join(userRoot(dataDir, workspace.userId), 'git-stubs'));
+  const file = join(dir, `${workspace.id}.git`);
+  writeFileSync(file, 'gitdir: /run/elowen-git-unavailable\n', { mode: 0o600 });
+  return file;
+}
+
+function buildWorkspaceBubblewrap(command, hostCwd, workspace, home, gitStub) {
+  const root = realpathSync(workspace.path);
+  const rel = relative(root, hostCwd);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('execution cwd is outside the assigned workspace');
+  const guestCwd = rel ? join(WORKSPACE_GUEST_ROOT, rel) : WORKSPACE_GUEST_ROOT;
+  const args = [
+    '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup',
+    '--die-with-parent', '--new-session',
+    '--ro-bind', '/usr', '/usr',
+    '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib',
+    '--symlink', 'usr/lib64', '/lib64', '--symlink', 'usr/sbin', '/sbin',
+    '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home',
+    ...etcBinds(),
+    '--bind', root, WORKSPACE_GUEST_ROOT,
+    // A Git worktree's .git file contains a host-absolute pointer outside the worktree. Hide it completely;
+    // GitStatus is served through Sandbox's constrained Git seam instead of exposing repository metadata.
+    '--ro-bind', gitStub, `${WORKSPACE_GUEST_ROOT}/.git`,
+    '--bind', home, WORKSPACE_GUEST_HOME,
+    '--setenv', 'HOME', WORKSPACE_GUEST_HOME,
+    '--chdir', guestCwd,
+    '--',
+  ];
+  const env = confinedEnv(WORKSPACE_GUEST_HOME);
+  if (command.type === 'shell') {
+    env[CMD_VAR] = command.command;
+    const full = [...args, '/bin/bash', '-c'];
+    return {
+      launch: { type: 'shell', command: `exec ${BWRAP} ${full.map(shellWord).join(' ')} "$${CMD_VAR}"`, env },
+      guestCwd,
+    };
+  }
+  return { launch: { type: 'argv', file: BWRAP, args: [...args, command.file, ...command.args], env }, guestCwd };
+}
+
 function workspaceForCwd(workspaces, accountUserId, cwd) {
   if (accountUserId === null) return null;
   const real = resolve(cwd);
@@ -185,23 +228,28 @@ function workspaceForCwd(workspaces, accountUserId, cwd) {
 export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
   const prepare = async (input, options = {}) => {
     const access = ctx.currentAccess();
-    const accountUserId = options.accountUserId !== undefined
+    const explicitWorkspace = options.workspace ?? null;
+    const accountUserId = explicitWorkspace?.userId ?? (options.accountUserId !== undefined
       ? options.accountUserId
-      : ctx.currentContributionUserId() ?? ctx.currentIdentity()?.elowenUserId ?? null;
+      : ctx.currentContributionUserId() ?? ctx.currentIdentity()?.elowenUserId ?? null);
     const owner = options.owner !== undefined ? options.owner === true : access.owner === true;
-    const configuredRoots = options.roots ?? ctx.allowedRoots();
+    const configuredRoots = explicitWorkspace ? [explicitWorkspace.path] : options.roots ?? ctx.allowedRoots();
     const roots = bindableRoots([...new Set(configuredRoots.map(String))]);
     const cwd = realpathSync(input.cwd);
-    if (!owner && !roots.some((root) => within(cwd, root))) {
+    if (explicitWorkspace) {
+      if (!roots[0] || !within(cwd, roots[0])) throw new Error('execution cwd is outside the assigned workspace');
+    } else if (!owner && !roots.some((root) => within(cwd, root))) {
       throw new Error('execution cwd is outside the current account’s accessible project and workspace roots');
     }
-    const workspace = workspaceForCwd(listWorkspaces(), accountUserId, cwd);
+    const workspace = explicitWorkspace ?? workspaceForCwd(listWorkspaces(), accountUserId, cwd);
 
     let home = process.env.HOME || '/';
     let generation = null;
     if (accountUserId !== null) {
       const state = ensureUserHome(dataDir, accountUserId);
-      home = state.home;
+      home = explicitWorkspace
+        ? ensurePrivateDir(join(userRoot(dataDir, accountUserId), 'workspace-homes', explicitWorkspace.id))
+        : state.home;
       generation = state.generation;
     } else if (!owner) {
       home = EPHEMERAL_HOME;
@@ -209,6 +257,20 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
 
     let mode;
     let launch;
+    let displayCwd = cwd;
+    let sanitizeOutput = (text) => String(text);
+    // An explicit workspace is the strongest claim there is — it pins the child into one worktree and
+    // hides the host path behind a guest root, so it is decided before either shortcut into direct
+    // execution is even considered.
+    if (explicitWorkspace) {
+      const probe = bubblewrapProbe();
+      if (!probe.available) throw new Error(`confined execution is unavailable: ${probe.reason || 'bubblewrap probe failed'}`);
+      const prepared = buildWorkspaceBubblewrap(input.command, cwd, explicitWorkspace, home, workspaceGitStub(dataDir, explicitWorkspace));
+      mode = 'confined';
+      launch = prepared.launch;
+      displayCwd = prepared.guestCwd;
+      const prefixes = [realpathSync(explicitWorkspace.path), resolve(explicitWorkspace.path)];
+      sanitizeOutput = (text) => prefixes.reduce((value, prefix) => value.split(prefix).join(WORKSPACE_GUEST_ROOT), String(text));
     // `forceConfined` is what a plugin's background work asks for, and it overrides BOTH shortcuts into
     // direct execution — the operator turn it may happen to run inside, and the instance-wide
     // `confineNonOperators: false`. Neither is a statement about the plugin: the first is about who is
@@ -216,7 +278,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
     // A long-lived process a plugin supervises is neither, so it either gets a namespace or it does not
     // start — refusing is the honest answer, silently running it with the daemon's whole environment is
     // not.
-    if (!options.forceConfined && (owner || (accountUserId !== null && ctx.config.confineNonOperators === false))) {
+    } else if (!options.forceConfined && (owner || (accountUserId !== null && ctx.config.confineNonOperators === false))) {
       mode = 'direct';
       launch = input.command.type === 'shell'
         ? { type: 'shell', command: input.command.command, env: cleanHostEnv(home) }
@@ -246,6 +308,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
     return {
       mode,
       cwd,
+      displayCwd,
       home,
       roots,
       launch,
@@ -258,6 +321,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
         baseRef: workspace.baseRef,
       } : null,
       lease,
+      sanitizeOutput,
     };
   };
   return { prepare };

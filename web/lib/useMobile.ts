@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { PHONE_MAX_WIDTH } from './breakpoints';
 
-/** The width at or below which this is a phone. Exported because it is not only a media query: the UI
- *  scale has to make the same call, and a phone that counts as mobile for the layout but as a cramped
- *  desktop window for the zoom gets the compact layout shrunk a second time. */
-export const MOBILE_MAX_WIDTH = 767;
+/** The phone breakpoint under its historical name. The value lives in `lib/breakpoints.ts`, where the
+ *  shell's navigation thresholds are derived from it and the CSS mirrors are documented. */
+export const MOBILE_MAX_WIDTH = PHONE_MAX_WIDTH;
 
 /** The viewport against the mobile breakpoint (≤ 767px) — mirrors the Sidebar's drawer threshold so the
  *  two never disagree on what "mobile" means. `undefined` until the first effect measures it: neither SSR

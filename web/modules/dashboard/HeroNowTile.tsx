@@ -1,86 +1,43 @@
 'use client';
-import Link from 'next/link';
-import { ArrowRight, Clock3, Sparkles, WifiOff } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 import { HeroCosmos } from './HeroCosmos';
 import { HomeComposer } from './HomeComposer';
-import { usePresence, type PresenceState } from './usePresence';
+import type { Presence, PresenceState } from './usePresence';
 
-/** The hero's left column: where the instance is right now, in words, over the composer that starts
- *  the next turn — with the orbital field on the right.
+/** The box you type into, beside the being — the whole of what this tile is.
  *
- *  The "what is it working on" row used to name a tmux agent session and deep-link to the task it was
- *  assigned. Both belonged to the `agents`/`work` plugins. What replaces them is the same fact from a
- *  source that survived: the pulse names the person mid-turn and carries their conversation title, so
- *  the row still says who is doing what and now links to the conversation itself. */
-export function HeroNowTile({ now }: { now: number }) {
-  const { t, locale } = useTranslation();
+ *  The greeting, the status line and the clock that used to open it live in the page's WorkspaceHero
+ *  (DashboardView): they are the page's title block, and having a second <h1> inside the first surface
+ *  below it meant the dashboard announced itself twice.
+ *
+ *  A status ROW used to sit above the composer as well — the live conversation as a link while somebody
+ *  was mid-turn, a "resting" card otherwise. It is gone rather than restyled, because the page already
+ *  answers that question three times below the fold: the live tile counts who is working, the pulse draws
+ *  the same flag, and the activity feed names the person in its own header. An unreachable daemon is the
+ *  one fact none of them can report, and it belongs to the whole page, so it is the hero's description.
+ *  The presence state still reaches the orbital field, which is what actually renders it. */
+export function HeroNowTile({ now, presence }: { now: number; presence: Presence }) {
+  const { t } = useTranslation();
   const { appName } = useBrand();
-  const presence = usePresence();
 
-  const date = new Date(now);
-  const hour = date.getHours();
-  const greeting = hour < 12 ? t.dashboard.greetingMorning : hour < 18 ? t.dashboard.greetingAfternoon : t.dashboard.greetingEvening;
-  const time = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-  const dateLabel = date.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' });
   const stateLabel = stateText(t.dashboard.presence, presence.state);
-  const statusLine = presence.state === 'offline'
-    ? t.dashboard.presence.offline
-    : presence.activeCount > 0
-      ? t.dashboard.peopleWorking.replace('{count}', String(presence.activeCount))
-      : t.dashboard.allQuiet;
 
   return (
-    <section className="dashboard-hero relative isolate overflow-hidden px-1 py-5 @container sm:px-3 sm:py-7">
-      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_78%_40%,rgb(255_82_54_/_0.1),transparent_35%),linear-gradient(140deg,rgb(255_82_54_/_0.022),transparent_52%)]" aria-hidden />
-      <div className="grid min-h-[29rem] items-center gap-7 @3xl:grid-cols-[minmax(0,1fr)_minmax(26rem,1fr)]">
-        <div className="flex min-w-0 flex-col gap-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex flex-col gap-1.5">
-              <span className="inline-flex w-fit items-center gap-2 text-[11px] font-semibold uppercase tracking-[.13em] text-accent">
-                <span className="live-dot h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />{t.dashboard.rightNow}
-              </span>
-              <h1 className="font-display text-4xl font-semibold tracking-[-0.045em] text-text sm:text-5xl">{greeting}</h1>
-              <p className="text-sm text-text-muted">{statusLine}</p>
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-0.5">
-              <span className="font-mono text-xl font-semibold tabular-nums text-text">{time}</span>
-              <span className="text-xs capitalize text-text-muted">{dateLabel}</span>
-            </div>
-          </div>
-
-          {presence.primary ? (
-            <Link href="/chat" className="group flex items-center gap-3 rounded-2xl border border-accent/15 bg-accent/[0.04] px-4 py-3 shadow-[0_0_24px_rgb(255_82_54_/_0.07)] transition-[border-color,background-color] hover:border-accent/40 hover:bg-accent/[0.07]">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 text-accent"><Sparkles size={16} aria-hidden /></span>
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                {/* The title is empty between turns even while `working` is true, so the person's name
-                    is the fallback rather than a blank row. */}
-                <span className="truncate text-sm font-medium text-text">{presence.primary.title || presence.primary.label}</span>
-                <span className="truncate text-xs text-text-muted">
-                  <span>{t.dashboard.byPerson.replace('{person}', presence.primary.label)}</span>
-                  <span aria-hidden> · </span>
-                  <span>{stateLabel}</span>
-                </span>
-              </span>
-              <ArrowRight size={15} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent" aria-hidden />
-            </Link>
-          ) : (
-            <div className="flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated text-text-muted">
-                {presence.state === 'offline' ? <WifiOff size={16} aria-hidden /> : <Clock3 size={16} aria-hidden />}
-              </span>
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="text-sm font-medium text-text">{presence.state === 'offline' ? stateLabel : t.dashboard.resting.replace('{agentName}', appName)}</span>
-                <span className="text-xs text-text-muted">{presence.state === 'offline' ? t.common.daemonUnreachable : t.dashboard.restingDesc}</span>
-              </span>
-            </div>
-          )}
-
+    <section className="hero-now relative isolate overflow-hidden px-1 py-5 @container @sm:px-3 @sm:py-7">
+      {/* The wash itself is declared in dashboard-cosmos.css. It was an inline `style`, which no
+          stylesheet can override — a design that does not want an accent gradient behind its dashboard
+          had no way to say so. */}
+      <div className="dash-aura pointer-events-none absolute inset-0 -z-10" aria-hidden />
+      {/* No min-height below the orbit threshold. The grid used to reserve 29rem at every width — a
+          figure chosen when the whole app was rendered at ~72% — which on a phone was half a screen of
+          nothing above the fold. Room is reserved only where the two-column field is actually drawn. */}
+      <div className="hero-now__field grid items-center gap-6 @3xl:min-h-[22rem] @3xl:grid-cols-[minmax(0,1fr)_minmax(20rem,1fr)]">
+        <div className="flex min-w-0 flex-col gap-4">
           <HomeComposer placeholder={t.dashboard.composerPlaceholder} actionLabel={t.dashboard.composerAction.replace('{agentName}', appName)} />
         </div>
 
-        <div className="flex min-h-72 flex-col justify-center @3xl:min-h-[25rem] @3xl:self-stretch">
+        <div className="hero-now__signals flex flex-col justify-center @3xl:min-h-[18rem] @3xl:self-stretch">
           <HeroCosmos now={now} state={presence.state} presenceLabel={`${appName}: ${stateLabel}`} />
         </div>
       </div>

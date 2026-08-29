@@ -528,7 +528,7 @@ export function shapeBrainMessages(
     // valid JSON, so the parse alone would let them through and every `.content` read below would throw —
     // taking the entire transcript down over one bad row. Anything else stays the empty message, which
     // produces no view and is skipped.
-    let msg: { content?: unknown } = {};
+    let msg: { content?: unknown; model?: unknown } = {};
     try {
       const parsed: unknown = JSON.parse(row.content);
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) msg = parsed;
@@ -603,6 +603,7 @@ export function shapeBrainMessages(
         ...(row.id ? { id: row.id } : {}), role: 'assistant', text, segments,
         ...(row.created_at ? { createdAt: row.created_at } : {}),
         ...(row.turn_duration_ms != null ? { durationMs: row.turn_duration_ms } : {}),
+        ...(typeof msg.model === 'string' && msg.model.trim() ? { model: msg.model.trim() } : {}),
       },
     });
   }

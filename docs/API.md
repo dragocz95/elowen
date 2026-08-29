@@ -243,7 +243,7 @@ The global `GET /events` stream is separate from the conversation stream. It rep
 | `POST` | `/brain/visibility` | Report whether a client window is hidden or visible. |
 | `POST` | `/brain/model` | Switch the selected conversation to a configured provider/model. |
 | `POST` | `/brain/think` | Set reasoning effort for the conversation and account default. Body: `{ "level": "…", "session"?: "…" }`. |
-| `POST` | `/brain/fast` | Enable or disable the provider priority service tier for a conversation. |
+| `POST` | `/brain/fast` | Set or toggle the caller account's durable Fast preference; the selected session reports current route support. |
 | `POST` | `/brain/yolo` | Enable or disable the conversation-scoped YOLO override. Deny rules still apply. |
 | `POST` | `/brain/cwd` | Record a validated working-directory change. |
 | `POST` | `/brain/compact` | Compact conversation context, optionally with an `instruction`. |

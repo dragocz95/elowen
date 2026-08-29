@@ -17,6 +17,7 @@ import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { ModelIcon } from '../../components/ui/ModelIcon';
 import { AskQuestionCard } from './AskQuestionCard';
 import { AgentsTable } from './AgentsTable';
 import { StatsModal } from './StatsModal';
@@ -33,6 +34,8 @@ import { useBrainChat } from './BrainChatProvider';
 import { formatBytes, formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { isBackgroundProcessCardId } from '../../lib/processScope';
+import { PageTopBarPortal } from '../../lib/pageHeader';
 import {
   DEFAULT_COMPOSE_MARKER_MS,
   DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS,
@@ -78,7 +81,7 @@ function DiffBlock({ diff }: { diff: string }) {
       <div
         id={bodyId}
         data-testid="chat-diff"
-        className={expanded ? 'max-h-[60vh] overflow-y-auto' : ''}
+        className={expanded ? 'max-h-[60dvh] overflow-y-auto' : ''}
         // A scrollable region has to be reachable by keyboard alone, and it only scrolls when expanded.
         tabIndex={expanded ? 0 : undefined}
         role={expanded ? 'group' : undefined}
@@ -189,7 +192,7 @@ export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
         <ul className="flex flex-col gap-0.5">
           {shown.map((titem, i) => (
             <li key={i} className="flex items-start gap-1.5">
-              <span className={`shrink-0 ${titem.status === 'completed' ? 'text-success' : titem.status === 'in_progress' ? 'text-accent' : 'text-text-muted'}`}>
+              <span className={`shrink-0 ${titem.status === 'completed' ? 'text-success' : titem.status === 'in_progress' ? 'text-primary' : 'text-text-muted'}`}>
                 {titem.status === 'completed' ? '✔' : titem.status === 'in_progress' ? '◐' : '○'}
               </span>
               <span className={titem.status === 'completed' ? 'text-text-muted line-through' : 'text-text'}>
@@ -456,7 +459,7 @@ function AttachmentThumb({ image }: { image: BrainMessageImage }) {
       target="_blank"
       rel="noreferrer"
       title={t.brainChat.attachmentOpen}
-      className="block overflow-hidden rounded-lg border border-border transition-colors hover:border-accent"
+      className="block overflow-hidden rounded-lg border border-border transition-colors hover:border-primary"
     >
       <img
         src={`/api${image.url}`}
@@ -524,8 +527,14 @@ function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen
   const settled = turn.role === 'elowen' ? turn.durationMs != null : Boolean(turn.createdAt);
   if (!settled) return null;
   return (
-    <div data-testid="chat-turn-meta" className="mt-1 flex items-center gap-2 text-[10px] leading-none text-text-muted/70">
+    <div data-testid="chat-turn-meta" className="chat-turn-meta mt-1 flex items-center gap-2 text-[10px] leading-none text-text-muted/70">
       {turn.createdAt ? <time dateTime={turn.createdAt}>{localDateTime(turn.createdAt, locale, false)}</time> : null}
+      {turn.role === 'elowen' && turn.model ? (
+        <span data-testid="chat-turn-model" className="inline-flex min-w-0 items-center gap-1" title={turn.model}>
+          <ModelIcon name={turn.model} size={10} />
+          <span className="max-w-48 truncate">{brainModelQualifiedLabel(turn.model)}</span>
+        </span>
+      ) : null}
       {turn.role === 'elowen' && turn.durationMs != null ? (
         <span className="inline-flex items-center gap-1" title={t.brainChat.turnDuration}>
           <Clock3 size={10} aria-hidden />
@@ -576,10 +585,10 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   const you = turn.role === 'you';
   const roleAttr = you ? 'you' : 'assistant';
   const body = turn.role === 'you'
-    ? <>
-        {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-text ${full ? 'my-1.5' : ''}`}>{turn.text}</div> : null}
+    ? <div className="chat-user-message">
+        {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-text ${full ? '' : 'my-1.5'}`}>{turn.text}</div> : null}
         {turn.images?.length ? <Attachments images={turn.images} full={full} /> : null}
-      </>
+      </div>
     : <>{turn.segments.map((seg, i) => (seg.kind === 'text'
         ? <TextSegment key={i} text={seg.text} className={full ? 'my-1.5' : ''} />
         : seg.kind === 'reasoning'
@@ -594,13 +603,13 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
 
   if (full) {
     return (
-      <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className={`grid grid-cols-[16px_1fr] gap-x-3 ${showRole ? 'mt-6 first:mt-0' : ''}`}>
+      <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className={`chat-turn chat-turn--${roleAttr} grid grid-cols-[16px_1fr] gap-x-3 ${showRole ? 'mt-6 first:mt-0' : ''}`}>
         {showRole ? (
-          <span aria-hidden className={`mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-accent ring-4 ring-accent/15' : 'bg-text-muted'}`} />
-        ) : <span aria-hidden />}
-        <div className="min-w-0">
-          {showRole ? <div className={`mb-0.5 text-xs font-semibold ${you ? 'text-accent' : 'text-text-muted'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
-          <div className="flex min-w-0 flex-col">{body}</div>
+          <span aria-hidden className={`chat-turn__marker mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-primary ring-4 ring-primary/15' : 'bg-text-muted'}`} />
+        ) : <span aria-hidden className="chat-turn__marker" />}
+        <div className="chat-turn__column min-w-0">
+          {showRole ? <div className={`chat-turn__role mb-0.5 text-xs font-semibold ${you ? 'text-primary' : 'text-text-muted'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
+          <div className="chat-turn__body flex min-w-0 flex-col">{body}</div>
           <MessageMeta turn={turn} />
         </div>
       </div>
@@ -610,7 +619,7 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   if (you) {
     return (
       <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 flex max-w-full flex-col items-end self-end">
-        <div className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
+        <div className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-text">
           {turn.role === 'you' ? turn.text : null}
           {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
         </div>
@@ -651,7 +660,7 @@ function WorkModePill({ mode, full }: { mode: BrainWorkMode; full?: boolean }) {
     <span
       data-testid="chat-work-mode"
       title={t.brainChat.workModeLabel}
-      className={`shrink-0 rounded-md border border-accent/40 bg-accent/10 px-1.5 font-medium uppercase tracking-wide text-accent ${full ? 'py-0.5 text-tiny' : 'py-px text-[0.625rem]'}`}
+      className={`shrink-0 rounded-md border border-primary/40 bg-primary/10 px-1.5 font-medium uppercase tracking-wide text-primary ${full ? 'py-0.5 text-tiny' : 'py-px text-[0.625rem]'}`}
     >
       <span className="sr-only">{t.brainChat.workModeLabel}: </span>{t.brainChat.workMode[mode]}
     </span>
@@ -663,8 +672,8 @@ function WorkModePill({ mode, full }: { mode: BrainWorkMode; full?: boolean }) {
  *  deliberately NOT here — it is changed often enough that burying it behind two taps was the complaint.
  *  A transient popover (outside-pointer / Escape dismiss, same grammar as ModelPicker), never a persistent
  *  panel. Desktop keeps every control inline and never mounts this. */
-function BarOverflowMenu({ workMode, hasTodos, onOpenTodos }: {
-  workMode: BrainWorkMode; hasTodos: boolean; onOpenTodos: () => void;
+function BarOverflowMenu({ workMode, onOpenTasks }: {
+  workMode: BrainWorkMode; onOpenTasks: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -694,13 +703,11 @@ function BarOverflowMenu({ workMode, hasTodos, onOpenTodos }: {
           {/* Where the agent works belongs beside what it is: the phone folds both away, so both come back
               here rather than leaving the directory reachable only on a desktop. */}
           <div className="px-1 pb-1"><ProjectPicker variant="full" /></div>
-          {/* The narrow bar has no room for a TODO control of its own, so the menu is the way to reach it. */}
-          {hasTodos ? (
-            <button type="button" onClick={() => { setOpen(false); onOpenTodos(); }} className={rowClass}>
-              <ListChecks size={16} className="text-text-muted" aria-hidden />
-              <span>{t.chat.todos}</span>
-            </button>
-          ) : null}
+          {/* The mobile entry opens the same task manager as `/tasks`; there is one modal and one data path. */}
+          <button type="button" onClick={() => { setOpen(false); onOpenTasks(); }} className={rowClass}>
+            <ListChecks size={16} className="text-text-muted" aria-hidden />
+            <span>{t.chat.todos}</span>
+          </button>
           {workMode !== 'build' ? (
             <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-text-muted">
               <span>{t.brainChat.workModeLabel}:</span><WorkModePill mode={workMode} full />
@@ -738,6 +745,16 @@ function RenameDialog({ current, onClose, onSubmit }: { current: string; onClose
   );
 }
 
+/** How close to the bottom still counts as sitting ON the newest turn. */
+const BOTTOM_GAP = 80;
+/** How close to the top asks for the next older page. */
+const OLDER_TRIGGER = 120;
+/** Keyboard inputs that can move the transcript. When already reading history, downward keys count too
+ *  so reaching the bottom can re-enable following; while pinned, only upward keys may release it. */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+/** Keep a short causal window between an input gesture and the browser's resulting scroll event. */
+const USER_SCROLL_WINDOW_MS = 350;
+
 /** The presentational brain chat surface, driven entirely by the shared controller (BrainChatProvider)
  *  read from context. It owns NO network or session state: only pure view affordances (the picker-open
  *  toggle, the slash keyboard cursor, DOM refs + autoscroll) live here, so unmounting it (Chat↔Terminál
@@ -754,7 +771,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
     usage, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
-    openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, focusNonce,
+    openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, activeSessionId, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts,
     workMode, planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
     registerSurface,
@@ -790,23 +807,29 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   // TODO cards with open work (CardBlock hides a card whose every item is done). The phone bar has no room
   // for a control of its own, so the ⋯ menu opens them in a dialog instead.
   const todoCards = cards.filter((cd) => {
-    if (cd.id === 'bg-processes') return false;
+    if (isBackgroundProcessCardId(cd.id)) return false;
     const items = cd.items ?? [];
     return items.length === 0 ? true : !items.every((i) => i.status === 'completed');
   });
-  const [todosOpen, setTodosOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Lazy-load (scroll-up) state. `loadingOlder` drives the top spinner; `atBottomRef` tracks whether the
-  // reader is pinned to the newest turn (so a streaming delta doesn't yank them down while they read up).
+  // Lazy-load (scroll-up) state. `loadingOlder` drives the top spinner.
   // The prepend anchor rides on a real turn ELEMENT: at scroll-trigger we grab the topmost turn node and its
   // offsetTop; after older turns land above it, we shift scrollTop by exactly how far that node moved. Node
   // offsetTop is immune to below-viewport growth (cards / ask / agents / process panel) and to a stream
   // delta landing during the fetch, both of which broke a scrollHeight-delta anchor.
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const atBottomRef = useRef(true);
+  // THE scroll state. `followNewestRef` owns whether layout changes keep the newest turn visible;
+  // `userScrollUntilRef` is a short causal window in which a browser `scroll` event may be trusted as
+  // reader-driven rather than as a side effect of focus, anchoring or one of our own writes.
+  const followNewestRef = useRef(true);
+  const userScrollUntilRef = useRef(0);
+  // The offset the surface itself last wrote, so the `scroll` event that write causes is not mistaken
+  // for the reader moving. -1 is "nothing written yet", which no real offset equals.
+  const ownWriteAtRef = useRef(-1);
   const prevTurnsRef = useRef<ChatTurn[]>([]);
+  const previousSessionRef = useRef<string | null>(activeSessionId);
   const anchorNodeRef = useRef<HTMLElement | null>(null);
   const anchorTopRef = useRef(0);
 
@@ -818,6 +841,32 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     if (!el) return null;
     return variant === 'full' ? el.closest('main') : el;
   }, [variant]);
+
+  // ── THE SCROLL CONTRACT ────────────────────────────────────────────────────────────────────────────
+  // One invariant owns every scroll write in this component: while `followNewestRef` is true the transcript
+  // shows its newest turn, and each REAL layout change re-pins it there; the pin is released only by the
+  // reader scrolling away from the bottom, and nothing else writes the offset. This is the single writer —
+  // it self-gates, so no caller has to re-check the flag and no two callers can disagree about it.
+  const pinToNewest = useCallback((): void => {
+    const s = getScroller();
+    if (!s || !followNewestRef.current) return;
+    s.scrollTo({ top: s.scrollHeight });
+    // Read the offset BACK rather than assuming `scrollHeight`: the browser clamps the write, and the
+    // clamped value is what the resulting `scroll` event will report. Remembering it is what lets the
+    // handler below discard the surface's own writes even after the reader has been marked engaged —
+    // `keydown` bubbles out of the composer and `pointerdown` out of any click inside the scroller, so
+    // engagement is a coarse signal and must never be the only thing standing between a pin write and
+    // the event it causes.
+    ownWriteAtRef.current = s.scrollTop;
+  }, [getScroller]);
+
+  // Re-entering a conversation is an explicit request to see its newest turn: the pin goes back on, and the
+  // previous visit's intent window is cleared so a stale `scroll` event cannot release it again.
+  const followNewestAgain = useCallback((): void => {
+    followNewestRef.current = true;
+    userScrollUntilRef.current = 0;
+    pinToNewest();
+  }, [pinToNewest]);
 
   // Grab the current topmost turn node as the prepend anchor, then fetch the next older page (the layout
   // effect restores its position once the page lands). Guarded so a burst of scroll events fires at most one
@@ -852,6 +901,34 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   // enough (and avoids re-firing on the controller's per-render identity churn).
   useEffect(() => { ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Entering the full chat route always opens at the newest turn. The shell <main> survives route changes,
+  // so neither its old scrollTop nor the previous visit's engagement may become this visit's chat state.
+  //
+  // The ResizeObserver is what makes the guarantee LAYOUT-driven instead of timing-driven, and it replaces
+  // the rAF this used to also fire: a frame is a guess about when the transcript has settled, whereas a
+  // resize IS the transcript settling. Late markdown, a decoded image, a web font and the toolbar portal
+  // each resize the transcript, and each one lands the newest turn back at the bottom — however many
+  // frames after mount it happens.
+  useLayoutEffect(() => {
+    if (variant !== 'full') return;
+    followNewestAgain();
+    const transcript = scrollRef.current;
+    const observer = transcript && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => pinToNewest()) : null;
+    if (transcript) observer?.observe(transcript);
+    return () => observer?.disconnect();
+  }, [variant, followNewestAgain, pinToNewest]);
+
+  // Opening another conversation is an explicit request to see that conversation's newest message. Reset
+  // every scroll/prepend guard before its snapshot lands; otherwise a chat opened while the previous one
+  // was scrolled up inherited a released pin and rendered at the old page offset.
+  useLayoutEffect(() => {
+    if (!activeSessionId || activeSessionId === previousSessionRef.current) return;
+    previousSessionRef.current = activeSessionId;
+    prevTurnsRef.current = [];
+    anchorNodeRef.current = null;
+    followNewestAgain();
+  }, [activeSessionId, followNewestAgain]);
+
   // Position the transcript after each turns change. A lazy-load PREPEND (older turns inserted in front —
   // detected by the previous head object reappearing below index 0) holds the viewport on the same content
   // by shifting scrollTop by exactly how far the anchored turn node moved down; every other change sticks to
@@ -868,13 +945,16 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     if (isPrepend) {
       // Only the prepend consumes the anchor — a stream delta landing in the fetch gap must NOT clear it,
       // or the real prepend that follows would jump.
-      if (anchor) s.scrollTop += anchor.offsetTop - anchorTopRef.current;
+      if (anchor) {
+        s.scrollTop += anchor.offsetTop - anchorTopRef.current;
+        ownWriteAtRef.current = s.scrollTop;
+      }
       anchorNodeRef.current = null;
-    } else if (atBottomRef.current) {
-      s.scrollTo({ top: s.scrollHeight });
+    } else {
+      pinToNewest();
     }
     prevTurnsRef.current = turns;
-  }, [turns, variant, getScroller]);
+  }, [turns, variant, getScroller, pinToNewest]);
 
   // Watch the live scroll position: track "near the bottom" (the stick-to-newest gate above) and load the
   // next older page when the reader nears the top. Bound imperatively because the scroller is sometimes the
@@ -883,13 +963,91 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   useEffect(() => {
     const s = getScroller();
     if (!s) return;
-    const onScroll = (): void => {
-      atBottomRef.current = s.scrollHeight - s.scrollTop - s.clientHeight < 80;
-      if (s.scrollTop < 120) triggerOlderRef.current();
+    let touchY: number | null = null;
+    let scrollbarPointer: number | null = null;
+
+    // Release immediately on genuine reader intent, before the browser's later `scroll` event. Otherwise a
+    // streaming render can win that gap and pin the transcript back down. Clearing our remembered write also
+    // prevents the reader's first offset from being mistaken for a delayed event from that write.
+    const markReaderScroll = (): void => {
+      followNewestRef.current = false;
+      ownWriteAtRef.current = -1;
+      userScrollUntilRef.current = performance.now() + USER_SCROLL_WINDOW_MS;
     };
+    const onWheel = (event: WheelEvent): void => {
+      if (!event.isTrusted) return;
+      if (event.deltaY < 0 || !followNewestRef.current) markReaderScroll();
+    };
+    const onTouchStart = (event: TouchEvent): void => {
+      if (!event.isTrusted) return;
+      touchY = event.touches[0]?.clientY ?? null;
+    };
+    const onTouchMove = (event: TouchEvent): void => {
+      if (!event.isTrusted) return;
+      const nextY = event.touches[0]?.clientY ?? null;
+      if (nextY !== null && (touchY === null || nextY > touchY || !followNewestRef.current)) markReaderScroll();
+      touchY = nextY;
+    };
+    const onTouchEnd = (): void => { touchY = null; };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!event.isTrusted || !SCROLL_KEYS.has(event.key)) return;
+      const target = event.target as HTMLElement | null;
+      if (target && target !== document.body && !s.contains(target)) return;
+      if (target?.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+      const movesUp = event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home' || (event.key === ' ' && event.shiftKey);
+      if (movesUp || !followNewestRef.current) markReaderScroll();
+    };
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!event.isTrusted) return;
+      const rect = s.getBoundingClientRect();
+      const gutter = Math.max(0, s.offsetWidth - s.clientWidth);
+      const hitsVerticalScrollbar = event.target === s && gutter > 0 && event.clientX >= rect.right - gutter;
+      if (!hitsVerticalScrollbar) return;
+      scrollbarPointer = event.pointerId;
+      markReaderScroll();
+    };
+    const onPointerEnd = (event: PointerEvent): void => {
+      if (event.pointerId === scrollbarPointer) scrollbarPointer = null;
+    };
+    const onScroll = (): void => {
+      // Our own write, arriving back as an event — never the reader.
+      if (s.scrollTop === ownWriteAtRef.current) return;
+      const now = performance.now();
+      const readerDriven = scrollbarPointer !== null || now <= userScrollUntilRef.current;
+      if (!readerDriven) return;
+      // Wheel smoothing and touch momentum can continue after the final input event. Every causally-linked
+      // scroll extends the window so the final offset can re-enable following when momentum reaches bottom.
+      userScrollUntilRef.current = now + USER_SCROLL_WINDOW_MS;
+      followNewestRef.current = s.scrollHeight - s.scrollTop - s.clientHeight < BOTTOM_GAP;
+      // Entry pins and browser-driven focus/anchoring are never requests for older history. Only an offset
+      // causally tied to a reader gesture may cross this boundary.
+      if (!followNewestRef.current && s.scrollTop < OLDER_TRIGGER) triggerOlderRef.current();
+    };
+
     s.addEventListener('scroll', onScroll, { passive: true });
-    return () => s.removeEventListener('scroll', onScroll);
-  }, [getScroller]);
+    s.addEventListener('wheel', onWheel, { passive: true });
+    s.addEventListener('touchstart', onTouchStart, { passive: true });
+    s.addEventListener('touchmove', onTouchMove, { passive: true });
+    s.addEventListener('touchend', onTouchEnd, { passive: true });
+    s.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    const keyTarget: EventTarget = variant === 'full' ? window : s;
+    keyTarget.addEventListener('keydown', onKeyDown as EventListener);
+    s.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointerup', onPointerEnd, { passive: true });
+    window.addEventListener('pointercancel', onPointerEnd, { passive: true });
+    return () => {
+      s.removeEventListener('scroll', onScroll);
+      s.removeEventListener('wheel', onWheel);
+      s.removeEventListener('touchstart', onTouchStart);
+      s.removeEventListener('touchmove', onTouchMove);
+      s.removeEventListener('touchend', onTouchEnd);
+      s.removeEventListener('touchcancel', onTouchEnd);
+      keyTarget.removeEventListener('keydown', onKeyDown as EventListener);
+      s.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerEnd);
+      window.removeEventListener('pointercancel', onPointerEnd);
+    };
+  }, [getScroller, variant]);
 
   // The controller asks the composer to focus (a compose-bridge request / a seeded draft) by bumping the
   // focus nonce — the surface owns the DOM ref, so it does the actual focus. Guard against a plain (re)mount
@@ -912,7 +1070,13 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
-  }, [input]);
+    // The full-page composer participates in the document height even though it is sticky, and it sits
+    // OUTSIDE the observed transcript, so its growth is the one real layout change the ResizeObserver
+    // above cannot see. Re-pin in the same layout phase, before paint, so wrapped lines do not visibly
+    // shove the whole conversation upward one row at a time. A reader scrolled into history is left
+    // untouched — `pinToNewest` self-gates on the same flag as every other writer.
+    pinToNewest();
+  }, [input, pinToNewest]);
 
   const newChat = () => { setPickerOpen(false); void switchSession({ fresh: true }).catch(() => toast(t.brainChat.searchOpenError, 'error')); };
 
@@ -950,9 +1114,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           <ChatHistoryRail variant="dropdown" open={pickerOpen} onClose={() => setPickerOpen(false)} />
         </div>
       ) : (
-        <div className="chat-gutter sticky top-0 z-10 flex shrink-0 items-center gap-1.5 bg-bg py-2">
-          {/* No hairline under the sticky bar — a soft fade separates it from the scrolling transcript. */}
-          <div aria-hidden className="pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-bg to-transparent" />
+        <PageTopBarPortal>
+        <div className="chat-gutter chat-page-toolbar sticky top-0 z-10 flex min-w-0 shrink-0 items-center gap-1.5 bg-bg py-2">
+          {/* These controls ride in the shell's top rule at every width that publishes one — a phone
+              included. Only the frameless design, which has no page slot, keeps this as its own local
+              sticky bar. */}
+          <div aria-hidden className="chat-page-toolbar__fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-bg to-transparent" />
           {onOpenHistory ? (
             <button
               type="button"
@@ -964,16 +1131,20 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               <PanelLeft size={18} aria-hidden />
             </button>
           ) : null}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{active?.title || t.brainChat.newChat}</span>
+          {/* Named because the two hosts want opposite things from it: as the page's own sticky bar it
+              takes the leftover width and pushes the controls to the far edge, while inside the shell's
+              top rule the same growth is what tore this toolbar into two halves with the row's whole
+              width between them. page-bar.css holds it to its text there. */}
+          <span className="chat-page-toolbar__title min-w-0 flex-1 truncate text-sm font-medium text-text">{active?.title || t.brainChat.newChat}</span>
           {/* On a phone the model picker and work-mode pill fold into the ⋯ menu below; on desktop they
               stay inline. The pill is a security indicator (plan/workflow), so it also shows inline on
               desktop and, when non-build, inside the ⋯ menu on mobile. */}
           {mobile === false ? (
-            <>
+            <div className="chat-page-toolbar__wide-controls flex shrink-0 items-center gap-1.5">
               <WorkModePill mode={workMode} full />
               <ProjectPicker variant="full" />
               <ModelPicker variant="full" />
-            </>
+            </div>
           ) : null}
           {/* The reasoning button stays inline at EVERY width. It is the one control here that gets
               changed mid-conversation rather than set once, and two taps through ⋯ for something that
@@ -1004,22 +1175,24 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           >
             <Plus size={18} aria-hidden />
           </button>
-          {/* Desktop keeps the model/mode/thoughts controls inline above; a phone folds them behind ⋯. */}
-          {mobile === true ? (
-            <BarOverflowMenu
-              workMode={workMode}
-              hasTodos={todoCards.length > 0}
-              onOpenTodos={() => setTodosOpen(true)}
-            />
+          {/* Phones and narrow desktops fold the wide pickers behind ⋯; roomy desktops keep them inline. */}
+          {mobile !== undefined ? (
+            <div className={mobile ? '' : 'chat-page-toolbar__overflow'}>
+              <BarOverflowMenu
+                workMode={workMode}
+                onOpenTasks={() => setTasksOpen(true)}
+              />
+            </div>
           ) : null}
         </div>
+        </PageTopBarPortal>
       )}
 
       {/* Messages. The full /chat variant flows full-width and lets the page scroll (no inner scroll box);
           turns stack with NO container gap — each segment carries its own margin, so tool rows keep one
           uniform rhythm across turn boundaries and only a speaker change opens a block break. The compact
           dock keeps its own internal scroll and per-turn gap. */}
-      <div ref={scrollRef} data-testid="chat-transcript" className={`flex flex-1 flex-col ${variant === 'full' ? 'chat-gutter py-4' : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
+      <div ref={scrollRef} data-testid="chat-transcript" className={`flex flex-1 flex-col ${variant === 'full' ? 'chat-gutter chat-transcript' : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
         {turns.length === 0 && ready ? (
           variant === 'full' ? (
             <div className="m-auto flex max-w-md flex-col items-center gap-2 text-center">
@@ -1107,17 +1280,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         {modelOpen ? (
           <ModelModal onClose={() => setModelOpen(false)} />
         ) : null}
-        {todosOpen ? (
-          <Modal title={t.chat.todos} onClose={() => setTodosOpen(false)} size="md" icon={ListChecks}>
-            <ModalBody>
-              {/* Outside the transcript there is no wrapper to inherit from, so the modal states the
-                  same monospace type itself. */}
-              <div className="flex flex-col gap-3 font-mono text-tiny">
-                {todoCards.map((card) => <CardBlock key={card.id} card={card} live={busy} />)}
-              </div>
-            </ModalBody>
-          </Modal>
-        ) : null}
         {/* Plan mode's decision point: the model submitted a plan and the turn settled. The controller
             derives it from the DAEMON's answer, so it also appears for a plan submitted from the CLI and
             survives a reload — and it is a modal, like the CLI picker, because implementing is the only
@@ -1143,8 +1305,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
 
       {/* Composer footer (statusline + staged attachments + queue + composer). In the full page it sticks
           to the viewport bottom so it stays reachable while the whole page scrolls behind it; the compact
-          dock keeps it in normal flow at the bottom of its own scroll box. */}
-      <div className={variant === 'full' ? 'sticky bottom-0 z-10 bg-bg' : ''}>
+          dock keeps it in normal flow at the bottom of its own scroll box.
+
+          `.chat-composer-dock` (chat.css) carries the bottom safe-area inset. Without it the composer's
+          send button sits UNDER a phone's home indicator: the dock is pinned at `bottom: 0`, which is the
+          edge of the viewport, not the edge of the usable screen. */}
+      <div className={variant === 'full' ? 'chat-composer-dock sticky bottom-0 z-10 bg-bg' : ''}>
       {/* No hairline above the footer — a soft fade lets the transcript slide under it instead. */}
       {variant === 'full' ? (
         <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-gradient-to-t from-bg to-transparent" />
@@ -1162,10 +1328,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           back. */}
       {lineCfg && (lineCfg.showModel || lineCfg.showContext || lineCfg.showTokens || lineCfg.showSpeed || lineCfg.showCost) ? (
         // Exactly ONE line, phone included: a second row here pushes the composer down and eats the little
-        // vertical room a phone has. The metrics are the point and stay whole (`shrink-0 whitespace-nowrap`,
-        // needed because a no-wrap FLEX row still lets each item's own text wrap); the model name is the
-        // long, expendable part, so it alone absorbs the squeeze and truncates, with the full id on title.
-        <div data-testid="chat-statusline" className={`flex min-w-0 items-center gap-x-2 overflow-hidden py-1 font-mono text-text-muted sm:gap-x-3 ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
+        // vertical room a phone has. Each statistic stays whole (`shrink-0 whitespace-nowrap`, needed
+        // because a no-wrap FLEX row still lets each item's own text wrap) — but when the row runs out of
+        // width it is the STATISTICS that give way, cheapest first, and the model name that keeps the room
+        // they free. Which one drops at which width is the `[data-stat]` ladder in chat.css, driven by the
+        // row's own container: the docked telemetry rail narrows it without the viewport changing.
+        <div data-testid="chat-statusline" className={`chat-statusline flex min-w-0 items-center gap-x-2 overflow-hidden py-1 font-mono text-text-muted sm:gap-x-3 ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
           <button
             type="button"
             onClick={() => setStatuslinePref(statuslineShown ? 'hidden' : 'shown')}
@@ -1182,18 +1350,18 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
                 const model = currentModel || active?.model || '';
                 const modelProvider = currentModel ? provider : (active?.provider ?? '');
                 const label = brainModelQualifiedLabel({ provider: modelProvider, model });
-                return <span className="min-w-0 truncate" title={label}>{label}</span>;
+                return <span data-stat="model" className="min-w-0 truncate" title={label}>{label}</span>;
               })() : null}
               {lineCfg.showContext && usage && usage.percent != null ? (
-                <span className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
+                <span data-stat="context" className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
               ) : null}
-              {lineCfg.showTokens && usage ? <span className="shrink-0 whitespace-nowrap">Σ {formatTokens(usage.totalTokens)} {t.sessionsPanel.tok}</span> : null}
+              {lineCfg.showTokens && usage ? <span data-stat="tokens" className="shrink-0 whitespace-nowrap">Σ {formatTokens(usage.totalTokens)} {t.sessionsPanel.tok}</span> : null}
               {/* Measured generation speed: absent until something has been timed, and hidden below
                   1 tok/s where the rounded figure would read as a stall rather than as too few samples. */}
               {lineCfg.showSpeed && typeof usage?.outputTps === 'number' && usage.outputTps >= 1 ? (
-                <span className="shrink-0 whitespace-nowrap">{Math.round(usage.outputTps)} {t.brainChat.tokensPerSecond}</span>
+                <span data-stat="speed" className="shrink-0 whitespace-nowrap">{Math.round(usage.outputTps)} {t.brainChat.tokensPerSecond}</span>
               ) : null}
-              {lineCfg.showCost && usage ? <span className="shrink-0 whitespace-nowrap">{formatCost(usage.cost, 2)}</span> : null}
+              {lineCfg.showCost && usage ? <span data-stat="cost" className="shrink-0 whitespace-nowrap">{formatCost(usage.cost, 2)}</span> : null}
             </>
           ) : null}
         </div>
@@ -1227,8 +1395,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
       {!readOnly && queued.length > 0 ? (
         <div className={`flex flex-col gap-1 py-2 ${variant === 'full' ? 'chat-gutter' : 'px-3'}`}>
           {queued.map((q) => (
-            <div key={q.id} className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/5 px-2 py-1 text-tiny">
-              <span className="shrink-0 rounded bg-accent/20 px-1.5 py-0.5 font-medium uppercase tracking-wide text-accent">{t.brainChat.queued}</span>
+            <div key={q.id} className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-tiny">
+              <span className="shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-medium uppercase tracking-wide text-primary">{t.brainChat.queued}</span>
               <span className="min-w-0 flex-1 truncate text-text-muted">{q.text}</span>
               <button
                 type="button"
@@ -1246,14 +1414,14 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
 
       {/* Composer — replaced by a read-only banner when viewing a channel/task session's history. */}
       {readOnly ? (
-        <div className={variant === 'full' ? 'chat-gutter pb-4 pt-1' : ''}>
+        <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
           <div className={`flex items-center justify-between gap-2 bg-elevated/40 p-3 text-sm text-text-muted ${variant === 'full' ? 'rounded-xl border border-border' : ''}`}>
             <span className="flex min-w-0 items-center gap-2"><FileText size={14} className="shrink-0" aria-hidden /><span className="truncate">{t.brainChat.readOnly}</span></span>
             <button type="button" onClick={exitReadOnly} className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-text transition-colors hover:bg-elevated">{t.brainChat.readOnlyExit}</button>
           </div>
         </div>
       ) : (
-      <div className={variant === 'full' ? 'chat-gutter pb-4 pt-1' : ''}>
+      <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
       {/* In the full page the whole composer is ONE quiet rounded field (attach + textarea + send inside
           it, Claude-style); the dock keeps its original three-control row. */}
       <form
@@ -1271,7 +1439,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
                   type="button"
                   onMouseDown={(e) => { e.preventDefault(); it.run(); }}
                   onMouseEnter={() => setSlashIdx(i)}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${i === slashSel ? 'bg-accent/15 text-text' : 'text-text-muted'}`}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${i === slashSel ? 'bg-primary/15 text-text' : 'text-text-muted'}`}
                 >
                   <span className="shrink-0 font-mono">{it.label}</span>
                   {it.desc && <span className="truncate text-tiny opacity-60">{it.desc}</span>}
@@ -1327,10 +1495,14 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           }}
           rows={1}
           placeholder={t.brainChat.placeholder}
-          className={`max-h-40 flex-1 resize-none text-sm text-text placeholder:text-text-muted ${
+          // How tall the composer may grow is a share of the SCREEN, not a fixed desktop figure. The flat
+          // 10rem this used to carry is a comfortable third of a desktop composer and most of a landscape
+          // phone, which is how the dock came to take half the reading height at 740x360. dvh, never vh:
+          // a collapsing mobile toolbar makes vh taller than the screen really is.
+          className={`max-h-[min(10rem,22dvh)] flex-1 resize-none text-sm text-text placeholder:text-text-muted ${
             variant === 'full'
               ? 'bg-transparent px-2 py-2 focus:outline-none'
-              : 'rounded-lg border border-border bg-bg px-3 py-2 focus:border-accent'
+              : 'rounded-lg border border-border bg-bg px-3 py-2 focus:border-primary'
           }`}
         />
         {busy ? (
@@ -1341,8 +1513,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             aria-label={t.brainChat.stop}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors ${
               variant === 'full'
-                ? 'rounded-xl bg-accent text-white hover:bg-accent-hot'
-                : 'rounded-lg border border-accent bg-accent/15 text-accent hover:bg-accent/25'
+                ? 'rounded-xl bg-primary text-text hover:bg-primary-hot'
+                : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
             }`}
           >
             <Square size={14} fill="currentColor" aria-hidden />
@@ -1355,8 +1527,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             aria-label={t.brainChat.send}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${
               variant === 'full'
-                ? 'rounded-xl bg-accent text-white hover:bg-accent-hot'
-                : 'rounded-lg border border-accent bg-accent/15 text-accent hover:bg-accent/25'
+                ? 'rounded-xl bg-primary text-text hover:bg-primary-hot'
+                : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
             }`}
           >
             <Send size={16} aria-hidden />

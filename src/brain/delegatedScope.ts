@@ -4,6 +4,7 @@ import {
   type NoninteractivePermissionBoundary,
 } from './toolPermissions.js';
 import { buildReadOnlyBoundary } from './agents/readOnlyBoundary.js';
+import type { SandboxWorkspaceRef } from '../plugins/workspaceTypes.js';
 
 /**
  * The immutable execution boundary minted for a delegated child.  A child is a durable conversation:
@@ -36,10 +37,16 @@ export interface DelegatedExecutionScope {
    *  it later: a shared channel gives every member the same parent session, so the session guard alone
    *  would let one member promote another member's sub-agent. Absent = unknown ⇒ unpromotable. */
   spawnedBy?: string;
+  /** Account whose model, prompt, compaction and Fast preferences compose the child. Optional only for
+   * legacy rows; new children capture it so eviction or runner execution never falls back to the row owner. */
+  settingsUserId?: number;
   /** Account whose owner-scoped contributions, HOME and Sandbox workspaces the child inherits. Optional for
    * legacy rows; absence fails closed to instance contributions/base Project roots rather than guessing the
    * durable session owner. */
   contributionUserId?: number;
+  /** Explicit Sandbox worktree assigned by the delegating turn. The durable scope stores only this
+   * ownership tuple; every process resolves the canonical host path through Sandbox immediately before use. */
+  workspaceRef?: SandboxWorkspaceRef;
 }
 
 const MAX_PROJECT_IDS = 10_000;
@@ -143,10 +150,27 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     spawnedBy = value.spawnedBy.trim();
     if (!spawnedBy || spawnedBy.length > MAX_PRINCIPAL_CHARS) return undefined;
   }
+  let settingsUserId: number | undefined;
+  if (own(value, 'settingsUserId')) {
+    if (!Number.isSafeInteger(value.settingsUserId) || (value.settingsUserId as number) <= 0) return undefined;
+    settingsUserId = value.settingsUserId as number;
+  }
   let contributionUserId: number | undefined;
   if (own(value, 'contributionUserId')) {
     if (!Number.isSafeInteger(value.contributionUserId) || (value.contributionUserId as number) <= 0) return undefined;
     contributionUserId = value.contributionUserId as number;
+  }
+  let workspaceRef: SandboxWorkspaceRef | undefined;
+  if (own(value, 'workspaceRef')) {
+    const rawWorkspace = value.workspaceRef;
+    if (!rawWorkspace || typeof rawWorkspace !== 'object' || Array.isArray(rawWorkspace)) return undefined;
+    const workspace = rawWorkspace as Record<string, unknown>;
+    if (typeof workspace.workspaceId !== 'string' || !workspace.workspaceId.trim()
+      || workspace.workspaceId.length > 128
+      || !Number.isSafeInteger(workspace.projectId) || (workspace.projectId as number) <= 0) return undefined;
+    workspaceRef = { workspaceId: workspace.workspaceId.trim(), projectId: workspace.projectId as number };
+    if (!value.admin && !canonicalProjectIds.includes(workspaceRef.projectId)) return undefined;
+    if (contributionUserId === undefined) return undefined;
   }
 
   return {
@@ -158,7 +182,9 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     ...(promptAppend ? { promptAppend } : {}),
     ...(readOnlyOrigin ? { readOnlyOrigin } : {}),
     ...(spawnedBy ? { spawnedBy } : {}),
+    ...(settingsUserId !== undefined ? { settingsUserId } : {}),
     ...(contributionUserId !== undefined ? { contributionUserId } : {}),
+    ...(workspaceRef ? { workspaceRef } : {}),
   };
 }
 
@@ -208,8 +234,12 @@ export interface DelegatingTurnAccess {
   planMode?: boolean;
   /** Who is running this turn (see turnPrincipal). Absent when the turn carries no identity. */
   principal?: string;
+  /** Account whose personal settings compose this turn. */
+  settingsUserId?: number | null;
   /** Account whose owner-scoped contributions and Sandbox state this turn carries. */
   contributionUserId?: number | null;
+  /** Present only inside a child already narrowed to an explicitly assigned Sandbox workspace. */
+  workspaceRef?: SandboxWorkspaceRef;
 }
 
 /** Whether a PERSISTED child scope grants more than the delegating turn holds right now — returns the
@@ -239,8 +269,18 @@ export function scopeExceedsCurrentAccess(
     if (lost.length) return `it is scoped to project(s) ${lost.join(', ')}, which this conversation no longer has`;
   }
   if (scope.owner && !access.owner) return 'it carries owner authority and this conversation does not';
+  if (scope.settingsUserId !== undefined && scope.settingsUserId !== access.settingsUserId) {
+    return 'it belongs to a different account settings context than the current turn';
+  }
   if (scope.contributionUserId !== undefined && scope.contributionUserId !== access.contributionUserId) {
     return 'it belongs to a different account contributor than the current turn';
+  }
+  if (access.workspaceRef) {
+    if (!scope.workspaceRef) return 'it is not confined to this turn’s Sandbox workspace';
+    if (scope.workspaceRef.workspaceId !== access.workspaceRef.workspaceId
+      || scope.workspaceRef.projectId !== access.workspaceRef.projectId) {
+      return 'it is confined to a different Sandbox workspace';
+    }
   }
   const callerAllow = access.toolPolicy?.allow;
   if (callerAllow) {
@@ -310,7 +350,9 @@ export function promoteDelegatedScope(
     ...(access.toolPolicy ? { toolPolicy: access.toolPolicy } : {}),
     ...(scope.promptAppend ? { promptAppend: scope.promptAppend } : {}),
     spawnedBy: scope.spawnedBy,
+    ...(scope.settingsUserId !== undefined ? { settingsUserId: scope.settingsUserId } : {}),
     ...(scope.contributionUserId !== undefined ? { contributionUserId: scope.contributionUserId } : {}),
+    ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
   });
   if (!promoted) return { error: 'the resulting access could not be validated' };
   return { scope: promoted };
@@ -437,13 +479,16 @@ export function packDelegatedPromptAppend(sections: readonly string[]): PackedDe
   return { promptAppend: chunks, truncated, dropped };
 }
 
+/** Tools that require a live user must never reach an unattended delegated turn. */
+const DELEGATED_INTERACTIVE_TOOL_DENIES = ['AskUserQuestion'] as const;
+
 /** Rehydrate the execution-time plugin-tool policy. An empty allow-list is preserved as a real empty Set. */
 export function delegatedToolPolicy(
   scope: DelegatedExecutionScope,
   currentDenied: Iterable<string> = [],
   currentAllow?: Iterable<string>,
 ): ToolPolicy | undefined {
-  const narrowed = withDelegatedDeniedTools(scope, currentDenied);
+  const narrowed = withDelegatedDeniedTools(scope, [...currentDenied, ...DELEGATED_INTERACTIVE_TOOL_DENIES]);
   const deny = narrowed.toolPolicy?.deny;
   // The captured scope stays authoritative, but the spawning ACCOUNT's current grant may still narrow it:
   // a tool an admin has since revoked must not keep reaching a long-lived child through its frozen

@@ -66,9 +66,11 @@ describe('mascot command field', () => {
     setViewport(false);
     renderRail();
     expect(screen.queryByTestId('command-orbit')).toBeNull();
-    const { mascot } = await openField();
+    const { mascot, field } = await openField();
 
-    await act(async () => { fireEvent.keyDown(window, { key: 'Escape' }); });
+    // Raised on the field, not on `window`: Escape is Radix's dismissable layer now, and it reads the
+    // key off the document the event bubbles through — which is the path a real Escape takes.
+    await act(async () => { fireEvent.keyDown(field, { key: 'Escape' }); });
     await waitFor(() => expect(screen.queryByTestId('command-orbit')).toBeNull());
     expect(document.activeElement).toBe(mascot);
   });

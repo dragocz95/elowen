@@ -1152,7 +1152,7 @@ describe('chat application shell ownership', () => {
   it('keeps the background-process card when the rail cannot fit (narrow terminal)', async () => {
     const h = compositionHarness({ columns: 100, rows: 24, turns: 4 });
     h.rt.cards = [{
-      id: 'bg-processes', title: 'Background processes (2)', pinned: true,
+      id: 'bg-processes-1', title: 'Background processes (2)', pinned: true,
       items: [
         { text: 'sleep 300 &', status: 'in_progress' },
         { text: 'npm run dev &', status: 'in_progress' },
@@ -1172,7 +1172,7 @@ describe('chat application shell ownership', () => {
   it('drops the background-process card while the telemetry rail is on screen', async () => {
     const h = compositionHarness({ columns: 120, rows: 24, turns: 4 });
     h.rt.cards = [{
-      id: 'bg-processes', title: 'Background processes (2)', pinned: true,
+      id: 'bg-processes-1', title: 'Background processes (2)', pinned: true,
       items: [{ text: 'sleep 300 &', status: 'in_progress' }],
     }];
     const composition = makeComposition(h);

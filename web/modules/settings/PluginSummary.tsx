@@ -13,7 +13,7 @@ export function PluginHero({ name, detail, description, toolCount }: { name: str
     <section className="@container">
       <div className="flex flex-col gap-5 @2xl:flex-row @2xl:items-start">
         <div className="flex min-w-0 flex-1 gap-4">
-          <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden text-accent">{icon}</div>
+          <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden text-primary">{icon}</div>
           <div className="min-w-0 pt-1">
             <div className="flex flex-wrap items-center gap-2.5">
               <h2 className="text-2xl font-semibold tracking-[-0.025em] text-text">{detail.name}</h2>
@@ -30,7 +30,7 @@ export function PluginHero({ name, detail, description, toolCount }: { name: str
           { term: t.pluginDetail.overviewSource, value: detail.source === 'bundled' ? t.plugins.bundled : t.plugins.user, mono: false },
           { term: t.pluginDetail.tools, value: String(toolCount), mono: true },
         ].map((fact) => (
-          <div key={fact.term} className="inline-flex items-center gap-2 rounded-full border border-border bg-white/[0.012] px-3 py-1.5">
+          <div key={fact.term} className="inline-flex items-center gap-2 rounded-full border border-border bg-text/[0.012] px-3 py-1.5">
             <dt className="text-[9px] font-semibold uppercase tracking-[0.12em] text-text-muted">{fact.term}</dt>
             <dd className={`text-xs text-text ${fact.mono ? 'font-mono' : ''}`}>{fact.value}</dd>
           </div>

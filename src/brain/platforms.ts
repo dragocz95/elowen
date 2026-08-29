@@ -1,6 +1,6 @@
 import type { PluginRegistry } from '../plugins/registry.js';
 import { decodeNotificationDestination, encodeNotificationDestination } from '../plugins/destinations.js';
-import type { ChannelRef, ServiceNotice } from '../plugins/api.js';
+import type { ChannelRef, KnownControls, ServiceNotice } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import { narrowToolAllowList, type ToolPolicy, type TurnIdentity } from '../plugins/policyContext.js';
 import type { IdentityResolver } from './identity.js';
@@ -19,6 +19,7 @@ import type { DelegatedTurnRequest } from './delegatedTurn.js';
 import { resolveAgentTools, READ_ONLY_AGENT_TOOLS, type AgentDef } from './agents/agentRegistry.js';
 import { renderAgentPrompt } from './agents/agentPrompt.js';
 import { buildReadOnlyBoundary, resolveReadOnlyOrigin } from './agents/readOnlyBoundary.js';
+import { bindingRef, resolveDelegatedWorkspace } from './workspaceScope.js';
 
 export interface PlatformOrchestratorDeps {
   /** The daemon-wide plugin registry resolver (undefined when plugins aren't wired). */
@@ -41,12 +42,15 @@ export interface PlatformOrchestratorDeps {
   /** A linked user's own tool authority — the grant an admin gave that account, minus their deny-list and
    *  the tools of any grant-gated plugin they do not hold — applied for their platform turns. */
   toolAuthorityFor?: (userId: number) => ToolPolicy | undefined;
+  fastMode?: (userId: number) => boolean;
+  setFastMode?: (userId: number, on?: boolean) => boolean;
   identity: IdentityResolver;
   channels: ChannelSessionService;
   /** Where a DELEGATED turn actually executes — see SubagentDispatch. Every delegation reaches the host
    *  through this orchestrator's `run` handle (the Delegate tool and a workflow node alike), so this is
    *  the one place that decides between running it on this event loop and handing it to the runner. */
   dispatch: { send(request: DelegatedTurnRequest, text: string, onEvent?: (e: BrainEvent) => void): Promise<string> };
+  sandbox?: () => KnownControls['sandbox'] | undefined;
   /** Admin daemon restart for a platform `/restart` slash. Lazily resolved: the handler is built after
    *  the brain (it needs systemd + the marker path), so this returns undefined until it's wired. */
   restart?: () => ((byUserId: number) => Promise<void>) | undefined;
@@ -219,6 +223,16 @@ export class PlatformOrchestrator {
             // the least diagnosable failure this path can produce. Log whatever had to be cut, since the
             // child only learns it from a marker inside its own prompt.
             const packed = packDelegatedPromptAppend(promptAppend);
+            const workspaceBinding = resolveDelegatedWorkspace(
+              this.d.sandbox?.(),
+              {
+                admin: src.access.admin === true,
+                projectIds: src.access.projectIds ?? [],
+                contributionUserId: src.access.contributionUserId,
+                workspaceRef: src.access.workspaceRef,
+              },
+              src.access.workspaceId,
+            );
             if (packed.truncated || packed.dropped) {
               log?.info(`delegated prompt did not fit the scope budget: ${packed.truncated} section(s) shortened, `
                 + `${packed.dropped} dropped (channel ${keyOf(src)})`);
@@ -237,13 +251,17 @@ export class PlatformOrchestrator {
               // Host-stamped on the delegating turn (pathGuard.currentAccess), so the child records the
               // identity that actually spawned it. Absent leaves the child unpromotable, never wider.
               ...(typeof src.access.principal === 'string' ? { spawnedBy: src.access.principal } : {}),
+              ...(Number.isSafeInteger(src.access.settingsUserId) && src.access.settingsUserId! > 0
+                ? { settingsUserId: src.access.settingsUserId } : {}),
               ...(Number.isSafeInteger(src.access.contributionUserId) && src.access.contributionUserId! > 0
                 ? { contributionUserId: src.access.contributionUserId } : {}),
+              ...(workspaceBinding ? { workspaceRef: bindingRef(workspaceBinding) } : {}),
             });
             if (!rawScope) throw new Error('invalid delegated access');
             // The account running the child can only make the captured scope narrower. Persist this union
             // too, so a later settings change that re-enables a tool never widens an already-delegated run.
-            const spawnerAuthority = this.d.toolAuthorityFor?.(sessionOwner);
+            const authorityUserId = rawScope.settingsUserId ?? rawScope.contributionUserId ?? sessionOwner;
+            const spawnerAuthority = this.d.toolAuthorityFor?.(authorityUserId);
             const delegatedAccess = withDelegatedDeniedTools(rawScope, spawnerAuthority?.deny ?? []);
             // Validated above for the owner lookup; re-checked here so the request below carries the
             // non-optional parent it actually has.
@@ -268,10 +286,9 @@ export class PlatformOrchestrator {
               scheduled: src.access.scheduled === true,
               ...(src.access.model ? { model: src.access.model } : {}),
               ...(src.access.thinkingLevel !== undefined ? { thinkingLevel: src.access.thinkingLevel } : {}),
-              ...(src.access.fast !== undefined ? { fast: src.access.fast } : {}),
               // A delegated child inherits the delegating turn's working directory so its tools run in —
               // and it advertises — the SAME project as the parent, not the daemon's `/`.
-              ...(src.access.cwd !== undefined ? { clientCwd: src.access.cwd } : {}),
+              ...(!workspaceBinding && src.access.cwd !== undefined ? { clientCwd: src.access.cwd } : {}),
               // Surface-tuned idle cutoff (the delegate plugin pins it so a child's transcript is never
               // rolled over mid-delegation).
               ...(src.access.sessionIdleMs !== undefined ? { idleRolloverMs: src.access.sessionIdleMs } : {}),
@@ -422,7 +439,6 @@ export class PlatformOrchestrator {
             scheduled: src.access.scheduled === true,
             model: src.access.model,
             thinkingLevel: src.access.thinkingLevel,
-            fast: src.access.fast,
             // Surface-tuned idle cutoff (cron passes a shorter one; Discord omits it → host default).
             idleRolloverMs: src.access.sessionIdleMs,
             toolPolicy,
@@ -459,7 +475,25 @@ export class PlatformOrchestrator {
           status: (ref) => this.d.channels.status(keyOf(ref)),
           abort: (ref) => this.d.channels.abort(keyOf(ref)),
           compact: (ref) => this.d.channels.compact(keyOf(ref)),
-          setFast: (ref, on) => this.d.channels.setFast(keyOf(ref), on),
+          // API-v1 adapters cannot prove which account invoked the out-of-band slash, so the legacy
+          // conversation-local method fails closed instead of guessing from room/session state.
+          setFast: () => null,
+          fastStatus: (ref, senderPlatformId) => {
+            const userId = this.d.identity.platformAccountId(ref.platform, senderPlatformId);
+            if (userId === null) return null;
+            return {
+              fast: this.d.fastMode?.(userId) === true,
+              fastAvailable: this.d.channels.status(keyOf(ref))?.fastAvailable ?? false,
+            };
+          },
+          setAccountFast: (ref, senderPlatformId, on) => {
+            const userId = this.d.identity.platformAccountId(ref.platform, senderPlatformId);
+            if (userId === null || !this.d.setFastMode) return null;
+            return {
+              fast: this.d.setFastMode(userId, on),
+              fastAvailable: this.d.channels.status(keyOf(ref))?.fastAvailable ?? false,
+            };
+          },
           restart: async () => {
             const fn = this.d.restart?.();
             if (!fn) throw new Error('restart is not available on this deployment');

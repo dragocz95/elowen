@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainStore } from '../store/brainStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
-import type { KnownControls, PlatformHistory, PlatformHistoryMessage } from '../plugins/api.js';
+import type { KnownControls, PlatformHistory, PlatformHistoryMessage, SandboxExecutionLease } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity, ToolPolicy } from '../plugins/policyContext.js';
 import type { PlatformSenderAttribution } from './identity.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
+import { createWorkspacePathView, type WorkspacePathView } from '../plugins/pathView.js';
 import {
   delegatedToolPolicy,
   normalizeDelegatedExecutionScope,
@@ -132,7 +133,6 @@ export interface PlatformTurnResumeEnvelope {
   deniedTools?: string[];
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
-  fast?: boolean;
   idleRolloverMs?: number;
   /** Opaque outbound destination — present only for verified direct chats, exactly as on the live turn. */
   deliveryTarget?: string;
@@ -183,7 +183,6 @@ export function normalizePlatformTurnEnvelope(raw: unknown): PlatformTurnResumeE
   if (model !== undefined && (typeof model !== 'object' || model === null
     || !isOptionalString(model.provider) || !isOptionalString(model.model))) return null;
   if (!isOptionalString(e.thinkingLevel)) return null;
-  if (e.fast !== undefined && typeof e.fast !== 'boolean') return null;
   if (e.idleRolloverMs !== undefined && !(typeof e.idleRolloverMs === 'number' && Number.isFinite(e.idleRolloverMs))) return null;
   if (!isOptionalString(e.deliveryTarget) || !isOptionalString(e.historyPlatform)) return null;
   if (typeof e.promptCommand !== 'boolean') return null;
@@ -216,7 +215,6 @@ export function normalizePlatformTurnEnvelope(raw: unknown): PlatformTurnResumeE
       ...(model.model !== undefined ? { model: model.model as string } : {}),
     } } : {}),
     ...(e.thinkingLevel !== undefined ? { thinkingLevel: e.thinkingLevel } : {}),
-    ...(e.fast !== undefined ? { fast: e.fast } : {}),
     ...(e.idleRolloverMs !== undefined ? { idleRolloverMs: e.idleRolloverMs } : {}),
     ...(e.deliveryTarget !== undefined ? { deliveryTarget: e.deliveryTarget } : {}),
     ...(e.historyPlatform !== undefined ? { historyPlatform: e.historyPlatform } : {}),
@@ -371,7 +369,6 @@ export interface ChannelSendOpts {
   scheduled?: boolean;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
-  fast?: boolean;
   /** Durable parent for delegated sessions; never accepted from ordinary external adapters. */
   parentSessionId?: string;
   /** Immutable policy/identity boundary minted by the delegating turn. Required for a child send. */
@@ -440,6 +437,8 @@ export interface ChannelServiceDeps {
    *  Absent ⇒ always admits. */
   admitsNewWork?(): boolean;
   store: BrainStore;
+  /** Durable account Fast preference for status only; provider requests use the spawner's live getter. */
+  fastMode?: (userId: number) => boolean;
   /** The same store-backed registry owner chat uses, so channel/sub-agent cards survive replay cleanup. */
   cards: CardRegistry;
   /** `granted_plugins` is needed as well as the display fields: the per-turn skills announcement runs the
@@ -560,6 +559,7 @@ export class ChannelSessionService {
   private delegatedExecution(opts: ChannelSendOpts, sessionId: string): {
     scope: DelegatedExecutionScope;
     toolPolicy: ToolPolicy | undefined;
+    pathView?: WorkspacePathView;
   } {
     const scope = normalizeDelegatedExecutionScope(opts.delegatedAccess);
     if (!scope || !opts.identity || opts.writerUserId !== undefined
@@ -582,9 +582,28 @@ export class ChannelSessionService {
     // its current grant intersects — so it cannot swap the inherited allow/deny shape while the child is
     // idle. Dropping the caller's allow here is what made the account grant a per-path accident: the
     // careful intersection every caller computes was discarded and rebuilt from the frozen scope alone.
+    let pathView: WorkspacePathView | undefined;
+    if (scope.workspaceRef) {
+      const sandbox = this.d.sandbox?.();
+      if (!sandbox || scope.contributionUserId === undefined) throw new Error('delegated workspace unavailable');
+      const binding = sandbox.resolveWorkspace({
+        accountUserId: scope.contributionUserId,
+        workspace: scope.workspaceRef,
+        accessibleProjectIds: scope.admin ? 'all' : scope.projectIds,
+      });
+      const scopedProjectIds = scope.admin
+        ? this.d.projects?.list().map((project) => project.id) ?? []
+        : scope.projectIds;
+      const hiddenPrefixes = [
+        ...(this.d.projects?.list().filter((project) => scopedProjectIds.includes(project.id)).map((project) => project.path) ?? []),
+        ...sandbox.workspacesFor({ userId: scope.contributionUserId, projectIds: scopedProjectIds }).map((workspace) => workspace.path),
+      ];
+      pathView = createWorkspacePathView(binding, hiddenPrefixes);
+    }
     return {
       scope,
       toolPolicy: delegatedToolPolicy(scope, opts.toolPolicy?.deny ?? [], opts.toolPolicy?.allow),
+      ...(pathView ? { pathView } : {}),
     };
   }
 
@@ -695,6 +714,8 @@ export class ChannelSessionService {
       this.d.registry.isParentAborting(parentSessionId) || this.d.registry.hasPendingAbort(sessionId)
     );
     let delegatedCall = false;
+    let delegationLease: SandboxExecutionLease | undefined;
+    let delegationLeaseHeartbeat: ReturnType<typeof setInterval> | undefined;
     // Armed by a turn that actually produced an answer and consumed once by settleTurn below, mirroring
     // the owner surface: a turn that threw leaves it undefined, which is how a failed exchange stays out
     // of the writer's memory. The writer stamp and the drain are NOT gated on it — see the settle.
@@ -703,16 +724,26 @@ export class ChannelSessionService {
     // turn (that turn is still live, so nothing may dispose it) and false if the steer attempt itself
     // threw, which is the same situation seen from the failing side.
     let ranOwnTurn = false;
+    let admitted = false;
+    try {
     if (parentSessionId) {
       if (this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
       const parent = this.d.store.getSession(parentSessionId);
       if (!parent || parent.user_id !== opts.ownerUserId || parent.id === sessionId) throw new Error('invalid parent session');
+      if (delegated?.scope.workspaceRef) {
+        const sandbox = this.d.sandbox?.();
+        const accountUserId = delegated.scope.contributionUserId;
+        if (!sandbox || accountUserId === undefined) throw new Error('delegated workspace unavailable');
+        delegationLease = sandbox.acquireDelegationLease({ accountUserId, workspace: delegated.scope.workspaceRef });
+        delegationLeaseHeartbeat = setInterval(() => { void delegationLease?.heartbeat(); }, 5_000);
+        delegationLeaseHeartbeat.unref?.();
+      }
       // Register before the first async boundary. A background delegate may be stopped immediately after
       // its tool returns, before spawn has emitted the child's `session` progress event.
       this.beginDelegatedCall(parentSessionId, sessionId);
       delegatedCall = true;
     }
-    try {
+    admitted = true;
     const steered = await this.trySteerIntoRunningTurn(opts, turnText, senderText, delegationAborted);
     if (steered === null) ranOwnTurn = true;
     const reply = steered !== null ? steered : await this.d.registry.withLock(sessionId, async () => {
@@ -799,7 +830,6 @@ export class ChannelSessionService {
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*
           scheduled: opts.scheduled, // timer-driven turn → focused `scheduled` system prompt instead of the coding base
           thinkingLevel: opts.thinkingLevel,
-          fast: opts.fast,
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           // …at the WRITER'S personal settings, not the room opener's. A room is owned by whoever opened
           // it, which is bookkeeping only, so composing the session from that account meant one
@@ -807,8 +837,10 @@ export class ChannelSessionService {
           // else in the room. An unlinked sender carries no account, so the owner still stands. Every
           // one of those settings is read from this single id inside the spawner; resolving even one of
           // them here would be the second opinion that let the threshold drift from the model.
-          // A delegated child has no writer of its own and inherits its parent's — see parentSettingsUserId.
-          settingsUserId: opts.writerUserId ?? this.parentSettingsUserId(parentSessionId) ?? ownerUserId,
+          // A delegated child has no writer of its own. New children carry the parent's composing account
+          // durably; the live-parent lookup remains only for legacy rows minted before that field existed.
+          settingsUserId: opts.writerUserId ?? delegated?.scope.settingsUserId
+            ?? this.parentSettingsUserId(parentSessionId) ?? ownerUserId,
           // Only a DELEGATED child names one. An ordinary room deliberately composes the instance set and
           // announces the writer's per turn: PI's skill set is fixed for the life of a session, so
           // composing it from whoever spoke first would leave that person's private skills expandable for
@@ -824,7 +856,8 @@ export class ChannelSessionService {
             : {}),
           // A delegated child inherits its parent's working directory (set only for subagent sends); an
           // ordinary platform channel leaves this undefined and resolves its cwd from the policy root.
-          clientCwd: opts.clientCwd,
+          clientCwd: delegated?.pathView?.root ?? opts.clientCwd,
+          ...(delegated?.pathView ? { pathView: delegated.pathView } : {}),
         });
         if (carriedOrientation !== undefined) ch.orientedForCompaction = carriedOrientation;
         if (this.d.registry.consumePendingAbort(sessionId)) {
@@ -832,16 +865,17 @@ export class ChannelSessionService {
           throw new Error('delegation aborted');
         }
       }
-      // Fast is a mutable request profile, so a platform toggle applies without rebuilding the session.
-      if (opts.fast !== undefined) {
-        if (opts.fast && !ch.fastAvailable) throw new Error('Fast mode is available only for OpenAI OAuth models');
-        ch.requestProfile.fast = ch.fastAvailable && opts.fast;
-      }
       // Stamp the 1:1-vs-shared flag on EVERY platform message, not only when this turn happened to spawn
       // the session: a conversation that was already live (or whose row predates the column) would
       // otherwise never learn what it is, and a private DM would keep behaving like a shared room forever.
       if (opts.direct !== undefined) this.d.store.setDirect(sessionId, opts.direct);
       this.d.registry.channelTouch(opts.channelId, ch); // (re-)insert → Map order doubles as LRU order
+      // Provider calls before the prompt (cold-start compaction) already belong to THIS turn, so stamp
+      // the verified writer before any of them. The inner finally clears both fields after settlement;
+      // out-of-band compaction therefore fails closed instead of borrowing the previous room writer.
+      ch.turnSender = opts.identity?.userId; // whose turn this is → mid-run injection only steers same-sender messages in
+      ch.turnWriterUserId = opts.writerUserId ?? null;
+      try {
       // First turn after this room's prompt cache expired: shrink the context BEFORE the provider
       // re-caches it. Owner chat has had this since the idle sweep was retired; a room did not, even
       // though a room — a cron channel that keeps one conversation for weeks — is where the expensive
@@ -852,11 +886,9 @@ export class ChannelSessionService {
         { store: this.d.store, sessions: this.d.registry, elicitation: this.d.elicitation ?? { pendingForSession: () => null } },
         ch,
       );
-      ch.turnSender = opts.identity?.userId; // whose turn this is → mid-run injection only steers same-sender messages in
       // Same rule for mid-turn recall as for the turn-start block below: the verified sender's memories,
       // nobody's when they are unlinked. Never the channel owner's — that would surface their memories
       // into a stranger's turn in a shared room.
-      ch.turnWriterUserId = opts.writerUserId ?? null;
       // WHOSE personal skills this turn may load — announced below and authorised by the same value on the
       // turn scope, so the model is never told about a skill a tool will then refuse to open for it.
       //
@@ -973,15 +1005,18 @@ export class ChannelSessionService {
         // Resolve from THIS writer and THIS turn. `ch.workDir` is only the static spawn cwd (often the room
         // opener's Project); validating it through the current Policy first makes another writer fall back to
         // their own Project, then Sandbox may select that account's active workspace.
-        const baseWorkDir = turnWorkDir(opts.policy, opts.clientCwd ?? ch.workDir, this.d.projectPath);
-        const effectiveWorkDir = effectiveTurnWorkDir({
-          policy: opts.policy,
-          baseWorkDir,
-          accountUserId: turnContributionUserId,
-          sessionId,
-          projects: this.d.projects,
-          sandbox: this.d.sandbox?.(),
-        });
+        const baseWorkDir = delegated?.pathView?.root
+          ?? turnWorkDir(opts.policy, opts.clientCwd ?? ch.workDir, this.d.projectPath);
+        const effectiveWorkDir = delegated?.pathView
+          ? { baseWorkDir, workDir: delegated.pathView.root, workspace: null }
+          : effectiveTurnWorkDir({
+              policy: opts.policy,
+              baseWorkDir,
+              accountUserId: turnContributionUserId,
+              sessionId,
+              projects: this.d.projects,
+              sandbox: this.d.sandbox?.(),
+            });
         const workspaceReminder = workDirReorientation(ch.workDir, effectiveWorkDir.workDir);
         try {
           // …and, in a room, narrowed to the tools this writer OWNS as well as the ones they were granted.
@@ -1071,7 +1106,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',
@@ -1137,7 +1172,6 @@ export class ChannelSessionService {
             ...(opts.model.model !== undefined ? { model: opts.model.model } : {}),
           } } : {}),
           ...(opts.thinkingLevel !== undefined ? { thinkingLevel: opts.thinkingLevel } : {}),
-          ...(opts.fast !== undefined ? { fast: opts.fast } : {}),
           // `Infinity` (cron's "never roll over") does not survive JSON — omitted, like unset.
           ...(opts.idleRolloverMs !== undefined && Number.isFinite(opts.idleRolloverMs)
             ? { idleRolloverMs: opts.idleRolloverMs } : {}),
@@ -1160,6 +1194,10 @@ export class ChannelSessionService {
         // The turn settled (reply or error already back with the adapter) — nothing left to resume.
         if (resumable) this.d.store.clearPlatformTurnEnvelope(sessionId);
       }
+      } finally {
+        ch.turnSender = undefined;
+        ch.turnWriterUserId = null;
+      }
     });
     // Armed only by a turn that produced an answer, exactly as the owner surface arms it.
     if (steered === null && !opts.internalSystem && opts.writerUserId != null && this.d.curator
@@ -1181,18 +1219,23 @@ export class ChannelSessionService {
       // A message STEERED into somebody else's running turn omits the curator (that turn curates its own
       // exchange) and the drain (that turn is still running, so nothing may dispose it yet), while the
       // writer stamp still lands: the person did write here.
-      settleTurn({
-        sessionId,
-        ...(curate ? { curate } : {}),
-        ...(!opts.internalSystem && opts.writerUserId != null
-          ? { lastWriter: { store: this.d.store, userId: opts.writerUserId } }
-          : {}),
-        // Its absence here is why a CreateSkill issued from Discord wrote a skill to disk and then silently
-        // never applied it: the owner surface drained the request and no room ever did.
-        ...(ranOwnTurn && this.d.drainPluginReload ? { drainPluginReload: this.d.drainPluginReload } : {}),
-        // `notify` is owner-only and therefore absent: the room already received this answer.
-      });
-      if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId);
+      try {
+        if (admitted) settleTurn({
+          sessionId,
+          ...(curate ? { curate } : {}),
+          ...(!opts.internalSystem && opts.writerUserId != null
+            ? { lastWriter: { store: this.d.store, userId: opts.writerUserId } }
+            : {}),
+          // Its absence here is why a CreateSkill issued from Discord wrote a skill to disk and then silently
+          // never applied it: the owner surface drained the request and no room ever did.
+          ...(ranOwnTurn && this.d.drainPluginReload ? { drainPluginReload: this.d.drainPluginReload } : {}),
+          // `notify` is owner-only and therefore absent: the room already received this answer.
+        });
+      } finally {
+        if (delegationLeaseHeartbeat) clearInterval(delegationLeaseHeartbeat);
+        try { await delegationLease?.release(); }
+        finally { if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId); }
+      }
     }
   }
 
@@ -1371,7 +1414,7 @@ export class ChannelSessionService {
   /** Live status of a channel session (model + whether a turn is in flight + context usage) for a platform
    *  `/status` (and `/stop`) slash. Null when the channel has no live session yet (never spawned, or
    *  LRU-evicted). Read-only — no lock needed. */
-  status(channelId: string): { provider?: string; model: string; streaming: boolean; usage: BrainUsage; fast: boolean; fastAvailable: boolean } | null {
+  status(channelId: string): { provider?: string; model: string; streaming: boolean; usage: BrainUsage; fastAvailable: boolean } | null {
     const ch = this.d.registry.channelGet(channelId);
     return ch ? {
       provider: ch.providerId,
@@ -1380,19 +1423,8 @@ export class ChannelSessionService {
       // tracked descendant is still running so the channel can cancel the whole tree.
       streaming: ch.session.isStreaming || this.d.registry.hasActiveChildren(ch.sessionId),
       usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId),
-      fast: ch.requestProfile.fast,
       fastAvailable: ch.fastAvailable,
     } : null;
-  }
-
-  /** Set/toggle ChatGPT OAuth priority processing without respawning the channel session. */
-  setFast(channelId: string, on?: boolean): { fast: boolean; fastAvailable: boolean } | null {
-    const ch = this.d.registry.channelGet(channelId);
-    if (!ch) return null;
-    if (!ch.fastAvailable) return { fast: false, fastAvailable: false };
-    ch.requestProfile.fast = on ?? !ch.requestProfile.fast;
-    ch.interactedAt = Date.now();
-    return { fast: ch.requestProfile.fast, fastAvailable: true };
   }
 
   /** Abort the in-flight turn on a channel session (a platform `/stop` slash). Delegated descendants

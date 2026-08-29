@@ -26,7 +26,12 @@ export function useFillHeight(ref: RefObject<HTMLElement | null>, minPx = 320): 
       for (let node = el.parentElement; node && node !== scroller; node = node.parentElement) {
         gutter += parseFloat(getComputedStyle(node).paddingBottom) || 0;
       }
-      const top = el.getBoundingClientRect().top / zoom;
+      // A bounding rect is viewport-relative. Once the page has scrolled, using it directly makes the
+      // measured top negative and inflates the fill height by the current scroll offset. Phone browsers
+      // resize the visual viewport as their chrome hides/shows, so one resize near the bottom could freeze
+      // thousands of pixels of empty flex space under the transcript. Convert the visual position back to
+      // the element's stable position inside the scroller before deriving the remaining viewport height.
+      const top = (el.getBoundingClientRect().top - scroller.getBoundingClientRect().top) / zoom + scroller.scrollTop;
       setHeight(Math.max(minPx, Math.round(window.innerHeight / zoom - top - gutter)));
     };
 

@@ -54,3 +54,13 @@ export function xtermTheme(resolvedTheme: ResolvedTheme, prefs?: TerminalSetting
   if (prefs?.theme === 'custom') return paletteTheme(prefs.palette);
   return resolvedTheme === 'light' ? LIGHT : DARK;
 }
+
+/** The background xterm will actually paint, always a `#rrggbb`: a custom palette whose background was
+ *  dropped by the validation above falls back to the app-theme default. It lives here rather than at the
+ *  call site because this module is the one place allowed to hold a terminal colour literal — a
+ *  terminal's palette is deliberately independent of the app's design tokens, which is exactly why
+ *  anything tinting itself AGAINST that background has to ask for it instead of writing its own. */
+export function xtermBackground(resolvedTheme: ResolvedTheme, prefs?: TerminalSettings): string {
+  const fallback = resolvedTheme === 'light' ? LIGHT : DARK;
+  return xtermTheme(resolvedTheme, prefs).background ?? fallback.background!;
+}

@@ -12,7 +12,7 @@ import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
-import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
+import { assertPathAllowed, allowedRoots, defaultCwd, displayPath, isAllAccess, currentAccess, pathStateKey, sanitizePathOutput } from './pathGuard.js';
 import { currentIdentity, currentContributionUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
@@ -113,7 +113,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession', 'resumeInterrupted'],
   mcp: ['listServers', 'bridgeSnapshot'],
   lsp: ['diagnosticsEnabled'],
-  sandbox: ['workspaceRoots', 'workspacesFor', 'activeWorkspace', 'prepareExecution'],
+  sandbox: ['workspaceRoots', 'resolveWorkspace', 'acquireDelegationLease', 'workspacesFor', 'activeWorkspace', 'prepareExecution'],
   microsoftIdentity: ['identityFor', 'driveGraphFor'],
   publishedSitesGateway: [
     'hostnameBase', 'syncSites', 'ensureSite', 'removeSite', 'deny', 'status',
@@ -176,6 +176,13 @@ export class PluginRegistry {
    * Index-aligned with `tools`; owner-scoped duplicate names are safe because `toolsFor` filters and
    * de-duplicates before a session is composed. */
   readonly toolOwnerUsers: (number | null)[] = [];
+  /** Tools whose implementation can see the daemon host filesystem outside PathView (notably stdio MCP).
+   * Explicit workspace-scoped children omit them fail-closed; remote/network tools remain available. */
+  readonly hostFilesystemTools = new Set<string>();
+  /** Tools positively declared safe for an exact workspace PathView. */
+  readonly workspaceSafeTools = new Set<string>();
+  /** At least one registration for this name lacked the workspace-safe declaration. */
+  readonly workspaceUnsafeTools = new Set<string>();
   readonly skills: PluginSkill[] = [];
   readonly promptFragments: string[] = [];
   /** Static Markdown fragments loaded from a platform plugin's `prompt/*.md` directory. Unlike global
@@ -296,6 +303,9 @@ export class PluginRegistry {
       this.tools.push(t);
       this.toolOwnerUsers.push(other.toolOwnerUsers[i] ?? null);
       this.toolOwner.set(t.name, owner);
+      if (other.hostFilesystemTools.has(t.name)) this.hostFilesystemTools.add(t.name);
+      if (other.workspaceSafeTools.has(t.name)) this.workspaceSafeTools.add(t.name);
+      if (other.workspaceUnsafeTools.has(t.name)) this.workspaceUnsafeTools.add(t.name);
     }
     this.skills.push(...other.skills);
     this.promptFragments.push(...other.promptFragments);
@@ -826,6 +836,9 @@ export class PluginRegistry {
         this.tools.push(t);
         this.toolOwnerUsers.push(opts?.ownerUserId ?? null);
         this.toolOwner.set(t.name, name);
+        if (opts?.hostFilesystem === true) this.hostFilesystemTools.add(t.name);
+        if (opts?.workspaceSafe === true) this.workspaceSafeTools.add(t.name);
+        else this.workspaceUnsafeTools.add(t.name);
       },
       registerSkill: (s, opts) => {
         this.skills.push(s);
@@ -1151,6 +1164,9 @@ export class PluginRegistry {
         });
       },
       assertPathAllowed,
+      displayPath,
+      pathStateKey,
+      sanitizePathOutput,
       allowedRoots,
       defaultCwd,
       workDir: currentWorkDir,
@@ -1190,14 +1206,14 @@ export class PluginRegistry {
         }
         return delegatedChildren.read(parentSessionId, sessionId);
       },
-      continueSubagent: (sessionId, text, onEvent, model, promote) => {
+      continueSubagent: (sessionId, text, onEvent, model, promote, workspaceId) => {
         const parentSessionId = currentSessionId();
         if (!parentSessionId || !delegatedChildren) {
           return Promise.reject(new Error('continuing a sub-agent is only available inside a conversation turn'));
         }
         // `currentAccess()` is read HERE, from the live turn scope, for the promotion ceiling as much as for
         // the continuation check: the plugin never supplies the authority a promotion is measured against.
-        return delegatedChildren.continue(parentSessionId, sessionId, text, currentAccess(), onEvent, model, promote === true);
+        return delegatedChildren.continue(parentSessionId, sessionId, text, currentAccess(), onEvent, model, promote === true, workspaceId);
       },
       stopSubagent: (sessionId) => {
         const parentSessionId = currentSessionId();

@@ -19,7 +19,7 @@ import { OAuthUsageRail } from './OAuthUsageRail';
 import { useUpdateConfig, useSaveBrainProviders, useBrainOauthDisconnect } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
 import type { BrainProvider, BrainProviderCompatibility, BrainProviderType, OAuthFlowState, ElowenConfig } from '../../lib/types';
-import { SettingsGroup, SettingsRow, SettingsState } from './SettingsSurface';
+import { SettingsGroup, SettingsRow, SettingsState } from '../../components/ui/SettingsSurface';
 import { DEFAULT_PROVIDER_COMPATIBILITY, ProviderCompatibilityModal, providerCompatibilityCustomCount } from './ProviderCompatibilityModal';
 import { DomainFavicon } from './providers';
 
@@ -124,12 +124,12 @@ function OAuthConnectDialog({ flow: initial, onDone }: { flow: OAuthFlowState; o
     <Modal title={t.brain.connectTitle} icon={Link2} size="md" onClose={() => onDone('cancelled')}>
       <ModalBody gap={4}>
         {flow.authUrl ? (
-          <a href={flow.authUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 break-all rounded-md border border-accent/40 bg-accent/10 p-3 text-xs text-accent hover:bg-accent/20">
+          <a href={flow.authUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 break-all rounded-md border border-primary/40 bg-primary/10 p-3 text-xs text-primary hover:bg-primary/20">
             <ExternalLink size={14} className="shrink-0" aria-hidden />{flow.authUrl}
           </a>
         ) : <p className="text-xs text-text-muted">{t.brain.connectStarting}</p>}
         {flow.userCode ? (
-          <p className="text-sm text-text">{t.brain.connectUserCode}: <span className="font-mono text-lg font-semibold tracking-widest text-accent">{flow.userCode}</span></p>
+          <p className="text-sm text-text">{t.brain.connectUserCode}: <span className="font-mono text-lg font-semibold tracking-widest text-primary">{flow.userCode}</span></p>
         ) : null}
         {flow.instructions ? <p className="text-xs leading-relaxed text-text-muted">{flow.instructions}</p> : null}
         {flow.needsInput ? (
@@ -239,9 +239,16 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
     <>
     <Modal title={isNew ? t.brain.addProvider : t.brain.editProvider} icon={Server} size="md" onClose={onClose}>
       <ModalBody gap={4}>
-        <Field label={t.brain.providerLabel}>
-          <Input value={d.label} onChange={(e) => setD({ ...d, label: e.target.value })} placeholder="CoreSynth Proxy" />
-          {isNew && id ? <p className="mt-1 font-mono text-tiny text-text-muted">id: {id}{idTaken ? ` — ${t.brain.idTaken}` : ''}</p> : null}
+        {/* The derived id and the "taken" verdict used to sit INSIDE the wrapping label, which put both
+            into the input's accessible name. As the field's description and error they describe the
+            control instead of renaming it. */}
+        <Field
+          label={t.brain.providerLabel}
+          required
+          description={isNew && id ? `id: ${id}` : undefined}
+          error={idTaken ? t.brain.idTaken : undefined}
+        >
+          {(control) => <Input value={d.label} onChange={(e) => setD({ ...d, label: e.target.value })} placeholder="CoreSynth Proxy" {...control} />}
         </Field>
         <Field label={t.brain.providerType}>
           <Segmented
@@ -252,8 +259,10 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
             onChange={(v) => setD({ ...d, type: v as BrainProviderType })}
           />
         </Field>
-        <Field label={t.brain.baseUrl} hint={d.type === 'openai' ? t.brain.baseUrlHintOpenai : t.brain.baseUrlHintAnthropic}>
-          <Input value={d.baseUrl} onChange={(e) => setD({ ...d, baseUrl: e.target.value })} placeholder={d.type === 'openai' ? 'https://ai.example.com/v1' : 'https://api.anthropic.com'} className="font-mono" />
+        {/* Anthropic falls back to its own default endpoint, so the base URL is only mandatory for the
+            OpenAI-compatible type — the same condition `valid` above enforces. */}
+        <Field label={t.brain.baseUrl} hint={d.type === 'openai' ? t.brain.baseUrlHintOpenai : t.brain.baseUrlHintAnthropic} required={d.type === 'openai'}>
+          {(control) => <Input value={d.baseUrl} onChange={(e) => setD({ ...d, baseUrl: e.target.value })} placeholder={d.type === 'openai' ? 'https://ai.example.com/v1' : 'https://api.anthropic.com'} className="font-mono" {...control} />}
         </Field>
         <Field label={t.brain.apiKey} hint={isNew ? undefined : t.brain.apiKeyKeepHint}>
           <Input type="password" value={d.apiKey} onChange={(e) => setD({ ...d, apiKey: e.target.value })} placeholder={isNew ? 'sk-…' : '••••••'} autoComplete="off" />
@@ -277,16 +286,16 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
           <button
             type="button"
             onClick={() => setCompatibilityOpen(true)}
-            className="group flex w-full items-center gap-3 rounded-lg border border-border bg-bg px-3.5 py-3 text-left transition-colors hover:border-accent/40 hover:bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="group flex w-full items-center gap-3 rounded-lg border border-border bg-bg px-3.5 py-3 text-left transition-colors hover:border-primary/40 hover:bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-elevated text-text-muted transition-colors group-hover:text-accent">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-elevated text-text-muted transition-colors group-hover:text-primary">
               <SlidersHorizontal size={17} aria-hidden />
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium text-text">{t.brain.compatibility.title}</span>
               <span className="mt-0.5 block text-xs text-text-muted">{compatibilitySummary}</span>
             </span>
-            <ChevronRight size={16} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent" aria-hidden />
+            <ChevronRight size={16} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-primary" aria-hidden />
           </button>
         ) : (
           <Field label={t.brain.temperature} hint={t.brain.temperatureHint}>
@@ -312,6 +321,10 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
                 moreCount={Math.max(0, selectedModels.length - 3)}
                 onManage={() => setModelsOpen(true)}
                 manageLabel={t.managePicker.manage}
+                // The field's label wraps this summary, and a wrapping label names the first labelable
+                // element inside it — this button. Naming it explicitly says which selection it manages
+                // instead of letting it answer to the field's own label.
+                manageAriaLabel={`${t.managePicker.manage}: ${t.brain.models}`}
               />
               <ManageSelectionModal
                 title={t.brain.models}
@@ -329,7 +342,7 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
               value={d.models}
               onChange={(e) => setD({ ...d, models: e.target.value })}
               rows={3}
-              className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent"
+              className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-primary"
               placeholder={'claude-opus-4-8\nollama/kimi-k2.7-code'}
             />
           )}
@@ -480,7 +493,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
           <ActionMenu
             align="right"
             label={t.brain.addAccount}
-            triggerClassName="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-accent"
+            triggerClassName="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-primary"
             trigger={<Plus size={15} aria-hidden />}
             items={restorableOauth.map((type) => ({ label: typeLabel(type), iconNode: <ModelIcon name={OAUTH_ICON[type] ?? type} size={15} />, onSelect: () => showOauth(type) }))}
           />
@@ -494,6 +507,10 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
             <SettingsRow
               key={type}
               label={typeLabel(type)}
+              // A connected account is a multi-value record: a connection badge, one usage meter per
+              // rate-limit window, and two actions. It does not fit the one-value table a phone gives a
+              // record's trailing side.
+              trailingLayout="stack"
               status={(
                 <span className="flex items-center gap-2">
                   <ModelIcon name={icon} size={15} />
@@ -528,7 +545,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
             onClick={() => setModal(emptyDraft())}
             aria-label={t.brain.addProvider}
             title={t.brain.addProvider}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-accent"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-primary"
           >
             <Plus size={15} aria-hidden />
           </button>
@@ -551,6 +568,9 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
                 <SettingsRow
                   key={p.id}
                   label={p.label}
+                  // Endpoint, model count, type badge, key badge, an optional hosted-search badge and up
+                  // to three buttons — the same multi-value record as an account above.
+                  trailingLayout="stack"
                   iconNode={<DomainFavicon baseUrl={p.baseUrl} fallback={<BrainCircuit size={15} strokeWidth={1.75} />} />}
                   status={(
                     <span className="flex flex-col gap-1">

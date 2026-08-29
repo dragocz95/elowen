@@ -69,7 +69,11 @@ export function TasksModal({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <Modal title={t.tasksModal.modalTitle} onClose={onClose} size="md" icon={ListChecks}>
+      {/* `inspect`: the turn's task list, read and ticked off beside the conversation it belongs to. On a
+          phone it is the shared fullscreen overlay — every automatic overlay is, see overlayDepth.tsx —
+          so the list scrolls to its last row under the pinned header. The two clear confirmations below
+          are a level deeper and take the screen, which is what a destructive question should do. */}
+      <Modal title={t.tasksModal.modalTitle} onClose={onClose} size="md" icon={ListChecks} intent="inspect">
         <ModalBody gap={4}>
           <Input
             value={filter}

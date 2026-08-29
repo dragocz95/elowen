@@ -1,9 +1,13 @@
 'use client';
 import { useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { useDismiss } from '../../lib/useDismiss';
 import { useTranslation } from '../../lib/i18n';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '../../components/ui/shadcn/dropdown-menu';
 import { useBrainChat } from './BrainChatProvider';
 import { ModelOptionList } from './ModelOptionList';
 
@@ -18,46 +22,41 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
   const { t } = useTranslation();
   const { models, currentModel, provider, modelsLoading, loadModels } = useBrainChat();
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const firstOpenHandled = useRef(false);
 
-  // Dismiss on an outside pointer or Escape — the popover is a transient overlay, never a persistent panel.
-  useDismiss(rootRef, open, () => setOpen(false));
-
-  const toggle = (): void => {
-    setOpen((v) => {
-      const next = !v;
-      if (next && models === null && !modelsLoading) loadModels(); // fetch once, on first open
-      return next;
-    });
+  const handleOpenChange = (next: boolean): void => {
+    setOpen(next);
+    if (!next || firstOpenHandled.current) return;
+    firstOpenHandled.current = true;
+    if (models === null && !modelsLoading) loadModels();
   };
 
   const label = currentModel ? brainModelQualifiedLabel({ provider, model: currentModel }) : t.brainChat.modelPicker;
 
   return (
-    <div ref={rootRef} data-testid="chat-model-picker" className="relative shrink-0">
-      <button
-        type="button"
-        onClick={toggle}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={label}
-        className={`flex items-center gap-1.5 rounded-md border border-border text-text-muted transition-colors hover:bg-elevated hover:text-text ${
-          variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[220px] px-2.5 text-xs'
-        }`}
-      >
-        <span className="truncate font-mono">{label}</span>
-        <ChevronDown size={variant === 'compact' ? 12 : 14} className="shrink-0" aria-hidden />
-      </button>
-
-      {open ? (
-        <div
-          role="listbox"
+    <div data-testid="chat-model-picker" className="relative shrink-0">
+      <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            title={label}
+            className={`flex items-center gap-1.5 rounded-md border border-border text-text-muted transition-colors hover:bg-elevated hover:text-text ${
+              variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[220px] px-2.5 text-xs'
+            }`}
+          >
+            <span className="truncate font-mono">{label}</span>
+            <ChevronDown size={variant === 'compact' ? 12 : 14} className="shrink-0" aria-hidden />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
           aria-label={t.brainChat.modelPicker}
-          className="absolute right-0 z-20 mt-1 max-h-80 w-64 overflow-y-auto rounded-lg border border-border bg-elevated py-1 shadow-lg"
+          align="end"
+          sideOffset={4}
+          className="max-h-80 w-64 p-0 py-1"
         >
-          <ModelOptionList onPick={() => setOpen(false)} />
-        </div>
-      ) : null}
+          <ModelOptionList presentation="menu" />
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

@@ -82,6 +82,17 @@ const firstRow = (): HTMLElement => {
   return row;
 };
 
+/** The grid items of a row. A row that opens a record also carries the row-open control. That control IS
+ *  a cell — `role="row"` admits nothing else, and a screen reader does not expose content that sits
+ *  outside one — but an absolutely positioned cell, and an absolutely positioned child of a grid
+ *  container is not a grid item at all. It occupies no track and must not be counted against the
+ *  template, and neither must the header's matching column name, taken out of the flow the same way. */
+const cellsOf = (row: Element): Element[] =>
+  Array.from(row.children).filter((child) =>
+    (child.getAttribute('role') === 'cell' || child.getAttribute('role') === 'columnheader')
+    && !child.classList.contains('data-table-open-cell')
+    && !child.classList.contains('data-table-open-header'));
+
 describe('MemoryView column grid', () => {
   it('declares one track per cell, so no cell wraps onto a second row', async () => {
     renderView();
@@ -89,11 +100,11 @@ describe('MemoryView column grid', () => {
 
     const table = screen.getByRole('table');
     const tracks = trackCount(table.style.getPropertyValue('--data-table-columns'));
-    expect(tracks).toBe(firstRow().children.length);
+    expect(tracks).toBe(cellsOf(firstRow()).length);
 
     const headerRow = screen.getByRole('button', { name: 'Used' }).closest('[role="row"]');
     if (!headerRow) throw new Error('used header is outside a row');
-    expect(headerRow.children.length).toBe(tracks);
+    expect(cellsOf(headerRow).length).toBe(tracks);
   });
 
   it('keeps the compact grid aligned with the cells that survive the narrow breakpoint', async () => {
@@ -101,9 +112,10 @@ describe('MemoryView column grid', () => {
     await waitFor(() => expect(screen.getByText('read recently')).toBeInTheDocument());
 
     const table = screen.getByRole('table');
-    const wide = Array.from(firstRow().children).filter((cell) => cell.getAttribute('data-priority') === 'wide');
+    const cells = cellsOf(firstRow());
+    const wide = cells.filter((cell) => cell.getAttribute('data-priority') === 'wide');
     expect(trackCount(table.style.getPropertyValue('--data-table-compact-columns')))
-      .toBe(firstRow().children.length - wide.length);
+      .toBe(cells.length - wide.length);
   });
 });
 

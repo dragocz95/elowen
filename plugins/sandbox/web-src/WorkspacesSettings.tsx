@@ -155,37 +155,42 @@ export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'de
       )}
 
       {filtered.length === 0 ? <C.EmptyState title={s.emptyWorkspaces} icon={FolderGit2} /> : (
-        <C.DataTable ariaLabel={s.tableLabel} columns="minmax(14rem,1.2fr) minmax(9rem,.7fr) minmax(14rem,1fr) minmax(13rem,1fr)" compactColumns="minmax(0,1fr)">
+        <C.DataTable ariaLabel={s.tableLabel} columns="minmax(14rem,1.2fr) minmax(9rem,.7fr) minmax(14rem,1fr) minmax(13rem,1fr) 1.25rem" compactColumns="minmax(0,1fr) 1.25rem">
           <C.DataTableRow header>
-            <C.DataTableCell header>{s.columnWorkspace}</C.DataTableCell>
-            <C.DataTableCell header priority="wide">{s.columnProject}</C.DataTableCell>
-            <C.DataTableCell header priority="wide">{s.columnBranch}</C.DataTableCell>
-            <C.DataTableCell header priority="wide">{s.columnState}</C.DataTableCell>
+            <C.DataTableCell header lines={1}>{s.columnWorkspace}</C.DataTableCell>
+            <C.DataTableCell header priority="wide" lines={1}>{s.columnProject}</C.DataTableCell>
+            <C.DataTableCell header priority="wide" lines={1}>{s.columnBranch}</C.DataTableCell>
+            <C.DataTableCell header priority="wide" lines={1}>{s.columnState}</C.DataTableCell>
+            {/* The chevron track carries no header: its cell is decorative. */}
           </C.DataTableRow>
-          {filtered.map((workspace) => (
-            <C.DataTableRow
-              key={workspace.id}
-              interactive
-              selected={workspace.id === selectedId}
-              tabIndex={0}
-              aria-selected={workspace.id === selectedId}
-              onClick={() => setSelectedId(workspace.id)}
-              onKeyDown={(event: React.KeyboardEvent) => {
-                if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(workspace.id); }
-              }}
-            >
-              <C.DataTableCell>
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-text">{workspace.label}</div>
-                  <div className="truncate font-mono text-[11px] text-text-muted">{workspace.baseRef}</div>
-                  <div className="mt-2 sm:hidden">{stateBadges(workspace)}</div>
-                </div>
-              </C.DataTableCell>
-              <C.DataTableCell priority="wide" className="truncate text-xs text-text-muted">{projectNames.get(workspace.projectId) ?? `#${workspace.projectId}`}</C.DataTableCell>
-              <C.DataTableCell priority="wide" className="truncate font-mono text-xs text-text-muted">{workspace.branch}</C.DataTableCell>
-              <C.DataTableCell priority="wide">{stateBadges(workspace)}</C.DataTableCell>
-            </C.DataTableRow>
-          ))}
+          {filtered.map((workspace) => {
+            const projectName = projectNames.get(workspace.projectId) ?? `#${workspace.projectId}`;
+            return (
+              // The label cell stacks the base ref under the label (and the state badges under both on a
+              // narrow surface), so the row asks for the two-line rhythm rather than deforming the
+              // one-line one.
+              <C.DataTableRow
+                key={workspace.id}
+                height="tall"
+                selected={workspace.id === selectedId}
+                aria-selected={workspace.id === selectedId}
+                onOpen={() => setSelectedId(workspace.id)}
+                openLabel={s.openWorkspace.replace('{name}', workspace.label)}
+              >
+                <C.DataTableCell lines="auto" title={workspace.label}>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-text">{workspace.label}</div>
+                    <div className="truncate font-mono text-[11px] text-text-muted">{workspace.baseRef}</div>
+                    <div className="mt-2 sm:hidden">{stateBadges(workspace)}</div>
+                  </div>
+                </C.DataTableCell>
+                <C.DataTableCell priority="wide" lines={1} title={projectName} className="text-xs text-text-muted">{projectName}</C.DataTableCell>
+                <C.DataTableCell priority="wide" lines={1} title={workspace.branch} className="font-mono text-xs text-text-muted">{workspace.branch}</C.DataTableCell>
+                <C.DataTableCell priority="wide" lines="auto">{stateBadges(workspace)}</C.DataTableCell>
+                <C.DataTableChevronCell />
+              </C.DataTableRow>
+            );
+          })}
         </C.DataTable>
       )}
 

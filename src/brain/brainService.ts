@@ -259,6 +259,7 @@ export class BrainService {
       get cwd() { return d.cwd; },
       get projectPath() { return d.projectPath; },
       get userSettings() { return d.userSettings; },
+      get fastMode() { return d.fastMode; },
       get activeUserInstructions() { return d.activeUserInstructions; },
       get brand() { return d.brand; },
       get maxSteps() { return d.maxSteps; },
@@ -340,10 +341,11 @@ export class BrainService {
       get createSession() { return d.createSession; },
       get cwd() { return d.cwd; },
       get policy() { return d.policy; },
+      get fastMode() { return d.fastMode; },
     });
     this.channelService = new ChannelSessionService({
       registry: this.sessions, admitsNewWork: () => !this.draining && !this.reloadingPlugins,
-      store: d.store, cards: this.cards, users: d.users,
+      store: d.store, fastMode: d.fastMode, cards: this.cards, users: d.users,
       // A file dropped into a room is written into the VERIFIED writer's project, through the same
       // decision the web upload route makes — see brain/channelAttachments.ts.
       uploads: {
@@ -387,6 +389,7 @@ export class BrainService {
     this.delegated = new DelegatedSessionService({
       store: d.store, sessions: this.sessions, channelService: this.channelService, identity: this.identity,
       users: d.users, policyForProjects: d.policyForProjects,
+      sandbox: () => d.plugins?.peek()?.control('sandbox'),
       // A daemon-side delegated send (an owner drill-in, a DelegateContinue, a durable result delivery)
       // rehydrates the child from SQLite HERE, so the runner must not still be holding a live record for
       // it. Asking first is what keeps one child session from being live in two processes at once.
@@ -405,9 +408,12 @@ export class BrainService {
       // A linked platform sender uses the same account policy and tool grant wherever they write.
       policyForUser: d.policy,
       toolAuthorityFor: (userId) => toolAuthorityForUser(d, userId),
+      fastMode: d.fastMode,
+      setFastMode: d.setFastMode,
       identity: this.identity,
       channels: this.channelService,
       dispatch: this.subagents,
+      sandbox: () => d.plugins?.peek()?.control('sandbox'),
       restart: () => this.restartHandler,
       // Owner-chat origin work only. Direct platform origins are deliberately intercepted by
       // PlatformOrchestrator and run through ChannelSessionService + the outbound adapter; routing a
@@ -571,8 +577,13 @@ export class BrainService {
       if (wf.attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) {
         reason = 'it kept getting interrupted by repeated daemon restarts';
       } else if (control) {
+        const trustedNodeWorkspaceRefs = Object.fromEntries(wf.state.nodes
+          .filter((node) => node.workspaceRef)
+          .map((node) => [node.id, node.workspaceRef!]));
         const outcome = await control.resumeInterrupted({
           workflowId: wf.workflowId, parentSessionId: wf.parentSessionId, toolCallId: wf.toolCallId,
+          ...(wf.state.workspaceRef ? { trustedWorkspaceRef: wf.state.workspaceRef } : {}),
+          ...(Object.keys(trustedNodeWorkspaceRefs).length ? { trustedNodeWorkspaceRefs } : {}),
           hooks: {
             emit: (update) => { this.d.store.upsertWorkflowRun(wf.parentSessionId, update); },
             complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
@@ -882,6 +893,28 @@ export class BrainService {
     if (!this.d.users.get(row.user_id)) return { ok: false, reason: 'the origin user no longer exists' };
     const policy = this.d.policy?.(row.user_id);
     const settings = this.d.permissions?.(row.user_id);
+    const contributionUserId = scope.contributionUserId;
+    if (contributionUserId !== undefined && !this.d.users.get(contributionUserId)) {
+      return { ok: false, reason: 'the journaled contribution account no longer exists' };
+    }
+    if (scope.workspaceRef) {
+      const sandbox = this.d.plugins?.peek()?.control('sandbox');
+      if (!sandbox || contributionUserId === undefined) {
+        return { ok: false, reason: 'the journaled Sandbox workspace cannot be resolved' };
+      }
+      const contributionPolicy = this.d.policy?.(contributionUserId);
+      try {
+        sandbox.resolveWorkspace({
+          accountUserId: contributionUserId,
+          workspace: scope.workspaceRef,
+          accessibleProjectIds: contributionPolicy?.allowedProjectIds === 'all'
+            ? 'all'
+            : contributionPolicy ? [...contributionPolicy.allowedProjectIds] : [],
+        });
+      } catch (error) {
+        return { ok: false, reason: `the journaled Sandbox workspace is unavailable: ${error instanceof Error ? error.message : String(error)}` };
+      }
+    }
     const access: DelegatingTurnAccess = {
       admin: policy?.allowedProjectIds === 'all',
       projectIds: !policy || policy.allowedProjectIds === 'all' ? [] : [...policy.allowedProjectIds],
@@ -891,6 +924,8 @@ export class BrainService {
       permissionBoundary: settings
         ? noninteractivePermissionBoundary({ ruleset: buildPermissionRuleset(settings), yolo: false, unattendedAsks: settings.unattendedAsks })
         : null,
+      ...(contributionUserId !== undefined ? { contributionUserId } : {}),
+      ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
     };
     const exceeds = scopeExceedsCurrentAccess(scope, access);
     return exceeds ? { ok: false, reason: `the journaled boundary exceeds the origin's current authority: ${exceeds}` } : { ok: true };
@@ -1147,14 +1182,13 @@ export class BrainService {
     return { thinkingLevel: (sess.thinkingLevel as string) ?? canonical };
   }
 
-  /** Toggle ChatGPT OAuth priority processing for one live conversation. */
+  /** Set/toggle the durable account Fast preference; the target conversation supplies support context only. */
   setFast(userId: number, on?: boolean, session?: string): { fast: boolean; fastAvailable: boolean } {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
-    if (!b.fastAvailable) throw new Error('Fast mode is available only for OpenAI OAuth models');
-    b.requestProfile.fast = on ?? !b.requestProfile.fast;
-    b.interactedAt = Date.now();
-    return { fast: b.requestProfile.fast, fastAvailable: true };
+    if (!this.d.setFastMode) throw new Error('Fast mode settings are unavailable');
+    const fast = this.d.setFastMode(userId, on);
+    return { fast, fastAvailable: b.fastAvailable };
   }
 
   /** Chat-client status — of the active conversation, or of the caller's explicit `session` (a bound
@@ -1483,8 +1517,9 @@ export class BrainService {
     onEvent?: (e: SubagentProgressEvent) => void,
     model?: string,
     promote?: boolean,
+    workspaceId?: string,
   ): Promise<DelegatedContinueResult> {
-    return this.delegated.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote);
+    return this.delegated.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote, workspaceId);
   }
 
   /** Run one user turn — see BrainTurnRunner.send. `display` is the client's clean rendering of the

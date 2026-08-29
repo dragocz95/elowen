@@ -15,6 +15,7 @@ import { subscribeRevive } from '../../lib/useRevive';
 import { resolveStreamSilence } from '../../lib/streamWatchdog';
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { isBackgroundProcessCardId } from '../../lib/processScope';
 import {
   BRAIN_COMPOSE_EVENT,
   BRAIN_OPEN_EVENT,
@@ -28,6 +29,8 @@ import { useBrainChatHistory } from './brainChatHistory';
 import { useBrainChatStream } from './brainChatStream';
 
 const THOUGHTS_VALUES = ['show', 'hide'] as const;
+const withoutBackgroundProcessCards = (cards: readonly BrainCard[]): BrainCard[] =>
+  cards.filter((card) => !isBackgroundProcessCardId(card.id));
 
 /** The `kind:'mode'` commands, in one place — the `/plan`, `/build`, `/workflow` slash names ARE the mode
  *  values, so this is what narrows a command name to a BrainWorkMode without a cast. */
@@ -345,9 +348,10 @@ function useBrainChatController(): BrainChatValue {
   // sends, so persisting it would make a reloaded tab claim a mode the user never re-chose.
   const [workMode, setWorkMode] = useState<BrainWorkMode>('build');
   // Plan mode's decision, as the DAEMON sees it — the mode it last ran a turn in plus the plan that turn
-  // submitted. Both are hydrated from the server (status on connect, then every snapshot frame): the mode
-  // above is this tab's own stamp and knows nothing about a plan entered in the CLI, and it resets to
-  // 'build' on reload, which is exactly how the decision used to vanish from the page that had it.
+  // submitted. Both are hydrated from the server (status on connect, every snapshot frame, and — for the
+  // mode, which has no live event — every settled turn): the mode above is this tab's own stamp and knows
+  // nothing about a plan entered in the CLI, and it resets to 'build' on reload, which is exactly how the
+  // decision used to vanish from the page that had it.
   const [daemonMode, setDaemonMode] = useState<BrainWorkMode>('build');
   const [pendingPlan, setPendingPlan] = useState<BrainPendingPlan | null>(null);
   /** The plans this tab has already decided on (implemented or dismissed), one per conversation, keyed like
@@ -477,7 +481,7 @@ function useBrainChatController(): BrainChatValue {
           }
           if (Object.prototype.hasOwnProperty.call(snap, 'cards')) {
             hydrationStampRef.current.cards += 1;
-            setCards(snap.cards ?? []);
+            setCards(withoutBackgroundProcessCards(snap.cards ?? []));
           }
           // Explicit nulls matter here: the snapshot can clear a question or plan that another surface settled.
           if (control) {
@@ -534,7 +538,7 @@ function useBrainChatController(): BrainChatValue {
         process: (processes) => qc.setQueryData(['brain-processes'], processes),
         card: (card) => {
           // The background-process card is rendered by ProcessPanel; use it only as a refresh signal.
-          if (card.id === 'bg-processes') { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
+          if (isBackgroundProcessCardId(card.id)) { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
           hydrationStampRef.current.cards += 1;
           setCards((cur) => upsertCard(cur, card));
         },
@@ -594,6 +598,25 @@ function useBrainChatController(): BrainChatValue {
           applyEvent({ type: 'idle' });
           repairTruncatedHistory();
           if (nextUsage) setUsage(nextUsage);
+          // The daemon's work mode is the one piece of plan-mode state with NO live event of its own — it is
+          // committed only once the settled turn's prompt has reached the provider, so status and the
+          // snapshot frame are the only places it is published. A settled turn is therefore both the only
+          // moment it can have changed and the only moment worth re-reading it; without this read
+          // `daemonMode` stayed frozen at whatever CONNECT answered ('build' for any ordinary session) and
+          // the plan submitted afterwards — from this tab or from the CLI — raised no decision at all until
+          // the stream happened to reconnect. Fenced like the connect-time read, so a control frame that
+          // landed meanwhile is not overwritten. Presence-gated, unlike the hydration reads: an absent
+          // `workMode` is a daemon that publishes none, not a conversation that left plan mode (every real
+          // transition names its new mode), and defaulting it to 'build' would erase the decision itself.
+          const controlStamp = hydrationStampRef.current.control;
+          void elowenClient.brainStatus(boundSessionRef.current)
+            .then((status) => {
+              if (generation !== genRef.current || hydrationStampRef.current.control !== controlStamp) return;
+              if (!status.workMode) return;
+              hydrationStampRef.current.control += 1;
+              setDaemonMode(status.workMode);
+            })
+            .catch(() => { /* the mode stays as hydrated; the next settle or reconnect reads it again */ });
           void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
         },
       },
@@ -616,7 +639,7 @@ function useBrainChatController(): BrainChatValue {
       setDaemonMode(st.workMode ?? 'build');
       setPendingPlan(st.pendingPlan ?? null);
     }
-    if (fresh.cards === statusHydrationStamp.cards) setCards(st.cards ?? []);
+    if (fresh.cards === statusHydrationStamp.cards) setCards(withoutBackgroundProcessCards(st.cards ?? []));
     if (fresh.queue === statusHydrationStamp.queue) setQueued(st.queued ?? []);
   };
 
@@ -689,7 +712,7 @@ function useBrainChatController(): BrainChatValue {
           replaceHistoryWindow(snap.nextBefore ?? null, snap.hasMore ?? false);
           const folded = fromSnapshot(snap);
           setView({ ...folded, thinking: snap.control ? snap.control.streaming : folded.thinking });
-          setCards(snap.cards ?? []);
+          setCards(withoutBackgroundProcessCards(snap.cards ?? []));
           if (snap.session) { setCurrentModel(snap.session.model); setProvider(snap.session.provider); }
           if (snap.sessionId) setActiveSessionId(snap.sessionId);
           if (snap.control) {
@@ -713,7 +736,10 @@ function useBrainChatController(): BrainChatValue {
         image: ({ ref, id, caption }) => applyEvent({ type: 'image', ref, id, caption }),
         file: ({ ref, name, size, id, caption }) => applyEvent({ type: 'file', ref, name, size, id, caption }),
         idle: () => applyEvent({ type: 'idle' }),
-        card: (card) => setCards((cur) => upsertCard(cur, card)),
+        card: (card) => {
+          if (isBackgroundProcessCardId(card.id)) return;
+          setCards((cur) => upsertCard(cur, card));
+        },
         error: (message) => applyEvent({ type: 'error', message }),
         openError: () => {
           toast(t.brainChat.searchOpenError, 'error');
@@ -1089,7 +1115,7 @@ function ReconnectOverlay() {
   const { t } = useTranslation();
   return (
     <div
-      className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-bg/60 backdrop-blur-md"
+      className="overlay-layer-modal fixed inset-0 flex flex-col items-center justify-center gap-4 bg-bg/60 backdrop-blur-md"
       role="status"
       aria-live="polite"
     >

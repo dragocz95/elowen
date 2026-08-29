@@ -166,6 +166,7 @@ interface StatusServiceDeps {
   /** The caller's repo access, re-resolved per request so the project section reflects CURRENT project
    *  assignments. Absent (tests) → all-access. */
   policy?: BrainDeps['policy'];
+  fastMode?: BrainDeps['fastMode'];
   /** Injected for tests; defaults to PI's createAgentSession (smoke test only). */
   createSession?: typeof createAgentSession;
   /** Working dir for the throwaway smoke-test session. Default: process.cwd(). */
@@ -367,7 +368,7 @@ export class BrainStatusService {
       thinkingLevel: (sess?.thinkingLevel as string) ?? b?.thinkingLevel ?? '',
       thinkingLevels: supports ? (sess?.getAvailableThinkingLevels?.() ?? []) : [],
       thinkingLevelLabels: b?.thinkingLabels ?? {},
-      fast: b?.requestProfile.fast ?? false,
+      fast: this.d.fastMode?.(userId) === true,
       fastAvailable: b?.fastAvailable ?? false,
       // A question parked for the active conversation, so a client reconnecting mid-question (refresh, SSE
       // drop) restores the picker instead of hanging until the timeout.

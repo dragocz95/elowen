@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Eye, Gauge, MoonStar, Shrink, SlidersHorizontal, Zap } from 'lucide-react';
+import { Bolt, Eye, Gauge, MoonStar, Shrink, SlidersHorizontal, Zap } from 'lucide-react';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { CompactThresholdsDrawer } from './CompactThresholdsDrawer';
 import { Segmented } from '../../components/ui/Segmented';
@@ -34,6 +34,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
   const [thinkingLevel, setThinkingLevel] = useState('');
   const [autoCompact, setAutoCompact] = useState(false);
   const [autoCompactAt, setAutoCompactAt] = useState(80);
+  const [fastMode, setFastMode] = useState(false);
   // Per-model threshold overrides (key `provider/model` → percent). Empty = every model uses the global.
   const [compactByModel, setCompactByModel] = useState<Record<string, number>>({});
   const [thresholdsOpen, setThresholdsOpen] = useState(false);
@@ -50,6 +51,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       setThinkingLevel(data.thinkingLevel ?? '');
       setAutoCompact(data.autoCompact);
       setAutoCompactAt(data.autoCompactAt);
+      setFastMode(data.fastMode ?? false);
       setCompactByModel(data.autoCompactAtByModel ?? {});
       setSeeded(true);
     }
@@ -65,6 +67,8 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         : (modelOptions.find((m) => m.default) ?? modelOptions[0]))
     : undefined;
   const reasoningLevels = activeModel?.reasoningLevels ?? NO_REASONING_LEVELS;
+  const anyFastRoute = modelOptions.some((model) => model.fastAvailable === true);
+  const activeFastSupported = activeModel?.fastAvailable === true;
   useEffect(() => {
     // A sibling default-model change invalidates cli-settings. If the new model cannot accept the old
     // effort, clear the override instead of keeping a request-breaking hidden value in the account.
@@ -124,22 +128,33 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       throw error;
     }
   }, { ready: seeded });
+  // Fast must patch alone: the daemon deliberately skips every session respawn for a fast-only save because
+  // already-live conversations read this account value on their next provider request.
+  const { status: fastStatus, retry: retryFast } = useAutoSaveStatus([fastMode], async () => {
+    try {
+      await save.mutateAsync({ fastMode });
+    } catch (error) {
+      toast(t.cli.saveError, 'error');
+      throw error;
+    }
+  }, { ready: seeded, delay: 0 });
 
-  const status = settingsStatus === 'error' || yoloStatus === 'error' || unattendedStatus === 'error'
+  const status = settingsStatus === 'error' || fastStatus === 'error' || yoloStatus === 'error' || unattendedStatus === 'error'
     ? 'error'
-    : settingsStatus === 'saving' || yoloStatus === 'saving' || unattendedStatus === 'saving'
+    : settingsStatus === 'saving' || fastStatus === 'saving' || yoloStatus === 'saving' || unattendedStatus === 'saving'
       ? 'saving'
-      : settingsStatus === 'saved' || yoloStatus === 'saved' || unattendedStatus === 'saved' ? 'saved' : 'idle';
+      : settingsStatus === 'saved' || fastStatus === 'saved' || yoloStatus === 'saved' || unattendedStatus === 'saved' ? 'saved' : 'idle';
   useEffect(() => {
     const retry = status === 'error'
       ? () => {
         if (settingsStatus === 'error') retrySettings();
+        if (fastStatus === 'error') retryFast();
         if (yoloStatus === 'error') retryYolo();
         if (unattendedStatus === 'error') retryUnattended();
       }
       : undefined;
     onSaveState?.('cli', status, retry);
-  }, [onSaveState, retrySettings, retryUnattended, retryYolo, settingsStatus, status, unattendedStatus, yoloStatus]);
+  }, [fastStatus, onSaveState, retryFast, retrySettings, retryUnattended, retryYolo, settingsStatus, status, unattendedStatus, yoloStatus]);
 
   if (isError) return <ErrorState message={t.common.daemonUnreachable} onRetry={() => refetch()} />;
   if (isLoading || !data) return <LoadingState />;
@@ -193,6 +208,19 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           keyOf={(m) => `${m.provider}::${m.model}`}
           manageAriaLabel={`${t.managePicker.manage}: ${t.cli.compactModelLabel}`}
         />
+      </SpatialRow>
+
+      <SpatialRow title={t.cli.fastModeTitle} icon={Bolt} description={t.help.cliFastMode}>
+        <label className="flex items-center gap-3 text-sm text-text">
+          <Toggle checked={fastMode} onChange={setFastMode} disabled={!anyFastRoute} label={t.cli.fastModeToggle} />
+          <span>
+            {!anyFastRoute
+              ? t.cli.fastModeUnavailable
+              : fastMode && !activeFastSupported
+                ? t.cli.fastModeCurrentUnsupported
+                : t.cli.fastModeToggle}
+          </span>
+        </label>
       </SpatialRow>
 
       {/* The warning reads as inline text like every other row here — a lone HelpTip button on one row

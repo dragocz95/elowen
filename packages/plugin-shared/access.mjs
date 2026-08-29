@@ -36,16 +36,12 @@ export function buildRoleAccess(match, state = {}) {
     model: chosen ? { provider: chosen.provider, model: chosen.model } : undefined,
     // Per-conversation reasoning effort (set via /reasoning); empty = the model default.
     thinkingLevel: typeof state.thinkingLevel === 'string' ? state.thinkingLevel : undefined,
-    fast: state.fast === true,
   };
 }
 
 /** Steer one turn to the configured vision model — an image turn's normal model may be text-only.
- *  `vision` is a parsed `{ provider?, model }`; `models` is the brain's catalog. Fast belongs to the
- *  conversation's normal profile: a vision model without its own fast tier clears it for this request
- *  only, so an OAuth priority tier never leaks into a non-OAuth hop. The saved preference is untouched —
- *  this returns a new descriptor and never mutates `access`. */
-export function applyVisionModel(access, vision, models = []) {
-  const option = models.find((m) => m.model === vision.model && (!vision.provider || m.provider === vision.provider));
-  return { ...access, model: vision, ...(!option?.fastAvailable ? { fast: false } : {}) };
+ *  Fast is not copied here: the provider request layer evaluates the account preference against the actual
+ *  vision route, so an unsupported hop simply receives no Fast wire field. */
+export function applyVisionModel(access, vision, _models = []) {
+  return { ...access, model: vision };
 }

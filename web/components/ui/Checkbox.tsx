@@ -1,22 +1,26 @@
 'use client';
+
 import { Check } from 'lucide-react';
 
-/** OLED-pattern checkbox: a presentational box. The clickable parent owns the toggle,
- *  so render it inside a button/label that flips `checked`. */
+import { cn } from '../../lib/utils';
+import { Checkbox as CheckboxPrimitive } from './shadcn/checkbox';
+
+/** A presentational checkbox indicator. The clickable parent continues to own selection, so the Radix
+ * root renders through its child and stays out of the parent's keyboard and pointer interaction. */
 export function Checkbox({ checked, className = '' }: { checked: boolean; className?: string }) {
   return (
-    <span
-      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border transition-colors ${
-        checked ? 'border-accent bg-accent text-bg' : 'border-border-strong bg-surface'
-      } ${className}`}
-      aria-hidden
-    >
-      <Check
-        size={11}
-        strokeWidth={3}
-        className={`transition-transform duration-150 ${checked ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}
-        style={{ transitionTimingFunction: 'var(--ease-spring)' }}
-      />
-    </span>
+    <CheckboxPrimitive checked={checked} asChild className={cn('pointer-events-none', className)}>
+      <span aria-hidden tabIndex={-1}>
+        <Check
+          size={11}
+          strokeWidth={3}
+          className={cn(
+            'transition-transform duration-150',
+            checked ? 'scale-100 opacity-100' : 'scale-50 opacity-0',
+          )}
+          style={{ transitionTimingFunction: 'var(--ease-spring)' }}
+        />
+      </span>
+    </CheckboxPrimitive>
   );
 }

@@ -39,15 +39,15 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
 
   return (
     <Modal title={t.agents.title} description={t.agents.subtitle} onClose={onClose} size="xl" icon={Users}>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto @container">
         <table className="w-full text-tiny">
           <thead className="sticky top-0 bg-surface text-text-muted">
             <tr className="border-b border-border text-left">
               <th className="px-3 py-2 font-medium">{t.agents.task}</th>
-              <th className="px-3 py-2 font-medium">{t.agents.model}</th>
-              <th className="px-3 py-2 text-right font-medium">{t.agents.tokens}</th>
-              <th className="px-3 py-2 text-right font-medium">{t.agents.tools}</th>
-              <th className="px-3 py-2 text-right font-medium">{t.agents.idle}</th>
+              <th className="agents-table-secondary px-3 py-2 font-medium">{t.agents.model}</th>
+              <th className="agents-table-secondary px-3 py-2 text-right font-medium">{t.agents.tokens}</th>
+              <th className="agents-table-secondary px-3 py-2 text-right font-medium">{t.agents.tools}</th>
+              <th className="agents-table-secondary px-3 py-2 text-right font-medium">{t.agents.idle}</th>
               <th className="px-3 py-2" />
             </tr>
           </thead>
@@ -66,10 +66,10 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                       <span className="truncate text-text" title={a.task}>{a.detail || a.task}</span>
                     </div>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 font-mono text-text-muted">{a.model ?? '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-muted">{a.tokens != null ? formatTokens(a.tokens) : '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-muted">{a.tools}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-muted">{idle == null ? '—' : `${idle}s`}</td>
+                  <td className="agents-table-secondary whitespace-nowrap px-3 py-2 font-mono text-text-muted">{a.model ?? '—'}</td>
+                  <td className="agents-table-secondary px-3 py-2 text-right tabular-nums text-text-muted">{a.tokens != null ? formatTokens(a.tokens) : '—'}</td>
+                  <td className="agents-table-secondary px-3 py-2 text-right tabular-nums text-text-muted">{a.tools}</td>
+                  <td className="agents-table-secondary px-3 py-2 text-right tabular-nums text-text-muted">{idle == null ? '—' : `${idle}s`}</td>
                   <td className="px-2 py-2 text-right"><ChevronRight size={13} className="text-text-muted" aria-hidden /></td>
                 </tr>
               );

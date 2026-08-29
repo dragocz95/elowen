@@ -52,10 +52,12 @@ export function ChatView() {
 
   return (
     <>
-      {/* The stat hero is desktop-only: on a phone its icon + wrapping stat row just ate vertical space and
-          scrolled away (it is not sticky), and every stat it shows is already reachable in the telemetry
-          drawer. `mobile === false` (not `!mobile`) so it never flashes in during the pre-measure commit. */}
-      {mobile === false ? <ChatDeckHero /> : null}
+      {/* The hero mounts at EVERY width, because it carries the page's <h1> and a route with no level-1
+          heading is a route a screen reader cannot orient in. What a small screen cannot afford is the
+          stat row, not the heading — so the hero drops its own metrics through a container query in
+          chat.css rather than being withheld here. Being CSS it also holds from the first paint instead
+          of waiting for the viewport measurement. */}
+      <ChatDeckHero />
       <div
         ref={surfaceRef}
         style={fillHeight ? { minHeight: fillHeight } : undefined}
@@ -70,9 +72,10 @@ export function ChatView() {
           />
         </div>
         {mobile === false && railShown ? <TelemetryPanel variant="column" onOpenWorkflow={openDag} /> : null}
-        {/* On a phone the global TopBar is gone (see Shell), so the drawer that lists conversations is also
-            the only way back to the rest of the app — it carries a "← dashboard" link. Desktop keeps the
-            TopBar, so the link would be redundant there. */}
+        {/* On the frameless design a phone /chat has no TopBar (see Shell), so the drawer that lists
+            conversations is also the only way back to the rest of the app — it carries a "← dashboard"
+            link. Studio's ruled bar stays up on a phone with its hamburger, where the link is a spare
+            exit rather than the only one; desktop keeps the TopBar too. */}
         <ChatHistoryRail
           variant="drawer"
           open={historyOpen}

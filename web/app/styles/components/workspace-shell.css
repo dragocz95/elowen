@@ -1,0 +1,34 @@
+/* The canonical page shell: .workspace-shell, .workspace-page, .workspace-status, .module-header. */
+
+/* ONE gutter, ONE width cap and ONE bottom rhythm for every full-page surface in the app. Before this
+   rule the register shell and the control deck each carried their own set and drifted apart — different
+   caps, different gutters at the same viewport, different bottom padding. --content-max (tokens.css) is
+   the single authority for width; no shell and no content surface may restate a cap of its own.
+
+   The gutter composes the safe-area tokens instead of being widened by a phone-sized media query: in
+   landscape on a notched device the notch is on ONE side, and a symmetric override is either too little
+   there or too much everywhere else. --shell-gutter already floors at 1rem, so a phone needs nothing
+   further. */
+.workspace-shell,
+.workspace-page {
+  container: workspace-shell / inline-size;
+  width: 100%;
+  max-width: var(--content-max);
+  margin-inline: auto;
+  padding-inline-start: max(var(--shell-gutter), var(--safe-left));
+  padding-inline-end: max(var(--shell-gutter), var(--safe-right));
+  padding-block-end: calc(3rem + var(--safe-bottom));
+}
+
+.workspace-shell__content { min-width: 0; padding-block: 1rem 2rem; }
+
+.workspace-status { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--color-text-muted); font-size: 0.75rem; }
+.workspace-status::before { content: ''; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--color-success); box-shadow: 0 0 14px color-mix(in srgb, var(--color-success) 45%, transparent); }
+
+/* A page's action toolbar can consist entirely of controls that currently render nothing on screen — an
+   idle auto-save indicator is an empty live region that exists for the screen reader alone. The wrapper
+   then draws a zero-height box that still spends its bottom margin, which reads as an unexplained gap
+   above the content. Neither React nor a layout effect can see that a child rendered to nothing; :has
+   can. Void and form elements are listed explicitly because they are :empty while still being visible. */
+.module-header__toolbar:not(:has(> :not(:empty), > input, > select, > textarea, > img, > svg)) { display: none; }
+.module-header:not(:has(> p)):not(:has(.module-header__toolbar > :not(:empty), .module-header__toolbar > input, .module-header__toolbar > select, .module-header__toolbar > textarea, .module-header__toolbar > img, .module-header__toolbar > svg)) { display: none; }

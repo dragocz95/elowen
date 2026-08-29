@@ -1,0 +1,88 @@
+/* The page chrome every route carries: .top-bar and its parts (.top-bar__menu, .top-bar__actions,
+   .top-bar__identity), plus .page-bar__breadcrumb and .shell-content.
+
+   Geometry belongs to the TopBar's typed variant (components/shell/TopBar.tsx), not here — this file
+   holds only what a utility cannot say once for a whole subtree. */
+
+/* ONE ghost anatomy for every control in the bar variant, stated on the container rather than on each
+   control: 32px tall, small radius, no border.
+   It has to be stated here because the controls come from five different components and only two of
+   them take their geometry from the variant. `SkinSwitcher` hardcodes `h-9 rounded-full` and
+   `LanguageSwitcher` hardcodes `h-9 rounded-md border border-border` — both correct in the floating
+   cluster they were written for, both wrong in a ruled bar, and together they made the row read as two
+   32px ghosts beside a 36px pill and a 36px boxed "EN". Reaching them from their own components would
+   mean teaching three shared controls about a variant that is not theirs; the bar is one place and says
+   it once.
+   Three things are excluded, each for its own reason.
+   The identity link frames a circular avatar, and a rounded-rectangle focus ring around a disc is worse
+   than no ring at all.
+   A floating MENU is not part of the row. `LanguageSwitcher` renders its menu inline rather than through
+   a portal, so a descendant selector reaches every item in it: at 32px a menu item's 8px padding leaves
+   a 16px content box for a 20px line, and the label spilled out of the menu's own `overflow: hidden`.
+   `.overlay-layer-menu` is what every floating menu in the app already wears, so excluding it covers the
+   ones that have not been opened here yet as well.
+   The breadcrumb's steps are the reader's LOCATION, not controls, and must not be sized like one. Today
+   they are inline boxes that a height cannot apply to anyway — which is exactly why the exclusion is
+   written down: the day one of them becomes `flex`, the trail would silently grow to 32px.
+   The fourth is what a control OPENS. A picker in this bar anchors its listbox inline, so the menu is a
+   DESCENDANT of the bar: every option was clamped to the row height of the trigger that opened it, and a
+   model row — a name with its reasoning levels underneath — spilled over the row below it into unreadable
+   overlapping text. `.overlay-layer-menu *` covers the portaled menus only; these never leave the bar. */
+.top-bar--bar :is(a, button):not(
+  .top-bar__identity,
+  .overlay-layer-menu *,
+  .page-bar__breadcrumb *,
+  :is([role='listbox'], [role='menu'], [role='dialog']) *
+) {
+  height: 2rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+/* The floor a finger needs, restated rather than left to the `pointer-coarse:` utility the hamburger
+   carries: this file is unlayered, so the height above would otherwise outrank it. 44px inside a 48px
+   bar. */
+@media (pointer: coarse) {
+  .top-bar--bar :is(a, button):not(
+    .top-bar__identity,
+    .overlay-layer-menu *,
+    .page-bar__breadcrumb *,
+    :is([role='listbox'], [role='menu'], [role='dialog']) *
+  ) {
+    height: var(--touch-target);
+  }
+}
+
+/* Route-owned controls portal into this single strip. It gives way before global actions and keeps every
+   page's state in the page component rather than rebuilding controls in the shell. */
+.top-bar__page-slot { scrollbar-width: none; }
+.top-bar__page-slot::-webkit-scrollbar { display: none; }
+/* Portaled controls are a GROUP beside the location, not a second row spanning the bar. They shrink but
+   never grow: a route whose toolbar stretched to the full slot pushed its own trailing controls to the
+   far edge of the screen, leaving its title stranded at the other end with the whole window between two
+   halves of one toolbar. */
+.top-bar__page-slot > * { min-width: 0; flex: 0 1 auto; }
+.top-bar__page-slot .chat-page-toolbar {
+  position: static;
+  z-index: auto;
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+/* The conversation's name is the one elastic part of that group, and it is elastic DOWNWARDS: it gives up
+   width to the pickers beside it and truncates, rather than spending the row on a short title. */
+.top-bar__page-slot .chat-page-toolbar__title {
+  flex: 0 1 auto;
+  max-width: 16rem;
+}
+.top-bar__page-slot .chat-page-toolbar__fade { display: none; }
+.chat-page-toolbar__overflow { display: none; }
+@media (min-width: 768px) and (max-width: 1150px) {
+  .top-bar__page-slot .chat-page-toolbar__wide-controls { display: none; }
+  .top-bar__page-slot .chat-page-toolbar__overflow { display: block; }
+}
+
+/* The trail must give way before the actions do: it is the one part of the row that can be read from
+   the page itself, and every step inside it truncates rather than wrapping. */
+.page-bar__breadcrumb { min-width: 0; overflow: hidden; font-size: 0.8125rem; }

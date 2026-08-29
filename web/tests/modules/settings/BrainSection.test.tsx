@@ -251,7 +251,9 @@ describe('BrainSection — OAuth account model picker', () => {
     await act(async () => { probeFor('https://new.example/v1')({ models: ['new-model'] }); });
     await act(async () => { probeFor('https://old.example/v1')({ models: ['old-model'] }); });
 
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
+    // The summary's button carries the selection it manages in its own name, so it does not answer to
+    // the enclosing field's label.
+    fireEvent.click(screen.getByRole('button', { name: `${en.managePicker.manage}: ${en.brain.models}` }));
     expect(await screen.findByRole('button', { name: 'new-model' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'old-model' })).toBeNull();
   });
@@ -276,11 +278,11 @@ describe('BrainSection — OAuth account model picker', () => {
     fireEvent.click(screen.getByRole('button', { name: en.brain.retention.manage }));
     expect(screen.getByRole('dialog', { name: en.brain.retention.title })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole('slider', { name: en.brain.retention.graceDays }), { target: { value: '30' } });
+    fireEvent.keyDown(screen.getByRole('slider', { name: en.brain.retention.graceDays }), { key: 'ArrowRight' });
     // The RuntimeLimits-style autosave PUTs the whole runtime block after the debounce — retention included.
     await waitFor(() => expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
       runtime: expect.objectContaining({
-        memoryRetention: expect.objectContaining({ graceDays: 30 }),
+        memoryRetention: expect.objectContaining({ graceDays: 15 }),
       }),
     })), { timeout: 3000 });
   });

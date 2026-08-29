@@ -46,7 +46,10 @@ describe('BrainSessionsPanel (conversation register)', () => {
     // One header row plus a page of conversations.
     expect(screen.getByTestId('brain-sessions-list').children).toHaveLength(13);
     expect(screen.queryByText('Conversation 13')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    // The shared <Pager /> — its controls carry a full accessible name ("Next page") because at narrow
+    // widths the visible label is dropped and only that name is left to identify the button.
+    expect(screen.getByRole('navigation', { name: 'Conversations' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     expect(await screen.findByText('Conversation 13')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Conversation 1')).not.toBeInTheDocument());
   });
@@ -115,14 +118,16 @@ describe('BrainSessionsPanel (conversation register)', () => {
     await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
 
     fireEvent.click(await screen.findByRole('button', { name: 'Delete all' }));
-    const wide = await screen.findByRole('dialog');
+    // `alertdialog`, not `dialog`: a confirmation is an alert dialog now, which is what makes it
+    // undismissable by a stray press outside it.
+    const wide = await screen.findByRole('alertdialog');
     expect(within(wide).getByText(/every account/i)).toBeInTheDocument();
     fireEvent.click(within(wide).getByRole('button', { name: 'Cancel' }));
 
     fireEvent.click(screen.getByRole('radio', { name: 'Just mine' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Delete all' }));
     // The personal view keeps the personal wording -- clearing your own history is a different act.
-    const mine = await screen.findByRole('dialog');
+    const mine = await screen.findByRole('alertdialog');
     expect(within(mine).queryByText(/every account/i)).toBeNull();
   });
 });

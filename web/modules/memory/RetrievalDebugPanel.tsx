@@ -41,7 +41,7 @@ export function RetrievalDebugPanel() {
 
   return (
     <div className="flex flex-col">
-      <ControlSurfaceToolbar>
+      <ControlSurfaceToolbar promote={false}>
         <div className="flex flex-col gap-1">
         <h2 className="text-base font-semibold text-text">{t.memory.retrievalHeading}</h2>
         <p className="text-xs text-text-muted">{t.memory.retrievalIntro}</p>
@@ -107,12 +107,12 @@ export function RetrievalDebugPanel() {
 
 function ScoreRow({ score, body, t }: { score: RetrievalScore; body: string; t: ReturnType<typeof useTranslation>['t'] }) {
   return (
-    <li className={`rounded-lg border p-3 text-xs ${score.picked ? 'border-accent/40 bg-accent/5' : 'border-border bg-surface'}`}>
+    <li className={`rounded-lg border p-3 text-xs ${score.picked ? 'border-primary/40 bg-primary/5' : 'border-border bg-surface'}`}>
       <div className="flex items-start gap-2">
         <p className="min-w-0 flex-1 whitespace-pre-wrap text-text">{body}</p>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span className="font-mono text-sm font-semibold tabular-nums text-text">{score.score.toFixed(3)}</span>
-          {score.picked ? <span className="inline-flex items-center gap-1 text-[10px] font-medium text-accent"><Check size={11} aria-hidden />{t.memory.scorePicked}</span> : null}
+          {score.picked ? <span className="inline-flex items-center gap-1 text-[10px] font-medium text-primary"><Check size={11} aria-hidden />{t.memory.scorePicked}</span> : null}
         </div>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 @sm:grid-cols-4">
@@ -134,7 +134,7 @@ function Weight({ label, value }: { label: string; value: number }) {
         <span>{label}</span><span className="font-mono text-text">{value.toFixed(2)}</span>
       </span>
       <span className="h-1.5 w-full overflow-hidden rounded-full bg-elevated">
-        <span className="block h-full rounded-full bg-accent" style={{ width: `${width}%` }} />
+        <span className="block h-full rounded-full bg-primary" style={{ width: `${width}%` }} />
       </span>
     </div>
   );

@@ -27,6 +27,14 @@ export function TeamPulseTile() {
   const pulse = usePulse();
   const data = pulse.data;
   const people = data?.people ?? [];
+  // `data` being present is not the same as its sections being present. The tile reads an external
+  // payload and dereferences each section below, so a response that omits one degrades to the tile's
+  // empty state rather than throwing and collapsing the whole dashboard route. Guarded per consumer,
+  // not as one all-or-nothing check: the gauges and the rings read different halves of the response,
+  // and a payload that can still answer one of them should still show it.
+  const totals = data?.totals;
+  const canStat = data != null && totals != null && data.yesterday != null && data.memoryByHour != null;
+  const month = data?.month;
 
   return (
     <section aria-labelledby="dashboard-pulse" className="px-1 py-6 @sm:px-3 @2xl:px-5">
@@ -34,17 +42,17 @@ export function TeamPulseTile() {
         <div className="flex items-center gap-2">
           <h2 id="dashboard-pulse" className="dash-label">{t.dashboard.pulse}</h2>
           {/* Live because the tile is SSE-driven, not because anything polls. */}
-          <span className="rounded-full border border-accent/40 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-accent">
+          <span className="dash-live rounded-full border border-primary/40 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-primary">
             {t.dashboard.live}
           </span>
         </div>
-        {data ? (
+        {data && totals ? (
           <div className="flex items-baseline gap-x-4 font-mono text-[11px] tabular-nums text-text-muted">
-            <span className="text-text">{formatTokens(data.totals.tokens)}</span>
+            <span className="text-text">{formatTokens(totals.tokens)}</span>
             <span className="text-text">
               {data.spendAvailable === false
                 ? t.dashboard.pulseSpendOff
-                : data.totals.cost === null ? t.dashboard.pulseUnpriced : formatCost(data.totals.cost, 2)}
+                : totals.cost === null ? t.dashboard.pulseUnpriced : formatCost(totals.cost, 2)}
             </span>
             <span>{t.dashboard.pulseTodayLabel}</span>
           </div>
@@ -53,12 +61,12 @@ export function TeamPulseTile() {
 
       {pulse.isLoading ? (
         <LoadingState />
-      ) : !data || people.length === 0 ? (
+      ) : !data || people.length === 0 || (!canStat && !month) ? (
         <p className="text-sm text-text-muted">{t.dashboard.pulseNobody}</p>
       ) : (
         <div className="flex flex-col gap-6">
-          <PulseStats data={data} t={t} />
-          <PulseRings people={people} month={data.month} t={t} />
+          {canStat ? <PulseStats data={data} t={t} /> : null}
+          {month ? <PulseRings people={people} month={month} t={t} /> : null}
         </div>
       )}
     </section>

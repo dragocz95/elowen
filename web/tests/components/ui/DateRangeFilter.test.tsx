@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { DateRangeFilter } from '../../../components/ui/DateRangeFilter';
 import { DEFAULT_RANGE } from '../../../lib/dateRange';
@@ -37,5 +37,18 @@ describe('DateRangeFilter', () => {
     const dateInputs = document.querySelectorAll('input[type="date"]');
     fireEvent.change(dateInputs[0], { target: { value: '2026-06-01' } });
     expect(onChange).toHaveBeenCalledWith({ preset: 'custom', from: '2026-06-01', to: null });
+  });
+
+  it('closes on Escape and restores focus to the trigger', async () => {
+    renderFilter();
+    const trigger = screen.getByRole('button', { expanded: false });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole('dialog');
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(trigger).toHaveFocus();
   });
 });

@@ -7,10 +7,13 @@ import { createWrapper, setViewport, watchMounts } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChatSurface } from '../../../modules/advisor/BrainChatSurface';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import { PageHeaderProvider, PageTopBarHost } from '../../../lib/pageHeader';
 
 // The conversation bar carries different controls on a phone (model picker and work-mode pill fold into
 // the ⋯ popover) than on desktop (everything inline). Which set is chosen must wait for the viewport
 // measurement. The reasoning button is the exception — it stays inline at every width.
+// Placement is not width-dependent: wherever the shell publishes a top-bar host, the whole bar rides in
+// it — a phone included, which is what keeps the controls inside the one sticky bar a phone has.
 
 class FakeES {
   static instances: FakeES[] = [];
@@ -32,6 +35,7 @@ const server = setupServer(
   http.get('*/api/brain/processes', () => HttpResponse.json([])),
   http.get('*/api/brain/sessions', () => HttpResponse.json([{ id: 'brain-1', title: 'Chat', model: 'm', updated_at: '2026-07-08', active: true, attached: 0 }])),
   http.get('*/api/brain/commands', () => HttpResponse.json({ commands: [] })),
+  http.get('*/api/plugins/todo/api/tasks', () => HttpResponse.json({ tasks: [] })),
 );
 
 beforeAll(() => {
@@ -50,6 +54,25 @@ function renderSurface() {
 }
 
 describe('conversation bar controls', () => {
+  it('rides in the shell top bar on a phone, not in a row of its own below it', async () => {
+    // The phone used to be exempted from the portal, so the shell's bar sat on top holding nothing but
+    // a hamburger while the conversation's controls lived in a second, local row under it. Where a host
+    // is published the controls must land inside it at every width.
+    setViewport(true);
+    const { wrapper: Wrapper } = createWrapper();
+    render(
+      <Wrapper><ToastProvider><PageHeaderProvider>
+        <BrainChatProvider>
+          <PageTopBarHost />
+          <BrainChatSurface variant="full" />
+        </BrainChatProvider>
+      </PageHeaderProvider></ToastProvider></Wrapper>,
+    );
+
+    const host = await screen.findByTestId('page-top-bar-host');
+    await waitFor(() => expect(host).toContainElement(screen.getByTestId('chat-thoughts-toggle')));
+  });
+
   it('never paints the desktop-only controls on a phone, not even for one commit', async () => {
     // The boolean-returning useMobile reports `false` before the first measurement, so the phone briefly
     // got the inline desktop bar and then swapped it for the ⋯ popover — a visible rearrangement on load.
@@ -85,13 +108,23 @@ describe('conversation bar controls', () => {
     expect(popover.textContent).not.toContain('Reasoning');
   });
 
-  it('keeps the desktop controls inline off a phone', async () => {
+  it('opens the same Tasks modal as `/tasks` from the phone overflow', async () => {
+    setViewport(true);
+    renderSurface();
+    fireEvent.click(await screen.findByRole('button', { name: 'More options' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Tasks' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Filter tasks' })).toBeInTheDocument();
+  });
+
+  it('keeps the wide controls inline and reserves a CSS-gated overflow fallback off a phone', async () => {
     setViewport(false);
     renderSurface();
 
     expect(await screen.findByTestId('chat-thoughts-toggle')).toBeInTheDocument();
     expect(await screen.findByTestId('chat-model-picker')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'More options' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'More options' }).closest('.chat-page-toolbar__overflow')).not.toBeNull();
   });
 
   it('closes the ⋯ popover on Escape', async () => {

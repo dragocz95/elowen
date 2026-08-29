@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { Blocks, Settings2 } from 'lucide-react';
 import { ModuleShell } from '../../../../components/shell/ModuleShell';
 import { WorkspacePage } from '../../../../components/ui/WorkspacePrimitives';
+import { WorkspaceShell } from '../../../../components/ui/WorkspaceShell';
+import { ControlSurfaceDocument, ControlSurfaceState } from '../../../../components/ui/ControlSurface';
 import { ModuleHeader } from '../../../../components/ui/ModuleHeader';
 import { AutoSaveStatus } from '../../../../components/ui/AutoSaveStatus';
 import type { SaveStatus } from '../../../../lib/useAutoSaveStatus';
@@ -59,17 +61,28 @@ export default function PluginHostPage() {
   // bar, or from a link that predates the switch. It gets the chrome of a page (masthead, tab title)
   // and the one action that resolves it, instead of a bare sentence on an empty screen.
   const notice = (text: string, withAction = false) => (
-    <WorkspacePage>
+    <>
+      {/* Draws nothing: it publishes the page name for the shell masthead and the browser tab, exactly
+          as every other workspace page does alongside its shell. */}
       <ModuleHeader title={entry?.label ?? plugin} icon={Blocks} />
-      <EmptyState
-        title={strings.unavailableTitle}
-        description={text}
-        icon={Blocks}
-        action={withAction
-          ? <Button variant="accent" icon={Settings2} onClick={() => router.push('/settings?cat=plugins')}>{strings.manage}</Button>
-          : undefined}
-      />
-    </WorkspacePage>
+      <WorkspaceShell
+        variant="single"
+        hero={{ eyebrow: strings.eyebrow, title: entry?.label ?? plugin, icon: Blocks, mascot: 'error' }}
+      >
+        <ControlSurfaceDocument>
+          <ControlSurfaceState>
+            <EmptyState
+              title={strings.unavailableTitle}
+              description={text}
+              icon={Blocks}
+              action={withAction
+                ? <Button variant="accent" icon={Settings2} onClick={() => router.push('/settings?cat=plugins')}>{strings.manage}</Button>
+                : undefined}
+            />
+          </ControlSurfaceState>
+        </ControlSurfaceDocument>
+      </WorkspaceShell>
+    </>
   );
 
   let body: ReactNode;
@@ -97,10 +110,15 @@ export default function PluginHostPage() {
     const rendered = match
       ? <match.Component plugin={plugin} params={match.params} rest={rest} surface="page" {...(settingsComponent && section ? { onSaveState: reportSaveState } : {})} />
       : <Placeholder text={section ? strings.settingsUnavailable : strings.pageMissing} />;
+    // A section that draws its own page shell has already been given the page column by that shell, so
+    // wrapping it again nests two page frames: the gutter and the bottom padding apply twice and the
+    // page comes out narrower than every sibling register. Only the bundle knows what its component
+    // renders, which is why it declares the ids it frames itself.
+    const ownsFrame = section !== undefined && registration.ownsPageFrame?.includes(section.id) === true;
     // A settings section is written for the Settings deck: the deck's panel supplies the document surface
     // its groups sit on, and the deck page supplies the masthead title and the page column. Reached
     // directly it has to bring all three, or it reads as a fragment pasted onto an empty screen.
-    body = settingsComponent && section ? (
+    body = settingsComponent && section && !ownsFrame ? (
       <WorkspacePage>
         {/* The masthead and the browser tab are the host's to name; everything visible belongs to the
             section, which on a page heads itself with components.PluginPageHeader above its own
@@ -111,6 +129,15 @@ export default function PluginHostPage() {
         </ModuleHeader>
         <MotionReveal>{rendered}</MotionReveal>
       </WorkspacePage>
+    ) : settingsComponent && section ? (
+      <>
+        {/* Nothing but the page name: the header renders no DOM without children, so the masthead and
+            the browser tab keep reading the section's label while the section owns every pixel. Its
+            save state is its own to show — the host has no header here to put it in, and `onSaveState`
+            is still handed to it above so a section that wants the host's channel keeps it. */}
+        <ModuleHeader title={section.label} icon={pluginLucideIcon(section.icon)} />
+        {rendered}
+      </>
     ) : rendered;
   }
 

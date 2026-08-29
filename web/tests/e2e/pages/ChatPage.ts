@@ -168,17 +168,17 @@ export class ChatPage {
    *  placeholder). Assert on it to check a model switch landed (initiator label, or a watcher reconciled
    *  via the `session-event` → status refetch). */
   modelTrigger(): Locator {
-    return this.modelPicker.locator('button[aria-haspopup="listbox"]');
+    return this.modelPicker.getByRole('button');
   }
 
-  /** Open the model-picker popover (its trigger carries `aria-haspopup="listbox"`). */
+  /** Open the model-picker menu. */
   async openModelPicker(): Promise<void> {
     await this.modelTrigger().click();
   }
 
-  /** The picker's option rows (role="option"), available once it is open. */
+  /** The picker's radio rows, available once it is open. */
   modelOptions(): Locator {
-    return this.modelPicker.getByRole('option');
+    return this.modelPicker.getByRole('menuitemradio');
   }
 
   /** Open the picker and choose the option whose text contains `label`. */
@@ -202,15 +202,13 @@ export class ChatPage {
 
   // --- Lazy-load ---
 
-  /** Scroll every scrollable ancestor of the transcript (and the window) to the top, tripping the
-   *  scroll-up loader — robust to whether the actual scroller is the page `<main>` or the surface's own
-   *  box (the compact dock). Assert on `historySentinel` afterwards. */
+  /** The READER scrolls up to the top with the browser's real wheel input, tripping the scroll-up loader.
+   *  Assert on `historySentinel` afterwards. A programmatic offset write must not count as reader intent:
+   *  that distinction prevents entering /chat from loading history and opening mid-conversation. */
   async scrollToTopForOlder(): Promise<void> {
-    await this.transcript.evaluate((el) => {
-      for (let node = el.parentElement; node; node = node.parentElement) {
-        if (node.scrollHeight > node.clientHeight) node.scrollTop = 0;
-      }
-      window.scrollTo(0, 0);
-    });
+    const main = this.page.locator('main');
+    await main.hover();
+    await this.page.mouse.wheel(0, -100_000);
+    await expect.poll(() => main.evaluate((node) => node.scrollTop)).toBeLessThan(120);
   }
 }

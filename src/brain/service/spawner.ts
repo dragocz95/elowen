@@ -4,7 +4,8 @@ import type { PluginRegistry } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { logger } from '../../shared/logger.js';
 import type { BrainRuntimeConfig } from '../providers.js';
-import { buildBrainRegistry, resolveBrainModelRoute } from '../providers.js';
+import { buildBrainRegistry, registryProviderName, resolveBrainModelRoute } from '../providers.js';
+import { resolveFastModeRoute } from '../fastMode.js';
 import { isOfferableBrainModel } from '../../shared/execs.js';
 import { buildMemoryTools, BUILTIN_TOOL_DEFER_LOADING, BUILTIN_TOOL_ICONS, BUILTIN_TOOL_PLAN_SAFE } from '../tools/index.js';
 import { buildShareFileTool } from '../tools/shareFileTool.js';
@@ -14,6 +15,7 @@ import { composeSessionTools } from '../session/capabilities.js';
 import { createToolSearchHandle, toolSearchTool, formatDeferredToolsBlock, formatHostedToolCatalogBlock, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { buildPromptTemplates } from '../slashCommands.js';
 import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
+import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
 import { currentWorkDir } from '../../plugins/policyContext.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
@@ -41,6 +43,7 @@ interface SpawnerDeps {
   cwd?: string;
   projectPath?: () => string | undefined;
   userSettings?: BrainDeps['userSettings'];
+  fastMode?: BrainDeps['fastMode'];
   activeUserInstructions?: BrainDeps['activeUserInstructions'];
   brand?: BrainDeps['brand'];
   maxSteps?: () => number;
@@ -75,6 +78,35 @@ interface SpawnerDeps {
  *  testable decision rather than an inline condition: a shared channel serves several senders and must
  *  never surface one person's memories to another, and an ownerless session has no memory to search.
  *  Sub-agent sessions are channel-keyed (`brain-ch-subagent-*`), so the same test excludes them. */
+const WORKSPACE_UNSUPPORTED_TOOLS = new Set([
+  'LspDiagnostics', 'LspGoToDefinition', 'LspFindReferences', 'LspHover',
+  'LspDocumentSymbol', 'LspWorkspaceSymbol',
+  'CodebaseSearch', 'CodebaseReindex', 'CodebaseStatus',
+  'SandboxListWorkspaces', 'SandboxCreateWorkspace', 'SandboxUseWorkspace', 'SandboxCommit', 'SandboxRemoveWorkspace',
+  'ListMcpResources', 'ReadMcpResource',
+]);
+const WORKSPACE_PATH_TOOLS = new Set(['Read', 'Write', 'Edit', 'ListDir', 'Search', 'FileInfo', 'GitStatus', 'Glob', 'Grep', 'WorkflowStart']);
+
+export function workspaceToolDefinition<T extends { name: string; description?: string; parameters?: unknown }>(tool: T): T | undefined {
+  if (WORKSPACE_UNSUPPORTED_TOOLS.has(tool.name)) return undefined;
+  if (!WORKSPACE_PATH_TOOLS.has(tool.name) && tool.name !== 'Bash') return tool;
+  const parameters = tool.parameters && typeof tool.parameters === 'object'
+    ? structuredClone(tool.parameters) as Record<string, unknown>
+    : tool.parameters;
+  const properties = parameters && typeof parameters === 'object'
+    ? ((parameters as Record<string, unknown>).properties as Record<string, Record<string, unknown>> | undefined)
+    : undefined;
+  if (properties?.path) properties.path.description = 'Workspace-relative logical path (for example "src/file.ts")';
+  if (properties?.nodesFile) properties.nodesFile.description = 'Workspace-relative path to the JSON workflow definition';
+  if (properties?.cwd) properties.cwd.description = 'Workspace-relative working directory; omit to use the workspace root';
+  const description = tool.name === 'WorkflowStart'
+    ? 'Run a DAG of sub-agents from a JSON definition inside this assigned workspace. nodesFile must be workspace-relative. Nodes may inherit this exact workspace or explicitly name the same/narrower workspaceId; they cannot widen to a sibling worktree.'
+    : `${String(tool.description ?? '')
+        .replace('The path must be absolute.', 'The path must be relative to the assigned workspace.')
+        .replace('Use absolute paths — `cd` inside a compound command is unreliable and can shift context unexpectedly.', 'Use short workspace-relative paths. An absolute cwd or host path is refused.')}`;
+  return { ...tool, description, ...(parameters ? { parameters } : {}) };
+}
+
 export function liveRecallAllowed(sessionId: string, ownerUserId: number): boolean {
   return ownerUserId > 0 && !isSubagentSession(sessionId);
 }
@@ -192,10 +224,11 @@ export class LiveSessionSpawner {
       settings?.autoCompactAtByModel, route.providerId, model.id, settings?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
     );
     const capabilities = modelCapabilities(model);
-    // One resolver owns OAuth, official API-key and probe-backed Azure classification. It consumes the
-    // config entry (auth + URL), never guesses from PI's registry provider name.
+    // Route capabilities consume the configured entry + exact wire model. Credential provenance alone is
+    // never enough: a compatible relay must not inherit an upstream-only Fast field.
     const providerEntry = cfg.providers.find((provider) => provider.id === route.providerId);
     if (!providerEntry) throw new Error(`brain provider '${route.providerId}' is not configured`);
+    const fastRoute = resolveFastModeRoute(providerEntry, model);
     const hostedRoute = resolveHostedToolSearchRoute(providerEntry, model, {
       toolDeferralEnabled: runtime?.toolDeferralEnabled ?? false,
       hostedToolSearch: runtime?.hostedToolSearch ?? {},
@@ -205,7 +238,6 @@ export class LiveSessionSpawner {
     // Temperature is the provider entry's own setting, read from the same route that chose the model, and
     // absent unless the operator set one — see ProviderRequestProfile on why absent must stay the default.
     const requestProfile = {
-      fast: capabilities.fast && opts.fast === true,
       // A Qwen thinking model on a DashScope endpoint takes its effort as `thinking_budget`, not
       // `reasoning_effort` — the hook rewrites each request's current effort into that wire shape.
       ...(model.reasoning && qwenThinkingWire(model.baseUrl, model.id) ? { qwenThinking: true } : {}),
@@ -220,7 +252,8 @@ export class LiveSessionSpawner {
     // The session cwd is what pi advertises to the model ("Current working directory: …") and what
     // relative paths resolve against — it must be the USER'S project, never the brain's data dir
     // (the model would otherwise claim/act on that path). Same resolution as the per-turn workDir.
-    const cwd = turnWorkDir(opts.policy, opts.clientCwd, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
+    const cwd = opts.pathView?.root
+      ?? turnWorkDir(opts.policy, opts.clientCwd, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
     // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
     // Policy at call time via AsyncLocalStorage (set around each prompt), no per-session construction.
     const plugins = await this.d.plugins();
@@ -257,10 +290,18 @@ export class LiveSessionSpawner {
     // the turn may SEE and CALL is decided per turn from `personalToolOwners` below, so nothing here is a
     // widening — before it, a room simply had none of them and nothing said why.
     const perTurnContributions = resolvesContributionsPerTurn(sessionId, opts.direct === true);
-    const pluginTools = plugins?.toolsFor(contributionOwnerUserId, contributionOwnerUser, {
+    const rawPluginTools = plugins?.toolsFor(contributionOwnerUserId, contributionOwnerUser, {
       grantsEnforcedPerTurn: opts.channel === true,
       allOwners: perTurnContributions,
     }) ?? [];
+    const pluginTools = opts.pathView
+      ? rawPluginTools
+          .filter((tool) => !plugins?.hostFilesystemTools.has(tool.name)
+            && plugins?.workspaceSafeTools.has(tool.name) === true
+            && !plugins.workspaceUnsafeTools.has(tool.name))
+          .map(workspaceToolDefinition)
+          .filter((tool): tool is NonNullable<typeof tool> => !!tool)
+      : rawPluginTools;
     const personalToolOwners = perTurnContributions
       ? plugins?.sharedRoomToolOwners() ?? new Map<string, ReadonlySet<number>>()
       : undefined;
@@ -364,7 +405,7 @@ export class LiveSessionSpawner {
     // model about the wrong list either way round; this keeps announcement and authorisation on the one
     // decision `contributionOwnerForSession` makes. Everything else — owner chat, a 1:1 DM, a sub-agent —
     // has exactly one contribution owner for the whole session and keeps the cheap cached block.
-    const skillsBlock = skills.length && !perTurnContributions
+    const skillsBlock = !opts.pathView && skills.length && !perTurnContributions
       ? formatSkillsForPrompt(skills)
       : '';
     // Deferred-tools awareness: names (+ short descriptions) of the withheld MCP tools so the model knows
@@ -446,6 +487,21 @@ export class LiveSessionSpawner {
     // the session. Safe because the channel lock serializes turns, so it cannot change under a running
     // retrieval. The rule itself lives in liveRecallUserId, where a test can pin it.
     const recallUserId = (): number | null => liveRecallUserId(sessionId, ownerUserId, live.turnWriterUserId);
+    // Fast follows the account driving THIS request. An ordinary shared/direct channel without a verified
+    // writer fails closed instead of borrowing the room owner's preference. A delegated child has no writer
+    // of its own, so it uses the contribution account captured as settingsUserId and re-reads that account in
+    // both in-process and runner execution.
+    const fastUserId = (): number | null => opts.channel
+      ? opts.parentSessionId ? settingsUserId : live.turnWriterUserId ?? null
+      : settingsUserId;
+    const fastEnabled = (): boolean => {
+      const userId = fastUserId();
+      return userId !== null && this.d.fastMode?.(userId) === true;
+    };
+    const fastRouteFor = (requestModel: Model<Api>) => {
+      const entry = cfg.providers.find((provider) => registryProviderName(provider) === requestModel.provider);
+      return entry ? resolveFastModeRoute(entry, requestModel) : undefined;
+    };
     const listeners = new Set<(e: BrainEvent) => void>();
     // Re-attach every listener ClientAttachments still has on this session id — direct subscribe()
     // subscribers and drill-in taps alike. A respawn (model switch, restart, vision hop, idle rollover,
@@ -459,9 +515,11 @@ export class LiveSessionSpawner {
       sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
       seedMessages: opts.seedMessages,
       runtime: this.d.runtime, model, providerId, compactionFallbackModel: route.compactionFallback, cwd,
+      ...(opts.pathView ? { displayCwd: '.', contextRoot: opts.pathView.root, sanitizePaths: opts.pathView.sanitize } : {}),
       systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
       tools: allTools, toolSearch: toolSearchHandle, hostedToolSearch,
       thinkingLevel: opts.thinkingLevel, requestProfile,
+      fastMode: { enabled: fastEnabled, routeFor: fastRouteFor },
       autoCompact: opts.autoCompact, autoCompactAtPct,
       // Read per call rather than from the `runtime` snapshot above: the operator can turn provider-side
       // compaction off while a long conversation is running, and the next request must already follow it.
@@ -509,7 +567,7 @@ export class LiveSessionSpawner {
       // (2) admin owner — a non-admin account with no repo of its own resolves cwd to the daemon's
       // project path, and PI walks it plus every ancestor up to `/`, so a plain user's chat would
       // otherwise inhale the operator's private CLAUDE.md (internal hosts, prod credentials).
-      contextFiles: !opts.channel && !!u?.is_admin,
+      contextFiles: opts.pathView ? true : !opts.channel && !!u?.is_admin,
       // A conversation that gave up on compacting cannot recover on its own, so it goes out on the same
       // channel as any other terminal session failure rather than staying a log line nobody reads.
       onCompactionStopped: (message) => replay.publish({ type: 'error', message }),
@@ -564,7 +622,7 @@ export class LiveSessionSpawner {
       session, sessionId, ownerUserId, settingsUserId, contributionUserId: contributionOwnerUserId,
       direct: opts.direct === true,
       model: model.id, providerId, provider: model.provider, thinkingLevel: opts.thinkingLevel,
-      requestProfile, fastAvailable: capabilities.fast,
+      requestProfile, fastAvailable: fastRoute !== undefined,
       thinkingLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
       policy: opts.policy, applyCompaction, assessColdCompaction, listeners, replay, turnContext,
       pluginToolNames: new Set(pluginTools.map((t) => t.name)),

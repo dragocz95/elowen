@@ -1,7 +1,7 @@
 'use client';
 import { Palette } from 'lucide-react';
 import { useSkin } from '../../lib/skinContext';
-import { BUILTIN_SKIN } from '../../lib/skins';
+import { skinDisplayName } from '../../lib/skins';
 import { useTranslation } from '../../lib/i18n';
 
 /** Cycles the interface through the skins the instance allows. Deliberately a single button and not a
@@ -17,7 +17,7 @@ export function SkinSwitcher({ collapsed = false }: { collapsed?: boolean }) {
 
   if (allowed.length < 2) return null;
 
-  const name = choice === BUILTIN_SKIN ? t.common.skinBuiltIn : choice ?? t.common.skinBuiltIn;
+  const name = skinDisplayName(t, choice);
   const label = `${t.common.skin}: ${name}`;
 
   return (
@@ -26,13 +26,13 @@ export function SkinSwitcher({ collapsed = false }: { collapsed?: boolean }) {
       onClick={cycle}
       aria-label={label}
       title={`${label} — ${t.common.skinCycle}`}
-      className="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-text-muted transition-colors hover:bg-elevated hover:text-text"
+      className="skin-switcher__button flex h-9 items-center gap-1.5 rounded-full px-2.5 text-text-muted transition-colors hover:bg-elevated hover:text-text"
     >
-      <Palette size={17} aria-hidden />
+      <Palette size={18} strokeWidth={1.5} aria-hidden />
       {/* The name is the only way to tell two dark skins apart at a glance, so it stays visible wherever
           there is room. `collapsed` is the narrow rail, where the icon carries it and the title attribute
           and aria-label still say which skin is on. */}
-      {collapsed ? null : <span className="hidden text-[11px] font-medium uppercase tracking-wide lg:inline">{name}</span>}
+      {collapsed ? null : <span className="skin-switcher__name hidden text-[11px] font-medium uppercase tracking-wide lg:inline">{name}</span>}
     </button>
   );
 }

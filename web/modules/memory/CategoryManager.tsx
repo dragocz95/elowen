@@ -119,9 +119,15 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
   // The project bound to this category, resolved from the loaded list — drives the scope glyph.
   const selectedProject = projectId == null ? null : (projects.data ?? []).find((p) => p.id === projectId) ?? null;
 
+  // A missing name is a property of the name field, not of the whole dialog, so it is stated there
+  // instead of as a toast the reader has to connect back to a control. Latched on the first blocked
+  // submit and derived from the live value, so it clears as soon as something is typed.
+  const [nameSubmitted, setNameSubmitted] = useState(false);
+  const nameError = nameSubmitted && !name.trim() ? t.memory.categoryNameRequired : undefined;
+
   const submit = () => {
     const next = name.trim();
-    if (!next) { toast(t.memory.categoryNameRequired, 'error'); return; }
+    if (!next) { setNameSubmitted(true); return; }
     const body = { name: next, description: description.trim(), color, icon, projectId };
     const onSuccess = () => { toast(t.memory.categorySaved); onClose(); };
     const onError = (e: unknown) => toast(apiErrorMessage(e) || t.memory.categorySaveError, 'error');
@@ -132,8 +138,8 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
   return (
     <Modal title={isEdit ? t.memory.categoryEdit : t.memory.categoryNew} onClose={onClose} size="sm" icon={Tags}>
       <ModalBody>
-        <Field label={t.memory.categoryName}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder={t.memory.categoryNamePlaceholder} />
+        <Field label={t.memory.categoryName} required error={nameError}>
+          {(control) => <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder={t.memory.categoryNamePlaceholder} {...control} />}
         </Field>
         <Field label={t.memory.categoryDescription}>
           <textarea
@@ -141,7 +147,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
             placeholder={t.memory.categoryDescriptionPlaceholder}
-            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
+            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
           />
         </Field>
         <Field label={t.memory.categoryProject}>
@@ -196,7 +202,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
                   aria-label={n}
                   aria-pressed={icon === n}
                   title={n}
-                  className={`flex aspect-square items-center justify-center rounded-md border transition-colors ${icon === n ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface text-text-muted hover:border-text-muted hover:text-text'}`}
+                  className={`flex aspect-square items-center justify-center rounded-md border transition-colors ${icon === n ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-surface text-text-muted hover:border-text-muted hover:text-text'}`}
                 >
                   <CategoryIcon name={n} size={16} />
                 </button>
@@ -206,7 +212,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
               type="button"
               onClick={suggestIcon}
               disabled={!name.trim() || suggesting}
-              className="inline-flex w-fit items-center gap-1 text-[11px] font-medium text-accent hover:underline disabled:opacity-40 disabled:no-underline"
+              className="inline-flex w-fit items-center gap-1 text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:no-underline"
             >
               {t.memory.categoryIconSuggest}
             </button>

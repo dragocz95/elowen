@@ -4,7 +4,8 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
 import { SkinSwitcher } from '../../components/ui/SkinSwitcher';
-import { SkinProvider } from '../../lib/skinContext';
+import { SkinProvider, useSkin } from '../../lib/skinContext';
+import { QUERY_KEYS } from '../../lib/queries';
 import { BUILTIN_SKIN, type SkinChoice } from '../../lib/skins';
 import { createWrapper } from '../test-utils';
 
@@ -70,6 +71,15 @@ describe('SkinSwitcher', () => {
     return waitFor(() => expect(screen.getByRole('button')).toBeTruthy());
   });
 
+  it('shows the skin its human name, never its id', () => {
+    // The id is a directory name and a `data-skin` value. Rendering it verbatim put "midnight" — and
+    // would have put "studio-oled" — in the top bar as if it were a product name.
+    mount([BUILTIN_SKIN, 'midnight'], BUILTIN_SKIN);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Skin: Midnight');
+    expect(screen.getByText('Midnight')).toBeTruthy();
+  });
+
   it('remembers the choice where both the client and the next server render can find it', () => {
     mount([BUILTIN_SKIN, 'midnight'], BUILTIN_SKIN);
     fireEvent.click(screen.getByRole('button'));
@@ -78,5 +88,38 @@ describe('SkinSwitcher', () => {
     // The cookie is the half the SERVER reads, and it is what stops the next document arriving in the
     // old design and visibly changing colour once hydration catches up.
     expect(document.cookie).toContain('elowen-skin=midnight');
+  });
+});
+
+/** The provider's own contract, independent of the switcher: whatever the document ends up wearing, the
+ *  attribute and the context's resolved skin say the same thing. Null is a value in that resolution — the
+ *  built-in design — and reaching it while the page is open is ordinary, not an error. */
+describe('SkinProvider', () => {
+  function Readout() {
+    const { skin, choice } = useSkin();
+    return <span data-testid="readout">{`${skin ?? 'builtin'}/${choice ?? 'none'}`}</span>;
+  }
+
+  it('removes the attribute when the live allow-list drops the skin the reader is wearing', async () => {
+    // The mechanism from the blocker: an admin revokes the skin and the config QUERY pushes the narrowed
+    // list into a mounted provider. Nothing reloads, so if the document write is skipped for the built-in
+    // design the page keeps wearing a stylesheet nothing else believes in any more.
+    const { wrapper: Wrapper, client } = createWrapper();
+    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [BUILTIN_SKIN, 'midnight'] })));
+    localStorage.setItem('elowen-skin', 'midnight');
+    render(
+      <Wrapper>
+        <SkinProvider allowedSkins={[BUILTIN_SKIN, 'midnight']} initialChoice="midnight" fallback={null}>
+          <Readout />
+        </SkinProvider>
+      </Wrapper>,
+    );
+    await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('midnight'));
+    expect(screen.getByTestId('readout').textContent).toBe('midnight/midnight');
+
+    client.setQueryData(QUERY_KEYS.config, { allowedSkins: [] });
+
+    await waitFor(() => expect(document.documentElement.hasAttribute('data-skin')).toBe(false));
+    expect(screen.getByTestId('readout').textContent).toBe('builtin/none');
   });
 });

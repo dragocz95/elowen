@@ -681,11 +681,11 @@ export function createChatComposition(
     // Project context yields only when the active-goal progress would otherwise be truncated. It remains
     // visible in the telemetry rail or returns automatically as soon as the terminal is wide enough.
     promptMeta.setRight(activeGoal && visibleWidth(metaLeftLine()) + visibleWidth(metaRight) + 1 > chatWidth() ? '' : metaRight);
-    // The terminal plugin pins a `bg-processes` card, but its real home is the ProcessPanel in the right
-    // rail — keeping it above the composer only put running background shells in two places at once. Drop
-    // it only while the rail can actually fit (panelAvailable): on a narrower terminal the card is the
-    // last surface for those processes, and hiding it would leave a backgrounded shell invisible.
-    cardPanel.set(focusedCards().filter((c) => c.id !== 'bg-processes' || !panelAvailable()));
+    // The terminal plugin pins a background-process card (legacy global id or account-scoped id), but its
+    // real home is the ProcessPanel in the right rail — keeping it above the composer only put running
+    // shells in two places at once. Drop it only while the rail can actually fit (panelAvailable): on a
+    // narrower terminal the card is the last surface for those processes.
+    cardPanel.set(focusedCards().filter((c) => (c.id !== 'bg-processes' && !c.id.startsWith('bg-processes-')) || !panelAvailable()));
     subPanel.set(panelAvailable() ? [] : agents);
     subPanel.setSelected(rt.childView?.sessionId ?? null);
     // Pending mid-turn queue strip above the composer (with the remove-last keybind hint when bound).

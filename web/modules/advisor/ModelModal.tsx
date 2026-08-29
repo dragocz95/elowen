@@ -15,8 +15,10 @@ export function ModelModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const [filter, setFilter] = useState('');
 
+  // `inspect`: pick one row and it closes — a browsing surface, not something you work in, so a phone
+  // gets a bottom sheet.
   return (
-    <Modal title={t.brainChat.modelPicker} onClose={onClose} size="md" icon={Cpu}>
+    <Modal title={t.brainChat.modelPicker} onClose={onClose} size="md" icon={Cpu} intent="inspect">
       <ModalBody gap={4}>
         <Input
           value={filter}
@@ -24,8 +26,8 @@ export function ModelModal({ onClose }: { onClose: () => void }) {
           placeholder={t.modelModal.filterPlaceholder}
           aria-label={t.modelModal.filterPlaceholder}
         />
-        <div role="listbox" aria-label={t.brainChat.modelPicker} className="max-h-[26rem] overflow-y-auto rounded-md border border-border py-1">
-          <ModelOptionList filter={filter} onPick={onClose} />
+        <div className="max-h-[26rem] overflow-y-auto rounded-md border border-border py-1">
+          <ModelOptionList filter={filter} onPickAction={onClose} presentation="list" />
         </div>
       </ModalBody>
     </Modal>

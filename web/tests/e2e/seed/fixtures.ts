@@ -11,6 +11,9 @@ import type {
   SlashCommandDef,
   BrainMessage,
   Project,
+  Memory,
+  MemoryCategory,
+  ProviderUsage,
 } from '../../../lib/types.ts';
 
 /** The single admin account the fake daemon accepts. Global setup logs in with exactly these creds
@@ -109,6 +112,33 @@ export const brainModels: BrainModelOption[] = [
   },
 ];
 
+/** The OAuth account types the daemon supports, and whether each is connected. The settings Brain
+ *  section derives the whole accounts list from these KEYS, so an empty object renders no account rows at
+ *  all — which is why the layout specs seed this explicitly rather than relying on a 404. */
+export const brainOauthStatus: Record<string, boolean> = {
+  'oauth-anthropic': true,
+  'oauth-openai-codex': false,
+  'oauth-github-copilot': false,
+  'oauth-kimi': false,
+};
+
+/** Subscription usage for the connected account, keyed by the account's provider ENTRY id (not its
+ *  `oauth-*` type) — the same mapping BrainProvidersSection uses to look a rail up. Two windows, because
+ *  a single-window rail cannot expose the row's multi-metric stacking, which is where the phone layout
+ *  broke. */
+export const brainRateLimits: Record<string, ProviderUsage> = {
+  anthropic: {
+    provider: 'oauth-anthropic',
+    planType: 'max',
+    windows: [
+      { usedPercent: 42, windowMinutes: 300, resetsAt: 1_790_000_000 },
+      { usedPercent: 87, windowMinutes: 10_080, resetsAt: 1_790_500_000 },
+    ],
+    fetchedAt: 1_789_900_000,
+    stale: false,
+  },
+};
+
 export const brainCommands: SlashCommandDef[] = [
   { name: 'new', description: 'Start a fresh conversation', kind: 'action' },
   { name: 'compact', description: 'Compact the conversation context', kind: 'action' },
@@ -127,3 +157,34 @@ export const brainMessages: BrainMessage[] = [
 
 // The ambient shell polls these too; empty lists are valid and keep the sidebars quiet.
 export const projects: Project[] = [];
+
+export const memoryCategories: MemoryCategory[] = [
+  { id: 1, user_id: 1, name: 'Architecture', description: 'Decisions and constraints', color: '#7c9cff', icon: 'Layers', is_builtin: 1, projectId: null, created_at: '2026-01-01T00:00:00.000Z' },
+  { id: 2, user_id: 1, name: 'Preferences', description: 'Standing user preferences', color: '#ffb570', icon: 'Sparkles', is_builtin: 1, projectId: null, created_at: '2026-01-01T00:00:00.000Z' },
+];
+
+/** 47 rows: more than two pages at the module's PAGE_SIZE of 20, so the pager renders with a reachable
+ *  "next" on every page but the last. Bodies deliberately vary in length — a register truncates a cell to
+ *  one line, and a fixture whose bodies were all short would never put that to the test. */
+export const memories: Memory[] = Array.from({ length: 47 }, (_, i) => {
+  const n = i + 1;
+  const long = n % 3 === 0;
+  return {
+    id: n,
+    user_id: 1,
+    body: long
+      ? `Memory ${n}: a deliberately long body that runs well past the width of any register cell so the one-line truncation rule has something to truncate, and keeps going for good measure.`
+      : `Memory ${n}: a short note.`,
+    kind: n % 2 === 0 ? 'fact' : 'preference',
+    importance: (n % 5) + 1,
+    confidence: 0.5 + (n % 5) / 10,
+    source: 'e2e',
+    status: 'active' as const,
+    created_at: '2026-06-01T00:00:00.000Z',
+    updated_at: `2026-07-${String((n % 28) + 1).padStart(2, '0')}T10:00:00.000Z`,
+    last_used_at: n % 4 === 0 ? '2026-07-20T10:00:00.000Z' : null,
+    use_count: n % 7,
+    category_id: n % 3 === 0 ? 1 : n % 3 === 1 ? 2 : null,
+    vitality: (n % 10) / 10,
+  };
+});

@@ -7,7 +7,6 @@ import { safeSsoNext, ssoErrorCode } from '../../lib/authSso';
 import { useToast } from '../ui/Toast';
 import { Button, buttonClassName } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { ControlSurfaceDocument } from '../ui/ControlSurface';
 import { useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 
@@ -82,34 +81,51 @@ export function LoginForm({ onAuthed }: { onAuthed: () => void }) {
   const showMicrosoft = ssoProviders.length > 0;
 
   return (
-    <div className="flex h-screen items-center justify-center bg-bg">
-      <ControlSurfaceDocument className="animate-pop-in flex w-full max-w-sm flex-col gap-4 p-8">
-        <img src={brand.logoSrc} alt={brand.appName} className="logo-adaptive mx-auto h-auto w-64" />
-        <h1 className="text-center text-sm uppercase tracking-wide text-text-muted">{t.auth.signIn}</h1>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <Input type="text" placeholder={t.auth.usernamePlaceholder} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
-          <Input type="password" placeholder={t.auth.passwordPlaceholder} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-          <Button type="submit" variant="accent" disabled={login.isPending} className="w-full justify-center">
+    <div className="login-page flex min-h-screen items-center justify-center bg-bg px-4 py-10">
+      <main className="login-card animate-pop-in flex w-full max-w-md flex-col gap-6 rounded-xl border border-border bg-surface p-8 shadow-[var(--shadow-raised)]">
+        <div className="flex flex-col items-center gap-5 text-center">
+          <img
+            src={brand.logoSrc}
+            alt={brand.appName}
+            className="logo-adaptive max-h-16 w-auto max-w-56 object-contain"
+          />
+          <div className="space-y-1.5">
+            <h1 className="text-2xl font-semibold tracking-tight text-text">{t.auth.signIn}</h1>
+            <p className="text-sm text-text-muted">{t.auth.signInDescription.replace('{app}', brand.appName)}</p>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <label className="flex flex-col gap-2 text-sm font-medium text-text">
+            <span>{t.auth.usernamePlaceholder}</span>
+            <Input type="text" placeholder={t.auth.usernamePlaceholder} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+          </label>
+          <label className="flex flex-col gap-2 text-sm font-medium text-text">
+            <span>{t.auth.passwordPlaceholder}</span>
+            <Input type="password" placeholder={t.auth.passwordPlaceholder} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+          </label>
+          <Button type="submit" variant="accent" disabled={login.isPending} className="h-10 w-full justify-center">
             {t.auth.signIn}
           </Button>
         </form>
+
         {showMicrosoft ? (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-3 text-xs text-text-muted" aria-hidden>
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-3 text-sm text-text-muted" aria-hidden>
               <span className="h-px flex-1 bg-border" />
-              <span>{t.auth.or}</span>
+              <span>{t.auth.orContinueWith}</span>
               <span className="h-px flex-1 bg-border" />
             </div>
             <a
               href={`/api/auth/sso/microsoft/start?next=${encodeURIComponent(currentTarget)}`}
-              className={buttonClassName('ghost', 'w-full justify-center')}
+              className={buttonClassName('default', 'h-10 w-full justify-center')}
             >
               <MicrosoftLogo />
-              {t.auth.signInWithMicrosoft}
+              {t.auth.microsoft}
             </a>
           </div>
         ) : null}
-      </ControlSurfaceDocument>
+      </main>
     </div>
   );
 }

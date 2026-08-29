@@ -68,7 +68,7 @@ function mount(people: PulsePerson[], over: Partial<PulseResponse> = {}) {
 
 /** Render the hover card the way a ring would, without needing a measured chart. */
 function showCard(p: PulsePerson, share = 50) {
-  render(<PersonCard person={p} share={share} colour="var(--color-accent)" t={en} />);
+  render(<PersonCard person={p} share={share} colour="var(--color-primary)" t={en} />);
 }
 
 describe('TeamPulseTile — ring', () => {

@@ -72,8 +72,8 @@ export function buildThemeStyle(theme: ThemePayload): string {
   const decls: string[] = [];
   for (const [key, value] of Object.entries(theme.colors)) {
     if (typeof value !== 'string') continue;
-    if (key === 'accent-rgb') {
-      if (RGB_TRIPLE_RE.test(value) && value.split(' ').every((n) => Number(n) <= 255)) decls.push(`--accent-rgb: ${value};`);
+    if (key === 'primary-rgb') {
+      if (RGB_TRIPLE_RE.test(value) && value.split(' ').every((n) => Number(n) <= 255)) decls.push(`--primary-rgb: ${value};`);
       continue;
     }
     if (/^[a-z-]{1,24}$/.test(key) && HEX_COLOR_RE.test(value)) decls.push(`--color-${key}: ${value};`);

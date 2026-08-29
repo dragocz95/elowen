@@ -34,12 +34,30 @@ describe('CategoryModal project scope picker', () => {
 
   it('sends the selected project id through the category mutation', async () => {
     renderModal();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Planning' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name Required' }), { target: { value: 'Planning' } });
     fireEvent.click(screen.getByRole('button', { name: 'Project scope' }));
     fireEvent.click(screen.getByRole('button', { name: 'kolin' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(createCategory).toHaveBeenCalledWith(expect.objectContaining({ name: 'Planning', projectId: 9 }), expect.anything()));
+  });
+});
+
+describe('CategoryModal name validation', () => {
+  it('states a missing name on the field itself and clears it once something is typed', async () => {
+    createCategory.mockClear();
+    renderModal();
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    const message = await screen.findByRole('alert');
+    expect(message).toHaveTextContent('The category name is required');
+    expect(createCategory).not.toHaveBeenCalled();
+    const input = screen.getByRole('textbox', { name: 'Name Required' });
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAttribute('aria-describedby', message.id);
+
+    fireEvent.change(input, { target: { value: 'Planning' } });
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   });
 });

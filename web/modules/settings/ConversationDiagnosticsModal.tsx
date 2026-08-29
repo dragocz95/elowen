@@ -20,9 +20,12 @@ import type {
   BrainDebugRequestItem, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload, BrainDebugSessionItem,
 } from '../../lib/types';
 
+/** The segment legend's swatches. `tool` and `reasoning` need a hue no semantic token owns — calling
+ *  them "info" or "warning" would state something about the segment that is not true — so they take the
+ *  two categorical tones tokens.css declares for exactly this. */
 const ROLE_CLASS: Record<string, string> = {
-  system: 'bg-accent', user: 'bg-success', assistant: 'bg-warning', tool: 'bg-[#a78bfa]',
-  reasoning: 'bg-[#f472b6]', error: 'bg-danger', options: 'bg-text-muted', response: 'bg-warning',
+  system: 'bg-primary', user: 'bg-success', assistant: 'bg-warning', tool: 'bg-tone-violet',
+  reasoning: 'bg-tone-magenta', error: 'bg-danger', options: 'bg-text-muted', response: 'bg-warning',
 };
 
 type Filters = {
@@ -105,8 +108,8 @@ function PrettyPayload({ value, depth = 0 }: { value: unknown; depth?: number })
   if (/^(tool_use|function_call|server_tool_use)$/i.test(type) || item.input !== undefined || item.arguments !== undefined || fn?.arguments !== undefined) {
     const args = item.input ?? item.arguments ?? fn?.arguments;
     return (
-      <article className="rounded-md border border-accent/30 bg-accent/5 p-3">
-        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-accent" /><strong className="text-sm text-text">{name}</strong><Badge tone="accent">{d.toolCall}</Badge></div>
+      <article className="rounded-md border border-primary/30 bg-primary/5 p-3">
+        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-primary" /><strong className="text-sm text-text">{name}</strong><Badge tone="accent">{d.toolCall}</Badge></div>
         {args === undefined ? null : <pre className="max-h-80 overflow-auto rounded bg-bg/60 p-3 text-xs text-text-muted">{pretty(args)}</pre>}
       </article>
     );
@@ -126,7 +129,7 @@ function PrettyPayload({ value, depth = 0 }: { value: unknown; depth?: number })
   if (item.input_schema !== undefined || fn?.parameters !== undefined || item.parameters !== undefined) {
     return (
       <article className="rounded-md border border-border bg-elevated/20 p-3">
-        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-accent" /><strong className="text-sm text-text">{name}</strong></div>
+        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-primary" /><strong className="text-sm text-text">{name}</strong></div>
         {typeof item.description === 'string' ? <p className="mb-3 text-sm leading-6 text-text-muted">{item.description}</p> : null}
         <pre className="max-h-80 overflow-auto rounded bg-bg/60 p-3 text-xs text-text-muted">{pretty(toolSchema(value))}</pre>
       </article>
@@ -194,21 +197,22 @@ function RequestGraph({ request, segments, cachedEstimateLabel }: { request: Bra
   const prompt = graph.reduce((sum, segment) => sum + segment.estimatedTokens, 0);
   const cached = Math.max(0, request.cacheReadTokens ?? 0);
   const cachedPercent = prompt > 0 ? Math.min(100, cached / prompt * 100) : 0;
+  // No minimum width and nothing to scroll sideways. Every segment is sized as a percentage, so the bar
+  // is legible at any width; the 36rem floor it used to sit behind was a hard 576px that overflowed the
+  // dialog on every phone.
   return (
-    <div className="overflow-x-auto" aria-label="Prompt token segments">
-      <div className="min-w-[36rem]">
-        <div className="relative flex h-8 overflow-hidden rounded-md border border-border bg-bg sm:h-12">
-          {graph.map((segment) => {
-            const role = segmentRole(segment);
-            const width = prompt > 0 ? Math.max(2, segment.estimatedTokens / prompt * 100) : 100 / Math.max(1, graph.length);
-            return <div key={`${segment.index}-${segment.digest}`} title={`${role}: ~${segment.estimatedTokens} tokens`} className={`${ROLE_CLASS[role] ?? 'bg-text-muted'} border-r border-bg/40 opacity-80`} style={{ width: `${width}%` }} />;
-          })}
-          {cachedPercent > 0 ? <div className="pointer-events-none absolute inset-y-0 left-0 border-r-2 border-dashed border-text bg-text/10" style={{ width: `${cachedPercent}%` }} /> : null}
-        </div>
-        <div className="mt-1 flex items-center justify-between text-[10px] text-text-muted">
-          <span>~{formatTokens(prompt)} prompt tokens</span>
-          <span>{cachedEstimateLabel}: ~{Math.round(cachedPercent)}%</span>
-        </div>
+    <div aria-label="Prompt token segments">
+      <div className="relative flex h-8 overflow-hidden rounded-md border border-border bg-bg sm:h-12">
+        {graph.map((segment) => {
+          const role = segmentRole(segment);
+          const width = prompt > 0 ? Math.max(2, segment.estimatedTokens / prompt * 100) : 100 / Math.max(1, graph.length);
+          return <div key={`${segment.index}-${segment.digest}`} title={`${role}: ~${segment.estimatedTokens} tokens`} className={`${ROLE_CLASS[role] ?? 'bg-text-muted'} border-r border-bg/40 opacity-80`} style={{ width: `${width}%` }} />;
+        })}
+        {cachedPercent > 0 ? <div className="pointer-events-none absolute inset-y-0 left-0 border-r-2 border-dashed border-text bg-text/10" style={{ width: `${cachedPercent}%` }} /> : null}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 text-[10px] text-text-muted">
+        <span>~{formatTokens(prompt)} prompt tokens</span>
+        <span>{cachedEstimateLabel}: ~{Math.round(cachedPercent)}%</span>
       </div>
     </div>
   );
@@ -259,7 +263,7 @@ function RequestSelector({ requests, selectedId, onSelect, hasMore, loadMore }: 
   return (
     <div className="flex items-center gap-2 overflow-x-auto border-b border-border px-3 py-2" aria-label={d.requests}>
       {requests.map((request) => (
-        <button key={request.requestId} type="button" aria-pressed={selectedId === request.requestId} onClick={() => onSelect(request.requestId)} className={`shrink-0 rounded-md border px-3 py-2 text-left ${selectedId === request.requestId ? 'border-accent bg-accent/10' : 'border-border bg-elevated/40'}`}>
+        <button key={request.requestId} type="button" aria-pressed={selectedId === request.requestId} onClick={() => onSelect(request.requestId)} className={`shrink-0 rounded-md border px-3 py-2 text-left ${selectedId === request.requestId ? 'border-primary bg-primary/10' : 'border-border bg-elevated/40'}`}>
           <div className="flex items-center gap-2"><span className="font-mono text-xs text-text">#{request.seq}</span><Badge>{request.kind}</Badge><Badge tone={statusTone(request.status)}>{request.status}</Badge>{request.retryOf ? <Badge tone="warning">{d.retry}</Badge> : null}</div>
           <div className="mt-1 max-w-44 truncate text-[10px] text-text-muted">{request.model}</div>
         </button>
@@ -278,7 +282,7 @@ function ToolEntry({ sessionId, requestId, tool }: { sessionId: string | null; r
   return (
     <details className="mb-2 rounded-md border border-border bg-surface" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="cursor-pointer list-none p-3">
-        <div className="flex items-center gap-2"><Wrench size={13} className="text-accent" /><strong className="min-w-0 flex-1 truncate text-xs text-text">{payload.data ? toolName(payload.data.payload) : segmentLabel(tool)}</strong>{badge ? <Badge tone={badge === 'server' ? 'accent' : badge === 'deferred' ? 'warning' : 'muted'}>{d[badge]}</Badge> : null}</div>
+        <div className="flex items-center gap-2"><Wrench size={13} className="text-primary" /><strong className="min-w-0 flex-1 truncate text-xs text-text">{payload.data ? toolName(payload.data.payload) : segmentLabel(tool)}</strong>{badge ? <Badge tone={badge === 'server' ? 'accent' : badge === 'deferred' ? 'warning' : 'muted'}>{d[badge]}</Badge> : null}</div>
         {tool.preview && tool.preview !== segmentLabel(tool) ? <div className="mt-1 line-clamp-2 text-[11px] text-text-muted">{tool.preview}</div> : null}
       </summary>
       {open ? <div className="border-t border-border">{payload.isLoading ? <LoadingState /> : payload.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => payload.refetch()} /> : <pre className="max-h-80 overflow-auto p-3 text-[11px] text-text-muted">{pretty(toolSchema(payload.data?.payload))}</pre>}</div> : null}
@@ -433,13 +437,13 @@ export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, 
                       </div>
                       <div data-testid="diagnostics-inspector" className={`${mobileContent === 'messages' ? 'hidden xl:flex' : 'flex'} min-h-0 flex-col rounded-lg border border-border`}>
                         {/* The label is the mobile tab's job; repeating it inside the panel just eats a row. */}
-                        <div className="flex items-center gap-2 border-b border-border p-3"><Braces size={14} className="hidden text-accent xl:block" /><strong className="hidden text-xs text-text xl:inline">{d.inspector}</strong><div className="ml-auto flex items-center gap-1"><div className="flex rounded-md border border-border bg-bg p-0.5" role="tablist" aria-label={d.displayMode}><button type="button" role="tab" aria-selected={!inspectorRaw} onClick={() => setInspectorRaw(false)} className={`rounded px-2.5 py-1 text-xs font-semibold ${!inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.pretty}</button><button type="button" role="tab" aria-selected={inspectorRaw} onClick={() => setInspectorRaw(true)} className={`rounded px-2.5 py-1 text-xs font-semibold ${inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.json}</button></div>{selectedPayload.data ? <Button variant="ghost" icon={Copy} aria-label={d.copy} onClick={() => copy(selectedPayload.data.payload)}>{d.copy}</Button> : null}</div></div>
+                        <div className="flex items-center gap-2 border-b border-border p-3"><Braces size={14} className="hidden text-primary xl:block" /><strong className="hidden text-xs text-text xl:inline">{d.inspector}</strong><div className="ml-auto flex items-center gap-1"><div className="flex rounded-md border border-border bg-bg p-0.5" role="tablist" aria-label={d.displayMode}><button type="button" role="tab" aria-selected={!inspectorRaw} onClick={() => setInspectorRaw(false)} className={`rounded px-2.5 py-1 text-xs font-semibold ${!inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.pretty}</button><button type="button" role="tab" aria-selected={inspectorRaw} onClick={() => setInspectorRaw(true)} className={`rounded px-2.5 py-1 text-xs font-semibold ${inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.json}</button></div>{selectedPayload.data ? <Button variant="ghost" icon={Copy} aria-label={d.copy} onClick={() => copy(selectedPayload.data.payload)}>{d.copy}</Button> : null}</div></div>
                         <div className="max-h-[32rem] min-h-0 flex-1 overflow-auto p-3">{selectedSegment ? selectedPayload.isLoading ? <LoadingState /> : selectedPayload.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => selectedPayload.refetch()} /> : inspectorRaw ? <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-text-muted">{pretty(selectedPayload.data?.payload)}</pre> : <PrettyPayload value={selectedPayload.data?.payload} /> : <EmptyState title={d.pickMessage} icon={ListFilter} />}</div>
                       </div>
                     </section>
 
                     <section className="rounded-lg border border-border">
-                      <button type="button" aria-expanded={rawOpen} onClick={() => setRawOpen((value) => !value)} className="flex w-full items-center gap-2 p-3 text-left text-xs font-semibold text-text">{rawOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<Braces size={14} className="text-accent" />{d.rawRequest}<span className="ml-auto font-mono text-[10px] text-text-muted">{selectedRequest.segmentBytes} B</span></button>
+                      <button type="button" aria-expanded={rawOpen} onClick={() => setRawOpen((value) => !value)} className="flex w-full items-center gap-2 p-3 text-left text-xs font-semibold text-text">{rawOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<Braces size={14} className="text-primary" />{d.rawRequest}<span className="ml-auto font-mono text-[10px] text-text-muted">{selectedRequest.segmentBytes} B</span></button>
                       {rawOpen ? <div className="border-t border-border p-3">{raw.isLoading ? <LoadingState /> : raw.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => raw.refetch()} /> : <pre className="max-h-[36rem] overflow-auto whitespace-pre-wrap text-[11px] text-text-muted">{pretty(raw.data?.payload)}</pre>}</div> : null}
                     </section>
                   </div>

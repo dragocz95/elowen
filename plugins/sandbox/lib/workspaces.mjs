@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { activeExecutionLeases, waitForExecutionLeases, withRepoLease } from './db.mjs';
 import { assertRelativePath, runPrepared, userWorkspacesRoot } from './execution.mjs';
 
@@ -100,6 +100,33 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
       WHERE b.session_id = ? AND b.user_id = ? AND b.project_id = ? AND w.lifecycle = 'active'`)
       .get(sessionId, accountUserId, projectId);
     return row ? rowWorkspace(row) : null;
+  };
+
+  const resolveWorkspace = ({ accountUserId, workspace, accessibleProjectIds }) => {
+    const userId = requireAccount(accountUserId);
+    const row = workspaceById(String(workspace?.workspaceId ?? ''));
+    if (!row || row.userId !== userId) throw coded('workspace not found', 'workspace_not_found', 404);
+    if (row.projectId !== Number(workspace?.projectId)) throw coded('workspace project mismatch', 'project_mismatch', 409);
+    if (row.lifecycle !== 'active') throw coded('workspace is not active', 'workspace_orphaned', 409);
+    const project = ctx.host.stores().projects.get(row.projectId);
+    if (!project) throw coded('project not found', 'project_not_found', 404);
+    const allowed = accessibleProjectIds === 'all' ? null : new Set((accessibleProjectIds ?? []).map(Number));
+    if (allowed && !allowed.has(row.projectId)) throw coded('workspace project is outside the delegated scope', 'project_forbidden', 403);
+    const root = userWorkspacesRoot(dataDir, userId);
+    const expected = resolve(root, row.id);
+    let actual;
+    let canonicalRoot;
+    try {
+      if (lstatSync(expected).isSymbolicLink()) throw new Error('workspace root is a symlink');
+      actual = realpathSync(expected);
+      canonicalRoot = realpathSync(root);
+    } catch {
+      throw coded('workspace path is missing or unsafe', 'workspace_path_missing', 409);
+    }
+    if (resolve(row.path) !== expected || dirname(actual) !== canonicalRoot || !actual.startsWith(`${canonicalRoot}${sep}`)) {
+      throw coded('workspace path no longer matches its Sandbox identity', 'workspace_path_mismatch', 409);
+    }
+    return { workspaceId: row.id, projectId: row.projectId, accountUserId: userId, path: actual };
   };
 
   const workspaceRoots = ({ accountUserId, projectIds }) => {
@@ -336,7 +363,7 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
   };
 
   return {
-    listWorkspaces, workspaceById, workspaceRoots, workspacesFor, activeWorkspace, statusFor,
+    listWorkspaces, workspaceById, resolveWorkspace, workspaceRoots, workspacesFor, activeWorkspace, statusFor,
     createWorkspace, useWorkspace, commitWorkspace, removalPreview, removeWorkspace,
     markProjectOrphaned, reconcile, removeAccount, sessionListForUser, verifySessionOwner,
   };

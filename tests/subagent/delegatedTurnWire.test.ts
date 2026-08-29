@@ -131,10 +131,28 @@ describe('the delegated-turn wire payload', () => {
         .toBe(Number.MAX_SAFE_INTEGER);
     });
 
-    it('keeps `fast` tri-state: absent is not false', () => {
+    it('never carries a Fast snapshot into fresh, runner or resumed child sessions', () => {
       expect(parseDelegatedTurnRequest(request())).not.toHaveProperty('fast');
       expect(delegatedChannelSendOpts(request(), deps)).not.toHaveProperty('fast');
-      expect(parseDelegatedTurnRequest({ ...request(), fast: false })?.fast).toBe(false);
+      // A durable request written by an older build may still contain the field. It is accepted for resume,
+      // but deliberately ignored so the runner reads the contribution account's live preference instead.
+      expect(parseDelegatedTurnRequest({ ...request(), fast: true })).not.toHaveProperty('fast');
+      expect(delegatedChannelSendOpts(parseDelegatedTurnRequest({ ...request(), fast: true })!, deps)).not.toHaveProperty('fast');
+    });
+
+    it('carries only a durable workspace ref for a scoped child and refuses a host cwd beside it', () => {
+      const scoped = {
+        ...request(),
+        delegatedAccess: {
+          ...request().delegatedAccess,
+          workspaceRef: { workspaceId: 'ws_123', projectId: 3 },
+        },
+        clientCwd: undefined,
+      };
+      const parsed = parseDelegatedTurnRequest(JSON.parse(JSON.stringify(scoped)));
+      expect(parsed?.delegatedAccess.workspaceRef).toEqual({ workspaceId: 'ws_123', projectId: 3 });
+      expect(parsed).not.toHaveProperty('clientCwd');
+      expect(parseDelegatedTurnRequest({ ...scoped, clientCwd: '/host/workspace' })).toBeUndefined();
     });
   });
 });

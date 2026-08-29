@@ -40,7 +40,12 @@ const server = setupServer(
     ? HttpResponse.json({ items: [], hasMore: false, nextBefore: null })
     : HttpResponse.json([]))),
   http.get('*/api/brain/status', () => HttpResponse.json({
-    running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
+    running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null,
+    cards: [
+      { id: 'bg-processes-1', title: 'Background processes (1)', pinned: true, items: [{ text: 'sudo systemctl restart elowen-daemon elowen-web', status: 'in_progress' }] },
+      { id: 'status-probe', title: 'Status probe', items: [{ text: 'hydrated', status: 'pending' }] },
+    ],
+    queued: [],
   })),
   http.get('*/api/brain/processes', () => HttpResponse.json([process1])),
   http.get('*/api/brain/processes/:id/output', () => HttpResponse.json({ output: '' })),
@@ -69,6 +74,7 @@ async function renderSurface(telemetryShown: boolean | undefined): Promise<{ sho
   );
   const view = render(tree(telemetryShown));
   await waitFor(() => expect(FakeES.instances.length).toBeGreaterThan(0));
+  await screen.findByText('Status probe');
   const es = FakeES.instances[0]!;
   es.emit('process', { processes: [process1] });
   es.emit('tool', { type: 'tool', name: 'Delegate', id: 'call-1' });
@@ -85,7 +91,8 @@ describe('live work is reported in one place', () => {
 
     // The agent chip proves the stream was consumed, so the missing process row is a decision.
     expect(await screen.findByText(/1 agent/)).toBeInTheDocument();
-    expect(screen.queryByText('Background processes')).toBeNull();
+    expect(screen.queryByText(/Background processes/)).toBeNull();
+    expect(screen.queryByText('sudo systemctl restart elowen-daemon elowen-web')).toBeNull();
     expect(screen.queryByTitle('sleep 55')).toBeNull();
   });
 
@@ -93,7 +100,8 @@ describe('live work is reported in one place', () => {
     await renderSurface(false);
 
     expect(await screen.findByText(/1 agent/)).toBeInTheDocument();
-    expect(screen.queryByText('Background processes')).toBeNull();
+    expect(screen.queryByText(/Background processes/)).toBeNull();
+    expect(screen.queryByText('sudo systemctl restart elowen-daemon elowen-web')).toBeNull();
     expect(screen.queryByTitle('sleep 55')).toBeNull();
   });
 
@@ -107,6 +115,6 @@ describe('live work is reported in one place', () => {
     showRail(false);
     expect(await screen.findByText(/1 agent/)).toBeInTheDocument();
     // The rail closing must not bring the process row back with the chip.
-    expect(screen.queryByText('Background processes')).toBeNull();
+    expect(screen.queryByText(/Background processes/)).toBeNull();
   });
 });

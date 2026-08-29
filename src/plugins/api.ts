@@ -1,11 +1,12 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ZodTypeAny } from 'zod';
 import type { SubagentCompletionEmitter, SubagentEmitter, TurnIdentity, TurnModel, WorkflowCompletionEmitter, WorkflowEmitter } from './policyContext.js';
-import type { AskAnswer, AskQuestion, BrainCard, WorkflowCompletion, WorkflowUpdate } from '../brain/events.js';
+import type { AskAnswer, AskQuestion, BrainCard, WorkflowCompletion, WorkflowUpdate, WorkflowWorkspaceRef } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
-import type { DelegatingTurnAccess } from '../brain/delegatedScope.js';
 import type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface } from '../brain/slashCommands.js';
+import type { SandboxWorkspaceBinding, SandboxWorkspaceRef } from './workspaceTypes.js';
+export type { SandboxWorkspaceBinding, SandboxWorkspaceRef } from './workspaceTypes.js';
 import type { PlatformSurface } from '../shared/platformIdentity.js';
 import type { DelegatedChildSummary } from '../store/brainDelegationStore.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -44,6 +45,19 @@ export interface SubagentProgressEvent {
  *  caller through the delegation's own result path (the blocking Delegate return / background delivery). */
 export type DelegatedContinueResult = { status: 'reply'; reply: string } | { status: 'steered' };
 
+interface DelegatingTurnAccessContract {
+  admin: boolean;
+  projectIds: number[];
+  owner: boolean;
+  toolPolicy?: { allow?: string[]; deny?: string[] };
+  permissionBoundary: NoninteractivePermissionBoundary | null;
+  readOnly?: boolean;
+  planMode?: boolean;
+  principal?: string;
+  contributionUserId?: number | null;
+  workspaceRef?: SandboxWorkspaceRef;
+}
+
 export interface DelegatedChildBridge {
   runs(parentSessionId: string, limit?: number): DelegatedChildSummary[];
   read(parentSessionId: string, childSessionId: string): string;
@@ -51,13 +65,14 @@ export interface DelegatedChildBridge {
     parentSessionId: string,
     childSessionId: string,
     text: string,
-    access: DelegatingTurnAccess,
+    access: DelegatingTurnAccessContract,
     onEvent?: (e: SubagentProgressEvent) => void,
     model?: string,
     /** Lift the child out of read-only mode for this and every later turn, up to what `access` holds now.
      *  Refused unless the child was spawned read-only BY CHOICE and by this same principal — see
      *  promoteDelegatedScope, which owns every rule. */
     promote?: boolean,
+    workspaceId?: string,
   ): Promise<DelegatedContinueResult>;
   stop(parentSessionId: string, childSessionId: string): Promise<{ stopped: boolean }>;
 }
@@ -252,10 +267,12 @@ export interface SessionSource {
     permissionBoundary?: NoninteractivePermissionBoundary | null;
     /** Delegated channel session's durable parent conversation. Host validates owner + existence. */
     parentSessionId?: string;
-    /** The delegating turn's resolved working directory (from `ctx.currentWorkDir()`), inherited by the
-     *  child so its tools and "Current working directory" advertise the SAME project the parent runs in —
-     *  not the daemon's `/`. Validated against the child's policy at spawn like any client-reported cwd. */
+    /** Legacy inherited host cwd. Explicit workspace-scoped delegations never set or persist this. */
     cwd?: string;
+    /** Public explicit workspace assignment from Delegate/Workflow. Resolved by the host before persistence. */
+    workspaceId?: string;
+    /** Internal inherited durable ref for nested delegation from an already workspace-scoped child. */
+    workspaceRef?: SandboxWorkspaceRef;
     /** Chosen built-in/custom sub-agent type (a `subagent_type` on the delegate call). The host resolves
      *  it against the agent registry into the child's role prompt, tool allow-list and (for a read-only
      *  type) a minted read-only permission boundary — see brain/platforms.ts. */
@@ -275,6 +292,8 @@ export interface SessionSource {
     /** The principal running the delegating turn (see turnPrincipal), recorded on the child's durable scope
      *  so only that same identity can ever promote it out of read-only. */
     principal?: string;
+    /** Account whose model, prompt, compaction and Fast preferences composed the delegating turn. */
+    settingsUserId?: number | null;
     /** Account whose personal contributions, HOME and Sandbox workspaces the delegated child inherits. It is
      * host-resolved from the current turn, not guessed from the durable room owner. */
     contributionUserId?: number | null;
@@ -749,15 +768,19 @@ export interface ChannelRef { platform: string; channelId: string; threadId?: st
 export interface PlatformControlApi {
   /** Live model, whether a turn is in flight, and context usage of the channel's session — or null when
    *  nothing is spawned. */
-  status(ref: ChannelRef): { provider?: string; model: string; streaming: boolean; usage: { tokens: number | null; contextWindow: number; percent: number | null }; fast: boolean; fastAvailable: boolean } | null;
+  status(ref: ChannelRef): { provider?: string; model: string; streaming: boolean; usage: { tokens: number | null; contextWindow: number; percent: number | null }; fastAvailable: boolean } | null;
   /** Abort the channel's in-flight turn (no-op when idle). */
   abort(ref: ChannelRef): Promise<void>;
   /** Compact the channel session's context; resolves to `{ usage, compacted }` (null if no session).
    *  `compacted:false` is a benign no-op (nothing to compact yet), not an error — only a real compaction
    *  failure rejects, so the caller can tell "no session" from "nothing to do" from a genuine error. */
   compact(ref: ChannelRef): Promise<{ usage: { tokens: number | null; contextWindow: number; percent: number | null }; compacted: boolean; message?: string } | null>;
-  /** Set/toggle ChatGPT OAuth priority processing for this channel. */
+  /** Legacy conversation-local Fast control. Retained for API-v1 adapters; without sender identity it fails closed. */
   setFast(ref: ChannelRef, on?: boolean): { fast: boolean; fastAvailable: boolean } | null;
+  /** Read the invoking linked account's durable Fast preference. Added by shared API v3. */
+  fastStatus?(ref: ChannelRef, senderPlatformId: string): { fast: boolean; fastAvailable: boolean } | null;
+  /** Set/toggle the invoking linked account's durable Fast preference. Added by shared API v3. */
+  setAccountFast?(ref: ChannelRef, senderPlatformId: string, on?: boolean): { fast: boolean; fastAvailable: boolean } | null;
   /** Admin-only daemon restart (attributed to the instance operator); rejects when restart isn't
    *  available on this deployment. The caller is responsible for its own admin gate. */
   restart(): Promise<void>;
@@ -908,6 +931,9 @@ export interface WorkflowRecoveryControl {
     workflowId: string;
     parentSessionId: string;
     toolCallId: string;
+    /** Trusted anchors loaded from brain_workflows, outside the agent-writable recovery journal. */
+    trustedWorkspaceRef?: WorkflowWorkspaceRef;
+    trustedNodeWorkspaceRefs?: Record<string, WorkflowWorkspaceRef>;
     hooks: {
       emit: (update: WorkflowUpdate) => void;
       complete: (completion: WorkflowCompletion) => void;
@@ -948,9 +974,7 @@ export interface LspStateControl {
 
 /** One account-owned Sandbox worktree root. Core consumes only the ownership tuple needed to extend the
  * canonical path policy; richer Git state stays live in the owning plugin. */
-export interface SandboxWorkspaceRoot {
-  workspaceId: string;
-  projectId: number;
+export interface SandboxWorkspaceRoot extends SandboxWorkspaceRef {
   path: string;
 }
 
@@ -982,7 +1006,10 @@ export type SandboxExecutionCommand =
  * policy have already been applied by Sandbox. */
 export interface SandboxPreparedExecution {
   mode: 'confined' | 'direct';
+  /** Host cwd used only by the process launcher. Never render it to a workspace-scoped model. */
   cwd: string;
+  /** Logical cwd visible inside the guest namespace and in tool results. */
+  displayCwd: string;
   home: string;
   roots: string[];
   launch:
@@ -990,12 +1017,23 @@ export interface SandboxPreparedExecution {
     | { type: 'argv'; file: string; args: string[]; env: Record<string, string> };
   workspace: SandboxWorkspace | null;
   lease: SandboxExecutionLease;
+  /** Remove verified host-only prefixes from arbitrary command output before it reaches the model. */
+  sanitizeOutput(text: string): string;
 }
 
 /** Live Sandbox domain seam. Consumers resolve it on every use; retaining a value across plugin reloads is
  * invalid because its DB/runtime generation may already have been replaced. */
 export interface SandboxControl {
   workspaceRoots(input: { projectIds: readonly number[] }): SandboxWorkspaceRoot[];
+  /** Resolve one durable workspace ref for an explicit account and current project ceiling. Refuses stale,
+   * orphaned, foreign, path-mismatched and inaccessible workspaces rather than falling back to a Project. */
+  resolveWorkspace(input: {
+    accountUserId: number;
+    workspace: SandboxWorkspaceRef;
+    accessibleProjectIds: readonly number[] | 'all';
+  }): SandboxWorkspaceBinding;
+  /** Hold a workspace alive for the full delegated turn. Removal remains blocked until release/owner death. */
+  acquireDelegationLease(input: { accountUserId: number; workspace: SandboxWorkspaceRef }): SandboxExecutionLease;
   /** The same lookup for an EXPLICITLY named account, for callers that have no ambient identity to read.
    *  `workspaceRoots` resolves the account from the current contribution/identity scope, which is exactly
    *  what a background service does not have: `registerInterval` and `registerService` run with
@@ -1012,6 +1050,8 @@ export interface SandboxControl {
       /** A fresh network namespace has no route to the host loopback or another site's listener. Omitted
        * keeps the existing shared network for interactive terminal/GitHub work. */
       network?: 'shared' | 'isolated';
+      /** When present, execution is forced into this exact workspace even for an operator/admin. */
+      workspace?: SandboxWorkspaceRef;
     },
     /** For a caller with NO ambient turn to read — a background service has neither an identity nor a
      *  set of allowed roots. Naming both explicitly is the only honest way to say whose HOME the child
@@ -1026,6 +1066,10 @@ export interface SandboxControl {
       roots: readonly string[];
     },
   ): SandboxPreparedExecution | Promise<SandboxPreparedExecution>;
+  gitStatus?(input: { accountUserId: number; workspace: SandboxWorkspaceRef; path?: string }): Promise<{
+    branch: string;
+    lines: string[];
+  }>;
 }
 
 /** Options a Microsoft Graph call accepts, mirroring the delegated client the Teams plugin already owns. */
@@ -1177,7 +1221,7 @@ export interface NotificationDestinationProvider {
 export interface PluginContext {
   /** Contribute a tool. `ownerUserId` scopes it to ONE Elowen account: it is then composed only into
    * that account's own/direct/delegated sessions. Omitted → instance-wide, as before. */
-  registerTool(tool: ToolDefinition, opts?: { ownerUserId?: number }): void;
+  registerTool(tool: ToolDefinition, opts?: { ownerUserId?: number; hostFilesystem?: boolean; workspaceSafe?: boolean }): void;
   /** Contribute a skill. `ownerUserId` scopes it to ONE Elowen account: it is then advertised (and
    *  `/skill:` expandable) only in that user's own sessions. Omitted → instance-wide, as before. */
   registerSkill(skill: PluginSkill, opts?: { ownerUserId?: number }): void;
@@ -1339,6 +1383,12 @@ export interface PluginContext {
    *  absolute path (throws otherwise). File/terminal tools call this before any disk access. Evaluated at
    *  tool-call time against the per-session Policy carried on AsyncLocalStorage. */
   assertPathAllowed(path: string): string;
+  /** Render a validated host path in the current logical filesystem view. */
+  displayPath(path: string): string;
+  /** Stable per-session read/write identity; workspace mode includes the durable workspace id. */
+  pathStateKey(path: string): string;
+  /** Remove exact verified host workspace prefixes from diagnostics before returning them to the model. */
+  sanitizePathOutput(text: string): string;
   /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
    *  a tool's working directory. */
   allowedRoots(): string[];
@@ -1385,7 +1435,7 @@ export interface PluginContext {
    *  toolPolicy carries exact allow+deny sets, and permissionBoundary carries the effective unattended
    *  granular-rule context so a child inherits exactly the caller's scope. `readOnly` is stamped by the
    *  host when the caller's turn is PLANNING — forward it untouched; never clear it. */
-  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; contributionUserId?: number | null; readOnly?: boolean };
+  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef };
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;
@@ -1450,7 +1500,7 @@ export interface PluginContext {
    *
    *  `model` optionally overrides the model the sub-agent runs on, as a `provider/model` string (value
    *  from {@link listModels}); omit it to resume on the model recorded on the child's session row. */
-  continueSubagent(sessionId: string, text: string, onEvent?: (e: SubagentProgressEvent) => void, model?: string, promote?: boolean): Promise<DelegatedContinueResult>;
+  continueSubagent(sessionId: string, text: string, onEvent?: (e: SubagentProgressEvent) => void, model?: string, promote?: boolean, workspaceId?: string): Promise<DelegatedContinueResult>;
   /** Stop a DIRECT sub-agent listed by {@link subagentRuns} — a runaway or no-longer-needed one — without
    *  touching its parent or siblings. The host anchors the lookup to the current turn's session, exactly
    *  like {@link readSubagent}; the plugin supplies only the child id and cannot widen the parent scope.

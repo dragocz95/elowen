@@ -1,12 +1,18 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { useDismiss } from '../../lib/useDismiss';
 import { useTranslation } from '../../lib/i18n';
 import { useProjects } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
 import { useToast } from '../../components/ui/Toast';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '../../components/ui/shadcn/dropdown-menu';
 import { useBrainChat } from './BrainChatProvider';
 
 interface ProjectLike { id: number; slug: string; path: string; icon?: string }
@@ -55,9 +61,6 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   // it is the value the daemon returned for the move it just performed.
   const [confirmed, setConfirmed] = useState<string | null>(null);
 
-  const rootRef = useRef<HTMLDivElement>(null);
-  useDismiss(rootRef, open, () => setOpen(false));
-
   const reported = telemetry.project?.cwd ?? null;
   // A different conversation, or a poll that has caught up, both retire the held value — after which the
   // label is the daemon's status again and cannot drift.
@@ -97,48 +100,50 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const label = current?.slug ?? t.brainChat.projectPickerNone;
 
   return (
-    <div ref={rootRef} data-testid="chat-project-picker" className="relative shrink-0">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={moving || !ready}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={cwd ? `${t.brainChat.projectPicker}: ${cwd}` : t.brainChat.projectPicker}
-        aria-disabled={!ready}
-        className={`flex items-center gap-1.5 rounded-md border border-border text-text-muted transition-colors hover:bg-elevated hover:text-text disabled:opacity-50 ${
-          variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[200px] px-2.5 text-xs'
-        }`}
-      >
-        {current ? <ProjectIcon project={current} size={variant === 'compact' ? 12 : 14} /> : null}
-        <span className="truncate">{label}</span>
-        <ChevronDown size={variant === 'compact' ? 12 : 14} className="shrink-0" aria-hidden />
-      </button>
-
-      {open ? (
-        <div
-          role="listbox"
+    <div data-testid="chat-project-picker" className="relative shrink-0">
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            disabled={moving || !ready}
+            title={cwd ? `${t.brainChat.projectPicker}: ${cwd}` : t.brainChat.projectPicker}
+            aria-disabled={!ready}
+            className={`flex items-center gap-1.5 rounded-md border border-border text-text-muted transition-colors hover:bg-elevated hover:text-text disabled:opacity-50 ${
+              variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[200px] px-2.5 text-xs'
+            }`}
+          >
+            {current ? <ProjectIcon project={current} size={variant === 'compact' ? 12 : 14} /> : null}
+            <span className="truncate">{label}</span>
+            <ChevronDown size={variant === 'compact' ? 12 : 14} className="shrink-0" aria-hidden />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
           aria-label={t.brainChat.projectPicker}
-          className="absolute right-0 z-20 mt-1 max-h-80 w-64 overflow-y-auto rounded-lg border border-border bg-elevated py-1 shadow-lg"
+          align="end"
+          sideOffset={4}
+          className="max-h-80 w-64 p-0 py-1"
         >
-          {items.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              role="option"
-              aria-selected={project.id === current?.id}
-              onClick={() => void move(project)}
-              className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-bg ${
-                project.id === current?.id ? 'text-accent' : 'text-text'
-              }`}
-            >
-              <ProjectIcon project={project} size={14} />
-              <span className="min-w-0 flex-1 truncate">{project.slug}</span>
-              <span className="shrink-0 truncate font-mono text-tiny text-text-muted" title={project.path}>{project.path}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+          <DropdownMenuRadioGroup
+            value={current ? String(current.id) : ''}
+            onValueChange={(value) => {
+              const project = items.find((item) => String(item.id) === value);
+              if (project) void move(project);
+            }}
+          >
+            {items.map((project) => (
+              <DropdownMenuRadioItem
+                key={project.id}
+                value={String(project.id)}
+                className="gap-2 rounded-none px-2.5 py-1.5 text-xs text-foreground data-[state=checked]:text-primary [&>span:first-child]:hidden"
+              >
+                <ProjectIcon project={project} size={14} />
+                <span className="min-w-0 flex-1 truncate">{project.slug}</span>
+                <span className="shrink-0 truncate font-mono text-tiny text-muted-foreground" title={project.path}>{project.path}</span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

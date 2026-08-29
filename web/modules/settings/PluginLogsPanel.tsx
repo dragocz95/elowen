@@ -1,6 +1,6 @@
 'use client';
 import { ScrollText } from 'lucide-react';
-import { SettingsGroup } from './SettingsSurface';
+import { SettingsGroup } from '../../components/ui/SettingsSurface';
 import { EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import type { PluginLogs } from '../../lib/types';

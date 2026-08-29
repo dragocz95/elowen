@@ -11,7 +11,7 @@ export function PatchView({ diff, empty, loading = false }: { diff: string; empt
       {diff.split('\n').map((line, i) => {
         const c = line.startsWith('+') && !line.startsWith('+++') ? 'text-success'
           : line.startsWith('-') && !line.startsWith('---') ? 'text-danger'
-          : line.startsWith('@@') ? 'text-accent'
+          : line.startsWith('@@') ? 'text-primary'
           : 'text-text-muted';
         return <div key={i} className={c}>{line || ' '}</div>;
       })}

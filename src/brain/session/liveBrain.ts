@@ -8,6 +8,7 @@ import type { TurnMode } from '../service/turnRequest.js';
 import type { ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import type { AssessColdCompaction } from './coldStartCompaction.js';
 import type { StoredChatImage } from '../chatImages.js';
+import type { WorkspacePathView } from '../../plugins/pathView.js';
 
 /** A queued mid-turn message's image attachments, in PI's ImageContent shape. */
 export type QueuedImage = { type: 'image'; data: string; mimeType: string };
@@ -75,7 +76,7 @@ export interface LiveBrain {
    *  the rate-limits route polls for the active conversation. */
   provider: string;
   thinkingLevel?: string;
-  /** Resolved provider capabilities + live request switches used by `/fast` and status surfaces. */
+  /** Provider payload transforms such as configured temperature and Qwen thinking budgets. */
   requestProfile: ProviderRequestProfile;
   fastAvailable: boolean;
   thinkingLabels: Record<string, string>;
@@ -116,14 +117,11 @@ export interface LiveBrain {
   planSafeToolNames: Set<string>;
   /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */
   visionFallback?: boolean;
-  /** Exact session-scoped profile to restore after the temporary vision fallback. This cannot be
-   *  re-derived from Account settings: the user may have selected a different provider/model, reasoning
-   *  level or Fast state just for this conversation. */
+  /** Exact session-scoped model profile to restore after the temporary vision fallback. */
   visionFallbackReturn?: {
     provider?: string;
     model: string;
     thinkingLevel?: string;
-    fast: boolean;
   };
   /** SESSION-scoped YOLO override (the CLI `/yolo` command): true/false wins over the user's persisted
    *  default for this live session only. Deliberately NOT carried across respawns (model switch,
@@ -270,8 +268,6 @@ export interface SpawnOpts {
   scheduled?: boolean;
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
-  /** Initial Fast state for platform sessions; ignored when the resolved model cannot use it. */
-  fast?: boolean;
   /** Durable parent conversation for delegated sessions (usage attribution + history navigation). */
   parentSessionId?: string;
   /** Immutable execution boundary minted by the delegating turn and checked on every child respawn. */
@@ -298,6 +294,8 @@ export interface SpawnOpts {
    *  the policy before use — see BrainService.turnWorkDir — and preferred as the session cwd, which pi
    *  advertises to the model ("Current working directory: …"). */
   clientCwd?: string;
+  /** Ephemeral exact workspace view resolved through Sandbox for this process. Never persisted or sent over IPC. */
+  pathView?: WorkspacePathView;
 }
 
 /** Fallback auto-compact threshold (context-window fill %) when the user set none — also the fixed value

@@ -1,6 +1,6 @@
 import { afterAll, describe, it, expect } from 'vitest';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,7 +44,7 @@ interface Tool {
 /** Build a workflow harness: a mock plugin ctx that captures the registered tools + emitted snapshots,
  *  and a controllable fake `run` handler. `run` resolves each node to `done:<task>` unless the task
  *  contains "FAIL" (then it returns an Error), recording the order nodes were launched. */
-const TEST_ACCESS = { admin: false, projectIds: [1], owner: true, permissionBoundary: null } as const;
+const TEST_ACCESS = { admin: false, projectIds: [1], owner: true, permissionBoundary: null, contributionUserId: 1 } as const;
 
 interface WorkflowControl {
   cancelForSession(input: { sessionId: string }): { cancelled: number };
@@ -83,7 +83,7 @@ function harness(opts: {
   gate = null;
   const tools = new Map<string, Tool>();
   const controls = new Map<string, WorkflowControl>();
-  const snapshots: { id: string; toolCallId: string; title?: string; status: string; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string }[] }[] = [];
+  const snapshots: { id: string; toolCallId: string; title?: string; status: string; workspaceRef?: { workspaceId: string; projectId: number }; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string; workspaceRef?: { workspaceId: string; projectId: number } }[] }[] = [];
   const launched: string[] = [];
   /** The context chunks each node was actually handed, by task — what the child can see, not what we hoped. */
   const contexts = new Map<string, string[]>();
@@ -92,8 +92,8 @@ function harness(opts: {
   const attempts = new Map<string, number>();
   /** Every launch as the host saw it: which channel the node ran in, and the VERBATIM task it received.
    *  A resume is only real if the channel id repeats — that is what puts the retry back in the same session. */
-  const runs: { task: string; channelId: string; fullTask: string; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string } }[] = [];
-  const run = async (source: { access?: { context?: string[]; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string } }; channelId?: string }, fullTask: string, onEvent: (e: unknown) => void) => {
+  const runs: { task: string; channelId: string; fullTask: string; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; workspaceRef?: { workspaceId: string; projectId: number } }[] = [];
+  const run = async (source: { access?: { context?: string[]; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; workspaceRef?: { workspaceId: string; projectId: number } }; channelId?: string }, fullTask: string, onEvent: (e: unknown) => void) => {
     // A resumed node is handed its task plus a trailing resume note. Everything keyed by identity here
     // (launch order, session id, FAIL_ONCE attempts) must key on the TASK, or a retry would read as a
     // different node and FAIL_ONCE would fail forever.
@@ -104,6 +104,7 @@ function harness(opts: {
       ...(source.access?.sessionIdleMs !== undefined ? { sessionIdleMs: source.access.sessionIdleMs } : {}),
       ...(source.access?.toolPolicy !== undefined ? { toolPolicy: source.access.toolPolicy } : {}),
       ...(source.access?.model !== undefined ? { model: source.access.model } : {}),
+      ...(source.access?.workspaceRef !== undefined ? { workspaceRef: source.access.workspaceRef } : {}),
     });
     contexts.set(task, source.access?.context ?? []);
     if (!opts.lateSession) onEvent({ type: 'session', sessionId: `s-${task}` });
@@ -130,7 +131,7 @@ function harness(opts: {
   /** Mutable so a test can narrow the caller's access boundary between a start and a resume, the way an
    *  operator revoking a project or disabling tools does to a real conversation. */
   const access: {
-    current: { admin: boolean; projectIds: number[]; owner: boolean; permissionBoundary: null; toolPolicy?: { allow?: string[]; deny?: string[] }; readOnly?: boolean };
+    current: { admin: boolean; projectIds: number[]; owner: boolean; permissionBoundary: null; toolPolicy?: { allow?: string[]; deny?: string[] }; readOnly?: boolean; contributionUserId?: number; workspaceRef?: { workspaceId: string; projectId: number } };
   } = {
     current: { ...TEST_ACCESS, toolPolicy: opts.toolPolicyAllow ? { allow: opts.toolPolicyAllow } : undefined },
   };
@@ -153,7 +154,14 @@ function harness(opts: {
     currentIdentity: () => ({ elowenUserId: 1, platform: 'cli', userId: '1' }),
     currentAccess: () => access.current,
     currentModel: () => model.current,
+    control: (name: string) => name === 'sandbox' ? {
+      workspacesFor: () => ['ws_root', 'ws_node', 'ws_child'].map((workspaceId) => ({
+        workspaceId, projectId: 1, path: `/host/${workspaceId}`, label: workspaceId, branch: 'b', baseRef: 'main',
+      })),
+      resolveWorkspace: ({ accountUserId, workspace }: any) => ({ accountUserId, ...workspace, path: `/host/${workspace.workspaceId}` }),
+    } : undefined,
     assertPathAllowed: assertTestPathAllowed,
+    sanitizePathOutput: (text: string) => text,
     workflowEmitter: () => (u: (typeof snapshots)[number]) => { snapshots.push(u); },
     // The gated variant must also RESOLVE the model: returning [] makes buildNodeAccess throw
     // "model is not available" before it ever reaches the fence being tested.
@@ -189,6 +197,7 @@ describe('workflow engine', () => {
     if (!start) throw new Error('WorkflowStart was not registered');
 
     expect(start.parameters?.properties).toHaveProperty('nodesFile');
+    expect(start.parameters?.properties).toHaveProperty('workspaceId');
     expect(start.parameters?.properties).not.toHaveProperty('nodes');
     expect(start.parameters?.required).toContain('nodesFile');
     expect(start.description).toContain('use Write');
@@ -203,6 +212,28 @@ describe('workflow engine', () => {
       nodesFile: workflowFile({ title: 'From file', nodes: [{ id: 'object', task: 'object' }] }),
     });
     expect(launched).toEqual(['array', 'object']);
+  });
+
+  it('applies WorkflowStart.workspaceId as an immutable workspace ceiling', async () => {
+    const { tools, runs } = harness();
+    const start = tools.get('WorkflowStart');
+    if (!start) throw new Error('WorkflowStart was not registered');
+    await start.execute('workspace-default', {
+      nodesFile: workflowFile([
+        { id: 'default', task: 'default' },
+        { id: 'explicit', task: 'explicit', workspaceId: 'ws_root' },
+      ]),
+      workspaceId: 'ws_root',
+    });
+    expect(runs.find((run) => run.task === 'default')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
+    expect(runs.find((run) => run.task === 'explicit')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
+    const rejected = await start.execute('workspace-sibling', {
+      nodesFile: workflowFile([{ id: 'sibling', task: 'sibling', workspaceId: 'ws_node' }]),
+      workspaceId: 'ws_root',
+    });
+    expect(rejected.content[0]?.text).toContain('cannot switch to a sibling workspace');
+    const add = tools.get('WorkflowAddNodes');
+    expect(add?.parameters?.properties).toHaveProperty('workspaceId');
   });
 
   it('lets explicit start arguments override reusable file options', async () => {
@@ -1599,6 +1630,8 @@ describe('workflow recovery journal + boot resume', () => {
   type ResumeControl = {
     resumeInterrupted(input: {
       workflowId: string; parentSessionId: string; toolCallId: string;
+      trustedWorkspaceRef?: { workspaceId: string; projectId: number };
+      trustedNodeWorkspaceRefs?: Record<string, { workspaceId: string; projectId: number }>;
       hooks: {
         emit: (u: unknown) => void;
         complete: (c: { id: string; toolCallId: string; status: string; result: string }) => void;
@@ -1697,6 +1730,39 @@ describe('workflow recovery journal + boot resume', () => {
     await until(() => completions.length === 1);
     expect(h2.launched).toEqual(['b-par']); // a-par's journaled result survived; only the hung node re-ran
     expect(completions[0]!.result).toContain('done:a-par');
+  });
+
+  it('treats the durable workflow snapshot as the workspace authority and rejects a tampered journal', async () => {
+    const h1 = harness();
+    h1.access.current.workspaceRef = { workspaceId: 'ws-trusted', projectId: 1 };
+    gate = { task: 'a-anchor', promise: new Promise<void>(() => { /* interrupted */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-anchor', { nodesFile: workflowFile([{ id: 'a', task: 'a-anchor' }]) });
+    await until(() => h1.snapshots.length > 0);
+    const trusted = h1.snapshots[0]!;
+    expect(trusted.workspaceRef).toEqual({ workspaceId: 'ws-trusted', projectId: 1 });
+    expect(trusted.nodes[0]!.workspaceRef).toEqual({ workspaceId: 'ws-trusted', projectId: 1 });
+
+    const path = journalPathOf(trusted.id);
+    const journal = JSON.parse(readFileSync(path, 'utf8')) as { workspaceRef: { workspaceId: string }; nodes: { workspaceRef?: { workspaceId: string } }[] };
+    journal.workspaceRef.workspaceId = 'ws-sibling';
+    journal.nodes[0]!.workspaceRef!.workspaceId = 'ws-sibling';
+    writeFileSync(path, JSON.stringify(journal));
+
+    const h2 = harness();
+    const outcome = await resumeControlOf(h2).resumeInterrupted({
+      workflowId: trusted.id, parentSessionId: 'brain-parent', toolCallId: 'call-anchor',
+      trustedWorkspaceRef: trusted.workspaceRef,
+      trustedNodeWorkspaceRefs: { a: trusted.nodes[0]!.workspaceRef! },
+      hooks: {
+        emit: () => {}, complete: () => { throw new Error('must not complete a refused resume'); },
+        stopChild: async () => ({ stopped: true }),
+        validateBoundary: () => { throw new Error('journal workspace must be rejected before access validation'); },
+      },
+    });
+    expect(outcome.resumed).toBe(false);
+    expect(outcome.reason).toContain('trusted workflow snapshot');
+    expect(h2.launched).toEqual([]);
+    expect(existsSync(path)).toBe(false);
   });
 
   it('refuses to resume when core rejects a journaled boundary, and runs nothing (D3)', async () => {

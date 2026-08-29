@@ -106,8 +106,8 @@ export interface BrainMessageFile { url: string; name: string; size: number }
 export interface BrainMessageView {
   id?: string; synthetic?: boolean; role: string; text: string; segments?: BrainSegment[];
   kind?: string; detail?: string; images?: BrainMessageImage[];
-  /** Display metadata only. Legacy rows omit duration; every stored row may expose its timestamp. */
-  createdAt?: string; durationMs?: number;
+  /** Display metadata only. Legacy rows omit duration/model; every stored row may expose its timestamp. */
+  createdAt?: string; durationMs?: number; model?: string;
 }
 
 /** The mode a turn runs in: `build` (the default), `plan` (planning only, tools clamped) or `workflow`.

@@ -1,10 +1,13 @@
 'use client';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Trash2, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { uiZoom } from '../../lib/uiZoom';
-import { MenuSurface } from './MenuSurface';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from './shadcn/dropdown-menu';
 
 /** An item carries EITHER a Lucide `icon` component OR a pre-rendered `iconNode` (e.g. a brand
  *  <ModelIcon/> for glyphs that aren't Lucide), never both — the two are mutually exclusive so the
@@ -18,11 +21,28 @@ export type ActionMenuItem = {
   | { icon?: never; iconNode?: ReactNode }
 );
 
+/** Grace period before a hover-opened menu closes, so a pointer crossing the gap between the trigger
+ *  and the panel doesn't dismiss it on the way down. */
+const CLOSE_DELAY_MS = 160;
+
+/** Where focus should land when the menu opens. Radix's own answer ("the panel, then its first item if
+ *  the user is on the keyboard") is right for a click and for ArrowDown, but wrong for the other two
+ *  ways this menu opens: a HOVER must not take focus away from whatever the reader was doing, and
+ *  ArrowUp is the menu-button pattern's "open at the last item". */
+type OpenFocus = 'none' | 'default' | 'last';
+
 /**
- * Global hover/click action menu. Opens on hover (and click for touch), and stays
- * open while the pointer is over the trigger OR the menu — a small close delay plus
- * a gapless dropdown means moving down onto an item never dismisses it early.
- * Default trigger is a red trash icon. Reusable across destructive/contextual actions.
+ * Global hover/click action menu, composed from the shadcn/ui `DropdownMenu` parts in
+ * `./shadcn/dropdown-menu.tsx`. Opens on hover (and click for touch), and stays open while the pointer
+ * is over the trigger OR the menu — the panel is a DOM child of the wrapper, so moving down onto an
+ * item never leaves it, and a short close delay covers the gap between the two. Default trigger is a
+ * red trash icon. Reusable across destructive/contextual actions.
+ *
+ * The keyboard contract — roving arrows, Home/End, typeahead, Enter/Space, Escape — is Radix's, not
+ * this file's. What stays here is the app's policy: hover-to-open with a grace period, ArrowUp opening
+ * at the last item, and focus returning to the trigger only when the menu actually held it. `ActionMenu`
+ * is handed to plugin bundles through `window.ElowenUiRuntime.components`, so its props are a published
+ * contract and did not change with the port.
  */
 export function ActionMenu({ items, label, trigger, triggerClassName, align = 'right' }: {
   items: ActionMenuItem[];
@@ -33,122 +53,103 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
   align?: 'left' | 'right';
 }) {
   const [open, setOpen] = useState(false);
-  const [focusOnOpen, setFocusOnOpen] = useState<'first' | 'last' | false>(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openFocus = useRef<OpenFocus>('none');
+  // Whether closing should hand focus back to the trigger. It should when the menu owned focus — a
+  // keyboard open, a selection, Escape — and must not when it was merely hovered open, or dismissed by
+  // a click somewhere else, because that would steal focus from what the reader actually pressed.
+  const restoreFocus = useRef(false);
   const { t } = useTranslation();
   const resolvedLabel = label ?? t.common.actions;
 
-  // Portalled to <body> + fixed-positioned from the trigger rect so the dropdown escapes the
-  // card's stacking context / overflow — otherwise a sibling card below paints over it.
-  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
-  const place = useCallback(() => {
-    const el = btnRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    // The UI-scale feature puts `zoom: z` on <html>. This menu is portalled into <body> (inside that
-    // zoom) and fixed-positioned, so its CSS px render at z×. getBoundingClientRect already returns
-    // zoomed (visual) viewport coords, so divide them by z to land the menu under the trigger instead
-    // of flinging it off to the side. window.innerWidth is the unzoomed layout width → left as-is.
-    const z = uiZoom();
-    setPos(align === 'right'
-      ? { top: r.bottom / z, right: window.innerWidth / z - r.right / z }
-      : { top: r.bottom / z, left: r.left / z });
-  }, [align]);
-
-  const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; } };
-  const scheduleClose = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 160); };
-  const openMenu = (focus: 'first' | 'last' | false = false) => { cancelClose(); place(); setFocusOnOpen(focus); setOpen(true); };
-  const closeMenu = (restoreFocus = false) => {
-    setOpen(false);
-    setFocusOnOpen(false);
-    if (restoreFocus) btnRef.current?.focus({ preventScroll: true });
+  const cancelClose = useCallback(() => {
+    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; }
+  }, []);
+  const openMenu = useCallback((focus: OpenFocus) => {
+    cancelClose();
+    openFocus.current = focus;
+    restoreFocus.current = false;
+    setOpen(true);
+  }, [cancelClose]);
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => { closeTimer.current = null; setOpen(false); }, CLOSE_DELAY_MS);
   };
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current?.contains(e.target as Node)) return;
-      if (menuRef.current?.contains(e.target as Node)) return;
-      setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) closeMenu(true); };
-    const reposition = () => place();
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
-    };
-  }, [open, place]);
-
-  useEffect(() => () => cancelClose(), []);
+  useEffect(() => () => cancelClose(), [cancelClose]);
 
   return (
     <div
-      ref={ref}
       className="relative"
-      onMouseEnter={() => openMenu(false)}
+      onMouseEnter={() => openMenu('none')}
       onMouseLeave={scheduleClose}
     >
-      <button
-        ref={btnRef}
-        type="button"
-        aria-label={resolvedLabel}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title={resolvedLabel}
-        onClick={() => (open ? closeMenu() : openMenu('first'))}
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-            event.preventDefault();
-            openMenu(event.key === 'ArrowUp' ? 'last' : 'first');
-          }
-        }}
-        className={triggerClassName ?? 'inline-flex h-8 w-8 items-center justify-center rounded-md bg-danger text-bg transition-colors hover:bg-danger/85'}
-        style={{ transitionDuration: 'var(--motion-fast)' }}
+      <DropdownMenu
+        open={open}
+        // Not modal: this menu opens on hover, so it must not lock the page's scroll or make the rest
+        // of the document unclickable just because a pointer crossed the trigger.
+        modal={false}
+        onOpenChange={(next) => { cancelClose(); setOpen(next); }}
       >
-        {trigger ?? <Trash2 size={15} aria-hidden />}
-      </button>
-      {mounted && open && pos && createPortal(
-        <MenuSurface
-          ref={menuRef}
-          autoFocus={focusOnOpen}
-          onDismiss={(reason) => closeMenu(reason === 'escape')}
-          onMouseEnter={cancelClose}
-          onMouseLeave={scheduleClose}
-          className="overlay-layer-menu fixed min-w-[12rem] overflow-hidden rounded-lg border border-border bg-surface py-1.5"
-          style={{ top: pos.top, left: pos.left, right: pos.right, boxShadow: 'var(--shadow-raised)' }}
+        <DropdownMenuTrigger
+          ref={triggerRef}
+          aria-label={resolvedLabel}
+          title={resolvedLabel}
+          onPointerDown={() => { if (!open) openMenu('default'); }}
+          // Radix opens a menu on POINTERDOWN, which a click synthesised by assistive technology or by
+          // a script never produces — and this menu has always opened on click. `detail === 0` is that
+          // click: a real pointer press carries a click count, so this cannot double-fire with the
+          // handler above, and Enter/Space are already consumed by the keyboard branch.
+          onClick={(event) => { if (event.detail === 0) (open ? setOpen(false) : openMenu('default')); }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              openMenu('last');
+              return;
+            }
+            if (['ArrowDown', 'Enter', ' '].includes(event.key)) openMenu('default');
+          }}
+          className={triggerClassName ?? 'inline-flex h-8 w-8 items-center justify-center rounded-md bg-destructive text-destructive-foreground transition-colors hover:bg-destructive/85'}
         >
-          {items.map((it) => {
-            const Icon = it.icon;
-            const danger = it.tone === 'danger';
+          {trigger ?? <Trash2 size={15} aria-hidden />}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          ref={contentRef}
+          align={align === 'right' ? 'end' : 'start'}
+          onFocus={() => { restoreFocus.current = true; }}
+          onInteractOutside={() => { restoreFocus.current = false; }}
+          onOpenAutoFocus={(event) => {
+            if (openFocus.current === 'default') return;
+            // Radix would focus the panel here; a hover-opened menu must leave focus alone.
+            event.preventDefault();
+            if (openFocus.current !== 'last') return;
+            const rows = contentRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([data-disabled])');
+            rows?.[rows.length - 1]?.focus();
+          }}
+          onCloseAutoFocus={(event) => {
+            // Radix always returns focus to the trigger; that is wrong for a menu the pointer merely
+            // passed over, so the decision is made here instead.
+            event.preventDefault();
+            if (restoreFocus.current) triggerRef.current?.focus({ preventScroll: true });
+          }}
+        >
+          {items.map((item) => {
+            const Icon = item.icon;
             return (
-              <button
-                key={it.label}
-                type="button"
-                role="menuitem"
-                onClick={() => { closeMenu(true); it.onSelect(); }}
-                className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors ${danger ? 'text-danger hover:bg-danger hover:text-bg' : 'text-text hover:bg-elevated'}`}
-                style={{ transitionDuration: 'var(--motion-fast)' }}
+              <DropdownMenuItem
+                key={item.label}
+                variant={item.tone === 'danger' ? 'destructive' : 'default'}
+                onSelect={() => { restoreFocus.current = true; item.onSelect(); }}
               >
-                {it.iconNode ?? (Icon ? <Icon size={15} aria-hidden /> : null)}
-                {it.label}
-              </button>
+                {item.iconNode ?? (Icon ? <Icon size={15} aria-hidden /> : null)}
+                {item.label}
+              </DropdownMenuItem>
             );
           })}
-        </MenuSurface>,
-        document.body,
-      )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

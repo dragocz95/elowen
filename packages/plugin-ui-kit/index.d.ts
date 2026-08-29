@@ -10,7 +10,7 @@ import type { ComponentType } from 'react';
 /** See index.js — bump on incompatible changes to `ElowenUiRuntime`. Deliberately a LITERAL type:
  *  the web app re-declares the value and annotates it with `typeof PLUGIN_UI_API_VERSION`, so a kit
  *  bump that forgets the host fails the web typecheck instead of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 7;
+export declare const PLUGIN_UI_API_VERSION: 8;
 
 /** Project metadata exposed to a contextual plugin panel. The Project remains core-owned; a panel uses
  *  this identity to address only its own project-scoped API data. */
@@ -95,6 +95,20 @@ export interface PluginUiRegistration {
   user?: Record<string, ComponentType<PluginUserPanelProps>>;
   project?: Record<string, ComponentType<PluginProjectPanelProps>>;
   settings?: Record<string, ComponentType<PluginPageProps>>;
+  /** Ids of `settings` sections that draw their OWN page frame — the shell, the masthead and the save
+   *  indicator — and therefore want none from the host.
+   *
+   *  The host serves a plugin's SOLE settings section as its page (`/p/<plugin>`) and wraps it in a
+   *  page column plus a masthead, because a section written for the Settings deck brings neither. A
+   *  section that renders `components.WorkspaceShell` itself then gets both twice: two nested page
+   *  frames, so the gutter and the bottom padding apply twice and the page is measurably narrower than
+   *  its sibling registers, above a masthead that is a zero-height row of margin holding an idle save
+   *  indicator. Naming the section here is how a bundle says "the frame is mine", and it is a fact only
+   *  the bundle holds — the host cannot see what a component renders without mounting it.
+   *
+   *  A section listed here owns the whole surface, so it also owns showing its own save state and must
+   *  not rely on `onSaveState` being displayed anywhere. Ids not present in `settings` are ignored. */
+  ownsPageFrame?: string[];
 }
 
 /** The host API surface a bundle finds on `window.ElowenUiRuntime`: the HOST's React instance (a

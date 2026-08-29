@@ -11,16 +11,16 @@ describe('buildThemeStyle', () => {
 
   // Whole-string assert on purpose: `toContain` alone would let a duplicate declaration, an extra rule
   // or a changed selector slip through the injection boundary unnoticed.
-  it('emits exactly the token overrides, the accent triple and the logo swap', () => {
+  it('emits exactly the token overrides, the primary triple and the logo swap', () => {
     const css = buildThemeStyle(theme({
-      colors: { accent: '#ff0000', 'accent-rgb': '255 0 0' },
+      colors: { primary: '#ff0000', 'primary-rgb': '255 0 0' },
       fonts: { sans: "'Inter', sans-serif" },
       assets: { logo: '/public/theme/assets/logo.png?v=0123456789abcdef' },
     }));
     expect(css).toBe([
       ':root[data-theme] {',
-      '--color-accent: #ff0000;',
-      '--accent-rgb: 255 0 0;',
+      '--color-primary: #ff0000;',
+      '--primary-rgb: 255 0 0;',
       "--font-sans: 'Inter', sans-serif;",
       '}',
       ":root[data-theme] .logo-adaptive { content: url('/api/public/theme/assets/logo.png?v=0123456789abcdef'); }",
@@ -31,13 +31,13 @@ describe('buildThemeStyle', () => {
   // must not TRUST that — a value that could close the declaration or the tag never passes here.
   it('drops any value that could escape the CSS declaration', () => {
     const css = buildThemeStyle(theme({
-      colors: { accent: 'red;}</style><script>', 'accent-rgb': 'rgb(0,0,0)', bg: '#000000' },
+      colors: { primary: 'red;}</style><script>', 'primary-rgb': 'rgb(0,0,0)', bg: '#000000' },
       fonts: { mono: 'x; background:url(//evil)' },
       assets: { logo: '/public/theme/assets/../../../etc/passwd?v=0123456789abcdef' },
     }));
     expect(css).toContain('--color-bg: #000000;'); // the valid key still applies
     expect(css).not.toContain('script');
-    expect(css).not.toContain('accent-rgb');
+    expect(css).not.toContain('primary-rgb');
     expect(css).not.toContain('--font-mono');
     expect(css).not.toContain('logo-adaptive');
   });
@@ -46,8 +46,8 @@ describe('buildThemeStyle', () => {
     expect(buildThemeStyle(theme({ fonts: { sans: '"Inter' } }))).toBe('');
   });
 
-  it('drops an out-of-range accent triple and a color key outside the token shape', () => {
-    expect(buildThemeStyle(theme({ colors: { 'accent-rgb': '999 0 0' } }))).toBe('');
+  it('drops an out-of-range primary triple and a color key outside the token shape', () => {
+    expect(buildThemeStyle(theme({ colors: { 'primary-rgb': '999 0 0' } }))).toBe('');
     expect(buildThemeStyle(theme({ colors: { 'Bad_Key': '#000000' } }))).toBe('');
   });
 });
@@ -86,7 +86,7 @@ describe('fetchThemePayload', () => {
   const importFresh = async () => (await import('../../lib/brandServer')).fetchThemePayload;
   const themedBody = {
     brand: { agentName: 'Acme Bot', productName: 'Acme' },
-    colors: { accent: '#ff0000' }, fonts: {}, text: {}, assets: {}, v: 'a'.repeat(16),
+    colors: { primary: '#ff0000' }, fonts: {}, text: {}, assets: {}, v: 'a'.repeat(16),
   };
   const okResponse = (body: unknown) => ({ ok: true, json: async () => body }) as Response;
 

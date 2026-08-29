@@ -46,7 +46,7 @@ export type TranscriptEvent =
   /** The daemon discarded a just-sent user turn (Esc/Stop before any output): remove the matching 'you'
    *  bubble by `durableId`. Its `text` is restored to the composer by the provider, which owns input state. */
   | { type: 'discard_user'; durableId: string; text: string }
-  | { type: 'idle'; durationMs?: number; completedAt?: string }
+  | { type: 'idle'; model?: string; durationMs?: number; completedAt?: string }
   | { type: 'error'; message: string };
 
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
@@ -159,7 +159,7 @@ function imageFromRef(ref: string): BrainMessageImage {
  *  dedupes on — never a text fingerprint. */
 type YouTurn = { role: 'you'; text: string; id?: string; images?: BrainMessageImage[]; createdAt?: string };
 type ElowenTurn = {
-  role: 'elowen'; segments: Segment[]; streaming: boolean; id?: string; synthetic?: boolean; createdAt?: string; durationMs?: number;
+  role: 'elowen'; segments: Segment[]; streaming: boolean; id?: string; synthetic?: boolean; createdAt?: string; durationMs?: number; model?: string;
   /** Live-only tool-call authoring hint. Cleared as soon as the matching tool starts or the turn settles. */
   composing?: boolean; composingTool?: string; composingDetail?: string; composingReason?: string;
 };
@@ -224,6 +224,7 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
       ...(m.synthetic ? { synthetic: true } : {}),
       ...(m.createdAt ? { createdAt: m.createdAt } : {}),
       ...(m.durationMs != null ? { durationMs: m.durationMs } : {}),
+      ...(m.model ? { model: m.model } : {}),
     });
   }
   return { turns, thinking: false };
@@ -451,6 +452,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
         composing: false, composingTool: undefined, composingDetail: undefined, composingReason: undefined,
         ...(e.completedAt ? { createdAt: e.completedAt } : {}),
         ...(e.durationMs != null ? { durationMs: e.durationMs } : {}),
+        ...(e.model ? { model: e.model } : {}),
       };
       return { turns, thinking: false, notice: undefined };
     }

@@ -3,7 +3,8 @@ import { WorkspacesSettings } from './WorkspacesSettings';
 import { EnvironmentSettings } from './EnvironmentSettings';
 
 registerSandboxUi({
-  requiresApiVersion: 5,
+  // 8: the workspace register renders the host's DataTableChevronCell.
+  requiresApiVersion: 8,
   user: {
     environment: EnvironmentSettings,
   },

@@ -112,6 +112,24 @@ describe('web plan decision', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  it('follows the daemon into plan mode when the turn that entered it settles', async () => {
+    // The realistic web journey: the tab connects to a conversation the daemon is still running in build
+    // mode, the user picks plan mode HERE, and the plan is submitted in that very session. The mode is
+    // committed only once the settled turn's prompt reached the provider, so the connect-time status
+    // answered 'build' and nothing else ever republished it — the decision has to follow the settle.
+    status = statusBody({ workMode: 'build', pendingPlan: null });
+    const es = await renderSurface();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    status = statusBody({ workMode: 'plan', pendingPlan: { id: 'call-1', plan: PLAN } });
+    await act(async () => {
+      es.emit({ type: 'tool', name: 'ExitPlanMode', id: 'call-1' });
+      es.emit({ type: 'tool_end', id: 'call-1', plan: PLAN });
+      es.emit({ type: 'idle' });
+    });
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('Ship it');
+  });
+
   it('cancelling stays in plan mode and does not raise the same plan again on the next hydration', async () => {
     status = statusBody({ workMode: 'plan', pendingPlan: { id: 'call-1', plan: PLAN } });
     const es = await renderSurface();

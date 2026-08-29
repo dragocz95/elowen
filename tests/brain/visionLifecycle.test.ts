@@ -4,14 +4,14 @@ import { ClientAttachments } from '../../src/brain/service/attachments.js';
 import { LiveSessionRegistry } from '../../src/brain/session/liveRegistry.js';
 import type { LiveBrain, SpawnOpts } from '../../src/brain/session/liveBrain.js';
 
-function live(spec: { provider?: string; model: string; thinkingLevel?: string; fast?: boolean }): LiveBrain {
+function live(spec: { provider?: string; model: string; thinkingLevel?: string }): LiveBrain {
   return {
     session: { dispose: vi.fn(), isStreaming: false } as never,
     sessionId: 'brain-1',
     providerId: spec.provider,
     model: spec.model,
     thinkingLevel: spec.thinkingLevel,
-    requestProfile: { fast: spec.fast === true },
+    requestProfile: {},
     fastAvailable: spec.provider === 'codex',
     thinkingLabels: {},
     policy: { allowedProjectIds: 'all', allowedPaths: () => [] },
@@ -23,10 +23,10 @@ function live(spec: { provider?: string; model: string; thinkingLevel?: string; 
 }
 
 describe('ConversationLifecycle vision fallback', () => {
-  it('temporarily clears Fast, then restores the exact provider/model/reasoning/Fast profile', async () => {
+  it('lets each vision route decide Fast without copying a session-local flag', async () => {
     const sessions = new LiveSessionRegistry<LiveBrain>();
     const attachments = new ClientAttachments();
-    const original = live({ provider: 'codex', model: 'gpt-main', thinkingLevel: 'max', fast: true });
+    const original = live({ provider: 'codex', model: 'gpt-main', thinkingLevel: 'max' });
     sessions.set('brain-1', original);
     const listener = vi.fn();
     // Listener ownership lives in ClientAttachments (attach()), not on the transient LiveBrain — this is
@@ -38,7 +38,6 @@ describe('ConversationLifecycle vision fallback', () => {
         provider: opts.selection.provider,
         model: opts.selection.model ?? 'default',
         thinkingLevel: opts.thinkingLevel,
-        fast: opts.fast,
       });
       // Mirrors LiveSessionSpawner: every respawn restores whatever ClientAttachments still has attached
       // to this session id — the hop keeps the same id, so the listener stays registered throughout.
@@ -62,20 +61,21 @@ describe('ConversationLifecycle vision fallback', () => {
 
     const fallback = await lifecycle.maybeVisionHop(1, original, true);
     expect(spawn.mock.calls[0]![0]).toMatchObject({
-      selection: { provider: 'vision-relay', model: 'vision-model' }, fast: false,
+      selection: { provider: 'vision-relay', model: 'vision-model' },
     });
+    expect(spawn.mock.calls[0]![0]).not.toHaveProperty('fast');
     expect(fallback).toMatchObject({
       providerId: 'vision-relay', model: 'vision-model', visionFallback: true,
-      visionFallbackReturn: { provider: 'codex', model: 'gpt-main', thinkingLevel: 'max', fast: true },
+      visionFallbackReturn: { provider: 'codex', model: 'gpt-main', thinkingLevel: 'max' },
     });
     expect(fallback.listeners.has(listener)).toBe(true);
 
     const restored = await lifecycle.maybeVisionHop(1, fallback, false);
     expect(spawn.mock.calls[1]![0]).toMatchObject({
-      selection: { provider: 'codex', model: 'gpt-main' }, thinkingLevel: 'max', fast: true,
+      selection: { provider: 'codex', model: 'gpt-main' }, thinkingLevel: 'max',
     });
+    expect(spawn.mock.calls[1]![0]).not.toHaveProperty('fast');
     expect(restored).toMatchObject({ providerId: 'codex', model: 'gpt-main', thinkingLevel: 'max' });
-    expect(restored.requestProfile.fast).toBe(true);
     expect(restored.listeners.has(listener)).toBe(true);
   });
 

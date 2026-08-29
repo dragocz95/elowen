@@ -151,4 +151,19 @@ describe('listBrainModels', () => {
     ] };
     expect((await listBrainModels(cfg, f)).map((m) => m.source)).toEqual(['oauth', 'relay']);
   });
+
+  it('publishes Fast availability from route capability without exposing credentials', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) as unknown as typeof fetch;
+    const cfg: BrainRuntimeConfig = { providers: [
+      { id: 'official', label: 'OpenAI', type: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.6-sol', 'gpt-5.5'], apiKey: 'secret' },
+      { id: 'relay', label: 'Relay', type: 'openai', api: 'openai-responses', baseUrl: 'https://relay.example/v1', models: ['gpt-5.6-sol'], apiKey: 'other-secret' },
+    ] };
+    const models = await listBrainModels(cfg, f);
+    expect(models.map(({ provider, model, fastAvailable }) => ({ provider, model, fastAvailable }))).toEqual([
+      { provider: 'official', model: 'gpt-5.6-sol', fastAvailable: true },
+      { provider: 'official', model: 'gpt-5.5', fastAvailable: undefined },
+      { provider: 'relay', model: 'gpt-5.6-sol', fastAvailable: undefined },
+    ]);
+    expect(JSON.stringify(models)).not.toContain('secret');
+  });
 });

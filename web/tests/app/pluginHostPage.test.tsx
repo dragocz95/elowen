@@ -121,6 +121,55 @@ describe('plugin host route', () => {
     expect(retry).toHaveBeenCalled();
   });
 
+  // A section that draws its own page shell has the page column already. Wrapping it again nested two
+  // frames, so the gutter and the bottom padding were spent twice and the page came out narrower than
+  // every sibling register — with a zero-height masthead row of margin above it.
+  it('adds no second page frame around a section that frames itself', async () => {
+    route.rest = ['settings', 'skills'];
+    registration.value = {
+      pages: {},
+      settings: { skills: () => <div className="workspace-shell" data-testid="section">section</div> },
+      ownsPageFrame: ['skills'],
+    } as unknown as PluginUiRegistration;
+    const { container } = mount();
+    await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
+
+    expect(container.querySelectorAll('.workspace-page, .workspace-shell')).toHaveLength(1);
+    expect(container.querySelector('.workspace-shell')).toBe(screen.getByTestId('section'));
+    expect(container.querySelector('.module-header')).toBeNull();
+    // The page is still the host's to name, for the masthead and the browser tab alike.
+    await waitFor(() => expect(screen.getByTestId('masthead')).toHaveTextContent('Skills'));
+  });
+
+  // Frame ownership is per section id: a bundle that frames one of its sections does not thereby give up
+  // the host frame for the others, and a bundle that declares nothing keeps today's behaviour exactly.
+  it('keeps the host frame for a section the bundle did not claim', async () => {
+    route.rest = ['settings', 'skills'];
+    registration.value = {
+      pages: {},
+      settings: { skills: () => <div data-testid="section">section</div> },
+      ownsPageFrame: ['something-else'],
+    } as unknown as PluginUiRegistration;
+    const { container } = mount();
+    await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
+    expect(container.querySelector('.workspace-page')).not.toBeNull();
+  });
+
+  // The host draws no header for a frame-owning section, so it displays no save state either — but the
+  // channel has to stay open, or such a section could never report one at all.
+  it('still hands a frame-owning section the save-state channel', async () => {
+    route.rest = ['settings', 'skills'];
+    const seen: unknown[] = [];
+    const Section = ({ onSaveState }: { onSaveState?: (s: 'error') => void }) => {
+      seen.push(onSaveState);
+      return <div className="workspace-shell" data-testid="section">section</div>;
+    };
+    registration.value = { pages: {}, settings: { skills: Section }, ownsPageFrame: ['skills'] } as unknown as PluginUiRegistration;
+    mount();
+    await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
+    expect(seen.every((fn) => typeof fn === 'function')).toBe(true);
+  });
+
   it('tells a declared section with no registered component apart from an unknown page', async () => {
     // The menu offered "Skills" by name, so the miss is a section that failed to register — not a page
     // the reader guessed wrong. Answering "page missing" would explain the wrong thing.

@@ -46,8 +46,9 @@ export function ReasoningModal({ onClose }: { onClose: () => void }) {
       .catch((e: Error) => { setApplied(previous || null); toast(e.message, 'error'); });
   };
 
+  // `inspect`: two controls, applied live and closed — a phone shows it as a bottom sheet.
   return (
-    <Modal title={t.reasoning.modalTitle} onClose={onClose} icon={Brain}>
+    <Modal title={t.reasoning.modalTitle} onClose={onClose} size="md" icon={Brain} intent="inspect">
       <ModalBody gap={4}>
         {statusQuery.isLoading ? (
           <LoadingState variant="list" />

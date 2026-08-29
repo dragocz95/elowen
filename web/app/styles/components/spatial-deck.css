@@ -1,0 +1,318 @@
+/* The deck shell's furniture and the settings surface it carries.
+   Two things live here, and they are one system: the section rail with the spatial decoration it shares
+   (.spatial-section-rail*, .spatial-section-node*, .spatial-identity, .spatial-inline-action,
+   .spatial-mascot*, .telemetry-rail-scroll), and the settings/account surface itself (.settings-document,
+   .settings-group*, .settings-row*, .settings-toolbar and their register variants).
+   The surface used to sit in web/modules/settings/theme.css, loaded by hand from the root layout even
+   though /account and every plugin bundle render it too. It is shared UI, so it belongs in the core
+   stylesheet with the components it is built from.
+   The deck's own page frame is gone: every shell is .workspace-shell (workspace-shell.css) and every
+   heading is .workspace-hero (workspace-hero.css). */
+
+/* Section rail ------------------------------------------------------------- */
+
+.spatial-section-rail { position: relative; width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; }
+.spatial-section-rail::-webkit-scrollbar { display: none; }
+.spatial-section-rail__track { position: relative; display: flex; width: max(100%, 68rem); min-height: 8.2rem; align-items: flex-start; padding: 1.25rem 0 0.85rem; }
+.spatial-section-rail__track::before { content: ''; position: absolute; top: 2.95rem; right: 3.4rem; left: 3.4rem; height: 1px; background: linear-gradient(90deg, transparent, rgb(var(--primary-rgb) / 0.34) 4%, rgb(var(--primary-rgb) / 0.2) 96%, transparent); }
+.spatial-section-node { position: relative; z-index: 1; display: flex; min-width: 7rem; flex: 1 0 7rem; flex-direction: column; align-items: center; gap: 0.72rem; color: var(--color-text-muted); font-size: 0.78rem; transition: color var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+.spatial-section-node:hover { color: var(--color-text); transform: translateY(-2px); }
+.spatial-section-node__icon { position: relative; display: grid; width: 3.45rem; height: 3.45rem; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 50%; background: var(--color-document); box-shadow: 0 0 0 6px var(--color-bg), inset 0 1px color-mix(in srgb, var(--color-text) 2.5%, transparent); transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+.spatial-section-node__icon > svg { position: relative; z-index: 2; }
+.spatial-section-node--active { color: var(--color-primary); font-weight: 570; }
+.spatial-section-node--active .spatial-section-node__icon { border-color: var(--color-primary); background: radial-gradient(circle, rgb(var(--primary-rgb) / 0.14), var(--color-document) 68%); box-shadow: 0 0 0 6px var(--color-bg), var(--glow-active), inset 0 0 20px rgb(var(--primary-rgb) / 0.09); transform: scale(1.1); }
+.spatial-section-node--active .spatial-section-node__icon::before { content: ''; position: absolute; inset: -1.35rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(var(--primary-rgb) / 0.28), rgb(var(--primary-rgb) / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
+.spatial-section-node__count { margin-left: 0.35rem; color: var(--color-text-muted); font-family: var(--font-mono); font-size: 0.64rem; font-weight: 500; }
+.spatial-section-node--active .spatial-section-node__count { color: color-mix(in srgb, var(--color-primary) 72%, var(--color-text)); }
+.spatial-section-node--active .spatial-section-node__icon::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(var(--primary-rgb) / 0.58), 1.25rem 0.35rem 0 color-mix(in srgb, var(--color-ember) 48%, transparent), -0.45rem -1.22rem 0 rgb(var(--primary-rgb) / 0.5), 0.65rem -1.05rem 0 color-mix(in srgb, var(--color-ember) 42%, transparent); opacity: 0.7; }
+html[data-effects='full'] .spatial-section-node--active .spatial-section-node__icon::before { animation: ember-breathe 2.8s ease-in-out infinite; }
+html[data-effects='full'] .spatial-section-node--active .spatial-section-node__icon::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; }
+.spatial-section-node:focus-visible { outline: none; }
+.spatial-section-node:focus-visible .spatial-section-node__icon { outline: 2px solid var(--color-text); outline-offset: 5px; }
+.spatial-section-node__label { white-space: nowrap; }
+/* The rail is a band across the shell, hairlined off the hero above and the content below. */
+.workspace-shell > .spatial-section-rail { margin-top: 1rem; border-block: var(--hairline); }
+
+@keyframes spatial-ember-flicker {
+  from { opacity: 0.38; transform: translateY(0) scale(0.86); }
+  to { opacity: 0.82; transform: translateY(-0.38rem) scale(1.08); }
+}
+
+.spatial-identity {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 7.3rem;
+  padding: 1.35rem 0;
+  border-bottom: var(--hairline);
+}
+.spatial-inline-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0.2rem 0.35rem;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  font-weight: 520;
+  transition: color var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
+}
+.spatial-inline-action:hover { color: var(--color-primary); }
+.spatial-inline-action:disabled { cursor: not-allowed; opacity: 0.4; }
+
+.spatial-mascot { position: relative; width: 100%; height: 100%; }
+.spatial-mascot__webgl { position: absolute; inset: -20%; z-index: 2; opacity: 0; transform: scale(0.985); pointer-events: none; transition: opacity 520ms var(--ease-out), transform 520ms var(--ease-out); }
+.spatial-mascot-fallback { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; opacity: 1; transition: opacity 520ms var(--ease-out); }
+.spatial-mascot--ready .spatial-mascot__webgl { opacity: 1; transform: scale(1); }
+.spatial-mascot--ready .spatial-mascot-fallback { opacity: 0; }
+.spatial-mascot-fallback::before {
+  content: '';
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(var(--primary-rgb) / 0.1), rgb(var(--primary-rgb) / 0.03) 44%, transparent 72%);
+  filter: blur(10px);
+}
+.spatial-mascot-fallback img { position: relative; z-index: 1; width: min(58%, 11.25rem); height: auto; filter: drop-shadow(0 1rem 2rem color-mix(in srgb, var(--color-primary) 10%, transparent)); }
+.spatial-mascot-fallback__ring { position: absolute; border: 1px solid rgb(var(--primary-rgb) / 0.18); border-radius: 50%; }
+.spatial-mascot-fallback__ring--outer { inset: 3% 0; transform: rotate(-12deg); }
+.spatial-mascot-fallback__ring--inner { inset: 19% 13%; transform: rotate(17deg); }
+.spatial-mascot-fallback--saving::before { animation: ember-breathe 1.1s ease-in-out infinite; }
+.spatial-mascot-fallback--success::before { background: radial-gradient(circle, color-mix(in srgb, var(--color-success) 20%, transparent), rgb(var(--primary-rgb) / 0.04) 48%, transparent 72%); }
+.spatial-mascot-fallback--error::before { background: radial-gradient(circle, color-mix(in srgb, var(--color-error) 15%, transparent), transparent 70%); }
+
+/* Chat telemetry rail ------------------------------------------------------ */
+/* The rail scrolls a long panel vertically but never draws the bar: an 8px rule down a 240px companion
+   column is louder than the numbers it measures, and the same body is a phone drawer. Only the chrome is
+   hidden — wheel, touch, keyboard and scroll-into-view are untouched, and the overflow rules themselves
+   stay on the element as utilities.
+   It has to be a real class rather than a Tailwind arbitrary utility: base.css styles `*` scrollbars
+   OUTSIDE any cascade layer, and unlayered declarations beat anything in @layer utilities no matter how
+   specific. Same shape as `.spatial-section-rail` above. */
+.telemetry-rail-scroll { scrollbar-width: none; }
+.telemetry-rail-scroll::-webkit-scrollbar { display: none; }
+
+/* Settings / account surface ----------------------------------------------- */
+
+/* One page inset for every deck, whichever module mounts it. It used to be declared twice, once per
+   module stylesheet, with the two copies free to drift. */
+.workspace-shell[data-variant="deck"] > .spatial-content-surface { padding: 1rem 0.5rem 2rem; }
+[data-settings-panel], [data-account-panel] { min-width: 0; }
+
+/* The cards carry the chrome, so the document that holds them draws none: one shell around a stack of
+   shells reads as a box someone forgot to remove, and it is what made every section look welded to the
+   page rather than placed on it. */
+.settings-document { display: flex; min-width: 0; flex-direction: column; gap: 1rem; }
+[data-settings-document].control-surface-document { overflow: visible; border: 0; border-radius: 0; background: none; box-shadow: none; }
+
+.settings-group {
+  min-width: 0;
+  overflow: clip;
+  border: 1px solid color-mix(in srgb, var(--color-text) 7%, transparent);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-text) 2%, transparent), transparent 42%), var(--color-document);
+  box-shadow: var(--shadow-card);
+}
+.settings-group[data-tone="danger"] { border-color: color-mix(in srgb, var(--color-danger) 28%, transparent); background: linear-gradient(180deg, color-mix(in srgb, var(--color-danger) 5%, transparent), transparent 46%), var(--color-document); }
+
+.settings-group__header { display: flex; min-height: 3.4rem; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem 1rem; padding: 0.95rem clamp(1rem, 1.6vw, 1.4rem); border-bottom: var(--hairline); }
+/* Grow so the heading keeps the first line to itself; when wide actions (e.g. the tool-loading Segmented
+   with three labels) no longer fit beside it, flex-wrap drops them to their own full-width line below
+   instead of overrunning the title on a narrow viewport. */
+.settings-group__heading { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 0.65rem; }
+.settings-group__icon { display: grid; flex: none; place-items: center; color: var(--color-primary); }
+.settings-group__heading h2 { color: var(--color-text); font-size: 0.95rem; font-weight: 600; letter-spacing: -0.015em; }
+.settings-group__heading p { margin-top: 0.15rem; color: var(--color-text-muted); font-size: 0.72rem; line-height: 1.45; }
+.settings-group__actions, .settings-row__actions { display: flex; min-width: 0; flex: none; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.settings-group__body { min-width: 0; }
+
+/* A body made of records becomes an inset panel, so the records read as one instrument inside the card
+   instead of as the card's own edges. `:has` keeps this off bodies holding something else — a register
+   of provider rows, a config field grid, a log tail — which stay full-bleed. */
+.settings-group__body:has(> .settings-row),
+.settings-group__body:has(> .settings-group__column) {
+  margin: 0.8rem clamp(0.8rem, 1.4vw, 1.15rem) clamp(0.9rem, 1.4vw, 1.15rem);
+  border: 1px solid color-mix(in srgb, var(--color-text) 5.5%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-text) 1.1%, transparent);
+}
+
+/* THE ALIGNMENT RULE. A stack of records owns the column tracks and every record borrows them through
+   subgrid, so each status sits under the previous status and each action under the previous action. Let
+   the records size their own tracks instead and a wider action ("Restart the daemon" beside "Restart
+   the web") drags that row's whole split sideways — which is exactly how these read before. */
+.settings-group__body:has(> .settings-row),
+.settings-group__column {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 1.05fr) auto;
+  align-content: start;
+}
+/* Two stacks side by side. They are separate grids on purpose: each aligns within itself, and a tall
+   record on the left does not stretch whatever sits opposite it. */
+.settings-group__body:has(> .settings-group__column) { display: grid; grid-template-columns: 1fr 1fr; }
+.settings-group__column { min-width: 0; }
+.settings-group__column + .settings-group__column { border-left: 1px solid color-mix(in srgb, var(--color-text) 5.5%, transparent); }
+/* Half the width means half the room: the label track gives some of it back to the control. */
+.settings-group__column { grid-template-columns: minmax(8rem, 1fr) minmax(0, 0.85fr) auto; }
+
+/* A padded body for grouped content that is a free block (pill lists, log tails, config field grids)
+   rather than a stack of records — inset matched to the card header. */
+.settings-group__panel { padding: 1.05rem clamp(1rem, 1.6vw, 1.4rem) 1.3rem; }
+/* A record nested inside a padded panel must not double its inset — the panel already provides the
+   horizontal padding, so the record only keeps its vertical rhythm. */
+.settings-group__panel .settings-row { padding-inline: 0; }
+
+/* Plugin-detail cards already read as discrete surfaces; the base card provides that now, so the
+   modifier only has to stop the header tint from fighting the rounded corner. */
+.settings-group.plugin-card > .settings-group__header { background: transparent; }
+
+/* Three tracks, because a record may carry BOTH a control and trailing actions (a connected account
+   shows its usage meters and a "Models" button). A two-track grid pushed the actions onto a second line
+   and crushed the meters. The tracks come from the enclosing stack via subgrid — see the alignment rule
+   above — so every record in a card shares one set of columns. */
+.settings-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 1.05fr) auto;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 0.8rem 0.95rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 4.5%, transparent);
+  transition: background-color var(--motion-base) var(--ease-out);
+}
+/* Borrow the stack's tracks — but ONLY when the record actually sits in one. A record rendered inside a
+   padded panel (the plugin config field grid) has no track-owning parent, and subgrid there would
+   collapse it to a single column. The declaration above stays as the standalone and no-subgrid case. */
+.settings-group__body:has(> .settings-row) > .settings-row,
+.settings-group__column > .settings-row { grid-column: 1 / -1; grid-template-columns: subgrid; }
+.settings-row:last-child { border-bottom: 0; }
+.settings-group[data-density="compact"] .settings-row { padding-block: 0.6rem; }
+/* The accent edge is the row's whole hover story: it marks WHICH record has the pointer without
+   repainting the card underneath it. */
+.settings-row::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 2px;
+  background: var(--color-primary);
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+.settings-row:hover { background: linear-gradient(90deg, rgb(var(--primary-rgb) / 0.05), color-mix(in srgb, var(--color-text) 0.8%, transparent) 58%, transparent); }
+.settings-row:hover::before, .settings-row:focus-within::before { opacity: 1; }
+
+.settings-row__label { display: flex; min-width: 0; align-items: flex-start; gap: 0.7rem; }
+.settings-row__icon {
+  display: grid;
+  width: 2.05rem;
+  height: 2.05rem;
+  flex: none;
+  place-items: center;
+  border: 1px solid rgb(var(--primary-rgb) / 0.32);
+  border-radius: 50%;
+  color: var(--color-primary);
+  background: radial-gradient(circle at 50% 38%, rgb(var(--primary-rgb) / 0.15), rgb(var(--primary-rgb) / 0.03) 70%);
+  transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out);
+}
+.settings-row:hover .settings-row__icon, .settings-row:focus-within .settings-row__icon {
+  border-color: rgb(var(--primary-rgb) / 0.62);
+  box-shadow: 0 0 0 3px rgb(var(--primary-rgb) / 0.05), 0 0 14px rgb(var(--primary-rgb) / 0.2);
+}
+/* Quiet modes keep the edge marker and the border change (both carry meaning) and drop the glow. */
+html:is([data-effects='reduced'], [data-effects='off']) .settings-row:hover .settings-row__icon,
+html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-within .settings-row__icon { box-shadow: none; }
+
+.settings-row__title { display: block; color: var(--color-text); font-size: 0.82rem; font-weight: 580; letter-spacing: -0.005em; }
+.settings-row__description { margin-top: 0.16rem; color: var(--color-text-muted); font-size: 0.7rem; line-height: 1.45; }
+.settings-row__status { margin-top: 0.3rem; color: var(--color-text-muted); font-size: 0.68rem; line-height: 1.45; }
+/* One trailing cell owns status, control and actions, so every row has the same two logical columns even
+   when a record carries more than one trailing value. It spans the control/action tracks of the shared
+   subgrid; skins may retune the tracks without changing the DOM contract. */
+.settings-row__trailing { display: flex; min-width: 0; grid-column: 2 / 4; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem 0.75rem; }
+.settings-row__trailing .settings-row__status { margin-top: 0; white-space: nowrap; }
+.settings-row__trailing .settings-row__control { min-width: 0; flex: 1 1 10rem; }
+.settings-row__trailing .settings-row__actions { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 0.5rem; }
+/* Legacy direct slots retain their tracks for plugin bundles compiled against the earlier anatomy. The
+   descendant specificity intentionally matches the phone reset below, whose later rule must release it. */
+.settings-row__control { min-width: 0; grid-column: 2; }
+.settings-row__actions { grid-column: 3; }
+
+.settings-toolbar { position: sticky; top: 0; z-index: var(--z-sticky); border-radius: var(--radius-lg); background: linear-gradient(180deg, var(--color-document) 88%, transparent); }
+
+.settings-control-row__status i { width: 0.48rem; height: 0.48rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 12px currentColor; }
+
+.settings-control-row__status { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--color-success); font-size: 0.7rem; font-weight: 620; }
+.settings-control-row__status--down { color: var(--color-danger); }
+
+/* Register rows inside a card (connected accounts, providers, models) share the record's hover
+   treatment, so a list section and a form section behave the same under the pointer.
+   `.settings-agent-row`, `.settings-skill-statuses`, `.settings-status-banner` and
+   `.settings-document__footer` used to sit here too. They have no consumer left anywhere — core, bundled
+   plugin or registry checkout — and only survived because a module stylesheet was outside the reach of
+   the core dead-CSS scan. Moving the surface into core is what found them. */
+.settings-model-rows { container-type: inline-size; }
+.settings-model-row { position: relative; min-height: 4.1rem; padding: 0.65rem clamp(1rem, 1.6vw, 1.4rem); border-bottom: var(--hairline); transition: background-color var(--motion-base) var(--ease-out); }
+.settings-model-row:last-child { border-bottom: 0; }
+.settings-model-row:hover { background: linear-gradient(90deg, rgb(var(--primary-rgb) / 0.05), color-mix(in srgb, var(--color-text) 0.8%, transparent) 58%, transparent); }
+
+/* Responsive ---------------------------------------------------------------- */
+/* Named container queries throughout. These were viewport media queries while the surface lived in a
+   module stylesheet, which was wrong in the same way everywhere else was: the same card renders full
+   width on /settings, inside a plugin detail column and inside a drawer, and only the space it actually
+   has can decide how it folds. */
+
+@container workspace-shell (width < 73.75rem) {
+  .settings-group__body:has(> .settings-group__column) { grid-template-columns: 1fr; }
+  .settings-group__column + .settings-group__column { border-left: 0; border-top: 1px solid color-mix(in srgb, var(--color-text) 5.5%, transparent); }
+}
+
+@container workspace-shell (width < 56.25rem) {
+  .spatial-section-rail__track { width: max-content; min-width: 100%; }
+  .spatial-section-node { min-width: 7.5rem; flex-basis: 7.5rem; }
+}
+
+@container workspace-shell (width < 50rem) {
+  .settings-group__header, .settings-toolbar { padding-inline: 1rem; }
+  /* Actions wrap to their own full-width line under the heading (see flex-wrap above), left-aligned so a
+     three-option Segmented has the whole row instead of being crushed against the title. */
+  .settings-group__actions { flex-basis: 100%; justify-content: flex-start; }
+  .settings-group__panel { padding-inline: 1rem; }
+}
+
+@container workspace-shell (width < 38.75rem) {
+  .spatial-section-rail__track { min-height: 6.7rem; padding-top: 0.85rem; }
+  .spatial-section-rail__track::before { top: 2.55rem; }
+  .spatial-section-node { min-width: 6.75rem; flex-basis: 6.75rem; gap: 0.55rem; font-size: 0.72rem; }
+  .spatial-section-node__icon { width: 3.15rem; height: 3.15rem; }
+  /* THE RAIL SCROLLS HERE AND ITS SCROLLBAR IS HIDDEN. Six sections need ~648px and a phone gives the
+     rail ~354px, so half of them sit past the right edge with nothing on screen saying so — at 390px a
+     user saw three sections and had no reason to believe in the other three. The mask fades both edges
+     into the page so the strip reads as a window onto a longer band rather than as the whole set.
+     Applied only in this block, where the overflow is arithmetic rather than a guess: below 38.75rem the
+     six narrowest core sections already exceed the width, so the fade never dims a rail that fits.
+     `black` here is mask alpha, not a colour — a mask ignores hue entirely. */
+  .spatial-section-rail {
+    mask-image: linear-gradient(90deg, transparent, black 1.75rem, black calc(100% - 1.75rem), transparent);
+  }
+  /* The stack collapses to a single track, and the records borrowing it through subgrid collapse with
+     it — overriding the record alone would lose to the more specific subgrid rule. */
+  .settings-group__body:has(> .settings-row), .settings-group__column { grid-template-columns: 1fr; }
+  .settings-row { grid-template-columns: 1fr; gap: 0.6rem; }
+  /* One track: release the pinned columns, or each slot would open an implicit column of its own. */
+  .settings-row__control, .settings-row__actions { grid-column: auto; }
+  .settings-row__actions { justify-self: start; }
+  .settings-row__trailing { width: 100%; grid-column: auto; justify-content: flex-start; }
+  /* A record that declared `trailingLayout="stack"` carries SEVERAL trailing values (a connected
+     account's meters, a provider entry's endpoint and badge set). Give each of them the row's whole
+     width: a usage meter sized as a flex item of a shared value column resolves to zero and stops being
+     a meter at all. */
+  .settings-row[data-trailing='stack'] .settings-row__status,
+  .settings-row[data-trailing='stack'] .settings-row__control,
+  .settings-row[data-trailing='stack'] .settings-row__actions { width: 100%; flex: 1 1 100%; }
+  .settings-row[data-trailing='stack'] .settings-row__status { white-space: normal; }
+  .settings-row[data-trailing='stack'] .settings-row__actions { justify-content: flex-start; }
+  .spatial-identity { align-items: flex-start; flex-wrap: wrap; }
+  .settings-model-row { padding-inline: 1rem; }
+}

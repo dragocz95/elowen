@@ -1,0 +1,19 @@
+/* Ambient state feedback: .skeleton, .live-dot, .flow-active. */
+
+.skeleton {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(100deg, var(--color-elevated) 30%, var(--color-overlay) 50%, var(--color-elevated) 70%);
+  background-size: 240% 100%;
+  animation: skeleton-drift 1.7s var(--ease-standard) infinite;
+}
+
+.live-dot { position: relative; }
+.live-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  animation: live-ring 2.2s var(--ease-out) infinite;
+}
+
+.flow-active { animation: flow-pulse 1.9s ease-in-out infinite; }

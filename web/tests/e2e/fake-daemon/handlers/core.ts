@@ -27,6 +27,7 @@ export function registerCoreRoutes(app: Hono): void {
 
   app.get('/config', (c) => c.json(getResponse('config', config)));
   app.get('/projects', (c) => c.json(getResponse('projects', projects)));
+  app.get('/activity/pulse', (c) => c.json(getResponse('activity/pulse', [])));
   // The shell reads this before it can render its nav at all, and `applyNavLayout` indexes both arrays
   // unguarded — the catch-all's `[]` crashes the whole layout, so the empty layout is modeled explicitly.
   app.get('/auth/me/nav-settings', (c) => c.json({ order: [], hidden: [] }));
