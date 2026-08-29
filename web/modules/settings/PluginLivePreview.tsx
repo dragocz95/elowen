@@ -7,7 +7,7 @@ import { useBrand } from '../../lib/brand';
 import type { PluginConfigField, PluginDetail } from '../../lib/types';
 
 // One shared surface for every preview tile so the panel reads as a single clean card language instead of
-// a mix of accent-bordered, elevated and surface boxes.
+// a mix of accent-bordered, muted and card boxes.
 const previewBox = 'rounded-lg border border-border/70 bg-foreground/[0.02] px-3 py-2.5';
 
 function valueOf(detail: PluginDetail, values: Record<string, unknown>, key: string): unknown {
