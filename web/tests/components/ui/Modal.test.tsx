@@ -52,7 +52,7 @@ describe('Modal', () => {
       </Modal>,
       { wrapper: W },
     );
-    const backdrop = document.querySelector('.overlay-layer-modal')!;
+    const backdrop = screen.getByRole('dialog', { name: 'Nová vzpomínka' }).parentElement!;
     fireEvent.pointerDown(screen.getByRole('button', { name: 'picker' }));
     fireEvent.click(backdrop);
     expect(onClose).not.toHaveBeenCalled();
@@ -133,12 +133,12 @@ describe('Modal', () => {
     function Harness() {
       const [drawerOpen, setDrawerOpen] = useState(true);
       const [modalOpen, setModalOpen] = useState(true);
-      return (
-        <>
-          {drawerOpen ? <WorkspaceDetailRail label="User detail" closeLabel="Close detail" onClose={() => setDrawerOpen(false)}>detail</WorkspaceDetailRail> : null}
+      return drawerOpen ? (
+        <WorkspaceDetailRail label="User detail" closeLabel="Close detail" onClose={() => setDrawerOpen(false)}>
+          detail
           {modalOpen ? <Modal title="Manage tools" onClose={() => setModalOpen(false)}>picker</Modal> : null}
-        </>
-      );
+        </WorkspaceDetailRail>
+      ) : null;
     }
     render(<Harness />, { wrapper: W });
     const modal = screen.getByRole('dialog', { name: 'Manage tools' });
