@@ -86,4 +86,32 @@ export default tseslint.config(
       '@next/next/no-html-link-for-pages': 'off',
     },
   },
+  {
+    // Overlay semantics on native DOM nodes belong to the shadcn/Radix primitive layer. A custom
+    // component such as <PopoverContent role="dialog"> is already composing that layer, so the AST
+    // selector deliberately targets lowercase host elements only — no source-text regex guessing.
+    files: ['web/app/**/*.{ts,tsx}', 'web/components/**/*.{ts,tsx}', 'web/modules/**/*.{ts,tsx}'],
+    ignores: [
+      'web/components/ui/shadcn/**',
+      // These shells are columns on desktop and modal drawers on narrow screens. They cannot join
+      // the body-portalled overlay stack without making their own shell ancestor inert.
+      'web/components/shell/OrbitalNav.tsx',
+      'web/components/shell/StudioNavigation.tsx',
+      // Radix has no combobox primitive. The surrounding Dialog is Radix; only its native listbox and
+      // option protocol remain application-owned and are tested as one aria-activedescendant widget.
+      'web/components/shell/CommandPalette.tsx',
+    ],
+    rules: {
+      'no-restricted-syntax': ['error',
+        {
+          selector: "JSXOpeningElement[name.type='JSXIdentifier'][name.name=/^[a-z]/] JSXAttribute[name.name='role'] Literal[value=/^(dialog|menu|listbox|tooltip)$/]",
+          message: 'Native overlay roles belong in a shadcn/Radix primitive, not an app surface.',
+        },
+        {
+          selector: "JSXOpeningElement[name.type='JSXIdentifier'][name.name=/^[a-z]/] > JSXAttribute[name.name='aria-modal']",
+          message: 'aria-modal belongs in a shadcn/Radix primitive, not an app surface.',
+        },
+      ],
+    },
+  },
 );
