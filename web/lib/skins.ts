@@ -109,10 +109,6 @@ export const SKIN_FAMILY_SHEETS: readonly SkinFamilySheets[] = (
 export const BUILTIN_SKIN = 'default';
 export type SkinChoice = SkinName | typeof BUILTIN_SKIN;
 
-/** Every choice that can be offered, the compatibility name first. One stable order so the switcher and
- *  the admin list cannot disagree about what exists. */
-export const SKIN_CHOICES: readonly SkinChoice[] = [BUILTIN_SKIN, ...SKINS];
-
 /** THE FLOOR UNDER EVERY RESOLUTION, and the reason `resolveSkin` cannot return null.
  *
  *  Every path that used to end at "no skin" ends here instead: nothing chosen, a choice the admin has
@@ -146,19 +142,20 @@ export function shellProfileFor(skin: SkinChoice | null | undefined): ShellProfi
   return SKIN_DEFINITIONS[skin].shellProfile;
 }
 
-export const isSkinChoice = (value: string | null | undefined): value is SkinChoice =>
-  !!value && (SKIN_CHOICES as readonly string[]).includes(value);
+const isSkinName = (value: string | null | undefined): value is SkinName =>
+  !!value && (SKINS as readonly string[]).includes(value);
 
-/** The choices an account may actually pick, from the names the operator allowed in instance config.
- *  Intersected with what THIS build compiled: the daemon stores names without knowing which skins exist,
- *  because that registry is a build artifact of `web/`, so an allowed name with no stylesheet behind it is
- *  dropped here rather than offered as an option that would visibly do nothing. The operator's order is
- *  kept — it is the order the switcher cycles through. */
-export function allowedSkinChoices(configured: readonly string[] | null | undefined): SkinChoice[] {
+export const isSkinChoice = (value: string | null | undefined): value is SkinChoice =>
+  value === BUILTIN_SKIN || isSkinName(value);
+
+/** The designs an account may actually pick, from the names the operator allowed in instance config.
+ *  Unknown names and the legacy `default` alias are dropped: `default` still resolves safely when found in
+ *  stored data, but exposing it beside Studio Light would present the same look twice. */
+export function allowedSkinChoices(configured: readonly string[] | null | undefined): SkinName[] {
   if (!configured) return [];
-  const out: SkinChoice[] = [];
+  const out: SkinName[] = [];
   for (const name of configured) {
-    if (!isSkinChoice(name) || out.includes(name)) continue;
+    if (!isSkinName(name) || out.includes(name)) continue;
     out.push(name);
   }
   return out;
@@ -196,7 +193,7 @@ export function currentSkinChoice(
   fallback: SkinName | null,
 ): SkinChoice | null {
   if (chosen && isSkinChoice(chosen) && allowed.includes(chosen)) return chosen;
-  const implied: SkinChoice = fallback ?? BUILTIN_SKIN;
+  const implied: SkinChoice = fallback ?? DEFAULT_SKIN;
   return allowed.includes(implied) ? implied : null;
 }
 

@@ -6,7 +6,6 @@ import {
   BUILTIN_SKIN,
   DEFAULT_SKIN,
   SKINS,
-  SKIN_CHOICES,
   SKIN_DEFINITIONS,
   SKIN_FAMILY_SHEETS,
   allowedSkinChoices,
@@ -176,7 +175,7 @@ describe('skin registry contract', () => {
     // A stored choice is one string. If a skin were ever named `default`, "the plain design" and "that
     // skin" would be the same value and nothing downstream could tell them apart.
     expect(SKINS as readonly string[]).not.toContain(BUILTIN_SKIN);
-    expect(SKIN_CHOICES).toEqual([BUILTIN_SKIN, ...SKINS]);
+    expect([...SKINS]).toEqual(['studio-light', 'studio-oled']);
   });
 
   it('carries exactly one definition per compiled skin, and none for a skin that does not exist', () => {
@@ -289,7 +288,7 @@ describe('the app has exactly two designs', () => {
     // The whole matrix of things that used to produce null: nothing chosen, the compatibility name, a
     // retired name, a name no build ever had, an empty allow-list, an unset ELOWEN_SKIN, and every
     // combination of those with a deployment default.
-    const lists: (readonly SkinChoice[])[] = [[], [BUILTIN_SKIN], [...SKIN_CHOICES], ['studio-oled']];
+    const lists: (readonly SkinChoice[])[] = [[], [BUILTIN_SKIN], [...SKINS], ['studio-oled']];
     const chosen = [null, undefined, '', BUILTIN_SKIN, 'midnight', 'ghost', '../etc', 'studio-light', 'studio-oled'];
     const fallbacks: (SkinName | null)[] = [null, 'studio-light', 'studio-oled'];
     for (const allowed of lists) {
@@ -326,10 +325,10 @@ describe('the app has exactly two designs', () => {
 });
 
 describe('skin choice resolution', () => {
-  const allowed = allowedSkinChoices([BUILTIN_SKIN, 'studio-oled']);
+  const allowed = allowedSkinChoices([BUILTIN_SKIN, 'studio-light', 'studio-oled']);
 
-  it('offers only names this build compiled, in the order the operator listed them', () => {
-    expect(allowedSkinChoices(['studio-oled', BUILTIN_SKIN])).toEqual(['studio-oled', BUILTIN_SKIN]);
+  it('offers only compiled designs, in operator order, without the duplicate default alias', () => {
+    expect(allowedSkinChoices(['studio-oled', BUILTIN_SKIN, 'studio-light'])).toEqual(['studio-oled', 'studio-light']);
     // A name left behind by a deployment that used to ship a skin would otherwise be offered as an
     // option that visibly does nothing. The placeholder is deliberately one no build can ever compile:
     // this file is inherited by deployment forks that DO add skins of their own, and naming a real one
@@ -339,13 +338,12 @@ describe('skin choice resolution', () => {
     expect(allowedSkinChoices(null)).toEqual([]);
   });
 
-  it('honours an allowed choice, and maps the compatibility one to DEFAULT_SKIN', () => {
+  it('honours an allowed design and safely resolves the compatibility alias', () => {
     expect(resolveSkin('studio-oled', allowed, null)).toBe('studio-oled');
-    // `default` used to mean "the plain design", i.e. no attribute. It is now a stored VALUE that means
-    // "no design of my own", and it still outranks the operator's ELOWEN_SKIN the way it always has —
-    // an explicit choice beats a deployment default — so it resolves to DEFAULT_SKIN and not to the
-    // fallback passed here.
-    expect(resolveSkin(BUILTIN_SKIN, allowed, 'studio-oled')).toBe(DEFAULT_SKIN);
+    // The alias is no longer offered, so stored legacy data follows the deployment fallback.
+    expect(resolveSkin(BUILTIN_SKIN, allowed, 'studio-oled')).toBe('studio-oled');
+    // The resolver still understands explicitly admitted legacy data for compatibility callers.
+    expect(resolveSkin(BUILTIN_SKIN, [BUILTIN_SKIN], 'studio-oled')).toBe(DEFAULT_SKIN);
   });
 
   it('drops a choice the admin has revoked, back to the deployment default', () => {
@@ -362,15 +360,16 @@ describe('skin choice resolution', () => {
     expect(currentSkinChoice('studio-oled', allowed, null)).toBe('studio-oled');
     // Nothing chosen: the visible design is the operator's default, and that is where cycling starts.
     expect(currentSkinChoice(null, allowed, 'studio-oled')).toBe('studio-oled');
-    expect(currentSkinChoice(null, allowed, null)).toBe(BUILTIN_SKIN);
+    expect(currentSkinChoice(null, allowed, null)).toBe(DEFAULT_SKIN);
     // The deployment default is not itself on offer — cycling must not claim it was picked.
     expect(currentSkinChoice(null, allowedSkinChoices([BUILTIN_SKIN]), 'studio-oled')).toBeNull();
   });
 
   it('cycles forward and wraps, and starts at the first entry from nothing', () => {
-    expect(nextSkinChoice(BUILTIN_SKIN, allowed)).toBe('studio-oled');
-    expect(nextSkinChoice('studio-oled', allowed)).toBe(BUILTIN_SKIN);
-    expect(nextSkinChoice(null, allowed)).toBe(BUILTIN_SKIN);
+    expect(nextSkinChoice(BUILTIN_SKIN, allowed)).toBe('studio-light');
+    expect(nextSkinChoice('studio-light', allowed)).toBe('studio-oled');
+    expect(nextSkinChoice('studio-oled', allowed)).toBe('studio-light');
+    expect(nextSkinChoice(null, allowed)).toBe('studio-light');
     expect(nextSkinChoice(null, [])).toBeNull();
   });
 });

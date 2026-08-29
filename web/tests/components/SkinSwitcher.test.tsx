@@ -6,7 +6,7 @@ import { onUnhandledRequest } from '../msw';
 import { SkinSwitcher } from '../../components/ui/SkinSwitcher';
 import { SkinProvider, useSkin } from '../../lib/skinContext';
 import { QUERY_KEYS } from '../../lib/queries';
-import { BUILTIN_SKIN, DEFAULT_SKIN, type SkinChoice } from '../../lib/skins';
+import { DEFAULT_SKIN, type SkinChoice } from '../../lib/skins';
 import { createWrapper } from '../test-utils';
 
 // The instance config is what the provider reads to learn which skins are allowed. Empty by default, so
@@ -49,10 +49,7 @@ describe('SkinSwitcher', () => {
   it('cycles the live document attribute, which is the entire mechanism', () => {
     // Every skin's CSS is already in the page, scoped under its own [data-skin]. Switching is this
     // attribute and nothing else — no fetch, no reload — so asserting on it IS asserting on the feature.
-    mount([BUILTIN_SKIN, 'studio-oled'], BUILTIN_SKIN);
-    // The compatibility choice is not a design of its own: it resolves to DEFAULT_SKIN, and the document
-    // wears that. What it must never do is leave `data-skin="default"` behind, matching no stylesheet,
-    // or drop the attribute entirely and leave the page on no design at all.
+    mount(['studio-light', 'studio-oled'], 'studio-light');
     expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN);
 
     fireEvent.click(screen.getByRole('button'));
@@ -67,7 +64,7 @@ describe('SkinSwitcher', () => {
     // had no cookie to forward and seeded an EMPTY allow-list. Logging in only opens the shell gate — it
     // does not re-render the layout. Without the live config query the switcher would stay missing until
     // the user happened to reload, which looks exactly like the feature not existing.
-    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [BUILTIN_SKIN, 'studio-oled'] })));
+    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: ['studio-light', 'studio-oled'] })));
     mount([]);
     return waitFor(() => expect(screen.getByRole('button')).toBeTruthy());
   });
@@ -75,14 +72,14 @@ describe('SkinSwitcher', () => {
   it('shows the skin its human name, never its id', () => {
     // The id is a directory name and a `data-skin` value. Rendering it verbatim put "studio-oled" — and
     // would have put "studio-oled" — in the top bar as if it were a product name.
-    mount([BUILTIN_SKIN, 'studio-oled'], BUILTIN_SKIN);
+    mount(['studio-light', 'studio-oled'], 'studio-light');
     fireEvent.click(screen.getByRole('button'));
     expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Skin: Studio OLED');
     expect(screen.getByText('Studio OLED')).toBeTruthy();
   });
 
   it('remembers the choice where both the client and the next server render can find it', () => {
-    mount([BUILTIN_SKIN, 'studio-oled'], BUILTIN_SKIN);
+    mount(['studio-light', 'studio-oled'], 'studio-light');
     fireEvent.click(screen.getByRole('button'));
 
     expect(localStorage.getItem('elowen-skin')).toBe('studio-oled');
@@ -107,11 +104,11 @@ describe('SkinProvider', () => {
     // keep wearing a stylesheet nothing else believes in any more — and if it removed the attribute the
     // page would land on no design at all, which is the third look this app is not allowed to have.
     const { wrapper: Wrapper, client } = createWrapper();
-    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: [BUILTIN_SKIN, 'studio-oled'] })));
+    server.use(http.get('*/api/config', () => HttpResponse.json({ allowedSkins: ['studio-light', 'studio-oled'] })));
     localStorage.setItem('elowen-skin', 'studio-oled');
     render(
       <Wrapper>
-        <SkinProvider allowedSkins={[BUILTIN_SKIN, 'studio-oled']} initialChoice="studio-oled" fallback={null}>
+        <SkinProvider allowedSkins={['studio-light', 'studio-oled']} initialChoice="studio-oled" fallback={null}>
           <Readout />
         </SkinProvider>
       </Wrapper>,

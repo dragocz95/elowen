@@ -8,14 +8,11 @@ import { useTranslation } from '../../lib/i18n';
 import { SettingsRow } from '../../components/ui/SettingsSurface';
 import { Button } from '../../components/ui/Button';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
-import { SKIN_CHOICES, skinDisplayName, type SkinChoice } from '../../lib/skins';
+import { SKINS, skinDisplayName, type SkinChoice } from '../../lib/skins';
 
-/** Which designs accounts may switch between, chosen from the skins THIS build compiled. The list is the
- *  whole control: the switcher in the top bar appears only once at least two are allowed, so leaving it
- *  empty — the default — keeps an instance looking exactly as it did before skins were switchable.
- *
- *  Offering the built-in design as an entry rather than an implicit floor is deliberate: allowing one skin
- *  and nothing else would otherwise be a one-way door, with no way back to the plain look. */
+/** Which designs accounts may switch between, chosen from the two skins THIS build compiled. The legacy
+ *  `default` value remains readable as stored compatibility data, but resolves to Studio Light and is not
+ *  offered as a duplicate third design. */
 export function SkinsRow() {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -27,12 +24,12 @@ export function SkinsRow() {
     const stored = config.data?.allowedSkins ?? [];
     // Intersect with what this build actually has: a name left behind by a deployment that used to ship a
     // skin must not be presented as a live selection.
-    return new Set(stored.filter((name) => (SKIN_CHOICES as readonly string[]).includes(name)));
+    return new Set(stored.filter((name) => (SKINS as readonly string[]).includes(name)));
   }, [config.data?.allowedSkins]);
 
   const label = (name: SkinChoice): string => skinDisplayName(t, name);
 
-  const items: ManageSelectionItem[] = SKIN_CHOICES.map((name) => ({
+  const items: ManageSelectionItem[] = SKINS.map((name) => ({
     id: name,
     label: label(name),
     group: 'skins',
@@ -43,7 +40,7 @@ export function SkinsRow() {
     // Send them in the catalog's own order rather than Set insertion order: this list is also the order
     // the switcher cycles through, and it should not depend on which checkbox the admin happened to tick
     // first.
-    const ordered = SKIN_CHOICES.filter((name) => next.has(name));
+    const ordered = SKINS.filter((name) => next.has(name));
     try {
       await update.mutateAsync({ allowedSkins: [...ordered] });
       setOpen(false);
@@ -52,7 +49,7 @@ export function SkinsRow() {
     }
   };
 
-  const chosen = SKIN_CHOICES.filter((name) => allowed.has(name));
+  const chosen = SKINS.filter((name) => allowed.has(name));
 
   return (
     <>
