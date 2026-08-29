@@ -143,11 +143,12 @@ function shellWord(word) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function buildBubblewrap(command, cwd, roots, home) {
+function buildBubblewrap(command, cwd, roots, home, network = 'shared') {
   const binds = bindableRoots(roots);
   if (binds.length === 0) throw new Error('no accessible project directory is available for confined execution');
   const args = [
     '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup',
+    ...(network === 'isolated' ? ['--unshare-net'] : []),
     '--die-with-parent', '--new-session',
     '--ro-bind', '/usr', '/usr',
     '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib',
@@ -225,7 +226,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
       const probe = bubblewrapProbe();
       if (!probe.available) throw new Error(`confined execution is unavailable: ${probe.reason || 'bubblewrap probe failed'}`);
       mode = 'confined';
-      launch = buildBubblewrap(input.command, cwd, roots, accountUserId === null ? null : home);
+      launch = buildBubblewrap(input.command, cwd, roots, accountUserId === null ? null : home, input.network);
     }
 
     const mintLease = () => createExecutionLease(db, {

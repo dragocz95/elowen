@@ -30,6 +30,19 @@ describe('published sites gateway control', () => {
     });
   });
 
+  it('passes Namecheap credentials only through stdin and validates them first', async () => {
+    const invoke = vi.fn(async () => ({ ok: true, active: true, hostnameBase: 'sites.agent.example.com' }));
+    const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke });
+    const input = {
+      apiUser: 'operator', apiKey: 'k'.repeat(32), username: 'operator', clientIp: '203.0.113.7',
+      email: 'ops@example.com', gatewayToken: TOKEN,
+    };
+    expect(await control.provisionNamecheap(input)).toEqual({
+      available: true, active: true, hostnameBase: 'sites.agent.example.com',
+    });
+    expect(invoke).toHaveBeenCalledWith({ op: 'provision-namecheap', ...input });
+  });
+
   it('refuses malformed secrets before starting sudo', async () => {
     const invoke = vi.fn();
     const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke });

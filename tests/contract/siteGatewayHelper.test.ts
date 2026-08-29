@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 // The installed root helper is deliberately standalone ESM: it cannot import service-user-owned package
 // code after sudo. This contract test imports its pure renderer directly and exercises the bytes shipped.
 // @ts-expect-error the standalone deployment helper intentionally has no TypeScript declaration file
-import { deploymentFrom, renderActiveConfig, renderDenyConfig } from '../../scripts/elowen-site-gateway.mjs';
+import {
+  deploymentFrom, parseHosts, renderActiveConfig, renderDenyConfig, setHostsParams, zoneFor,
+} from '../../scripts/elowen-site-gateway.mjs';
 
 const deployment = deploymentFrom({ appHost: 'agent.chetty.ai', daemonPort: 4400 });
 
@@ -15,6 +17,29 @@ describe('root-owned published-sites gateway helper', () => {
     });
     expect(() => deploymentFrom({ appHost: 'sites.evil.test', daemonPort: 4400 })).toThrow();
     expect(() => deploymentFrom({ appHost: 'agent.chetty.ai', daemonPort: 80 })).toThrow();
+  });
+
+  it('derives the Namecheap zone and preserves every returned record in a replacement request', () => {
+    const zone = zoneFor(deployment);
+    expect(zone).toEqual({
+      sld: 'chetty',
+      tld: 'ai',
+      wildcardName: '*.sites.agent',
+      challengeName: '_acme-challenge.sites.agent',
+      challengeFqdn: '_acme-challenge.sites.agent.chetty.ai',
+    });
+    const records = parseHosts(`<?xml version="1.0"?><ApiResponse Status="OK"><CommandResponse>
+      <DomainDNSGetHostsResult IsUsingOurDNS="true">
+        <host HostId="1" Name="@" Type="A" Address="203.0.113.7" MXPref="10" TTL="300" />
+        <host HostId="2" Name="www" Type="CNAME" Address="agent.chetty.ai." MXPref="10" TTL="1800" />
+      </DomainDNSGetHostsResult></CommandResponse></ApiResponse>`);
+    expect(records).toHaveLength(2);
+    expect(setHostsParams(zone, records)).toEqual({
+      SLD: 'chetty', TLD: 'ai',
+      HostName1: '@', RecordType1: 'A', Address1: '203.0.113.7', MXPref1: '10', TTL1: '300',
+      HostName2: 'www', RecordType2: 'CNAME', Address2: 'agent.chetty.ai.', MXPref2: '10', TTL2: '1800',
+    });
+    expect(() => parseHosts('<ApiResponse Status="OK"><DomainDNSGetHostsResult IsUsingOurDNS="false" /></ApiResponse>')).toThrow();
   });
 
   it('renders one wildcard gateway whose slug comes from Host and whose upstream is fixed', () => {

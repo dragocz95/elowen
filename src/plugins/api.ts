@@ -1006,6 +1006,9 @@ export interface SandboxControl {
       command: SandboxExecutionCommand;
       cwd: string;
       leaseKind: 'terminal' | 'github' | 'sites';
+      /** A fresh network namespace has no route to the host loopback or another site's listener. Omitted
+       * keeps the existing shared network for interactive terminal/GitHub work. */
+      network?: 'shared' | 'isolated';
     },
     /** For a caller with NO ambient turn to read — a background service has neither an identity nor a
      *  set of allowed roots. Naming both explicitly is the only honest way to say whose HOME the child
@@ -1078,6 +1081,14 @@ export interface PublishedSitesGatewayStatus {
 export interface PublishedSitesGatewayControl {
   hostnameBase(): string | null;
   ensure(input: { certificatePem: string; privateKeyPem: string; gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
+  provisionNamecheap(input: {
+    apiUser: string;
+    apiKey: string;
+    username: string;
+    clientIp: string;
+    email: string;
+    gatewayToken: string;
+  }): Promise<PublishedSitesGatewayStatus>;
   deny(): Promise<PublishedSitesGatewayStatus>;
   status(): Promise<PublishedSitesGatewayStatus>;
 }

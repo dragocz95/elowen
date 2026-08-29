@@ -1,12 +1,23 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { isIP } from 'node:net';
 import type { PublishedSitesGatewayControl, PublishedSitesGatewayStatus } from '../plugins/api.js';
 import { SITE_GATEWAY_HELPER_PATH } from '../shared/siteGateway.js';
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const HELPER_TIMEOUT_MS = 30_000;
+const PROVISION_TIMEOUT_MS = 10 * 60_000;
 
 type HelperRequest =
   | { op: 'apply'; certificatePem: string; privateKeyPem: string; gatewayToken: string }
+  | {
+    op: 'provision-namecheap';
+    apiUser: string;
+    apiKey: string;
+    username: string;
+    clientIp: string;
+    email: string;
+    gatewayToken: string;
+  }
   | { op: 'deny' }
   | { op: 'status' };
 
@@ -85,7 +96,7 @@ function defaultInvoker(request: HelperRequest): Promise<HelperResponse> {
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       finish(new Error('the site gateway helper timed out'));
-    }, HELPER_TIMEOUT_MS);
+    }, request.op === 'provision-namecheap' ? PROVISION_TIMEOUT_MS : HELPER_TIMEOUT_MS);
     timer.unref?.();
     child.stdin.end(JSON.stringify(request));
   });
@@ -137,6 +148,15 @@ export function createPublishedSitesGatewayControl(options: {
         return unavailable('the internal gateway token is malformed');
       }
       return call({ op: 'apply', certificatePem, privateKeyPem, gatewayToken });
+    },
+    provisionNamecheap: async ({ apiUser, apiKey, username, clientIp, email, gatewayToken }) => {
+      const accountField = (value: string): boolean => /^[A-Za-z0-9_.@-]{1,64}$/.test(value);
+      if (!accountField(apiUser) || !accountField(username)) return unavailable('the Namecheap account identity is malformed');
+      if (!/^\S{16,128}$/.test(apiKey)) return unavailable('the Namecheap API key is malformed');
+      if (isIP(clientIp) !== 4) return unavailable('Namecheap requires the whitelisted public IPv4 address');
+      if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 254) return unavailable('the ACME contact email is malformed');
+      if (!/^[A-Za-z0-9_-]{43,128}$/.test(gatewayToken)) return unavailable('the internal gateway token is malformed');
+      return call({ op: 'provision-namecheap', apiUser, apiKey, username, clientIp, email, gatewayToken });
     },
     deny: () => call({ op: 'deny' }),
     status: () => call({ op: 'status' }),

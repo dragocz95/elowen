@@ -97,6 +97,7 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     const host: KnownControls['publishedSitesGateway'] = {
       hostnameBase: () => 'sites.agent.example',
       ensure: async () => ({ available: true, active: true, hostnameBase: 'sites.agent.example' }),
+      provisionNamecheap: async () => ({ available: true, active: true, hostnameBase: 'sites.agent.example' }),
       deny: async () => ({ available: true, active: false, hostnameBase: 'sites.agent.example' }),
       status: async () => ({ available: true, active: false, hostnameBase: 'sites.agent.example' }),
     };

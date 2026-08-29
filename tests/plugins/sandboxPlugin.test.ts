@@ -318,6 +318,17 @@ describe('sandbox execution HOME and leases', () => {
     await prepared.lease.release();
   });
 
+  it('can isolate a site runtime from the host and other loopback listeners', async () => {
+    const { registry } = await setup();
+    const owned = temp('service-netns');
+    const prepared = await registry.control('sandbox')!.prepareExecution(
+      { command: { type: 'shell', command: 'pwd' }, cwd: owned, leaseKind: 'sites', network: 'isolated' },
+      { accountUserId: 1, roots: [owned] },
+    );
+    expect(JSON.stringify(prepared.launch)).toContain('--unshare-net');
+    await prepared.lease.release();
+  });
+
   it('never hands a plugin unconfined execution, even inside an operator turn', async () => {
     // `owner` selects DIRECT execution: no bubblewrap, and the daemon's whole environment passed to the
     // child. It follows from who is driving the turn and must never follow from what a plugin asked
