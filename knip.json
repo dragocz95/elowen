@@ -52,6 +52,9 @@
     ],
     "packages/plugin-shared/lifecycle.mjs": [
       "exports"
+    ],
+    "web/components/ui/select.tsx": [
+      "exports"
     ]
   },
   "ignore": [
