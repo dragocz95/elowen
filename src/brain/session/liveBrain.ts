@@ -236,6 +236,19 @@ export interface LiveBrain {
    *  the model just read. A daemon restart resets it, which is correct: a fresh process has shown the
    *  model nothing. */
   modeReminderTurns?: number;
+  /** Memory ids already printed into THIS context window, by either recall path. Both paths consult it,
+   *  so neither re-prints what the other already delivered.
+   *
+   *  It lives on the session rather than the turn because that is how long the memories stay legible: a
+   *  composed prompt freezes into history, so one recalled on turn 3 is still in front of the model on
+   *  turn 30 and printing it again buys nothing. Measured on captured payloads before this existed —
+   *  83.8% of the memory text sent was a repeat of a memory already in the same context.
+   *
+   *  Deliberately NOT carried across a respawn (it is absent from InPlaceRespawnState): the turn framing
+   *  that carries these blocks is stripped before history is persisted, so a rehydrated conversation
+   *  genuinely no longer contains them and an empty set is the truthful state. A compaction clears it for
+   *  the same reason. */
+  injectedMemoryIds?: Set<number>;
 }
 
 /** What it takes to spawn one live conversation — composed by BrainService.spawnLive and reused by

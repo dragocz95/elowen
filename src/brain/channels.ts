@@ -931,23 +931,6 @@ export class ChannelSessionService {
             senderText: senderMsg,
           });
         }
-        // Verified-sender memory recall (ephemeral, never persisted), keyed on their linked account + gated
-        // by autoRecall; an unlinked sender has no writerUserId → no recall (shared-space privacy).
-        const writerUserId = opts.writerUserId;
-        const memoryBlock = await recallMemoryBlock({
-          service: this.d.memoryService,
-          userId: writerUserId,
-          text: senderMsg,
-          enabled: writerUserId != null && this.d.userSettings?.(writerUserId)?.autoRecall !== false,
-          // Only the SCOPE is a channel concern: a room recalls globally for the verified sender, since
-          // there is no project context to narrow it to. The rendering is shared, so a platform user is
-          // told how old a memory is exactly like the owner is.
-          scoped: (run) => runWithPolicy(opts.policy, run, {
-            memoryRecallScope: this.d.memoryCategoryStore && writerUserId != null
-              ? globalMemoryRecallScope(writerUserId, this.d.memoryCategoryStore)
-              : { projectId: null, categoryIds: new Set<number>() },
-          }),
-        });
         const options = turnImages?.length
           ? { images: turnImages.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })) }
           : undefined;
@@ -1057,8 +1040,32 @@ export class ChannelSessionService {
               // provider), but the ORDER and framing of the blocks no longer live here: composeTurnPrompt
               // is the single source for that, so a block added for the owner chat cannot silently skip
               // every channel the way this composition used to allow.
-              const { block: postCompaction, commit } = drainPostCompactionContext(this.d.store, ch);
+              const { block: postCompaction, compacted, commit } = drainPostCompactionContext(this.d.store, ch);
               commitOrientation = commit;
+              // The compaction took the memory blocks with it, so what the model can still read is empty
+              // again. Cleared before the recall below, or this turn would suppress memories the compacted
+              // transcript no longer carries.
+              if (compacted) ch.injectedMemoryIds?.clear();
+              // Verified-sender memory recall (ephemeral, never persisted), keyed on their linked account
+              // and gated by autoRecall; an unlinked sender has no writerUserId → no recall (shared-space
+              // privacy). Resolved on the real-prompt path only: recalling on a prompt-command turn marked
+              // memories as delivered to a model that never saw them.
+              const writerUserId = opts.writerUserId;
+              const memoryBlock = await recallMemoryBlock({
+                service: this.d.memoryService,
+                userId: writerUserId,
+                text: senderMsg,
+                enabled: writerUserId != null && this.d.userSettings?.(writerUserId)?.autoRecall !== false,
+                // Only the SCOPE is a channel concern: a room recalls globally for the verified sender,
+                // since there is no project context to narrow it to. The rendering is shared, so a platform
+                // user is told how old a memory is exactly like the owner is.
+                scoped: (run) => runWithPolicy(opts.policy, run, {
+                  memoryRecallScope: this.d.memoryCategoryStore && writerUserId != null
+                    ? globalMemoryRecallScope(writerUserId, this.d.memoryCategoryStore)
+                    : { projectId: null, categoryIds: new Set<number>() },
+                }),
+                alreadyInContext: (ch.injectedMemoryIds ??= new Set<number>()),
+              });
               // Blocks a channel deliberately does not carry are simply absent: modes and the interactive
               // permission summary are owner-chat concepts, and a room has neither.
               prompted = composeTurnPrompt({

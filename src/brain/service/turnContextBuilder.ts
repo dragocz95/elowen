@@ -118,17 +118,7 @@ export class TurnContextBuilder {
     const memSettings = this.d.userSettings?.(request.userId);
     const scoped = this.scopeOptions(request.userId, live, mode, request.clientCwd);
     const scope = scoped.scope;
-    const memoryBlock = await recallMemoryBlock({
-      service: this.d.memoryService,
-      // In an owner chat the writer IS the owner, so the same rule ("the memories belong to whoever is
-      // writing this turn") simply resolves to the requesting account.
-      userId: request.userId,
-      text: request.text,
-      enabled: memSettings?.autoRecall !== false,
-      scoped: (run) => runWithPolicy(live.policy, run, scope),
-    });
     const hookBlock = await pluginContextBlock({ plugins: () => this.d.plugins(), hookAudit: this.d.hookAudit, text: request.text });
-    const permissionsBlock = scope.permissions ? `${summarizePermissions(scope.permissions)}\n\n` : '';
     // Each non-build mode carries its own tuned <system-reminder> directive (a self-contained block in
     // the template). Plan also restricts tools (see applyOwnerToolPolicy); Workflow is prompt-only.
     const modeTemplate = mode === 'plan' ? 'cli/plan-mode' : mode === 'workflow' ? 'cli/workflow-mode' : null;
@@ -159,6 +149,26 @@ export class TurnContextBuilder {
           // files were open. Re-orient the model exactly once, next to the other one-shot notices.
           const { block: postCompaction, compacted, commit } = drainPostCompactionContext(this.d.store, live);
           commitOrientation = commit;
+          // The compaction took the memory blocks with it, so what the model can still read is empty
+          // again. Cleared before the recall below, or this turn would suppress memories the compacted
+          // transcript no longer carries. liveRecall clears the same set from its own hook, which is the
+          // only seam that sees a compaction landing MID-turn.
+          if (compacted) live.injectedMemoryIds?.clear();
+          // Recall and the permission summary are resolved HERE, not in build(), for the same reason the
+          // mode reminder below is: both make a claim about what the model has been shown. Recalling in
+          // build() marked memories as delivered on a `/command` turn that never reaches the provider —
+          // inflating use_count, which feeds vitality and therefore what the retention sweep evicts.
+          const memoryBlock = await recallMemoryBlock({
+            service: this.d.memoryService,
+            // In an owner chat the writer IS the owner, so the same rule ("the memories belong to whoever
+            // is writing this turn") simply resolves to the requesting account.
+            userId: request.userId,
+            text: request.text,
+            enabled: memSettings?.autoRecall !== false,
+            scoped: (run) => runWithPolicy(live.policy, run, scope),
+            alreadyInContext: (live.injectedMemoryIds ??= new Set<number>()),
+          });
+          const permissionsBlock = scope.permissions ? `${summarizePermissions(scope.permissions)}\n\n` : '';
           // Rendered HERE, not in build(), for two reasons the counter cannot survive otherwise. It must
           // be chosen AFTER the drain, because a compaction just deleted the full directive from context
           // and the sparse line's "the full instructions are earlier in this conversation" would then be

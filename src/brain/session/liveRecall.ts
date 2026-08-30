@@ -59,6 +59,12 @@ export interface LiveRecallOptions {
    *  dedup below drops the repeats, so marking at retrieval time inflates use_count — and use_count
    *  drives vitality, which drives eviction. Only this callback sees what truly reached the model. */
   onInjected?: (ids: number[]) => void;
+  /** Memory ids already printed into this context window, SHARED with turn-start recall. Read per pass
+   *  rather than captured, because it lives on the session and this extension outlives no session.
+   *  Session-scoped rather than turn-scoped: the blocks below freeze into history, so a memory injected
+   *  on an earlier turn is still legible and re-injecting it only spends context. Cleared here when a
+   *  compaction removes those blocks — see the reset below. */
+  alreadyInContext: () => Set<number>;
   /** Injectable clock: renders memory ages and drives the pending-retrieval abandon check. */
   now?: () => number;
 }
@@ -208,7 +214,6 @@ interface TurnState {
   /** Search count for the per-turn embedding safety cap. */
   searches: number;
   bytes: number;
-  injected: Set<number>;
   /** Frozen messages and the canonical boundaries after which they were first emitted. */
   blocks: AnchoredBlock[];
   lastQuery: string;
@@ -217,7 +222,7 @@ interface TurnState {
 }
 
 function freshTurn(): TurnState {
-  return { steered: false, searches: 0, bytes: 0, injected: new Set(), blocks: [], lastQuery: '', loggedSkip: false };
+  return { steered: false, searches: 0, bytes: 0, blocks: [], lastQuery: '', loggedSkip: false };
 }
 
 /** The one retrieval a session may have in flight. The hook mutates the object from the promise's own
@@ -272,18 +277,19 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       // A user message arriving mid-flight is steering: it earns a fresh budget, because a redirected
       // turn deserves to search again. What it must NOT do is drop the blocks already injected — the
       // model has been working with those memories, and yanking them mid-turn is a silent loss with no
-      // upside. They are carried over, along with the ids, so nothing is injected twice.
+      // upside. They are carried over.
       // Only a RISING count is steering. A falling one means compaction replaced the history with a
       // summary, and then a full reset is correct rather than merely acceptable: the blocks this turn
       // injected are gone from the compacted transcript, so re-surfacing the same memories is no longer
-      // duplication. Carrying `injected` across a compaction would suppress them forever.
+      // duplication — which is why the shared already-in-context set is cleared here too. Leaving it
+      // populated across a compaction would suppress those memories for the rest of the session.
       const carried = steering ? turn : undefined;
       turn = freshTurn();
       if (carried) {
         turn.blocks = carried.blocks;
-        turn.injected = carried.injected;
         turn.steered = true;
       }
+      if (compacted) opts.alreadyInContext().clear();
       // A retrieval still in flight was searching for what the PREVIOUS turn was doing. The reset hands
       // out a fresh byte budget and the next search starts from current work — including a steering
       // instruction — so injecting the superseded result would answer a question nobody is
@@ -351,13 +357,14 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       return reEmit();
     }
 
-    const fresh = found.filter((m) => !turn.injected.has(m.id));
+    const injected = opts.alreadyInContext();
+    const fresh = found.filter((m) => !injected.has(m.id));
     if (fresh.length === 0) {
       // Distinguishes "the search came back empty" from "everything it found is already in context" —
       // the first points at the similarity floor, the second is the dedup working as intended.
       log.info(found.length === 0
         ? 'search returned no memory above the similarity floor'
-        : `search returned ${found.length} memory(ies), all already injected this turn`);
+        : `search returned ${found.length} memory(ies), all already in this context window`);
       return reEmit();
     }
 
@@ -376,7 +383,7 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       rendered.push(text);
       injectedIds.push(memory.id);
       content = candidate;
-      turn.injected.add(memory.id);
+      injected.add(memory.id);
     }
     if (rendered.length === 0) return reEmit();
 

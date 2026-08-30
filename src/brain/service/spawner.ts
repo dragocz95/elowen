@@ -530,6 +530,9 @@ export class LiveSessionSpawner {
       // the operator's limits take effect on a conversation that is already running.
       ...(memService && liveRecallAllowed(sessionId, ownerUserId) ? {
         liveRecall: {
+          // Lazily created on the live session and shared with turn-start recall, so the two paths
+          // cannot deliver the same memory twice into one context window.
+          alreadyInContext: () => (live.injectedMemoryIds ??= new Set<number>()),
           budget: () => this.d.liveRecallBudget?.() ?? { passes: 0, count: 0, bytes: 0 },
           enabled: () => {
             const userId = recallUserId();

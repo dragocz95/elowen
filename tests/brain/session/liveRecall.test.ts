@@ -36,21 +36,27 @@ function harness(opts: {
   retrieve: (query: string, maxCount: number, byteBudget: number) => Promise<LiveRecallMemory[]>;
   passes?: number; count?: number; bytes?: number; enabled?: () => boolean; now?: () => number;
   onInjected?: (ids: number[]) => void;
-}): { fire: (messages: Msg[]) => Promise<Msg[]> } {
+  /** The set the session shares with turn-start recall. Supplied by the test when it needs to observe
+   *  what reached the model across turns, or to seed what another path already delivered. */
+  alreadyInContext?: Set<number>;
+}): { fire: (messages: Msg[]) => Promise<Msg[]>; alreadyInContext: Set<number> } {
   let handler: Handler = async () => undefined;
   const pi = {
     on: (event: string, fn: Handler) => { if (event === 'context') handler = fn; },
   } as unknown as ExtensionAPI;
+  const alreadyInContext = opts.alreadyInContext ?? new Set<number>();
 
   installLiveRecall(pi, {
     budget: () => ({ passes: opts.passes ?? 10, count: opts.count ?? 8, bytes: opts.bytes ?? 6000 }),
     enabled: opts.enabled ?? (() => true),
     retrieve: opts.retrieve,
+    alreadyInContext: () => alreadyInContext,
     ...(opts.onInjected ? { onInjected: opts.onInjected } : {}),
     now: opts.now ?? (() => T0),
   });
 
   return {
+    alreadyInContext,
     fire: async (messages: Msg[]) => {
       const out = await handler({ messages });
       return (out?.messages as Msg[] | undefined) ?? messages;
@@ -231,6 +237,30 @@ describe('live recall — memories arrive mid-turn', () => {
 
     const injected = out.map(textOf).join('\n');
     expect(injected.match(/The one fact/g) ?? []).toHaveLength(1);
+  });
+
+  // The dedup used to reset with the turn, so a memory relevant to a long piece of work was re-injected
+  // on every turn of it. The composed prompt freezes into history, so those copies all stay legible at
+  // once — measured at 83.8% of the memory text sent being a repeat of something already in context.
+  it('does not inject the same memory again on a later turn', async () => {
+    const { fire } = harness({ retrieve: async () => [mem(1, 'The one fact')] });
+
+    const first: Msg[] = [{ role: 'user', content: 'go' }, { role: 'toolResult', content: 'first tool output about deployment' }];
+    await fire(first);
+    const afterFirst = await fire(first);
+    expect(afterFirst.map(textOf).join('\n')).toContain('The one fact');
+
+    // A NEW user message: a new turn by every measure the extension has, and previously a fresh dedup.
+    const second: Msg[] = [
+      ...first,
+      { role: 'user', content: 'now do the other half' },
+      { role: 'toolResult', content: 'second tool output, entirely different subject: database migrations' },
+    ];
+    await fire(second);
+    const out = await fire(second);
+
+    // Exactly the one copy the first turn injected, re-emitted at its anchor — no second rendering.
+    expect((out.map(textOf).join('\n').match(/The one fact/g) ?? [])).toHaveLength(1);
   });
 
   // Usage is what vitality decays from, and vitality decides what the retention sweep evicts. Retrieval

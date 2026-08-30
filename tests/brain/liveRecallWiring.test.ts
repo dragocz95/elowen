@@ -16,7 +16,10 @@ import type { Policy } from '../../src/plugins/policy.js';
 
 interface CapturedHandlers { context?: (e: { messages: unknown }) => Promise<{ messages: unknown } | undefined> }
 
-async function buildWithLiveRecall(retrieve: (q: string) => Promise<{ id: number; body: string; kind: string; importance: number }[]>): Promise<CapturedHandlers> {
+async function buildWithLiveRecall(
+  retrieve: (q: string) => Promise<{ id: number; body: string; kind: string; importance: number }[]>,
+  alreadyInContext: Set<number> = new Set<number>(),
+): Promise<CapturedHandlers> {
   const session = {
     sessionId: 'brain-1',
     agent: {} as Record<string, unknown>,
@@ -53,6 +56,7 @@ async function buildWithLiveRecall(retrieve: (q: string) => Promise<{ id: number
       budget: () => ({ passes: 10, count: 8, bytes: 6000 }),
       enabled: () => true,
       retrieve: async (q: string) => retrieve(q),
+      alreadyInContext: () => alreadyInContext,
     },
   } as never);
 
@@ -98,6 +102,50 @@ describe('live recall wiring — a real session reaches the recall pass', () => 
     expect(String(result[3]?.content)).toContain('Deployment runs through release.sh');
     // Everything before the appended block is untouched, so the provider's cached prefix still matches.
     expect(JSON.stringify(result.slice(0, messages.length))).toBe(JSON.stringify(messages));
+  });
+
+  it('leaves a memory alone when turn-start recall already put it in this context window', async () => {
+    // The two recall paths were tested in complete isolation before this, which is exactly how they
+    // could both be correct and still print the same memory twice into one prompt. Seeding the shared
+    // set stands in for the turn-start pass having already delivered id 7.
+    const shared = new Set<number>([7]);
+    const handlers = await buildWithLiveRecall(async (q) => (q.includes('release.sh')
+      ? [{ id: 7, body: 'Deployment runs through release.sh', kind: 'fact', importance: 4 }]
+      : []), shared);
+    if (!handlers.context) throw new Error('context handler was never registered');
+
+    const messages = [
+      { role: 'user', content: 'fix it' },
+      { role: 'assistant', content: 'looking into the deploy path' },
+      { role: 'toolResult', content: 'bash: ./release.sh --dry-run exited 2' },
+    ];
+    await handlers.context({ messages });
+    await new Promise((resolve) => { setImmediate(resolve); });
+    const out = await handlers.context({ messages });
+
+    // Nothing appended: the search still ran and still matched, but the model can already read it.
+    expect(out).toBeUndefined();
+  });
+
+  it('adds what it injected to the set turn-start recall reads', async () => {
+    const shared = new Set<number>();
+    const handlers = await buildWithLiveRecall(async (q) => (q.includes('release.sh')
+      ? [{ id: 7, body: 'Deployment runs through release.sh', kind: 'fact', importance: 4 }]
+      : []), shared);
+    if (!handlers.context) throw new Error('context handler was never registered');
+
+    const messages = [
+      { role: 'user', content: 'fix it' },
+      { role: 'assistant', content: 'looking into the deploy path' },
+      { role: 'toolResult', content: 'bash: ./release.sh --dry-run exited 2' },
+    ];
+    await handlers.context({ messages });
+    await new Promise((resolve) => { setImmediate(resolve); });
+    await handlers.context({ messages });
+
+    // The other direction of the same contract: without this the next turn's turn-start recall would
+    // reprint what mid-turn recall just delivered.
+    expect([...shared]).toEqual([7]);
   });
 
   it('reads the current turn scope at each hook after the cwd changes', async () => {

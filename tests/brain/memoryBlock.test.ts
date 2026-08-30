@@ -78,6 +78,53 @@ describe('recallMemoryBlock', () => {
     })).resolves.toBe('');
   });
 
+  it('prints only what the context window does not already carry', async () => {
+    const markRecalled = vi.fn();
+    const { service: svc, retrieve } = service([
+      { id: 7, body: 'already on screen', updated_at: daysAgo(1) },
+      { id: 8, body: 'genuinely new', updated_at: daysAgo(1) },
+    ], { markRecalled });
+    const alreadyInContext = new Set<number>([7]);
+
+    const block = await recallMemoryBlock({
+      service: svc, userId: 2, text: 'q', enabled: true, scoped: passthrough, now: NOW, alreadyInContext,
+    });
+
+    // Retrieval still runs — relevance is a per-turn judgement — but a memory the model can already
+    // read is not spent on a second time.
+    expect(retrieve).toHaveBeenCalled();
+    expect(block).toContain('genuinely new');
+    expect(block).not.toContain('already on screen');
+    // use_count feeds vitality, which decides what the retention sweep evicts, so it must count
+    // deliveries. Marking the suppressed one would be the phantom inflation markRecalled forbids.
+    expect(markRecalled).toHaveBeenCalledWith(2, [8]);
+    expect([...alreadyInContext]).toEqual([7, 8]);
+  });
+
+  it('says nothing at all when every hit is already in the context window', async () => {
+    const markRecalled = vi.fn();
+    const { service: svc } = service([{ id: 7, body: 'already on screen', updated_at: daysAgo(1) }], { markRecalled });
+
+    const block = await recallMemoryBlock({
+      service: svc, userId: 2, text: 'q', enabled: true, scoped: passthrough, now: NOW,
+      alreadyInContext: new Set<number>([7]),
+    });
+
+    // An empty frame would still cost the wrapper's tokens and tell the model nothing.
+    expect(block).toBe('');
+    expect(markRecalled).not.toHaveBeenCalled();
+  });
+
+  it('keeps printing everything when no session set is supplied', async () => {
+    const { service: svc } = service([{ id: 7, body: 'unchanged behaviour', updated_at: daysAgo(1) }]);
+
+    const block = await recallMemoryBlock({
+      service: svc, userId: 2, text: 'q', enabled: true, scoped: passthrough, now: NOW,
+    });
+
+    expect(block).toContain('unchanged behaviour');
+  });
+
   it('is the only place either surface renders recalled memory', () => {
     for (const file of ['src/brain/channels.ts', 'src/brain/service/turnContextBuilder.ts']) {
       const source = readFileSync(new URL(`../../${file}`, import.meta.url), 'utf-8');
