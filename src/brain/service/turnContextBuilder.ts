@@ -267,13 +267,18 @@ export class TurnContextBuilder {
         ? this.d.store.getSubagentRuns(live.sessionId).find((run) => run.sessionId === visible.sessionId)?.status
         : undefined;
       if (!this.d.store.upsertSubagentRun(live.sessionId, visible, update.status)) return false;
+      const persisted = this.d.store.getSubagentRuns(live.sessionId)
+        .find((run) => run.toolCallId === visible.id);
+      if (!persisted) return false;
+      const { toolCallId: id, ...state } = persisted;
+      const published: SubagentUpdate = { id, ...state };
       // As the 'progress' source: this emitter tracks the plugin's progress ROW, not the child's actual
       // run (that claim belongs to begin/endDelegatedCall). A DelegateContinue that steered into a
-      // running child settles its OWN progress claim, while `visible` stays running under the actual
+      // running child settles its OWN progress claim, while `published` stays running under the actual
       // call claim. UI state and liveness ownership are deliberately separate here.
-      this.d.sessions.setChildRunning(live.sessionId, visible.sessionId, update.status === 'running', 'progress');
-      live.replay.publish({ type: 'subagent', ...visible });
-      recordSubagentFinishMarker(this.d.store, live.sessionId, (event) => live.replay.publish(event), prevStatus, visible);
+      this.d.sessions.setChildRunning(live.sessionId, published.sessionId, update.status === 'running', 'progress');
+      live.replay.publish({ type: 'subagent', ...published });
+      recordSubagentFinishMarker(this.d.store, live.sessionId, (event) => live.replay.publish(event), prevStatus, published);
       return true;
     };
     const emitSubagentCompletion = (completion: SubagentCompletion): void => {

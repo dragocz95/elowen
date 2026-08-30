@@ -24,6 +24,10 @@ interface BrainSubagentRunState {
 export interface BrainSubagentRun extends BrainSubagentRunState {
   toolCallId: string;
   sessionId: string;
+  /** The delegated child's existing brain_sessions.created_at value. */
+  startedAt?: string;
+  /** The run sidecar's existing brain_subagent_runs.updated_at value. */
+  updatedAt?: string;
 }
 /** One restart-orphaned delegation claimed for recovery at boot: enough to rehydrate the child session,
  *  classify its discarded suffix and decide respawn vs recovery_required. `attempt` is the post-increment
@@ -372,7 +376,8 @@ export class BrainDelegationStore {
    *  this boundary, so all downstream wire shapes remain trusted and finite. */
   getSubagentRuns(parentSessionId: string): BrainSubagentRun[] {
     const rows = this.db.prepare(
-      `SELECT r.tool_call_id, r.child_session_id, r.state, x.delivery_state
+      `SELECT r.tool_call_id, r.child_session_id, r.state, c.created_at AS started_at,
+              r.updated_at, x.delivery_state
          FROM brain_subagent_runs r
          JOIN brain_sessions p ON p.id = r.parent_session_id
          JOIN brain_sessions c ON c.id = r.child_session_id
@@ -382,7 +387,10 @@ export class BrainDelegationStore {
           AND c.parent_session_id = p.id
           AND c.user_id = p.user_id
         ORDER BY r.updated_at ASC, r.rowid ASC`
-    ).all(parentSessionId) as { tool_call_id: string; child_session_id: string; state: string; delivery_state: string | null }[];
+    ).all(parentSessionId) as {
+      tool_call_id: string; child_session_id: string; state: string;
+      started_at: string; updated_at: string; delivery_state: string | null;
+    }[];
     const out: BrainSubagentRun[] = [];
     for (const row of rows) {
       let parsed: unknown;
@@ -390,6 +398,7 @@ export class BrainDelegationStore {
       const state = normalizeSubagentState(parsed);
       if (state) out.push({
         toolCallId: row.tool_call_id, sessionId: row.child_session_id, ...state,
+        startedAt: row.started_at, updatedAt: row.updated_at,
         ...(row.delivery_state === 'pending' || row.delivery_state === 'acknowledged'
           ? { resultDelivery: row.delivery_state } : {}),
       });

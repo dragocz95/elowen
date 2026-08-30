@@ -118,11 +118,17 @@ describe('BrainStore', () => {
 
     expect(store.upsertSubagentRun('root', {
       id: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
-      detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm', background: true,
+      detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
+      thinkingLevel: 'high', thinkingLabel: 'High', background: true,
     })).toBe(true);
+    // The DTO reads both timestamps from the existing tables; neither lives in the JSON state.
+    db.prepare("UPDATE brain_sessions SET created_at = '2026-08-30 05:00:00' WHERE id = 'child'").run();
+    db.prepare("UPDATE brain_subagent_runs SET updated_at = '2026-08-30 05:00:07' WHERE tool_call_id = 'delegate-1'").run();
     expect(store.getSubagentRuns('root')).toEqual([{
       toolCallId: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
-      detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm', background: true,
+      detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
+      thinkingLevel: 'high', thinkingLabel: 'High', background: true,
+      startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:07',
     }]);
     expect(store.upsertSubagentRun('root', {
       id: 'unrelated', sessionId: 'same-owner-unrelated', status: 'running', task: 'x', tools: 0, seconds: 0,
@@ -138,6 +144,14 @@ describe('BrainStore', () => {
     expect(store.upsertSubagentRun('root', {
       id: 'delegate-1', sessionId: 'child-2', status: 'done', task: 'x', tools: 1, seconds: 1,
     })).toBe(false);
+    // A pre-reasoning JSON state still receives the relational timestamps and simply omits newer metadata.
+    db.prepare("UPDATE brain_subagent_runs SET state = ? WHERE tool_call_id = 'delegate-1'").run(JSON.stringify({
+      status: 'done', task: 'legacy', tools: 1, seconds: 9,
+    }));
+    expect(store.getSubagentRuns('root')).toEqual([expect.objectContaining({
+      task: 'legacy', status: 'done', startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:07',
+    })]);
+    expect(store.getSubagentRuns('root')[0]).not.toHaveProperty('thinkingLevel');
     db.prepare("UPDATE brain_subagent_runs SET state = '{bad json' WHERE tool_call_id = 'delegate-1'").run();
     expect(store.getSubagentRuns('root')).toEqual([]); // corrupt state never reaches a renderer
   });

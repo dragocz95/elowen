@@ -456,7 +456,10 @@ export class BrainTurnRunner {
   private publishResultDelivery(parentSessionId: string, toolCallId: string, delivery: 'pending' | 'acknowledged'): void {
     const run = this.d.store.getSubagentRuns(parentSessionId).find((entry) => entry.toolCallId === toolCallId);
     const live = this.d.sessions.get(parentSessionId);
-    if (run && live) live.replay.publish({ type: 'subagent', id: toolCallId, ...run, resultDelivery: delivery });
+    if (run && live) {
+      const { toolCallId: id, ...state } = run;
+      live.replay.publish({ type: 'subagent', id, ...state, resultDelivery: delivery });
+    }
   }
 
   private scheduleResultRetry(userId: number, parentSessionId: string, attempts: number): void {

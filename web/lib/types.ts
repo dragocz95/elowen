@@ -69,7 +69,7 @@ export interface BrainSearchHit { sessionId: string; sessionTitle: string; role:
  *  event/goal DTOs likewise keep their web-side names (`Memory`, `MemoryCategory`, `MemoryEvent`,
  *  `BrainGoal`) as aliases of the shared rows. */
 import type {
-  ToolOutputView, BrainWorkflowView, BrainMessageView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainStreamControl,
+  ToolOutputView, BrainSubagentView, BrainWorkflowView, BrainMessageView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainStreamControl,
   BrainWorkMode, BrainPendingPlan,
   User, BrainLimits, BrainProviderCompatibility, RuntimeConfig as WireRuntimeConfig, RuntimeLimits, ToolDeferralOverrides, BrainUsage, MemoryRow, MemoryCategoryRow, MemoryEventRow, BrainGoalState,
   MemoryVitalityHistory,
@@ -80,7 +80,7 @@ import type {
 } from '../../src/shared/wireContract.js';
 export type { PlatformLinkKey, PlatformSurface };
 // `BrainStreamControl` is only referenced by the snapshot frame below, so it is imported but not re-exported.
-export type { ToolOutputView, BrainWorkflowView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, BrainProviderCompatibility, RuntimeLimits, BrainUsage, CommitFileChange, CommitLogEntry };
+export type { ToolOutputView, BrainSubagentView, BrainWorkflowView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, BrainProviderCompatibility, RuntimeLimits, BrainUsage, CommitFileChange, CommitLogEntry };
 export type {
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,

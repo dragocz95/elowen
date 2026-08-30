@@ -136,10 +136,3 @@
   .data-table-wide,
   .data-table-mobile { display: block; }
 }
-
-/* This is deliberately not a DataTable: a native table keeps its desktop sizing and semantics in the
-   sub-agent modal. Its status dot stays beside the task; only the columns that crushed the task disappear
-   on a phone-sized container. */
-@container (width < 40rem) {
-  .agents-table-secondary { display: none; }
-}
