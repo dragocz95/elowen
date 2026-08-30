@@ -76,6 +76,8 @@ class BgProcess {
     this.workspaceScoped = !!prepared.workspace;
     this.command = this.sanitizeOutput(command);
     this.output = '';
+    this.outputBytes = 0;
+    this.outputCap = outputCap;
     this.readOffset = 0;
     this.exitCode = null;
     this.startedAt = new Date().toISOString();
@@ -97,19 +99,7 @@ class BgProcess {
     }
     this.stdoutDecoder = new StringDecoder('utf8');
     this.stderrDecoder = new StringDecoder('utf8');
-    const onData = (decoder) => (d) => {
-      this.output += decoder.write(d);
-      // BYTES, not UTF-16 code units: the operator sets this cap in kB, and ProcessOutput hands the raw
-      // buffer to the model, so measuring it in characters let a background process printing non-Latin
-      // text return three times the budget it was given. The cheap length check guards the byte count.
-      if (this.output.length > outputCap && Buffer.byteLength(this.output, 'utf8') > outputCap) {
-        // Front-drop, unlike a foreground run: a background process is READ INCREMENTALLY as it goes, so
-        // its beginning has usually already been delivered and the newest output is what has not.
-        const cut = truncateTailBytes(this.output, outputCap);
-        this.readOffset = Math.max(0, this.readOffset - (this.output.length - cut.length));
-        this.output = cut;
-      }
-    };
+    const onData = (decoder) => (d) => { this.appendOutput(decoder.write(d)); };
     this.child.stdout.on('data', onData(this.stdoutDecoder));
     this.child.stderr.on('data', onData(this.stderrDecoder));
     let settled = false;
@@ -118,14 +108,27 @@ class BgProcess {
       settled = true;
       if (error) killProcessGroup(this.child);
       await waitForProcessGroupExit(this.child.pid);
-      this.output += this.stdoutDecoder.end() + this.stderrDecoder.end();
-      if (error) this.output += `\n[spawn error: ${error.message}]`;
+      this.appendOutput(this.stdoutDecoder.end() + this.stderrDecoder.end());
+      if (error) this.appendOutput(`\n[spawn error: ${error.message}]`);
       this.exitCode = code ?? -1;
       await this.releaseLease();
       onClose?.();
     };
     this.child.on('close', (code) => { void finish(code); });
     this.child.on('error', (error) => { void finish(-1, error); });
+  }
+  appendOutput(text) {
+    if (!text) return;
+    this.output += text;
+    this.outputBytes += Buffer.byteLength(text, 'utf8');
+    if (this.outputBytes <= this.outputCap) return;
+    // Front-drop, unlike a foreground run: a background process is READ INCREMENTALLY as it goes, so its
+    // beginning has usually already been delivered and the newest output is what has not. Track bytes as
+    // chunks arrive rather than using UTF-16 string length as a precondition for measuring the real budget.
+    const cut = truncateTailBytes(this.output, this.outputCap);
+    this.readOffset = Math.max(0, this.readOffset - (this.output.length - cut.length));
+    this.output = cut;
+    this.outputBytes = Buffer.byteLength(cut, 'utf8');
   }
   get running() { return this.exitCode === null; }
   kill() {
@@ -285,8 +288,8 @@ function truncateTailBytes(content, maxBytes) {
  *  length depends on the sizes it reports. Generous on purpose: overshooting the cap costs the result its
  *  tail (see formatRunResult), while a hundred spare bytes cost nothing. */
 const TRUNCATION_BANNER_RESERVE = 200;
-/** Output never shrinks below this, however long the command and cwd are. A pathological invocation must
- *  cost itself its own echo, not the model's view of what the command did. */
+/** Reserve this much of the cap for process output before command/cwd framing gets its own middle cut.
+ *  A pathological invocation must cost itself its own echo, not the model's view of what the command did. */
 const MIN_RESULT_BODY_BYTES = 2_000;
 
 /** Cut a long output in the MIDDLE, keeping both ends.
@@ -342,6 +345,16 @@ function truncateMiddle(content, { maxBytes, alignToLines = true }) {
   };
 }
 
+/** Bound a block with a visible middle-cut notice. The payload and notice together fit `maxBytes`. */
+function truncateBlock(content, maxBytes, describe) {
+  const totalBytes = Buffer.byteLength(content, 'utf8');
+  if (totalBytes <= maxBytes) return content;
+  const banner = `\n…[${describe(totalBytes)}]\n`;
+  const payloadBudget = maxBytes - Buffer.byteLength(banner, 'utf8');
+  const t = truncateMiddle(content, { maxBytes: payloadBudget, alignToLines: false });
+  return `${t.head}${banner}${t.tail}`;
+}
+
 /** Format a settled run's rolling buffer into the `$ cmd … [exit N]` block the model reads.
  *
  *  `dropped` is what ForegroundRun's own buffer already discarded mid-run. It is USUALLY still above the
@@ -354,7 +367,19 @@ function truncateMiddle(content, { maxBytes, alignToLines = true }) {
  *  is still far better than the previous behaviour, which reported the size of whatever survived and
  *  called it the size of the run. */
 function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped = 0) {
-  const framing = `$ ${command}\n(cwd: ${cwd})\n${note}[exit ${exitCode}]`;
+  const exit = `[exit ${exitCode}]`;
+  const rawHeader = `$ ${command}\n(cwd: ${cwd})\n${note}`;
+  // Reserve a useful output body before bounding pathological command/cwd text. Without this first cut, a
+  // multibyte command whose echo alone exceeded the cap either blew the complete result budget or consumed
+  // the whole head half of a final safety cut, hiding the beginning of the process output.
+  const headerBudget = outputCap
+    - MIN_RESULT_BODY_BYTES
+    - TRUNCATION_BANNER_RESERVE
+    - Buffer.byteLength(exit, 'utf8')
+    - 1;
+  const header = truncateBlock(rawHeader, headerBudget,
+    (bytes) => `command/cwd framing truncated from ${formatSize(bytes)}`);
+
   // The cap bounds the WHOLE result, not just the stream inside it.
   //
   // This is not tidiness. A tool result larger than the operator's inline-result threshold is spilled to
@@ -362,10 +387,11 @@ function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped =
   // this truncation exists to keep. Both defaults are 60 kB, so budgeting only the output meant every
   // truncated command overshot by the length of its own echo and banner and got its tail deleted by the
   // spill: the feature defeated itself under the settings almost everyone runs.
-  const budget = Math.max(
-    MIN_RESULT_BODY_BYTES,
-    outputCap - Buffer.byteLength(framing, 'utf8') - TRUNCATION_BANNER_RESERVE,
-  );
+  const budget = outputCap
+    - Buffer.byteLength(header, 'utf8')
+    - Buffer.byteLength(exit, 'utf8')
+    - TRUNCATION_BANNER_RESERVE
+    - 1;
   const t = truncateMiddle(out, { maxBytes: budget });
   const lost = t.totalBytes - t.keptBytes + dropped;
   let body = t.head;
@@ -385,7 +411,11 @@ function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped =
   // Ensure the exit marker starts on its own line — the tail may not end in a newline, which would
   // otherwise glue `[exit N]` onto the last line of real output the model parses.
   const sep = body.endsWith('\n') || body.length === 0 ? '' : '\n';
-  return `$ ${command}\n(cwd: ${cwd})\n${note}${body}${sep}[exit ${exitCode}]`;
+  const result = `${header}${body}${sep}${exit}`;
+  // The reserves above keep ordinary results inside the cap while retaining maximum useful output. This
+  // final invariant also covers future framing changes and arbitrarily long multibyte metadata.
+  return truncateBlock(result, outputCap,
+    (bytes) => `complete result truncated from ${formatSize(bytes)} to fit ${formatSize(outputCap)}`);
 }
 
 /** Name what a run's rolling buffer discarded, so a full read is never a silently glued head and tail.

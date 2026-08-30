@@ -263,6 +263,26 @@ describe('terminal plugin — configurable outputCap', () => {
     expect(text).not.toContain('\uFFFD');
   });
 
+  it('caps the complete foreground result when multibyte command framing alone exceeds the budget', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { outputCap: 10_000 } },
+    });
+    const longComment = '€'.repeat(9_000); // 9000 characters but 27000 UTF-8 bytes
+    // The marker text is encoded in the command, not repeated verbatim in its echo, so these assertions
+    // prove both ends of the PROCESS OUTPUT survived rather than merely finding them in the framing.
+    const command = `printf '\\110\\105\\101\\104\\055\\117\\125\\124\\120\\125\\124'; `
+      + `printf %020000d 0; printf '\\124\\101\\111\\114\\055\\117\\125\\124\\120\\125\\124' # ${longComment}`;
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command }), { identity: owner });
+    const text = res.content[0].text;
+
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(10_000);
+    expect(text).toContain('HEAD-OUTPUT');
+    expect(text).toContain('TAIL-OUTPUT');
+    expect(text).toContain('[exit 0]');
+    expect(text).not.toContain('\uFFFD');
+  });
+
   // The rolling buffer used to drop from the FRONT at twice the cap, so anything past that arrived here
   // already missing its beginning — the head half of a head+tail cut would then show the middle of the
   // run and call it the start. The buffer now drops from the middle too, and counts what it lost so the
@@ -342,16 +362,16 @@ describe('terminal plugin — configurable outputCap', () => {
     expect(out.content[0].text.length).toBeLessThanOrEqual(10_000 + '\n[exited 0]'.length);
   });
 
-  it('bounds that buffer in BYTES, so non-Latin output cannot return three times the cap', async () => {
-    // ProcessOutput hands the raw buffer to the model, and the buffer compared UTF-16 code units against
-    // a cap the operator sets in kB — so 15000 three-byte characters sat under a 10000 "character" cap
-    // and came back as 45 kB of context.
+  it('bounds that buffer in BYTES even when its character count is below the cap', async () => {
+    // ProcessOutput hands the raw buffer to the model. A cheap `output.length > outputCap` guard skipped
+    // the byte count entirely, so 9000 three-byte characters sat below a 10000-character threshold while
+    // returning 27 kB of context.
     const reg = await loadPlugins({
       dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
       config: { terminal: { outputCap: 10_000 } },
     });
     const scope = { identity: owner, sessionId: 'brain-terminal-output-cap-bytes' };
-    const command = 'node -e "process.stdout.write(\'\\u20ac\'.repeat(15000))"';
+    const command = 'node -e "process.stdout.write(\'\\u20ac\'.repeat(9000))"';
     const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command, background: true }), scope);
     const id = /Started background process (\S+):/.exec(started.content[0].text)?.[1];
     expect(id).toBeTruthy();
