@@ -176,15 +176,17 @@ describe('terminal plugin — configurable outputCap', () => {
   let dir: string;
   beforeAll(() => { dir = tmpDir('term-cap'); });
   const bigOutput = (n: number) => `node -e "process.stdout.write('a'.repeat(${n}))"`;
-  // The shown output is the tail kept after the "…[truncated: …]\n" hint line, up to the trailing
-  // "[exit N]" marker. Its length == the applied cap (bash truncation keeps the END).
-  const shownTailLength = (text: string): number => {
+  /** The kept output either side of the "…[truncated: …]" banner, which now sits in the MIDDLE: the head
+   *  runs from the `(cwd: …)` line to the banner, the tail from the banner to the trailing `[exit N]`.
+   *  Their sum is what the configured cap bounds. */
+  const shownParts = (text: string): { head: number; tail: number } => {
     const marker = text.indexOf('…[truncated');
     if (marker < 0) throw new Error('not truncated');
-    const start = text.indexOf('\n', marker) + 1; // first char after the hint line
+    const bodyStart = text.indexOf('\n', text.indexOf('(cwd: ')) + 1;
+    const tailStart = text.indexOf('\n', marker) + 1;
     let end = text.lastIndexOf('[exit ');
     if (text[end - 1] === '\n') end -= 1; // drop the separator newline the plugin inserts before [exit N]
-    return end - start;
+    return { head: marker - 1 - bodyStart, tail: end - tailStart }; // -1: the newline before the banner
   };
 
   it('a configured outputCap (min-clamped 10000) truncates output that the default 60000 would not', async () => {
@@ -195,7 +197,13 @@ describe('terminal plugin — configurable outputCap', () => {
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(15_000) }), { identity: owner });
     const text = res.content[0].text;
     expect(text).toContain('…[truncated');
-    expect(shownTailLength(text)).toBe(10_000);
+    const { head, tail } = shownParts(text);
+    // Both ends survive, and together they still cost exactly what the cap allows. A tail-only cut kept
+    // 10000 bytes of the END and threw away the command's echo and everything printed before the bulk.
+    expect(head).toBe(5_000);
+    expect(tail).toBe(5_000);
+    // The banner names the ORIGINAL size, not the size of what survived.
+    expect(text).toContain('dropped 4.9KB of 14.6KB');
   });
 
   it('unset outputCap reproduces the default 60000-byte cap exactly', async () => {
@@ -205,7 +213,34 @@ describe('terminal plugin — configurable outputCap', () => {
     const over = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(65_000) }), { identity: owner });
     const text = over.content[0].text;
     expect(text).toContain('…[truncated');
-    expect(shownTailLength(text)).toBe(60_000);
+    const { head, tail } = shownParts(text);
+    expect(head + tail).toBe(60_000);
+  });
+
+  // The rolling buffer used to drop from the FRONT at twice the cap, so anything past that arrived here
+  // already missing its beginning — the head half of a head+tail cut would then show the middle of the
+  // run and call it the start. The buffer now drops from the middle too, and counts what it lost so the
+  // banner can state the run's real size rather than the size of what survived.
+  it('keeps the true beginning of a run far larger than the buffer, and says how much was lost', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { outputCap: 10_000 } },
+    });
+    // 300 kB, far past the 20 kB buffer limit, with a distinct first and last line.
+    const command = 'node -e "process.stdout.write(\'FIRST-LINE\\n\' + \'x\'.repeat(300000) + \'\\nLAST-LINE\\n\')"';
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command }), { identity: owner });
+    // Read past the `$ <command>` echo, which repeats both marker strings verbatim.
+    const full = res.content[0].text;
+    const body = full.slice(full.indexOf('\n', full.indexOf('(cwd: ')) + 1);
+
+    expect(body).toContain('FIRST-LINE');
+    expect(body).toContain('LAST-LINE');
+    expect(body.indexOf('FIRST-LINE')).toBeLessThan(body.indexOf('…[truncated'));
+    expect(body.indexOf('LAST-LINE')).toBeGreaterThan(body.indexOf('…[truncated'));
+    // ~293 KB: the buffer's own drops are counted into the total, not silently excluded from it.
+    expect(body).toMatch(/of 29\d(\.\d)?KB;/);
+    const { head, tail } = shownParts(full);
+    expect(head + tail).toBeLessThanOrEqual(10_000);
   });
 
   it('outputCap also bounds the background process rolling buffer', async () => {

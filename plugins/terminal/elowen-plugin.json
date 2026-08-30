@@ -44,7 +44,12 @@
       "step": 1000,
       "placeholder": "60000",
       "default": 60000,
-      "hint": "How many bytes of stdout/stderr are returned before truncation. Also caps the rolling output buffer kept for background processes."
+      "hint": "How much stdout/stderr a command returns. Past this the middle is dropped and only the beginning and the end come back, with the discarded amount named in the result. Also caps the rolling output buffer kept for background processes. Range 10–500 kB; default 60 kB.",
+      "display": {
+        "control": "slider",
+        "unit": "kB",
+        "divisor": 1000
+      }
     },
     {
       "key": "commandTimeoutMs",

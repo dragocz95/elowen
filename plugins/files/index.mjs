@@ -1049,7 +1049,15 @@ export function register(ctx) {
         // Cap each hit so one minified/very long match line can't flood the result set.
         const formatted = lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text).join('\n');
         const truncated = lines.length >= searchMaxMatches;
-        return ok('Search', formatted || 'No matches found.', { ...pathMeta(abs), mode, matches: lines.length, truncated });
+        // Say so out loud, like Grep does. The cut used to live only in `details.truncated`, which the
+        // model never sees — so a search that stopped at its limit was indistinguishable from one that
+        // found everything, and "not found" was reported for files that were simply past the cap.
+        // The true total is unknown by construction: both the ripgrep call and the fallback walk STOP at
+        // the limit rather than counting past it, so the notice names the limit rather than a total.
+        const text = truncated && lines.length
+          ? `${formatted}\n\n[Output truncated at ${lines.length} results — the search stopped at its limit; narrow the query or the include pattern for more.]`
+          : formatted || 'No matches found.';
+        return ok('Search', text, { ...pathMeta(abs), mode, matches: lines.length, truncated });
       } catch (e) { return fail('Search', safeError(e)); }
     },
   }), { workspaceSafe: true });
@@ -1145,7 +1153,17 @@ export function register(ctx) {
         const results = matched.slice(0, globMax).map((m) => m.path);
         const truncated = matched.length > globMax;
         const walkTruncated = files.length >= WALK_CAP; // the traversal itself hit the file cap
-        return ok('Glob', results.join('\n') || 'No files matched.', {
+        // Both cuts used to live only in `details`, which the model never sees. They mean different
+        // things and are reported separately: the first trimmed a KNOWN match set (so it can name the
+        // real total), while the second stopped the traversal itself, meaning matches may be missing
+        // altogether rather than merely trimmed — the more serious of the two, and the one that silently
+        // turned an incomplete answer into a confident one.
+        const notices = [
+          ...(truncated ? [`[Showing the ${results.length} newest of ${matched.length} matching files — narrow the pattern for more.]`] : []),
+          ...(walkTruncated ? [`[The traversal stopped at ${WALK_CAP} files, so matches beyond it were never examined — search a narrower path.]`] : []),
+        ];
+        const text = [results.join('\n') || 'No files matched.', ...notices].join('\n\n');
+        return ok('Glob', text, {
           ...pathMeta(abs), pattern: p.pattern, matches: results.length, truncated, walkTruncated,
         });
       } catch (e) { return fail('Glob', safeError(e)); }

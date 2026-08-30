@@ -4,7 +4,7 @@
 //
 // The plugin is `userGrantable` and carries no grant gate of its own: the host's per-account tool policy
 // decides who may reach Bash and the process tools.
-import { defineTool, truncateTail, formatSize } from '@earendil-works/pi-coding-agent';
+import { defineTool, formatSize } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
@@ -142,6 +142,9 @@ class ForegroundRun {
     this.startedAt = new Date().toISOString();
     this.output = '';
     this.readOffset = 0;
+    /** Bytes the rolling buffer below discarded from the middle, so the final result can state the true
+     *  size of the run instead of the size of what happened to survive. */
+    this.dropped = 0;
     this.exitCode = null;
     this.outputCap = outputCap;
     this.timeoutMs = timeoutMs;
@@ -188,10 +191,19 @@ class ForegroundRun {
     };
     const onData = (d) => {
       this.output += this._decoder.write(d);
-      if (this.output.length > this.outputCap * 2) {
-        const drop = this.output.length - this.outputCap * 2;
-        this.output = this.output.slice(drop);
-        this.readOffset = Math.max(0, this.readOffset - drop);
+      const limit = this.outputCap * 2;
+      if (this.output.length > limit) {
+        // Discard from the MIDDLE, never the front. The head carries the command's own echo, whatever
+        // configuration a tool prints on startup and any error raised before the bulk began — a
+        // front-dropping buffer threw exactly that away, which would leave the head half of the final
+        // head+tail cut showing the middle of the run and calling it the beginning.
+        const drop = this.output.length - limit;
+        const keepHead = Math.floor(limit / 2);
+        this.dropped += Buffer.byteLength(this.output.slice(keepHead, keepHead + drop), 'utf8');
+        this.output = this.output.slice(0, keepHead) + this.output.slice(keepHead + drop);
+        // An incremental cursor cannot survive a hole punched behind it: clamp it into what is left, which
+        // re-reads a little rather than pointing past the end and returning nothing.
+        this.readOffset = Math.min(this.readOffset, this.output.length);
       }
       emitProgress();
     };
@@ -231,14 +243,62 @@ class ForegroundRun {
   }
 }
 
-/** Format a settled run's rolling buffer into the `$ cmd … [exit N]` block the model reads. */
-function formatRunResult(command, cwd, out, exitCode, note, outputCap) {
-  // Byte-only cap: `maxLines: Infinity` overrides PI's 2000-line default, which would otherwise
-  // silently clip long-but-small output (e.g. a lint report) far under the configured `outputCap`.
-  const t = truncateTail(out, { maxBytes: outputCap, maxLines: Infinity });
-  const body = t.truncated
-    ? `…[truncated: last ${formatSize(t.outputBytes)} of ${formatSize(t.totalBytes)}]\n${t.content}`
-    : t.content;
+/** Cut a long output in the MIDDLE, keeping both ends.
+ *
+ *  PI's `truncateTail` keeps only the end, which is right for a build log whose error is its last line and
+ *  wrong for most other output: it discards the command's own echo, the configuration a tool prints on
+ *  startup and any error raised before the bulk began. Both ends carry the evidence; the middle is where
+ *  the repetition lives. `Read` deliberately stays head-only — its `offset` argument is how a caller
+ *  continues, so there is nothing to lose at the end.
+ *
+ *  Kept local to this plugin rather than shared: Bash is the only consumer, and no bundled plugin imports
+ *  the shared package today, so introducing a publish cycle would cost more than the reuse is worth.
+ *
+ *  Cuts on a line boundary when the budget contains one, and falls back to a raw byte offset when a single
+ *  line is larger than the budget (a minified bundle, one huge JSON line) — half of a giant line still
+ *  tells the model what it is looking at, where refusing to cut would blow the budget it was given.
+ *
+ *  `maxBytes` bounds the OUTPUT, not the whole block: the banner describing the cut is metadata about the
+ *  truncation, exactly as it was while this was tail-only. */
+function truncateMiddle(content, { maxBytes }) {
+  const buf = Buffer.from(content, 'utf8');
+  if (buf.length <= maxBytes) {
+    return { head: content, tail: '', truncated: false, totalBytes: buf.length, keptBytes: buf.length };
+  }
+  const NEWLINE = 0x0a;
+  const headBudget = Math.floor(maxBytes / 2);
+  const tailBudget = maxBytes - headBudget;
+  const lastNewline = buf.lastIndexOf(NEWLINE, headBudget - 1);
+  const headEnd = lastNewline >= 0 ? lastNewline + 1 : headBudget;
+  const firstNewline = buf.indexOf(NEWLINE, buf.length - tailBudget);
+  const tailStart = Math.max(headEnd, firstNewline >= 0 ? firstNewline + 1 : buf.length - tailBudget);
+  return {
+    head: buf.subarray(0, headEnd).toString('utf8'),
+    tail: buf.subarray(tailStart).toString('utf8'),
+    truncated: true,
+    totalBytes: buf.length,
+    keptBytes: headEnd + (buf.length - tailStart),
+  };
+}
+
+/** Format a settled run's rolling buffer into the `$ cmd … [exit N]` block the model reads.
+ *
+ *  `dropped` is what ForegroundRun's own buffer already discarded mid-run. Its limit is twice `outputCap`
+ *  and it trims back to exactly that, so a run that lost anything there always arrives here above the cap
+ *  and is cut again — which is what guarantees there is a middle for the banner to sit in. */
+function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped = 0) {
+  const t = truncateMiddle(out, { maxBytes: outputCap });
+  const lost = t.totalBytes - t.keptBytes + dropped;
+  let body = t.head;
+  if (lost > 0) {
+    const headBytes = Buffer.byteLength(t.head, 'utf8');
+    const banner = `…[truncated: dropped ${formatSize(lost)} of ${formatSize(t.totalBytes + dropped)}`
+      + `; kept ${formatSize(headBytes)} head + ${formatSize(t.keptBytes - headBytes)} tail]`;
+    // The head may not end in a newline (a byte-offset cut through a long line), and the banner has to
+    // start on its own line or the model reads it as part of the output.
+    const lead = t.head.endsWith('\n') || t.head.length === 0 ? '' : '\n';
+    body = `${t.head}${lead}${banner}\n${t.tail}`;
+  }
   // Ensure the exit marker starts on its own line — the tail may not end in a newline, which would
   // otherwise glue `[exit N]` onto the last line of real output the model parses.
   const sep = body.endsWith('\n') || body.length === 0 ? '' : '\n';
@@ -354,7 +414,7 @@ export function register(ctx) {
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
       `Foreground runs are killed after ${Math.round(DEFAULT_TIMEOUT_MS / 1000)} s; raise it with \`timeout\` (seconds, max ${MAX_TIMEOUT_S}) for a slow but finite command such as an install or a full build.`,
       'Pass background=true for open-ended work (dev servers, watchers) — it runs detached and returns a process id with no command timeout (it does not outlive a daemon restart). Manage those with ListProcesses / ProcessOutput / KillProcess, and use backgroundMode="service" for a long-lived process that should never be collected as a finite job.',
-      `Output is capped: only the LAST ~${Math.round(outputCap / 1000)} kB is returned and the result says so when it was truncated, so redirect a long build or test run to a file and grep it instead of re-running it.`,
+      `Output is capped at ~${Math.round(outputCap / 1000)} kB: past that only the BEGINNING and the END are returned, with the middle dropped and named in the result, so redirect a long build or test run to a file and grep it instead of re-running it.`,
       'A denied or blocked command means a permission rule stopped it — adjust the approach, do not retry it verbatim. Keep secrets out of command lines and output.',
     ].join(' '),
     parameters: Type.Object({
@@ -427,7 +487,7 @@ export function register(ctx) {
           // The `[exit N]` marker inside the text is framing for the MODEL; the display path reads the
           // exit code structurally from details (tone + status chip), so report it there as well. A
           // killed run has no exit code (null) and its note already says why.
-          const res = ok(formatRunResult(run.command, run.cwd, run.sanitizeOutput(run.output), run.exitCode, note, outputCap));
+          const res = ok(formatRunResult(run.command, run.cwd, run.sanitizeOutput(run.output), run.exitCode, note, outputCap, run.dropped));
           if (typeof run.exitCode === 'number') res.details.exitCode = run.exitCode;
           return res;
         }

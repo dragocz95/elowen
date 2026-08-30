@@ -7,7 +7,7 @@
     },
     "outputCap": {
       "label": "Limit výstupu",
-      "hint": "Kolik bajtů stdout/stderr se vrátí před oříznutím. Zároveň omezuje průběžnou vyrovnávací paměť výstupu udržovanou pro procesy na pozadí."
+      "hint": "Kolik stdout/stderr se z příkazu vrátí. Nad tímto limitem se zahodí prostředek a vrátí se jen začátek a konec, přičemž výsledek uvede, kolik toho ubylo. Zároveň omezuje průběžnou vyrovnávací paměť výstupu udržovanou pro procesy na pozadí. Rozsah 10–500 kB, výchozí 60 kB."
     },
     "commandTimeoutMs": {
       "label": "Časový limit příkazu (ms)",
