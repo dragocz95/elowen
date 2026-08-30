@@ -86,6 +86,35 @@ describe('the telemetry rail keeps a right gutter', () => {
   });
 });
 
+describe('the context section never drops the price', () => {
+  it('keeps $888.46 even at the rail\'s documented 36-column minimum, not just a roomy width', () => {
+    // This is the direct regression test for the reported bug: at width 60 the price already survived
+    // (covered above), but the single tail-truncation this replaced ate exactly the price at 36.
+    const text = new TelemetryPanel(fullState).render(TELEMETRY_MIN_COLUMNS).map(strip).join('\n');
+    expect(text).toContain('$888.46');
+  });
+
+  it('drops the absolute token count before the percentage or the price, as width tightens', () => {
+    const wide = new TelemetryPanel(fullState).render(80).map(strip).join('\n');
+    expect(wide).toContain('200k'); // tokens present with plenty of room
+    expect(wide).toContain('100%');
+    expect(wide).toContain('$888.46');
+
+    const narrow = new TelemetryPanel(fullState).render(TELEMETRY_MIN_COLUMNS).map(strip).join('\n');
+    // The token count is the widest, least essential segment — the first one sacrificed.
+    expect(narrow).not.toContain('200k');
+    expect(narrow).toContain('100%');
+    expect(narrow).toContain('$888.46');
+  });
+
+  it('falls back to the plain "—" percentage when there is no usage at all, unaffected by the price logic', () => {
+    const noUsage: TelemetryState = { ...fullState(), usage: null };
+    const text = new TelemetryPanel(() => noUsage).render(60).map(strip).join('\n');
+    expect(text).toContain('—');
+    expect(text).not.toContain('$');
+  });
+});
+
 describe('the telemetry rail auto-fits its width to its content', () => {
   const shortState = (): TelemetryState => ({
     usage: null, cwd: '~/x', branch: 'main', mcp: null, lspEnabled: null, floatOffset: 0,

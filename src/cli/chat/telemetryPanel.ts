@@ -230,7 +230,7 @@ export class TelemetryPanel implements Component {
         id: 'context', minimumRows: 3,
         rows: contextCollapsed ? [contextHeader] : [
           contextHeader,
-          `  ${truncateToWidth(`${color.text(tokens)} ${color.faint('tokens')} ${color.faint(`· ${pct}`)}${usage ? ` ${color.faint(`· $${usage.cost.toFixed(2)}`)}` : ''}`, this.contentWidth(width), '…')}`,
+          this.contextSummaryLine(width, tokens, pct, usage),
           `${' '.repeat(PANEL_BAR_MARGIN)}${this.contextBar(usage?.percent ?? 0, width)}`,
         ],
       },
@@ -416,6 +416,24 @@ export class TelemetryPanel implements Component {
     if ((minutes ?? 0) < 1_440) return `↻ ${time}`;
     const weekday = at.toLocaleDateString(undefined, { weekday: 'short' });
     return `↻ ${weekday} ${time}`;
+  }
+
+  /** Priority-tiered token/percent/cost line: the price Filip asked to always keep, then the percentage
+   *  (which the bar below already shows visually, so it's the cheaper thing to lose), then the absolute
+   *  token count — the widest, least essential piece at a squeezed width. Never truncate a KEPT segment;
+   *  only ever drop the lowest-priority whole segment. */
+  private contextSummaryLine(width: number, tokens: string, pct: string, usage: BrainUsageView | null): string {
+    const cw = this.contentWidth(width);
+    const tokensPart = `${color.text(tokens)} ${color.faint('tokens')}`;
+    const pctPart = `${color.faint('·')} ${color.faint(pct)}`;
+    const costPart = usage ? `${color.faint('·')} ${color.faint(`$${usage.cost.toFixed(2)}`)}` : '';
+    const full = [tokensPart, pctPart, costPart].filter(Boolean).join(' ');
+    if (visibleWidth(full) <= cw) return `  ${full}`;
+    const withoutTokens = [pctPart, costPart].filter(Boolean).join(' ');
+    if (visibleWidth(withoutTokens) <= cw) return `  ${withoutTokens}`;
+    // Defensive floor for a pathologically narrow rail below what TELEMETRY_MIN_COLUMNS should ever allow:
+    // keep only the price (or the percentage if there's no usage at all), truncating that as a last resort.
+    return `  ${truncateToWidth(costPart || pctPart, cw, '…')}`;
   }
 
   /** The context meter spans the panel minus an equal margin on both edges and shares the exact same
