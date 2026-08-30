@@ -183,19 +183,6 @@
   /* Minimum hit area for an interactive control on a touch pointer (WCAG 2.5.8 / platform guidance). */
   --touch-target: 44px;
 
-  /* The deck's vertical section column (components/ui/WorkspaceShell.tsx, `data-section-layout="sidebar"`).
-     Three values, because all three are things a design legitimately restates and none of them may be a
-     literal buried in a grid template:
-       width      — wide enough for a section name plus its glyph without truncating the longest one;
-       gap        — the distance to the surface the column navigates, which is a page-frame rhythm;
-       sticky-top — how far below the top of the SCROLLER the column parks while the surface scrolls under
-                    it. It is 0 plus a breath by default because the built-in design has no bar of its own
-                    inside the page scroller; a design that puts one there (Studio does) adds that bar's
-                    height here rather than re-declaring the sticky rule. */
-  --section-sidebar-width: 15rem;
-  --section-sidebar-gap: 2rem;
-  --section-sidebar-sticky-top: 1rem;
-
   /* The primary navigation column's own three surfaces. A sidebar is a chrome region rather than a
      document surface: it sits one step quieter than the content it insets from, its rows take a fill of
      their own that is not `--color-muted` (which is a CONTENT step and moves with the cards), and its

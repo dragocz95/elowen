@@ -212,10 +212,24 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
   padding-left: 0;
 }
 
-/* Single-line segmented controls remain touch-scrollable without showing native chrome. This must live
-   outside Tailwind's utility layer: the global scrollbar rule in base.css is also unlayered and would win
-   over an arbitrary utility regardless of specificity. */
-.segmented[data-nowrap='true'] { scrollbar-width: none; }
+/* Single-line segmented controls remain touch-scrollable without showing native chrome. Their measured
+   edge state drives the mask variables, so a fade appears only where content is genuinely hidden — never
+   as a permanent decoration on a track that already fits. This must live outside Tailwind's utility layer:
+   the global scrollbar rule in base.css is also unlayered and would win over an arbitrary utility. */
+.segmented[data-nowrap='true'] {
+  --segmented-edge-fade-size: 0.75rem;
+  --segmented-edge-fade-left: 0px;
+  --segmented-edge-fade-right: 0px;
+  max-width: 100%;
+  scrollbar-width: none;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--segmented-edge-fade-left),
+    black calc(100% - var(--segmented-edge-fade-right)),
+    transparent 100%
+  );
+}
 .segmented[data-nowrap='true']::-webkit-scrollbar { display: none; }
 
 /* A pointer that is a finger needs a target it can actually hit. Applied only for a coarse pointer, so

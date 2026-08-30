@@ -51,106 +51,25 @@
   .workspace-page > .workspace-page__lead > .workspace-hero { padding-block-start: 1rem; }
 }
 
-/* The section navigation is IN THE PAGE, between the metric rail and the toolbar row — it used to portal
-   itself into the top bar, where a page's own sections sat among the window's global controls. The track
-   itself is the shared `Segmented` or `SelectMenu`; these rules only place it. */
-.workspace-shell__section-navigation { min-width: 0; padding-block: 1rem 0; }
-
-/* THE CONTENT COLUMN IS THE CONTAINER EVERY SURFACE INSIDE IT IS MEASURED AGAINST, and it has to
-   re-declare the shell's own name to be one.
-
-   `@container workspace-shell` is what a settings record, a control surface and a register row fold
-   against (spatial-deck.css, control-surface.css, page-toolbar.css, skins/studio/surfaces.css). A
-   container query resolves against the NEAREST ancestor carrying the name, so while the shell was the
-   only one, every one of those rules asked how wide the PAGE is. With a section column beside the
-   surface that is the wrong question by the width of the column: a 1000px shell hands its records a
-   ~730px surface, and a record asking "am I under 48rem" would answer against the 1000.
-
-   Redeclaring it here makes the question "how much room does this surface have", which is what all of
-   those rules were always asking. It costs nothing in the other two layouts, where the content column IS
-   the shell's width.
-
-   It is safe to add containment here, and the reason is worth stating because it looks dangerous:
-   `container-type: inline-size` makes an element the containing block for `position: fixed`
-   descendants. Nothing in the app relies on one. Every overlay raised from inside a page — `Modal`,
-   `ConfirmDialog`, `WorkspaceTakeover`, the toast viewport, the command palette — portals to
-   <body> (see the note in components/ui/Modal.tsx), so none of them is a descendant of this element at
-   all. And the shell above already declares the same containment, so a hypothetical fixed box in the
-   content was ALREADY contained; this narrows an existing containing block rather than introducing one.
-   `<main>` deliberately stays uncontained for the same class of reason — the fixed chrome outside the
-   page lives there. */
-.workspace-shell__content { container: workspace-shell / inline-size; min-width: 0; padding-block: 1rem 2rem; }
-.workspace-shell[data-section-layout='sidebar'] > .page-toolbar { container: workspace-shell / inline-size; }
-
-/* ── THE DECK'S SECTION COLUMN ──────────────────────────────────────────────────────────────────────
-   A configuration deck with room places its sections in a column to the LEFT of everything they
-   configure, instead of in a horizontal track above it. The shape is chosen in the component
-   (`resolveSectionLayout`, components/ui/WorkspaceShell.tsx) and announced here as `data-section-layout`;
-   this file only lays it out.
-
-   The hero spans both columns because it names the PAGE, not the section. The toolbar and the content
-   share the right column because both belong to the section that is open, and the column spans them both
-   so it reads as one surface beside one working area rather than as a control above a card. */
-.workspace-shell[data-section-layout='sidebar'] {
-  display: grid;
-  grid-template-columns: var(--section-sidebar-width) minmax(0, 1fr);
-  grid-template-areas:
-    'hero hero'
-    'sections toolbar'
-    'sections content';
-  column-gap: var(--section-sidebar-gap);
-}
-.workspace-shell[data-section-layout='sidebar'] > .workspace-hero { grid-area: hero; }
-.workspace-shell[data-section-layout='sidebar'] > .page-toolbar { grid-area: toolbar; }
-.workspace-shell[data-section-layout='sidebar'] > .workspace-shell__content { grid-area: content; }
-/* `align-self: start` is what makes the sticky work, not a decoration. A grid item stretches to fill its
-   area by default, and a sticky box that is already as tall as its containing block has nowhere to move:
-   the column would scroll away with the page exactly as if the rule were absent. Sized to its content, it
-   parks instead. */
-.workspace-shell[data-section-layout='sidebar'] > .workspace-shell__section-navigation {
-  position: sticky;
-  top: var(--section-sidebar-sticky-top);
-  align-self: start;
-  grid-area: sections;
-  max-height: calc(100dvh - var(--section-sidebar-sticky-top) - 1rem);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-/* The column's own control fills it — a `Segmented` is an inline-flex box and would otherwise be as wide
-   as its longest label, leaving every other row's hit area short of the column edge. */
-.workspace-shell[data-section-layout='sidebar'] > .workspace-shell__section-navigation > .segmented {
-  display: flex;
+/* The section navigation is IN THE PAGE, between the metric rail and the toolbar row. The wrapper owns
+   the page rhythm and clips its inline boundary; the shared Segmented inside owns horizontal scrolling. */
+.workspace-shell__section-navigation {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding-block: 1rem 0;
 }
+.workspace-shell__section-navigation > .segmented { width: 100%; }
 
-/* The picker takes the full line. It is the only navigation on the surface at this width, so a control
-   sized to its current label would be a different width on every section. */
-.workspace-shell[data-section-layout='select'] > .workspace-shell__section-navigation > * { width: 100%; }
+/* THE CONTENT COLUMN IS THE CONTAINER EVERY SURFACE INSIDE IT IS MEASURED AGAINST. `@container
+   workspace-shell` is what settings records, control surfaces and register rows fold against, so the
+   content keeps the name even though every shell now has one full-width column. */
+.workspace-shell__content { container: workspace-shell / inline-size; min-width: 0; padding-block: 1rem 2rem; }
+
 @media (pointer: coarse) {
-  .workspace-shell__section-navigation[data-layout='select'] [role='combobox'] {
-    min-height: var(--touch-target);
-  }
-}
-
-/* THE PHONE GUARD, and the reason it is a media query rather than a container one.
-   `useElementWidth` reports 0 until its first observation and the shell reads that as the wide answer,
-   so between hydration and the first measurement a phone paints ONE frame of the sidebar layout — a
-   15rem column plus a content column, on a 390px screen. A container query cannot help: the shell is the
-   container, and it is the very box the grid is being applied to. The viewport, however, is known to the
-   stylesheet before any JavaScript runs. 48rem is the exact complement of `PHONE_MAX_WIDTH`
-   (767px, lib/breakpoints.ts), the same boundary the rest of the app treats as "phone". */
-@media (width < 48rem) {
-  .workspace-shell[data-section-layout='sidebar'] {
-    display: block;
-  }
-  .workspace-shell[data-section-layout='sidebar'] > .workspace-shell__section-navigation {
-    position: static;
-    max-height: none;
-    overflow: hidden;
-  }
-  .workspace-shell[data-section-layout='sidebar'] .segmented__option:not([aria-checked='true']) { display: none; }
-  .workspace-shell[data-section-layout='sidebar'] .segmented__option[aria-checked='true'] {
-    width: 100%;
+  .workspace-shell__section-navigation[data-layout='tabs'] .segmented__option {
+    min-width: var(--touch-target);
     min-height: var(--touch-target);
   }
 }

@@ -497,32 +497,23 @@
   border-radius: var(--radius);
   font-size: 0.8125rem;
 }
-/* A REGISTER's sections are plain tabs in the shell's top rule, never a second pill-shaped control below
-   the heading. The track scrolls horizontally when a phone cannot fit every label.
-
-   Every rule in this block is scoped to `[data-layout='tabs']`, which the shell states on the nav itself
-   (components/ui/WorkspaceShell.tsx). Unscoped, the same declarations reached the deck's vertical column
-   and its phone picker as well and undid them one at a time: `width: fit-content` collapsed the column
-   to its longest label, `overflow: hidden` clipped it, and a 2px bottom rule under every row turned a
-   menu into a stack of tabs. The tab treatment IS a treatment for a horizontal track; naming the layout
-   it belongs to is what lets the other two exist at all. */
+/* Every sectioned workspace uses the same plain line tabs. The wrapper never grows wider than the page;
+   the Segmented track fills it and owns the horizontal scroll when the labels do not fit. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='tabs'] {
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   padding: 0 0 1rem;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='tabs'] .segmented {
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
   gap: 1rem;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
-  scrollbar-width: none;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='tabs'] .segmented::-webkit-scrollbar {
-  display: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='tabs'] .segmented__option {
   height: 2.25rem;
@@ -542,70 +533,6 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='tabs'] .segmented__count {
   color: inherit;
   opacity: 0.65;
-}
-
-/* ── THE DECK'S SECTION COLUMN, in Studio ───────────────────────────────────────────────────────────
-   The arrangement is the shared shell's (app/styles/components/workspace-shell.css); what Studio states
-   is where the column parks and what a row looks like under the pointer.
-
-   The offset is the reference chrome's own: the page bar is `position: sticky` at the top of the SAME
-   scroller this column sticks to, so a column parked at the stylesheet's default would slide underneath
-   it and lose its first section behind the bar — exactly what `.data-table-header` offsets for a few
-   rules above. It is set as the shared token rather than as a `top` of its own, so the sticky rule keeps
-   one owner. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell[data-section-layout='sidebar'] {
-  --section-sidebar-sticky-top: calc(var(--studio-top-bar-height) + 1rem);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented {
-  gap: 0.125rem;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-/* STATE IS A CHANGE OF GROUND AND NOTHING ELSE — the same rule the registers and the settings records
-   already follow a few blocks below. The shared control paints its selected row with `bg-primary/15` and
-   `text-primary`, which puts a block of the signal blue down the left edge of a settings page whose whole
-   point is that the DATA is the only colour on it. Two neutral steps of the same ink instead, from the
-   shared `--studio-fill-*` tokens, so a section row, a table row and a menu item all move by the same
-   amount. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option {
-  height: 2.25rem;
-  justify-content: flex-start;
-  gap: 0.625rem;
-  padding-inline: 0.625rem;
-  border: 0;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--color-muted-foreground);
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option:hover {
-  background: var(--studio-fill-hover);
-  color: var(--color-foreground);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option[aria-checked='true'] {
-  background: var(--studio-fill-active);
-  color: var(--color-foreground);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__count {
-  color: var(--color-subtle-foreground);
-}
-
-/* The picker a narrow deck folds to. It is the ONLY navigation on the surface at that width, so it takes
-   the whole line — a trigger sized to its current label is a different width on every section — and it
-   clears the touch floor on a finger, which is the pointer that gets this layout most often. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='select'] {
-  padding: 0 0 1rem;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='select'] [role='combobox'] {
-  width: 100%;
-  height: 2.5rem;
-  border: 1px solid var(--studio-line);
-  border-radius: var(--radius);
-  background: var(--color-card);
-  color: var(--color-foreground);
-  font-size: 0.875rem;
 }
 /* State is a change of ground and nothing else — two neutral steps of the same ink, never a tint. The
    selected row used to take 7% of the signal blue, which put a coloured block in the middle of a table

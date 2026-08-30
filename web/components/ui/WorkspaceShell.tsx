@@ -2,9 +2,8 @@
 
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { useElementWidth } from '../../lib/useElementWidth';
+import { consumeHorizontalWheel, revealHorizontalItem } from './horizontalScroll';
 import { Segmented } from './Segmented';
-import { SelectMenu } from './SelectMenu';
 import { PageToolbar, PageToolbarPortal, PageToolbarProvider, PageToolbarScope, type PageToolbarProps } from './PageToolbar';
 import { WorkspaceHero, type WorkspaceHeroProps } from './WorkspaceHero';
 
@@ -34,9 +33,18 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   useEffect(() => {
+    const track = rail.current;
     const active = refs.current[value];
-    active?.scrollIntoView?.({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    if (track && active) revealHorizontalItem(track, active);
   }, [value]);
+
+  useEffect(() => {
+    const track = rail.current;
+    if (!track) return;
+    const onWheel = (event: WheelEvent) => { consumeHorizontalWheel(track, event); };
+    track.addEventListener('wheel', onWheel, { passive: false });
+    return () => track.removeEventListener('wheel', onWheel);
+  }, []);
 
   const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     let next = index;
@@ -57,11 +65,6 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
       ref={rail}
       data-testid="spatial-section-rail"
       className="spatial-section-rail"
-      onWheel={(event) => {
-        if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-        event.preventDefault();
-        event.currentTarget.scrollBy({ left: event.deltaY, behavior: 'auto' });
-      }}
     >
       <nav role="radiogroup" aria-label={ariaLabel} className="spatial-section-rail__track">
         {sections.map((section, index) => {
@@ -90,39 +93,6 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   );
 }
 
-/** How the section navigation presents itself. ONE section model, three shapes, and the shell decides
- *  which one from the variant and the room it actually has — a page never picks a shape itself.
- *
- *  tabs    — the quiet underline track IN THE PAGE, directly under the metric rail. A browsable register
- *            has few sections and they read as a filter over one collection, which is what a tab row is.
- *  sidebar — a vertical column beside the surface it configures. A configuration deck carries a long,
- *            growing, unordered set of sections whose names are the only way to tell them apart, and a
- *            horizontal track answers that by scrolling half of them off the page.
- *  select  — one compact picker. The same deck with no room for a column of its own; a vertical menu
- *            there would spend the whole first screen on navigation before the surface begins.
- *
- *  This is INTERNAL. No prop, no call site and no plugin bundle names a layout, so the deck surfaces
- *  (`/settings`, `/account`, every plugin config surface through `SpatialControlDeck`) change shape
- *  without a single one of them being touched. */
-type SectionLayout = 'tabs' | 'sidebar' | 'select';
-
-/** The room a deck needs before it gets a section column of its own, in CSS pixels of the shell's own
- *  content box. Below it the column and the surface beside it would both be too narrow to read, so the
- *  deck folds to the picker instead.
- *
- *  It is measured on the SHELL rather than matched against the window: the same page renders beside a
- *  pinned advisor dock and inside a plugin host, and only the space the page actually has can answer
- *  this. `useElementWidth` reports 0 until the first observation, which is deliberately read as the wide
- *  answer — a deck must not paint the phone picker for a frame on a desktop. The stylesheet carries the
- *  complementary phone guard, so the wide first paint cannot lay out a two-column grid on a 390px screen
- *  either. */
-const SECTION_SIDEBAR_MIN_WIDTH = 900;
-
-function resolveSectionLayout(variant: WorkspaceShellVariant, shellWidth: number): SectionLayout {
-  if (variant !== 'deck') return 'tabs';
-  return shellWidth === 0 || shellWidth >= SECTION_SIDEBAR_MIN_WIDTH ? 'sidebar' : 'select';
-}
-
 /** The section navigation, IN THE PAGE.
  *
  * It used to portal itself into the shell's top bar, which put a page's sections in the window chrome
@@ -131,58 +101,35 @@ function resolveSectionLayout(variant: WorkspaceShellVariant, shellWidth: number
  * (`PageTopBarPortal`, modules/advisor/BrainChatSurface.tsx); that is a different decision about a
  * different set of controls and is untouched.
  *
- * Every shape keeps the same accessible name and the same single-choice semantics. `tabs` and `sidebar`
- * are the shared `Segmented` under its two existing variants — a radiogroup with a roving tab stop —
- * and `select` is the shared `SelectMenu`, a combobox. The picker has no place to put a count beside a
- * label, so the count is folded INTO the label rather than dropped: a section that carries a figure on a
- * desktop must still carry it on a phone. */
-function SectionNavigation({ sections, value, onChange, ariaLabel, layout }: WorkspaceShellNavigation & { layout: SectionLayout }) {
+ * Every sectioned shell uses the same horizontal, single-line `Segmented` radiogroup. Counts remain beside
+ * their labels; icons stay out of the track so a long configuration deck has as much room for names as a
+ * register does. */
+function SectionNavigation({ sections, value, onChange, ariaLabel }: WorkspaceShellNavigation) {
   return (
-    <nav className="workspace-shell__section-navigation min-w-0" data-layout={layout} aria-label={ariaLabel}>
-      {layout === 'select' ? (
-        <SelectMenu
-          value={value}
-          onChange={onChange}
-          label={ariaLabel}
-          variant="line"
-          options={sections.map((section) => {
-            const Icon = section.icon;
-            return {
-              value: section.id,
-              label: section.count === undefined ? section.label : `${section.label} (${section.count})`,
-              icon: <Icon size={16} strokeWidth={1.6} aria-hidden />,
-            };
-          })}
-        />
-      ) : (
-        <Segmented
-          aria-label={ariaLabel}
-          value={value}
-          onChange={onChange}
-          variant={layout === 'sidebar' ? 'menu' : 'line'}
-          // A horizontal track has to stay on one line and scroll; a vertical column has no such axis.
-          nowrap={layout === 'tabs'}
-          options={sections.map((section) => ({
-            value: section.id,
-            label: section.label,
-            count: section.count,
-            // Icons belong to the column, where each row has a whole line to itself. In a tab row they
-            // would double the width of every label for no gain.
-            icon: layout === 'sidebar' ? section.icon : undefined,
-          }))}
-        />
-      )}
+    <nav className="workspace-shell__section-navigation min-w-0" data-layout="tabs" aria-label={ariaLabel}>
+      <Segmented
+        aria-label={ariaLabel}
+        value={value}
+        onChange={onChange}
+        variant="line"
+        nowrap
+        options={sections.map((section) => ({
+          value: section.id,
+          label: section.label,
+          count: section.count,
+        }))}
+      />
     </nav>
   );
 }
 
 /** Which information structure the page carries — NOT a visual theme.
  *
- *  register — a browsable collection with live figures: mascot hero, metric row, optional section rail.
- *  deck     — a configuration surface: section rail over one settings surface at a time.
- *  single   — one working surface under a title block, no rail.
+ *  register — a browsable collection with live figures, metrics and optional section tabs.
+ *  deck     — a configuration surface with section tabs over one settings surface at a time.
+ *  single   — one working surface under a title block, with no section navigation.
  *
- *  All three share the same anatomy (hero, optional rail, content) and therefore the same gutter, the
+ *  All three share the same anatomy (hero, optional navigation, content) and therefore the same gutter, the
  *  same width cap and the same vertical rhythm. The variant only decides which parts are present. */
 type WorkspaceShellVariant = 'register' | 'deck' | 'single';
 
@@ -223,10 +170,6 @@ export interface WorkspaceShellProps {
  *  no shipped design selected. `SpatialSectionRail` stays exported and fully functional for the bundles
  *  and forks that mount it themselves; the shell simply does not choose it for them. */
 export function WorkspaceShell({ variant = 'register', hero, navigation, toolbar, children, className = '' }: WorkspaceShellProps) {
-  const shellRef = useRef<HTMLDivElement>(null);
-  const shellWidth = useElementWidth(shellRef);
-  const layout = resolveSectionLayout(variant, shellWidth);
-
   const content = (
     <section
       className="workspace-shell__content spatial-content-surface"
@@ -238,18 +181,13 @@ export function WorkspaceShell({ variant = 'register', hero, navigation, toolbar
 
   return (
     <PageToolbarProvider>
-      {/* DOM ORDER IS THE ANATOMY and does not change with the layout: hero, navigation, toolbar,
-          content, in that order, whichever shape the navigation takes. The sidebar arrangement is a
-          grid placement in workspace-shell.css, not a different tree — a reader with no stylesheet, and
-          a screen reader following the document, meet the page in the order it is written. */}
       <div
-        ref={shellRef}
         className={`workspace-shell ${className}`.trim()}
         data-variant={variant}
-        data-section-layout={navigation ? layout : undefined}
+        data-section-layout={navigation ? 'tabs' : undefined}
       >
         <WorkspaceHero {...hero} />
-        {navigation ? <SectionNavigation {...navigation} layout={layout} /> : null}
+        {navigation ? <SectionNavigation {...navigation} /> : null}
         <PageToolbar {...toolbar} />
         {content}
       </div>

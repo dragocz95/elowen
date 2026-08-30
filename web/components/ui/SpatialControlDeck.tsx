@@ -11,9 +11,9 @@ import type { SpatialMascotState } from './SpatialMascot';
 export { SpatialSectionRail };
 export type { SpatialDeckSection };
 
-/** Live figures and a primary action for the deck's hero. Supplying it turns the plain title block into
- *  the same mascot hero the register workspaces wear, so a settings page opens on the state of the thing
- *  it configures instead of on a heading. Omit it and the deck keeps the compact title block. */
+/** Live figures and a primary action for the deck's hero. Supplying it adds the same metric rail used by
+ *  register workspaces, so a settings page can open on the state of the thing it configures. Omit it and
+ *  the deck keeps the compact title block. */
 export interface SpatialDeckHero {
   metrics: ReactNode;
   action?: ReactNode;
