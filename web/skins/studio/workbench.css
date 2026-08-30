@@ -148,6 +148,11 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-user-message .text-foreground {
   color: inherit;
 }
+/* User metadata sits ON the user bubble, so the bubble's own paired ink owns it. Muted foreground is a
+   document colour and can disappear on both the blue Light bubble and the neutral OLED bubble. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-turn-meta[data-role='user'] {
+  color: var(--studio-chat-user-text);
+}
 /* Code and markdown tables use the same neutral working surface as the composer. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .chat-markdown pre {
   padding: 1rem;
