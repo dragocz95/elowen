@@ -67,6 +67,7 @@ describe('the advisor agents table', () => {
     render(<AgentsTable agents={AGENTS} onOpen={vi.fn()} onClose={vi.fn()} />, { wrapper: W });
 
     const body = soleBody();
+    expect(screen.getByRole('dialog')).toHaveAttribute('data-presentation', 'fullscreen');
     const table = screen.getByRole('table', { name: 'Delegated sub-agents' });
     expect(body.contains(table), 'the wide register scrolls in the shared body').toBe(true);
     expect(table.tagName).toBe('DIV');
@@ -111,7 +112,11 @@ describe('the advisor agents table', () => {
       expect(screen.getByText(value)).toBeInTheDocument();
     }
     const task = screen.getByText('inspect the code');
-    expect(task).not.toHaveClass('truncate');
+    expect(task).toHaveClass('line-clamp-4');
+    expect(task).toHaveAttribute('title', 'inspect the code');
+    const activity = screen.getByText('Read src/a.ts').closest('[data-agent-activity]');
+    expect(activity).toHaveClass('font-mono');
+    expect(activity).toHaveAttribute('title', 'Read src/a.ts');
 
     fireEvent.click(screen.getByRole('button', { name: 'Open sub-agent transcript: write tests' }));
     expect(onOpen).toHaveBeenCalledWith('s-2');

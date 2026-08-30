@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { ChevronRight, GitBranch, Users } from 'lucide-react';
+import { ChevronRight, GitBranch, SquareTerminal, Users } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { Modal, ModalBody } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
@@ -65,9 +65,18 @@ function AgentMobileCard({ agent, now, onOpen }: { agent: SubagentState; now: nu
                 <GitBranch size={12} className="text-muted-foreground" aria-hidden />
               </span>
             ) : null}
-            <h3 className="min-w-0 break-words text-sm font-semibold leading-snug text-foreground">{agent.task}</h3>
+            <h3 className="line-clamp-4 min-w-0 break-words text-sm font-semibold leading-snug text-foreground" title={agent.task}>{agent.task}</h3>
           </div>
-          <p className="mt-1 break-words text-xs leading-relaxed text-muted-foreground">{agent.detail ?? '—'}</p>
+          <div
+            className="mt-2 flex min-w-0 items-start gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-muted-foreground"
+            title={agent.detail}
+            data-agent-activity
+          >
+            <SquareTerminal size={12} aria-hidden className="mt-0.5 shrink-0 text-primary" />
+            <span aria-hidden className="shrink-0 text-primary">$</span>
+            <span className="line-clamp-2 min-w-0 break-all">{agent.detail ?? '—'}</span>
+            {agent.status === 'running' ? <span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-primary motion-reduce:animate-none" /> : null}
+          </div>
         </div>
 
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-border/60 bg-background/55 px-2.5 py-2">
@@ -130,9 +139,7 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
       title={t.agents.title}
       description={t.agents.subtitle}
       onClose={onClose}
-      size="lg"
-      intent="inspect"
-      drawerWidth="wide"
+      presentation="fullscreen"
       icon={Users}
     >
       <ModalBody>
