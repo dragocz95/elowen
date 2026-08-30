@@ -217,6 +217,41 @@ describe('terminal plugin — configurable outputCap', () => {
     expect(head + tail).toBe(60_000);
   });
 
+  // One enormous line terminated by a newline used to lose its whole tail: the only newline inside the
+  // tail budget was the trailing one, so the line-aligned cut started the tail at the very end and
+  // head+tail silently degraded back to head-only.
+  it('keeps a tail for one oversized line that ends in a newline', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { outputCap: 10_000 } },
+    });
+    const command = 'node -e "process.stdout.write(\'S\' + \'x\'.repeat(19998) + \'E\\n\')"';
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command }), { identity: owner });
+    const text = res.content[0].text;
+    const { head, tail } = shownParts(text);
+
+    expect(head).toBeGreaterThan(0);
+    expect(tail).toBeGreaterThan(0);
+    expect(head + tail).toBeLessThanOrEqual(10_000);
+  });
+
+  // A raw byte cut through multi-byte text used to decode each half on its own, so the character sitting
+  // on the seam came back as U+FFFD on both sides.
+  it('never cuts a multi-byte character in half', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { outputCap: 10_000 } },
+    });
+    // One line of 3-byte characters, 15000 bytes total. Both cut points (5000 and 10000) fall INSIDE a
+    // character rather than between two, which is the case a byte offset gets wrong.
+    const command = 'node -e "process.stdout.write(\'\\u5b57\'.repeat(5000))"';
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command }), { identity: owner });
+    const text = res.content[0].text;
+
+    expect(text).toContain('…[truncated');
+    expect(text).not.toContain('\uFFFD');
+  });
+
   // The rolling buffer used to drop from the FRONT at twice the cap, so anything past that arrived here
   // already missing its beginning — the head half of a head+tail cut would then show the middle of the
   // run and call it the start. The buffer now drops from the middle too, and counts what it lost so the

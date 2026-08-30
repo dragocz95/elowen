@@ -197,13 +197,21 @@ class ForegroundRun {
         // configuration a tool prints on startup and any error raised before the bulk began — a
         // front-dropping buffer threw exactly that away, which would leave the head half of the final
         // head+tail cut showing the middle of the run and calling it the beginning.
-        const drop = this.output.length - limit;
-        const keepHead = Math.floor(limit / 2);
-        this.dropped += Buffer.byteLength(this.output.slice(keepHead, keepHead + drop), 'utf8');
-        this.output = this.output.slice(0, keepHead) + this.output.slice(keepHead + drop);
-        // An incremental cursor cannot survive a hole punched behind it: clamp it into what is left, which
-        // re-reads a little rather than pointing past the end and returning nothing.
-        this.readOffset = Math.min(this.readOffset, this.output.length);
+        // Both offsets step off a low surrogate: slicing between the halves of a surrogate pair splits a
+        // character in two and corrupts the output on either side of the seam.
+        const onBoundary = (index) => {
+          const code = this.output.charCodeAt(index);
+          return Number.isNaN(code) || code < 0xdc00 || code > 0xdfff ? index : index + 1;
+        };
+        const keepHead = onBoundary(Math.floor(limit / 2));
+        const resumeAt = onBoundary(keepHead + (this.output.length - limit));
+        const drop = resumeAt - keepHead;
+        this.dropped += Buffer.byteLength(this.output.slice(keepHead, resumeAt), 'utf8');
+        this.output = this.output.slice(0, keepHead) + this.output.slice(resumeAt);
+        // Everything behind the hole moved left by `drop`, so a detached run's incremental cursor has to
+        // move with it. Clamping to the new length instead would park the cursor at the end and make
+        // ProcessOutput report "nothing new" for output that had in fact just arrived.
+        if (this.readOffset > keepHead) this.readOffset = Math.max(keepHead, this.readOffset - drop);
       }
       emitProgress();
     };
@@ -256,22 +264,37 @@ class ForegroundRun {
  *
  *  Cuts on a line boundary when the budget contains one, and falls back to a raw byte offset when a single
  *  line is larger than the budget (a minified bundle, one huge JSON line) — half of a giant line still
- *  tells the model what it is looking at, where refusing to cut would blow the budget it was given.
+ *  tells the model what it is looking at, where refusing to cut would blow the budget it was given. A raw
+ *  offset is then snapped onto a UTF-8 character boundary: decoding half a character produces U+FFFD, and
+ *  a replacement character in the middle of a path or an identifier is worse than one byte less output.
  *
  *  `maxBytes` bounds the OUTPUT, not the whole block: the banner describing the cut is metadata about the
  *  truncation, exactly as it was while this was tail-only. */
 function truncateMiddle(content, { maxBytes }) {
   const buf = Buffer.from(content, 'utf8');
-  if (buf.length <= maxBytes) {
+  if (!(maxBytes >= 2) || buf.length <= maxBytes) {
     return { head: content, tail: '', truncated: false, totalBytes: buf.length, keptBytes: buf.length };
   }
   const NEWLINE = 0x0a;
+  // A UTF-8 continuation byte is 10xxxxxx; a cut may only land on a byte that is not one.
+  const isContinuation = (index) => index > 0 && index < buf.length && (buf[index] & 0xc0) === 0x80;
+  const backToBoundary = (index) => { let i = index; while (isContinuation(i)) i -= 1; return i; };
+  const forwardToBoundary = (index) => { let i = index; while (isContinuation(i)) i += 1; return i; };
+
   const headBudget = Math.floor(maxBytes / 2);
   const tailBudget = maxBytes - headBudget;
   const lastNewline = buf.lastIndexOf(NEWLINE, headBudget - 1);
-  const headEnd = lastNewline >= 0 ? lastNewline + 1 : headBudget;
-  const firstNewline = buf.indexOf(NEWLINE, buf.length - tailBudget);
-  const tailStart = Math.max(headEnd, firstNewline >= 0 ? firstNewline + 1 : buf.length - tailBudget);
+  const headEnd = lastNewline >= 0 ? lastNewline + 1 : backToBoundary(headBudget);
+
+  const tailFrom = buf.length - tailBudget;
+  const firstNewline = buf.indexOf(NEWLINE, tailFrom);
+  // A newline that IS the last byte would leave an EMPTY tail — which is exactly what one enormous line
+  // terminated by a newline produces, and it silently turns head+tail back into head-only. Accept a
+  // line-aligned tail only when something follows the newline; otherwise take the raw offset, which is
+  // the fallback an oversized line is supposed to get.
+  const tailStart = firstNewline >= 0 && firstNewline + 1 < buf.length
+    ? Math.max(headEnd, firstNewline + 1)
+    : Math.max(headEnd, forwardToBoundary(tailFrom));
   return {
     head: buf.subarray(0, headEnd).toString('utf8'),
     tail: buf.subarray(tailStart).toString('utf8'),
@@ -283,26 +306,46 @@ function truncateMiddle(content, { maxBytes }) {
 
 /** Format a settled run's rolling buffer into the `$ cmd … [exit N]` block the model reads.
  *
- *  `dropped` is what ForegroundRun's own buffer already discarded mid-run. Its limit is twice `outputCap`
- *  and it trims back to exactly that, so a run that lost anything there always arrives here above the cap
- *  and is cut again — which is what guarantees there is a middle for the banner to sit in. */
+ *  `dropped` is what ForegroundRun's own buffer already discarded mid-run. It is USUALLY still above the
+ *  cap when it gets here — the buffer's limit is twice `outputCap` — so the banner normally sits between
+ *  a head and a tail. It is not guaranteed to, because workspace-path sanitisation runs in between and
+ *  shrinks the text, so the no-middle case is handled rather than assumed.
+ *
+ *  The reported total mixes sanitised surviving bytes with unsanitised discarded ones, so it is a size
+ *  estimate rather than an exact byte count of what the process wrote. Naming a slightly imprecise total
+ *  is still far better than the previous behaviour, which reported the size of whatever survived and
+ *  called it the size of the run. */
 function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped = 0) {
   const t = truncateMiddle(out, { maxBytes: outputCap });
   const lost = t.totalBytes - t.keptBytes + dropped;
   let body = t.head;
   if (lost > 0) {
     const headBytes = Buffer.byteLength(t.head, 'utf8');
-    const banner = `…[truncated: dropped ${formatSize(lost)} of ${formatSize(t.totalBytes + dropped)}`
-      + `; kept ${formatSize(headBytes)} head + ${formatSize(t.keptBytes - headBytes)} tail]`;
+    const kept = t.truncated
+      ? `; kept ${formatSize(headBytes)} head + ${formatSize(t.keptBytes - headBytes)} tail`
+      : '';
+    const banner = `…[truncated: dropped ${formatSize(lost)} of ${formatSize(t.totalBytes + dropped)}${kept}]`;
     // The head may not end in a newline (a byte-offset cut through a long line), and the banner has to
     // start on its own line or the model reads it as part of the output.
     const lead = t.head.endsWith('\n') || t.head.length === 0 ? '' : '\n';
-    body = `${t.head}${lead}${banner}\n${t.tail}`;
+    // Without a cut of its own there is no middle to sit in: the loss happened somewhere inside output
+    // that now fits, and the only honest placement left is after all of it.
+    body = t.truncated ? `${t.head}${lead}${banner}\n${t.tail}` : `${t.head}${lead}${banner}\n`;
   }
   // Ensure the exit marker starts on its own line — the tail may not end in a newline, which would
   // otherwise glue `[exit N]` onto the last line of real output the model parses.
   const sep = body.endsWith('\n') || body.length === 0 ? '' : '\n';
   return `$ ${command}\n(cwd: ${cwd})\n${note}${body}${sep}[exit ${exitCode}]`;
+}
+
+/** Name what a run's rolling buffer discarded, so a full read is never a silently glued head and tail.
+ *  A ForegroundRun detached with Ctrl+B drops from the middle and counts the loss; a plain BgProcess
+ *  trims its front and keeps no counter, so it simply has nothing to declare. */
+function withDropNotice(bg, text) {
+  const dropped = bg.dropped ?? 0;
+  return dropped > 0
+    ? `${text}\n…[${formatSize(dropped)} was dropped from the middle of this output while the process ran]`
+    : text;
 }
 
 export function register(ctx) {
@@ -330,16 +373,19 @@ export function register(ctx) {
     id, command: bg.command, cwd: bg.cwd, startedAt: bg.startedAt,
     accountUserId, sessionId, workspaceId, homeGeneration, completionMode,
     running: () => bg.running, exitCode: () => bg.exitCode,
-    readAll: () => bg.sanitizeOutput(bg.output),
+    readAll: () => withDropNotice(bg, bg.sanitizeOutput(bg.output)),
     readNew: (all) => {
       // A host prefix may be split across process chunks or the incremental cursor. Workspace-scoped output
       // is therefore sanitized as one complete buffer before it is exposed; repeating prior output is safer
       // than returning a cross-boundary fragment that reconstructs a host path.
-      const text = bg.workspaceScoped
+      const whole = bg.workspaceScoped || all;
+      const text = whole
         ? bg.sanitizeOutput(bg.output)
-        : bg.sanitizeOutput(all ? bg.output : bg.output.slice(bg.readOffset));
+        : bg.sanitizeOutput(bg.output.slice(bg.readOffset));
       bg.readOffset = bg.output.length;
-      return text;
+      // Only a WHOLE read can be described by the notice: an incremental slice may not even contain the
+      // seam, and stamping every later read with a loss that happened once would be its own kind of lie.
+      return whole ? withDropNotice(bg, text) : text;
     },
     kill: () => bg.kill(),
   });

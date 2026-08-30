@@ -21,6 +21,9 @@ const RESULT_LINE_MAX = 500; // cap each search hit so one minified line can't f
 const IMAGE_MAX_BYTES = 3_750_000;
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'web-dist', '.next', '.turbo']);
 const DEFAULT_GLOB_MAX = 100;
+/** How many files a traversal may visit before it gives up. Shared by Glob and Search's rg-less
+ *  fallback so both report the same bound with the same wording. */
+const WALK_CAP = 10_000;
 const DEFAULT_GREP_MAX_MATCHES = 200;
 const execFileP = promisify(execFile);
 const RIPGREP_REQUIRED = 'Error: ripgrep (rg) is required for content search. Install ripgrep and retry (Ubuntu/Debian: apt install ripgrep; macOS: brew install ripgrep).';
@@ -640,6 +643,9 @@ function globRegex(glob) {
   return new RegExp(`^${escaped}$`);
 }
 
+/** Walk up to `limit` files. Callers that REPORT the cap ask for `limit + 1` and treat an over-long
+ *  result as capped: a walk that returns exactly `limit` is otherwise indistinguishable from a tree that
+ *  happens to hold exactly that many files, and claiming truncation there is a lie about completeness. */
 function walkFiles(root, limit = 5000) {
   const s = statSync(root);
   if (s.isFile()) return [root];
@@ -659,6 +665,8 @@ function walkFiles(root, limit = 5000) {
   return out;
 }
 
+/** Ripgrep collects the WHOLE match set and this trims it, so `total` is the real number of matches —
+ *  reported so the caller can say "showing N of M" rather than guessing from a full page. */
 async function rgSearch(abs, root, queryText, include, mode, maxMatches) {
   const ignoreGlobs = [...SKIP_DIRS].map((d) => `!${d}/**`);
   if (mode === 'files') {
@@ -666,15 +674,15 @@ async function rgSearch(abs, root, queryText, include, mode, maxMatches) {
     try {
       const { stdout } = await execFileP('rg', args, { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 1_000_000 });
       const query = safeRegex(queryText);
-      return stdout.split('\n').filter(Boolean)
+      const all = stdout.split('\n').filter(Boolean)
         .map((p) => relative(root, p.startsWith('/') ? p : join(root, p)) || p)
-        .filter((p) => query.test(p))
-        .slice(0, maxMatches);
+        .filter((p) => query.test(p));
+      return { lines: all.slice(0, maxMatches), total: all.length };
     } catch (e) {
       // rg exits 1 on "no files matched" just like content mode — that's a real empty result, NOT an
       // rg-unavailable signal. Without this the caller would treat it as a miss and fall back to the JS
       // walk (which ignores .gitignore), surfacing gitignored files rg deliberately skipped.
-      if (e && typeof e === 'object' && 'code' in e && e.code === 1) return [];
+      if (e && typeof e === 'object' && 'code' in e && e.code === 1) return { lines: [], total: 0 };
       throw e;
     }
   }
@@ -688,15 +696,16 @@ async function rgSearch(abs, root, queryText, include, mode, maxMatches) {
   ];
   try {
     const { stdout } = await execFileP('rg', args, { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 1_000_000 });
-    return stdout.split('\n').filter(Boolean).map((line) => {
+    const all = stdout.split('\n').filter(Boolean).map((line) => {
       if (!line.startsWith('/')) return line;
       const first = line.indexOf(':');
       const second = first >= 0 ? line.indexOf(':', first + 1) : -1;
       if (second < 0) return line;
       return `${relative(root, line.slice(0, first))}${line.slice(first)}`;
-    }).slice(0, maxMatches);
+    });
+    return { lines: all.slice(0, maxMatches), total: all.length };
   } catch (e) {
-    if (e && typeof e === 'object' && 'code' in e && e.code === 1) return [];
+    if (e && typeof e === 'object' && 'code' in e && e.code === 1) return { lines: [], total: 0 };
     throw e;
   }
 }
@@ -1031,33 +1040,46 @@ export function register(ctx) {
         const query = safeRegex(queryText);
         const include = globRegex(p.include);
         const lines = [];
+        // Matches found, INCLUDING the ones past the cap. Counting them is what lets the notice below say
+        // "showing 200 of 431" instead of guessing truncation from a full page — a page that is exactly
+        // full is far more often a complete result than a trimmed one.
+        let total = 0;
+        // Set when the traversal itself ran out of budget, so matches may be missing rather than trimmed.
+        let walkTruncated = false;
         try {
-          lines.push(...await rgSearch(abs, root, queryText, p.include, mode, searchMaxMatches));
+          const hits = await rgSearch(abs, root, queryText, p.include, mode, searchMaxMatches);
+          lines.push(...hits.lines);
+          total = hits.total;
         } catch (error) {
           if (!commandMissing(error)) throw error;
           // Filename matching stays safe without rg: the bounded walk reads directory entries and stats,
           // never file contents. Content search must fail closed — reading arbitrary whole files as UTF-8
           // is exactly how a broad /data search pulled a production SQLite database into the V8 heap.
           if (mode === 'content') return ok('Search', RIPGREP_REQUIRED, { ok: false, path: abs, mode });
-          for (const file of walkFiles(abs)) {
+          const walked = walkFiles(abs, WALK_CAP + 1);
+          walkTruncated = walked.length > WALK_CAP;
+          for (const file of walked.slice(0, WALK_CAP)) {
             const rel = relative(root, file) || file;
             if (include && !include.test(rel) && !include.test(rel.split('/').at(-1) ?? rel)) continue;
-            if (query.test(rel)) lines.push(rel);
-            if (lines.length >= searchMaxMatches) break;
+            if (!query.test(rel)) continue;
+            // Keep counting past the cap: the walk is already bounded, so the extra work is a regex test
+            // per file and it buys an honest total instead of "at least this many".
+            total += 1;
+            if (lines.length < searchMaxMatches) lines.push(rel);
           }
         }
         // Cap each hit so one minified/very long match line can't flood the result set.
         const formatted = lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text).join('\n');
-        const truncated = lines.length >= searchMaxMatches;
+        const truncated = total > lines.length;
         // Say so out loud, like Grep does. The cut used to live only in `details.truncated`, which the
         // model never sees — so a search that stopped at its limit was indistinguishable from one that
         // found everything, and "not found" was reported for files that were simply past the cap.
-        // The true total is unknown by construction: both the ripgrep call and the fallback walk STOP at
-        // the limit rather than counting past it, so the notice names the limit rather than a total.
-        const text = truncated && lines.length
-          ? `${formatted}\n\n[Output truncated at ${lines.length} results — the search stopped at its limit; narrow the query or the include pattern for more.]`
-          : formatted || 'No matches found.';
-        return ok('Search', text, { ...pathMeta(abs), mode, matches: lines.length, truncated });
+        const notices = [
+          ...(truncated ? [`[Showing ${lines.length} of ${total} matches — narrow the query or the include pattern for the rest.]`] : []),
+          ...(walkTruncated ? [`[The traversal stopped at ${WALK_CAP} files, so matches beyond it were never examined — search a narrower path.]`] : []),
+        ];
+        const text = [formatted || 'No matches found.', ...notices].join('\n\n');
+        return ok('Search', text, { ...pathMeta(abs), mode, matches: lines.length, total, truncated, walkTruncated });
       } catch (e) { return fail('Search', safeError(e)); }
     },
   }), { workspaceSafe: true });
@@ -1139,8 +1161,12 @@ export function register(ctx) {
         const regex = globRegex(p.pattern);
         if (!regex) return ok('Glob', 'Error: invalid glob pattern.', { ok: false });
         const globMax = Math.min(Math.max(Number(ctx.config.globMax) || DEFAULT_GLOB_MAX, 10), 500);
-        const WALK_CAP = 10_000;
-        const files = walkFiles(abs, WALK_CAP);
+        // One over the cap, so "the tree holds exactly WALK_CAP files" is distinguishable from "the walk
+        // ran out of budget" — the notice below claims matches were never examined, which must not be
+        // said about a traversal that actually finished.
+        const walked = walkFiles(abs, WALK_CAP + 1);
+        const walkTruncated = walked.length > WALK_CAP;
+        const files = walked.slice(0, WALK_CAP);
         // "newest first" must hold across the WHOLE match set, so collect EVERY match (matching is cheap),
         // then sort by mtime and trim — never stop the walk in traversal order and sort only that subset,
         // which would drop a newer file that happened to sit past the cap.
@@ -1152,12 +1178,12 @@ export function register(ctx) {
         matched.sort((a, b) => b.mtime - a.mtime);
         const results = matched.slice(0, globMax).map((m) => m.path);
         const truncated = matched.length > globMax;
-        const walkTruncated = files.length >= WALK_CAP; // the traversal itself hit the file cap
         // Both cuts used to live only in `details`, which the model never sees. They mean different
         // things and are reported separately: the first trimmed a KNOWN match set (so it can name the
         // real total), while the second stopped the traversal itself, meaning matches may be missing
         // altogether rather than merely trimmed — the more serious of the two, and the one that silently
-        // turned an incomplete answer into a confident one.
+        // turned an incomplete answer into a confident one. When the traversal WAS capped, "newest" and
+        // the total describe only what it examined, which is what the second notice warns about.
         const notices = [
           ...(truncated ? [`[Showing the ${results.length} newest of ${matched.length} matching files — narrow the pattern for more.]`] : []),
           ...(walkTruncated ? [`[The traversal stopped at ${WALK_CAP} files, so matches beyond it were never examined — search a narrower path.]`] : []),
