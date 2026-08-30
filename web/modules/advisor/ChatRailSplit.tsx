@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { useDefaultLayout, type LayoutStorage, type PanelImperativeHandle } from 'react-resizable-panels';
 import { useTranslation } from '../../lib/i18n';
 import {
@@ -15,7 +15,6 @@ import {
   RAIL_LAYOUT_STORAGE_KEY,
   RAIL_MAX_WIDTH,
   RAIL_MIN_WIDTH,
-  railTypeVars,
 } from '../../lib/telemetryRail';
 import { TelemetryPanel } from './TelemetryPanel';
 import { useTelemetryRail } from './telemetryRailState';
@@ -56,9 +55,6 @@ export function ChatRailSplit({ workspace, docked }: { workspace: ReactNode; doc
   const { t } = useTranslation();
   const rail = useTelemetryRail();
   const panelRef = useRef<PanelImperativeHandle | null>(null);
-  // The live pixel width, republished as the rail's own type tokens. It starts at the default rather than
-  // at zero so the first paint is already sized correctly instead of flashing the narrow end of the scale.
-  const [railWidth, setRailWidth] = useState(RAIL_DEFAULT_WIDTH);
   // A persisted collapsed layout contains only 52px, so after a reload the library no longer knows the
   // expanded size it had before the collapse. Keep the latest expanded width for this mount, seeded with
   // the designed default; expanding after a reload therefore returns to 340px rather than the 280px minimum.
@@ -97,7 +93,6 @@ export function ChatRailSplit({ workspace, docked }: { workspace: ReactNode; doc
   }, [collapsed, docked]);
 
   const onResize = useCallback((size: { inPixels: number; asPercentage: number }) => {
-    setRailWidth(size.inPixels);
     // Dragging the edge past the collapse threshold is a legitimate way to collapse the rail, and the
     // restored layout on mount is another; either way the mirror follows the panel, so the toggle button
     // and its `aria-expanded` report what is actually on screen.
@@ -145,7 +140,6 @@ export function ChatRailSplit({ workspace, docked }: { workspace: ReactNode; doc
             // change and the rail keeps the width the reader gave it.
             groupResizeBehavior="preserve-pixel-size"
             onResize={onResize}
-            style={railTypeVars(railWidth)}
             className="flex"
           >
             <TelemetryPanel

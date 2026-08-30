@@ -78,7 +78,7 @@ function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
 /** A section heading: a quiet label with an optional right-aligned meta value, mirroring the CLI rail. */
 function SectionHead({ label, meta }: { label: string; meta?: ReactNode }) {
   return (
-    <div className="telemetry-section-head flex items-baseline justify-between gap-2 text-tiny uppercase tracking-wide text-subtle-foreground">
+    <div className="telemetry-section-head flex items-baseline justify-between gap-2 text-xs uppercase tracking-wide text-subtle-foreground">
       {/* The label truncates like the meta does: it is a translated string, and at the narrow end of the
           rail an uppercase heading like "OTHER PROCESSES" is otherwise a width floor the row cannot go
           under, pushing the whole section past the column. */}
@@ -143,7 +143,7 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel }: {
       // `min-w-0 flex-1` rather than `w-full`: the row also carries a fixed-size icon (and, in the other-
       // processes section, a badge and a kill button), so a child asking for the row's FULL width starts
       // every layout pass over budget and only truncation inside it saves the row.
-      className="h-6 min-w-0 flex-1 justify-start gap-1.5 rounded px-1 text-left text-tiny disabled:cursor-default disabled:opacity-100"
+      className="h-6 min-w-0 flex-1 justify-start gap-1.5 rounded px-1 text-left text-xs disabled:cursor-default disabled:opacity-100"
     >
       <span className={`shrink-0 ${tone === 'running' ? 'text-success' : 'text-subtle-foreground'}`} aria-hidden>●</span>
       <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
@@ -257,7 +257,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
             meta={usage.percent == null ? undefined : `${Math.round(usage.percent)}%`}
           />
           <ContextMeter percent={usage.percent ?? 0} label={t.brainChat.context} />
-          <p className="font-mono text-tiny text-muted-foreground">
+          <p className="font-mono text-xs text-muted-foreground">
             {formatTokens(usage.tokens ?? 0)} / {formatTokens(usage.contextWindow)} · {formatCost(usage.cost, 2)}
           </p>
         </section>
@@ -266,17 +266,17 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
       {activeGoal ? (
         <section className="flex flex-col gap-1" data-testid="telemetry-goal">
           <SectionHead label={t.telemetry.goal} meta={goalMeta} />
-          <p className="flex items-center gap-1.5 text-tiny">
+          <p className="flex items-center gap-1.5 text-xs">
             <Target size={11} className="shrink-0 text-primary" aria-hidden />
             <span className="min-w-0 truncate text-foreground" title={activeGoal.goal}>{activeGoal.goal}</span>
           </p>
           {activeGoal.last_evidence ? (
-            <p className="line-clamp-2 text-tiny text-muted-foreground" title={activeGoal.last_evidence}>
+            <p className="line-clamp-2 text-xs text-muted-foreground" title={activeGoal.last_evidence}>
               {t.telemetry.goalProgress.replace('{text}', activeGoal.last_evidence)}
             </p>
           ) : null}
           {subgoals ? (
-            <p className="text-tiny text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {t.telemetry.goalSubgoals.replace('{done}', String(subgoals.done)).replace('{total}', String(subgoals.total))}
             </p>
           ) : null}
@@ -436,7 +436,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           testId="telemetry-mcp"
         >
           {mcpConnected.map((s) => (
-            <li key={s.name} className="flex items-center gap-1.5 text-tiny">
+            <li key={s.name} className="flex items-center gap-1.5 text-xs">
               <span className="shrink-0 text-success" aria-hidden>●</span>
               <span className="truncate font-mono text-foreground" title={s.name}>{s.name}</span>
             </li>
@@ -447,7 +447,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
       {telemetry.lspEnabled !== null ? (
         <section className="flex flex-col gap-1" data-testid="telemetry-lsp">
           <SectionHead label={t.telemetry.lsp} />
-          <p className="flex items-center gap-1.5 text-tiny">
+          <p className="flex items-center gap-1.5 text-xs">
             <Badge variant={telemetry.lspEnabled ? 'soft-success' : 'secondary'} className="px-1 py-0 text-[10px]">
               {telemetry.lspEnabled ? t.telemetry.lspActive : t.telemetry.lspInactive}
             </Badge>
@@ -473,7 +473,7 @@ function TelemetryHead({ busy, collapsible, collapsed, onToggle }: {
     <div data-testid="telemetry-head" className="flex items-center gap-2 px-3 py-2">
       <TelemetryMascot busy={busy} size={56} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-caption font-medium text-foreground">{t.telemetry.title}</span>
+        <span className="truncate text-sm font-medium text-foreground">{t.telemetry.title}</span>
         <Badge variant={busy ? 'soft-primary' : 'secondary'} className="w-fit px-1 py-0 text-[10px]">
           {busy ? t.telemetry.statusRunning : t.telemetry.statusIdle}
         </Badge>
@@ -508,13 +508,13 @@ function TelemetryFoot() {
     <div data-testid="telemetry-foot" className="flex flex-col gap-0.5 px-3 py-2">
       <section className="flex flex-col gap-0.5" data-testid="telemetry-project">
         {project?.cwd ? (
-          <p className="truncate font-mono text-tiny text-foreground" title={project.cwd}>{project.cwd}</p>
+          <p className="truncate font-mono text-xs text-foreground" title={project.cwd}>{project.cwd}</p>
         ) : null}
         {project?.branch ? (
           // A branch name is one unbreakable token (`agent/chat-rail-no-scroll-20260818`), so without a
           // truncation of its own it sets the section's minimum width — the same rule the cwd above
           // already follows.
-          <p className="flex items-baseline gap-1 font-mono text-tiny text-muted-foreground">
+          <p className="flex items-baseline gap-1 font-mono text-xs text-muted-foreground">
             <GitBranch size={10} className="shrink-0 text-subtle-foreground" aria-hidden />
             <span className="shrink-0">{t.telemetry.branch}</span>
             <span className="min-w-0 truncate text-primary" title={project.branch}>{project.branch}</span>
