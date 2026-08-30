@@ -155,11 +155,10 @@ export const sk = {
     expandNav: 'Rozbaliť navigáciu',
     openCommandPalette: 'Otvoriť paletu príkazov',
     skin: 'Vzhľad',
-    skinBuiltIn: 'Predvolený',
     skinCycle: 'kliknutím prepnete',
     skinNames: {
-      studioLight: 'Studio Light',
-      studioOled: 'Studio OLED',
+      studioLight: 'Light',
+      studioOled: 'Dark',
     },
     logout: 'Odhlásiť sa',
     language: 'Jazyk',

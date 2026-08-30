@@ -6,7 +6,7 @@ import { onUnhandledRequest } from '../msw';
 import { SkinSwitcher } from '../../components/ui/SkinSwitcher';
 import { SkinProvider, useSkin } from '../../lib/skinContext';
 import { QUERY_KEYS } from '../../lib/queries';
-import { DEFAULT_SKIN, type SkinChoice } from '../../lib/skins';
+import { DEFAULT_SKIN, type SkinName } from '../../lib/skins';
 import { createWrapper } from '../test-utils';
 
 // The instance config is what the provider reads to learn which skins are allowed. Empty by default, so
@@ -22,7 +22,7 @@ afterEach(() => {
   document.cookie = 'elowen-skin=; path=/; max-age=0';
 });
 
-const mount = (allowedSkins: string[], initialChoice: SkinChoice | null = null) => {
+const mount = (allowedSkins: string[], initialChoice: SkinName | null = null) => {
   const { wrapper: Wrapper } = createWrapper();
   return render(
     <Wrapper>
@@ -74,8 +74,8 @@ describe('SkinSwitcher', () => {
     // would have put "studio-oled" — in the top bar as if it were a product name.
     mount(['studio-light', 'studio-oled'], 'studio-light');
     fireEvent.click(screen.getByRole('button'));
-    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Skin: Studio OLED');
-    expect(screen.getByText('Studio OLED')).toBeTruthy();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Skin: Dark');
+    expect(screen.getByText('Dark')).toBeTruthy();
   });
 
   it('remembers the choice where both the client and the next server render can find it', () => {

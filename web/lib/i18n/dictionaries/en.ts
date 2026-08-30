@@ -159,13 +159,12 @@ export const en = {
     expandNav: 'Expand navigation',
     openCommandPalette: 'Open command palette',
     skin: 'Skin',
-    skinBuiltIn: 'Default',
     skinCycle: 'click to switch',
     // Human names for the compiled skins, keyed by SkinDefinition.nameKey. These are product names and
     // stay identical in every locale.
     skinNames: {
-      studioLight: 'Studio Light',
-      studioOled: 'Studio OLED',
+      studioLight: 'Light',
+      studioOled: 'Dark',
     },
     logout: 'Sign out',
     language: 'Language',

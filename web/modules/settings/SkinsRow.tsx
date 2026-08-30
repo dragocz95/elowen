@@ -8,11 +8,9 @@ import { useTranslation } from '../../lib/i18n';
 import { SettingsRow } from '../../components/ui/SettingsSurface';
 import { Button } from '../../components/ui/Button';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
-import { SKINS, skinDisplayName, type SkinChoice } from '../../lib/skins';
+import { SKINS, skinDisplayName, type SkinName } from '../../lib/skins';
 
-/** Which designs accounts may switch between, chosen from the two skins THIS build compiled. The legacy
- *  `default` value remains readable as stored compatibility data, but resolves to Studio Light and is not
- *  offered as a duplicate third design. */
+/** Which designs accounts may switch between, chosen from the two skins THIS build compiled. */
 export function SkinsRow() {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -27,7 +25,7 @@ export function SkinsRow() {
     return new Set(stored.filter((name) => (SKINS as readonly string[]).includes(name)));
   }, [config.data?.allowedSkins]);
 
-  const label = (name: SkinChoice): string => skinDisplayName(t, name);
+  const label = (name: SkinName): string => skinDisplayName(t, name);
 
   const items: ManageSelectionItem[] = SKINS.map((name) => ({
     id: name,

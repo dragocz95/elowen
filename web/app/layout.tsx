@@ -13,7 +13,7 @@ import { Shell } from '../components/shell/Shell';
 import { fetchThemePayload, buildThemeStyle, themeIcon } from '../lib/brandServer';
 import { fetchPluginUiListing, fetchMe, hasSessionCookie, readLocale, readSkinChoice, fetchAllowedSkins } from '../lib/serverPrefetch';
 import { activeSkin } from '../lib/skinEnv';
-import { allowedSkinChoices, resolveSkin, type SkinChoice, type SkinName } from '../lib/skins';
+import { allowedSkinChoices, resolveSkin, type SkinName } from '../lib/skins';
 
 // Every route renders per request — the brand payload is fetched live, so a theme switch must land on
 // the next reload. This CANNOT be left to the `no-store` fetch inside fetchThemePayload: its failure
@@ -86,8 +86,8 @@ const SKIN_PAINT: Record<SkinName, DocumentPaint> = {
 const documentPaint = (skin: SkinName): DocumentPaint => SKIN_PAINT[skin];
 
 type SkinResolution = {
-  choice: SkinChoice | null;
-  allowed: SkinChoice[];
+  choice: SkinName | null;
+  allowed: SkinName[];
   fallback: SkinName | null;
   /** What `data-skin` must be. Always a compiled skin — see DEFAULT_SKIN in lib/skins.ts. */
   skin: SkinName;

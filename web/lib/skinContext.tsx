@@ -5,10 +5,9 @@ import {
   DEFAULT_SKIN,
   allowedSkinChoices,
   currentSkinChoice,
-  isSkinChoice,
+  isSkinName,
   nextSkinChoice,
   resolveSkin,
-  type SkinChoice,
   type SkinName,
 } from './skins';
 
@@ -18,22 +17,22 @@ const STORAGE_KEY = 'elowen-skin';
  *  client's source of truth, and the cookie exists purely so the FIRST PAINT is already right. Without it
  *  the document would arrive in the operator's default design and be repainted a moment later — which for
  *  a skin means the whole interface visibly changing colour after it appeared. */
-function writeSkinCookie(choice: SkinChoice): void {
+function writeSkinCookie(choice: SkinName): void {
   // One year, path-wide, Lax: it carries a UI preference, never a credential, so it does not need to be
   // httpOnly (the client has to write it) and must not be cross-site.
   document.cookie = `${STORAGE_KEY}=${choice}; path=/; max-age=31536000; samesite=lax`;
 }
 
-function readSkinCookie(): SkinChoice | null {
+function readSkinCookie(): SkinName | null {
   const match = document.cookie.match(/(?:^|;\s*)elowen-skin=([^;]*)/);
   const value = match ? decodeURIComponent(match[1]) : null;
-  return isSkinChoice(value) ? value : null;
+  return isSkinName(value) ? value : null;
 }
 
 interface SkinContextValue {
   /** The account's current choice, or null when the visible design is the operator's default and that
    *  default is not itself one of the offered choices. */
-  choice: SkinChoice | null;
+  choice: SkinName | null;
   /** The skin the document is actually WEARING — exactly what `data-skin` says, and never nothing: every
    *  resolution ends at a compiled skin (DEFAULT_SKIN is the floor). It is not the same thing as
    *  `choice`: an operator who sets ELOWEN_SKIN without offering it in the allow-list gives everyone that
@@ -42,7 +41,7 @@ interface SkinContextValue {
    *  design's shell inside another design's stylesheet. */
   skin: SkinName;
   /** What may be picked. Empty means the instance has not enabled switching at all. */
-  allowed: SkinChoice[];
+  allowed: SkinName[];
   /** Advance to the next allowed choice — the switcher's whole interaction. */
   cycle: () => void;
 }
@@ -93,7 +92,7 @@ export function SkinProvider({
   fallback = null,
 }: {
   children: ReactNode;
-  initialChoice?: SkinChoice | null;
+  initialChoice?: SkinName | null;
   allowedSkins?: readonly string[];
   fallback?: SkinName | null;
 }) {
@@ -107,7 +106,7 @@ export function SkinProvider({
     () => allowedSkinChoices(config.data?.allowedSkins ?? allowedSkins),
     [config.data?.allowedSkins, allowedSkins],
   );
-  const [choice, setChoice] = useState<SkinChoice | null>(initialChoice);
+  const [choice, setChoice] = useState<SkinName | null>(initialChoice);
 
   useEffect(() => {
     // localStorage remains the client's source of truth, so a session that predates the cookie — or one

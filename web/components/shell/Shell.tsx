@@ -7,7 +7,7 @@ import { NAV_COLUMN_MIN_WIDTH, NAV_FULL_MIN_WIDTH } from '../../lib/breakpoints'
 import { Providers, type PluginUiSeed, type MeSeed } from '../../app/providers';
 import { LanguageProvider, type Locale } from '../../lib/i18n';
 import { SkinProvider, useSkin } from '../../lib/skinContext';
-import { shellProfileFor, type ShellProfile, type SkinChoice, type SkinName } from '../../lib/skins';
+import { shellProfileFor, type ShellProfile, type SkinName } from '../../lib/skins';
 import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand';
 import { ToastProvider, resolveToastDuration } from '../ui/Toast';
 import { useConfig } from '../../lib/queries';
@@ -345,7 +345,7 @@ function ConfiguredToastProvider({ children }: { children: ReactNode }) {
   return <ToastProvider durationMs={resolveToastDuration(config?.runtime?.limits)}>{children}</ToastProvider>;
 }
 
-export function Shell({ children, theme, pluginUiSeed, meSeed, sessionPresent = true, initialLocale, skinSeed }: { children: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null; sessionPresent?: boolean; initialLocale?: Locale; skinSeed?: { choice: SkinChoice | null; allowed: SkinChoice[]; fallback: SkinName | null } }) {
+export function Shell({ children, theme, pluginUiSeed, meSeed, sessionPresent = true, initialLocale, skinSeed }: { children: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null; sessionPresent?: boolean; initialLocale?: Locale; skinSeed?: { choice: SkinName | null; allowed: SkinName[]; fallback: SkinName | null } }) {
   return (
     <EffectsProvider>
       <Providers pluginUiSeed={pluginUiSeed} meSeed={meSeed}>

@@ -80,7 +80,7 @@ describe('SkinsRow', () => {
     expect(studioSurfaces).toContain('.settings-row__trailing [data-row-picker]');
   });
 
-  /** A retired skin and the legacy `default` alias are compatibility data, not live designs. */
+  /** Unknown stored values are not live designs. */
   it('offers only the two compiled designs', () => {
     useConfig.mockReturnValue({ data: { allowedSkins: ['default', 'studio-light', 'studio-oled', 'retired-skin'] } });
     renderRow();
@@ -88,7 +88,7 @@ describe('SkinsRow', () => {
     const trigger = screen.getByRole('button', { name: en.settings.skins.manage });
     expect(trigger).toHaveTextContent(en.managePicker.selectedCount.replace('{n}', '2'));
     fireEvent.click(trigger);
-    expect(screen.queryByText(en.common.skinBuiltIn)).toBeNull();
+    expect(screen.queryByText('Default')).toBeNull();
     expect(screen.getByText(en.common.skinNames.studioLight)).toBeInTheDocument();
     expect(screen.getByText(en.common.skinNames.studioOled)).toBeInTheDocument();
   });

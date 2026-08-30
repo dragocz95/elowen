@@ -4,7 +4,7 @@ import { headers } from 'next/headers';
 import { daemonUrl, readCookieHeader, sessionCookieName } from './proxy';
 import { dictionaries, type Locale } from './i18n/dictionaries';
 import { DEFAULT_LOCALE } from './i18n';
-import { isSkinChoice, type SkinChoice } from './skins';
+import { isSkinName, type SkinName } from './skins';
 import type { PluginUiListing, User } from './types';
 
 /** After a failed fetch, requests skip the daemon for this long. Same reasoning as the theme payload
@@ -77,9 +77,9 @@ export const readLocale = cache(async (): Promise<Locale> => {
  *  hydration reads localStorage. An unknown value falls back to null so a hand-edited cookie cannot put an
  *  arbitrary string into a DOM attribute. Whether the choice is still ALLOWED is decided later, against
  *  instance config; this only reports what was asked for. */
-export const readSkinChoice = cache(async (): Promise<SkinChoice | null> => {
+export const readSkinChoice = cache(async (): Promise<SkinName | null> => {
   const value = readCookieHeader((await headers()).get('cookie') ?? '', 'elowen-skin');
-  return isSkinChoice(value) ? value : null;
+  return isSkinName(value) ? value : null;
 });
 
 /** The skins the instance allows accounts to choose between. Null — logged out, 401/403, daemon down —

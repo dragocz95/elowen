@@ -7,18 +7,14 @@ import { onUnhandledRequest } from '../msw';
 vi.mock('next/navigation', () => ({ usePathname: () => '/dash', useRouter: () => ({ push: () => {}, replace: () => {} }), useSearchParams: () => new URLSearchParams() }));
 import { Shell } from '../../components/shell/Shell';
 import { useSkin } from '../../lib/skinContext';
-import { DEFAULT_SKIN, type SkinChoice, type SkinName } from '../../lib/skins';
+import { DEFAULT_SKIN, type SkinName } from '../../lib/skins';
 
 class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) {} }
 (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
 
 /** Both designs the app has. There is no third one to swap to: every compiled skin is a Studio variant
- *  and everything else resolves to DEFAULT_SKIN, so what these cases exercise is a REPAINT that keeps the
- *  same shell — which is the harder half of the seam, because nothing visibly unmounts to prove the
- *  switch happened. The compatibility choice is deliberately NOT here: it resolves to DEFAULT_SKIN, so
- *  cycling onto it would change no attribute and the test would assert nothing. lib/skins.test.ts and
- *  SkinSwitcher.test.tsx cover it where it is the subject rather than the noise. */
-const ALLOWED: SkinChoice[] = ['studio-light', 'studio-oled'];
+ *  and everything else resolves to DEFAULT_SKIN, so these cases exercise an in-place repaint. */
+const ALLOWED: SkinName[] = ['studio-light', 'studio-oled'];
 const server = setupServer(
   http.get('*/api/health', () => HttpResponse.json({ ok: true })),
   http.get('*/api/config', () => HttpResponse.json({ allowedSkins: ALLOWED })),
@@ -77,7 +73,7 @@ describe('switching between the two designs', () => {
     expect(mounts).toBe(1);
 
     // The switcher is the real way a reader changes design: one button, no reload.
-    fireEvent.click(await screen.findByRole('button', { name: 'Skin: Studio Light' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Skin: Light' }));
 
     await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('studio-oled'));
     expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
@@ -137,7 +133,7 @@ describe('a design the reader did not switch away from', () => {
   // With no `allowedSkins` in the config payload the provider reads the seed, which is what lets these
   // cases change the allow-list and the operator default on a LIVE tree instead of on a fresh mount.
   const seedOnly = () => server.use(http.get('*/api/config', () => HttpResponse.json({})));
-  const seed = (choice: SkinChoice | null, allowed: SkinChoice[], fallback: SkinName | null) => ({ choice, allowed, fallback });
+  const seed = (choice: SkinName | null, allowed: SkinName[], fallback: SkinName | null) => ({ choice, allowed, fallback });
 
   it('hands the document to DEFAULT_SKIN when an admin revokes the active skin', async () => {
     seedOnly();
@@ -160,9 +156,6 @@ describe('a design the reader did not switch away from', () => {
 
     // The admin drops studio-light from the instance allow-list. No reload: the new list reaches the
     // live provider, and the design the reader is looking at is no longer on offer.
-    // The list it narrows to must NOT contain the built-in choice: with `default` still on offer the
-    // provider would resolve to it and WRITE that back over the stored preference, and the last leg of
-    // this test — re-allowing the skin restores it — would be asserting nothing.
     rerender(<Shell skinSeed={seed('studio-oled', ['studio-light'], null)}><Probe /><SkinReadout /></Shell>);
 
     // DEFAULT_SKIN, not "no design": the attribute is rewritten rather than removed, and the shell stays.
