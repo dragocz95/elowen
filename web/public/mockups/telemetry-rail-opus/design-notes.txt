@@ -1,0 +1,145 @@
+ELOWEN — TELEMETRY RAIL, NÁVRH PŘESTAVBY NA SHADCN/UI
+=====================================================
+Artefakty: mockup.html (interaktivní), mockup.svg + mockup.png (statická kompozice 2438x2008),
+reference.png (tvůj produkční screenshot). Do produkčního kódu se v tomhle kole nesahalo.
+
+
+1. DESIGN THESIS
+----------------
+"Přístrojová hrana, ne dashboard."
+
+Rail není druhý dokument vedle konverzace ani sloupec karet. Je to hrana pracovní plochy — jeden
+souvislý pás od horní k dolní hraně viewportu, rozdělený jen hairline separátory. Žádný <Card>,
+žádné rámečky uvnitř rámečku. To je přímá odpověď na "dashboard-card soup": karta má smysl, když
+sama plave na ploše; tady je plocha celá její, takže rámeček nic neodděluje a jen ubírá 32 px šířky.
+
+Tři pásma, každé s jiným úkolem:
+
+  HEAD (přišpendlené, sedí na HORNÍ hraně viewportu)
+    Maskot + kdo + co právě dělá + jak dlouho. Maskot zůstává velký a živý, ale místo ~230 px
+    dekorace ze současného railu zabírá 96 px a nese status vedle sebe, ne pod sebou.
+
+  BODY (ScrollArea)
+    Kontext (hero metrika) → Cíl → Limity → Živá práce → MCP → LSP.
+    Pořadí je podle toho, jak často se na to člověk dívá, ne podle toho, jak to teče z API.
+
+  FOOT (přišpendlené, sedí na DOLNÍ hraně viewportu)
+    Cesta k projektu + větev. Identita workspace je ambientní informace, patří na status bar dole,
+    ne doprostřed toku metrik.
+
+Distinktivní prvek pro live-agent workspace: maskotí halo, které dýchá jenom když běží tah a
+zastaví se, když ne. Je to jediná animace v railu a nese stav — proto si místo zaslouží.
+
+
+2. GEOMETRIE
+------------
+  min       280 px   (dnes 240) — pod tím se "340k / 1.0M · $1875.90" nevejde na jeden mono řádek
+                      a hlavička maskota se začne lámat
+  default   340 px   (dnes 320)
+  max       560 px   (beze změny)
+  collapsed  52 px   — ikonový pahýl, ne nula: maskot, svislý context meter a "34 %"
+
+  Handle: 1 px viditelná linka, 11 px hit area, grip tečky na hover/focus.
+          Klávesnice ±16 px, dvojklik = reset na 340 px.
+  Rail sedí flush na horní, pravou i dolní hraně viewportu. Jediný border je ten levý — a ten
+  border JE handle.
+
+
+3. MAPOVÁNÍ NA SHADCN KOMPONENTY
+--------------------------------
+Region                        → shadcn primitivum
+  shell split                 → ResizablePanelGroup direction="horizontal" autoSaveId
+  konverzace                  → ResizablePanel order={1}
+  dělicí hrana                → ResizableHandle withHandle
+  rail                        → ResizablePanel order={2} collapsible collapsedSize minSize maxSize
+  scroll railu                → ScrollArea (type="hover")
+  pásma head/body/foot        → Separator (full-bleed, orientation="horizontal")
+  context meter               → Progress
+  každé okno limitů           → Progress  (jeden a tentýž primitiv, jedna vizuální řeč)
+  plán, počty, MCP stav, LSP  → Badge (variant secondary / soft-success / soft-primary)
+  sbalit, rozbalit, kill, řádky → Button (variant="ghost", size="icon" resp. plný řádek)
+  useknuté labely, reset okna → Tooltip
+  Živá práce, MCP servery     → Collapsible + CollapsibleTrigger + CollapsibleContent
+  potvrzení kill procesu      → AlertDialog        (už v repu)
+  prázdný rail                → Empty              (už v repu)
+  načítání                    → Skeleton           (už v repu)
+  mobil                       → Sheet side="right" className="w-full sm:max-w-sm"
+  maskot                      → NENÍ shadcn: zůstává app <MascotGlyph>. Avatar by byl špatně,
+                                to je primitiv na fotky uživatelů, ne na stavovou grafiku.
+  Card                        → ZÁMĚRNĚ NIKDE. V railu neexistuje místo, kde by byla strukturálně
+                                správně; použít ji je přesně ten card soup, co se ti nelíbí.
+
+Co v repu UŽ JE (web/components/ui/shadcn/):
+  alert-dialog, avatar, badge, button, checkbox, context-menu, dialog, dropdown-menu, empty,
+  input, label, popover, radio-group, select, skeleton, slider, switch, textarea, toast, tooltip
+
+Co je potřeba DOINSTALOVAT (npx shadcn@latest add ...), a co k tomu přibude za dependency:
+  resizable    → react-resizable-panels        (nová dep)
+  progress     → @radix-ui/react-progress      (nová dep)
+  scroll-area  → @radix-ui/react-scroll-area   (nová dep)
+  separator    → @radix-ui/react-separator     (nová dep)
+  collapsible  → @radix-ui/react-collapsible   (nová dep)
+  sheet        → BEZ nové dependency, staví na @radix-ui/react-dialog, ten už v repu je
+
+Pět nových balíčků je reálná cena. Čtyři z nich (progress, scroll-area, separator, collapsible)
+jsou drobné Radix primitivy a nahrazují ručně psané ekvivalenty, které v repu už existují
+(ContextMeter, OAuthUsageRail track, .telemetry-rail-scroll, ručně skládané sekce). resizable je
+jediný, který přidává skutečnou váhu — a je to zároveň ten, kvůli kterému se řeší celý dok.
+
+
+4. DESKTOP / MOBIL
+------------------
+Desktop (useMobileViewport() === false):
+  Dokovaný ResizablePanel, flush na tři hrany. Šířka se pamatuje přes autoSaveId skupiny.
+  Collapse: tlačítko v hlavičce railu i v hlavičce chatu, plus panelRef.current.collapse().
+  Pod ~1100 px šířky shellu se rail sbalí sám do 52px pahýlu (ne do nuly — telemetrie zmizí,
+  ale kontext a stav agenta zůstanou vidět).
+
+Mobil (useMobileViewport() === true):
+  Beze změny principu, jen jiný primitiv: Sheet side="right", w-full. Žádné mačkání doku do
+  telefonu. Renderuje se ÚPLNĚ STEJNÝ <TelemetryBody /> — jeden zdroj pravdy pro obsah, dva
+  hostitelé pro geometrii. To je přesně dnešní column/drawer kontrakt, jen postavený na Sheetu
+  místo na ručně obalovaném DialogContentu.
+
+Motivy a pohyb:
+  Všechny barvy jdou přes tokeny (studio-light i studio-oled jsou v mockupu přepínatelné).
+  prefers-reduced-motion vypíná dýchání maskota, pulz běžících teček i přechod šířky Progressu;
+  drag a Collapsible zůstávají funkční, jen bez animace.
+
+
+5. IMPLEMENTAČNÍ POZNÁMKY PROTI SOUČASNÉMU KÓDU
+-----------------------------------------------
+(1) Vlastníka layoutu je nutné posunout nahoru. Dnes rail mountuje web/modules/chat/ChatView.tsx
+    jako sourozence <BrainChatSurface /> uvnitř .workspace-shell rámu, takže ho shora ořízne
+    TopBar a chat hero — přesně ten inset ze screenshotu. ResizablePanelGroup musí sedět ve
+    web/components/shell/Shell.tsx (nebo v layoutu /chat) NAD tím rámem, aby oba panely byly
+    vysoké přes celý viewport. Zároveň se tím ruší --chat-max ořez pro pravý panel; levý panel
+    si centrovaný 96rem rám nechává (web/skins/studio/shared.css).
+
+(2) react-resizable-panels počítá v PROCENTECH skupiny, dnešní rail v pixelech. Zachovat px
+    rozsah 280–560 znamená přepočítat minSize/maxSize z naměřené šířky shellu (ResizeObserver)
+    a v onLayout převést zpátky na px — railTypeVars(width) v web/lib/useTelemetryRailWidth.ts
+    px hodnotu potřebuje, protože z ní odvozuje --text-tiny a --text-caption. Persistence se
+    přesouvá z ručního localStorage klíče 'elowen:telemetry-rail-width' na autoSaveId skupiny;
+    RAIL_MIN/DEFAULT/MAX_WIDTH zůstávají exportované konstanty, jen mění spotřebitele.
+
+(3) Testy na to sáhnou. web/tests/modules/advisor/TelemetryRailWidth.test.tsx tahá za
+    getByRole('separator') a čte style.width na [data-testid=telemetry-column]. Po přechodu na
+    ResizableHandle je separator Radixu a šířku drží grupa, ne element — test se musí přepsat na
+    onLayout/autoSaveId. Pozor: Separator (shadcn) má taky role="separator", takže ten dotaz
+    přestane být jednoznačný; handle je potřeba adresovat přes data-panel-resize-handle-id.
+    web/tests/components/overlayPresentation.test.tsx má TelemetryPanel.tsx zapsaný jako
+    DialogContent surface — po přechodu na Sheet se ten záznam musí upravit, ne smazat.
+
+(4) usageFillClass() z web/modules/settings/OAuthUsageRail.tsx zůstává jediným zdrojem tlakové
+    rampy (primary → warning na 70 % → destructive na 90 %). Progress ji bere přes className na
+    indikátoru; nová paleta se nikde nezavádí. ContextMeter v TelemetryPanel.tsx se ruší celý,
+    OAuthUsageRail se přepíše na Progress a zůstane sdílený se /settings.
+
+(5) .telemetry-rail-scroll (web/app/styles/components/spatial-deck.css) padá spolu s ručním
+    scroll boxem — ScrollArea si scrollbar kreslí sama a base.css ji nepřebije, protože nestyluje
+    její vnitřní elementy. Zkontrolovat, že třídu nečte nikdo jiný, než se smaže.
+
+(6) Řádky živé práce jsou dnes <button> s ručními hover třídami. Přejít na Button variant="ghost"
+    znamená pohlídat, že si nevynutí h-9 — rail jede na 24px řádcích, takže size="sm" plus
+    override výšky, jinak se sekce natáhne o třetinu.

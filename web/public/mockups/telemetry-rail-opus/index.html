@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="cs" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elowen — telemetry rail (shadcn/ui) — design mockup</title>
+<!--
+  STANDALONE DESIGN MOCKUP. Not production code, not a component to copy.
+
+  Everything here is hand-written CSS/JS that IMITATES the target so it can be reviewed in a browser.
+  The real implementation must be assembled from actual shadcn/ui primitives; every region carries a
+  data-shadcn="..." attribute naming the primitive that owns it, and the "Anotace" toggle draws those
+  names onto the composition.
+
+  Palette values are lifted from the repo's own token blocks so the mockup reads like the product:
+    dark  -> web/skins/studio-oled/skin.css
+    light -> web/skins/studio-light/skin.css
+-->
+<style>
+/* ── Tokens ─────────────────────────────────────────────────────────────────────────────────────
+   Named exactly as web/app/styles/tokens.css names them, so the mapping to the real design system
+   is one-to-one. The mockup never hardcodes a colour outside this block. */
+:root[data-theme="dark"] {
+  --background:#03080a; --document:#03080a; --card:#080d0f; --muted:#0e1416; --popover:#0b1113;
+  --border:#171c1e; --border-strong:#2a3134;
+  --foreground:#fcfcfe; --muted-foreground:#a1a3a5; --subtle-foreground:#828486;
+  --primary:#ff5236; --primary-hot:#ff735c; --ember:#ff9a62; --ember-bright:#ffd09a;
+  --primary-foreground:#03080a;
+  --destructive:#ff2d55; --success:#34dfaa; --warning:#e5a000; --info:#4d8dff;
+  --accent:rgb(252 252 254 / .07);
+  --rail-ground:#060b0d;
+  --scrim:rgb(0 0 0 / .55);
+}
+:root[data-theme="light"] {
+  --background:#ffffff; --document:#ffffff; --card:#ffffff; --muted:#f4f4f5; --popover:#ffffff;
+  --border:#e4e4e7; --border-strong:#d4d4d8;
+  --foreground:#09090b; --muted-foreground:#52525b; --subtle-foreground:#6a6a73;
+  --primary:#0068e1; --primary-hot:#0070f3; --ember:#4c8dff; --ember-bright:#93b8ff;
+  --primary-foreground:#ffffff;
+  --destructive:#ce2b1e; --success:#0a7c42; --warning:#b45309; --info:#0761d9;
+  --accent:rgb(9 9 11 / .06);
+  --rail-ground:#fafafa;
+  --scrim:rgb(0 0 0 / .35);
+}
+:root{
+  --radius-sm:6px; --radius:8px; --radius-md:10px; --radius-lg:12px;
+  --font-sans:"Inter Variable",Inter,ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;
+  --motion-fast:140ms; --motion-base:240ms; --ease:cubic-bezier(.2,0,0,1);
+  /* Rail geometry — the numbers the real ResizablePanel is configured with. */
+  --rail-min:280px; --rail-default:340px; --rail-max:560px; --rail-collapsed:52px;
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{ animation-duration:.001ms !important; animation-iteration-count:1 !important;
+    transition-duration:.001ms !important; scroll-behavior:auto !important; }
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0; font-family:var(--font-sans); background:var(--background); color:var(--foreground);
+  -webkit-font-smoothing:antialiased; overflow:hidden;
+}
+button{ font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; }
+
+/* ── Viewport shell ─────────────────────────────────────────────────────────────────────────────
+   THE POINT OF THE WHOLE MOCKUP: `.viewport` is the browser viewport, and `.rail` is its direct
+   child. The rail therefore starts at the outer TOP edge, runs to the outer BOTTOM edge and sits
+   flush against the RIGHT edge — it is no longer nested under the chat header the way the
+   production screenshot shows it. The chat header lives inside the LEFT panel only. */
+.viewport{ position:fixed; inset:0; display:flex; }
+
+/* ═══ Left panel: chat (a stand-in, only enough of it to judge the rail against) ═══ */
+.chat{ position:relative; display:flex; flex-direction:column; min-width:0; flex:1 1 auto; background:var(--background); }
+.chat-header{
+  display:flex; align-items:center; gap:10px; height:50px; flex:0 0 50px; padding:0 14px;
+  border-bottom:1px solid var(--border); background:var(--document);
+}
+.chat-header .crumb{ font-size:13px; font-weight:500; }
+.chat-header .sep{ color:var(--border-strong); }
+.chat-header .model{ font-family:var(--font-mono); font-size:12px; color:var(--muted-foreground); }
+.chat-header .spacer{ flex:1; }
+.icon-btn{
+  display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px;
+  border-radius:var(--radius-sm); color:var(--muted-foreground); transition:background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.icon-btn:hover{ background:var(--accent); color:var(--foreground); }
+.icon-btn:focus-visible{ outline:2px solid var(--primary); outline-offset:2px; }
+
+.transcript{ flex:1; overflow-y:auto; padding:22px 26px 0; display:flex; flex-direction:column; gap:16px; }
+.transcript::-webkit-scrollbar{ width:8px; } .transcript::-webkit-scrollbar-thumb{ background:var(--border-strong); border-radius:8px; }
+.bubble{ align-self:flex-end; max-width:min(62ch,72%); background:var(--muted); border:1px solid var(--border);
+  border-radius:var(--radius-lg); padding:9px 13px; font-size:13.5px; line-height:1.55; }
+.msg{ max-width:min(78ch,88%); font-size:13.5px; line-height:1.62; color:var(--foreground); }
+.toolrows{ font-family:var(--font-mono); font-size:11.5px; line-height:1.75; color:var(--subtle-foreground); padding-left:16px; }
+.toolrows b{ font-weight:400; color:var(--muted-foreground); }
+.composer{ flex:0 0 auto; padding:12px 26px 18px; }
+.composer .statusline{ display:flex; gap:14px; justify-content:flex-end; font-family:var(--font-mono);
+  font-size:11px; color:var(--subtle-foreground); padding:0 4px 8px; }
+.composer .field{ display:flex; align-items:center; gap:10px; border:1px solid var(--border); background:var(--card);
+  border-radius:var(--radius-lg); padding:11px 12px 11px 15px; color:var(--subtle-foreground); font-size:13.5px; }
+.composer .field .spacer{ flex:1; }
+.stop{ width:32px; height:32px; border-radius:999px; background:var(--primary); display:grid; place-items:center; }
+.stop i{ width:10px; height:10px; border-radius:2px; background:var(--primary-foreground); display:block; }
+
+/* ═══ The resize handle ═══ shadcn: <ResizableHandle withHandle /> ═══════════════════════════════
+   A 1px rule that widens its HIT area to 11px, exactly like ResizableHandle: the visible divider
+   stays hairline-thin while the grab target stays comfortable. The grip dots appear on hover /
+   focus, which is what `withHandle` renders permanently — here they fade so the resting rail is
+   quiet. */
+.handle{
+  position:relative; flex:0 0 1px; width:1px; background:var(--border); cursor:col-resize;
+  transition:background var(--motion-fast) var(--ease);
+}
+.handle::before{ content:""; position:absolute; top:0; bottom:0; left:-5px; right:-5px; }
+.handle:hover,.handle.is-dragging,.handle:focus-visible{ background:var(--primary); outline:none; }
+.handle .grip{
+  position:absolute; top:50%; left:50%; translate:-50% -50%; width:11px; height:26px;
+  border-radius:4px; border:1px solid var(--border); background:var(--card);
+  display:grid; place-items:center; gap:2px; opacity:0;
+  transition:opacity var(--motion-fast) var(--ease);
+}
+.handle:hover .grip,.handle.is-dragging .grip,.handle:focus-visible .grip{ opacity:1; }
+.handle .grip span{ width:3px; height:3px; border-radius:999px; background:var(--muted-foreground); display:block; }
+body.dragging{ cursor:col-resize; user-select:none; }
+
+/* ═══ Right panel: the telemetry rail ═══ shadcn: <ResizablePanel collapsible> ═══════════════════ */
+.rail{
+  flex:0 0 var(--rail-default); width:var(--rail-default); min-width:0;
+  display:flex; flex-direction:column; background:var(--rail-ground);
+  /* No top/right/bottom border and no radius: the rail IS the viewport edge on three sides. */
+  overflow:hidden;
+}
+
+/* ── Head: agent core. Pinned, sits on the outer top edge. ────────────────────────────────────── */
+.rail-head{ flex:0 0 auto; padding:14px 14px 12px; display:flex; gap:12px; align-items:center; }
+.core{ position:relative; flex:0 0 auto; width:60px; height:60px; }
+.core .halo{
+  position:absolute; inset:-7px; border-radius:999px;
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--primary) 26%, transparent), transparent 78%);
+  animation:breathe 3.6s var(--ease) infinite;
+}
+@keyframes breathe{ 0%,100%{ transform:scale(.94); opacity:.75 } 50%{ transform:scale(1.06); opacity:1 } }
+/* SELF-CRITIQUE, v2: the ember hairline ring that used to sit at `.core > .ring` is GONE. It drew a
+   second circle around a glyph the halo already frames, it carried no state (the halo does — it stops
+   breathing when the agent is idle), and on the light palette the halo is faint enough that the ring
+   read as a stray artifact rather than as intent. One ornament per element. */
+.core svg{ position:absolute; inset:6px; width:calc(100% - 12px); height:calc(100% - 12px); }
+.rail[data-busy="false"] .core .halo{ animation:none; opacity:.35; }
+
+.core-meta{ min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
+.core-meta .who{ display:flex; align-items:center; gap:7px; }
+.core-meta .who b{ font-size:13.5px; font-weight:600; letter-spacing:-.01em; }
+.core-meta .state{ display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--muted-foreground); }
+.core-meta .state .dot{ width:6px; height:6px; border-radius:999px; background:var(--success); flex:0 0 auto;
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent); }
+.core-meta .elapsed{ font-family:var(--font-mono); font-size:11px; color:var(--subtle-foreground); }
+.rail-head .head-actions{ flex:0 0 auto; align-self:flex-start; display:flex; }
+
+/* shadcn: <Badge variant="secondary" /> */
+.badge{
+  display:inline-flex; align-items:center; gap:5px; white-space:nowrap;
+  border:1px solid var(--border); background:var(--muted); color:var(--muted-foreground);
+  border-radius:var(--radius-sm); padding:1px 6px; font-family:var(--font-mono); font-size:10.5px; font-weight:500;
+}
+.badge[data-variant="soft-primary"]{ border-color:color-mix(in srgb,var(--primary) 40%,transparent);
+  background:color-mix(in srgb,var(--primary) 12%,transparent); color:var(--primary); }
+.badge[data-variant="soft-success"]{ border-color:color-mix(in srgb,var(--success) 40%,transparent);
+  background:color-mix(in srgb,var(--success) 12%,transparent); color:var(--success); }
+
+/* shadcn: <Separator /> */
+.sep-h{ height:1px; background:var(--border); flex:0 0 1px; margin:0 14px; }
+.sep-h.full{ margin:0; }
+
+/* ── Body: the scroller. shadcn: <ScrollArea /> ───────────────────────────────────────────────── */
+.rail-body{ flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
+.rail-body::-webkit-scrollbar{ display:none; }
+.zone{ padding:13px 14px; }
+.zone + .zone{ border-top:1px solid var(--border); }
+
+.zone-head{ display:flex; align-items:center; gap:8px; margin-bottom:9px; }
+.zone-head .label{ font-size:10px; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--subtle-foreground); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.zone-head .spacer{ flex:1; }
+.zone-head .chev{ color:var(--subtle-foreground); transition:transform var(--motion-fast) var(--ease); flex:0 0 auto; }
+.zone[data-open="false"] .chev{ transform:rotate(-90deg); }
+.zone[data-open="false"] .zone-body{ display:none; }
+button.zone-head{ width:100%; text-align:left; }
+button.zone-head:hover .label{ color:var(--muted-foreground); }
+button.zone-head:focus-visible{ outline:2px solid var(--primary); outline-offset:3px; border-radius:var(--radius-sm); }
+
+/* Context — the rail's hero metric. */
+.hero-num{ display:flex; align-items:baseline; gap:7px; margin-bottom:8px; }
+.hero-num b{ font-size:27px; font-weight:600; letter-spacing:-.03em; font-variant-numeric:tabular-nums; line-height:1; }
+.hero-num .unit{ font-size:13px; color:var(--muted-foreground); font-weight:500; }
+.hero-num .spacer{ flex:1; }
+
+/* shadcn: <Progress /> — one meter vocabulary for every bar in the rail. */
+.progress{ height:5px; border-radius:999px; background:var(--muted); overflow:hidden; }
+.progress > i{ display:block; height:100%; border-radius:999px; background:var(--primary);
+  transition:width 500ms var(--ease); }
+.progress[data-tone="warning"] > i{ background:var(--warning); }
+.progress[data-tone="danger"] > i{ background:var(--destructive); }
+@media (prefers-reduced-motion: reduce){ .progress > i{ transition:none; } }
+
+.mono-line{ font-family:var(--font-mono); font-size:11px; color:var(--muted-foreground);
+  margin-top:7px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mono-line em{ font-style:normal; color:var(--foreground); }
+
+/* Limit rows: label | Progress | value — a fixed three-column grid so every row lines up. */
+.meter-row{ display:grid; grid-template-columns:44px 1fr 34px; align-items:center; gap:9px; }
+.meter-row + .meter-row{ margin-top:8px; }
+.meter-row .k{ font-size:11px; color:var(--muted-foreground); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.meter-row .v{ font-family:var(--font-mono); font-size:11px; text-align:right; font-variant-numeric:tabular-nums; }
+
+/* Live-work rows. */
+.rows{ display:flex; flex-direction:column; gap:1px; }
+.row{
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  border-radius:var(--radius-sm); padding:4px 6px; margin:0 -6px; font-size:12px;
+  transition:background var(--motion-fast) var(--ease);
+}
+button.row:hover{ background:var(--accent); }
+button.row:focus-visible{ outline:2px solid var(--primary); outline-offset:-1px; }
+.row .glyph{ flex:0 0 auto; color:var(--subtle-foreground); display:grid; place-items:center; width:13px; }
+.row .txt{ min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.row .txt.mono{ font-family:var(--font-mono); font-size:11px; }
+.row .meta{ flex:0 0 auto; font-family:var(--font-mono); font-size:10.5px; color:var(--subtle-foreground);
+  font-variant-numeric:tabular-nums; }
+.row .kill{ flex:0 0 auto; width:20px; height:20px; border-radius:4px; display:grid; place-items:center;
+  color:var(--subtle-foreground); }
+.row .kill:hover{ color:var(--destructive); background:color-mix(in srgb,var(--destructive) 12%,transparent); }
+.dot{ width:5px; height:5px; border-radius:999px; flex:0 0 auto; }
+.dot.ok{ background:var(--success); } .dot.run{ background:var(--primary); }
+.dot.run{ animation:pulse 1.8s var(--ease) infinite; }
+@keyframes pulse{ 0%,100%{ opacity:1 } 50%{ opacity:.35 } }
+
+/* ── Foot: workspace identity. Pinned, sits on the outer bottom edge. ─────────────────────────── */
+.rail-foot{ flex:0 0 auto; border-top:1px solid var(--border); background:var(--card);
+  padding:9px 14px 10px; display:flex; flex-direction:column; gap:3px; }
+.rail-foot .path{ font-family:var(--font-mono); font-size:11px; color:var(--muted-foreground);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rail-foot .branch{ display:flex; align-items:center; gap:6px; font-family:var(--font-mono); font-size:11px; }
+.rail-foot .branch span{ color:var(--primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rail-foot .branch .glyph{ color:var(--subtle-foreground); flex:0 0 auto; }
+
+/* ── Collapsed stub ───────────────────────────────────────────────────────────────────────────── */
+.rail[data-collapsed="true"]{ flex-basis:var(--rail-collapsed) !important; width:var(--rail-collapsed) !important; }
+.rail[data-collapsed="true"] .rail-head,
+.rail[data-collapsed="true"] .rail-body,
+.rail[data-collapsed="true"] .rail-foot,
+.rail[data-collapsed="true"] .sep-h{ display:none; }
+.stub{ display:none; }
+.rail[data-collapsed="true"] .stub{
+  display:flex; flex-direction:column; align-items:center; gap:14px; padding:14px 0; height:100%;
+}
+.stub .mini-core{ position:relative; width:26px; height:26px; flex:0 0 auto; }
+.stub .mini-core svg{ position:absolute; inset:0; width:100%; height:100%; }
+/* The context meter survives collapse, rotated onto the vertical: the one number worth keeping
+   visible when the rail is 52px wide. */
+.stub .vmeter{ flex:1 1 auto; width:5px; border-radius:999px; background:var(--muted); position:relative; overflow:hidden; }
+.stub .vmeter i{ position:absolute; left:0; right:0; bottom:0; background:var(--primary); border-radius:999px; }
+.stub .vlabel{ font-family:var(--font-mono); font-size:10px; color:var(--muted-foreground); }
+.rail[data-collapsed="true"] + .handle,
+.rail[data-collapsed="true"]{ }
+
+/* ── Tooltip (shadcn: <Tooltip />) ─────────────────────────────────────────────────────────────── */
+[data-tip]{ position:relative; }
+[data-tip]::after{
+  content:attr(data-tip); position:absolute; right:calc(100% + 9px); top:50%; translate:0 -50%;
+  background:var(--popover); color:var(--foreground); border:1px solid var(--border);
+  border-radius:var(--radius-sm); padding:4px 8px; font-family:var(--font-sans); font-size:11px;
+  white-space:nowrap; opacity:0; pointer-events:none; z-index:60;
+  transition:opacity var(--motion-fast) var(--ease); box-shadow:0 8px 24px rgb(0 0 0 / .3);
+}
+[data-tip]:hover::after,[data-tip]:focus-visible::after{ opacity:1; }
+
+/* ── Mockup chrome: theme / annotation / mobile toggles ────────────────────────────────────────── */
+.devbar{
+  position:fixed; left:16px; bottom:16px; z-index:80; display:flex; gap:6px; align-items:center;
+  background:var(--popover); border:1px solid var(--border); border-radius:999px; padding:5px 6px;
+  box-shadow:0 10px 34px rgb(0 0 0 / .34); font-size:11.5px;
+}
+.devbar button{ padding:5px 11px; border-radius:999px; color:var(--muted-foreground);
+  transition:background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease); }
+.devbar button:hover{ background:var(--accent); color:var(--foreground); }
+.devbar button[aria-pressed="true"]{ background:var(--primary); color:var(--primary-foreground); }
+.devbar .tag{ font-family:var(--font-mono); font-size:10.5px; color:var(--subtle-foreground); padding-left:6px; }
+
+/* Annotation overlay. */
+.anno{ position:fixed; inset:0; z-index:70; pointer-events:none; display:none; }
+body[data-anno="on"] .anno{ display:block; }
+body[data-anno="on"] [data-shadcn]{ outline:1px dashed color-mix(in srgb,var(--info) 60%,transparent); outline-offset:-1px; }
+.anno .pin{
+  position:absolute; transform:translateY(-50%);
+  background:var(--popover); border:1px solid color-mix(in srgb,var(--info) 45%,transparent);
+  border-left:2px solid var(--info); border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  padding:5px 9px; max-width:290px; box-shadow:0 10px 30px rgb(0 0 0 / .34);
+}
+.anno .pin b{ display:block; font-family:var(--font-mono); font-size:10.5px; color:var(--info); font-weight:600; }
+.anno .pin span{ display:block; font-size:10.5px; line-height:1.45; color:var(--muted-foreground); margin-top:2px; }
+
+/* ── Mobile presentation. shadcn: <Sheet side="right" /> ──────────────────────────────────────── */
+.phone{ position:fixed; inset:0; z-index:90; display:none; place-items:center; background:var(--scrim); }
+body[data-phone="on"] .phone{ display:grid; }
+.phone .device{ width:392px; height:min(846px,94vh); background:var(--background); border:1px solid var(--border-strong);
+  border-radius:34px; overflow:hidden; position:relative; box-shadow:0 40px 120px rgb(0 0 0 / .55); }
+.phone .device .chat-header{ height:46px; flex:none; }
+.phone .sheet{
+  position:absolute; inset:0; background:var(--rail-ground); display:flex; flex-direction:column;
+  animation:sheet-in var(--motion-base) var(--ease);
+}
+@keyframes sheet-in{ from{ transform:translateX(14px); opacity:0 } to{ transform:none; opacity:1 } }
+.phone .sheet-head{ display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--border); }
+.phone .sheet-head b{ font-size:13.5px; font-weight:600; flex:1; }
+.phone .close-hint{ position:absolute; left:50%; bottom:10px; translate:-50% 0; font-size:11px; color:var(--subtle-foreground); }
+</style>
+</head>
+<body data-anno="off" data-phone="off">
+
+<!-- ══════════════════════════════════════════════════════════════════════════════════════════════
+     shadcn: <ResizablePanelGroup direction="horizontal" autoSaveId="elowen:chat-rail">
+     Mounted at the SHELL level, above the chat frame, so its two panels are viewport-height.
+     ══════════════════════════════════════════════════════════════════════════════════════════ -->
+<div class="viewport" id="viewport" data-shadcn="ResizablePanelGroup">
+
+  <!-- shadcn: <ResizablePanel order={1} minSize={…}> — the conversation. The chat header is INSIDE
+       this panel; that is the whole geometry change against the current build. -->
+  <section class="chat" data-shadcn="ResizablePanel · order 1">
+    <header class="chat-header">
+      <button class="icon-btn" data-tip="Historie konverzací" aria-label="Historie konverzací">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
+      </button>
+      <span class="crumb">Elowen</span>
+      <span class="sep">/</span>
+      <span class="crumb" style="color:var(--primary)">elowen</span>
+      <span class="sep">/</span>
+      <span class="model">openai-codex/gpt-5.1-codex-max</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" aria-label="Hledat">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+      </button>
+      <button class="icon-btn" id="toggle-rail" data-tip="Skrýt telemetrii" aria-label="Skrýt telemetrii">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+      </button>
+    </header>
+
+    <div class="transcript">
+      <div class="bubble">Ať tam je spuštěný tool ve stylu terminálu jakoby. Použij hlavně co půjde shadcn.</div>
+      <div class="msg">Beru to jako malý terminálový řádek uvnitř sloupce: ikonka, monospace a běžící stav, ne obyčejný šedý text. Nejdřív vezmu existující shadcn/app primitivum, až potom píšu vlastní komponentu.</div>
+      <div class="toolrows">
+        <div>⌕ <b>Search</b> web/components</div>
+        <div>⌕ <b>ListDir</b> web/components/ui/shadcn</div>
+        <div>▤ <b>Read</b> web/components/ui/Badge.tsx · lines 1-100</div>
+        <div>✎ <b>Edit</b> web/modules/advisor/AgentsTable.tsx ›</div>
+        <div>✎ <b>Edit</b> web/tests/modules/advisor/advisorModalBody.… ›</div>
+      </div>
+      <div class="bubble">Udělej z toho full screen modal, stejně jako je Diagnostika konverzací.</div>
+      <div class="msg">Na desktopu fullscreen stejně jako Diagnostika konverzací; mobil zůstane fullscreen přirozeně. Pak už ten horizontální registr dostane i dost vzduchu.</div>
+      <div class="toolrows">
+        <div>▤ <b>Read</b> web/modules/settings/ConversationDiagnostic… ›</div>
+        <div>✎ <b>Edit</b> web/modules/advisor/AgentsT… · lines 133-162</div>
+        <div>▶ <b>Bash</b> npm run test:web -- advisorModalBody ›</div>
+        <div>▶ <b>Bash</b> sudo systemctl restart elowen-web ›</div>
+      </div>
+      <div class="msg">Hotovo — web restartovaný. Za půl minuty ověřím fullscreen modal, čtyřřádkový clamp i terminálový řádek přímo v produkci.</div>
+    </div>
+
+    <div class="composer">
+      <div class="statusline">
+        <span>kontext 34% (340k/1.0M)</span><span>Σ 2243.1M tok</span><span>$1875.90</span>
+      </div>
+      <div class="field">
+        <span>Napiš zprávu nebo / pro příkazy</span>
+        <span class="spacer"></span>
+        <span class="stop" aria-hidden="true"><i></i></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- shadcn: <ResizableHandle withHandle /> -->
+  <div class="handle" id="handle" role="separator" aria-orientation="vertical" tabindex="0"
+       aria-label="Šířka telemetrie" aria-valuenow="340" aria-valuemin="280" aria-valuemax="560"
+       data-shadcn="ResizableHandle withHandle">
+    <span class="grip" aria-hidden="true"><span></span><span></span><span></span></span>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════════════════════════════════
+       shadcn: <ResizablePanel order={2} collapsible collapsedSize={…} minSize={…} maxSize={…}>
+       Flush to the viewport's top, right and bottom edges. Its only border is the left one, and
+       that border IS the handle above.
+       ════════════════════════════════════════════════════════════════════════════════════════ -->
+  <aside class="rail" id="rail" data-busy="true" data-collapsed="false" aria-label="Telemetrie"
+         data-shadcn="ResizablePanel · order 2 · collapsible">
+
+    <!-- Collapsed stub: the rail at --rail-collapsed. -->
+    <div class="stub" aria-hidden="true">
+      <span class="mini-core">
+        <svg viewBox="0 0 64 64"><use href="#mascot"/></svg>
+      </span>
+      <span class="vmeter"><i style="height:34%"></i></span>
+      <span class="vlabel">34%</span>
+      <button class="icon-btn" id="expand-rail" data-tip="Rozbalit telemetrii" aria-label="Rozbalit telemetrii">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14 6-6 6 6 6"/></svg>
+      </button>
+    </div>
+
+    <!-- ── HEAD ── agent core. app <MascotGlyph> + shadcn <Badge> + shadcn <Button size="icon"> ── -->
+    <div class="rail-head" data-shadcn="head · MascotGlyph + Badge + Button">
+      <span class="core" aria-hidden="true">
+        <span class="halo"></span>
+        <svg viewBox="0 0 64 64"><use href="#mascot"/></svg>
+      </span>
+      <span class="core-meta">
+        <span class="who">
+          <b>Elowen</b>
+          <span class="badge" data-variant="soft-primary">codex-max</span>
+        </span>
+        <span class="state"><i class="dot"></i>Pracuje na úkolu</span>
+        <span class="elapsed">11m 13s · 7 kroků</span>
+      </span>
+      <span class="head-actions">
+        <button class="icon-btn" id="collapse-rail" data-tip="Sbalit rail" aria-label="Sbalit rail">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 6 6 6-6 6"/></svg>
+        </button>
+      </span>
+    </div>
+
+    <div class="sep-h full" data-shadcn="Separator"></div>
+
+    <!-- ── BODY ── shadcn <ScrollArea> ─────────────────────────────────────────────────────────── -->
+    <div class="rail-body" data-shadcn="ScrollArea">
+
+      <!-- Context: the rail's hero metric. shadcn <Progress> + <Tooltip>. -->
+      <section class="zone" data-open="true">
+        <div class="zone-head"><span class="label">Kontext</span></div>
+        <div class="hero-num">
+          <b>34</b><span class="unit">%</span>
+          <span class="spacer"></span>
+          <!-- A `1.0M` Badge sat here in v1 and was cut with the ring: the mono line directly below
+               already says "340k / 1.0M", so the badge spent a row restating the denominator. -->
+        </div>
+        <div class="progress" role="progressbar" aria-valuenow="34" aria-valuemin="0" aria-valuemax="100"
+             aria-label="Využití kontextu" data-shadcn="Progress">
+          <i style="width:34%"></i>
+        </div>
+        <p class="mono-line"><em>340k</em> / 1.0M · <em>$1875.90</em></p>
+      </section>
+
+      <!-- Rate limits. shadcn <Progress> per window + <Badge> for the plan. -->
+      <section class="zone" data-open="true">
+        <div class="zone-head">
+          <span class="label">Limity předplatného</span><span class="spacer"></span>
+          <span class="badge">pro</span>
+        </div>
+        <div class="zone-body" data-shadcn="Progress × N">
+          <div class="meter-row" data-tip="Obnoví se v pá 09:00">
+            <span class="k">týdně</span>
+            <span class="progress" role="progressbar" aria-valuenow="33" aria-valuemin="0" aria-valuemax="100" aria-label="Týdenní limit"><i style="width:33%"></i></span>
+            <span class="v">33 %</span>
+          </div>
+          <div class="meter-row" data-tip="Obnoví se ve 20:00">
+            <span class="k">5h</span>
+            <span class="progress" data-tone="warning" role="progressbar" aria-valuenow="71" aria-valuemin="0" aria-valuemax="100" aria-label="Pětihodinový limit"><i style="width:71%"></i></span>
+            <span class="v">71 %</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Live work. shadcn <Collapsible> + <Badge> + <Button variant="ghost"> + <AlertDialog>. -->
+      <section class="zone" data-open="true" id="zone-work" data-shadcn="Collapsible">
+        <button class="zone-head" aria-expanded="true" aria-controls="work-body">
+          <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          <span class="label">Živá práce</span><span class="spacer"></span>
+          <span class="badge" data-variant="soft-success">4 běží</span>
+        </button>
+        <div class="zone-body rows" id="work-body">
+          <button class="row" data-tip="Otevřít DAG workflow">
+            <span class="glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M6 9v6a3 3 0 0 0 3 3h6"/></svg></span>
+            <span class="txt">build → typecheck → deploy</span>
+            <span class="meta">3/5</span>
+          </button>
+          <button class="row" data-tip="Otevřít tabulku sub-agentů">
+            <span class="glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M17 11a3 3 0 1 0-2-5.2"/></svg></span>
+            <span class="txt">telemetry-rail-opus</span>
+            <span class="meta">128k</span>
+          </button>
+          <button class="row" data-tip="Otevřít výstup procesu">
+            <span class="glyph"><i class="dot run"></i></span>
+            <span class="txt mono">npm run build:web</span>
+            <span class="meta">1m 04s</span>
+          </button>
+          <div class="row">
+            <span class="glyph"><i class="dot run"></i></span>
+            <span class="txt mono">next dev --turbo</span>
+            <span class="badge">discord</span>
+            <button class="kill" data-tip="Ukončit proces" aria-label="Ukončit proces">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- MCP. shadcn <Collapsible> + <Badge>. -->
+      <section class="zone" data-open="true" id="zone-mcp" data-shadcn="Collapsible">
+        <button class="zone-head" aria-expanded="true" aria-controls="mcp-body">
+          <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          <span class="label">MCP servery</span><span class="spacer"></span>
+          <span class="badge" data-variant="soft-success">3/3</span>
+        </button>
+        <div class="zone-body rows" id="mcp-body">
+          <div class="row"><span class="glyph"><i class="dot ok"></i></span><span class="txt mono">azure</span><span class="meta">42 tools</span></div>
+          <div class="row"><span class="glyph"><i class="dot ok"></i></span><span class="txt mono">chrome-devtools</span><span class="meta">17 tools</span></div>
+          <div class="row"><span class="glyph"><i class="dot ok"></i></span><span class="txt mono">microsoft-learn</span><span class="meta">6 tools</span></div>
+        </div>
+      </section>
+
+      <!-- LSP. -->
+      <section class="zone" data-open="true">
+        <div class="zone-head"><span class="label">LSP</span><span class="spacer"></span>
+          <span class="badge" data-variant="soft-success">aktivní</span></div>
+        <div class="rows"><div class="row"><span class="glyph"><i class="dot ok"></i></span><span class="txt mono">typescript-language-server</span></div></div>
+      </section>
+    </div>
+
+    <!-- ── FOOT ── workspace identity, pinned to the outer bottom edge. ─────────────────────────── -->
+    <div class="rail-foot" data-shadcn="foot · Separator + Tooltip">
+      <span class="path" data-tip="/var/www/elowen">/var/www/elowen</span>
+      <span class="branch">
+        <span class="glyph"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.4"/><circle cx="6" cy="19" r="2.4"/><circle cx="18" cy="9" r="2.4"/><path d="M6 7.4v9.2M18 11.4c0 3-3 3.6-6 3.6"/></svg></span>
+        <span>main</span>
+      </span>
+    </div>
+  </aside>
+</div>
+
+<!-- Shared mascot glyph (the app's <MascotGlyph> stands in for this in the real rail). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <radialGradient id="ember" cx="38%" cy="30%">
+      <stop offset="0" stop-color="var(--ember-bright)"/>
+      <stop offset="45%" stop-color="var(--ember)"/>
+      <stop offset="100%" stop-color="var(--primary)"/>
+    </radialGradient>
+    <g id="mascot">
+      <path d="M32 3c5 9 3 13 8 19s9 9 9 19a17 17 0 0 1-34 0c0-6 3-9 5-13 1 4 3 6 5 6-2-9 2-20 7-31z" fill="url(#ember)"/>
+      <circle cx="25" cy="42" r="3.1" fill="#1a0a06"/>
+      <circle cx="39" cy="42" r="3.1" fill="#1a0a06"/>
+      <circle cx="26.1" cy="41" r="1.05" fill="#fff"/>
+      <circle cx="40.1" cy="41" r="1.05" fill="#fff"/>
+      <path d="M29 48q3 2.6 6 0" stroke="#1a0a06" stroke-width="1.7" fill="none" stroke-linecap="round"/>
+    </g>
+  </defs>
+</svg>
+
+<!-- ── Annotation overlay ────────────────────────────────────────────────────────────────────── -->
+<div class="anno" aria-hidden="true">
+  <div class="pin" style="right:calc(var(--anno-x) + 20px); top:56px">
+    <b>ResizablePanel · collapsible</b>
+    <span>Rail = 2. panel skupiny. Flush na horní/pravou/dolní hranu viewportu. min 280 / default 340 / max 560 px, collapsedSize 52 px.</span>
+  </div>
+  <div class="pin" style="right:calc(var(--anno-x) + 20px); top:172px">
+    <b>Progress</b>
+    <span>Kontext i každé okno limitů jedou přes jediné <code>&lt;Progress&gt;</code>; tón bere pressure ramp z <code>usageFillClass()</code>.</span>
+  </div>
+  <div class="pin" style="right:calc(var(--anno-x) + 20px); top:330px">
+    <b>Collapsible + Badge</b>
+    <span>Živá práce a MCP jsou <code>&lt;Collapsible&gt;</code>; počty jedou přes <code>&lt;Badge&gt;</code>, řádky přes <code>&lt;Button variant="ghost"&gt;</code>.</span>
+  </div>
+  <div class="pin" style="right:calc(var(--anno-x) + 20px); bottom:66px; top:auto; transform:none">
+    <b>Separator + Tooltip</b>
+    <span>Patička = identita workspace. Sedí na dolní hraně viewportu, ne nad kompozerem.</span>
+  </div>
+  <div class="pin" style="right:calc(var(--anno-x) + 34px); top:calc(50% - 40px)">
+    <b>ResizableHandle withHandle</b>
+    <span>1px linka, 11px hit area, grip na hover/focus. Šipky ±16 px, dvojklik = reset na 340 px.</span>
+  </div>
+</div>
+
+<!-- ── Mobile presentation ───────────────────────────────────────────────────────────────────── -->
+<div class="phone" id="phone">
+  <div class="device">
+    <div class="chat-header">
+      <span class="crumb">Elowen</span><span class="spacer"></span>
+      <span class="model">gpt-5.1</span>
+    </div>
+    <div class="sheet" data-shadcn="Sheet side=&quot;right&quot;">
+      <div class="sheet-head">
+        <b>Telemetrie</b>
+        <span class="badge" data-variant="soft-success">4 běží</span>
+        <button class="icon-btn" id="phone-close" aria-label="Zavřít">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="rail-body" id="phone-body"></div>
+    </div>
+    <span class="close-hint">Sheet side="right", w-full — žádný zmáčknutý dok</span>
+  </div>
+</div>
+
+<!-- ── Mockup controls ───────────────────────────────────────────────────────────────────────── -->
+<div class="devbar">
+  <button id="btn-theme" aria-pressed="false">Světlý motiv</button>
+  <button id="btn-anno" aria-pressed="false">Anotace</button>
+  <button id="btn-collapse" aria-pressed="false">Sbalit rail</button>
+  <button id="btn-phone" aria-pressed="false">Mobil</button>
+  <span class="tag" id="tag-width">340 px</span>
+</div>
+
+<script>
+(() => {
+  const root = document.documentElement, body = document.body;
+  const rail = document.getElementById('rail');
+  const handle = document.getElementById('handle');
+  const tag = document.getElementById('tag-width');
+
+  const MIN = 280, MAX = 560, DEFAULT = 340, COLLAPSED = 52;
+  const STORE = 'mockup:rail-width';           // real impl: ResizablePanelGroup autoSaveId
+  let width = Number(localStorage.getItem(STORE)) || DEFAULT;
+  let collapsed = false;
+
+  const clamp = (n) => Math.max(MIN, Math.min(MAX, Math.round(n)));
+
+  function apply() {
+    rail.dataset.collapsed = String(collapsed);
+    const w = collapsed ? COLLAPSED : width;
+    rail.style.flexBasis = w + 'px';
+    rail.style.width = w + 'px';
+    handle.setAttribute('aria-valuenow', String(w));
+    tag.textContent = collapsed ? 'sbaleno · 52 px' : w + ' px';
+    root.style.setProperty('--anno-x', w + 'px');
+    // The rail publishes its own type scale, exactly like railTypeVars(width) does today.
+    const t = (width - MIN) / (MAX - MIN);
+    rail.style.setProperty('--rail-t', t.toFixed(3));
+  }
+
+  // ── Drag. Mirrors ResizableHandle: pointer capture, delta-based, clamped, persisted. ──────────
+  let dragFrom = null;
+  handle.addEventListener('pointerdown', (e) => {
+    if (collapsed) return;
+    e.preventDefault();
+    dragFrom = { x: e.clientX, w: width };
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add('is-dragging');
+    body.classList.add('dragging');
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragFrom) return;
+    width = clamp(dragFrom.w - (e.clientX - dragFrom.x));   // dragging LEFT widens the rail
+    apply();
+  });
+  const endDrag = (e) => {
+    if (!dragFrom) return;
+    dragFrom = null;
+    try { handle.releasePointerCapture(e.pointerId); } catch {}
+    handle.classList.remove('is-dragging');
+    body.classList.remove('dragging');
+    localStorage.setItem(STORE, String(width));
+  };
+  handle.addEventListener('pointerup', endDrag);
+  handle.addEventListener('lostpointercapture', endDrag);
+
+  // Keyboard: the handle is a real window splitter.
+  handle.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    if (collapsed) { collapsed = false; apply(); return; }
+    width = clamp(width + (e.key === 'ArrowLeft' ? 16 : -16));
+    apply(); localStorage.setItem(STORE, String(width));
+  });
+  handle.addEventListener('dblclick', () => {
+    width = DEFAULT; collapsed = false; apply(); localStorage.setItem(STORE, String(width));
+  });
+
+  // ── Collapse ─────────────────────────────────────────────────────────────────────────────────
+  const setCollapsed = (v) => {
+    collapsed = v; apply();
+    document.getElementById('btn-collapse').setAttribute('aria-pressed', String(v));
+    document.getElementById('btn-collapse').textContent = v ? 'Rozbalit rail' : 'Sbalit rail';
+  };
+  document.getElementById('collapse-rail').addEventListener('click', () => setCollapsed(true));
+  document.getElementById('expand-rail').addEventListener('click', () => setCollapsed(false));
+  document.getElementById('toggle-rail').addEventListener('click', () => setCollapsed(!collapsed));
+  document.getElementById('btn-collapse').addEventListener('click', () => setCollapsed(!collapsed));
+
+  // ── Collapsible zones ────────────────────────────────────────────────────────────────────────
+  for (const zone of document.querySelectorAll('.zone[id]')) {
+    const trigger = zone.querySelector('button.zone-head');
+    trigger?.addEventListener('click', () => {
+      const open = zone.dataset.open !== 'true';
+      zone.dataset.open = String(open);
+      trigger.setAttribute('aria-expanded', String(open));
+    });
+  }
+
+  // ── Mockup chrome ────────────────────────────────────────────────────────────────────────────
+  const btnTheme = document.getElementById('btn-theme');
+  btnTheme.addEventListener('click', () => {
+    const light = root.dataset.theme === 'dark';
+    root.dataset.theme = light ? 'light' : 'dark';
+    btnTheme.setAttribute('aria-pressed', String(light));
+    btnTheme.textContent = light ? 'Tmavý motiv' : 'Světlý motiv';
+  });
+  const btnAnno = document.getElementById('btn-anno');
+  btnAnno.addEventListener('click', () => {
+    const on = body.dataset.anno !== 'on';
+    body.dataset.anno = on ? 'on' : 'off';
+    btnAnno.setAttribute('aria-pressed', String(on));
+  });
+
+  // Mobile: the SAME body markup, re-hosted in a Sheet — that is the point, one <TelemetryBody />.
+  const btnPhone = document.getElementById('btn-phone');
+  const phoneBody = document.getElementById('phone-body');
+  btnPhone.addEventListener('click', () => {
+    const on = body.dataset.phone !== 'on';
+    if (on && !phoneBody.childElementCount) {
+      phoneBody.innerHTML = document.querySelector('.rail-body').innerHTML;
+    }
+    body.dataset.phone = on ? 'on' : 'off';
+    btnPhone.setAttribute('aria-pressed', String(on));
+  });
+  document.getElementById('phone-close').addEventListener('click', () => {
+    body.dataset.phone = 'off'; btnPhone.setAttribute('aria-pressed', 'false');
+  });
+  document.getElementById('phone').addEventListener('click', (e) => {
+    if (e.target.id === 'phone') { body.dataset.phone = 'off'; btnPhone.setAttribute('aria-pressed', 'false'); }
+  });
+
+  apply();
+})();
+</script>
+</body>
+</html>

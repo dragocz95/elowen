@@ -1,0 +1,316 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Elowen — telemetry rail redesign, static desktop composition.
+
+  Canvas 2438 x 2008 = the user's reference screenshot, at 2x over a 1219 x 1004 logical viewport,
+  so every number below is authored in CSS pixels and the viewBox does the scaling.
+
+  The single geometric claim this drawing has to make: the rail is a child of the VIEWPORT, not of
+  the chat frame. Its ground runs from y=0 to y=1004 and out to x=1219 — it touches the top, right
+  and bottom edges. The chat header's hairline stops dead at x=878, on the resize handle.
+
+  Palette is web/skins/studio-oled/skin.css verbatim. No gradients, no alpha and no <tspan> runs:
+  every blended value is pre-composited to a flat hex and every text run carries its own x, so the
+  file rasterises identically in a browser and in a minimal SVG renderer.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="2438" height="2008" viewBox="0 0 1219 1004"
+     font-family="Inter, ui-sans-serif, system-ui, sans-serif" shape-rendering="geometricPrecision">
+
+  <!-- ═══ Grounds ═══════════════════════════════════════════════════════════════════════════════ -->
+  <rect x="0" y="0" width="1219" height="1004" fill="#03080a"/>
+  <!-- THE RAIL GROUND: y 0 → 1004, x 879 → 1219. Three flush viewport edges. -->
+  <rect x="879" y="0" width="340" height="1004" fill="#070c0e"/>
+
+  <!-- ═══════════════════════════════ CHAT PANEL ═══════════════════════════════════════════════ -->
+
+  <!-- Header. Note where its bottom rule ends: x=878, not 1219. -->
+  <g>
+    <line x1="0" y1="50" x2="878" y2="50" stroke="#171c1e" stroke-width="1"/>
+    <g stroke="#a1a3a5" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="17" y="16.5" width="18" height="18" rx="2.5"/>
+      <path d="M26 16.5v18"/>
+    </g>
+    <text x="48" y="30" font-size="13.5" font-weight="600" fill="#fcfcfe">Elowen</text>
+    <text x="108" y="30" font-size="13.5" fill="#2a3134">/</text>
+    <text x="120" y="30" font-size="13.5" font-weight="500" fill="#ff5236">elowen</text>
+    <text x="176" y="30" font-size="13.5" fill="#2a3134">/</text>
+    <text x="188" y="30" font-size="12" font-family="JetBrains Mono, ui-monospace, monospace" fill="#a1a3a5">openai-codex/gpt-5.1-codex-max</text>
+    <g stroke="#a1a3a5" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="809" cy="24" r="6.5"/>
+      <path d="M814 29l3.5 3.5"/>
+      <rect x="835" y="16.5" width="18" height="18" rx="2.5"/>
+      <path d="M847 16.5v18"/>
+    </g>
+  </g>
+
+  <!-- ── Transcript ─────────────────────────────────────────────────────────────────────────────
+       Tool rows use drawn marks rather than glyph characters, and a fixed argument column at
+       x=118, so the log reads as one aligned block the way the production transcript does. -->
+  <g>
+    <rect x="447" y="74" width="403" height="52" rx="12" fill="#0e1416" stroke="#171c1e" stroke-width="1"/>
+    <text x="464" y="96" font-size="13" fill="#fcfcfe">Ať tam je spuštěný tool ve stylu terminálu jakoby.</text>
+    <text x="464" y="114" font-size="13" fill="#fcfcfe">Použij hlavně co půjde shadcn.</text>
+
+    <text x="28" y="160" font-size="13" fill="#fcfcfe">Beru to jako malý terminálový řádek uvnitř sloupce: ikonka, monospace a běžící stav, ne obyčejný</text>
+    <text x="28" y="180" font-size="13" fill="#fcfcfe">šedý text. Nejdřív vezmu existující shadcn/app primitivum, až potom píšu vlastní komponentu.</text>
+
+    <g font-family="JetBrains Mono, ui-monospace, monospace" font-size="11.5">
+      <rect x="44" y="199" width="7" height="7" rx="1.5" fill="none" stroke="#828486" stroke-width="1.3"/>
+      <text x="60" y="206" fill="#a1a3a5">Search</text>
+      <text x="118" y="206" fill="#828486">web/components</text>
+
+      <rect x="44" y="219" width="7" height="7" rx="1.5" fill="none" stroke="#828486" stroke-width="1.3"/>
+      <text x="60" y="226" fill="#a1a3a5">ListDir</text>
+      <text x="118" y="226" fill="#828486">web/components/ui/shadcn</text>
+
+      <rect x="44" y="239" width="7" height="7" rx="1.5" fill="none" stroke="#828486" stroke-width="1.3"/>
+      <text x="60" y="246" fill="#a1a3a5">Read</text>
+      <text x="118" y="246" fill="#828486">web/components/ui/Badge.tsx · lines 1-100</text>
+
+      <rect x="44" y="259" width="7" height="7" rx="1.5" fill="#828486"/>
+      <text x="60" y="266" fill="#a1a3a5">Edit</text>
+      <text x="118" y="266" fill="#828486">web/modules/advisor/AgentsTable.tsx</text>
+
+      <rect x="44" y="279" width="7" height="7" rx="1.5" fill="#828486"/>
+      <text x="60" y="286" fill="#a1a3a5">Edit</text>
+      <text x="118" y="286" fill="#828486">web/tests/modules/advisor/advisorModalBody.…</text>
+    </g>
+
+    <rect x="509" y="308" width="341" height="34" rx="12" fill="#0e1416" stroke="#171c1e" stroke-width="1"/>
+    <text x="526" y="330" font-size="13" fill="#fcfcfe">Udělej z toho full screen modal, jako Diagnostika.</text>
+
+    <text x="28" y="376" font-size="13" fill="#fcfcfe">Na desktopu fullscreen stejně jako Diagnostika konverzací; mobil zůstane fullscreen přirozeně.</text>
+    <text x="28" y="396" font-size="13" fill="#fcfcfe">Pak už ten horizontální registr dostane i dost vzduchu.</text>
+
+    <g font-family="JetBrains Mono, ui-monospace, monospace" font-size="11.5">
+      <rect x="44" y="415" width="7" height="7" rx="1.5" fill="none" stroke="#828486" stroke-width="1.3"/>
+      <text x="60" y="422" fill="#a1a3a5">Read</text>
+      <text x="118" y="422" fill="#828486">web/modules/settings/ConversationDiagnostic…</text>
+
+      <rect x="44" y="435" width="7" height="7" rx="1.5" fill="#828486"/>
+      <text x="60" y="442" fill="#a1a3a5">Edit</text>
+      <text x="118" y="442" fill="#828486">web/modules/advisor/AgentsT… · lines 133-162</text>
+
+      <path d="M44.5 455.5l7 3.5-7 3.5z" fill="#828486"/>
+      <text x="60" y="462" fill="#a1a3a5">Bash</text>
+      <text x="118" y="462" fill="#828486">npm run test:web -- advisorModalBody</text>
+
+      <path d="M44.5 475.5l7 3.5-7 3.5z" fill="#828486"/>
+      <text x="60" y="482" fill="#a1a3a5">Bash</text>
+      <text x="118" y="482" fill="#828486">sudo systemctl restart elowen-web</text>
+    </g>
+
+    <text x="28" y="522" font-size="13" fill="#fcfcfe">Hotovo — web restartovaný. Za půl minuty ověřím fullscreen modal, čtyřřádkový clamp i terminálový</text>
+    <text x="28" y="542" font-size="13" fill="#fcfcfe">řádek přímo v produkci.</text>
+
+    <!-- the tail call of a still-streaming turn -->
+    <g font-family="JetBrains Mono, ui-monospace, monospace" font-size="11.5">
+      <circle cx="48" cy="564" r="3.4" fill="#e5a000"/>
+      <text x="60" y="568" fill="#a1a3a5">Bash</text>
+      <text x="118" y="568" fill="#828486">npm run build:web</text>
+    </g>
+  </g>
+
+  <!-- ── Composer ───────────────────────────────────────────────────────────────────────────────
+       The statusline survives untouched: it is the one place the totals belong when the rail is
+       collapsed or the user is on a phone. -->
+  <g font-family="JetBrains Mono, ui-monospace, monospace" font-size="11" fill="#828486" text-anchor="end">
+    <text x="850" y="900">$1875.90</text>
+    <text x="762" y="900">Σ 2243.1M tok</text>
+    <text x="636" y="900">kontext 34% (340k/1.0M)</text>
+  </g>
+  <rect x="28" y="916" width="822" height="50" rx="12" fill="#080d0f" stroke="#171c1e" stroke-width="1"/>
+  <text x="46" y="946" font-size="13.5" fill="#828486">Napiš zprávu nebo / pro příkazy</text>
+  <circle cx="822" cy="941" r="17" fill="#ff5236"/>
+  <rect x="817" y="936" width="10" height="10" rx="2" fill="#03080a"/>
+
+  <!-- ═══ Resize handle ═══ shadcn <ResizableHandle withHandle /> ═══════════════════════════════
+       1px rule from the very top of the viewport to the very bottom — the rail's ONLY border. -->
+  <line x1="878.5" y1="0" x2="878.5" y2="1004" stroke="#171c1e" stroke-width="1"/>
+  <rect x="873" y="489" width="11" height="26" rx="4" fill="#0b1012" stroke="#2a3134" stroke-width="1"/>
+  <g fill="#828486">
+    <circle cx="878.5" cy="496" r="1.4"/>
+    <circle cx="878.5" cy="502" r="1.4"/>
+    <circle cx="878.5" cy="508" r="1.4"/>
+  </g>
+
+  <!-- ═══════════════════════════════ THE RAIL ═════════════════════════════════════════════════ -->
+
+  <!-- ── HEAD: agent core. Starts at y=18, i.e. ABOVE the chat header's 50px rule. ────────────── -->
+  <g>
+    <!-- Halo, stepped instead of a gradient: three pre-composited rings of the ember over the rail
+         ground. In the live component this is one radial glow that breathes while a turn runs and
+         holds still when it does not — the rail's only animation, and it carries state. -->
+    <circle cx="923" cy="48" r="40" fill="#161010"/>
+    <circle cx="923" cy="48" r="35" fill="#251512"/>
+    <circle cx="923" cy="48" r="31" fill="#391a16"/>
+
+    <!-- MascotGlyph (the app component; drawn flat here). -->
+    <g transform="translate(895,20) scale(0.875)">
+      <path d="M32 3c5 9 3 13 8 19s9 9 9 19a17 17 0 0 1-34 0c0-6 3-9 5-13 1 4 3 6 5 6-2-9 2-20 7-31z" fill="#ff5236"/>
+      <path d="M32 12c3 7 2 10 6 15s6 7 6 14a12 12 0 0 1-24 0c0-5 2-7 4-10 1 3 2 4 4 4-2-7 1-15 4-23z" fill="#ff9a62"/>
+      <path d="M32 24c2 4 1 6 3 9s4 4 4 8a7 7 0 0 1-14 0c0-3 1-4 3-6 0 2 1 3 2 3-1-5 1-9 2-14z" fill="#ffd09a"/>
+      <circle cx="25" cy="42" r="3.4" fill="#1a0a06"/>
+      <circle cx="39" cy="42" r="3.4" fill="#1a0a06"/>
+      <circle cx="26.2" cy="40.9" r="1.15" fill="#ffffff"/>
+      <circle cx="40.2" cy="40.9" r="1.15" fill="#ffffff"/>
+      <path d="M28.6 48.2q3.4 2.8 6.8 0" stroke="#1a0a06" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+    </g>
+
+    <!-- Identity + live state. Three lines, one column: name, what it is doing, how long. -->
+    <text x="968" y="36" font-size="14" font-weight="600" fill="#fcfcfe">Elowen</text>
+    <rect x="1030" y="24" width="72" height="16" rx="5" fill="#251512" stroke="#6a281e" stroke-width="1"/>
+    <text x="1066" y="35.5" font-size="10.5" font-family="JetBrains Mono, ui-monospace, monospace" fill="#ff5236" text-anchor="middle">codex-max</text>
+
+    <circle cx="972" cy="53" r="6" fill="#0f322a"/>
+    <circle cx="972" cy="53" r="3" fill="#34dfaa"/>
+    <text x="986" y="57" font-size="11.5" fill="#a1a3a5">Pracuje na úkolu</text>
+    <text x="968" y="76" font-size="11" font-family="JetBrains Mono, ui-monospace, monospace" fill="#828486">11m 13s · 7 kroků</text>
+
+    <!-- Collapse control — shadcn <Button variant="ghost" size="icon" /> -->
+    <g stroke="#828486" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M1187 42l6 6-6 6"/>
+    </g>
+  </g>
+
+  <!-- shadcn <Separator /> — full-bleed, because the head is a pinned zone, not a card. -->
+  <line x1="879" y1="96.5" x2="1219" y2="96.5" stroke="#171c1e" stroke-width="1"/>
+
+  <!-- ── ZONE: Kontext — the rail's hero metric ────────────────────────────────────────────────── -->
+  <g>
+    <text x="893" y="120" font-size="10" font-weight="600" letter-spacing="1.2" fill="#828486">KONTEXT</text>
+    <text x="893" y="151" font-size="28" font-weight="600" fill="#fcfcfe">34</text>
+    <text x="941" y="151" font-size="13" font-weight="500" fill="#a1a3a5">%</text>
+
+    <!-- shadcn <Progress /> — the same primitive every other bar in the rail uses. -->
+    <rect x="893" y="164" width="312" height="6" rx="3" fill="#0e1416"/>
+    <rect x="893" y="164" width="106" height="6" rx="3" fill="#ff5236"/>
+
+    <g font-family="JetBrains Mono, ui-monospace, monospace" font-size="11">
+      <text x="893" y="189" fill="#fcfcfe">340k</text>
+      <text x="926" y="189" fill="#a1a3a5">/ 1.0M ·</text>
+      <text x="986" y="189" fill="#fcfcfe">$1875.90</text>
+    </g>
+  </g>
+  <line x1="879" y1="208.5" x2="1219" y2="208.5" stroke="#171c1e" stroke-width="1"/>
+
+  <!-- ── ZONE: Cíl (active goal) ───────────────────────────────────────────────────────────────── -->
+  <g>
+    <text x="893" y="232" font-size="10" font-weight="600" letter-spacing="1.2" fill="#828486">CÍL</text>
+    <text x="1205" y="232" font-size="10.5" font-family="JetBrains Mono, ui-monospace, monospace" fill="#828486" text-anchor="end">7/20 tahů · 11m</text>
+    <path d="M894 250.5l7 3.5-7 3.5z" fill="#ff5236"/>
+    <text x="911" y="258" font-size="12" fill="#fcfcfe">Převést telemetrii na shadcn primitiva</text>
+    <text x="893" y="277" font-size="11" fill="#828486">Splněno 2 ze 4 podcílů</text>
+  </g>
+  <line x1="879" y1="292.5" x2="1219" y2="292.5" stroke="#171c1e" stroke-width="1"/>
+
+  <!-- ── ZONE: Limity předplatného ─────────────────────────────────────────────────────────────── -->
+  <g>
+    <text x="893" y="316" font-size="10" font-weight="600" letter-spacing="1.2" fill="#828486">LIMITY PŘEDPLATNÉHO</text>
+    <rect x="1173" y="304" width="32" height="16" rx="5" fill="#0e1416" stroke="#171c1e" stroke-width="1"/>
+    <text x="1189" y="315.5" font-size="10.5" font-family="JetBrains Mono, ui-monospace, monospace" fill="#a1a3a5" text-anchor="middle">pro</text>
+
+    <text x="893" y="342" font-size="11" fill="#a1a3a5">týdně</text>
+    <rect x="944" y="335" width="216" height="6" rx="3" fill="#0e1416"/>
+    <rect x="944" y="335" width="71" height="6" rx="3" fill="#ff5236"/>
+    <text x="1205" y="342" font-size="11" font-family="JetBrains Mono, ui-monospace, monospace" fill="#fcfcfe" text-anchor="end">33 %</text>
+
+    <text x="893" y="366" font-size="11" fill="#a1a3a5">5h</text>
+    <rect x="944" y="359" width="216" height="6" rx="3" fill="#0e1416"/>
+    <!-- pressure ramp: primary → warning at 70 % → destructive at 90 %, same as usageFillClass() -->
+    <rect x="944" y="359" width="153" height="6" rx="3" fill="#e5a000"/>
+    <text x="1205" y="366" font-size="11" font-family="JetBrains Mono, ui-monospace, monospace" fill="#fcfcfe" text-anchor="end">71 %</text>
+  </g>
+  <line x1="879" y1="396.5" x2="1219" y2="396.5" stroke="#171c1e" stroke-width="1"/>
+
+  <!-- ── ZONE: Živá práce — shadcn <Collapsible> ───────────────────────────────────────────────── -->
+  <g>
+    <g stroke="#828486" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M893 417l5 5 5-5"/>
+    </g>
+    <text x="911" y="420" font-size="10" font-weight="600" letter-spacing="1.2" fill="#828486">ŽIVÁ PRÁCE</text>
+    <rect x="1149" y="408" width="56" height="16" rx="5" fill="#0c2620" stroke="#19604c" stroke-width="1"/>
+    <text x="1177" y="419.5" font-size="10.5" font-family="JetBrains Mono, ui-monospace, monospace" fill="#34dfaa" text-anchor="middle">4 běží</text>
+
+    <!-- workflow -->
+    <g stroke="#828486" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="893" y="436" width="5.5" height="5.5" rx="1"/>
+      <rect x="901" y="443.5" width="5.5" height="5.5" rx="1"/>
+      <path d="M895.7 441.5v2.5a2.3 2.3 0 0 0 2.3 2.3h2.5"/>
+    </g>
+    <text x="915" y="445" font-size="12" fill="#fcfcfe">build → typecheck → deploy</text>
+    <text x="1205" y="445" font-size="10.5" font-family="JetBrains Mono, ui-monospace, monospace" fill="#828486" text-anchor="end">3/5</text>
+
+    <!-- sub-agent -->
+    <g stroke="#828486" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="897" cy="465" r="2.7"/>
+      <path d="M892.5 472.5a4.5 4.5 0 0 1 9 0"/>
+      <path d="M903.5 467a2.5 2.5 0 1 0-1.7-4.4"/>
+    </g>
+    <text x="915" y="469" font-size="12" fill="#fcfcfe">telemetry-rail-opus</text>
+    <text x="1205" y="469" font-size="10.5" font-family="JetBrains Mono, ui-monospace, monospace" fill="#828486" text-anchor="end">128k</text>
+
+    <!-- own process -->
+    <circle cx="897" cy="489" r="3" fill="#ff5236"/>
+    <text x="915" y="493" font-size="11" font-family="JetBrains Mono, ui-monospace, monospace" fill="#fcfcfe">npm run build:web</text>
+    <text x="1205" y="493" font-size="10.5" font-family="JetBrains Mono, ui-monospace, monospace" fill="#828486" text-anchor="end">1m 04s</text>
+
+    <!-- a process this conversation does NOT own: its origin is named and it stays killable -->
+    <circle cx="897" cy="513" r="3" fill="#ff5236"/>
+    <text x="915" y="517" font-size="11" font-family="JetBrains Mono, ui-monospace, monospace" fill="#fcfcfe">next dev --turbo</text>
+    <rect x="1108" y="506" width="52" height="15" rx="5" fill="#0e1416" stroke="#171c1e" stroke-width="1"/>
+    <text x="1134" y="517" font-size="10" font-family="JetBrains Mono, ui-monospace, monospace" fill="#828486" text-anchor="middle">discord</text>
+    <g stroke="#828486" stroke-width="1.7" stroke-linecap="round">
+      <path d="M1193 509l7 7M1200 509l-7 7"/>
+    </g>
+  </g>
+  <line x1="879" y1="542.5" x2="1219" y2="542.5" stroke="#171c1e" stroke-width="1"/>
+
+  <!-- ── ZONE: MCP servery — shadcn <Collapsible> ──────────────────────────────────────────────── -->
+  <g>
+    <g stroke="#828486" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M893 563l5 5 5-5"/>
+    </g>
+    <text x="911" y="566" font-size="10" font-weight="600" letter-spacing="1.2" fill="#828486">MCP SERVERY</text>
+    <rect x="1163" y="554" width="42" height="16" rx="5" fill="#0c2620" stroke="#19604c" stroke-width="1"/>
+    <text x="1184" y="565.5" font-size="10.5" font-family="JetBrains Mono, ui-monospace, monospace" fill="#34dfaa" text-anchor="middle">3/3</text>
+
+    <g font-family="JetBrains Mono, ui-monospace, monospace" font-size="11">
+      <circle cx="897" cy="587" r="3" fill="#34dfaa"/>
+      <text x="915" y="591" fill="#fcfcfe">azure</text>
+      <text x="1205" y="591" font-size="10.5" fill="#828486" text-anchor="end">42 tools</text>
+
+      <circle cx="897" cy="611" r="3" fill="#34dfaa"/>
+      <text x="915" y="615" fill="#fcfcfe">chrome-devtools</text>
+      <text x="1205" y="615" font-size="10.5" fill="#828486" text-anchor="end">17 tools</text>
+
+      <circle cx="897" cy="635" r="3" fill="#34dfaa"/>
+      <text x="915" y="639" fill="#fcfcfe">microsoft-learn</text>
+      <text x="1205" y="639" font-size="10.5" fill="#828486" text-anchor="end">6 tools</text>
+    </g>
+  </g>
+  <line x1="879" y1="660.5" x2="1219" y2="660.5" stroke="#171c1e" stroke-width="1"/>
+
+  <!-- ── ZONE: LSP ─────────────────────────────────────────────────────────────────────────────── -->
+  <g>
+    <text x="893" y="684" font-size="10" font-weight="600" letter-spacing="1.2" fill="#828486">LSP</text>
+    <rect x="1147" y="672" width="58" height="16" rx="5" fill="#0c2620" stroke="#19604c" stroke-width="1"/>
+    <text x="1176" y="683.5" font-size="10.5" font-family="JetBrains Mono, ui-monospace, monospace" fill="#34dfaa" text-anchor="middle">aktivní</text>
+
+    <circle cx="897" cy="705" r="3" fill="#34dfaa"/>
+    <text x="915" y="709" font-size="11" font-family="JetBrains Mono, ui-monospace, monospace" fill="#fcfcfe">typescript-language-server</text>
+  </g>
+
+  <!-- ── FOOT: workspace identity, pinned to the OUTER BOTTOM EDGE ─────────────────────────────── -->
+  <line x1="879" y1="935.5" x2="1219" y2="935.5" stroke="#171c1e" stroke-width="1"/>
+  <rect x="879" y="936" width="340" height="68" fill="#0b1012"/>
+  <text x="893" y="964" font-size="11" font-family="JetBrains Mono, ui-monospace, monospace" fill="#a1a3a5">[host-path]</text>
+  <g stroke="#828486" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="897" cy="976" r="2.5"/>
+    <circle cx="897" cy="988" r="2.5"/>
+    <circle cx="908" cy="979" r="2.5"/>
+    <path d="M897 978.5v7M908 981.5c0 2.7-2.7 3.3-5.6 3.3"/>
+  </g>
+  <text x="920" y="986" font-size="11" font-family="JetBrains Mono, ui-monospace, monospace" fill="#ff5236">main</text>
+
+</svg>
