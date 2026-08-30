@@ -937,13 +937,18 @@ describe('brain routes', () => {
     }]);
   });
 
-  it('publishes surface-specific Fast and rename commands from one catalog', async () => {
+  it('publishes surface-specific commands with additive execution metadata', async () => {
     const { app, amyTok } = setup();
-    const cli = await (await app.request('/brain/commands?surface=cli', auth(amyTok))).json() as { commands: { name: string }[] };
-    const whatsapp = await (await app.request('/brain/commands?surface=whatsapp', auth(amyTok))).json() as { commands: { name: string }[] };
+    type Command = { name: string; execution?: string; argument?: unknown };
+    const cli = await (await app.request('/brain/commands?surface=cli', auth(amyTok))).json() as { commands: Command[] };
+    const whatsapp = await (await app.request('/brain/commands?surface=whatsapp', auth(amyTok))).json() as { commands: Command[] };
     expect(cli.commands.map((c) => c.name)).toEqual(expect.arrayContaining(['fast', 'rename']));
     expect(whatsapp.commands.map((c) => c.name)).toContain('fast');
     expect(whatsapp.commands.map((c) => c.name)).not.toContain('rename');
+    expect(whatsapp.commands.find((c) => c.name === 'fast')).toMatchObject({
+      execution: 'session-control',
+      argument: { kind: 'enum', values: ['on', 'off'] },
+    });
   });
 
   it('publishes the work modes and rename to the web surface', async () => {
