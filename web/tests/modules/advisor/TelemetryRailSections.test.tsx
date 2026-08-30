@@ -164,15 +164,53 @@ describe('telemetry rail — live work sections', () => {
     expect(other.textContent).not.toContain('npm run dev');
   });
 
-  it('kills a stranded process straight from the other-processes section', async () => {
-    processes = [{ ...process1, id: 'pX', command: 'python other.py', sessionId: 'brain-ch-subagent-sub-dlg-9' }];
+  it('confirms a stranded process kill with its command and origin before sending DELETE', async () => {
+    let resolveKill!: () => void;
+    const killGate = new Promise<void>((resolve) => { resolveKill = resolve; });
+    processes = [{ ...process1, id: 'pX', command: 'python {origin}.py', sessionId: 'brain-ch-subagent-sub-dlg-9' }];
+    server.use(http.delete('*/api/brain/processes/pX', async () => {
+      killed.push('pX');
+      await killGate;
+      return HttpResponse.json({ killed: true });
+    }));
     await renderRail();
     const other = await screen.findByTestId('telemetry-processes-other');
     // The row names where it came from, so the reader knows what they are about to kill.
     expect(other.textContent).toContain('sub-agent');
 
     await act(async () => { fireEvent.click(within(other).getByRole('button', { name: 'Kill process' })); });
+    const confirm = await screen.findByRole('alertdialog', { name: 'Kill this process?' });
+    expect(confirm).toHaveTextContent('Command: python {origin}.py');
+    expect(confirm).toHaveTextContent('Origin: sub-agent');
+    expect(killed).toEqual([]);
+
+    const kill = within(confirm).getByRole('button', { name: 'Kill process' });
+    fireEvent.click(kill);
+    fireEvent.click(kill);
     await waitFor(() => expect(killed).toEqual(['pX']));
+    expect(confirm).toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    expect(confirm).toBeInTheDocument();
+
+    resolveKill();
+    expect(await screen.findByText('The process was killed.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Kill this process?' })).toBeNull());
+    expect(killed).toEqual(['pX']);
+  });
+
+  it('shows a kill error when the daemon rejects the request', async () => {
+    processes = [{ ...process1, id: 'pX', command: 'python other.py', sessionId: 'brain-99' }];
+    server.use(http.delete('*/api/brain/processes/pX', () => HttpResponse.json({ error: 'failed' }, { status: 500 })));
+    await renderRail();
+    const other = await screen.findByTestId('telemetry-processes-other');
+
+    fireEvent.click(within(other).getByRole('button', { name: 'Kill process' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Kill this process?' });
+    expect(killed).toEqual([]);
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Kill process' }));
+
+    expect(await screen.findByText('The process could not be killed.')).toBeInTheDocument();
+    expect(confirm).toBeInTheDocument();
   });
 
   it("counts a job started by this conversation's own sub-agent as its live work", async () => {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { BookOpen, Play, Trash2 } from 'lucide-react';
 import { useBrainChat } from './BrainChatProvider';
 import { usePluginSkills } from '../../lib/queries';
@@ -26,6 +26,7 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
   const deleteSkill = useDeletePluginSkill();
   const [filter, setFilter] = useState('');
   const [pendingDelete, setPendingDelete] = useState<PluginSkill | null>(null);
+  const deletePendingRef = useRef(false);
 
   const rows = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -34,12 +35,17 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
     return all.filter((s) => s.name.toLowerCase().includes(needle) || s.description.toLowerCase().includes(needle));
   }, [skillsQuery.data, filter]);
 
-  const runDelete = (skill: PluginSkill): void => {
-    setPendingDelete(null);
-    deleteSkill.mutate(
-      { name: skill.name, owner: skill.owner },
-      { onError: (e: Error) => toast(e.message, 'error') },
-    );
+  const runDelete = async (skill: PluginSkill): Promise<void> => {
+    if (deletePendingRef.current) return;
+    deletePendingRef.current = true;
+    try {
+      await deleteSkill.mutateAsync({ name: skill.name, owner: skill.owner });
+      setPendingDelete((current) => current?.name === skill.name && current.owner === skill.owner ? null : current);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t.common.error, 'error');
+    } finally {
+      deletePendingRef.current = false;
+    }
   };
 
   return (
@@ -97,9 +103,16 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
       <ConfirmDialog
         open={pendingDelete !== null}
         title={t.skillsModal.deleteTitle}
-        description={pendingDelete ? `/skill:${pendingDelete.name}` : undefined}
-        onConfirm={() => { if (pendingDelete) runDelete(pendingDelete); }}
-        onClose={() => setPendingDelete(null)}
+        description={pendingDelete
+          ? t.skillsModal.deleteDescription
+            .replace('{name}', `/skill:${pendingDelete.name}`)
+            .replace('{scope}', pendingDelete.scope ?? pendingDelete.source)
+            .replace('{owner}', pendingDelete.owner === null
+              ? t.skillsModal.ownerInstance
+              : t.skillsModal.ownerAccount.replace('{id}', String(pendingDelete.owner)))
+          : undefined}
+        onConfirm={() => pendingDelete ? runDelete(pendingDelete) : Promise.resolve()}
+        onClose={() => { if (!deletePendingRef.current) setPendingDelete(null); }}
       />
     </>
   );

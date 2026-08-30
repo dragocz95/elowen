@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Target, TerminalSquare, Users, Workflow, X } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
+import { interpolate } from '../../lib/i18n/interpolate';
 import { elowenClient } from '../../lib/elowenClient';
 import { useBrainProcesses, useBrainRateLimitsAll } from '../../lib/queries';
 import { formatTokens, formatCost } from '../../lib/format';
@@ -11,6 +12,8 @@ import { OAuthUsageRail, usageFillClass } from '../settings/OAuthUsageRail';
 import { MascotGlyph } from '../../components/ui/SpatialMascot';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { useToast } from '../../components/ui/Toast';
 import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
 import { railTypeVars, useTelemetryRailWidth, RAIL_MIN_WIDTH, RAIL_MAX_WIDTH } from '../../lib/useTelemetryRailWidth';
 import { workflowLabel, workflowProgress } from '../../lib/workflowDag';
@@ -18,7 +21,7 @@ import { useBrainChat } from './BrainChatProvider';
 import { ProcessOutputModal } from './ProcessPanel';
 import { ownedSessionIds, isOwnProcess, processOrigin } from '../../lib/processScope';
 import { CommandOrbit } from './CommandOrbit';
-import type { BrainGoal } from '../../lib/types';
+import type { BrainGoal, ProcessInfo } from '../../lib/types';
 
 /** The owl presides over the rail the way it tops the CLI panel — and it is not decoration: it mirrors
  *  the agent, breathing while a turn runs and settling when it does not, so the rail reads as inhabited
@@ -217,12 +220,15 @@ function subgoalTally(raw: string): { done: number; total: number } | null {
  *  empty rail is quieter than a rail full of dashes. Shared by the desktop column and the mobile drawer. */
 function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => void }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const { usage, telemetry, activeSessionId, provider, busy, goal, subagents, workflows, setAgentsOpen } = useBrainChat();
   const { data: allProcesses = [] } = useBrainProcesses();
   const qc = useQueryClient();
   // Track the open process by id, not a click-time copy, so the modal follows the live list (it stops
   // polling once the process exits, and closes when the process is pruned away).
   const [openProcessId, setOpenProcessId] = useState<string | null>(null);
+  const [confirmKill, setConfirmKill] = useState<ProcessInfo | null>(null);
+  const killPendingRef = useRef(false);
   // A drill-in session is intentionally not owner-addressable through /brain/rate-limits?session=. Fetch
   // the owner-wide provider map and select with the focused snapshot's provider instead; an empty provider
   // while that snapshot loads must show no rail rather than leaking the parent's account into the child.
@@ -250,9 +256,22 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   const otherProcesses = liveProcesses.filter((p) => !isOwnProcess(p, owned));
   // Resolved across BOTH lists so the output modal follows whichever row opened it.
   const openProcess = liveProcesses.find((p) => p.id === openProcessId) ?? null;
-  const killProcess = async (id: string) => {
-    await elowenClient.brainKillProcess(id).catch(() => undefined);
-    await qc.invalidateQueries({ queryKey: ['brain-processes'] });
+  const killProcess = async (proc: ProcessInfo): Promise<void> => {
+    if (killPendingRef.current) return;
+    killPendingRef.current = true;
+    try {
+      const result = await elowenClient.brainKillProcess(proc.id);
+      setConfirmKill((current) => current?.id === proc.id ? null : current);
+      toast(result.killed ? t.telemetry.processKilled : t.telemetry.processAlreadyFinished);
+    } catch {
+      toast(t.telemetry.processKillError, 'error');
+    } finally {
+      try {
+        await qc.invalidateQueries({ queryKey: ['brain-processes'] });
+      } finally {
+        killPendingRef.current = false;
+      }
+    }
   };
   const sections = [
     usage !== null,
@@ -408,7 +427,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
                       area of its own; the glyph stays small so the row keeps its quiet density. */}
                   <button
                     type="button"
-                    onClick={() => void killProcess(proc.id)}
+                    onClick={() => setConfirmKill(proc)}
                     aria-label={t.processes.kill}
                     title={t.processes.kill}
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-subtle-foreground transition-colors hover:text-destructive"
@@ -423,6 +442,23 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
       ) : null}
 
       {openProcess ? <ProcessOutputModal proc={openProcess} onClose={() => setOpenProcessId(null)} /> : null}
+
+      <ConfirmDialog
+        open={confirmKill !== null}
+        title={t.telemetry.processKillTitle}
+        description={confirmKill
+          ? interpolate(t.telemetry.processKillConfirm, {
+            command: confirmKill.command,
+            origin: (() => {
+              const origin = processOrigin(confirmKill.sessionId);
+              return origin ? t.processes[origin] : t.telemetry.processOriginUnknown;
+            })(),
+          })
+          : undefined}
+        confirmLabel={t.processes.kill}
+        onConfirm={() => confirmKill ? killProcess(confirmKill) : Promise.resolve()}
+        onClose={() => { if (!killPendingRef.current) setConfirmKill(null); }}
+      />
 
       {hasProject ? (
         <section className="flex flex-col gap-1" data-testid="telemetry-project">

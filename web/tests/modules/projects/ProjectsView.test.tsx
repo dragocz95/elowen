@@ -157,4 +157,102 @@ describe('ProjectsView', () => {
     expect(screen.getAllByTestId('workspace-hero-metrics')).toHaveLength(1);
     expect(screen.getByTestId('projects-register').closest('[data-control-surface]')).toBeInTheDocument();
   });
+
+  it('browses from the edit form and cancelling removal preserves the draft without deleting', async () => {
+    let deleteHit = false;
+    server.use(
+      http.get('*/api/fs/dirs', ({ request }) => {
+        expect(new URL(request.url).searchParams.get('path')).toBe('/draft/path');
+        return HttpResponse.json({ path: '/selected/path', parent: '/', entries: [] });
+      }),
+      http.delete('*/api/projects/1', () => { deleteHit = true; return HttpResponse.json({ ok: true }); }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    await screen.findByText('elowen');
+    fireEvent.click(screen.getByRole('button', { name: 'elowen: Actions' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Edit project' }));
+    const edit = await screen.findByRole('dialog', { name: 'Edit project' });
+    const editInputs = edit.querySelectorAll('input');
+    const editPathInput = editInputs[1] as HTMLInputElement;
+    const editNotesInput = edit.querySelector('textarea') as HTMLTextAreaElement;
+    fireEvent.change(editPathInput, { target: { value: '/draft/path' } });
+    fireEvent.change(editNotesInput, { target: { value: 'draft notes' } });
+
+    const browse = within(edit).getByRole('button', { name: 'Browse' });
+    browse.focus();
+    fireEvent.click(browse);
+    let picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
+    expect(edit).toHaveAttribute('data-presentation', 'drawer');
+    expect(picker).toHaveAttribute('data-presentation', 'center');
+    const overlays = Array.from(document.querySelectorAll('[data-slot="dialog-overlay"]'));
+    expect(overlays.at(-1)?.contains(picker)).toBe(true);
+    fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(browse).toHaveFocus());
+    expect(editPathInput).toHaveValue('/draft/path');
+    expect(editNotesInput).toHaveValue('draft notes');
+
+    fireEvent.click(browse);
+    picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
+    const selectFolder = within(picker).getByRole('button', { name: 'Select this folder' });
+    await waitFor(() => expect(selectFolder).toBeEnabled());
+    fireEvent.click(selectFolder);
+    await waitFor(() => expect(editPathInput).toHaveValue('/selected/path'));
+
+    fireEvent.click(within(edit).getByRole('button', { name: 'Remove project' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Remove project' })).toBeInTheDocument();
+    expect(deleteHit).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Edit project' })).toBeInTheDocument();
+    expect(editPathInput).toHaveValue('/selected/path');
+    expect(editNotesInput).toHaveValue('draft notes');
+    expect(deleteHit).toBe(false);
+  });
+
+  it('submits removal once and never closes a newer editor after a deferred response', async () => {
+    let deleteHits = 0;
+    let resolveDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => { resolveDelete = resolve; });
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([
+        { id: 1, slug: 'elowen', path: '[host-path]', notes: '', icon: '' },
+        { id: 2, slug: 'website', path: '/var/www/site', notes: 'newer draft', icon: '' },
+      ])),
+      http.get('*/api/projects/2/git', () => HttpResponse.json({ isRepo: false, status: null, branches: [], commits: [] })),
+      http.delete('*/api/projects/1', async () => {
+        deleteHits += 1;
+        await deleteGate;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    await screen.findByText('website');
+    fireEvent.click(screen.getByRole('button', { name: 'elowen: Actions' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Edit project' }));
+    const firstEditor = await screen.findByRole('dialog', { name: 'Edit project' });
+    fireEvent.click(within(firstEditor).getByRole('button', { name: 'Remove project' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Remove project' });
+    const remove = within(confirm).getByRole('button', { name: 'Remove' });
+    fireEvent.click(remove);
+    fireEvent.click(remove);
+    await waitFor(() => expect(deleteHits).toBe(1));
+    expect(confirm).toBeInTheDocument();
+
+    // Synthetic interaction models a newer editor state arriving while the old request is still pending.
+    fireEvent.click(screen.getByRole('button', { name: 'website: Actions', hidden: true }));
+    fireEvent.click(within(screen.getByRole('menu', { hidden: true })).getByRole('menuitem', { name: 'Edit project', hidden: true }));
+    const currentEditor = screen.getByRole('dialog', { name: 'Edit project', hidden: true });
+    expect((currentEditor.querySelector('input') as HTMLInputElement)).toHaveValue('website');
+
+    resolveDelete();
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Remove project' })).toBeNull());
+    expect(screen.getByRole('dialog', { name: 'Edit project' })).toBeInTheDocument();
+    expect((currentEditor.querySelector('input') as HTMLInputElement)).toHaveValue('website');
+    expect(screen.getByRole('button', { name: 'Open project website', hidden: true }).closest('[role="row"]')).toHaveAttribute('aria-selected', 'true');
+    expect(deleteHits).toBe(1);
+  });
 });

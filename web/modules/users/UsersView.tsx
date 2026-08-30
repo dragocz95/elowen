@@ -1,10 +1,11 @@
 'use client';
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { Users, UserPlus, Trash2, Shield, ShieldCheck, Lock, LogIn, MoreHorizontal, Search, FolderGit2, Cpu } from 'lucide-react';
 import { useUsers, useMe, useProjects, useConfig } from '../../lib/queries';
 import { useCreateUser, useDeleteUser, useUpdateUser } from '../../lib/mutations';
 import type { User as ElowenUser } from '../../lib/types';
 import { impersonateUser } from '../../lib/token';
+import { ElowenApiError } from '../../lib/elowenClient';
 import { useToast } from '../../components/ui/Toast';
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
@@ -44,13 +45,30 @@ export function UsersView() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
-  // Deleting a user is destructive + cascades (settings, memory, personality) — always confirm first.
+  // Destructive account and role changes are staged separately so opening a confirmation cannot mutate data.
   const [confirmDelete, setConfirmDelete] = useState<ElowenUser | null>(null);
+  const [confirmRole, setConfirmRole] = useState<ElowenUser | null>(null);
+  const rolePendingRef = useRef(false);
+
+  function mutationError(err: unknown, operation: 'create' | 'delete' | 'role'): string {
+    const fallback = operation === 'create' ? t.users.createError : operation === 'delete' ? t.users.deleteError : t.users.updateError;
+    if (!(err instanceof ElowenApiError)) return fallback;
+    if (err.code === 'username taken') return t.users.usernameTaken;
+    if (err.code === 'cannot delete the last user') return t.users.deleteLastUser;
+    if (err.code === 'cannot delete the admin') return t.users.deleteAdmin;
+    if (err.code === 'account processes are still active') return t.users.deleteActiveProcesses;
+    if (err.code === 'account plugin cleanup failed') return t.users.deleteCleanupError;
+    if (err.code === 'cannot demote the last admin') return t.users.cannotDemoteLastAdmin;
+    if (err.code === 'user not found' || err.status === 404) return t.users.userNotFound;
+    if (err.code === 'forbidden' || err.status === 403) return t.users.adminRequired;
+    if (operation === 'create' && err.status === 400) return t.users.createInvalid;
+    return fallback;
+  }
 
   function handleDelete(id: number) {
     deleteUser.mutate(id, {
       onSuccess: () => { toast(t.users.userDeleted); setSelectedId((cur) => (cur === id ? null : cur)); },
-      onError: (err) => toast(String(err), 'error'),
+      onError: (err) => toast(mutationError(err, 'delete'), 'error'),
     });
   }
 
@@ -64,16 +82,23 @@ export function UsersView() {
           setNewUsername('');
           setNewPassword('');
         },
-        onError: (err) => toast(String(err), 'error'),
+        onError: (err) => toast(mutationError(err, 'create'), 'error'),
       },
     );
   }
 
-  function handleRole(user: ElowenUser) {
-    updateUser.mutate({ id: user.id, patch: { is_admin: !user.is_admin } }, {
-      onSuccess: () => toast(t.users.roleUpdated),
-      onError: (err) => toast(String(err) || t.users.updateError, 'error'),
-    });
+  async function handleRole(user: ElowenUser): Promise<void> {
+    if (rolePendingRef.current) return;
+    rolePendingRef.current = true;
+    try {
+      await updateUser.mutateAsync({ id: user.id, patch: { is_admin: !user.is_admin } });
+      setConfirmRole((current) => current?.id === user.id && current.is_admin === user.is_admin ? null : current);
+      toast(t.users.roleUpdated);
+    } catch (err) {
+      toast(mutationError(err, 'role'), 'error');
+    } finally {
+      rolePendingRef.current = false;
+    }
   }
 
   function handleImpersonate(user: ElowenUser) {
@@ -101,7 +126,7 @@ export function UsersView() {
       ...(isAdmin ? [{
         label: user.is_admin ? t.users.removeAdmin : t.users.makeAdmin,
         icon: user.is_admin ? Shield : ShieldCheck,
-        onSelect: () => { if (!updateUser.isPending) handleRole(user); },
+        onSelect: () => { if (!updateUser.isPending) setConfirmRole(user); },
       }] : []),
       ...(data.length > 1 ? [{
         label: t.users.deleteLabel.replace('{username}', user.username),
@@ -127,7 +152,7 @@ export function UsersView() {
         ...(isAdmin ? [{
           label: user.is_admin ? t.users.removeAdmin : t.users.makeAdmin,
           icon: user.is_admin ? Shield : ShieldCheck,
-          onClick: () => { if (!updateUser.isPending) handleRole(user); },
+          onClick: () => { if (!updateUser.isPending) setConfirmRole(user); },
         }] : []),
         ...(isAdmin ? [DIVIDER as typeof DIVIDER] : []),
         {
@@ -268,6 +293,20 @@ export function UsersView() {
         confirmLabel={t.users.delete}
         onConfirm={() => { if (confirmDelete) handleDelete(confirmDelete.id); setConfirmDelete(null); }}
         onClose={() => setConfirmDelete(null)}
+      />
+      <ConfirmDialog
+        open={!!confirmRole}
+        title={confirmRole
+          ? (confirmRole.is_admin ? t.users.confirmRemoveAdminTitle : t.users.confirmMakeAdminTitle).replace('{name}', confirmRole.name || confirmRole.username)
+          : ''}
+        description={confirmRole
+          ? confirmRole.is_admin && confirmRole.id === me.data?.user?.id
+            ? t.users.confirmSelfDemotionDesc
+            : confirmRole.is_admin ? t.users.confirmRemoveAdminDesc : t.users.confirmMakeAdminDesc
+          : undefined}
+        confirmLabel={confirmRole?.is_admin ? t.users.removeAdmin : t.users.makeAdmin}
+        onConfirm={() => confirmRole ? handleRole(confirmRole) : Promise.resolve()}
+        onClose={() => { if (!rolePendingRef.current) setConfirmRole(null); }}
       />
     </>
   );

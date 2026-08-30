@@ -118,4 +118,99 @@ describe('UsersView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(deleteHit).toBe(true));
   });
+
+  it('confirms role changes from both menu paths and warns before self-demotion', async () => {
+    let patchHits = 0;
+    let resolvePatch!: () => void;
+    const patchGate = new Promise<void>((resolve) => { resolvePatch = resolve; });
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/users', () => HttpResponse.json([
+        { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
+        { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },
+      ])),
+      http.patch('*/api/users/1', async () => {
+        patchHits += 1;
+        await patchGate;
+        return HttpResponse.json({ id: 1, username: 'alice', is_admin: false, allowed_execs: [] });
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
+
+    await screen.findByText('Admin');
+    fireEvent.click(screen.getByRole('button', { name: 'alice: Actions' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Remove admin' }));
+    const firstConfirm = await screen.findByRole('alertdialog', { name: 'Remove administrator access from alice?' });
+    expect(firstConfirm).toHaveTextContent('immediately removes your access to Users, instance settings and all administrator-only actions');
+    expect(patchHits).toBe(0);
+    fireEvent.click(within(firstConfirm).getByRole('button', { name: 'Cancel' }));
+
+    const aliceRow = screen.getByRole('button', { name: 'Open user alice' }).closest('[role="row"]');
+    if (!aliceRow) throw new Error('alice row not rendered');
+    fireEvent.contextMenu(aliceRow);
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Remove admin' }));
+    expect(patchHits).toBe(0);
+    const confirm = await screen.findByRole('alertdialog');
+    const removeAdmin = within(confirm).getByRole('button', { name: 'Remove admin' });
+    fireEvent.click(removeAdmin);
+    fireEvent.click(removeAdmin);
+    await waitFor(() => expect(patchHits).toBe(1));
+    expect(confirm).toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    expect(confirm).toBeInTheDocument();
+
+    resolvePatch();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(patchHits).toBe(1);
+  });
+
+  it('shows a specific create error and preserves the submitted form draft', async () => {
+    server.use(http.post('*/api/users', () => HttpResponse.json({ error: 'username taken' }, { status: 409 })));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New user' }));
+    const form = await screen.findByRole('dialog', { name: 'Add user' });
+    const usernameInput = within(form).getByPlaceholderText('Username');
+    const passwordInput = within(form).getByPlaceholderText('Password');
+    fireEvent.change(usernameInput, { target: { value: 'alice' } });
+    fireEvent.change(passwordInput, { target: { value: 'password123' } });
+    fireEvent.click(within(form).getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText('That username is already taken')).toBeInTheDocument();
+    expect(usernameInput).toHaveValue('alice');
+    expect(passwordInput).toHaveValue('password123');
+  });
+
+  it('maps role and delete API refusals to specific messages', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/users', () => HttpResponse.json([
+        { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
+        { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },
+      ])),
+      http.patch('*/api/users/1', () => HttpResponse.json({ error: 'cannot demote the last admin' }, { status: 400 })),
+      http.delete('*/api/users/2', () => HttpResponse.json({ error: 'account processes are still active' }, { status: 409 })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
+
+    await screen.findByText('Admin');
+    fireEvent.click(screen.getByRole('button', { name: 'alice: Actions' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Remove admin' }));
+    const roleConfirm = await screen.findByRole('alertdialog');
+    fireEvent.click(within(roleConfirm).getByRole('button', { name: 'Remove admin' }));
+    expect(await screen.findByText('The last administrator cannot be demoted.')).toBeInTheDocument();
+    expect(roleConfirm).toBeInTheDocument();
+    fireEvent.click(within(roleConfirm).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: 'bob: Actions' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Delete bob' }));
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('The user still has active processes. Stop them before deleting the account.')).toBeInTheDocument();
+  });
 });

@@ -1,5 +1,5 @@
 'use client';
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { EmptyState, ErrorState, LoadingLine, LoadingState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
@@ -96,6 +97,7 @@ export function ProjectsView() {
   const removeProject = useRemoveProject();
   // Removal detaches the project from Elowen but never touches files on disk.
   const [removing, setRemoving] = useState<Project | null>(null);
+  const removePendingRef = useRef(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
 
   function openCtxMenu(e: React.MouseEvent, p: Project) {
@@ -119,8 +121,8 @@ export function ProjectsView() {
   const [slug, setSlug] = useState('');
   const [path, setPath] = useState('');
   const [notes, setNotes] = useState('');
-  // Server-side folder picker for the new-project path (opens over the create modal).
-  const [browsing, setBrowsing] = useState(false);
+  // One picker serves both forms; its target decides which draft receives the selected folder.
+  const [browseTarget, setBrowseTarget] = useState<'create' | 'edit' | null>(null);
 
   // Edit-project modal: pre-filled from the chosen project; slug stays read-only.
   const [editProject, setEditProject] = useState<Project | null>(null);
@@ -171,17 +173,22 @@ export function ProjectsView() {
     );
   }
 
-  function handleRemove() {
-    if (!removing) return;
-    const id = removing.id;
-    removeProject.mutate(id, {
-      onSuccess: () => {
-        setRemoving(null);
-        if (selectedId === id) setSelectedId(null);
-        toast(t.projects.removed);
-      },
-      onError: (e) => toast(String(e), 'error'),
-    });
+  async function handleRemove(): Promise<void> {
+    const target = removing;
+    if (!target || removePendingRef.current) return;
+    removePendingRef.current = true;
+    const id = target.id;
+    try {
+      await removeProject.mutateAsync(id);
+      setRemoving((current) => current?.id === id ? null : current);
+      setEditProject((current) => current?.id === id ? null : current);
+      setSelectedId((current) => current === id ? null : current);
+      toast(t.projects.removed);
+    } catch (e) {
+      toast(String(e), 'error');
+    } finally {
+      removePendingRef.current = false;
+    }
   }
 
   const filteredProjects = useMemo(() => {
@@ -393,7 +400,7 @@ export function ProjectsView() {
               {(control) => (
                 <div className="flex items-center gap-2">
                   <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={t.projects.pathPlaceholder} className="flex-1 font-mono text-xs" {...control} />
-                  <Button icon={Folder} variant="default" onClick={() => setBrowsing(true)}>{t.projects.browse}</Button>
+                  <Button icon={Folder} variant="default" onClick={() => setBrowseTarget('create')}>{t.projects.browse}</Button>
                 </div>
               )}
             </Field>
@@ -405,6 +412,13 @@ export function ProjectsView() {
             <Button variant="ghost" onClick={() => setCreating(false)}>{t.common.cancel}</Button>
             <Button variant="accent" onClick={handleCreate} disabled={createProject.isPending || !slug.trim() || !path.trim()}>{t.projects.create}</Button>
           </ModalFooter>
+          {browseTarget === 'create' ? (
+            <DirectoryPicker
+              initialPath={path}
+              onSelect={(selectedPath) => { setPath(selectedPath); setBrowseTarget(null); }}
+              onClose={() => setBrowseTarget(null)}
+            />
+          ) : null}
         </Modal>
       )}
 
@@ -430,7 +444,12 @@ export function ProjectsView() {
               })()}
             </Field>
             <Field label={t.projects.fieldPath} hint={t.help.projectPath} required>
-              {(control) => <Input value={editPath} onChange={(e) => setEditPath(e.target.value)} className="font-mono text-xs" {...control} />}
+              {(control) => (
+                <div className="flex items-center gap-2">
+                  <Input value={editPath} onChange={(e) => setEditPath(e.target.value)} className="flex-1 font-mono text-xs" {...control} />
+                  <Button icon={Folder} variant="default" onClick={() => setBrowseTarget('edit')}>{t.projects.browse}</Button>
+                </div>
+              )}
             </Field>
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
               <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none" />
@@ -438,35 +457,31 @@ export function ProjectsView() {
 
           </ModalBody>
           <ModalFooter>
-            <Button variant="danger" icon={Trash2} onClick={() => { const p = editProject; setEditProject(null); setRemoving(p); }}>{t.projects.removeProject}</Button>
+            <Button variant="danger" icon={Trash2} onClick={() => setRemoving(editProject)}>{t.projects.removeProject}</Button>
             <div className="flex-1" />
             <Button variant="ghost" onClick={() => setEditProject(null)}>{t.common.cancel}</Button>
             <Button variant="accent" onClick={handleUpdate} disabled={updateProject.isPending || !editPath.trim()}>{t.common.save}</Button>
           </ModalFooter>
+          {browseTarget === 'edit' ? (
+            <DirectoryPicker
+              initialPath={editPath}
+              onSelect={(selectedPath) => { setEditPath(selectedPath); setBrowseTarget(null); }}
+              onClose={() => setBrowseTarget(null)}
+            />
+          ) : null}
         </Modal>
-      )}
-
-      {browsing && (
-        <DirectoryPicker
-          initialPath={path}
-          onSelect={(p) => { setPath(p); setBrowsing(false); }}
-          onClose={() => setBrowsing(false)}
-        />
       )}
 
       {editorEnabled && iconFor && <ProjectIconPicker project={iconFor} onClose={() => setIconFor(null)} />}
 
-      {removing && (
-        <Modal title={t.projects.removeConfirmTitle} onClose={() => setRemoving(null)} size="sm" icon={AlertTriangle}>
-          <ModalBody>
-            <p className="text-sm text-muted-foreground">{t.projects.removeConfirmBody.replace('{slug}', removing.slug)}</p>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" onClick={() => setRemoving(null)}>{t.common.cancel}</Button>
-            <Button variant="danger" icon={Trash2} onClick={handleRemove} disabled={removeProject.isPending}>{t.projects.removeConfirmBtn}</Button>
-          </ModalFooter>
-        </Modal>
-      )}
+      <ConfirmDialog
+        open={removing !== null}
+        title={t.projects.removeConfirmTitle}
+        description={removing ? t.projects.removeConfirmBody.replace('{slug}', removing.slug) : undefined}
+        confirmLabel={t.projects.removeConfirmBtn}
+        onConfirm={handleRemove}
+        onClose={() => { if (!removePendingRef.current) setRemoving(null); }}
+      />
 
       {ctxMenu && <ContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />}
     </>
