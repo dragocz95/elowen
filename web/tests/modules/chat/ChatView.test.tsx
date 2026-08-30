@@ -20,6 +20,13 @@ class FakeES {
   close() { this.closed = true; }
 }
 
+class FakeVisualViewport extends EventTarget {
+  width: number;
+  height: number;
+  offsetTop = 0;
+  constructor(height: number, width = 390) { super(); this.height = height; this.width = width; }
+}
+
 const server = setupServer(
   http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
   http.post('*/api/brain/send', () => HttpResponse.json({ ok: true }, { status: 202 })),
@@ -161,7 +168,7 @@ describe('ChatView (/chat page)', () => {
     scrollTo.mockClear();
 
     fireEvent.click(screen.getByRole('button', { name: /Conversation history|Historie konverzací/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Second chat/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat m2$/i }));
 
     await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1400 }));
     scrollTo.mockRestore();
@@ -184,6 +191,44 @@ describe('ChatView (/chat page)', () => {
     expect(composer.style.height).toBe('120px');
     expect(scrollTo).toHaveBeenCalledWith({ top: 1600 });
     scrollTo.mockRestore();
+  });
+
+  it('uses the visual viewport for an iOS-like keyboard without double-applying the safe area', async () => {
+    const originalViewport = window.visualViewport;
+    const originalInnerHeight = window.innerHeight;
+    const originalScale = document.documentElement.style.getPropertyValue('--ui-scale');
+    const viewport = new FakeVisualViewport(844);
+    const scale = 0.8;
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
+    document.documentElement.style.setProperty('--ui-scale', String(scale));
+    const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo');
+    try {
+      const { container } = renderChat(<main><ChatView /></main>);
+      const composer = await screen.findByTestId('chat-composer');
+      const dock = screen.getByTestId('chat-composer-dock');
+      const surface = dock.closest<HTMLElement>('[data-variant="full"]')!;
+      const main = container.querySelector('main')!;
+      Object.defineProperty(dock, 'offsetHeight', { configurable: true, value: 88 });
+      Object.defineProperty(main, 'scrollHeight', { configurable: true, value: 1600 });
+      scrollTo.mockClear();
+
+      composer.focus();
+      viewport.height = 500;
+      viewport.dispatchEvent(new Event('resize'));
+
+      await waitFor(() => expect(surface).toHaveAttribute('data-chat-keyboard-open', 'true'));
+      const expectedOffset = (window.innerHeight - viewport.offsetTop - viewport.height) / scale;
+      expect(parseFloat(surface.style.getPropertyValue('--chat-visual-bottom-offset'))).toBeCloseTo(expectedOffset, 0);
+      expect(surface.style.getPropertyValue('--chat-composer-height')).toBe('88px');
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1600 });
+    } finally {
+      scrollTo.mockRestore();
+      Object.defineProperty(window, 'visualViewport', { configurable: true, value: originalViewport });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight });
+      if (originalScale) document.documentElement.style.setProperty('--ui-scale', originalScale);
+      else document.documentElement.style.removeProperty('--ui-scale');
+    }
   });
 
   it('keeps the chat fill height stable when a phone resizes while scrolled', async () => {

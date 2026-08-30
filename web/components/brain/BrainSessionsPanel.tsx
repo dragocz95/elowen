@@ -357,7 +357,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         open={confirmId !== null}
         title={t.sessionsPanel.confirmDeleteTitle}
         description={t.sessionsPanel.confirmDeleteDesc}
-        onConfirm={() => confirmId && void doDelete(confirmId)}
+        onConfirm={() => confirmId ? doDelete(confirmId) : Promise.resolve()}
         onClose={() => setConfirmId(null)}
       />
       {contextMenu ? <ContextMenu state={contextMenu} onClose={() => setContextMenu(null)} /> : null}

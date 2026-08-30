@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -66,10 +66,10 @@ afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
 /** The transcript hydrates from the stream's snapshot frame, so the settled turn arrives there. */
-async function renderSurface(history: readonly unknown[] = HISTORY): Promise<{ container: HTMLElement; stream: FakeES }> {
+async function renderSurface(history: readonly unknown[] = HISTORY, variant: 'full' | 'compact' = 'full'): Promise<{ container: HTMLElement; stream: FakeES }> {
   const { wrapper: Wrapper } = createWrapper();
   const { container } = render(
-    <Wrapper><ToastProvider><BrainChatProvider><BrainChatSurface variant="full" /></BrainChatProvider></ToastProvider></Wrapper>,
+    <Wrapper><ToastProvider><BrainChatProvider><BrainChatSurface variant={variant} /></BrainChatProvider></ToastProvider></Wrapper>,
   );
   await waitFor(() => expect(FakeES.instances.length).toBeGreaterThan(0));
   const stream = FakeES.instances[0]!;
@@ -107,6 +107,26 @@ describe('settled turn metadata', () => {
  *  daemon's user view, the live `user` frame, the stream handler's cast, the provider's destructure and the
  *  transcript fold — so the chat could only ever date the agent's replies, never the user's own messages. */
 describe('sent message metadata', () => {
+  it.each(['full', 'compact'] as const)('keeps user metadata inside the %s bubble and assistant metadata outside its body', async (variant) => {
+    await renderSurface([
+      { role: 'user', id: 'u1', text: 'oprav to', createdAt: '2026-08-22T09:14:58.000Z' },
+      TOOL_ROUND('a1', 'Bash', 'git commit', '2026-08-22T09:15:12.000Z', 31_000, 'claude-opus-5'),
+    ], variant);
+    await waitFor(() => expect(screen.getAllByTestId('chat-turn-meta')).toHaveLength(2));
+
+    const userTurn = screen.getAllByTestId('chat-turn').find((turn) => turn.getAttribute('data-role') === 'you')!;
+    const userBubble = within(userTurn).getByTestId('chat-user-bubble');
+    const userMeta = within(userTurn).getByTestId('chat-turn-meta');
+    expect(userBubble).toContainElement(userMeta);
+    expect(userMeta.querySelector('time')).toHaveAttribute('datetime', '2026-08-22T09:14:58.000Z');
+
+    const assistantTurn = screen.getAllByTestId('chat-turn').find((turn) => turn.getAttribute('data-role') === 'assistant')!;
+    const assistantBody = within(assistantTurn).getByTestId('chat-assistant-body');
+    const assistantMeta = within(assistantTurn).getByTestId('chat-turn-meta');
+    expect(assistantBody).not.toContainElement(assistantMeta);
+    expect(within(assistantMeta).getByTestId('chat-turn-model')).toHaveTextContent('claude-opus-5');
+  });
+
   it('stamps the user bubble from the row the message was stored with', async () => {
     const { container } = await renderSurface([
       { role: 'user', id: 'u1', text: 'oprav to', createdAt: '2026-08-22T09:14:58.000Z' },

@@ -278,7 +278,13 @@ function ShellLayout({ children }: { children: ReactNode }) {
           {/* Named so a design can state its own gutter here. The 8px inset is the built-in design's:
               it sits OUTSIDE `.workspace-shell`, which carries `--shell-gutter` of its own, so the two
               add up and a design wanting one exact gutter has to be able to reach this one. */}
-          <div className="shell-content px-2" style={{ paddingBottom: launcherVisible ? 'var(--fab-clearance)' : '2rem' }}>
+          <div
+            className="shell-content px-2"
+            // /chat owns its bottom edge through the measured composer dock + safe-area policy. The generic
+            // page rhythm here was a second 2rem inset below that dock, which is why the focused composer
+            // floated a full band above the keyboard. Other routes still clear the launcher/page ending.
+            style={{ paddingBottom: onChat ? 0 : launcherVisible ? 'var(--fab-clearance)' : '2rem' }}
+          >
             <RouteTransition>{children}</RouteTransition>
           </div>
         </div>

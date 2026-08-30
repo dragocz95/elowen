@@ -755,7 +755,12 @@ function useBrainChatController(): BrainChatValue {
   const exitReadOnly = (): void => { setReadOnly(null); void connect(); };
 
   const deleteSession = async (id: string, wasActive: boolean): Promise<void> => {
-    await elowenClient.brainDeleteSession(id).catch(() => undefined);
+    try {
+      await elowenClient.brainDeleteSession(id);
+    } catch (error) {
+      toast(t.brainChat.deleteChatError, 'error');
+      throw error;
+    }
     await qc.invalidateQueries({ queryKey: ['brain-sessions'] });
     // Deleting the open conversation re-targets to the most recent remaining one (or a fresh state).
     if (wasActive) await connect();

@@ -857,7 +857,7 @@ export default function SettingsPage() {
       {conversationDiagnosticsOpen ? (
         <ConversationDiagnosticsModal
           captureEnabled={config.data?.runtime?.providerRequestCaptureEnabled !== false}
-          onEnableCapture={() => update.mutate({ runtime: { providerRequestCaptureEnabled: true } })}
+          onEnableCapture={() => update.mutateAsync({ runtime: { providerRequestCaptureEnabled: true } }).then(() => undefined)}
           onClose={() => setConversationDiagnosticsOpen(false)}
         />
       ) : null}

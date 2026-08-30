@@ -36,6 +36,7 @@ import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { isBackgroundProcessCardId } from '../../lib/processScope';
 import { PageTopBarPortal } from '../../lib/pageHeader';
+import { uiZoom } from '../../lib/uiZoom';
 import {
   DEFAULT_COMPOSE_MARKER_MS,
   DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS,
@@ -527,7 +528,7 @@ function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen
   const settled = turn.role === 'elowen' ? turn.durationMs != null : Boolean(turn.createdAt);
   if (!settled) return null;
   return (
-    <div data-testid="chat-turn-meta" className="chat-turn-meta mt-1 flex items-center gap-2 text-[10px] leading-none text-muted-foreground/70">
+    <div data-testid="chat-turn-meta" className={`chat-turn-meta ${turn.role === 'you' ? 'mt-1.5' : 'mt-1'} flex items-center gap-2 text-[10px] leading-none text-muted-foreground/70`}>
       {turn.createdAt ? <time dateTime={turn.createdAt}>{localDateTime(turn.createdAt, locale, false)}</time> : null}
       {turn.role === 'elowen' && turn.model ? (
         <span data-testid="chat-turn-model" className="inline-flex min-w-0 items-center gap-1" title={turn.model}>
@@ -585,9 +586,10 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   const you = turn.role === 'you';
   const roleAttr = you ? 'you' : 'assistant';
   const body = turn.role === 'you'
-    ? <div className="chat-user-message">
+    ? <div data-testid="chat-user-bubble" className="chat-user-message">
         {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground ${full ? '' : 'my-1.5'}`}>{turn.text}</div> : null}
         {turn.images?.length ? <Attachments images={turn.images} full={full} /> : null}
+        <MessageMeta turn={turn} />
       </div>
     : <>{turn.segments.map((seg, i) => (seg.kind === 'text'
         ? <TextSegment key={i} text={seg.text} className={full ? 'my-1.5' : ''} />
@@ -609,8 +611,8 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
         ) : <span aria-hidden className="chat-turn__marker" />}
         <div className="chat-turn__column min-w-0">
           {showRole ? <div className={`chat-turn__role mb-0.5 text-xs font-semibold ${you ? 'text-primary' : 'text-muted-foreground'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
-          <div className="chat-turn__body flex min-w-0 flex-col">{body}</div>
-          <MessageMeta turn={turn} />
+          <div data-testid={you ? undefined : 'chat-assistant-body'} className="chat-turn__body flex min-w-0 flex-col">{body}</div>
+          {you ? null : <MessageMeta turn={turn} />}
         </div>
       </div>
     );
@@ -619,15 +621,15 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   if (you) {
     return (
       <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 flex max-w-full flex-col items-end self-end">
-        <div className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
+        <div data-testid="chat-user-bubble" className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
           {turn.role === 'you' ? turn.text : null}
           {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
+          <MessageMeta turn={turn} />
         </div>
-        <MessageMeta turn={turn} />
       </div>
     );
   }
-  return <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="mr-4 flex flex-col gap-1.5 self-start">{body}<MessageMeta turn={turn} /></div>;
+  return <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="mr-4 flex flex-col gap-1.5 self-start"><div data-testid="chat-assistant-body" className="flex flex-col gap-1.5">{body}</div><MessageMeta turn={turn} /></div>;
 }
 
 /** Opens the conversation's reasoning controls. The historic test id stays stable for browser helpers,
@@ -814,6 +816,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const surfaceRootRef = useRef<HTMLDivElement>(null);
+  const composerDockRef = useRef<HTMLDivElement>(null);
   // Lazy-load (scroll-up) state. `loadingOlder` drives the top spinner.
   // The prepend anchor rides on a real turn ELEMENT: at scroll-trigger we grab the topmost turn node and its
   // offsetTop; after older turns land above it, we shift scrollTop by exactly how far that node moved. Node
@@ -1078,11 +1082,120 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     pinToNewest();
   }, [input, pinToNewest]);
 
+  // Mobile keyboards have two viewport policies. Chromium honours `interactive-widget=resizes-content`,
+  // so the layout viewport itself shrinks; iOS keeps the layout viewport tall and shrinks only
+  // `visualViewport`. The sticky dock therefore needs only the VISUAL bottom offset in the latter case.
+  // Its measured height is also the transcript's reserve: the dock overlaps that padding rather than
+  // obscuring the final turn. Safe-area padding is disabled while the keyboard is open because the visual
+  // viewport already ends above the keyboard/home indicator — adding it again creates the blank band from
+  // the screenshot.
+  useLayoutEffect(() => {
+    if (variant !== 'full') return;
+    const root = surfaceRootRef.current;
+    const dock = composerDockRef.current;
+    const composer = composerRef.current;
+    if (!root || !dock || !composer) return;
+
+    const viewport = window.visualViewport;
+    const viewportHeight = () => window.visualViewport?.height ?? window.innerHeight;
+    const viewportWidth = () => window.visualViewport?.width ?? window.innerWidth;
+    let restingHeight = viewportHeight();
+    let restingWidth = viewportWidth();
+    let keyboardWasOpen = false;
+    let frame = 0;
+    let baselineFrame = 0;
+    let baselineSettleFrame = 0;
+    const setPx = (name: string, value: number) => {
+      const next = `${Math.max(0, Math.round(value))}px`;
+      if (root.style.getPropertyValue(name) !== next) root.style.setProperty(name, next);
+    };
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const currentViewport = window.visualViewport;
+        const currentHeight = viewportHeight();
+        const currentWidth = viewportWidth();
+        const focused = document.activeElement === composer;
+        const restingLandscape = restingWidth > restingHeight;
+        const currentLandscape = currentWidth > currentHeight;
+        const layoutRotated = focused && keyboardWasOpen
+          && Math.abs(currentWidth - restingWidth) >= 1
+          && currentLandscape !== restingLandscape;
+        if (layoutRotated) {
+          // A focused keyboard survives rotation. Project the new resting height from the previous layout's
+          // width (the axes exchanged) instead of comparing the new portrait/landscape viewport against a
+          // baseline from the old orientation, which can falsely close the keyboard in one direction.
+          const previousRestingWidth = restingWidth;
+          restingWidth = currentWidth;
+          restingHeight = previousRestingWidth;
+        }
+        const keyboardOpen = focused && (currentHeight < restingHeight - 1 || layoutRotated);
+        keyboardWasOpen = keyboardOpen;
+        const visualBottomOffset = keyboardOpen && currentViewport
+          ? (window.innerHeight - currentViewport.offsetTop - currentViewport.height) / uiZoom()
+          : 0;
+
+        root.dataset.chatKeyboardOpen = keyboardOpen ? 'true' : 'false';
+        setPx('--chat-visual-bottom-offset', visualBottomOffset);
+        setPx('--chat-composer-height', dock.offsetHeight);
+        // The viewport or dock changed the available reading area. Keep following only for a reader who
+        // was already at the newest turn; `pinToNewest` deliberately does nothing while they read history.
+        pinToNewest();
+      });
+    };
+    const updateRestingHeightWhenStable = () => {
+      cancelAnimationFrame(baselineFrame);
+      cancelAnimationFrame(baselineSettleFrame);
+      const sampledHeight = viewportHeight();
+      const sampledWidth = viewportWidth();
+      baselineFrame = requestAnimationFrame(() => {
+        baselineSettleFrame = requestAnimationFrame(() => {
+          if (document.activeElement === composer) return;
+          const stableHeight = viewportHeight();
+          const stableWidth = viewportWidth();
+          if (Math.abs(stableHeight - sampledHeight) >= 1 || Math.abs(stableWidth - sampledWidth) >= 1) return;
+          restingHeight = stableHeight;
+          restingWidth = stableWidth;
+          keyboardWasOpen = false;
+          measure();
+        });
+      });
+    };
+    const onViewportResize = () => {
+      measure();
+      updateRestingHeightWhenStable();
+    };
+
+    measure();
+    window.addEventListener('resize', onViewportResize);
+    viewport?.addEventListener('resize', onViewportResize);
+    viewport?.addEventListener('scroll', measure);
+    composer.addEventListener('focus', measure);
+    composer.addEventListener('blur', measure);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(dock);
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(baselineFrame);
+      cancelAnimationFrame(baselineSettleFrame);
+      window.removeEventListener('resize', onViewportResize);
+      viewport?.removeEventListener('resize', onViewportResize);
+      viewport?.removeEventListener('scroll', measure);
+      composer.removeEventListener('focus', measure);
+      composer.removeEventListener('blur', measure);
+      observer?.disconnect();
+      root.style.removeProperty('--chat-visual-bottom-offset');
+      root.style.removeProperty('--chat-composer-height');
+      delete root.dataset.chatKeyboardOpen;
+    };
+  }, [variant, pinToNewest]);
+
   const newChat = () => { setPickerOpen(false); void switchSession({ fresh: true }).catch(() => toast(t.brainChat.searchOpenError, 'error')); };
 
   return (
     <div
-      className={`relative flex flex-col ${variant === 'full' ? 'flex-1' : 'h-full min-h-0'}`}
+      ref={surfaceRootRef}
+      className={`relative flex flex-col ${variant === 'full' ? 'chat-surface-full flex-1' : 'h-full min-h-0'}`}
       data-variant={variant}
     >
       {/* Conversation bar. Compact (dock): title + picker dropdown + new chat. Full (/chat): a light
@@ -1310,7 +1423,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           `.chat-composer-dock` (chat.css) carries the bottom safe-area inset. Without it the composer's
           send button sits UNDER a phone's home indicator: the dock is pinned at `bottom: 0`, which is the
           edge of the viewport, not the edge of the usable screen. */}
-      <div className={variant === 'full' ? 'chat-composer-dock sticky bottom-0 z-10 bg-background' : ''}>
+      <div ref={composerDockRef} data-testid="chat-composer-dock" className={variant === 'full' ? 'chat-composer-dock sticky z-10 bg-background' : ''}>
       {/* No hairline above the footer — a soft fade lets the transcript slide under it instead. */}
       {variant === 'full' ? (
         <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-gradient-to-t from-background to-transparent" />
