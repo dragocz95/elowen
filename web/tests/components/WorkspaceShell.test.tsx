@@ -439,6 +439,7 @@ describe('the shell stylesheets carry one authority per decision', () => {
   it('lets promoted toolbars fill the row so their search owns all free width', () => {
     const toolbar = css('page-toolbar');
     expect(toolbar).toMatch(/\.page-toolbar__slot \.control-surface-toolbar,[\s\S]*?\.page-toolbar__slot \.settings-toolbar\s*\{[^}]*width:\s*100%[^}]*flex:\s*1 1 100%/);
+    expect(toolbar).toMatch(/\.page-toolbar__slot :is\(\.control-surface-toolbar, \.settings-toolbar\) \.register-search\s*\{[^}]*max-width:\s*none/);
     expect(toolbar).toMatch(/\.page-toolbar__search\s*\{[^}]*flex:\s*1 1 16rem/);
   });
 
