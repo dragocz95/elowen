@@ -1109,6 +1109,12 @@ export class ChannelSessionService {
               });
             }
             if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
+            // Recall commits at HAND-OFF, before the turn runs, unlike the two below it. Those are read
+            // again only when the NEXT turn is composed, so waiting for the whole agent loop to settle is
+            // free insurance for them. This set is not: liveRecall reads it from inside PI's context hook
+            // DURING this turn, so a commit after the loop meant it always saw an empty set, retrieved the
+            // memories the prompt had just printed and injected them a second time.
+            commitRecall();
             if (opts.internalSystem) {
               await ch.session.sendCustomMessage({
                 customType: opts.internalSystem.customType, content: prompted, display: false,
@@ -1123,7 +1129,6 @@ export class ChannelSessionService {
             // reached the provider — an error or abort before this must leave it pending, not consumed.
             commitOrientation();
             commitSkillsDigest();
-            commitRecall();
             // A parent stop that landed during prompt() must make the child terminally unsuccessful;
             // otherwise an empty aborted assistant is mistaken for a successful "returned nothing" job.
             if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');

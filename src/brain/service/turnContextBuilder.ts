@@ -225,10 +225,18 @@ export class TurnContextBuilder {
             runningSubagents,
           });
         }
+        // Recall commits at HAND-OFF, before the turn runs, unlike everything below it. The others are
+        // read again only when the NEXT turn is composed, so waiting for the whole agent loop to settle
+        // is free insurance for them. This set is not: liveRecall reads it from inside PI's context hook
+        // DURING this turn, so a commit after the loop meant it always saw an empty set, retrieved the
+        // same memories the prompt above had just printed, injected them a second time and counted them
+        // twice — the exact duplication the dedup exists to remove, in the one place it was needed most.
+        // The `/prompt-command` bug this ordering originally fixed stays fixed: that path never composes
+        // a prompt at all, so it never reaches this line.
+        commitRecall();
         const result = await operation(prompt);
         commitOrientation();
         commitSessionNotices();
-        commitRecall();
         commitPermissionsDigest();
         commitMode();
         return result;

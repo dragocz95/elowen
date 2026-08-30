@@ -19,6 +19,7 @@ interface CapturedHandlers { context?: (e: { messages: unknown }) => Promise<{ m
 async function buildWithLiveRecall(
   retrieve: (q: string) => Promise<{ id: number; body: string; kind: string; importance: number }[]>,
   alreadyInContext: Set<number> = new Set<number>(),
+  onInjected?: (ids: number[]) => void,
 ): Promise<CapturedHandlers> {
   const session = {
     sessionId: 'brain-1',
@@ -59,6 +60,7 @@ async function buildWithLiveRecall(
       enabled: () => true,
       retrieve: async (q: string) => retrieve(q),
       alreadyInContext: () => alreadyInContext,
+      ...(onInjected ? { onInjected } : {}),
     },
   } as never);
 
@@ -148,6 +150,34 @@ describe('live recall wiring — a real session reaches the recall pass', () => 
     // The other direction of the same contract: without this the next turn's turn-start recall would
     // reprint what mid-turn recall just delivered.
     expect([...shared]).toEqual([7]);
+  });
+
+  it('withdraws what it injected when recording the recall fails', async () => {
+    // Marking is a database write, and PI swallows whatever an extension hook throws and sends the
+    // ORIGINAL context — so a failure here means the block never reached the model. Leaving the ids in
+    // the shared set would make BOTH recall paths refuse to print those memories for the rest of the
+    // session, on the strength of a delivery that did not happen.
+    const shared = new Set<number>();
+    const handlers = await buildWithLiveRecall(async (q) => (q.includes('release.sh')
+      ? [{ id: 7, body: 'Deployment runs through release.sh', kind: 'fact', importance: 4 }]
+      : []), shared, () => { throw new Error('memory store is locked'); });
+    if (!handlers.context) throw new Error('context handler was never registered');
+
+    const messages = [
+      { role: 'user', content: 'fix it' },
+      { role: 'toolResult', content: 'bash: ./release.sh --dry-run exited 2' },
+    ];
+    await handlers.context({ messages });
+    await new Promise((resolve) => { setImmediate(resolve); });
+    const out = await handlers.context({ messages });
+
+    // Nothing claimed as delivered, and the hook did not take the turn down with it.
+    expect([...shared]).toEqual([]);
+    expect(out).toBeUndefined();
+
+    // …and the memory is still available to the next search, which is the whole point of withdrawing it.
+    await handlers.context({ messages });
+    expect([...shared]).toEqual([]);
   });
 
   it('reads the current turn scope at each hook after the cwd changes', async () => {

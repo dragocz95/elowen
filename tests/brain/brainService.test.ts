@@ -4132,6 +4132,30 @@ describe('BrainService memory integration', () => {
     expect(service.markRecalled).toHaveBeenCalledWith(1, [1]);
   });
 
+  // The dedup set is read by mid-turn recall from inside PI's context hook WHILE this turn runs, so the
+  // moment the turn-start pass records what it delivered is not a detail. Committing after the agent loop
+  // settled meant mid-turn recall always looked at an empty set, retrieved the memories the prompt had
+  // just printed and injected them a second time — the duplication the dedup exists to remove, in the one
+  // place that needed it most.
+  it('records what the turn-start block delivered BEFORE the turn runs, not after it', async () => {
+    const d = fakeDeps();
+    (d as Record<string, unknown>).memoryStore = new MemoryStore(openDb(':memory:'));
+    const service = fakeMemoryService([asRow('Filip preferuje TypeScript strict.')]);
+    (d as Record<string, unknown>).memoryService = service;
+    let markedWhenTurnStarted: unknown[] | undefined;
+    const inner = d.session.prompt;
+    d.session.prompt = vi.fn(async (...args: Parameters<typeof inner>) => {
+      markedWhenTurnStarted = service.markRecalled.mock.calls.at(-1);
+      return inner(...args);
+    }) as typeof inner;
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+
+    await svc.send({ userId: 1, text: 'jaký jazyk mám použít?' });
+
+    expect(markedWhenTurnStarted).toEqual([1, [1]]);
+  });
+
   it('marks nothing when recall came back empty', async () => {
     const d = fakeDeps();
     (d as Record<string, unknown>).memoryStore = new MemoryStore(openDb(':memory:'));

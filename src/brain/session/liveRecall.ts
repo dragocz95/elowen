@@ -391,19 +391,15 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       rendered.push(text);
       injectedIds.push(memory.id);
       content = candidate;
-      injected.add(memory.id);
     }
     if (rendered.length === 0) return reEmit();
 
-    turn.bytes += Buffer.byteLength(content);
-    opts.onInjected?.(injectedIds);
-
-    // The only positive signal that recall fired at all: without it a silent no-op and a working feature
-    // look identical from the outside, and the failure path is the only thing that logs.
-    log.info(
-      `recalled ${rendered.length} memory(ies) mid-turn on search #${turn.searches} `
-      + `(ids ${injectedIds.join(',')}, ${turn.bytes} bytes used)`,
-    );
+    // The anchor is what makes an attachment withdrawable: a compaction recognises a dropped block by its
+    // anchor and gives the ids back. So nothing is recorded as delivered before there IS one — an id in
+    // the shared set with no block behind it can never be withdrawn, and both recall paths would then
+    // suppress a memory the model was never shown for the life of the session. The bail-out below is
+    // unreachable today (an empty message list is read as a compaction further up and resets the turn
+    // before this point), which is exactly why the ordering rather than a guard is what keeps it true.
     const anchorIndex = messages.length - 1;
     const anchorMessage = messages[anchorIndex];
     if (!anchorMessage) return reEmit();
@@ -413,6 +409,30 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       frozenMessage: Object.freeze({ role: 'user', content, isMeta: true }),
       memoryIds: injectedIds,
     });
+    for (const id of injectedIds) injected.add(id);
+
+    turn.bytes += Buffer.byteLength(content);
+    // Marking is a database write, and PI swallows whatever an extension hook throws and sends the
+    // ORIGINAL context instead — so a failure here means this block never reached the model at all. The
+    // ids have to come back out, or a transient store error would silently suppress those memories for
+    // the rest of the session. Undone rather than pre-checked, because the write is the only thing that
+    // knows whether it worked.
+    try {
+      opts.onInjected?.(injectedIds);
+    } catch (e) {
+      for (const id of injectedIds) injected.delete(id);
+      turn.blocks.pop();
+      turn.bytes -= Buffer.byteLength(content);
+      log.warn(`live recall could not record what it injected, withdrawing it: ${e instanceof Error ? e.message : String(e)}`);
+      return reEmit();
+    }
+
+    // The only positive signal that recall fired at all: without it a silent no-op and a working feature
+    // look identical from the outside, and the failure path is the only thing that logs.
+    log.info(
+      `recalled ${rendered.length} memory(ies) mid-turn on search #${turn.searches} `
+      + `(ids ${injectedIds.join(',')}, ${turn.bytes} bytes used)`,
+    );
     return insertAnchoredBlocks(messages, turn.blocks);
   });
 }
