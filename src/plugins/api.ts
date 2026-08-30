@@ -668,6 +668,11 @@ export interface PluginReadinessCheck {
   ok: boolean;
   detail: string;
   hint?: string;
+  /** Exact values a person has to enter somewhere this instance cannot reach — a DNS record at a
+   *  registrar, a value to paste into another console. Structured rather than folded into `hint`,
+   *  because these are transcribed character by character: the UI renders them as labelled, copyable
+   *  fields, where a prose sentence invites a typo in the one place a typo stays silent. */
+  fix?: { label: string; value: string }[];
 }
 
 /** One persisted activity-log row (see PluginContext.registerEventRowResolver). `label` is an optional

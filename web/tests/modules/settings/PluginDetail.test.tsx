@@ -17,7 +17,8 @@ const useConfig = vi.hoisted(() => vi.fn());
 const useBrainModels = vi.hoisted(() => vi.fn());
 const useUsers = vi.hoisted(() => vi.fn());
 const useNotificationDestinations = vi.hoisted(() => vi.fn());
-vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useUsers, useNotificationDestinations }));
+const useSystemReadiness = vi.hoisted(() => vi.fn());
+vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useUsers, useNotificationDestinations, useSystemReadiness }));
 // The debounced draft writes through this one mutation, so a shared mock is what lets a test prove that
 // editing a record — or the editor inside its modal — actually reaches the server.
 const savePluginConfig = vi.hoisted(() => vi.fn());
@@ -61,6 +62,7 @@ beforeEach(() => {
   savePluginConfig.mockReset(); savePluginConfig.mockResolvedValue({ ok: true });
   usePluginContributions.mockReturnValue({ data: undefined });
   usePluginLogs.mockReturnValue({ data: undefined });
+  useSystemReadiness.mockReturnValue({ data: undefined });
   usePluginHookExecutions.mockReturnValue({ data: undefined });
   useProjects.mockReturnValue({ data: [] });
   useConfig.mockReturnValue({ data: undefined });

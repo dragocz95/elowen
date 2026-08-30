@@ -749,7 +749,19 @@ export interface SystemInfo {
 /** One first-run readiness row from GET /system/readiness — a subsystem the onboarding UI reports on
  *  (chat/tasks/missions/memory/platforms/plugins). `ok=false` on `chat` means no provider resolves, so
  *  the agent cannot answer. Admin-only endpoint. */
-interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
+export interface ReadinessCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+  hint?: string;
+  /** Set only on rows a plugin contributed, so its own settings screen can show its status from the
+   *  same check the onboarding report reads — one health path, two places it is rendered. */
+  plugin?: string;
+  /** Values to transcribe somewhere this instance cannot reach (a registrar's DNS panel). Rendered as
+   *  labelled, copyable fields rather than prose. */
+  fix?: { label: string; value: string }[];
+}
 export interface SystemReadiness { checks: ReadinessCheck[] }
 
 // One stored memory — the daemon's `MemoryRow`, shared via the wire contract (re-exported at the top

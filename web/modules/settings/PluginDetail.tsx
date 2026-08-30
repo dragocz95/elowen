@@ -10,6 +10,7 @@ import { useTranslation } from '../../lib/i18n';
 import { usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions } from '../../lib/queries';
 import type { PluginConfigField, PluginContributions, PluginDetail as PluginDetailData, PluginHookExecutions, PluginLogs } from '../../lib/types';
 import { PluginConfigEditor } from './PluginConfigEditor';
+import { PluginStatusPanel } from './PluginStatusPanel';
 import { PluginHero } from './PluginSummary';
 import { PluginToolsPanel } from './PluginToolsPanel';
 import { PluginHooksPanel } from './PluginHooksPanel';
@@ -112,6 +113,9 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
         <div className="p-5 sm:p-6">
           <WorkspacePanel id="setup" active={tab} visited={visitedTabs}>
             <div className="flex min-w-0 flex-col gap-4">
+              {/* Above the checklist: the checklist answers "did I fill the fields in", this answers
+                  "does it actually work" — and a plugin can have every field set and still be dark. */}
+              <PluginStatusPanel name={name} />
               <SettingsGroup
                 className="plugin-card"
                 icon={Check}

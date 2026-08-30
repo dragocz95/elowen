@@ -8,7 +8,10 @@ import { ConfigStore, type ConfigPatch } from '../../src/store/configStore.js';
 import { openDb } from '../../src/store/db.js';
 import { fixturePlugins } from '../helpers/fixturePlugin.js';
 
-interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
+interface ReadinessCheck {
+  id: string; label: string; ok: boolean; detail: string; hint?: string;
+  plugin?: string; fix?: { label: string; value: string }[];
+}
 interface ReadinessResponse { checks: ReadinessCheck[] }
 
 /** A plugin contributing ONE readiness row, and one whose check throws. The row's own content is that
@@ -64,7 +67,36 @@ describe('GET /system/readiness', () => {
     const { status, body } = await getChecks(app);
     expect(status).toBe(200);
     expect(body.checks.map((c) => c.id)).toEqual(['chat', 'widgets', 'memory', 'platforms', 'plugins']);
-    expect(body.checks[1]).toEqual({ id: 'widgets', label: 'Widgets', ok: true, detail: 'contributed' });
+    // `plugin` is stamped on by the route, not by the check: it is what lets a plugin's own settings
+    // screen show this row without a second health path that could disagree with this one.
+    expect(body.checks[1]).toEqual({ id: 'widgets', label: 'Widgets', ok: true, detail: 'contributed', plugin: 'widgets' });
+    // …and the daemon's own rows carry no origin, so filtering by plugin cannot swallow them.
+    expect(body.checks.filter((c) => c.plugin !== undefined).map((c) => c.id)).toEqual(['widgets']);
+  });
+
+  // A failing subsystem often needs a value typed into somewhere this instance cannot reach — a DNS
+  // record at a registrar. Carried as labelled fields rather than folded into the hint sentence, so the
+  // screen can offer them for copying: they are transcribed by hand, and one wrong character fails
+  // silently, with the same symptom as never having created the record at all.
+  it('carries a check\'s structured fix-up values through untouched', async () => {
+    const f = fixturePlugins([{
+      name: 'widgets',
+      register: "ctx.registerReadinessCheck(() => ({ id: 'widgets', label: 'Widgets', ok: false, detail: 'no record',"
+        + " hint: 'Add this record.', fix: [{ label: 'Type', value: 'CNAME' }, { label: 'Name', value: '*.sites.example.test' }] }));",
+    }]);
+    fixtures.push(f);
+    const db = openDb(':memory:');
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const app = createServer({
+      bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config: new ConfigStore(db), projects: new ProjectStore(db),
+      plugins: f.provider, brain: { resolvableModel: () => 'kimi' } as never,
+    });
+    const { body } = await getChecks(app);
+    const row = body.checks.find((c) => c.id === 'widgets');
+    expect(row?.fix).toEqual([{ label: 'Type', value: 'CNAME' }, { label: 'Name', value: '*.sites.example.test' }]);
+    expect(row?.hint).toBe('Add this record.');
   });
 
   it('drops the contributed row when no plugin is loaded — the rest keeps its order', async () => {
