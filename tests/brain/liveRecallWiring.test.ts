@@ -24,6 +24,8 @@ async function buildWithLiveRecall(
     sessionId: 'brain-1',
     agent: {} as Record<string, unknown>,
     subscribe: () => () => {},
+    // The compaction threshold measures the never-shrinking prefill off these.
+    systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
     messages: [] as unknown[],
     setSteeringMode: vi.fn(),
   };
@@ -187,7 +189,11 @@ describe('live recall wiring — a real session reaches the recall pass', () => 
   });
 
   it('registers nothing when the spec carries no recall options', async () => {
-    const session = { sessionId: 'brain-1', agent: {}, subscribe: () => () => {}, messages: [], setSteeringMode: vi.fn() };
+    const session = {
+      sessionId: 'brain-1', agent: {}, subscribe: () => () => {}, messages: [], setSteeringMode: vi.fn(),
+      // The compaction threshold measures the never-shrinking prefill off these.
+      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
+    };
     const handlers: CapturedHandlers = {};
     const factory = new BrainSessionFactory({
       store: new BrainStore(openDb(':memory:')),

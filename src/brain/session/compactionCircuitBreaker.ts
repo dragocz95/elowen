@@ -60,6 +60,14 @@ export interface CompactionThresholdBudget {
    *  noise between the chars/4 estimate and the provider's real tokenizer, and encodes that a compaction
    *  buying less than this of working room is not worth its summarization cost. */
   floorMargin: number;
+  /** The never-shrinking prefill (system prompt + tool definitions) the user's percentage is measured
+   *  ON TOP OF, so "80% full" means 80% of what a conversation can actually use. Seeded from the rendered
+   *  prompt at spawn, replaced by the provider's own figure once a request reports one, and cleared by a
+   *  compaction — the prefill is stable, but the tools and system prompt behind it are not.
+   *
+   *  It lives here rather than on LiveBrain because only the factory's own threshold arithmetic reads it,
+   *  and this is already the shared mutable holder for the numbers that define the trigger. */
+  prefillBaseline: number | null;
 }
 
 export interface CompactionCircuitBreakerOptions {

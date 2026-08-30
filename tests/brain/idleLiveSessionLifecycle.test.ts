@@ -48,6 +48,9 @@ function fakeDeps() {
     compact: vi.fn(async () => {}),
     __tools: [] as { name: string }[],
     __active: [] as string[],
+    // A real PI session always exposes its RENDERED prompt; the compaction threshold measures the
+    // never-shrinking prefill off it, so a fake without one is simply incomplete.
+    systemPrompt: '',
     getAllTools(this: { __tools: { name: string }[] }) { return this.__tools; },
     getActiveToolNames(this: { __active: string[] }) { return this.__active; },
     setActiveToolsByName: vi.fn(function (this: { __active: string[] }, names: string[]) { this.__active = names; }),

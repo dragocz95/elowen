@@ -127,40 +127,53 @@ describe('BrainSessionFactory compaction budget', () => {
 
 });
 
-describe('BrainSessionFactory compaction settings handed to PI', () => {
-  async function captureCompactionSettings(
-    contextWindow: number, autoCompact: boolean, autoCompactAtPct: number, fixedCostTokens = 8_000,
-  ) {
-    const session = {
-      sessionId: 'sess-compaction-settings',
-      agent: {} as Record<string, unknown>,
-      subscribe: () => () => {},
-      messages: [] as unknown[],
-      setSteeringMode: vi.fn(),
-    };
-    const createSession = vi.fn(async () => ({ session }));
-    const factory = new BrainSessionFactory({
-      store: new BrainStore(openDb(':memory:')),
-      createSession: createSession as never,
-      resourceLoaderFactory: () => undefined,
-    });
-    // The fixed cost is derived from the spec's system prompt at chars/4, so a prompt of `fixedCostTokens
-    // * 4 − 2` chars (the empty tools array serializes as "[]") yields exactly the requested estimate.
-    const systemPrompt = 's'.repeat(fixedCostTokens * 4 - 2);
-    const { applyCompaction } = await factory.create({
-      sessionId: session.sessionId, ownerUserId: 1, runtime: undefined,
-      model: { id: 'test-model', provider: 'kimi-coding', contextWindow },
-      cwd: process.cwd(), systemPrompt, appendSystemPrompt: [], skills: [], tools: [],
-      autoCompact, autoCompactAtPct,
-    } as never);
-    // createAgentSession receives the session's in-memory SettingsManager — the same object PI reads at
-    // every compaction check, so what it holds IS what PI runs on.
-    const options = (createSession.mock.calls[0] as unknown[])[0] as {
-      settingsManager: { getCompactionSettings: () => { enabled: boolean; reserveTokens: number; keepRecentTokens: number } };
-    };
-    return { read: () => options.settingsManager.getCompactionSettings(), applyCompaction };
-  }
+/** Spawn a session through the real factory and expose what PI would actually run on: the live
+ *  SettingsManager, the re-callable applyCompaction, the session fake and an emitter for its event
+ *  stream. Shared by the threshold tests and the prefill-baseline ones, which need the same spawn. */
+async function captureCompactionSettings(
+  contextWindow: number, autoCompact: boolean, autoCompactAtPct: number, fixedCostTokens = 8_000,
+) {
+  const listeners: ((event: unknown) => void)[] = [];
+  const session = {
+    sessionId: 'sess-compaction-settings',
+    agent: {} as Record<string, unknown>,
+    subscribe: (l: (event: unknown) => void) => { listeners.push(l); return () => {}; },
+    // The prefill baseline is measured off these: a real PI session always exposes its rendered
+    // prompt and its tool registry, so a fake that omits them is simply incomplete.
+    systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
+    messages: [] as unknown[],
+    setSteeringMode: vi.fn(),
+  };
+  const createSession = vi.fn(async () => ({ session }));
+  const factory = new BrainSessionFactory({
+    store: new BrainStore(openDb(':memory:')),
+    createSession: createSession as never,
+    resourceLoaderFactory: () => undefined,
+  });
+  // The fixed cost is derived from the spec's system prompt at chars/4, so a prompt of `fixedCostTokens
+  // * 4 − 2` chars (the empty tools array serializes as "[]") yields exactly the requested estimate.
+  const systemPrompt = 's'.repeat(fixedCostTokens * 4 - 2);
+  const { applyCompaction } = await factory.create({
+    sessionId: session.sessionId, ownerUserId: 1, runtime: undefined,
+    model: { id: 'test-model', provider: 'kimi-coding', contextWindow },
+    cwd: process.cwd(), systemPrompt, appendSystemPrompt: [], skills: [], tools: [],
+    autoCompact, autoCompactAtPct,
+  } as never);
+  // createAgentSession receives the session's in-memory SettingsManager — the same object PI reads at
+  // every compaction check, so what it holds IS what PI runs on.
+  const options = (createSession.mock.calls[0] as unknown[])[0] as {
+    settingsManager: { getCompactionSettings: () => { enabled: boolean; reserveTokens: number; keepRecentTokens: number } };
+  };
+  return {
+    read: () => options.settingsManager.getCompactionSettings(),
+    applyCompaction,
+    session,
+    emit: (event: unknown) => { for (const l of listeners) l(event); },
+  };
+}
 
+
+describe('BrainSessionFactory compaction settings handed to PI', () => {
   it('hands PI an explicit keepRecentTokens, not the constant default by omission', async () => {
     // 300k at 50%: trigger 150k, so the post-compaction ceiling is 30k; after the 8k fixed cost and the
     // 8k summary allowance, 14k remains, and that is a value only this derivation produces. PI's own
@@ -201,6 +214,124 @@ describe('BrainSessionFactory compaction settings handed to PI', () => {
   });
 });
 
+/** The user's percentage means "how full", and it used to mean how full the WHOLE window is — charging
+ *  them for a system prompt and a tool set no compaction can remove. On a small window that was worse
+ *  than inefficient: the post-compaction floor exceeded the trigger, the circuit breaker judged every
+ *  compaction pointless, and automatic compaction switched itself off. It now measures the USABLE
+ *  window, capped by a hard ceiling so a large prefill can never let a conversation run to the brim. */
+describe('compactionReserveTokens — the percentage is measured against the usable window', () => {
+  it('is unchanged from the old absolute behaviour when there is no prefill to discount', () => {
+    // The regression guard for every session whose baseline has not been measured yet.
+    expect(compactionReserveTokens(200_000, true, 80, 0)).toBe(40_000);
+    expect(compactionReserveTokens(200_000, true, 50, 0)).toBe(100_000);
+    expect(compactionReserveTokens(200_000, true, 80)).toBe(compactionReserveTokens(200_000, true, 80, 0));
+  });
+
+  it('moves the trigger up by the share of the prefill the user is no longer charged for', () => {
+    // 200k window, 30k prefill, 80%: 80% of the 170k usable window on top of the prefill = 166k, so the
+    // conversation gets the 6k of working room the old arithmetic spent on its own system prompt.
+    expect(compactionReserveTokens(200_000, true, 80, 30_000)).toBe(34_000);
+  });
+
+  it('rescues a small window whose prefill used to disable compaction outright', () => {
+    // 32k window with a 29.6k prefill. The old trigger was 25.6k — BELOW the post-compaction floor — so
+    // every compaction measured as pointless and the breaker stopped compacting at all. The hard ceiling
+    // now decides instead: 95% of 32k is 30.4k, leaving a 1.6k reserve, and compaction works again.
+    expect(compactionReserveTokens(32_000, true, 80, 29_600)).toBe(1_600);
+    expect(32_000 - compactionReserveTokens(32_000, true, 80, 29_600)).toBe(30_400);
+  });
+
+  it('never lets the trigger past the hard ceiling, whatever the prefill claims', () => {
+    // A prefill larger than the window (a nonsense measurement, or a model whose window shrank under it)
+    // must not resolve to "compact at 100% full": reserveTokens is also the summary-output budget.
+    expect(compactionReserveTokens(200_000, true, 100, 500_000)).toBe(10_000);
+    expect(compactionReserveTokens(200_000, true, 100, 0)).toBe(10_000);
+  });
+
+  it('keeps an emergency reserve even on a window too small for the ceiling to leave one', () => {
+    // 5% of 2000 is 100, below the 256 floor — and a reserve that small leaves PI no room to write the
+    // summary at all, which fails three times and stops automatic compaction for good.
+    expect(compactionReserveTokens(2_000, true, 100, 1_900)).toBe(256);
+  });
+
+  it('leaves non-proactive compaction on its emergency margin, prefill or not', () => {
+    expect(compactionReserveTokens(200_000, false, 80, 30_000)).toBe(4_096);
+    expect(compactionReserveTokens(200_000, false, 80, 0)).toBe(4_096);
+  });
+});
+
+/** The estimate the session starts on is chars/4 over the rendered prompt; the provider's own count is
+ *  exact. Taking it is only valid while the request carried nothing but the prefill, which is the whole
+ *  reason the sample is gated on the transcript length rather than merely on being first. */
+describe('BrainSessionFactory prefill baseline measured from the provider', () => {
+  const assistantEnd = (input: number, cacheRead = 0) => ({
+    type: 'message_end',
+    message: { role: 'assistant', stopReason: 'stop', usage: { input, cacheRead } },
+  });
+
+  it('replaces the estimate with the measured prefill and re-applies the threshold in place', async () => {
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
+    expect(read().reserveTokens).toBe(40_000); // the empty fake renders no prefill at all
+
+    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    emit(assistantEnd(20_000, 10_000)); // 30k of prefill, cached or not — both were sent
+
+    // 80% of the 170k usable window on top of the 30k baseline: trigger 166k, reserve 34k.
+    expect(read().reserveTokens).toBe(34_000);
+  });
+
+  it('ignores a request that carried a conversation, because that is not a prefill', async () => {
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
+    // A respawned session's very first request already has a whole transcript behind it. Measuring it
+    // would call the conversation "never-shrinking" and push the trigger towards the hard ceiling.
+    session.messages.push({ role: 'user' }, { role: 'assistant' }, { role: 'user' }, { role: 'assistant' });
+    emit(assistantEnd(120_000));
+
+    expect(read().reserveTokens).toBe(40_000);
+  });
+
+  it('ignores an errored request, whose usage is all-zero', async () => {
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
+    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    emit({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', usage: { input: 0, cacheRead: 0 } } });
+    expect(read().reserveTokens).toBe(40_000);
+
+    // …and the sample is still available to the next real request.
+    emit(assistantEnd(30_000));
+    expect(read().reserveTokens).toBe(34_000);
+  });
+
+  it('measures once, so a later turn cannot restate the conversation as prefill', async () => {
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
+    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    emit(assistantEnd(30_000));
+    expect(read().reserveTokens).toBe(34_000);
+
+    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    emit(assistantEnd(150_000));
+    expect(read().reserveTokens).toBe(34_000);
+  });
+
+  it('drops a measurement a compaction invalidated, back to the rendered estimate', async () => {
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
+    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    emit(assistantEnd(30_000));
+    expect(read().reserveTokens).toBe(34_000);
+
+    // The transcript was rewritten, so the measured figure describes an epoch that no longer exists.
+    emit({ type: 'compaction_end', aborted: false, result: { messages: [] } });
+    expect(read().reserveTokens).toBe(40_000);
+  });
+
+  it('keeps the measurement when a compaction was aborted, because nothing was rewritten', async () => {
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
+    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    emit(assistantEnd(30_000));
+    emit({ type: 'compaction_end', aborted: true, result: undefined });
+    expect(read().reserveTokens).toBe(34_000);
+  });
+});
+
 // The register sorts by "Updated", and a reader takes that to mean the conversation moved. Spawning is
 // not the conversation moving: opening the web chat, a channel waking and an evicted conversation coming
 // back all spawn against an existing row. Stamping it there put yesterday's untouched chat at the top of
@@ -218,7 +349,8 @@ describe('BrainSessionFactory session stamping', () => {
     const idle = '2026-08-01 10:00:00';
     db.prepare('UPDATE brain_sessions SET updated_at = ? WHERE id = ?').run(idle, sessionId);
 
-    const session = { sessionId, agent: {}, subscribe: () => () => {}, messages: [], setSteeringMode: vi.fn() };
+    const session = { sessionId, agent: {}, subscribe: () => () => {}, messages: [], setSteeringMode: vi.fn(),
+      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [] };
     const factory = new BrainSessionFactory({
       store,
       createSession: vi.fn(async () => ({ session })) as never,
@@ -258,6 +390,9 @@ describe('BrainSessionFactory context-saving installers', () => {
       sessionId: `sess-${provider}`,
       agent: { streamFunction: nativeStream } as { streamFunction: typeof nativeStream; transformContext?: (m: unknown[]) => Promise<unknown[]> },
       subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
+      // The prefill baseline is measured off these: a real PI session always exposes its rendered
+      // prompt and its tool registry, so a fake that omits them is simply incomplete.
+      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
       messages: [] as unknown[],
       setSteeringMode: vi.fn(),
     };
@@ -442,6 +577,9 @@ describe('BrainSessionFactory context-saving installers', () => {
       sessionId: 'sess-spawned',
       agent: {} as Record<string, unknown>,
       subscribe: () => () => {},
+      // The prefill baseline is measured off these: a real PI session always exposes its rendered
+      // prompt and its tool registry, so a fake that omits them is simply incomplete.
+      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
       messages: history as unknown[],
       setSteeringMode: vi.fn(),
     };
@@ -471,9 +609,10 @@ describe('BrainSessionFactory context-saving installers', () => {
   it('skips cacheWatch for non-anthropic providers (their cache stats would make it cry wolf)', async () => {
     const { listeners, session, cacheMonitor } = await createWithProvider('kimi-coding');
     try {
-      // The request recorder, compaction circuit breaker and persistence projector are unconditional;
-      // cacheWatch did not subscribe. Clearing's transformContext is still installed.
-      expect(listeners).toHaveLength(3);
+      // The request recorder, compaction circuit breaker, prefill-baseline measurement and persistence
+      // projector are unconditional; cacheWatch did not subscribe. Clearing's transformContext is still
+      // installed.
+      expect(listeners).toHaveLength(4);
       expect(typeof session.agent.transformContext).toBe('function');
       expect(cacheMonitor).toBeUndefined();
     } finally {
@@ -498,6 +637,9 @@ describe('BrainSessionFactory turn-boundary compaction toggle', () => {
         prepareNextTurnWithContext: undefined as unknown,
       },
       subscribe: () => () => {},
+      // The prefill baseline is measured off these: a real PI session always exposes its rendered
+      // prompt and its tool registry, so a fake that omits them is simply incomplete.
+      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
       messages: [] as unknown[],
       setSteeringMode: vi.fn(),
     };
@@ -570,6 +712,9 @@ describe('BrainSessionFactory step-drain hold install order', () => {
         prepareNextTurnWithContext: undefined as unknown,
       },
       subscribe: () => () => {},
+      // The prefill baseline is measured off these: a real PI session always exposes its rendered
+      // prompt and its tool registry, so a fake that omits them is simply incomplete.
+      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
       messages: [] as unknown[],
       setSteeringMode: vi.fn(),
     };
@@ -623,6 +768,9 @@ describe('BrainSessionFactory deferred-tool wiring', () => {
       sessionId: 'sess-deferral',
       agent: {} as Record<string, unknown>,
       subscribe: () => () => {},
+      // The prefill baseline is measured off these: a real PI session always exposes its rendered
+      // prompt and its tool registry, so a fake that omits them is simply incomplete.
+      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
       messages: [] as unknown[],
       setActiveToolsByName: vi.fn(),
       setSteeringMode: vi.fn(),
@@ -670,6 +818,9 @@ describe('BrainSessionFactory cold-start-compaction assessment', () => {
       sessionId: 'sess-cold-assess',
       agent: {} as Record<string, unknown>,
       subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
+      // The prefill baseline is measured off these: a real PI session always exposes its rendered
+      // prompt and its tool registry, so a fake that omits them is simply incomplete.
+      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
       messages,
       setSteeringMode: vi.fn(),
     };
@@ -731,6 +882,9 @@ describe('BrainSessionFactory steering queue', () => {
       sessionId: 'sess-steering',
       agent: {} as Record<string, unknown>,
       subscribe: () => () => {},
+      // The prefill baseline is measured off these: a real PI session always exposes its rendered
+      // prompt and its tool registry, so a fake that omits them is simply incomplete.
+      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
       messages: [] as unknown[],
       setSteeringMode: vi.fn(),
     };

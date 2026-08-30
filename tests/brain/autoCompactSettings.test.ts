@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ModelRuntime, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { BrainService } from '../../src/brain/brainService.js';
-import { compactionReserveTokens } from '../../src/brain/session/factory.js';
+import { compactionReserveTokens, renderedPrefillTokens } from '../../src/brain/session/factory.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { openDb } from '../../src/store/db.js';
@@ -27,6 +27,7 @@ function fakeSession() {
       listeners.forEach((l) => l({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: `echo:${t}` }] }));
     }),
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
+    systemPrompt: '',
     setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}),
     abortCompaction: vi.fn(), abortBranchSummary: vi.fn(),
     messages, isStreaming: false, isCompacting: false,
@@ -59,14 +60,19 @@ function fakeSession() {
  *  session's SettingsManager and resolved model are captured in creation order, and every user id the
  *  code asked about is recorded in `settingsReads`. */
 function brainHarness(settings: (userId: number) => CliSettings | undefined) {
-  const session = fakeSession();
   const spawned: { settings: SettingsManager }[] = [];
   const models: { contextWindow: number }[] = [];
   const settingsReads: number[] = [];
+  // One session PER SPAWN, in spawn order. They used to share a single fake, which was harmless until the
+  // compaction threshold started depending on the session's own composed tools: the second spawn
+  // overwrote the first one's tool set, so an assertion about the first session measured the second.
+  const sessions: ReturnType<typeof fakeSession>[] = [];
   const createSession = vi.fn(async (opts: { customTools?: { name: string }[]; model?: { contextWindow: number } }) => {
+    const session = fakeSession();
     session.__tools = opts.customTools ?? [];
     session.__active = session.__tools.map((t) => t.name);
     if (opts.model) models.push(opts.model);
+    sessions.push(session);
     return { session };
   });
   const d = {
@@ -80,10 +86,16 @@ function brainHarness(settings: (userId: number) => CliSettings | undefined) {
     userSettings: (userId: number) => { settingsReads.push(userId); return settings(userId); },
     resourceLoaderFactory: (o: { settingsManager: SettingsManager }) => { spawned.push({ settings: o.settingsManager }); return undefined; },
   };
-  return { svc: new BrainService(d as never), createSession, spawned, models, settingsReads };
+  return { svc: new BrainService(d as never), createSession, spawned, models, settingsReads, sessions };
 }
 
 const reserveOf = (manager: SettingsManager): number => manager.getCompactionReserveTokens();
+/** The reserve `pct` should produce on THIS session. The percentage is measured against the usable window
+ *  — what is left once the never-shrinking prefill is paid for — so the expectation has to be computed
+ *  from the same baseline production used, through the same function, rather than from a bare window. */
+const expectedReserve = (session: { systemPrompt: string; getAllTools: () => { name: string }[]; getActiveToolNames: () => string[] },
+  contextWindow: number, pct: number): number =>
+  compactionReserveTokens(contextWindow, true, pct, renderedPrefillTokens(session as never));
 const policy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
 
 describe('auto-compact threshold on channel sessions', () => {
@@ -91,7 +103,7 @@ describe('auto-compact threshold on channel sessions', () => {
     // Regression: channels hardcoded DEFAULT_AUTO_COMPACT_PCT, so an owner running their clients on
     // Discord never got the threshold they configured in Account → CLI. An unlinked sender carries no
     // account of their own, so the room's owner is the only row there is to read.
-    const { svc, spawned, models, settingsReads } = brainHarness((id) => (id === 1
+    const { svc, spawned, models, settingsReads, sessions } = brainHarness((id) => (id === 1
       ? { autoCompact: true, autoCompactAt: 50 }
       : { autoCompact: true, autoCompactAt: 25 }));
 
@@ -101,13 +113,13 @@ describe('auto-compact threshold on channel sessions', () => {
     // The threshold must come from the CHANNEL OWNER's row, so no lookup may use another id.
     expect(settingsReads).toContain(1);
     expect([...new Set(settingsReads)]).toEqual([1]);
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 50));
+    expect(reserveOf(spawned[0]!.settings)).toBe(expectedReserve(sessions[0]!, models[0]!.contextWindow, 50));
   });
 
   it('compacts a room at the WRITER’S percentage, not the room opener’s', async () => {
     // A room belongs to whoever opened it, and that is bookkeeping only: composing the session from that
     // account made one colleague's personal threshold govern everybody else's turns in the room.
-    const { svc, spawned, models, settingsReads } = brainHarness((id) => (id === 1
+    const { svc, spawned, models, settingsReads, sessions } = brainHarness((id) => (id === 1
       ? { autoCompact: true, autoCompactAt: 50 }
       : { autoCompact: true, autoCompactAt: 25 }));
 
@@ -115,28 +127,28 @@ describe('auto-compact threshold on channel sessions', () => {
 
     // The opener's row must not be consulted at all — not even as a second opinion behind the writer's.
     expect([...new Set(settingsReads)]).toEqual([2]);
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 25));
+    expect(reserveOf(spawned[0]!.settings)).toBe(expectedReserve(sessions[0]!, models[0]!.contextWindow, 25));
   });
 
   it('lets the owner’s per-model override win for a channel session', async () => {
-    const { svc, spawned, models, settingsReads } = brainHarness((id) => (id === 1
+    const { svc, spawned, models, settingsReads, sessions } = brainHarness((id) => (id === 1
       ? { autoCompact: true, autoCompactAt: 50, autoCompactAtByModel: { 'relay/m': 35 } }
       : { autoCompact: true, autoCompactAt: 25 }));
 
     await svc.channelSend({ channelId: 'c-2', ownerUserId: 1, policy }, 'ahoj');
 
     expect([...new Set(settingsReads)]).toEqual([1]);
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 35));
+    expect(reserveOf(spawned[0]!.settings)).toBe(expectedReserve(sessions[0]!, models[0]!.contextWindow, 35));
   });
 
   it('falls back to the default when the owner has no settings, and keeps compaction proactive', async () => {
     // Only the owner (1) is unconfigured — reading anyone else's row would produce 20 %, not the default.
-    const { svc, spawned, models } = brainHarness((id) => (id === 1 ? undefined : { autoCompact: true, autoCompactAt: 20 }));
+    const { svc, spawned, models, sessions } = brainHarness((id) => (id === 1 ? undefined : { autoCompact: true, autoCompactAt: 20 }));
 
     await svc.channelSend({ channelId: 'c-3', ownerUserId: 1, policy }, 'ahoj');
 
     // 80 % — and NOT the disabled-compaction emergency reserve: a channel must stay bounded.
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 80));
+    expect(reserveOf(spawned[0]!.settings)).toBe(expectedReserve(sessions[0]!, models[0]!.contextWindow, 80));
   });
 });
 
@@ -148,7 +160,7 @@ describe('auto-compact threshold on live sessions', () => {
       1: { autoCompact: true, autoCompactAt: 80 },
       2: { autoCompact: true, autoCompactAt: 20 },
     };
-    const { svc, createSession, spawned, models, settingsReads } = brainHarness((id) => settings[id]);
+    const { svc, createSession, spawned, models, settingsReads, sessions } = brainHarness((id) => settings[id]);
     await svc.start(1);
     await svc.channelSend({ channelId: 'c-live', ownerUserId: 1, policy }, 'ahoj');
     expect(spawned).toHaveLength(2);
@@ -164,8 +176,8 @@ describe('auto-compact threshold on live sessions', () => {
     // Re-applying is keyed on the user whose settings were saved — reading any other row is the bug.
     expect([...new Set(settingsReads)]).toEqual([1]);
 
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 45));
-    expect(reserveOf(spawned[1]!.settings)).toBe(compactionReserveTokens(models[1]!.contextWindow, true, 45));
+    expect(reserveOf(spawned[0]!.settings)).toBe(expectedReserve(sessions[0]!, models[0]!.contextWindow, 45));
+    expect(reserveOf(spawned[1]!.settings)).toBe(expectedReserve(sessions[1]!, models[1]!.contextWindow, 45));
     expect(createSession.mock.calls).toHaveLength(spawnCalls); // applied in place, no respawn
   });
 
@@ -176,18 +188,18 @@ describe('auto-compact threshold on live sessions', () => {
       1: { autoCompact: true, autoCompactAt: 80 },
       2: { autoCompact: true, autoCompactAt: 25 },
     };
-    const { svc, spawned, models } = brainHarness((id) => settings[id]);
+    const { svc, spawned, models, sessions } = brainHarness((id) => settings[id]);
     await svc.channelSend({ channelId: 'c-composed', ownerUserId: 1, writerUserId: 2, policy }, 'ahoj');
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 25));
+    expect(reserveOf(spawned[0]!.settings)).toBe(expectedReserve(sessions[0]!, models[0]!.contextWindow, 25));
 
     settings = { 1: { autoCompact: true, autoCompactAt: 45 }, 2: { autoCompact: true, autoCompactAt: 25 } };
     svc.applyAutoCompactSettings(1);
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 25));
+    expect(reserveOf(spawned[0]!.settings)).toBe(expectedReserve(sessions[0]!, models[0]!.contextWindow, 25));
 
     // The writer it WAS composed for still reaches it, without a respawn — the whole point of this path.
     settings = { 1: { autoCompact: true, autoCompactAt: 45 }, 2: { autoCompact: true, autoCompactAt: 30 } };
     svc.applyAutoCompactSettings(2);
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 30));
+    expect(reserveOf(spawned[0]!.settings)).toBe(expectedReserve(sessions[0]!, models[0]!.contextWindow, 30));
   });
 
   it('honours a per-model override and leaves another user’s live sessions untouched', async () => {
@@ -195,7 +207,7 @@ describe('auto-compact threshold on live sessions', () => {
       1: { autoCompact: true, autoCompactAt: 80 },
       2: { autoCompact: true, autoCompactAt: 80 },
     };
-    const { svc, spawned, models } = brainHarness((id) => settings[id]);
+    const { svc, spawned, models, sessions } = brainHarness((id) => settings[id]);
     await svc.start(1);
     await svc.start(2);
 
@@ -205,8 +217,8 @@ describe('auto-compact threshold on live sessions', () => {
     };
     svc.applyAutoCompactSettings(1);
 
-    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 30));
-    expect(reserveOf(spawned[1]!.settings)).toBe(compactionReserveTokens(models[1]!.contextWindow, true, 80));
+    expect(reserveOf(spawned[0]!.settings)).toBe(expectedReserve(sessions[0]!, models[0]!.contextWindow, 30));
+    expect(reserveOf(spawned[1]!.settings)).toBe(expectedReserve(sessions[1]!, models[1]!.contextWindow, 80));
   });
 });
 
