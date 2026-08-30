@@ -47,6 +47,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function setMobileViewport(matches: boolean): void {
+  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 describe('the advisor agents table', () => {
   it('uses the shared DataTable with all authoritative fields in the sole ModalBody scroller', () => {
     vi.useFakeTimers();
@@ -78,6 +91,29 @@ describe('the advisor agents table', () => {
     const open = screen.getByRole('button', { name: 'Open sub-agent transcript: write tests' });
     expect(open.tagName).toBe('BUTTON');
     fireEvent.click(open);
+    expect(onOpen).toHaveBeenCalledWith('s-2');
+  });
+
+  it('lays out equal-width agent columns horizontally on a phone instead of mounting the wide table', async () => {
+    setMobileViewport(true);
+    const onOpen = vi.fn();
+    render(<AgentsTable agents={AGENTS} onOpen={onOpen} onClose={vi.fn()} />, { wrapper: W });
+
+    const body = soleBody();
+    const list = await screen.findByRole('list', { name: 'Delegated sub-agents' });
+    expect(body.contains(list), 'the shared ModalBody owns the horizontal scroll').toBe(true);
+    expect(screen.queryByRole('table', { name: 'Delegated sub-agents' })).not.toBeInTheDocument();
+    expect(list).toHaveClass('grid-flow-col', 'w-max');
+    expect(list.style.gridAutoColumns).toBe('10.5rem');
+    expect(list.children).toHaveLength(2);
+
+    for (const value of ['inspect the code', 'Read src/a.ts', 'anthropic/sonnet', 'High', '1.2k', 'Automatic delivery', 'Delivery pending']) {
+      expect(screen.getByText(value)).toBeInTheDocument();
+    }
+    const task = screen.getByText('inspect the code');
+    expect(task).not.toHaveClass('truncate');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open sub-agent transcript: write tests' }));
     expect(onOpen).toHaveBeenCalledWith('s-2');
   });
 });
