@@ -277,6 +277,11 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .control-surface-toolbar .register-search {
   max-width: 24rem;
 }
+/* Promoted toolbars are the page row itself, where the search must absorb every pixel left after filters
+   and actions. Keep the 24rem cap only for toolbars embedded inside the content surface. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .page-toolbar__slot .control-surface-toolbar .register-search {
+  max-width: none;
+}
 /* Toolbar controls share the reference's 40px rhythm. They stay compact enough to read as chrome while
    aligning search, filters and actions on one baseline; coarse pointers still inherit the 44px touch floor.
    `Button` and `Input` carry their height as Tailwind utilities and this stylesheet is unlayered, so a
