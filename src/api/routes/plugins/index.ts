@@ -3,7 +3,7 @@ import { join, resolve, sep } from 'node:path';
 import { discoverPlugins } from '../../../plugins/loader.js';
 import { isPluginAllowedForUser } from '../../../shared/pluginAccess.js';
 import type { PluginAccessUser } from '../../../shared/pluginAccess.js';
-import type { PluginConfigField } from '../../../plugins/manifest.js';
+import { tokenListValueError, type PluginConfigField } from '../../../plugins/manifest.js';
 import { CONSENT_REQUIRED_MUTATES } from '../../../plugins/api.js';
 import { buildContributionReport, emptyContributionReport, pluginContributions } from '../../../plugins/contributionReport.js';
 import { MarketplaceError } from '../../../plugins/marketplace.js';
@@ -39,6 +39,25 @@ function validateNumberValue(field: PluginConfigField, value: unknown): void {
   }
 }
 
+function validateTimezoneValue(field: PluginConfigField, value: unknown): void {
+  if (field.type !== 'timezone') return;
+  if (typeof value !== 'string') {
+    throw new PluginConfigValueError(`invalid value for "${field.key}": expected an IANA timezone or an empty server default`);
+  }
+  const timezone = value.trim();
+  if (!timezone) return;
+  try { new Intl.DateTimeFormat(undefined, { timeZone: timezone }); }
+  catch {
+    throw new PluginConfigValueError(`invalid value for "${field.key}": unknown IANA timezone "${value}"`);
+  }
+}
+
+function validateTokenListValue(field: PluginConfigField, value: unknown): void {
+  if (field.type !== 'tokenList') return;
+  const issue = tokenListValueError(value);
+  if (issue) throw new PluginConfigValueError(`invalid value for "${field.key}": ${issue}`);
+}
+
 /** Apply a config patch to the stored values, by the ONE rule both config forms follow: a key the caller
  *  did not send is left alone, an explicit `null` clears a non-secret back to its default, and a secret
  *  arriving empty keeps whatever is stored (the forms round-trip secrets write-only, so "empty" means
@@ -56,7 +75,11 @@ function applyConfigPatch(
     if (f.type === 'secret' && (v === '' || v === null)) continue;
     if (v === null) { delete next[f.key]; continue; }
     const effectiveCurrent = stored[f.key] !== undefined ? stored[f.key] : f.default;
-    if (f.type !== 'number' || !Object.is(v, effectiveCurrent)) validateNumberValue(f, v);
+    if (!Object.is(v, effectiveCurrent)) {
+      validateNumberValue(f, v);
+      validateTimezoneValue(f, v);
+      validateTokenListValue(f, v);
+    }
     next[f.key] = v;
   }
   return next;

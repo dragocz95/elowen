@@ -80,14 +80,59 @@ describe('parseManifest', () => {
         { key: 'prompt', label: 'Prompt', type: 'prompt' },
         { key: 'json', label: 'Json', type: 'json' },
         { key: 'emb', label: 'Embedding', type: 'embeddingModel' },
+        { key: 'tz', label: 'Timezone', type: 'timezone' },
+        { key: 'paths', label: 'Paths', type: 'tokenList', browse: 'directory' },
       ],
     });
     const types = m.configSchema?.map((f) => f.type);
-    for (const t of ['model', 'provider', 'section', 'enum', 'multiSelect', 'code', 'prompt', 'json', 'embeddingModel']) {
+    for (const t of ['model', 'provider', 'section', 'enum', 'multiSelect', 'code', 'prompt', 'json', 'embeddingModel', 'timezone', 'tokenList']) {
       expect(types).toContain(t);
     }
     expect(m.configSchema?.find((f) => f.type === 'provider')?.providerType).toBe('openai');
+    expect(m.configSchema?.find((f) => f.type === 'tokenList')?.browse).toBe('directory');
+    expect(() => parseManifest({
+      ...good,
+      configSchema: [{ key: 'bad', label: 'Bad', type: 'string', browse: 'directory' }],
+    })).toThrow('/configSchema/0/browse is only valid for tokenList fields');
   });
+  it('enforces timezone and token-list default types and canonical token items', () => {
+    const accepted = parseManifest({
+      ...good,
+      configSchema: [
+        { key: 'timezone', label: 'Timezone', type: 'timezone', default: 'UTC' },
+        { key: 'paths', label: 'Paths', type: 'tokenList', default: ['/one', '/two'] },
+      ],
+    });
+    expect(accepted.configSchema?.[0]?.default).toBe('UTC');
+    expect(accepted.configSchema?.[1]?.default).toEqual(['/one', '/two']);
+
+    for (const bad of [true, 1, ['UTC']]) {
+      expect(() => parseManifest({ ...good, configSchema: [{ key: 'tz', label: 'Timezone', type: 'timezone', default: bad }] }))
+        .toThrow('/configSchema/0/default must be a string for a timezone field');
+    }
+    for (const bad of ['one', true, 1]) {
+      expect(() => parseManifest({ ...good, configSchema: [{ key: 'paths', label: 'Paths', type: 'tokenList', default: bad }] }))
+        .toThrow('/configSchema/0/default expected an array of strings');
+    }
+    for (const [bad, message] of [
+      [[''], 'item 1 must not be empty'],
+      [[' one'], 'item 1 must be trimmed'],
+      [['one', 'one'], 'duplicate item "one"'],
+    ] as const) {
+      expect(() => parseManifest({ ...good, configSchema: [{ key: 'paths', label: 'Paths', type: 'tokenList', default: bad }] }))
+        .toThrow(`/configSchema/0/default ${message}`);
+    }
+    expect(() => parseManifest({ ...good, configSchema: [{ key: 'name', label: 'Name', type: 'string', default: ['one'] }] }))
+      .toThrow('/configSchema/0/default arrays are only valid for tokenList fields');
+  });
+
+  it('rejects an admin-only directory browser from per-user config', () => {
+    expect(() => parseManifest({
+      ...good,
+      userConfigSchema: [{ key: 'paths', label: 'Paths', type: 'tokenList', browse: 'directory' }],
+    })).toThrow('/userConfigSchema/0/browse is not allowed in userConfigSchema');
+  });
+
   it('accepts explicit numeric display metadata for inputs and bounded sliders', () => {
     const m = parseManifest({
       ...good,

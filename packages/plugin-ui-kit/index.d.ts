@@ -12,6 +12,14 @@ import type { ComponentType } from 'react';
  *  bump that forgets the host fails the web typecheck instead of drifting silently. */
 export declare const PLUGIN_UI_API_VERSION: 10;
 
+/** Public props of `ElowenUiRuntime.components.DirectoryPicker`. Selection reports the currently open
+ *  server directory; closing has no side effect. */
+export interface DirectoryPickerProps {
+  initialPath?: string;
+  onSelect: (path: string) => void;
+  onClose: () => void;
+}
+
 /** Project metadata exposed to a contextual plugin panel. The Project remains core-owned; a panel uses
  *  this identity to address only its own project-scoped API data. */
 export interface PluginUiProject {

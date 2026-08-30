@@ -782,6 +782,35 @@ export class PluginRegistry {
       warn: (m) => logger.warn(`[plugin:${name}] ${m}`),
       error: (m) => logger.error(`[plugin:${name}] ${m}`),
     };
+    let warnedTimezone: string | undefined;
+    const serverTimezone = (): string => {
+      try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+      catch { return 'UTC'; }
+    };
+    const liveTimezone = (): string => {
+      let configured = '';
+      try { configured = timezone?.().trim() ?? ''; }
+      catch {
+        const fallback = serverTimezone();
+        if (warnedTimezone !== '<resolver>') {
+          warnedTimezone = '<resolver>';
+          scoped.warn(`timezone resolver failed; using server timezone "${fallback}"`);
+        }
+        return fallback;
+      }
+      if (!configured) return serverTimezone();
+      try {
+        new Intl.DateTimeFormat(undefined, { timeZone: configured });
+        return configured;
+      } catch {
+        const fallback = serverTimezone();
+        if (warnedTimezone !== configured) {
+          warnedTimezone = configured;
+          scoped.warn(`invalid configured timezone "${configured}"; using server timezone "${fallback}"`);
+        }
+        return fallback;
+      }
+    };
     // Runtime capability enforcement (deny-by-default, non-fatal — mirrors the hook bus: a refused
     // contribution is dropped + warned, the plugin still loads). `caps`/`provides` come from the
     // manifest via the loader; when omitted (direct contextFor unit tests) enforcement stays inert.
@@ -1173,9 +1202,9 @@ export class PluginRegistry {
       // Every tool name in the LIVE merged registry. The loader supplies the merged view; without it (a
       // direct contextFor in a unit test) this falls back to the plugin's own staging tools.
       toolNames: () => (allToolNames ? allToolNames() : this.tools.map((t) => t.name)),
-      // The operator's configured zone; with no host wiring, the machine's own — which is exactly the
-      // behaviour every wall-clock consumer had before the setting existed.
-      timezone: () => timezone?.() || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      // The operator's configured zone; invalid legacy config must not crash a prompt or scheduler.
+      // Fall back to the server zone and warn once per bad value for this plugin generation.
+      timezone: liveTimezone,
       delegateContextChars: () => delegateContextChars?.() ?? DEFAULT_BRAIN_LIMITS.delegateContextChars,
       // Absent, not undefined, when nothing was handed down: the `mcp` plugin branches on presence, and
       // "the daemon told us it bridges nothing" (an empty array) must stay distinguishable from "nobody

@@ -84,6 +84,7 @@ import { WorkspaceDetailRail } from '../components/ui/WorkspacePrimitives';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
 import { SettingsDocument, SettingsGroup, SettingsRow } from '../components/ui/SettingsSurface';
 import { PluginConfigEditor } from '../modules/settings/PluginConfigEditor';
+import { DirectoryPicker } from '../components/ui/DirectoryPicker';
 import { usePluginConfigDraft } from './usePluginConfigDraft';
 import { MarkdownAssetEditor } from '../modules/settings/MarkdownAssetEditor';
 import { allModels } from './execPresets';
@@ -300,7 +301,7 @@ export function ensurePluginUiRuntime(): void {
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       ConfirmDialog, LiveTail,
-      SettingsDocument, SettingsGroup, SettingsRow, SpatialIdentity, TimeSeriesChart, PluginConfigEditor, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
+      SettingsDocument, SettingsGroup, SettingsRow, SpatialIdentity, TimeSeriesChart, PluginConfigEditor, DirectoryPicker, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends). DetailBlock is
       // the caption+hint wrapper the user detail puts above each of these summaries, shared so a plugin

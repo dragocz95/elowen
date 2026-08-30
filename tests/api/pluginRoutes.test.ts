@@ -53,6 +53,8 @@ function setup() {
     configSchema: [
       { key: 'botToken', label: 'Bot token', type: 'secret', required: true },
       { key: 'guildId', label: 'Guild ID', type: 'string' },
+      { key: 'timezone', label: 'Timezone', type: 'timezone' },
+      { key: 'paths', label: 'Paths', type: 'tokenList' },
       { key: 'historyLimit', label: 'History', type: 'number', min: 0, max: 100, step: 5, default: 25 },
       { key: 'preciseLimit', label: 'Precise limit', type: 'number', min: 1_000_000_000, max: 1_000_000_001, step: 0.1, default: 1_000_000_000 },
       { key: 'rolePolicies', label: 'Role policies', type: 'rolePolicies' },
@@ -104,7 +106,7 @@ describe('plugin routes', () => {
     const res = await app.request('/plugins/discord', auth(adminTok));
     expect(res.status).toBe(200);
     const body = await res.json() as { config: Record<string, unknown>; secretsSet: string[]; configSchema: { key: string }[] };
-    expect(body.configSchema.map((f) => f.key)).toEqual(['botToken', 'guildId', 'historyLimit', 'preciseLimit', 'rolePolicies']);
+    expect(body.configSchema.map((f) => f.key)).toEqual(['botToken', 'guildId', 'timezone', 'paths', 'historyLimit', 'preciseLimit', 'rolePolicies']);
     expect(body.config.guildId).toBe('g1');
     expect(body.config.botToken).toBeUndefined();
     expect(body.secretsSet).toEqual(['botToken']);
@@ -184,6 +186,58 @@ describe('plugin routes', () => {
     expect(offStep.status).toBe(400);
     expect(await offStep.json()).toEqual({ error: 'invalid value for "preciseLimit": must align to step 0.1 from 1000000000' });
     expect(config.pluginConfig('discord').preciseLimit).toBe(1_000_000_000.3);
+  });
+
+  it('validates changed timezones but lets an unchanged invalid legacy value survive a full snapshot', async () => {
+    const { app, config, adminTok } = setup();
+    config.update({ plugins: { config: { discord: { guildId: 'old', timezone: 'Mars/Olympus' } } } });
+    const view = await (await app.request('/plugins/discord', auth(adminTok))).json() as { config: Record<string, unknown> };
+
+    const unrelated = await app.request('/plugins/discord/config', patch(adminTok, { values: { ...view.config, guildId: 'new' } }));
+    expect(unrelated.status).toBe(200);
+    expect(config.pluginConfig('discord')).toMatchObject({ guildId: 'new', timezone: 'Mars/Olympus' });
+
+    const changedInvalid = await app.request('/plugins/discord/config', patch(adminTok, {
+      values: { ...view.config, guildId: 'must-not-land', timezone: 'Mars/Valles' },
+    }));
+    expect(changedInvalid.status).toBe(400);
+    expect(await changedInvalid.json()).toEqual({ error: 'invalid value for "timezone": unknown IANA timezone "Mars/Valles"' });
+    expect(config.pluginConfig('discord')).toMatchObject({ guildId: 'new', timezone: 'Mars/Olympus' });
+
+    const valid = await app.request('/plugins/discord/config', patch(adminTok, { values: { timezone: 'Europe/Prague' } }));
+    expect(valid.status).toBe(200);
+    expect(config.pluginConfig('discord').timezone).toBe('Europe/Prague');
+  });
+
+  it('validates changed token lists atomically while allowing an unchanged legacy string snapshot', async () => {
+    const { app, config, adminTok } = setup();
+    config.update({ plugins: { config: { discord: { guildId: 'old', paths: '/legacy,path' } } } });
+    const view = await (await app.request('/plugins/discord', auth(adminTok))).json() as { config: Record<string, unknown> };
+
+    const unrelated = await app.request('/plugins/discord/config', patch(adminTok, { values: { ...view.config, guildId: 'new' } }));
+    expect(unrelated.status).toBe(200);
+    expect(config.pluginConfig('discord')).toMatchObject({ guildId: 'new', paths: '/legacy,path' });
+
+    for (const [invalid, reason] of [
+      ['/changed-legacy', 'expected an array of strings'],
+      [['/ok', 2], 'item 2 must be a string'],
+      [{ path: '/object' }, 'expected an array of strings'],
+      [42, 'expected an array of strings'],
+      [[''], 'item 1 must not be empty'],
+      [[' /space'], 'item 1 must be trimmed'],
+      [['/dup', '/dup'], 'duplicate item "/dup"'],
+    ] as const) {
+      const rejected = await app.request('/plugins/discord/config', patch(adminTok, {
+        values: { ...view.config, guildId: 'must-not-land', paths: invalid },
+      }));
+      expect(rejected.status, JSON.stringify(invalid)).toBe(400);
+      expect(await rejected.json()).toEqual({ error: `invalid value for "paths": ${reason}` });
+      expect(config.pluginConfig('discord')).toMatchObject({ guildId: 'new', paths: '/legacy,path' });
+    }
+
+    const valid = await app.request('/plugins/discord/config', patch(adminTok, { values: { paths: ['/one', '/two,three'] } }));
+    expect(valid.status).toBe(200);
+    expect(config.pluginConfig('discord').paths).toEqual(['/one', '/two,three']);
   });
 
   it('PATCH toggles a plugin, persists config, and hot-reloads the brain', async () => {

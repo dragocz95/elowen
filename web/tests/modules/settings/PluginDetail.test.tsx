@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { ThemeProvider } from '../../../lib/useTheme';
@@ -36,6 +36,14 @@ vi.mock('../../../lib/monaco/monacoLoader', () => ({
   ),
   MonacoDiffEditor: () => null,
 }));
+vi.mock('../../../components/ui/DirectoryPicker', () => ({
+  DirectoryPicker: ({ onSelect, onClose }: { onSelect: (path: string) => void; onClose: () => void }) => (
+    <div role="dialog" aria-label="Directory picker">
+      <button type="button" onClick={() => onSelect('/picked')}>Choose /picked</button>
+      <button type="button" onClick={onClose}>Close directory picker</button>
+    </div>
+  ),
+}));
 
 import { PluginDetail } from '../../../modules/settings/PluginDetail';
 
@@ -69,6 +77,7 @@ beforeEach(() => {
   useUsers.mockReturnValue({ data: [] });
   useNotificationDestinations.mockReturnValue({ data: [] });
 });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('PluginDetail — error state', () => {
   it('shows a retryable error instead of an infinite skeleton', () => {
@@ -251,6 +260,110 @@ describe('PluginDetail config field layout', () => {
     fireEvent.click(within(rowOf('Streaming')).getByRole('switch', { name: 'Streaming' }));
     await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({
       name: 'testy', values: { maxResults: legacyValue, streaming: true },
+    }), { timeout: 3000 });
+  });
+
+  it('offers server default, detected timezone and searchable IANA zones', async () => {
+    vi.spyOn(Intl, 'supportedValuesOf').mockReturnValue(['Asia/Tokyo', 'Europe/Prague']);
+    const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'timezone', label: 'Timezone', type: 'timezone' },
+    ], {}), isLoading: false });
+    renderDetail();
+
+    const trigger = screen.getByRole('button', { name: 'Timezone' });
+    expect(trigger).toHaveTextContent(en.pluginCfg.timezoneServerDefault);
+    fireEvent.click(trigger);
+    expect(screen.getByRole('button', { name: en.pluginCfg.timezoneServerDefault })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /UTC/ })).toBeInTheDocument();
+    if (detected) expect(screen.getByText(detected)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('searchbox', { name: en.managePicker.searchPlaceholder }), { target: { value: 'Tokyo' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Asia/Tokyo' }));
+    fireEvent.click(screen.getByRole('button', { name: en.managePicker.saveChanges }));
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({ name: 'testy', values: { timezone: 'Asia/Tokyo' } }), { timeout: 3000 });
+  });
+
+  it('offers UTC and custom IANA entry when the browser has no timezone catalog', async () => {
+    const intlWithoutCatalog = Object.create(Intl) as typeof Intl;
+    Object.defineProperty(intlWithoutCatalog, 'supportedValuesOf', { value: undefined });
+    vi.stubGlobal('Intl', intlWithoutCatalog);
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'timezone', label: 'Timezone', type: 'timezone' },
+    ], {}), isLoading: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Timezone' }));
+    expect(screen.getByRole('button', { name: en.pluginCfg.timezoneServerDefault })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /UTC/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: en.pluginCfg.timezoneCustom }));
+    fireEvent.click(screen.getByRole('button', { name: en.managePicker.saveChanges }));
+
+    const custom = screen.getByRole('textbox', { name: en.pluginCfg.timezoneCustom });
+    fireEvent.change(custom, { target: { value: 'Pacific/Kiritimati' } });
+    fireEvent.click(screen.getByRole('button', { name: en.common.save }));
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({
+      name: 'testy', values: { timezone: 'Pacific/Kiritimati' },
+    }), { timeout: 3000 });
+  });
+
+  it('keeps a stale stored timezone visible and lets server default clear the override', async () => {
+    vi.spyOn(Intl, 'supportedValuesOf').mockReturnValue(['Asia/Tokyo']);
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'timezone', label: 'Timezone', type: 'timezone' },
+    ], { timezone: 'Mars/Olympus' }), isLoading: false });
+    renderDetail();
+
+    expect(screen.getByRole('button', { name: 'Timezone' })).toHaveTextContent('Mars/Olympus');
+    fireEvent.click(screen.getByRole('button', { name: 'Timezone' }));
+    expect(screen.getByRole('button', { name: /Mars\/Olympus/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText(en.pluginCfg.timezoneSaved)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: en.pluginCfg.timezoneServerDefault }));
+    fireEvent.click(screen.getByRole('button', { name: en.managePicker.saveChanges }));
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({ name: 'testy', values: { timezone: null } }), { timeout: 3000 });
+  });
+
+  it('preserves an untouched legacy token string in an unrelated full-snapshot save', async () => {
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'patterns', label: 'Include patterns', type: 'tokenList' },
+      { key: 'streaming', label: 'Streaming', type: 'boolean' },
+    ], { patterns: 'src/**/*.ts', streaming: false }), isLoading: false });
+    renderDetail();
+
+    fireEvent.click(within(rowOf('Streaming')).getByRole('switch', { name: 'Streaming' }));
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({
+      name: 'testy', values: { patterns: 'src/**/*.ts', streaming: true },
+    }), { timeout: 3000 });
+  });
+
+  it('converts a legacy token string to a structured deduplicated array on edit', async () => {
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'patterns', label: 'Include patterns', type: 'tokenList' },
+    ], { patterns: 'src/**/*.ts' }), isLoading: false });
+    renderDetail();
+
+    expect(screen.getByText('src/**/*.ts')).toBeInTheDocument();
+    fireEvent.paste(screen.getByRole('textbox', { name: 'Add to Include patterns' }), {
+      clipboardData: { getData: () => 'src/**/*.tsx\nsrc/**/*.ts' },
+    });
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({
+      name: 'testy', values: { patterns: ['src/**/*.ts', 'src/**/*.tsx'] },
+    }), { timeout: 3000 });
+  });
+
+  it('adds a browsed directory without replacing a stale existing path', async () => {
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'paths', label: 'Search paths', type: 'tokenList', browse: 'directory' },
+    ], { paths: ['/stale'] }), isLoading: false });
+    renderDetail();
+
+    expect(screen.getByText('/stale')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: en.pluginCfg.tokenListBrowse }));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose /picked' }));
+    expect(screen.getByText('/stale')).toBeInTheDocument();
+    expect(screen.getByText('/picked')).toBeInTheDocument();
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({
+      name: 'testy', values: { paths: ['/stale', '/picked'] },
     }), { timeout: 3000 });
   });
 

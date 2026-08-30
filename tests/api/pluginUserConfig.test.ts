@@ -32,6 +32,8 @@ function crmPluginDir(opts: { userGrantable?: boolean } = {}): string {
     userConfigSchema: [
       { key: 'apiKey', label: 'API key', type: 'secret' },
       { key: 'region', label: 'Region', type: 'string', default: 'eu' },
+      { key: 'timezone', label: 'Timezone', type: 'timezone' },
+      { key: 'paths', label: 'Paths', type: 'tokenList' },
       { key: 'seats', label: 'Seats', type: 'number', min: 1, max: 10, step: 1, default: 3 },
     ],
   }));
@@ -146,6 +148,48 @@ describe('per-user plugin config', () => {
     expect(changedInvalid.status).toBe(400);
     expect(await changedInvalid.json()).toEqual({ error: 'invalid value for "seats": must align to step 1 from 1' });
     expect(userPluginConfig.get(amy.id, 'crmdemo')).toEqual({ apiKey: 'legacy-key', region: 'new', seats: 4.5 });
+  });
+
+  it('validates changed user token lists atomically while allowing an unchanged legacy string', async () => {
+    const { app, userPluginConfig, amy, amyTok } = setup();
+    userPluginConfig.set(amy.id, 'crmdemo', { region: 'old', paths: '/legacy,path' });
+    const listing = await (await app.request('/plugins/user-config', auth(amyTok))).json() as View[];
+
+    const unrelated = await app.request('/plugins/crmdemo/user-config', patch(amyTok, {
+      values: { ...listing[0]!.config, region: 'new' },
+    }));
+    expect(unrelated.status).toBe(200);
+    expect(userPluginConfig.get(amy.id, 'crmdemo')).toMatchObject({ region: 'new', paths: '/legacy,path' });
+
+    for (const invalid of ['/changed', ['/ok', {}], { path: '/object' }, 7, [''], [' /space'], ['/dup', '/dup']]) {
+      const rejected = await app.request('/plugins/crmdemo/user-config', patch(amyTok, {
+        values: { ...listing[0]!.config, region: 'must-not-land', paths: invalid },
+      }));
+      expect(rejected.status, JSON.stringify(invalid)).toBe(400);
+      expect(userPluginConfig.get(amy.id, 'crmdemo')).toMatchObject({ region: 'new', paths: '/legacy,path' });
+    }
+
+    const valid = await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { paths: ['/one', '/two,three'] } }));
+    expect(valid.status).toBe(200);
+    expect(userPluginConfig.get(amy.id, 'crmdemo').paths).toEqual(['/one', '/two,three']);
+  });
+
+  it('validates changed user timezones while preserving an unchanged invalid legacy value', async () => {
+    const { app, userPluginConfig, amy, amyTok } = setup();
+    userPluginConfig.set(amy.id, 'crmdemo', { region: 'old', timezone: 'Mars/Olympus' });
+    const listing = await (await app.request('/plugins/user-config', auth(amyTok))).json() as View[];
+
+    const unrelated = await app.request('/plugins/crmdemo/user-config', patch(amyTok, {
+      values: { ...listing[0]!.config, region: 'new' },
+    }));
+    expect(unrelated.status).toBe(200);
+    expect(userPluginConfig.get(amy.id, 'crmdemo')).toMatchObject({ region: 'new', timezone: 'Mars/Olympus' });
+
+    const changedInvalid = await app.request('/plugins/crmdemo/user-config', patch(amyTok, {
+      values: { ...listing[0]!.config, region: 'must-not-land', timezone: 'Mars/Valles' },
+    }));
+    expect(changedInvalid.status).toBe(400);
+    expect(userPluginConfig.get(amy.id, 'crmdemo')).toMatchObject({ region: 'new', timezone: 'Mars/Olympus' });
   });
 
   it('drops an account\'s values when the account is deleted', async () => {

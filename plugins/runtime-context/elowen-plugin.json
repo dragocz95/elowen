@@ -6,6 +6,6 @@
   "entry": "index.mjs",
   "provides": {},
   "configSchema": [
-    { "key": "timezone", "label": "Timezone", "type": "string", "hint": "IANA timezone, e.g. Europe/Prague. Empty = the server's own timezone. This is YOUR timezone for the whole assistant: it sets the date/time injected into every turn AND the clock every scheduled job runs on, so \"daily 07:30\" fires at 07:30 where you are." }
+    { "key": "timezone", "label": "Timezone", "type": "timezone", "hint": "IANA timezone, e.g. Europe/Prague. Empty = the server's own timezone. This is YOUR timezone for the whole assistant: it sets the date/time injected into every turn AND the clock every scheduled job runs on, so \"daily 07:30\" fires at 07:30 where you are." }
   ]
 }

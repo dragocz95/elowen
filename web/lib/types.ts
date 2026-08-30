@@ -383,7 +383,7 @@ export interface PluginConfigField {
   type:
     | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
     | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers' | 'destination'
-    | 'projects' | 'plugins' | 'tools' | 'models';
+    | 'projects' | 'plugins' | 'tools' | 'models' | 'timezone' | 'tokenList';
   hint?: string;
   required?: boolean;
   /** For `number` fields: canonical stored bounds and step; `placeholder` typically shows the default value. */
@@ -397,9 +397,11 @@ export interface PluginConfigField {
     unit?: string;
     divisor?: number;
   };
+  /** Optional token-list browser. It adds a directory path; free-form values remain the authority. */
+  browse?: 'directory';
   /** Out-of-box value the settings form pre-fills when nothing is stored yet (mirrors the plugin's
    *  runtime fallback, so pre-filling never changes behavior). */
-  default?: string | number | boolean;
+  default?: string | number | boolean | string[];
   /** For `provider` fields: restrict the picker to configured providers of this type (e.g. `openai`). */
   providerType?: string;
   /** Choices for `enum`/`multiSelect` fields. */
