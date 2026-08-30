@@ -183,7 +183,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       label={t.memory.embeddingModelCustom}
       description={t.help.embeddingModelCustom}
       icon={PenLine}
-      control={<Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" variant="line" />}
+      control={<Input aria-label={t.memory.embeddingModelCustom} value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" variant="line" />}
     />
   );
   const rowDimensions = (
@@ -195,6 +195,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
         <Input
           type="number"
           inputMode="numeric"
+          aria-label={t.memory.embeddingDimensions}
           value={dimensions}
           onChange={(e) => setDimensions(e.target.value)}
           placeholder="1536"

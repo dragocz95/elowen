@@ -192,6 +192,77 @@ describe('PluginDetail config field layout', () => {
     fireEvent.click(within(rowOf('Streaming')).getByRole('switch', { name: 'Streaming' }));
     await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({ name: 'testy', values: { streaming: true } }), { timeout: 3000 });
   });
+
+  it('shows a scaled input with its unit and saves the canonical value', async () => {
+    usePluginDetail.mockReturnValue({ data: detail([{
+      key: 'timeoutMs', label: 'Timeout', type: 'number', min: 30000, max: 300000, step: 5000,
+      display: { control: 'input', unit: 's', divisor: 1000 },
+    }], { timeoutMs: 120000 }), isLoading: false });
+    renderDetail();
+
+    const row = rowOf('Timeout');
+    const input = within(row).getByRole('spinbutton', { name: 'Timeout' });
+    expect(input).toHaveValue(120);
+    expect(input).toHaveAttribute('min', '30');
+    expect(input).toHaveAttribute('max', '300');
+    expect(input).toHaveAttribute('step', '5');
+    expect(within(row).getByText('s')).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: '90' } });
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({ name: 'testy', values: { timeoutMs: 90000 } }), { timeout: 3000 });
+  });
+
+  it('renders an exact-step slider with keyboard control and a formatted readout', async () => {
+    usePluginDetail.mockReturnValue({ data: detail([{
+      key: 'timeoutMs', label: 'Timeout slider', type: 'number', min: 1000, max: 5000, step: 500,
+      display: { control: 'slider', unit: 's', divisor: 1000 },
+    }], { timeoutMs: 2500 }), isLoading: false });
+    renderDetail();
+
+    const row = rowOf('Timeout slider');
+    const slider = within(row).getByRole('slider', { name: 'Timeout slider' });
+    expect(slider).toHaveAttribute('aria-valuenow', '2.5');
+    expect(slider).toHaveAttribute('aria-valuetext', '2.5 s');
+    expect(within(row).getByText('2.5 s')).toBeInTheDocument();
+
+    slider.focus();
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    await waitFor(() => expect(slider).toHaveAttribute('aria-valuenow', '3'));
+    expect(slider).toHaveAttribute('aria-valuetext', '3 s');
+    expect(within(row).getByText('3 s')).toBeInTheDocument();
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({ name: 'testy', values: { timeoutMs: 3000 } }), { timeout: 3000 });
+  });
+
+  it.each([12, 2.5])('falls back to an exact number input for legacy slider value %s', async (legacyValue) => {
+    usePluginDetail.mockReturnValue({ data: detail([
+      {
+        key: 'maxResults', label: 'Search results', type: 'number', min: 1, max: 10, step: 1,
+        display: { control: 'slider', unit: 'results' },
+      },
+      { key: 'streaming', label: 'Streaming', type: 'boolean' },
+    ], { maxResults: legacyValue, streaming: false }), isLoading: false });
+    renderDetail();
+
+    const row = rowOf('Search results');
+    expect(within(row).queryByRole('slider', { name: 'Search results' })).toBeNull();
+    expect(within(row).getByRole('spinbutton', { name: 'Search results' })).toHaveValue(legacyValue);
+    expect(within(row).getByText('results')).toBeInTheDocument();
+
+    fireEvent.click(within(rowOf('Streaming')).getByRole('switch', { name: 'Streaming' }));
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith({
+      name: 'testy', values: { maxResults: legacyValue, streaming: true },
+    }), { timeout: 3000 });
+  });
+
+  it('names a plugin provider radiogroup from the manifest label', () => {
+    useConfig.mockReturnValue({ data: { brain: { providers: [{ id: 'openai', label: 'OpenAI', type: 'openai', apiKeySet: true }] } } });
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'speechProvider', label: 'Speech provider', type: 'provider', providerType: 'openai' },
+    ], { speechProvider: 'openai' }), isLoading: false });
+    renderDetail();
+
+    expect(screen.getByRole('radiogroup', { name: 'Speech provider' })).toBeInTheDocument();
+  });
 });
 
 describe('PluginDetail document-shaped fields', () => {

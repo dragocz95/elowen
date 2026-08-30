@@ -26,6 +26,7 @@ import type { BrainModelOption, PluginConfigField, PluginDetail, RolePolicy, Mcp
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
+import { Slider } from '../../components/ui/Slider';
 
 
 // A settings-group icon for an author-declared config section, inferred from its key/label. Falls back to
@@ -375,13 +376,48 @@ function McpServersEditor({ value, onChange }: { value: McpServerSpec[]; onChang
  *  is reused as the plugin's credentials, so no key is entered twice). Filtered to those with a key set
  *  and — when the field declares `providerType` — that type (e.g. `openai`, the only one with audio).
  *  Rendering is the shared ProviderPicker; this wrapper just applies the plugin-field filter. */
-function PluginProviderField({ value, onChange, providerType }: { value: string; onChange: (v: string) => void; providerType?: string }) {
+function PluginProviderField({ label, value, onChange, providerType }: { label: string; value: string; onChange: (v: string) => void; providerType?: string }) {
   const { data: config } = useConfig();
   const { t } = useTranslation();
   const { agentName } = useBrand();
   const providers = (config?.brain?.providers ?? []).filter((p) => p.apiKeySet && (!providerType || p.type === providerType));
-  return <ProviderPicker providers={providers} value={value} onChange={onChange} emptyText={interpolate(t.pluginCfg.noProviders, { agentName })} size="sm" />;
+  return <ProviderPicker providers={providers} value={value} onChange={onChange} label={label} emptyText={interpolate(t.pluginCfg.noProviders, { agentName })} size="sm" />;
 }
+
+const numberDivisor = (field: PluginConfigField): number => field.display?.divisor ?? 1;
+const displayNumber = (field: PluginConfigField, canonical: number): number => canonical / numberDivisor(field);
+const displayBound = (value: number | undefined, divisor: number): number | undefined => value === undefined ? undefined : value / divisor;
+const displayPlaceholder = (field: PluginConfigField): string | undefined => {
+  if (field.placeholder === undefined || numberDivisor(field) === 1) return field.placeholder;
+  const value = Number(field.placeholder);
+  return Number.isFinite(value) ? String(displayNumber(field, value)) : field.placeholder;
+};
+const decimalPlaces = (value: number): number => {
+  const [mantissa, exponentText] = String(value).toLowerCase().split('e');
+  const fraction = mantissa?.split('.')[1]?.length ?? 0;
+  return Math.max(0, fraction - Number(exponentText ?? 0));
+};
+const stepAligned = (value: number, base: number, step: number): boolean => {
+  const nearest = base + Math.round((value - base) / step) * step;
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(base), Math.abs(step), Math.abs(nearest)) * 8;
+  return Math.abs(value - nearest) <= tolerance;
+};
+const sliderCurrentValid = (field: PluginConfigField, canonical: number | undefined): canonical is number => (
+  canonical !== undefined
+  && canonical >= field.min!
+  && canonical <= field.max!
+  && stepAligned(canonical, field.min!, field.step!)
+);
+const sliderCanonicalValue = (field: PluginConfigField, displayed: number): number => {
+  const divisor = numberDivisor(field);
+  const min = field.min!;
+  const max = field.max!;
+  const step = field.step!;
+  const displayedMin = min / divisor;
+  const displayedStep = step / divisor;
+  const stepIndex = Math.round((displayed - displayedMin) / displayedStep);
+  return Math.min(max, Math.max(min, min + stepIndex * step));
+};
 
 /** The record a {@link MODAL_FIELD_TYPES} field wears: a summary trigger in the control cell, and the
  *  real editor in a modal raised from it. The trigger is named after the FIELD, not after what is stored,
@@ -455,7 +491,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   /** Custom plugin workspaces may expose the package download in their hero instead. */
   showAppPackage?: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const { data: brainModels } = useBrainModels();
   const { values, setValue: set } = draft;
   const [replacingSecrets, setReplacingSecrets] = useState<Set<string>>(new Set());
@@ -466,8 +502,52 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
     switch (f.type) {
       case 'boolean':
         return <Toggle checked={values[f.key] === true} onChange={(v) => set(f.key, v)} label={fieldLabel(f)} />;
-      case 'number':
-        return <Input type="number" min={f.min} max={f.max} step={f.step} placeholder={f.placeholder} aria-label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value === '' ? null : Number(e.target.value))} />;
+      case 'number': {
+        const divisor = numberDivisor(f);
+        const raw = values[f.key];
+        const numeric = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
+        const canonical = Number.isFinite(numeric) ? numeric : undefined;
+        const displayed = divisor === 1 ? String(raw ?? '') : canonical === undefined ? String(raw ?? '') : String(displayNumber(f, canonical));
+        const unit = f.display?.unit?.trim();
+        if (f.display?.control === 'slider' && (raw === undefined || sliderCurrentValid(f, canonical))) {
+          const fallback = typeof f.default === 'number' && Number.isFinite(f.default) ? f.default : f.min!;
+          const sliderValue = displayNumber(f, canonical ?? fallback);
+          const sliderMin = f.min! / divisor;
+          const sliderMax = f.max! / divisor;
+          const sliderStep = f.step! / divisor;
+          const maximumFractionDigits = Math.min(20, Math.max(decimalPlaces(sliderMin), decimalPlaces(sliderStep)));
+          const formatted = new Intl.NumberFormat(locale, { maximumFractionDigits }).format(sliderValue);
+          const readout = unit ? `${formatted} ${unit}` : formatted;
+          return (
+            <div className="flex w-full min-w-0 items-center gap-3">
+              <Slider
+                value={sliderValue}
+                min={sliderMin}
+                max={sliderMax}
+                step={sliderStep}
+                onChange={(value) => set(f.key, sliderCanonicalValue(f, value))}
+                aria-label={fieldLabel(f)}
+                aria-valuetext={readout}
+                className="min-w-24 flex-1"
+              />
+              <span className="shrink-0 font-mono text-sm tabular-nums text-primary">{readout}</span>
+            </div>
+          );
+        }
+        const input = (
+          <Input
+            type="number"
+            min={displayBound(f.min, divisor)}
+            max={displayBound(f.max, divisor)}
+            step={displayBound(f.step, divisor)}
+            placeholder={displayPlaceholder(f)}
+            aria-label={fieldLabel(f)}
+            value={displayed}
+            onChange={(e) => set(f.key, e.target.value === '' ? null : Number(e.target.value) * divisor)}
+          />
+        );
+        return unit ? <div className="flex items-center gap-2">{input}<span className="shrink-0 text-sm text-muted-foreground">{unit}</span></div> : input;
+      }
       case 'secret':
         return <Input type="password" aria-label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} autoComplete="off" />;
       case 'model':
@@ -478,7 +558,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={brainModels ?? []} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
       case 'provider':
         // Reuse a configured brain provider's key as this plugin's credentials (voice, image gen).
-        return <PluginProviderField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} providerType={f.providerType} />;
+        return <PluginProviderField label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} providerType={f.providerType} />;
       case 'destination':
         return <DestinationField label={fieldLabel(f)} hint={fieldHint(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
       case 'projects': {

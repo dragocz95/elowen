@@ -32,6 +32,7 @@ function crmPluginDir(opts: { userGrantable?: boolean } = {}): string {
     userConfigSchema: [
       { key: 'apiKey', label: 'API key', type: 'secret' },
       { key: 'region', label: 'Region', type: 'string', default: 'eu' },
+      { key: 'seats', label: 'Seats', type: 'number', min: 1, max: 10, step: 1, default: 3 },
     ],
   }));
   writeFileSync(join(dir, 'index.mjs'), `
@@ -125,6 +126,26 @@ describe('per-user plugin config', () => {
     expect(after.config.region).toBe('eu');
     const seen = ((await (await app.request('/crmdemo', auth(amyTok))).json()) as { seen: Record<string, unknown> }).seen;
     expect(seen).toEqual({ apiKey: 'amy-key' });
+  });
+
+  it('keeps an unchanged legacy-invalid number in a full snapshot while saving another user field', async () => {
+    const { app, userPluginConfig, amy, amyTok } = setup();
+    userPluginConfig.set(amy.id, 'crmdemo', { apiKey: 'legacy-key', region: 'old', seats: 4.5 });
+    const listing = await (await app.request('/plugins/user-config', auth(amyTok))).json() as View[];
+    expect(listing[0]!.config.seats).toBe(4.5);
+
+    const saved = await app.request('/plugins/crmdemo/user-config', patch(amyTok, {
+      values: { ...listing[0]!.config, apiKey: '', region: 'new' },
+    }));
+    expect(saved.status).toBe(200);
+    expect(userPluginConfig.get(amy.id, 'crmdemo')).toEqual({ apiKey: 'legacy-key', region: 'new', seats: 4.5 });
+
+    const changedInvalid = await app.request('/plugins/crmdemo/user-config', patch(amyTok, {
+      values: { ...listing[0]!.config, region: 'must-not-land', seats: 5.5 },
+    }));
+    expect(changedInvalid.status).toBe(400);
+    expect(await changedInvalid.json()).toEqual({ error: 'invalid value for "seats": must align to step 1 from 1' });
+    expect(userPluginConfig.get(amy.id, 'crmdemo')).toEqual({ apiKey: 'legacy-key', region: 'new', seats: 4.5 });
   });
 
   it('drops an account\'s values when the account is deleted', async () => {
