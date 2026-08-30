@@ -91,6 +91,9 @@
       "step": 5,
       "placeholder": "20",
       "default": 20,
+      "display": {
+        "control": "slider"
+      },
       "hint": "Maximum PDF pages one Read call may request. Raising this limit lets the model request wider ranges. Range 5–50; default 20."
     }
   ]

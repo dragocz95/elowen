@@ -27,6 +27,7 @@ import type { PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginU
 import { BASE, apiErrorMessage, elowenClient, ElowenApiError } from './elowenClient';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { Slider } from '../components/ui/Slider';
 import { Avatar as UserAvatar } from '../components/ui/Avatar';
 import { Badge } from '../components/ui/Badge';
 import { Field } from '../components/ui/Field';
@@ -123,7 +124,7 @@ import { eventIcon } from './eventMeta';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 9;
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 10;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -290,7 +291,7 @@ export function ensurePluginUiRuntime(): void {
     // a compatibility CEILING (`entry.apiVersion <= host`), so it can announce an ADDITION and cannot
     // express a removal at all; that is exactly why a referenced primitive must not be withdrawn.
     components: {
-      Button, Input, Avatar: PluginAvatar, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
+      Button, Input, Slider, Avatar: PluginAvatar, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
       Toggle, ModuleHeader, Segmented, SelectMenu, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
       MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
       // Page chrome a plugin page needs to look like every built-in workspace, not like a bundle that

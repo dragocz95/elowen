@@ -53,7 +53,8 @@ function setup() {
     configSchema: [
       { key: 'botToken', label: 'Bot token', type: 'secret', required: true },
       { key: 'guildId', label: 'Guild ID', type: 'string' },
-      { key: 'historyLimit', label: 'History', type: 'number', default: 25 },
+      { key: 'historyLimit', label: 'History', type: 'number', min: 0, max: 100, step: 5, default: 25 },
+      { key: 'preciseLimit', label: 'Precise limit', type: 'number', min: 1_000_000_000, max: 1_000_000_001, step: 0.1, default: 1_000_000_000 },
       { key: 'rolePolicies', label: 'Role policies', type: 'rolePolicies' },
     ],
   });
@@ -103,7 +104,7 @@ describe('plugin routes', () => {
     const res = await app.request('/plugins/discord', auth(adminTok));
     expect(res.status).toBe(200);
     const body = await res.json() as { config: Record<string, unknown>; secretsSet: string[]; configSchema: { key: string }[] };
-    expect(body.configSchema.map((f) => f.key)).toEqual(['botToken', 'guildId', 'historyLimit', 'rolePolicies']);
+    expect(body.configSchema.map((f) => f.key)).toEqual(['botToken', 'guildId', 'historyLimit', 'preciseLimit', 'rolePolicies']);
     expect(body.config.guildId).toBe('g1');
     expect(body.config.botToken).toBeUndefined();
     expect(body.secretsSet).toEqual(['botToken']);
@@ -135,6 +136,54 @@ describe('plugin routes', () => {
     await app.request('/plugins/discord/config', patch(adminTok, { values: { historyLimit: null, botToken: null } }));
     expect(config.pluginConfig('discord').historyLimit).toBeUndefined();
     expect(config.pluginConfig('discord').botToken).toBe('tok-123');
+  });
+
+  it('rejects out-of-range and step-invalid numbers without persisting or reloading', async () => {
+    const { app, config, reloadPlugins, adminTok } = setup();
+    await app.request('/plugins/discord/config', patch(adminTok, { values: { historyLimit: 30 } }));
+    reloadPlugins.mockClear();
+
+    const outOfRange = await app.request('/plugins/discord/config', patch(adminTok, { values: { historyLimit: 105 } }));
+    expect(outOfRange.status).toBe(400);
+    expect(await outOfRange.json()).toEqual({ error: 'invalid value for "historyLimit": must be at most 100' });
+    expect(config.pluginConfig('discord').historyLimit).toBe(30);
+
+    const offStep = await app.request('/plugins/discord/config', patch(adminTok, { values: { historyLimit: 32 } }));
+    expect(offStep.status).toBe(400);
+    expect(await offStep.json()).toEqual({ error: 'invalid value for "historyLimit": must align to step 5 from 0' });
+    expect(config.pluginConfig('discord').historyLimit).toBe(30);
+    expect(reloadPlugins).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unchanged legacy-invalid number in a full snapshot while saving another admin field', async () => {
+    const { app, config, adminTok } = setup();
+    config.update({ plugins: { config: { discord: { botToken: 'legacy-secret', guildId: 'old', historyLimit: 101 } } } });
+    const view = await (await app.request('/plugins/discord', auth(adminTok))).json() as { config: Record<string, unknown> };
+    expect(view.config.historyLimit).toBe(101);
+
+    const saved = await app.request('/plugins/discord/config', patch(adminTok, {
+      values: { ...view.config, botToken: '', guildId: 'new' },
+    }));
+    expect(saved.status).toBe(200);
+    expect(config.pluginConfig('discord')).toMatchObject({ botToken: 'legacy-secret', guildId: 'new', historyLimit: 101 });
+
+    const changedInvalid = await app.request('/plugins/discord/config', patch(adminTok, {
+      values: { ...view.config, guildId: 'must-not-land', historyLimit: 102 },
+    }));
+    expect(changedInvalid.status).toBe(400);
+    expect(config.pluginConfig('discord')).toMatchObject({ guildId: 'new', historyLimit: 101 });
+  });
+
+  it('accepts an aligned decimal step above a large nonzero min and rejects a real off-step value', async () => {
+    const { app, config, adminTok } = setup();
+    const aligned = await app.request('/plugins/discord/config', patch(adminTok, { values: { preciseLimit: 1_000_000_000.3 } }));
+    expect(aligned.status).toBe(200);
+    expect(config.pluginConfig('discord').preciseLimit).toBe(1_000_000_000.3);
+
+    const offStep = await app.request('/plugins/discord/config', patch(adminTok, { values: { preciseLimit: 1_000_000_000.35 } }));
+    expect(offStep.status).toBe(400);
+    expect(await offStep.json()).toEqual({ error: 'invalid value for "preciseLimit": must align to step 0.1 from 1000000000' });
+    expect(config.pluginConfig('discord').preciseLimit).toBe(1_000_000_000.3);
   });
 
   it('PATCH toggles a plugin, persists config, and hot-reloads the brain', async () => {

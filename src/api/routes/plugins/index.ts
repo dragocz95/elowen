@@ -14,6 +14,31 @@ import { registerBrainOAuthRoutes } from './oauth.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../../brain/tools/index.js';
 import { makeToolIconResolver } from '../../../brain/toolIcons.js';
 
+class PluginConfigValueError extends Error {}
+
+/** HTML number attributes are guidance, not a trust boundary. The write path enforces the same canonical
+ *  range and step before any store changes; legacy values already on disk remain readable unchanged. */
+function validateNumberValue(field: PluginConfigField, value: unknown): void {
+  if (field.type !== 'number' || value === null || value === undefined) return;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new PluginConfigValueError(`invalid value for "${field.key}": expected a finite number`);
+  }
+  if (field.min !== undefined && value < field.min) {
+    throw new PluginConfigValueError(`invalid value for "${field.key}": must be at least ${field.min}`);
+  }
+  if (field.max !== undefined && value > field.max) {
+    throw new PluginConfigValueError(`invalid value for "${field.key}": must be at most ${field.max}`);
+  }
+  if (field.step !== undefined) {
+    const base = field.min ?? 0;
+    const nearest = base + Math.round((value - base) / field.step) * field.step;
+    const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(base), Math.abs(field.step), Math.abs(nearest)) * 8;
+    if (Math.abs(value - nearest) > tolerance) {
+      throw new PluginConfigValueError(`invalid value for "${field.key}": must align to step ${field.step} from ${base}`);
+    }
+  }
+}
+
 /** Apply a config patch to the stored values, by the ONE rule both config forms follow: a key the caller
  *  did not send is left alone, an explicit `null` clears a non-secret back to its default, and a secret
  *  arriving empty keeps whatever is stored (the forms round-trip secrets write-only, so "empty" means
@@ -30,6 +55,8 @@ function applyConfigPatch(
     if (v === undefined) continue;
     if (f.type === 'secret' && (v === '' || v === null)) continue;
     if (v === null) { delete next[f.key]; continue; }
+    const effectiveCurrent = stored[f.key] !== undefined ? stored[f.key] : f.default;
+    if (f.type !== 'number' || !Object.is(v, effectiveCurrent)) validateNumberValue(f, v);
     next[f.key] = v;
   }
   return next;
@@ -337,7 +364,13 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown> } | null;
     if (!b || typeof b.values !== 'object' || b.values === null) return c.json({ error: 'values must be an object' }, 400);
     const schema = plugin.manifest.userConfigSchema ?? [];
-    store.set(user.id, name, applyConfigPatch(schema, store.get(user.id, name), b.values));
+    let next: Record<string, unknown>;
+    try { next = applyConfigPatch(schema, store.get(user.id, name), b.values); }
+    catch (error) {
+      if (error instanceof PluginConfigValueError) return c.json({ error: error.message }, 400);
+      throw error;
+    }
+    store.set(user.id, name, next);
     return c.json(userConfigView(name, schema, store.get(user.id, name)));
   });
 
@@ -433,7 +466,12 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!manifest) return c.json({ error: 'unknown plugin' }, 404);
     const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown> } | null;
     if (!b || typeof b.values !== 'object' || b.values === null) return c.json({ error: 'values must be an object' }, 400);
-    const stored = applyConfigPatch(manifest.configSchema ?? [], d.config.pluginConfig(name), b.values);
+    let stored: Record<string, unknown>;
+    try { stored = applyConfigPatch(manifest.configSchema ?? [], d.config.pluginConfig(name), b.values); }
+    catch (error) {
+      if (error instanceof PluginConfigValueError) return c.json({ error: error.message }, 400);
+      throw error;
+    }
     d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } });
     return applied(c, { ok: true }, await d.brain?.reloadPlugins());
   });

@@ -94,4 +94,10 @@ describe('MemorySection — categorization model picker', () => {
     // No model saved → the pinned None row is the current pick.
     expect(await screen.findByRole('button', { name: en.managePicker.none })).toHaveAttribute('aria-pressed', 'true');
   });
+
+  it('gives the custom model and optional dimensions inputs explicit translated names', () => {
+    renderSection();
+    expect(screen.getByRole('textbox', { name: en.memory.embeddingModelCustom })).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: en.memory.embeddingDimensions })).toHaveValue(1536);
+  });
 });

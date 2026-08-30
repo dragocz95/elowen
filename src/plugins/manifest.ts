@@ -49,11 +49,17 @@ export interface PluginConfigField {
   type: PluginConfigFieldType;
   hint?: string;
   required?: boolean;
-  /** For `number` fields: the input bounds and step; `placeholder` typically shows the default value. */
+  /** For `number` fields: canonical stored bounds and step; `placeholder` typically shows the default value. */
   min?: number;
   max?: number;
   step?: number;
   placeholder?: string;
+  /** Explicit number presentation. Bounds and values remain canonical; `divisor` converts them for display. */
+  display?: {
+    control?: 'input' | 'slider';
+    unit?: string;
+    divisor?: number;
+  };
   /** Out-of-box value the settings form pre-fills when nothing is stored yet. Must equal the plugin's
    *  own runtime fallback for the key, so pre-filling never changes behavior. */
   default?: string | number | boolean;
@@ -247,6 +253,11 @@ const ConfigFieldSchema = Type.Object({
   max: Type.Optional(Type.Number()),
   step: Type.Optional(Type.Number()),
   placeholder: Type.Optional(Type.String()),
+  display: Type.Optional(Type.Object({
+    control: Type.Optional(Type.Union([Type.Literal('input'), Type.Literal('slider')])),
+    unit: Type.Optional(Type.String()),
+    divisor: Type.Optional(Type.Number()),
+  })),
   default: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
   providerType: Type.Optional(Type.String()),
   options: Type.Optional(Type.Array(Type.Object({
@@ -376,6 +387,12 @@ function dropUnrenderableFields(raw: unknown, onWarn?: (message: string) => void
   return sanitized ?? raw;
 }
 
+function isStepAligned(value: number, base: number, step: number): boolean {
+  const nearest = base + Math.round((value - base) / step) * step;
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(base), Math.abs(step), Math.abs(nearest)) * 8;
+  return Math.abs(value - nearest) <= tolerance;
+}
+
 /** Validate a raw parsed `elowen-plugin.json`. Throws a descriptive Error on any problem (bad shape, an
  *  apiVersion the daemon doesn't support, a shared-helper contract it doesn't ship), so the loader can
  *  skip the plugin and log why.
@@ -392,6 +409,60 @@ export function parseManifest(raw: unknown, onWarn?: (message: string) => void):
     throw new Error(`invalid plugin manifest: ${first ? `${first.instancePath || '/'} ${first.message}` : 'shape mismatch'}`);
   }
   const m = candidate as PluginManifest;
+  for (const schemaKey of ['configSchema', 'userConfigSchema'] as const) {
+    for (const [index, field] of (m[schemaKey] ?? []).entries()) {
+      const path = `/${schemaKey}/${index}`;
+      if (field.display?.divisor !== undefined && (!Number.isFinite(field.display.divisor) || field.display.divisor <= 0)) {
+        throw new Error(`invalid plugin manifest: ${path}/display/divisor must be finite and greater than 0`);
+      }
+      if (field.type !== 'number') {
+        if (field.display?.control === 'slider') {
+          throw new Error(`invalid plugin manifest: ${path}/display/control slider requires a number field`);
+        }
+        continue;
+      }
+      if (field.min !== undefined && !Number.isFinite(field.min)) {
+        throw new Error(`invalid plugin manifest: ${path}/min must be finite`);
+      }
+      if (field.max !== undefined && !Number.isFinite(field.max)) {
+        throw new Error(`invalid plugin manifest: ${path}/max must be finite`);
+      }
+      if (field.step !== undefined && (!Number.isFinite(field.step) || field.step <= 0)) {
+        throw new Error(`invalid plugin manifest: ${path}/step must be finite and greater than 0`);
+      }
+      if (field.min !== undefined && field.max !== undefined && field.min > field.max) {
+        throw new Error(`invalid plugin manifest: ${path}/min must be less than or equal to max`);
+      }
+      if (field.default !== undefined) {
+        if (typeof field.default !== 'number' || !Number.isFinite(field.default)) {
+          throw new Error(`invalid plugin manifest: ${path}/default must be a finite number`);
+        }
+        if (field.min !== undefined && field.default < field.min) {
+          throw new Error(`invalid plugin manifest: ${path}/default must be at least min ${field.min}`);
+        }
+        if (field.max !== undefined && field.default > field.max) {
+          throw new Error(`invalid plugin manifest: ${path}/default must be at most max ${field.max}`);
+        }
+        if (field.step !== undefined) {
+          const base = field.min ?? 0;
+          if (!isStepAligned(field.default, base, field.step)) {
+            throw new Error(`invalid plugin manifest: ${path}/default must align to step ${field.step} from ${base}`);
+          }
+        }
+      }
+      if (field.display?.control === 'slider') {
+        if (field.min === undefined || field.max === undefined || field.step === undefined) {
+          throw new Error(`invalid plugin manifest: ${path}/display/control slider requires min, max, and step`);
+        }
+        if (field.min === field.max) {
+          throw new Error(`invalid plugin manifest: ${path}/display/control slider requires min to be less than max`);
+        }
+        if (!isStepAligned(field.max, field.min, field.step)) {
+          throw new Error(`invalid plugin manifest: ${path}/max must be reachable from min ${field.min} by step ${field.step}`);
+        }
+      }
+    }
+  }
   if (m.apiVersion !== PLUGIN_API_VERSION) {
     throw new Error(`unsupported plugin apiVersion "${m.apiVersion}" (need "${PLUGIN_API_VERSION}")`);
   }

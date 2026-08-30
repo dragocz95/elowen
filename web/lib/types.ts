@@ -386,11 +386,17 @@ export interface PluginConfigField {
     | 'projects' | 'plugins' | 'tools' | 'models';
   hint?: string;
   required?: boolean;
-  /** For `number` fields: input bounds and step; `placeholder` typically shows the default value. */
+  /** For `number` fields: canonical stored bounds and step; `placeholder` typically shows the default value. */
   min?: number;
   max?: number;
   step?: number;
   placeholder?: string;
+  /** Explicit number presentation. Bounds and values remain canonical; `divisor` converts them for display. */
+  display?: {
+    control?: 'input' | 'slider';
+    unit?: string;
+    divisor?: number;
+  };
   /** Out-of-box value the settings form pre-fills when nothing is stored yet (mirrors the plugin's
    *  runtime fallback, so pre-filling never changes behavior). */
   default?: string | number | boolean;

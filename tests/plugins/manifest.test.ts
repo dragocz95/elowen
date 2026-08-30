@@ -88,6 +88,59 @@ describe('parseManifest', () => {
     }
     expect(m.configSchema?.find((f) => f.type === 'provider')?.providerType).toBe('openai');
   });
+  it('accepts explicit numeric display metadata for inputs and bounded sliders', () => {
+    const m = parseManifest({
+      ...good,
+      configSchema: [
+        { key: 'timeout', label: 'Timeout', type: 'number', display: { control: 'input', unit: 's', divisor: 1000 } },
+        { key: 'results', label: 'Results', type: 'number', min: 1, max: 10, step: 1, display: { control: 'slider' } },
+      ],
+    });
+    expect(m.configSchema?.[0]?.display).toEqual({ control: 'input', unit: 's', divisor: 1000 });
+    expect(m.configSchema?.[1]?.display?.control).toBe('slider');
+  });
+  it('rejects invalid divisors', () => {
+    for (const divisor of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => parseManifest({
+        ...good,
+        configSchema: [{ key: 'n', label: 'N', type: 'number', display: { divisor } }],
+      }), String(divisor)).toThrow(/divisor/);
+    }
+  });
+  it('requires finite coherent constraints and defaults on every number field', () => {
+    const field = (extra: Record<string, unknown>) => ({ key: 'n', label: 'N', type: 'number', ...extra });
+    for (const [extra, path] of [
+      [{ min: Number.NaN }, '/min'],
+      [{ max: Number.POSITIVE_INFINITY }, '/max'],
+      [{ step: Number.NaN }, '/step'],
+      [{ default: Number.NaN }, '/default'],
+    ] as const) {
+      expect(() => parseManifest({ ...good, configSchema: [field(extra)] })).toThrow(path);
+    }
+    expect(() => parseManifest({ ...good, configSchema: [field({ step: 0 })] }))
+      .toThrow('/configSchema/0/step must be finite and greater than 0');
+    expect(() => parseManifest({ ...good, configSchema: [field({ min: 2, max: 1 })] }))
+      .toThrow('/configSchema/0/min must be less than or equal to max');
+    expect(() => parseManifest({ ...good, configSchema: [field({ min: 1, max: 10, default: 0 })] }))
+      .toThrow('/configSchema/0/default must be at least min 1');
+    expect(() => parseManifest({ ...good, configSchema: [field({ min: 1, max: 10, default: 11 })] }))
+      .toThrow('/configSchema/0/default must be at most max 10');
+    expect(() => parseManifest({ ...good, configSchema: [field({ min: 1, max: 10, step: 2, default: 4 })] }))
+      .toThrow('/configSchema/0/default must align to step 2 from 1');
+    expect(() => parseManifest({ ...good, configSchema: [field({ default: '5' })] }))
+      .toThrow('/configSchema/0/default must be a finite number');
+  });
+  it('requires a slider range whose max is exactly reachable from min', () => {
+    const slider = (extra: Record<string, unknown>) => ({ key: 'n', label: 'N', type: 'number', display: { control: 'slider' }, ...extra });
+    expect(() => parseManifest({ ...good, configSchema: [slider({ max: 10, step: 1 })] }))
+      .toThrow('/configSchema/0/display/control slider requires min, max, and step');
+    expect(() => parseManifest({ ...good, configSchema: [slider({ min: 1, max: 1, step: 1 })] }))
+      .toThrow('/configSchema/0/display/control slider requires min to be less than max');
+    expect(() => parseManifest({ ...good, configSchema: [slider({ min: 0, max: 1, step: 0.4 })] }))
+      .toThrow('/configSchema/0/max must be reachable from min 0 by step 0.4');
+    expect(() => parseManifest({ ...good, configSchema: [{ key: 'n', label: 'N', type: 'string', min: 1, max: 10, step: 1, display: { control: 'slider' } }] }))
+      .toThrow('/configSchema/0/display/control slider requires a number field');
+  });
   it('accepts options/help/risk/advanced/visibleWhen/language props', () => {
     const m = parseManifest({
       ...good,
