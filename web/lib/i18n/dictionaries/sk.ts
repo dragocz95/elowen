@@ -1471,6 +1471,7 @@ export const sk = {
     done: 'hotovo',
     error: 'chyba',
     openTranscript: 'Otvoriť prepis sub-agenta',
+    sandboxed: 'Beží v izolovanom sandboxe',
   },
   brainChat: {
     loadingOlder: 'Načítavanie starších správ',

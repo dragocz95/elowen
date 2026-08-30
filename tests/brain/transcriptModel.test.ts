@@ -397,16 +397,17 @@ describe('TranscriptModel', () => {
       detail: 'Read src/a.ts', tools: 2, tokens: 100, seconds: 3, model: 'test-model',
       thinkingLevel: 'high', thinkingLabel: 'High',
       startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:03',
-      background: true, autoDeliver: true, resultDelivery: 'pending',
+      background: true, autoDeliver: true, resultDelivery: 'pending', workspaceId: 'ws_abc123',
     });
 
     expect(model.turnCount).toBe(beforeTurns);
     expect(toolItem(model, 0, 'delegate-old').sub).toMatchObject({ sessionId: 'child-1', tools: 2 });
     // The child's own reasoning level rides the projection so the drilled-in status bar can show it.
+    // `workspaceId` mirrors it — it is what the CLI's sandboxed-run glyph next to the status icon keys on.
     expect(model.subagents()).toEqual([expect.objectContaining({
       sessionId: 'child-1', status: 'running', thinkingLevel: 'high', thinkingLabel: 'High',
       startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:03',
-      background: true, autoDeliver: true, resultDelivery: 'pending',
+      background: true, autoDeliver: true, resultDelivery: 'pending', workspaceId: 'ws_abc123',
     })]);
 
     const projection = model.subagents();

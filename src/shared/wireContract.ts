@@ -48,7 +48,15 @@ export interface BrainSubagentView {
   background?: boolean;
   autoDeliver?: boolean;
   resultDelivery?: 'pending' | 'acknowledged';
+  /** Sandbox workspace the child was confined to (Delegate's `workspaceId`), when it ran scoped to one.
+   *  Display-only signal for the sandboxed-run icon; absent means the legacy project-scope run. */
+  workspaceId?: string;
 }
+
+/** Trusted durable Sandbox-workspace anchor a delegated child or workflow node ran confined to. Mirrors
+ *  `WorkflowWorkspaceRef` (src/brain/events.ts) — this file imports nothing, so the shape is duplicated
+ *  here rather than imported; keep both in sync by hand. Contains no host path, display-only. */
+export interface BrainWorkspaceRefView { workspaceId: string; projectId: number }
 
 /** Durable latest state of a workflow DAG attached to its `WorkflowStart` call. */
 export interface BrainWorkflowView {
@@ -56,6 +64,9 @@ export interface BrainWorkflowView {
   toolCallId: string;
   title?: string;
   status: 'running' | 'done' | 'error' | 'cancelled';
+  /** Set when the whole DAG was launched confined to one Sandbox workspace (WorkflowStart's
+   *  `workspaceId`) — drives the sandboxed-run icon on the workflow's rail row. */
+  workspaceRef?: BrainWorkspaceRefView;
   nodes: {
     id: string;
     task: string;
@@ -71,6 +82,8 @@ export interface BrainWorkflowView {
     /** Short preview of a terminal node's outcome (bounded by the engine and again on persist). */
     result?: string;
     error?: string;
+    /** Per-node workspace scope, when it narrows (or repeats) the workflow's own workspaceRef above. */
+    workspaceRef?: BrainWorkspaceRefView;
   }[];
 }
 

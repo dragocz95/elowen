@@ -155,6 +155,8 @@ export interface SubagentPanelEntry {
   background?: boolean;
   autoDeliver?: boolean;
   resultDelivery?: 'pending' | 'acknowledged';
+  /** Sandbox workspace the child was confined to — drives the `⎇` sandboxed-run glyph on this row. */
+  workspaceId?: string;
 }
 
 /** A bounded live list shared by the telemetry rail and its narrow-terminal chat fallback — a spinner
@@ -228,11 +230,21 @@ export class SubagentPanel implements Component {
       // truncateToWidth fences its '…' ellipsis with a `\x1b[0m` reset. On the selected row that reset ends
       // the highlight background early (SGR has no stack), so strip SGR here to keep these strings truly
       // plain — the contract the coloured branches below rely on.
-      const metaPlain = stripSgr(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
-      const taskPlain = stripSgr(truncateToWidth(inlineText(e.task), Math.max(10, width - visibleWidth(metaPlain) - 12), '…'));
+      let metaPlain = stripSgr(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
+      // The sandbox glyph (`⎇ `, 2 cols) is carved out of the task budget up front so a workspace-scoped
+      // row keeps the same overall width as an unscoped one instead of overflowing by two columns.
+      const sandboxBudget = e.workspaceId ? 2 : 0;
+      const taskPlain = stripSgr(truncateToWidth(inlineText(e.task), Math.max(10, width - visibleWidth(metaPlain) - 12 - sandboxBudget), '…'));
       const iconPlain = e.status === 'running' ? '●' : e.status === 'done' ? '✓' : '✗';
-      const rowPlain = `    ${iconPlain} ${taskPlain} click`;
-      const gap = Math.max(1, width - visibleWidth(rowPlain) - visibleWidth(metaPlain) - 2);
+      const sandboxGlyphPlain = e.workspaceId ? '⎇ ' : '';
+      const rowPlain = `    ${iconPlain} ${sandboxGlyphPlain}${taskPlain} click`;
+      let gap = width - visibleWidth(rowPlain) - visibleWidth(metaPlain) - 2;
+      if (gap < 1) {
+        // The task text already floors at 10 columns, so a narrow panel (e.g. its 36-column minimum)
+        // cannot free more room there — shrink the meta column instead of letting the row overflow.
+        metaPlain = stripSgr(truncateToWidth(metaPlain, Math.max(0, width - visibleWidth(rowPlain) - 1), '…'));
+        gap = Math.max(0, width - visibleWidth(rowPlain) - visibleWidth(metaPlain));
+      }
       this.rowTargets.set(lines.length, e.sessionId);
       if (e.sessionId === this.selected) {
         // Strip once more AFTER padAnsi: when the row overflows, padAnsi truncates and re-inserts an
@@ -241,7 +253,8 @@ export class SubagentPanel implements Component {
         continue;
       }
       const icon = e.status === 'running' ? color.warning('●') : e.status === 'done' ? color.success('✓') : color.error('✗');
-      lines.push(`    ${icon} ${DIM(taskPlain)} ${FAINTC('click')}${' '.repeat(gap)}${FAINTC(metaPlain)}`);
+      const sandboxGlyph = e.workspaceId ? `${color.faint('⎇')} ` : '';
+      lines.push(`    ${icon} ${sandboxGlyph}${DIM(taskPlain)} ${FAINTC('click')}${' '.repeat(gap)}${FAINTC(metaPlain)}`);
     }
     // A clickable pager row makes the hidden overflow discoverable (the wheel alone was invisible). It
     // pages forward and wraps, so more than one full page is reachable with clicks alone.
@@ -336,10 +349,19 @@ export class WorkflowPanel implements Component {
         color.success(`${c.done}✓`), color.warning(`${c.running}●`), FAINTC(`${c.pending}⏸`),
         ...(c.error ? [color.error(`${c.error}✗`)] : []),
       ].join(' ');
-      const meta = [tally, c.tokens ? FAINTC(`${formatK(c.tokens)} tok`) : ''].filter(Boolean).join('  ');
-      const title = DIM(truncateToWidth(inlineText(workflowTitle(w)), Math.max(10, width - visibleWidth(meta) - 12), '…'));
-      const row = `    ${color.accent('⛓')} ${title} ${FAINTC('click')}`;
-      const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(meta) - 2);
+      let meta = [tally, c.tokens ? FAINTC(`${formatK(c.tokens)} tok`) : ''].filter(Boolean).join('  ');
+      // Same 2-col carve-out as SubagentPanel's `⎇ ` glyph, kept out of the title budget so a
+      // workspace-scoped workflow row stays the same overall width as an unscoped one.
+      const sandboxGlyph = w.workspaceRef ? `${color.faint('⎇')} ` : '';
+      const title = DIM(truncateToWidth(inlineText(workflowTitle(w)), Math.max(10, width - visibleWidth(meta) - 12 - (w.workspaceRef ? 2 : 0)), '…'));
+      const row = `    ${color.accent('⛓')} ${sandboxGlyph}${title} ${FAINTC('click')}`;
+      let gap = width - visibleWidth(row) - visibleWidth(meta) - 2;
+      if (gap < 1) {
+        // The title already floors at 10 columns, so a narrow rail (e.g. its 36-column minimum) cannot
+        // free more room there — shrink the tally/token meta instead of letting the row overflow.
+        meta = truncateToWidth(meta, Math.max(0, width - visibleWidth(row) - 1), '…');
+        gap = Math.max(0, width - visibleWidth(row) - visibleWidth(meta));
+      }
       this.rowTargets.set(lines.length, w.id);
       lines.push(`${row}${' '.repeat(gap)}${meta}`);
     }

@@ -498,6 +498,23 @@ describe('SubagentPanel', () => {
     expect(p.targetAt(0)).toBeNull();
   });
 
+  it('marks a workspace-scoped agent with the sandboxed-run glyph, and never overflows the row budget', () => {
+    const sandboxed = { ...running, sessionId: 'brain-ch-subagent-b', workspaceId: 'ws_abc123' };
+    const p = new SubagentPanel();
+    p.set([running, sandboxed]);
+    const lines = p.render(80).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+    expect(lines[1]).not.toContain('⎇');
+    expect(lines[2]).toContain('⎇');
+
+    // The glyph's 2-col carve-out must keep every row inside its requested width even at the panel's
+    // narrowest — the mutation this guards is dropping the carve-out and letting a sandboxed row overflow.
+    for (const width of [36, 46, 80]) {
+      const p2 = new SubagentPanel();
+      p2.set([sandboxed]);
+      for (const line of p2.render(width)) expect(visibleWidth(line.replace(/\x1b\[[0-9;]*m/g, ''))).toBeLessThanOrEqual(width);
+    }
+  });
+
   it('caps running sub-agents and exposes click targets only for rendered rows', () => {
     const p = new SubagentPanel();
     p.setMaxRows(3);

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Target, TerminalSquare, Users, Workflow, X } from 'lucide-react';
+import { GitBranch, Target, TerminalSquare, Users, Workflow, X } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
 import { interpolate } from '../../lib/i18n/interpolate';
@@ -333,6 +333,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
             {runningWorkflows.map((wf) => (
               <li key={wf.id} className="flex items-center gap-1.5">
                 <Workflow size={11} className="shrink-0 text-primary" aria-hidden />
+                {wf.workspaceRef ? (
+                  <span className="shrink-0" title={t.agents.sandboxed}>
+                    <GitBranch size={10} className="text-subtle-foreground" aria-hidden />
+                  </span>
+                ) : null}
                 <LiveRow
                   label={workflowLabel(wf)}
                   meta={workflowProgress(wf)}
@@ -354,6 +359,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
             {liveAgents.map((agent) => (
               <li key={agent.sessionId} className="flex items-center gap-1.5">
                 <Users size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
+                {agent.workspaceId ? (
+                  <span className="shrink-0" title={t.agents.sandboxed}>
+                    <GitBranch size={10} className="text-subtle-foreground" aria-hidden />
+                  </span>
+                ) : null}
                 <LiveRow
                   label={agent.detail || agent.task}
                   meta={agent.tokens != null ? formatTokens(agent.tokens) : undefined}

@@ -111,16 +111,17 @@ const subagentEvents = (over: {
   sessionId: string; status: 'running' | 'done'; task: string; id: string;
   detail?: string; model?: string; tokens?: number; thinkingLabel?: string;
   background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged';
-  tools?: number; seconds?: number;
+  tools?: number; seconds?: number; workspaceId?: string;
 }) => ([
   { type: 'tool', name: 'Delegate', id: over.id },
   { type: 'subagent', tools: 1, seconds: 2, ...over },
 ]);
 
-const workflowEvents = (status: 'running' | 'done') => ([
+const workflowEvents = (status: 'running' | 'done', workspaceRef?: { workspaceId: string; projectId: number }) => ([
   { type: 'tool', name: 'WorkflowStart', id: 'w-call' },
   {
     type: 'workflow', id: 'wf-1', toolCallId: 'w-call', title: 'Rail parity', status,
+    ...(workspaceRef ? { workspaceRef } : {}),
     nodes: [
       { id: 'a', task: 'prozkoumat', status: 'done', deps: [] },
       { id: 'b', task: 'napsat', status: 'running', deps: ['a'] },
@@ -354,6 +355,32 @@ describe('telemetry rail — live work sections', () => {
     await waitFor(() => expect(FakeES.instances).toHaveLength(2));
     expect(new URL(FakeES.instances[1]!.url, 'http://localhost').searchParams.get('session')).toBe('child-2');
     expect(screen.queryByRole('dialog', { name: 'Agents' })).not.toBeInTheDocument();
+  });
+
+  it('marks a sandbox-scoped sub-agent with the workspace icon on the rail and in the agents table', async () => {
+    const es = await renderRail();
+    es.emit('snapshot', snapshot({
+      events: [
+        ...subagentEvents({ id: 't1', sessionId: 'child-1', status: 'running', task: 'staví v sandboxu', workspaceId: 'ws_abc123' }),
+        ...subagentEvents({ id: 't2', sessionId: 'child-2', status: 'running', task: 'bez sandboxu' }),
+      ],
+    }));
+    const section = await screen.findByTestId('telemetry-agents');
+    expect(within(section).getAllByTitle('Running in an isolated sandbox')).toHaveLength(1);
+    const sandboxedRow = within(section).getByTitle('Running in an isolated sandbox').closest('li');
+    expect(sandboxedRow).not.toBeNull();
+
+    await act(async () => { fireEvent.click(within(sandboxedRow as HTMLElement).getByRole('button')); });
+    const dialog = await screen.findByRole('dialog', { name: 'Agents' });
+    // Same signal in the drill-in table: exactly the sandboxed row gets the icon, the plain one does not.
+    expect(within(dialog).getAllByTitle('Running in an isolated sandbox')).toHaveLength(1);
+  });
+
+  it('marks a sandbox-scoped workflow with the workspace icon on the rail', async () => {
+    const es = await renderRail();
+    for (const event of workflowEvents('running', { workspaceId: 'ws_abc123', projectId: 1 })) es.emit(event.type, event);
+    const section = await screen.findByTestId('telemetry-workflow');
+    expect(within(section).getByTitle('Running in an isolated sandbox')).toBeInTheDocument();
   });
 
   // The rail is dragged between 240px and 560px on desktop and pinned to the phone's width in the drawer,

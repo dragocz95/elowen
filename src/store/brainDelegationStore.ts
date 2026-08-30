@@ -19,6 +19,9 @@ interface BrainSubagentRunState {
   background?: boolean;
   autoDeliver?: boolean;
   resultDelivery?: 'pending' | 'acknowledged';
+  /** Sandbox workspace the child was confined to (Delegate's `workspaceId`). Mirrors BrainSubagentView;
+   *  display-only, drives the sandboxed-run glyph. */
+  workspaceId?: string;
 }
 /** Store-neutral display shape consumed by shapeBrainMessages. */
 export interface BrainSubagentRun extends BrainSubagentRunState {
@@ -242,6 +245,7 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
   if (o.background !== undefined && typeof o.background !== 'boolean') return undefined;
   if (o.autoDeliver !== undefined && typeof o.autoDeliver !== 'boolean') return undefined;
   if (o.resultDelivery !== undefined && o.resultDelivery !== 'pending' && o.resultDelivery !== 'acknowledged') return undefined;
+  if (o.workspaceId !== undefined && typeof o.workspaceId !== 'string') return undefined;
   return {
     status: o.status,
     task: bounded(o.task, 8_000),
@@ -255,6 +259,7 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
     ...(typeof o.background === 'boolean' ? { background: o.background } : {}),
     ...(typeof o.autoDeliver === 'boolean' ? { autoDeliver: o.autoDeliver } : {}),
     ...(o.resultDelivery === 'pending' || o.resultDelivery === 'acknowledged' ? { resultDelivery: o.resultDelivery } : {}),
+    ...(typeof o.workspaceId === 'string' ? { workspaceId: bounded(o.workspaceId, 256) } : {}),
   };
 }
 

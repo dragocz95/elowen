@@ -1,6 +1,6 @@
 'use client';
 import { useMemo, useRef, useState } from 'react';
-import { Workflow } from 'lucide-react';
+import { GitBranch, Workflow } from 'lucide-react';
 import { Modal, ModalBody } from '../../components/ui/Modal';
 import { useTranslation } from '../../lib/i18n';
 import { useMobileViewport } from '../../lib/useMobile';
@@ -113,6 +113,11 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
       <span className="flex items-center gap-1.5">
         <span aria-hidden className={`wf-dag__pulse shrink-0 text-tiny ${GLYPH_TONE[node.status]}`}>{NODE_GLYPH[node.status]}</span>
         <span className={`min-w-0 flex-1 truncate font-mono text-tiny ${full ? '' : 'text-foreground'}`}>{node.id}</span>
+        {node.workspaceRef ? (
+          <span className="shrink-0" title={t.agents.sandboxed}>
+            <GitBranch size={10} className="text-muted-foreground" aria-hidden />
+          </span>
+        ) : null}
       </span>
       {full ? (
         <>

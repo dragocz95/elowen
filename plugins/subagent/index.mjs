@@ -307,6 +307,7 @@ export function register(ctx) {
         thinkingLevel: job.thinkingLevel,
         background: job.background,
         autoDeliver: job.autoDeliver,
+        workspaceId: job.workspaceId,
       });
       if (accepted === false) throw new Error('the host rejected the durable sub-agent progress row');
       return { ok: true };
@@ -544,6 +545,10 @@ export function register(ctx) {
         // on the job so the rail entry can report it: a drilled-in sub-agent reads its reasoning level
         // from there, and with no source for it the CLI status line rendered that field blank.
         thinkingLevel,
+        // Mirrors the access boundary's workspaceId (set below in `access`) onto the progress/rail
+        // projection, so the sandboxed-run icon has a source that survives a reconnect without reaching
+        // into the (untyped) access object.
+        workspaceId: p.workspaceId,
         originPrincipal,
         originSessionId,
         emit,

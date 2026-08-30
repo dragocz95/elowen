@@ -63,6 +63,9 @@ export interface SubagentState {
   background?: boolean;
   autoDeliver?: boolean;
   resultDelivery?: 'pending' | 'acknowledged';
+  /** Sandbox workspace the child was confined to, when Delegate passed `workspaceId`. Mirrors
+   *  BrainSubagentView; drives the sandboxed-run glyph next to the sub-agent's status icon. */
+  workspaceId?: string;
 }
 type Segment =
   | { kind: 'text'; text: string }

@@ -417,6 +417,7 @@ export class TranscriptModel implements TranscriptRead {
       background: event.background,
       autoDeliver: event.autoDeliver,
       resultDelivery: event.resultDelivery,
+      workspaceId: event.workspaceId,
     };
     if (!this.patchTool(location, (item) => ({ ...item, sub }))) return false;
     this.upsertSubagent(location.source, sub, true);

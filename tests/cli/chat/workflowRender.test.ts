@@ -98,6 +98,26 @@ describe('workflow CLI rendering', () => {
     // one workflow row, clickable
     expect(lines.some((l) => strip(l).includes('⛓'))).toBe(true);
   });
+
+  it('marks a workspace-scoped workflow with the sandboxed-run glyph, plain otherwise', () => {
+    const bare = new WorkflowPanel();
+    bare.set([WF]);
+    bare.setMaxRows(4);
+    expect(strip(bare.render(46)[1]!)).not.toContain('⎇');
+
+    const sandboxed = new WorkflowPanel();
+    sandboxed.set([{ ...WF, workspaceRef: { workspaceId: 'ws_abc123', projectId: 1 } }]);
+    sandboxed.setMaxRows(4);
+    const lines = sandboxed.render(46);
+    expect(strip(lines[1]!)).toContain('⎇');
+    // The glyph's carve-out must keep every row inside its requested width, even at the panel's narrowest.
+    for (const width of [36, 46, 80]) {
+      const p = new WorkflowPanel();
+      p.set([{ ...WF, workspaceRef: { workspaceId: 'ws_abc123', projectId: 1 } }]);
+      p.setMaxRows(4);
+      for (const line of p.render(width)) expect(visibleWidth(strip(line))).toBeLessThanOrEqual(width);
+    }
+  });
 });
 
 describe('workflow canvas layout', () => {
@@ -137,6 +157,26 @@ describe('workflow canvas modal', () => {
     expect(flat).toMatch(/─ gather ─/);
     expect(flat).toMatch(/deps\s+root/);
     expect(flat).toContain('enter open node transcript');
+  });
+
+  it('marks a workspace-scoped node with the sandboxed glyph, on the canvas and the narrow list fallback', () => {
+    const sandboxedWf: WorkflowState = {
+      ...WF,
+      nodes: WF.nodes.map((n) => (n.id === 'analyze' ? { ...n, workspaceRef: { workspaceId: 'ws_abc123', projectId: 1 } } : n)),
+    };
+    // Full canvas (>= MIN_CANVAS_BODY): the running/selected node starts full and shows the glyph in its
+    // card meta row; the dock repeats it as "⎇ sandboxed" so it survives even a compact (non-selected) card.
+    const { modal: canvas } = openModal(() => sandboxedWf);
+    const canvasFlat = strip(canvas.render(96).join('\n'));
+    show('modal — sandboxed node (canvas)', canvas.render(96));
+    expect(canvasFlat).toContain('⎇');
+
+    // Narrow terminal: the same DAG falls back to the wave-grouped list — the glyph must not disappear
+    // with the geometry.
+    const { modal: list } = openModal(() => sandboxedWf, { columns: 60, rows: 40 });
+    const listFlat = strip(list.render(60).join('\n'));
+    show('modal — sandboxed node (list fallback)', list.render(60));
+    expect(listFlat).toContain('⎇');
   });
 
   it('navigates waves with ←→ and the column with ↑↓, clamped at the edges', () => {

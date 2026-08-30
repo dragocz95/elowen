@@ -1477,6 +1477,7 @@ export const cs = {
     done: 'hotovo',
     error: 'chyba',
     openTranscript: 'Otevřít přepis sub-agenta',
+    sandboxed: 'Běží v izolovaném sandboxu',
   },
   brainChat: {
     loadingOlder: 'Načítání starších zpráv',

@@ -38,7 +38,7 @@ export type TranscriptEvent =
   /** A whole-DAG snapshot of a running `WorkflowStart` call. Attached to its tool row by call id exactly
    *  like `subagent` — attaching (not merely projecting) is what makes it durable, so a reconnect rebuilds
    *  the panel from the transcript instead of losing every workflow it did not witness live. */
-  | { type: 'workflow'; id: string; toolCallId: string; title?: string; status: WorkflowState['status']; nodes: WorkflowState['nodes'] }
+  | { type: 'workflow'; id: string; toolCallId: string; title?: string; status: WorkflowState['status']; workspaceRef?: WorkflowState['workspaceRef']; nodes: WorkflowState['nodes'] }
   /** A server-delivered user message (a steered mid-turn message never optimistically echoed) — folded as
    *  a 'you' turn. `durableId` is the store row id, kept on the turn so a later `discard_user` can find it.
    *  The `queue` snapshot event (PI steering queue) is handled outside this fold. */
@@ -393,6 +393,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       const wf: WorkflowState = {
         id: e.id, toolCallId: e.toolCallId, status: e.status, nodes: e.nodes,
         ...(e.title ? { title: e.title } : {}),
+        ...(e.workspaceRef ? { workspaceRef: e.workspaceRef } : {}),
       };
       const patched = attachToToolInTurns(turns, e.toolCallId, (name) => name === 'WorkflowStart', (item) => ({ ...item, wf }));
       return patched ? { ...view, turns } : view;

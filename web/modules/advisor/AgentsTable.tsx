@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Users } from 'lucide-react';
+import { GitBranch, Users } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { Modal, ModalBody } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
@@ -94,7 +94,14 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                 </DataTableCell>
                 <DataTableCell lines="auto" title={agent.task}>
                   <div className="min-w-0">
-                    <div className="truncate font-medium text-foreground">{agent.task}</div>
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      {agent.workspaceId ? (
+                        <span className="shrink-0" title={t.agents.sandboxed}>
+                          <GitBranch size={12} className="text-muted-foreground" aria-hidden />
+                        </span>
+                      ) : null}
+                      <span className="truncate font-medium text-foreground">{agent.task}</span>
+                    </div>
                     <div className="truncate text-xs text-muted-foreground" title={agent.detail}>{agent.detail ?? '—'}</div>
                   </div>
                 </DataTableCell>

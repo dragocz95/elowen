@@ -1498,6 +1498,7 @@ export const en = {
     done: 'done',
     error: 'error',
     openTranscript: 'Open sub-agent transcript',
+    sandboxed: 'Running in an isolated sandbox',
   },
   brainChat: {
     loadingOlder: 'Loading older messages',

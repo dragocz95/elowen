@@ -183,6 +183,7 @@ export function drawCircuit(placements: readonly Placement[], opts: CircuitOptio
     const id = terminalInlineText(node.id);
     const secs = opts.seconds(node);
     const meta = [
+      node.workspaceRef ? '⎇' : '',
       node.tokens !== undefined ? `${formatK(node.tokens)} tok` : '',
       secs !== undefined ? formatDuration(secs) : '',
     ].filter(Boolean).join(' · ');

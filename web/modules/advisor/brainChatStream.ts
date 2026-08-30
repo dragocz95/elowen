@@ -20,8 +20,8 @@ import type { WorkflowState } from '../../lib/transcript';
 const SNAPSHOT_TIMEOUT_MS = 15_000;
 
 type AskFrame = { id: string; questions: AskQuestion[]; kind?: 'approval' };
-type SubagentFrame = { id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string };
-type WorkflowFrame = { id: string; toolCallId: string; title?: string; status: WorkflowState['status']; nodes: WorkflowState['nodes'] };
+type SubagentFrame = { id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; workspaceId?: string };
+type WorkflowFrame = { id: string; toolCallId: string; title?: string; status: WorkflowState['status']; workspaceRef?: WorkflowState['workspaceRef']; nodes: WorkflowState['nodes'] };
 
 interface LiveStreamHandlers {
   connecting: () => void;
