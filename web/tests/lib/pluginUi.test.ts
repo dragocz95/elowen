@@ -39,6 +39,7 @@ describe('plugin UI runtime', () => {
       PageToolbar: expect.any(Function),
       PageFilters: expect.any(Function),
       Slider: expect.any(Function),
+      DirectoryPicker: expect.any(Function),
     }));
     expect(window.ElowenUiRuntime?.components).toHaveProperty('LinkedAccountRow');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('SummaryChip');
@@ -103,7 +104,7 @@ const FROZEN_COMPONENTS = [
   'ChangeStrip', 'Checkbox', 'ChoiceField', 'CompactWorkspaceHeader', 'ConfirmDialog', 'ContextMenu',
   'ControlSurfaceDocument', 'ControlSurfaceRegister', 'ControlSurfaceState', 'ControlSurfaceToolbar',
   'DataTable', 'DataTableCell', 'DataTableChevronCell', 'DataTableRow', 'DateRangeFilter', 'DetailBlock',
-  'EmptyState', 'EntityList', 'EntityRow', 'ErrorState', 'ExecutorPicker', 'Field', 'HelpTip',
+  'DirectoryPicker', 'EmptyState', 'EntityList', 'EntityRow', 'ErrorState', 'ExecutorPicker', 'Field', 'HelpTip',
   'IconButton', 'Input', 'LinkedAccountRow', 'LiveTail', 'LoadingLine', 'LoadingState',
   'ManageSelectionModal', 'MarkdownAssetEditor', 'Modal', 'ModalBody', 'ModalFooter', 'ModelCatalogField',
   'ModelIcon', 'ModuleHeader', 'MotionLayout', 'MotionLayoutItem', 'MotionPresence', 'OutcomeBadge',

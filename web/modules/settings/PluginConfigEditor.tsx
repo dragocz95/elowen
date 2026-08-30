@@ -1,5 +1,5 @@
 'use client';
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronRight, Pencil, Users, SlidersHorizontal, Link2, Info, MessagesSquare, Mic, Image as ImageIcon, Puzzle, Wrench, type LucideIcon } from 'lucide-react';
 import { TeamsAppPackageSection } from './TeamsAppPackageSection';
 import { MonacoEditor } from '../../lib/monaco/monacoLoader';
@@ -27,6 +27,8 @@ import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 import { Slider } from '../../components/ui/Slider';
+import { normalizeTokenList, TokenList } from '../../components/ui/TokenList';
+import { DirectoryPicker } from '../../components/ui/DirectoryPicker';
 
 
 // A settings-group icon for an author-declared config section, inferred from its key/label. Falls back to
@@ -143,6 +145,130 @@ function MultiSelectField({ label, options, value, onChange }: { label: string; 
     ...options.map((o) => ({ id: o.value, label: o.label, group: '' })),
   ];
   return <RowMultiPicker label={label} items={items} value={value} onChange={onChange} />;
+}
+
+const supportedTimezones = (): string[] => {
+  try {
+    const supportedValuesOf = (Intl as typeof Intl & { supportedValuesOf?: (key: 'timeZone') => string[] }).supportedValuesOf;
+    return supportedValuesOf?.call(Intl, 'timeZone') ?? [];
+  } catch { return []; }
+};
+const browserTimezone = (): string => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
+  catch { return ''; }
+};
+
+const CUSTOM_TIMEZONE = '__custom_timezone__';
+
+function TimezoneField({ label, hint, value, onChange }: { label: string; hint?: string; value: string; onChange: (value: string | null) => void }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customValue, setCustomValue] = useState('');
+  const detected = useMemo(browserTimezone, []);
+  const zones = useMemo(supportedTimezones, []);
+  const known = new Set(zones);
+  const pinned = new Set([detected, 'UTC'].filter(Boolean));
+  const items: ManageSelectionItem[] = [
+    { id: '', label: t.pluginCfg.timezoneServerDefault, group: '' },
+    ...(detected ? [{ id: detected, label: detected, group: '', badges: [{ text: t.pluginCfg.timezoneBrowserDetected, tone: 'accent' as const }] }] : []),
+    ...(detected === 'UTC' ? [] : [{ id: 'UTC', label: 'UTC', group: '' }]),
+    ...(value && !pinned.has(value) && !known.has(value) ? [{ id: value, label: value, group: '', badges: [{ text: t.pluginCfg.timezoneSaved, tone: 'muted' as const }] }] : []),
+    { id: CUSTOM_TIMEZONE, label: t.pluginCfg.timezoneCustom, group: '' },
+    ...zones.filter((zone) => !pinned.has(zone)).map((zone) => ({ id: zone, label: zone, group: 'timezones', groupLabel: t.pluginCfg.timezoneCatalog })),
+  ];
+  const summary = value || t.pluginCfg.timezoneServerDefault;
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open || customOpen}
+        onClick={() => setOpen(true)}
+        data-row-picker
+        className="w-full justify-between font-normal"
+      >
+        <span className="min-w-0 truncate text-left">{summary}</span>
+        <ChevronDown size={14} aria-hidden className="opacity-60" />
+      </Button>
+      <ManageSelectionModal
+        title={label}
+        subtitle={hint}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        selected={new Set([value])}
+        onSave={(next) => {
+          const selected = [...next][0] ?? '';
+          if (selected === CUSTOM_TIMEZONE) {
+            setCustomValue(value);
+            setCustomOpen(true);
+            return;
+          }
+          onChange(selected || null);
+        }}
+        emptySelectionHint={t.pluginCfg.timezoneServerDefault}
+        single
+      />
+      {customOpen ? (
+        <Modal title={t.pluginCfg.timezoneCustom} description={hint} onClose={() => setCustomOpen(false)} size="sm">
+          <ModalBody>
+            <Input
+              autoFocus
+              value={customValue}
+              onChange={(event) => setCustomValue(event.target.value)}
+              aria-label={t.pluginCfg.timezoneCustom}
+              placeholder={t.pluginCfg.timezoneCustomPlaceholder}
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button type="button" variant="ghost" onClick={() => setCustomOpen(false)}>{t.common.cancel}</Button>
+            <Button
+              type="button"
+              variant="accent"
+              disabled={!customValue.trim()}
+              onClick={() => { onChange(customValue.trim()); setCustomOpen(false); }}
+            >
+              {t.common.save}
+            </Button>
+          </ModalFooter>
+        </Modal>
+      ) : null}
+    </>
+  );
+}
+
+const tokenListValues = (raw: unknown): string[] => Array.isArray(raw)
+  ? raw.filter((value): value is string => typeof value === 'string')
+  : typeof raw === 'string' && raw !== '' ? [raw] : [];
+
+function PluginTokenListField({ label, placeholder, value, browse, onChange }: {
+  label: string;
+  placeholder?: string;
+  value: unknown;
+  browse?: 'directory';
+  onChange: (value: string[]) => void;
+}) {
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const tokens = tokenListValues(value);
+  return (
+    <>
+      <TokenList label={label} value={tokens} onChange={onChange} placeholder={placeholder} onBrowse={browse === 'directory' ? () => setBrowseOpen(true) : undefined} />
+      {browseOpen ? (
+        <DirectoryPicker
+          onClose={() => setBrowseOpen(false)}
+          onSelect={(path) => {
+            const normalized = path.trim();
+            if (normalized) onChange(normalizeTokenList([...tokens, normalized]));
+            setBrowseOpen(false);
+          }}
+        />
+      ) : null}
+    </>
+  );
 }
 
 /** Shared live-catalog multi-select: the catalog-specific wrappers only map their domain rows into the
@@ -577,6 +703,10 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         const selected = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
         return <ModelsField label={fieldLabel(f)} hint={fieldHint(f)} models={brainModels ?? []} value={selected} onChange={(v) => set(f.key, v)} />;
       }
+      case 'timezone':
+        return <TimezoneField label={fieldLabel(f)} hint={fieldHint(f)} value={String(values[f.key] ?? '')} onChange={(value) => set(f.key, value)} />;
+      case 'tokenList':
+        return <PluginTokenListField label={fieldLabel(f)} placeholder={f.placeholder} value={values[f.key]} browse={f.browse} onChange={(value) => set(f.key, value)} />;
       case 'enum':
         return <ChoiceField title={fieldLabel(f)} options={fieldOptions(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
       case 'multiSelect': {

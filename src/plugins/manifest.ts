@@ -38,7 +38,7 @@ export const PLUGIN_API_VERSION = '1';
 export const CONFIG_FIELD_TYPES = [
   'string', 'secret', 'boolean', 'number', 'textarea', 'rolePolicies', 'model', 'provider',
   'section', 'enum', 'multiSelect', 'code', 'prompt', 'json', 'embeddingModel', 'mcpServers', 'destination',
-  'projects', 'plugins', 'tools', 'models',
+  'projects', 'plugins', 'tools', 'models', 'timezone', 'tokenList',
 ] as const;
 
 export type PluginConfigFieldType = (typeof CONFIG_FIELD_TYPES)[number];
@@ -60,9 +60,11 @@ export interface PluginConfigField {
     unit?: string;
     divisor?: number;
   };
+  /** Optional token-list browser. It adds a directory path; free-form values remain the authority. */
+  browse?: 'directory';
   /** Out-of-box value the settings form pre-fills when nothing is stored yet. Must equal the plugin's
    *  own runtime fallback for the key, so pre-filling never changes behavior. */
-  default?: string | number | boolean;
+  default?: string | number | boolean | string[];
   /** For `provider` fields: restrict the picker to providers of this type (e.g. `openai`). */
   providerType?: string;
   /** Choices for `enum`/`multiSelect` fields. */
@@ -258,7 +260,8 @@ const ConfigFieldSchema = Type.Object({
     unit: Type.Optional(Type.String()),
     divisor: Type.Optional(Type.Number()),
   })),
-  default: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
+  browse: Type.Optional(Type.Literal('directory')),
+  default: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Array(Type.String())])),
   providerType: Type.Optional(Type.String()),
   options: Type.Optional(Type.Array(Type.Object({
     value: Type.String(),
@@ -387,6 +390,20 @@ function dropUnrenderableFields(raw: unknown, onWarn?: (message: string) => void
   return sanitized ?? raw;
 }
 
+export function tokenListValueError(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return 'expected an array of strings';
+  const seen = new Set<string>();
+  for (const [index, item] of value.entries()) {
+    if (typeof item !== 'string') return `item ${index + 1} must be a string`;
+    const trimmed = item.trim();
+    if (!trimmed) return `item ${index + 1} must not be empty`;
+    if (item !== trimmed) return `item ${index + 1} must be trimmed`;
+    if (seen.has(item)) return `duplicate item "${item}"`;
+    seen.add(item);
+  }
+  return undefined;
+}
+
 function isStepAligned(value: number, base: number, step: number): boolean {
   const nearest = base + Math.round((value - base) / step) * step;
   const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(base), Math.abs(step), Math.abs(nearest)) * 8;
@@ -414,6 +431,31 @@ export function parseManifest(raw: unknown, onWarn?: (message: string) => void):
       const path = `/${schemaKey}/${index}`;
       if (field.display?.divisor !== undefined && (!Number.isFinite(field.display.divisor) || field.display.divisor <= 0)) {
         throw new Error(`invalid plugin manifest: ${path}/display/divisor must be finite and greater than 0`);
+      }
+      if (field.browse !== undefined && field.type !== 'tokenList') {
+        throw new Error(`invalid plugin manifest: ${path}/browse is only valid for tokenList fields`);
+      }
+      if (schemaKey === 'userConfigSchema' && field.browse !== undefined) {
+        throw new Error(`invalid plugin manifest: ${path}/browse is not allowed in userConfigSchema`);
+      }
+      if (field.type === 'timezone' && field.default !== undefined) {
+        if (typeof field.default !== 'string') {
+          throw new Error(`invalid plugin manifest: ${path}/default must be a string for a timezone field`);
+        }
+        const timezone = field.default.trim();
+        if (field.default !== timezone) {
+          throw new Error(`invalid plugin manifest: ${path}/default timezone must be trimmed`);
+        }
+        if (timezone) {
+          try { new Intl.DateTimeFormat(undefined, { timeZone: timezone }); }
+          catch { throw new Error(`invalid plugin manifest: ${path}/default unknown IANA timezone "${field.default}"`); }
+        }
+      }
+      if (field.type === 'tokenList' && field.default !== undefined) {
+        const issue = tokenListValueError(field.default);
+        if (issue) throw new Error(`invalid plugin manifest: ${path}/default ${issue}`);
+      } else if (Array.isArray(field.default)) {
+        throw new Error(`invalid plugin manifest: ${path}/default arrays are only valid for tokenList fields`);
       }
       if (field.type !== 'number') {
         if (field.display?.control === 'slider') {

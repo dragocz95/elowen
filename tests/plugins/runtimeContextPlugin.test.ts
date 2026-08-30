@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -26,6 +26,20 @@ describe('runtime-context plugin', () => {
     expect(out).toContain('Europe/Prague');
     expect(reg.tools).toHaveLength(0); // it adds NO tools and NO system-prompt fragment
     expect(reg.promptFragments).toHaveLength(0);
+  });
+
+  it('falls back to the server timezone and warns once for invalid legacy config', async () => {
+    const warn = vi.fn();
+    const serverTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const reg = await loadPlugins({
+      dirs: [pluginsDir], enabled: ['runtime-context'], dataRoot: freshDataRoot(),
+      logger: { info() {}, warn, error() {} }, timezone: () => 'Mars/Olympus',
+    });
+
+    expect(() => reg.turnContexts[0]!.render()).not.toThrow();
+    expect(reg.turnContexts[0]!.render()).toContain(`(${serverTimezone},`);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('invalid configured timezone "Mars/Olympus"'));
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   describe('sender/surface block', () => {
