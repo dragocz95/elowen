@@ -1,12 +1,24 @@
 # Web UI control audit
 
+## Implementation status — 30 August 2026
+
+The actionable findings in this audit have been implemented on the current UX branches and are awaiting their final merge/deployment:
+
+- Core forms now support unit-aware numeric controls, strict write-boundary validation, searchable time zones, editable token lists, directory browsing, shared temperature/day policy editors, and plugin UI API 11 (`Slider`, `DirectoryPicker`, async-safe `ConfirmDialog`).
+- Destructive actions preserve drafts and require consequence-specific confirmation: project removal, administrator role changes, process termination, skill deletion, conversation deletion, permission-rule deletion, MCP server deletion, and exact diagnostics capture.
+- Chat now keeps user metadata inside the message bubble, uses Radix menus and one in-place diagnostics workspace, and measures the mobile keyboard/composer viewport so the newest turn remains visible.
+- Sectioned pages use one horizontal swipe/scroll tab strip at every width. The Agents workspace is a full telemetry table with model, reasoning, tokens, tools, runtime, timestamps, delivery mode, keyboard opening, and horizontal phone scrolling.
+- Registry plugins add a schedule builder, token-list/directory fields for Codebase and OneDrive, Discord destination selection, and token-list allowlists for Discord, Telegram, and WhatsApp.
+
+The intentionally unchanged controls remain unchanged for the reasons recorded below: embedding dimensions and provider-defined TTS voices stay open-ended, native task status selection stays native, and Telegram/WhatsApp notification targets stay free text where no authoritative complete catalog exists.
+
+The detailed findings are retained below as the decision record. References to **Today** describe the pre-implementation state that triggered this work.
+
 ## Scope and standard
 
-This audit covers the core web modules (Settings, Account, Users, Projects, Memory, Dashboard, and chat overlays), the generic plugin renderer, bundled manifests in `plugins/`, and the installed plugin sources under `/var/www/.config/elowen/plugins-data/sandbox/users/1/workspaces/elowen-plugins-fast-v3/plugins/`.
+This audit covers the core web modules (Settings, Account, Users, Projects, Memory, Dashboard, and chat overlays), the generic plugin renderer, bundled manifests in `plugins/`, and marketplace plugin sources in `/var/www/elowen-plugins/plugins/`.
 
 The standard is simple: a person should select known entities and known finite values, adjust bounded quantities in meaningful units, and manage collections as visible items. Free text remains appropriate for prose, arbitrary identifiers, commands, URLs, glob patterns, provider-defined values, and genuinely open-ended model identifiers. Existing `Slider`, `Toggle`, `Segmented`, `ChoiceField`, `SelectMenu`, `BrainModelField`, `ManageSelectionModal`, `SelectionSummary`, `ConfirmDialog`, `Field`, and `DirectoryPicker` establish the house patterns.
-
-Verification result: the path references were checked against the current core and installed-plugin workspaces; the findings below marked **Verified** still match the code, while the **Correction** notes narrow or withdraw claims that treated a stylistic preference as a UX defect.
 
 ## Findings
 
