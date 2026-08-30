@@ -440,6 +440,8 @@ describe('the shell stylesheets carry one authority per decision', () => {
     const toolbar = css('page-toolbar');
     expect(toolbar).toMatch(/\.page-toolbar__slot \.control-surface-toolbar,[\s\S]*?\.page-toolbar__slot \.settings-toolbar\s*\{[^}]*width:\s*100%[^}]*flex:\s*1 1 100%/);
     expect(toolbar).toMatch(/:root \.page-toolbar__slot :is\(\.control-surface-toolbar, \.settings-toolbar\) \.register-search\s*\{[^}]*max-width:\s*none/);
+    const studio = readFileSync(resolve(process.cwd(), 'skins', 'studio', 'surfaces.css'), 'utf-8');
+    expect(studio).toMatch(/\.page-toolbar__slot \.control-surface-toolbar \.register-search\s*\{[^}]*max-width:\s*none/);
     expect(toolbar).toMatch(/\.page-toolbar__search\s*\{[^}]*flex:\s*1 1 16rem/);
   });
 
