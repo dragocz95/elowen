@@ -665,31 +665,34 @@ export class BrainTurnRunner {
       // alone, so waiting on it left a sent message invisible for 1.4–5.8 s. The prompt below still gets
       // the recalled memories; only the echo is off that path.
       admission.echo();
-      // PI's preflightResult fires after extension/input/template/auth/compaction preparation and directly
-      // before _runAgentPrompt. ADMITTING there closes the 202→isStreaming=false window: the prompt run
-      // becomes active in the same call stack before an HTTP follow-up can resume and steer it.
-      const options = {
-        images: turnImages?.length
-          ? turnImages.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
-          : undefined,
-        preflightResult: (success: boolean): void => {
-          // Final fail-closed check at PI's actual provider boundary. Recovery may finish while context/memory
-          // assembly awaits; if its new notice is not in this exact live context, reject before the model sees
-          // the old delegation request. A real user send retries restoration; an internal caller fails visibly.
-          if (success) {
-            const missingRecoveryNotice = this.d.store.pendingSubagentResults(live.sessionId)
-              .some((result) => result.requiresUserAction
-                && !resultInContext(live.session.messages as CustomResultMessage[], result.id));
-            if (missingRecoveryNotice) throw new Error('unsafe sub-agent recovery notice could not be restored');
-          }
-          admission.preflightResult(success);
-        },
-      };
       const context = await this.contextBuilder.build(turnRequest, live);
       // Meter the turn so the OpenRouter (or OpenRouter-backed proxy) cost pi-ai drops is captured and
       // stamped onto the persisted assistant row by projectEvent (fired synchronously in this scope).
       const meter = newCostMeter();
-      await runWithMeter(meter, () => context.run(async (prompted) => {
+      await runWithMeter(meter, () => context.run(async (prompted, confirmProviderPreflight) => {
+        // PI's preflightResult fires after extension/input/template/auth/compaction preparation and directly
+        // before _runAgentPrompt. ADMITTING there closes the 202→isStreaming=false window: the prompt run
+        // becomes active in the same call stack before an HTTP follow-up can resume and steer it. Turn-start
+        // recall commits at this same boundary: early enough for liveRecall's in-turn dedup, but only after PI
+        // has accepted the prompt so a rejected/rolled-back turn leaves no permanent memory delivery behind.
+        const options = {
+          images: turnImages?.length
+            ? turnImages.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
+            : undefined,
+          preflightResult: (success: boolean): void => {
+            // Final fail-closed check at PI's actual provider boundary. Recovery may finish while context/memory
+            // assembly awaits; if its new notice is not in this exact live context, reject before the model sees
+            // the old delegation request. A real user send retries restoration; an internal caller fails visibly.
+            if (success) {
+              const missingRecoveryNotice = this.d.store.pendingSubagentResults(live.sessionId)
+                .some((result) => result.requiresUserAction
+                  && !resultInContext(live.session.messages as CustomResultMessage[], result.id));
+              if (missingRecoveryNotice) throw new Error('unsafe sub-agent recovery notice could not be restored');
+            }
+            admission.preflightResult(success);
+            if (success) confirmProviderPreflight();
+          },
+        };
         // Context/memory/plugin hooks above are asynchronous. A quit that landed while they ran must fence
         // the provider call even though this send had already entered its turn callback.
         assertClientCurrent(live.sessionId);

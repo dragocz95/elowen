@@ -217,8 +217,8 @@ export interface LiveBrain {
    *  the live session is not reliably resolvable at event time, so a flag could be written to nothing
    *  while clients still saw the compaction — the reminder would then silently never appear.
    *
-   *  Carried across every in-memory respawn (model switch, idle rollover, vision hop) so a respawn
-   *  right after a compaction does not re-send an orientation the model already had. */
+   *  Deliberately not carried across a respawn: durable rehydration strips the ephemeral orientation block,
+   *  so the fresh provider context must derive and receive it again from the stored divider. */
   orientedForCompaction?: string;
   /** A reasoning-effort change riding out its debounce window before the visible marker lands (see
    *  scheduleReasoningMarker) — rapid ctrl+r cycling coalesces here into ONE marker showing the settled
@@ -231,10 +231,9 @@ export interface LiveBrain {
   lastMode?: 'build' | 'plan' | 'workflow';
   /** Turns spent in the current work mode since its directive was last restated IN FULL. 0 means the
    *  turn that entered the mode; the full text returns every MODE_REMINDER_FULL_EVERY turns and the
-   *  one-line restatement rides in between (see turnContextBuilder.modeTemplateFor). Carried across
-   *  in-memory respawns beside lastTurnMode — a model switch is not a reason to resend the directive
-   *  the model just read. A daemon restart resets it, which is correct: a fresh process has shown the
-   *  model nothing. */
+   *  one-line restatement rides in between (see turnContextBuilder.modeTemplateFor). Deliberately reset on
+   *  every respawn: rehydration preserves the mode fact but strips the ephemeral directive it refers to, so
+   *  undefined means the next prompt must restart with the full text. */
   modeReminderTurns?: number;
   /** Memory ids already printed into THIS context window, by either recall path. Both paths consult it,
    *  so neither re-prints what the other already delivered.

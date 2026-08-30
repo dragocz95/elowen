@@ -99,8 +99,10 @@ const MODE_REMINDER_FULL_EVERY = 5;
 
 export interface PreparedTurnContext {
   autoSaveMemory: boolean;
-  /** Execute inside the exact PI identity/policy/permission scope and resolve volatile turnContext there. */
-  run<T>(operation: (prompt: string) => Promise<T>): Promise<T>;
+  /** Execute inside the exact PI identity/policy/permission scope and resolve volatile turnContext there.
+   *  The operation confirms PI's successful preflight at the provider boundary, which commits only the
+   *  turn-start recall state needed by mid-turn dedup. */
+  run<T>(operation: (prompt: string, confirmProviderPreflight: () => void) => Promise<T>): Promise<T>;
 }
 
 /** Builds only ephemeral owner-turn context. Session system prompt, context files, skills and compaction
@@ -127,7 +129,7 @@ export class TurnContextBuilder {
 
     return {
       autoSaveMemory: memSettings?.autoSave !== false,
-      run: <T>(operation: (prompt: string) => Promise<T>): Promise<T> => runWithPolicy(live.policy, async () => {
+      run: <T>(operation: (prompt: string, confirmProviderPreflight: () => void) => Promise<T>): Promise<T> => runWithPolicy(live.policy, async () => {
         let prompt = request.text;
         // Assigned by the drains below and called only once the prompt has actually reached the provider —
         // an error or abort before that must leave the notice/orientation pending, not consumed.
@@ -225,16 +227,18 @@ export class TurnContextBuilder {
             runningSubagents,
           });
         }
-        // Recall commits at HAND-OFF, before the turn runs, unlike everything below it. The others are
-        // read again only when the NEXT turn is composed, so waiting for the whole agent loop to settle
-        // is free insurance for them. This set is not: liveRecall reads it from inside PI's context hook
-        // DURING this turn, so a commit after the loop meant it always saw an empty set, retrieved the
-        // same memories the prompt above had just printed, injected them a second time and counted them
-        // twice — the exact duplication the dedup exists to remove, in the one place it was needed most.
-        // The `/prompt-command` bug this ordering originally fixed stays fixed: that path never composes
-        // a prompt at all, so it never reaches this line.
-        commitRecall();
-        const result = await operation(prompt);
+        // Recall commits at PI's successful PREFLIGHT, not when prompt() is merely called and not after the
+        // whole agent loop. The boundary is load-bearing in both directions: before it, PI may reject the
+        // turn and admission rolls the user row back, so counting/suppressing the memory would lose it on
+        // retry; after it, liveRecall may run inside PI's context hook and must already see the turn-start
+        // ids or it injects and counts the same memories twice. The caller owns that exact native callback.
+        let recallCommitted = false;
+        const confirmProviderPreflight = (): void => {
+          if (recallCommitted) return;
+          recallCommitted = true;
+          commitRecall();
+        };
+        const result = await operation(prompt, confirmProviderPreflight);
         commitOrientation();
         commitSessionNotices();
         commitPermissionsDigest();
@@ -256,10 +260,13 @@ export class TurnContextBuilder {
    *  the sparse line's "the full instructions are earlier in this conversation" true, so it may only move
    *  for a turn the model actually received — hence the commit rather than a write here. */
   private modeTemplateFor(template: string, mode: TurnMode, previousMode: TurnMode | undefined, live: LiveBrain, reoriented: boolean): { template: string; commit: () => void } {
-    // A compaction counts as entering the mode again: it deleted the full directive along with everything
-    // else, so the cadence has to restart from a turn the model can actually still read.
-    const entering = previousMode !== mode || reoriented;
-    const seen = entering ? 0 : (live.modeReminderTurns ?? 0) + 1;
+    // A compaction or a missing cadence counts as entering the mode again: both mean the full directive is
+    // absent from the context the provider can read. In-place respawns preserve lastTurnMode as durable
+    // conversation state but deliberately reset modeReminderTurns because rehydration strips ephemeral turn
+    // framing; treating that undefined counter as zero would emit the sparse variant on the very next prompt.
+    const previousReminderTurns = live.modeReminderTurns;
+    const entering = previousMode !== mode || reoriented || previousReminderTurns === undefined;
+    const seen = entering ? 0 : previousReminderTurns + 1;
     return {
       template: seen % MODE_REMINDER_FULL_EVERY === 0 ? template : `${template}-sparse`,
       commit: (): void => { live.modeReminderTurns = seen; },
@@ -418,7 +425,8 @@ export class TurnContextBuilder {
     const { scope } = this.scopeOptions(userId, live, live.lastTurnMode ?? 'build');
     return {
       autoSaveMemory: false,
-      run: <T>(operation: (prompt: string) => Promise<T>): Promise<T> => runWithPolicy(live.policy, () => operation(''), scope),
+      run: <T>(operation: (prompt: string, confirmProviderPreflight: () => void) => Promise<T>): Promise<T> =>
+        runWithPolicy(live.policy, () => operation('', () => {}), scope),
     };
   }
 

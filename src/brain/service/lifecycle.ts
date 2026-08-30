@@ -389,10 +389,10 @@ export class ConversationLifecycle {
     return this.serial(sessionId, async () => {
       const previous = this.d.sessions.get(sessionId);
       const prevWorkDir = previous?.workDir; // the switch must not move the session cwd
-      // In-place respawn: the model switch rehydrates the SAME conversation, so its prompt/cadence state
-      // survives — see InPlaceRespawnState. Listener ownership lives in ClientAttachments; the spawner
-      // restores every genuinely attached transport for this session id on its own (see spawner.ts), so
-      // there is nothing to carry here.
+      // In-place respawn: the model switch rehydrates the SAME durable conversation, so the last mode fact
+      // survives — see InPlaceRespawnState. Ephemeral prompt/cadence state does not. Listener ownership lives
+      // in ClientAttachments; the spawner restores every genuinely attached transport for this session id on
+      // its own (see spawner.ts), so there is nothing else to carry here.
       const prevState = previous ? captureInPlaceRespawnState(previous) : undefined;
       const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
       // No in-flight turn can be running here: a send holds serial(send-<id>)→serial(<id>) across the whole
@@ -742,10 +742,10 @@ export class ConversationLifecycle {
     // moved on is not this restart's problem to finish; whatever replaced it owns its own lifecycle.
     if (this.d.sessions.get(sessionId) !== b) return;
     const prevWorkDir = b.workDir; // the restart must not move the session cwd
-    // In-place respawn (same id) — see InPlaceRespawnState. A settings reload is the LEAST eventful
-    // respawn there is (from the model's side nothing happened at all), so it must not re-deliver an
-    // orientation the model already read, nor restate a mode directive it can still see. Listener
-    // ownership lives in ClientAttachments; the spawner restores every attached transport on its own.
+    // In-place respawn (same id) — see InPlaceRespawnState. Even a settings reload rebuilds PI from durable
+    // history, which strips ephemeral orientation and mode framing; only the conversation's last mode fact
+    // survives. Listener ownership lives in ClientAttachments; the spawner restores every attached
+    // transport on its own.
     const prevState = captureInPlaceRespawnState(b);
     this.d.goals.cancelGoalContinuation(sessionId);
     this.d.sessions.dispose(sessionId);

@@ -2772,6 +2772,33 @@ describe('BrainService', () => {
     expect(await variant('back to planning', 'plan')).toBe('cli/plan-mode');
   });
 
+  it('restates the full mode directive on the first prompt after a model respawn', async () => {
+    const d = fakeDeps();
+    d.config = {
+      providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://x/v1', models: ['m', 'other'], apiKey: 'k' }],
+    };
+    d.prompts.render.mockImplementation((name: string, vars: Record<string, string>) =>
+      name.startsWith('cli/') ? name : `PERSONA:${name}:${vars.userName}`,
+    );
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const variant = async (text: string): Promise<string | undefined> => {
+      d.prompts.render.mockClear();
+      await svc.send({ userId: 1, text, mode: 'plan', session: 'brain-1' });
+      return (d.prompts.render.mock.calls.map((c) => c[0] as string)).find((n) => n.startsWith('cli/'));
+    };
+
+    expect(await variant('one')).toBe('cli/plan-mode');
+    expect(await variant('two')).toBe('cli/plan-mode-sparse');
+
+    // The respawn preserves the durable fact that this conversation is in plan mode, but rehydration uses
+    // clean stored user rows and therefore removes both full and sparse ephemeral mode framing.
+    await svc.switchModel(1, { provider: 'relay', model: 'other' }, 'brain-1');
+
+    expect(await variant('three')).toBe('cli/plan-mode');
+    expect(await variant('four')).toBe('cli/plan-mode-sparse');
+  });
+
   // A compaction deletes the full directive along with everything else, so the sparse line's "the full
   // instructions are earlier in this conversation" becomes a lie. The cadence therefore restarts on a
   // compaction even though the mode never changed — the case `previousMode !== mode` cannot catch.
@@ -4133,27 +4160,67 @@ describe('BrainService memory integration', () => {
   });
 
   // The dedup set is read by mid-turn recall from inside PI's context hook WHILE this turn runs, so the
-  // moment the turn-start pass records what it delivered is not a detail. Committing after the agent loop
-  // settled meant mid-turn recall always looked at an empty set, retrieved the memories the prompt had
-  // just printed and injected them a second time — the duplication the dedup exists to remove, in the one
-  // place that needed it most.
-  it('records what the turn-start block delivered BEFORE the turn runs, not after it', async () => {
+  // moment the turn-start pass records what it delivered is not a detail. It must be committed after PI
+  // accepts preflight but before the provider loop starts: later duplicates in-turn, earlier loses a recall
+  // when PI rejects the prompt.
+  it('records the turn-start recall at successful preflight, before the provider loop runs', async () => {
     const d = fakeDeps();
     (d as Record<string, unknown>).memoryStore = new MemoryStore(openDb(':memory:'));
     const service = fakeMemoryService([asRow('Filip preferuje TypeScript strict.')]);
     (d as Record<string, unknown>).memoryService = service;
-    let markedWhenTurnStarted: unknown[] | undefined;
+    let markedWhenProviderStarted: unknown[] | undefined;
     const inner = d.session.prompt;
-    d.session.prompt = vi.fn(async (...args: Parameters<typeof inner>) => {
-      markedWhenTurnStarted = service.markRecalled.mock.calls.at(-1);
-      return inner(...args);
+    d.session.prompt = vi.fn(async (text, options) => {
+      expect(service.markRecalled).not.toHaveBeenCalled();
+      options?.preflightResult?.(true);
+      markedWhenProviderStarted = service.markRecalled.mock.calls.at(-1);
+      return inner(text, options ? { ...options, preflightResult: undefined } : options);
     }) as typeof inner;
     const svc = new BrainService(d as never);
     await svc.start(1);
 
     await svc.send({ userId: 1, text: 'jaký jazyk mám použít?' });
 
-    expect(markedWhenTurnStarted).toEqual([1, [1]]);
+    expect(markedWhenProviderStarted).toEqual([1, [1]]);
+  });
+
+  it('retries a preflight-rejected turn with the same memory and no phantom use count', async () => {
+    const d = fakeDeps();
+    const memoryStore = new MemoryStore(openDb(':memory:'));
+    const memory = memoryStore.add(1, { body: 'The deployment uses systemd.' }, 'test', 'preflight regression');
+    const markRecalled = vi.fn((userId: number, ids: number[]) => memoryStore.markUsed(userId, ids));
+    const service = {
+      retrieve: vi.fn(async () => ({ memories: [memory], debug: { query: '', fallback: true, provider: null, model: null, candidates: 1, scores: [] } })),
+      markRecalled,
+      findSimilar: vi.fn(async () => []),
+    } as unknown as MemoryService;
+    (d as Record<string, unknown>).memoryStore = memoryStore;
+    (d as Record<string, unknown>).memoryService = service;
+    d.session.prompt.mockImplementationOnce(async (_text, options) => {
+      options?.preflightResult?.(false);
+      throw new Error('provider preflight rejected the turn');
+    });
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+
+    await expect(svc.send({ userId: 1, text: 'how is it deployed?', session: 'brain-1' }))
+      .rejects.toThrow('provider preflight rejected the turn');
+
+    const rejectedPrompt = d.session.prompt.mock.calls[0]?.[0] as string;
+    expect(rejectedPrompt).toContain('The deployment uses systemd.');
+    expect(markRecalled).not.toHaveBeenCalled();
+    expect(memoryStore.get(1, memory.id)?.use_count).toBe(0);
+    expect(svc.history(1).filter((row) => row.role === 'user')).toHaveLength(0);
+
+    await svc.send({ userId: 1, text: 'how is it deployed?', session: 'brain-1' });
+
+    const retryPrompt = d.session.prompt.mock.calls[1]?.[0] as string;
+    expect(retryPrompt).toContain('The deployment uses systemd.');
+    expect(service.retrieve).toHaveBeenCalledTimes(2);
+    expect(markRecalled).toHaveBeenCalledTimes(1);
+    expect(markRecalled).toHaveBeenCalledWith(1, [memory.id]);
+    expect(memoryStore.get(1, memory.id)?.use_count).toBe(1);
+    expect(svc.history(1).filter((row) => row.role === 'user')).toHaveLength(1);
   });
 
   it('marks nothing when recall came back empty', async () => {

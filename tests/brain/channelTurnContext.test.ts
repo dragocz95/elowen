@@ -130,6 +130,28 @@ describe('a channel turn carries the same per-turn context as an owner chat', ()
 
     expect(promptOf()).not.toContain('<running-subagents>');
   });
+
+  it('reorients after a thinking respawn removed the ephemeral post-compaction block', async () => {
+    const { store, svc, sessionId, opts, promptOf } = setup({}, 'discord-respawn-orientation');
+    store.createSession({ id: sessionId, userId: 1, model: 'kimi' });
+    store.appendMessage({
+      id: 'div-room', sessionId, parentId: null, role: 'compaction',
+      content: { role: 'compactionSummary', workingSet: [{ path: '/workspace/src/room.ts', wrote: true }] },
+    });
+
+    await svc.send(opts, 'first after compaction');
+    expect(promptOf()).toContain('<post-compaction-context>');
+    expect(promptOf()).toContain('/workspace/src/room.ts (edited)');
+
+    await svc.send(opts, 'same live context');
+    expect(promptOf()).not.toContain('<post-compaction-context>');
+
+    // Reasoning changes rebuild the same channel from durable rows. Those rows do not contain the first
+    // turn's ephemeral orientation, so the fresh provider context must receive it again.
+    await svc.send({ ...opts, thinkingLevel: 'high' }, 'after respawn');
+    expect(promptOf()).toContain('<post-compaction-context>');
+    expect(promptOf()).toContain('/workspace/src/room.ts (edited)');
+  });
 });
 
 /** The skill announcement is the one block a shared room cannot put in its cached system prompt, because

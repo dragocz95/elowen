@@ -800,12 +800,10 @@ export class ChannelSessionService {
       // old account/classification until an unrelated respawn.
       const classificationChanged = !!ch
         && (ch.ownerUserId !== ownerUserId || ch.direct !== (opts.direct === true));
-      // A channel respawn is invisible to the model, so the compaction it was already oriented for has
-      // to survive it — otherwise every model switch re-sends the whole post-compaction block for a
-      // compaction the model has already been told about.
-      let carriedOrientation: string | undefined;
+      // A same-id respawn rehydrates only durable history. The post-compaction block was ephemeral turn
+      // framing and is therefore absent from the fresh PI context, so no orientation marker may cross this
+      // boundary — the next prompt must derive and deliver it again from the durable divider.
       if (ch && (providerChanged || modelChanged || thinkingChanged || classificationChanged || opts.rebuildSession)) {
-        carriedOrientation = ch.orientedForCompaction;
         this.d.registry.channelDispose(opts.channelId);
         ch = undefined;
       }
@@ -860,7 +858,6 @@ export class ChannelSessionService {
           clientCwd: delegated?.pathView?.root ?? opts.clientCwd,
           ...(delegated?.pathView ? { pathView: delegated.pathView } : {}),
         });
-        if (carriedOrientation !== undefined) ch.orientedForCompaction = carriedOrientation;
         if (this.d.registry.consumePendingAbort(sessionId)) {
           ch.session.dispose();
           throw new Error('delegation aborted');
