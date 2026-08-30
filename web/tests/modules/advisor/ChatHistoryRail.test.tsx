@@ -136,27 +136,38 @@ describe('ChatHistoryRail', () => {
     expect(screen.getByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i })).toBeInTheDocument();
   });
 
-  it('deduplicates a pending delete and ignores its stale completion after a newer dialog opens', async () => {
+  it('locks a pending delete, deduplicates confirmation, then settles before another session can open', async () => {
     let resolveDelete!: () => void;
     ctrl.deleteSession.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveDelete = resolve; }));
-    renderRail('rail');
+    const { container } = renderRail('rail');
 
     openRowMenu(0);
     fireEvent.click(screen.getByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
-    const firstDialog = await screen.findByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i });
-    const confirm = within(firstDialog).getByRole('button', { name: /Delete conversation|Smazat konverzaci/i });
+    const dialog = await screen.findByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i });
+    const confirm = within(dialog).getByRole('button', { name: /Delete conversation|Smazat konverzaci/i });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
-    expect(ctrl.deleteSession).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(within(firstDialog).getByRole('button', { name: /Cancel|Zrušit/i }));
-    openRowMenu(1);
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
-    const newerDialog = await screen.findByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i });
-    expect(newerDialog).toHaveTextContent('Second');
+    await waitFor(() => {
+      expect(ctrl.deleteSession).toHaveBeenCalledTimes(1);
+      expect(dialog).toHaveAttribute('aria-busy', 'true');
+      expect(confirm).toBeDisabled();
+      expect(within(dialog).getByRole('button', { name: /Cancel|Zrušit/i })).toBeDisabled();
+      expect(within(dialog).getByRole('button', { name: /Close|Zavřít/i })).toBeDisabled();
+      expect(container).toHaveAttribute('inert');
+      expect(container).toHaveAttribute('aria-hidden', 'true');
+    });
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.getAllByRole('alertdialog')).toEqual([dialog]);
 
     resolveDelete();
-    await waitFor(() => expect(screen.getByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i })).toHaveTextContent('Second'));
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i })).not.toBeInTheDocument());
+    expect(container).not.toHaveAttribute('inert');
+
+    openRowMenu(1);
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
+    expect(await screen.findByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i })).toHaveTextContent('Second');
   });
 
   it('renames via brainRenameSession then invalidates the sessions query', async () => {

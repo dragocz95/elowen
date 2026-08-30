@@ -100,9 +100,14 @@ const snapshot = (over: Record<string, unknown>) => ({
 });
 
 /** A delegate tool call plus its sub-agent progress — the shape the rail's agent rows are folded from. */
-const subagentEvents = (over: { sessionId: string; status: 'running' | 'done'; task: string; id: string }) => ([
+const subagentEvents = (over: {
+  sessionId: string; status: 'running' | 'done'; task: string; id: string;
+  detail?: string; model?: string; tokens?: number; thinkingLabel?: string;
+  background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged';
+  tools?: number; seconds?: number;
+}) => ([
   { type: 'tool', name: 'Delegate', id: over.id },
-  { type: 'subagent', id: over.id, sessionId: over.sessionId, status: over.status, task: over.task, tools: 1, seconds: 2 },
+  { type: 'subagent', tools: 1, seconds: 2, ...over },
 ]);
 
 const workflowEvents = (status: 'running' | 'done') => ([
@@ -290,20 +295,35 @@ describe('telemetry rail — live work sections', () => {
     await waitFor(() => expect(screen.queryByTestId('telemetry-workflow')).toBeNull());
   });
 
-  it('lists only running sub-agents and opens the agents drill-in on click', async () => {
+  it('lists only running sub-agents and opens the accessible agents table with working row drill-in', async () => {
     const es = await renderRail();
     es.emit('snapshot', snapshot({
       events: [
-        ...subagentEvents({ id: 't1', sessionId: 'child-1', status: 'running', task: 'hledá volající' }),
-        ...subagentEvents({ id: 't2', sessionId: 'child-2', status: 'done', task: 'hotová práce' }),
+        ...subagentEvents({
+          id: 't1', sessionId: 'child-1', status: 'running', task: 'hledá volající',
+          detail: 'Reads direct callers', model: 'anthropic/sonnet', tokens: 1234,
+          thinkingLabel: 'High', tools: 4, seconds: 12, background: true,
+          autoDeliver: true, resultDelivery: 'pending',
+        }),
+        ...subagentEvents({ id: 't2', sessionId: 'child-2', status: 'done', task: 'hotová práce', tools: 2, seconds: 7 }),
       ],
     }));
     const section = await screen.findByTestId('telemetry-agents');
-    expect(section.textContent).toContain('hledá volající');
+    expect(section.textContent).toContain('Reads direct callers');
     expect(section.textContent).not.toContain('hotová práce');
 
-    await act(async () => { fireEvent.click(section.querySelector('button')!); });
-    await screen.findByText('Delegated sub-agents — click one to open its progress');
+    await act(async () => { fireEvent.click(within(section).getByRole('button')); });
+    const dialog = await screen.findByRole('dialog', { name: 'Agents' });
+    const table = within(dialog).getByRole('table', { name: 'Delegated sub-agents' });
+    expect(within(table).getAllByRole('row')).toHaveLength(3);
+    for (const value of ['hledá volající', 'Reads direct callers', 'anthropic/sonnet', 'High', '1.2k', '12s', 'Automatic delivery', 'Delivery pending', 'hotová práce']) {
+      expect(within(table).getByText(value)).toBeInTheDocument();
+    }
+
+    fireEvent.click(within(table).getByRole('button', { name: 'Open sub-agent transcript: hotová práce' }));
+    await waitFor(() => expect(FakeES.instances).toHaveLength(2));
+    expect(new URL(FakeES.instances[1]!.url, 'http://localhost').searchParams.get('session')).toBe('child-2');
+    expect(screen.queryByRole('dialog', { name: 'Agents' })).not.toBeInTheDocument();
   });
 
   // The rail is dragged between 240px and 560px on desktop and pinned to the phone's width in the drawer,

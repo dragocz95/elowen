@@ -85,6 +85,9 @@ const EXTERNALLY_SET: Record<string, string> = {
   '--data-table-columns': 'components/ui/DataTable.tsx, inline style per table',
   '--data-table-compact-columns': 'components/ui/DataTable.tsx, inline style per table',
   '--data-table-mobile-columns': 'components/ui/DataTable.tsx, inline style per table',
+  // Viewport/composer measurements owned by BrainChatSurface's layout effect, not global design tokens.
+  '--chat-visual-bottom-offset': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
+  '--chat-composer-height': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
   '--i': 'modules/dashboard/HeroCosmos.tsx, modules/advisor/CommandOrbit.tsx, lib/cosmosFilaments.ts',
   '--k': 'modules/advisor/CommandOrbit.tsx, the arc layout scale',
   '--fx': 'modules/dashboard/HeroCosmos.tsx, modules/advisor/CommandOrbit.tsx, pod entry offset',

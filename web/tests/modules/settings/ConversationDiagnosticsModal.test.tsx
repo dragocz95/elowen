@@ -196,27 +196,44 @@ describe('ConversationDiagnosticsModal', () => {
     expect(screen.getByRole('alertdialog', { name: 'Enable exact request capture?' })).toBeInTheDocument();
   });
 
-  it('deduplicates capture save and ignores an older completion after consent reopens', async () => {
+  it('locks pending capture consent, deduplicates submission, then settles before it can reopen', async () => {
     let resolveFirst!: () => void;
     const onEnableCapture = vi.fn()
       .mockImplementationOnce(() => new Promise<void>((resolve) => { resolveFirst = resolve; }))
       .mockResolvedValueOnce(undefined);
     renderModal(false, onEnableCapture);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Enable capture' }));
-    const firstConsent = await screen.findByRole('alertdialog', { name: 'Enable exact request capture?' });
-    const confirm = within(firstConsent).getByRole('button', { name: 'Enable capture' });
+    const enable = await screen.findByRole('button', { name: 'Enable capture' });
+    const diagnostics = screen.getByRole('dialog');
+    const diagnosticsOverlay = diagnostics.closest('[data-slot="dialog-overlay"]');
+    expect(diagnosticsOverlay).not.toBeNull();
+    fireEvent.click(enable);
+    const consent = await screen.findByRole('alertdialog', { name: 'Enable exact request capture?' });
+    const confirm = within(consent).getByRole('button', { name: 'Enable capture' });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
-    expect(onEnableCapture).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(within(firstConsent).getByRole('button', { name: 'Cancel' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Enable capture' }));
-    const newerConsent = await screen.findByRole('alertdialog', { name: 'Enable exact request capture?' });
+    await waitFor(() => {
+      expect(onEnableCapture).toHaveBeenCalledTimes(1);
+      expect(consent).toHaveAttribute('aria-busy', 'true');
+      expect(confirm).toBeDisabled();
+      expect(within(consent).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+      expect(within(consent).getByRole('button', { name: 'Close' })).toBeDisabled();
+      expect(diagnosticsOverlay).toHaveAttribute('inert');
+      expect(diagnosticsOverlay).toHaveAttribute('aria-hidden', 'true');
+    });
+
+    fireEvent.keyDown(consent, { key: 'Escape' });
+    expect(screen.getAllByRole('alertdialog')).toEqual([consent]);
+
     resolveFirst();
-    await waitFor(() => expect(screen.getByRole('alertdialog', { name: 'Enable exact request capture?' })).toBe(newerConsent));
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Enable exact request capture?' })).not.toBeInTheDocument());
+    expect(diagnosticsOverlay).not.toHaveAttribute('inert');
 
-    fireEvent.click(within(newerConsent).getByRole('button', { name: 'Enable capture' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Enable capture' }));
+    const reopened = await screen.findByRole('alertdialog', { name: 'Enable exact request capture?' });
+    expect(reopened).not.toBe(consent);
+    fireEvent.click(within(reopened).getByRole('button', { name: 'Enable capture' }));
     await waitFor(() => expect(onEnableCapture).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Enable exact request capture?' })).not.toBeInTheDocument());
   });
