@@ -51,6 +51,17 @@ describe('slash command registry', () => {
     expect(commandsFor('discord', true).some((c) => c.name === 'rename')).toBe(false);
   });
 
+  it('publishes one server-owned /goal definition to CLI and Web only', () => {
+    for (const surface of ['cli', 'web'] as const) {
+      expect(commandsFor(surface, true).find((command) => command.name === 'goal')).toMatchObject({
+        kind: 'action', execution: 'session-control', argument: { kind: 'text' },
+      });
+    }
+    for (const surface of PLATFORM_SURFACES) {
+      expect(commandsFor(surface, true).some((command) => command.name === 'goal'), surface).toBe(false);
+    }
+  });
+
   it('publishes stop/compact to every surface', () => {
     for (const surface of ['cli', 'discord', 'whatsapp', 'web'] as const) {
       for (const n of ['stop', 'compact']) {

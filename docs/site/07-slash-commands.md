@@ -51,7 +51,7 @@ These commands are available in the CLI. Web users manage conversations through 
 | `/plan` | — | CLI, Web | Selects Plan mode for subsequent messages. Tools remain listed, but execution policy prevents disallowed mutations; this is not a hidden-tool sandbox. |
 | `/build` | — | CLI, Web | Selects Build mode for subsequent messages. |
 | `/workflow` | — | CLI, Web | Selects Workflow mode, asking Elowen to orchestrate the request as a DAG of sub-agents. |
-| `/goal` | `[text\|status\|pause\|resume\|clear\|draft]` | CLI | Creates or manages a persistent multi-turn goal. Without an argument, or with `status`, it shows the goal; `draft` previews text without activating it. |
+| `/goal` | `[text\|status\|pause\|resume\|clear\|draft <text>]` | CLI, Web | Creates or manages a persistent multi-turn goal. Without an argument, or with `status`, it shows the goal; `draft <text>` previews the goal contract without activating it. |
 | `/subgoal` | `<text>\|remove <N>\|clear` | CLI | Adds a sub-goal, removes one by number, or clears all sub-goals under the active goal. |
 | `/yolo` | `[on\|off]` | CLI | Toggles session-scoped automatic approval for tool requests. Deny rules and hard safety boundaries still apply. |
 

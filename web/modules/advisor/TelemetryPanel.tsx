@@ -7,7 +7,7 @@ import { plural } from '../../lib/i18n/plural';
 import { interpolate } from '../../lib/i18n/interpolate';
 import { elowenClient } from '../../lib/elowenClient';
 import { useBrainProcesses, useBrainRateLimitsAll } from '../../lib/queries';
-import { formatTokens, formatCost } from '../../lib/format';
+import { formatTokens, formatCost, formatDuration } from '../../lib/format';
 import { OAuthUsageRail, usageFillClass } from '../settings/OAuthUsageRail';
 import { MascotGlyph } from '../../components/ui/SpatialMascot';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
@@ -21,6 +21,7 @@ import { useBrainChat } from './BrainChatProvider';
 import { ProcessOutputModal } from './ProcessPanel';
 import { ownedSessionIds, isOwnProcess, processOrigin } from '../../lib/processScope';
 import { CommandOrbit } from './CommandOrbit';
+import { goalSubgoalTally, useGoalElapsed } from './GoalStatus';
 import type { BrainGoal, ProcessInfo } from '../../lib/types';
 
 /** The owl presides over the rail the way it tops the CLI panel — and it is not decoration: it mirrors
@@ -201,20 +202,6 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel }: {
   );
 }
 
-/** Completed vs. total subgoals of a goal's stored JSON array, or null when it holds none. Malformed
- *  legacy rows are simply omitted — the goal itself still renders. */
-function subgoalTally(raw: string): { done: number; total: number } | null {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    const done = parsed.filter((entry): entry is { done: boolean } =>
-      typeof entry === 'object' && entry !== null && (entry as { done?: unknown }).done === true).length;
-    return { done, total: parsed.length };
-  } catch {
-    return null;
-  }
-}
-
 /** The panel's sections, in the CLI rail's order: context fill, goal, subscription limits, workflows,
  *  sub-agents, processes, project, MCP, LSP. A section with nothing to report simply does not render — an
  *  empty rail is quieter than a rail full of dashes. Shared by the desktop column and the mobile drawer. */
@@ -288,7 +275,9 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   const goalTurns = activeGoal && activeGoal.turn_budget > 0
     ? `${activeGoal.turns_used}/${activeGoal.turn_budget} ${plural(t.telemetry.goalTurns, activeGoal.turn_budget)}`
     : activeGoal ? `${activeGoal.turns_used} ${plural(t.telemetry.goalTurns, activeGoal.turns_used)}` : undefined;
-  const subgoals = activeGoal ? subgoalTally(activeGoal.subgoals) : null;
+  const goalElapsed = useGoalElapsed(activeGoal);
+  const goalMeta = goalTurns ? `${goalTurns} · ${formatDuration(goalElapsed)}` : undefined;
+  const subgoals = activeGoal ? goalSubgoalTally(activeGoal.subgoals) : null;
 
   return (
     <div className="flex flex-col gap-4 px-3 py-3">
@@ -312,11 +301,16 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
 
       {activeGoal ? (
         <section className="flex flex-col gap-1" data-testid="telemetry-goal">
-          <SectionHead label={t.telemetry.goal} meta={goalTurns} />
+          <SectionHead label={t.telemetry.goal} meta={goalMeta} />
           <p className="flex items-center gap-1.5 text-tiny">
             <Target size={11} className="shrink-0 text-primary" aria-hidden />
             <span className="min-w-0 truncate text-foreground" title={activeGoal.goal}>{activeGoal.goal}</span>
           </p>
+          {activeGoal.last_evidence ? (
+            <p className="line-clamp-2 text-tiny text-muted-foreground" title={activeGoal.last_evidence}>
+              {t.telemetry.goalProgress.replace('{text}', activeGoal.last_evidence)}
+            </p>
+          ) : null}
           {subgoals ? (
             <p className="text-tiny text-muted-foreground">
               {t.telemetry.goalSubgoals.replace('{done}', String(subgoals.done)).replace('{total}', String(subgoals.total))}

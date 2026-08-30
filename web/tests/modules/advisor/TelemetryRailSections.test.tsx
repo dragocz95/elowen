@@ -94,6 +94,13 @@ async function renderRail(onOpenWorkflow?: (id: string) => void): Promise<FakeES
   return FakeES.instances[0]!;
 }
 
+async function renderChatOnly(): Promise<FakeES> {
+  const { wrapper: Wrapper } = createWrapper();
+  render(<Wrapper><ToastProvider><BrainChatProvider><BrainChat /></BrainChatProvider></ToastProvider></Wrapper>);
+  await waitFor(() => expect(FakeES.instances.length).toBe(1));
+  return FakeES.instances[0]!;
+}
+
 const snapshot = (over: Record<string, unknown>) => ({
   type: 'snapshot', sessionId: 'brain-1', hasMore: false, nextBefore: null, history: [], events: [],
   control: { streaming: false, pendingAsk: null }, ...over,
@@ -240,6 +247,29 @@ describe('telemetry rail — live work sections', () => {
     expect(row).not.toBeNull();
     await act(async () => { fireEvent.click(row!); });
     await screen.findByText('ready on :4500');
+  });
+
+  it('shows the active goal in the compact chat without requiring the telemetry rail', async () => {
+    const es = await renderChatOnly();
+    es.emit('goal', { goal: activeGoal });
+    const status = await screen.findByTestId('chat-goal-status');
+    expect(status.textContent).toContain('Dokončit telemetrický rail');
+    expect(status.textContent).toContain('3/20');
+  });
+
+  it('isolates the compact goal status when the stream switches conversations', async () => {
+    const es = await renderChatOnly();
+    es.emit('goal', { goal: activeGoal });
+    await screen.findByTestId('chat-goal-status');
+
+    es.emit('session', { sessionId: 'brain-2' });
+    await waitFor(() => expect(screen.queryByTestId('chat-goal-status')).toBeNull());
+
+    es.emit('snapshot', snapshot({
+      sessionId: 'brain-2',
+      goal: { ...activeGoal, session_id: 'brain-2', goal: 'Goal druhé konverzace', turns_used: 1 },
+    }));
+    expect(await screen.findByText('Goal druhé konverzace')).toBeInTheDocument();
   });
 
   it('shows the active goal and hides the section once it is cleared', async () => {

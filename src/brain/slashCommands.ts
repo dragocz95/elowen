@@ -59,9 +59,10 @@ export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   { name: 'mcp', description: 'Inspect MCP servers, tools and reconnect health', kind: 'picker', execution: 'surface-local', surfaces: ['cli'], requiresPlugin: 'mcp' },
   { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker', execution: 'surface-local', surfaces: ['cli', 'web'], requiresPlugin: 'skills' },
   { name: 'tasks', description: 'Inspect and manage this conversation\'s tasks', kind: 'picker', execution: 'surface-local', surfaces: ['cli', 'web'], requiresPlugin: 'todo' },
-  // `surface-local` despite hitting the daemon: the CLI drives the goal endpoints from its own handler,
-  // not through a catalog dispatch, and no other surface publishes them.
-  { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
+  // The goal loop is conversation-owned daemon state. CLI keeps its richer optimistic TUI handler, while
+  // HTTP surfaces execute the same semantics through POST /brain/command; the argument is free text because
+  // it covers both control words (status/pause/resume/clear/draft) and a new goal statement.
+  { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', execution: 'session-control', surfaces: ['cli', 'web'], argument: { kind: 'text' } },
   { name: 'subgoal', description: 'Add or remove persistent-goal subgoals', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
   { name: 'tools', description: 'Inspect active plugin tools and ownership', kind: 'picker', execution: 'surface-local', surfaces: ['cli'] },
   // CLI and web can steer compaction with free text, but the current platform control core calls

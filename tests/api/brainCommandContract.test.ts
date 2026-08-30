@@ -5,8 +5,8 @@ import { makeTestApp } from '../helpers/testApp.js';
  *
  *  "unknown command" means the catalog has no executable command by that name — a typo, or a kind this
  *  endpoint never runs (a picker, an info line). "command is not server-dispatchable" means the command
- *  is real and this is the wrong place to ask: /goal and /maskot are CLI overlays, /voice is the chat
- *  adapter's own state. A caller that shows the user "no such command" for the second case is lying to
+ *  is real and this is the wrong place to ask: /maskot is a CLI overlay and /voice is the chat adapter's
+ *  own state. A caller that shows the user "no such command" for the second case is lying to
  *  them, which is why the two survived the move to a catalog-driven dispatch and are pinned here.
  *
  *  Only the refusal paths are exercised, and they all decide before touching the brain — hence the empty
@@ -37,7 +37,6 @@ describe('POST /brain/command refusals', () => {
   });
 
   it.each([
-    ['/goal, a CLI-local action', 'goal'],
     ['/maskot, a CLI-local action', 'maskot'],
     ['/voice, an adapter-owned action', 'voice'],
   ])('keeps "command is not server-dispatchable" for %s', async (_why, name) => {
@@ -48,5 +47,43 @@ describe('POST /brain/command refusals', () => {
   // name the catalog cannot resolve.
   it('answers "unknown command" for a body with no usable name', async () => {
     expect(await refuse(42)).toEqual({ status: 400, body: { error: 'unknown command' } });
+  });
+});
+
+describe('POST /brain/command /goal dispatch', () => {
+  it('owns status, actions, drafts and new goals without a Web-specific protocol', async () => {
+    const calls: unknown[][] = [];
+    const goal = {
+      session_id: 'brain-1', user_id: 1, status: 'active' as const, goal: 'Ship parity', draft: '', subgoals: '[]',
+      turns_used: 2, turn_budget: 20, last_verdict: '', last_evidence: 'Tests added', paused_reason: '',
+      created_at: '2026-08-30 10:00:00', updated_at: '2026-08-30 10:05:00',
+    };
+    const brain = {
+      goalStatus: (...args: unknown[]) => { calls.push(['status', ...args]); return goal; },
+      goalAction: (...args: unknown[]) => { calls.push(['action', ...args]); return args[1] === 'clear' ? null : goal; },
+      setGoal: async (...args: unknown[]) => { calls.push(['set', ...args]); return goal; },
+    };
+    const { app, token } = await makeTestApp({ extra: { brain: brain as never } });
+    const run = async (argument?: string) => {
+      const res = await app.request('/brain/command', post(token, { name: 'goal', session: 'brain-1', ...(argument ? { argument } : {}) }));
+      expect(res.status).toBe(200);
+      return res.json() as Promise<{ data: { goal: typeof goal | null } }>;
+    };
+
+    expect((await run()).data.goal).toEqual(goal);
+    expect((await run('show')).data.goal).toEqual(goal);
+    expect((await run('pause')).data.goal).toEqual(goal);
+    expect((await run('clear')).data.goal).toBeNull();
+    expect((await run('draft Prepare release')).data.goal).toEqual(goal);
+    expect((await run('Ship parity')).data.goal).toEqual(goal);
+
+    expect(calls).toEqual([
+      ['status', 1, 'brain-1'],
+      ['status', 1, 'brain-1'],
+      ['action', 1, 'pause', 'brain-1'],
+      ['action', 1, 'clear', 'brain-1'],
+      ['set', 1, 'Prepare release', { draft: true }, 'brain-1'],
+      ['set', 1, 'Ship parity', { draft: false }, 'brain-1'],
+    ]);
   });
 });

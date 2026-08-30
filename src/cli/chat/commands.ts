@@ -6,6 +6,7 @@ import { editTextExternally } from './externalEditor.js';
 import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readClipboardImage, type PendingImage } from './mentions.js';
 import { sessionItems, openPicker, openTextInput } from './picker.js';
 import type { BrainClient } from './brainClient.js';
+import type { SlashCommandDef } from '../../shared/wireContract.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources, ChatTaskScope } from './chatCapabilities.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
@@ -20,10 +21,14 @@ export function resolveThinkingLevel(value: string, levels: string[], labels: Re
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'clear' | 'stop' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tasks' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
+export function parseCommand(text: string, available?: readonly SlashCommandDef[]): { cmd: 'quit' | 'new' | 'clear' | 'stop' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tasks' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
-  switch (m[1]) {
+  const name = m[1]!;
+  // The daemon-published projection decides what this TUI may execute. `/exit` remains a local alias for
+  // the catalog's `/quit`; headless callers omit the projection and retain their existing offline parser.
+  if (available && name !== 'exit' && !available.some((command) => command.name === name)) return null;
+  switch (name) {
     case 'quit': case 'exit': return { cmd: 'quit' };
     case 'new': return { cmd: 'new' };
     case 'clear': return { cmd: 'clear' };
@@ -277,7 +282,7 @@ export function wireSubmit(
       });
       return;
     }
-    const command = parseCommand(trimmed);
+    const command = parseCommand(trimmed, commandDefs);
     // Inside a sub-agent view, plain text goes to the CHILD (steered into its running turn, or a fresh
     // child turn when idle) — the reply streams into the open view. Slash commands always act on the
     // parent conversation, so they snap back first (running /new while "inside" a child would be chaos).

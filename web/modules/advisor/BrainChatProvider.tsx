@@ -222,7 +222,7 @@ export interface BrainChatValue {
   commands: SlashCommandDef[];
   /** Execute a catalog command exactly as the composer's slash menu does. Exposed so a second entry point
    *  (the telemetry mascot's command field) dispatches through THIS path instead of a parallel copy. */
-  runSlash: (cmd: SlashCommandDef) => void;
+  runSlash: (cmd: SlashCommandDef, argument?: string) => void;
   slash: {
     items: SlashItem[];
     open: boolean;
@@ -694,7 +694,7 @@ function useBrainChatController(): BrainChatValue {
   const openReadOnly = async (sessionId: string): Promise<void> => {
     stream.close();
     const generation = nextGeneration();
-    setAsk(null); setNotice('');
+    setAsk(null); setNotice(''); setGoal(null);
     // The composer is about to be replaced by the read-only banner, so drop the in-flight marker at once.
     setView((cur) => ({ ...cur, thinking: false }));
     setReadOnly(sessionId);
@@ -916,7 +916,7 @@ function useBrainChatController(): BrainChatValue {
     void elowenClient.brainSend(`/skill:${name}`, [], undefined, binding(), workMode)
       .catch(() => toast(t.brainChat.sendError, 'error'));
   };
-  const runSlash = async (cmd: SlashCommandDef): Promise<void> => {
+  const runSlash = async (cmd: SlashCommandDef, argument?: string): Promise<void> => {
     if (cmd.name === 'model') { setInput(''); setModelOpen(true); void loadModels(); return; }
     setInput('');
     try {
@@ -940,7 +940,12 @@ function useBrainChatController(): BrainChatValue {
       // A prompt macro usually wants arguments — picking it pre-fills the composer (`/review `) so the
       // user types them and submits; the submit path expands the template (args or not).
       if (cmd.kind === 'prompt') { setInput(`/${cmd.name} `); return; }
-      if (cmd.kind === 'action') { const r = await elowenClient.brainCommand(cmd.name, boundSessionRef.current); toast(r.message ?? `/${cmd.name}`, 'ok'); return; }
+      if (cmd.kind === 'action') {
+        const r = await elowenClient.brainCommand(cmd.name, boundSessionRef.current, argument);
+        if (r.data && Object.prototype.hasOwnProperty.call(r.data, 'goal')) setGoal(r.data.goal ?? null);
+        toast(r.message ?? `/${cmd.name}`, 'ok');
+        return;
+      }
       toast(`/${cmd.name}`, 'ok');
     } catch (e) { toast((e as Error).message ?? String(e), 'error'); }
   };
@@ -1083,7 +1088,7 @@ function useBrainChatController(): BrainChatValue {
     setShowThoughts: (v) => setThoughts(v ? 'show' : 'hide'),
     workMode, setWorkMode: runMode, planDecision, implementPlan, dismissPlan, planSubmitting,
     renameOpen, closeRename: () => setRenameOpen(false), renameSession,
-    commands, runSlash: (cmd) => void runSlash(cmd),
+    commands, runSlash: (cmd, argument) => void runSlash(cmd, argument),
     slash: { items: slashItems, open: slashItems.length > 0 },
     sessions,
   };

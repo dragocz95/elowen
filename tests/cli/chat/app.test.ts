@@ -530,6 +530,8 @@ describe('parseCommand', () => {
     expect(parseCommand('/exit')).toEqual({ cmd: 'quit' });
     expect(parseCommand('/help')).toEqual({ cmd: 'help' });
     expect(parseCommand('/unknown')).toBeNull();
+    expect(parseCommand('/goal Fix tests', [{ name: 'goal', description: 'Goal', kind: 'action' }])).toEqual({ cmd: 'goal', arg: 'Fix tests' });
+    expect(parseCommand('/goal Fix tests', [{ name: 'help', description: 'Help', kind: 'info' }])).toBeNull();
     expect(parseCommand('běžná zpráva')).toBeNull();
   });
 });

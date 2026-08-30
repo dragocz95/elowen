@@ -17,7 +17,7 @@ function compactInstruction(v: unknown): string | undefined {
 
 /** The `POST /brain/command` body: `name` selects the command and the remaining fields are per-command,
  *  so it stays a permissive hand-rolled read rather than one zod schema (mirrors the streaming handler). */
-type ServerCommandBody = { name?: unknown; session?: unknown; on?: unknown; instruction?: unknown };
+type ServerCommandBody = { name?: unknown; session?: unknown; argument?: unknown; on?: unknown; instruction?: unknown };
 
 interface ServerCommandRun {
   c: ElowenContext;
@@ -27,6 +27,20 @@ interface ServerCommandRun {
 }
 
 type ServerCommandHandler = (run: ServerCommandRun) => Response | Promise<Response>;
+
+type GoalCommandState = ReturnType<BrainService['goalStatus']>;
+
+function goalCommandMessage(goal: GoalCommandState): string {
+  if (!goal) return 'No active goal.';
+  const parts = [`Goal ${goal.status}.`, `${goal.turns_used}/${goal.turn_budget} turns`, goal.goal];
+  try {
+    const subgoals = JSON.parse(goal.subgoals) as { done?: boolean }[];
+    if (Array.isArray(subgoals) && subgoals.length) parts.push(`Subgoals ${subgoals.filter((item) => item?.done).length}/${subgoals.length}`);
+  } catch { /* malformed legacy subgoals do not hide the goal itself */ }
+  if (goal.paused_reason) parts.push(`Paused: ${goal.paused_reason}`);
+  if (goal.last_evidence) parts.push(`Evidence: ${goal.last_evidence}`);
+  return parts.join(' · ');
+}
 
 /** Every command `POST /brain/command` actually executes, keyed by the catalog name it implements.
  *
@@ -50,13 +64,29 @@ export const SERVER_COMMANDS: Readonly<Record<string, ServerCommandHandler>> = {
     const data = await brain.clearSession(c.get('user').id, typeof body.session === 'string' ? body.session : undefined);
     return c.json({ ok: true, message: 'Conversation cleared.', data });
   },
+  goal: async ({ c, brain, body }) => {
+    const userId = c.get('user').id;
+    const session = typeof body.session === 'string' ? body.session : undefined;
+    const argument = typeof body.argument === 'string' ? body.argument.trim() : '';
+    let goal: GoalCommandState;
+    if (!argument || argument === 'status' || argument === 'show') {
+      goal = brain.goalStatus(userId, session);
+    } else if (argument === 'pause' || argument === 'resume' || argument === 'clear') {
+      goal = brain.goalAction(userId, argument, session);
+    } else {
+      const draft = argument.startsWith('draft ');
+      const text = draft ? argument.slice('draft '.length).trim() : argument;
+      goal = await brain.setGoal(userId, text, { draft }, session);
+    }
+    return c.json({ ok: true, message: argument === 'clear' ? 'Goal cleared.' : goalCommandMessage(goal), data: { goal } });
+  },
   compact: async ({ c, brain, route, body }) => {
     const target = typeof body.session === 'string' ? body.session : undefined;
     // A compaction runs a summarizing model turn, so its tokens are spend like any other and are
     // attributed to whoever asked for it. preflightSend is used purely as the ownership-checked
     // resolver of "which conversation is this about"; a failure here is not this route's error.
     try { route.pinOrigin(c, brain.preflightSend(c.get('user').id, target)); } catch { /* no conversation to attribute */ }
-    const r = await brain.compact(c.get('user').id, target, compactInstruction(body.instruction));
+    const r = await brain.compact(c.get('user').id, target, compactInstruction(body.argument ?? body.instruction));
     return c.json({
       ok: true,
       message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'),
@@ -64,11 +94,16 @@ export const SERVER_COMMANDS: Readonly<Record<string, ServerCommandHandler>> = {
     });
   },
   fast: ({ c, brain, body }) => {
-    const r = brain.setFast(
-      c.get('user').id,
-      typeof body.on === 'boolean' ? body.on : undefined,
-      typeof body.session === 'string' ? body.session : undefined,
-    );
+    const userId = c.get('user').id;
+    const session = typeof body.session === 'string' ? body.session : undefined;
+    const argument = typeof body.argument === 'string' ? body.argument.trim().toLowerCase() : '';
+    if (argument && argument !== 'on' && argument !== 'off' && argument !== 'status') {
+      return c.json({ error: 'usage: /fast · /fast on · /fast off · /fast status' }, 400);
+    }
+    const status = argument === 'status' ? brain.status(userId, session) : null;
+    const r = status
+      ? { fast: status.fast, fastAvailable: status.fastAvailable }
+      : brain.setFast(userId, typeof body.on === 'boolean' ? body.on : argument === 'on' ? true : argument === 'off' ? false : undefined, session);
     return c.json({ ok: true, message: `Fast mode ${r.fast ? 'enabled' : 'disabled'}.`, data: r });
   },
   restart: async ({ c, route }) => {

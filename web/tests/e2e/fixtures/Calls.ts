@@ -9,6 +9,7 @@ import { DAEMON_URL } from './env.ts';
 
 type ModelCall = Extract<RecordedCall, { kind: 'model' }>;
 type AbortCall = Extract<RecordedCall, { kind: 'abort' }>;
+type CommandCall = Extract<RecordedCall, { kind: 'command' }>;
 
 export class Calls {
   constructor(private readonly request: APIRequestContext) {}
@@ -28,5 +29,10 @@ export class Calls {
   /** The `POST /brain/abort` calls (the Stop button). */
   async aborts(): Promise<AbortCall[]> {
     return (await this.all()).filter((c): c is AbortCall => c.kind === 'abort');
+  }
+
+  /** The generic `POST /brain/command` calls (including typed /goal submissions). */
+  async commands(): Promise<CommandCall[]> {
+    return (await this.all()).filter((c): c is CommandCall => c.kind === 'command');
   }
 }

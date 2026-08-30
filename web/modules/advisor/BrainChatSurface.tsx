@@ -27,6 +27,7 @@ import { TasksModal } from './TasksModal';
 import { HelpModal } from './HelpModal';
 import { ModelModal } from './ModelModal';
 import { PlanDecisionModal } from './PlanDecisionModal';
+import { GoalStatusInline } from './GoalStatus';
 import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
 import { ProjectPicker } from './ProjectPicker';
@@ -37,6 +38,7 @@ import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { isBackgroundProcessCardId } from '../../lib/processScope';
 import { PageTopBarPortal } from '../../lib/pageHeader';
 import { uiZoom } from '../../lib/uiZoom';
+import { parseSlashInvocation } from '../../lib/slashCommands';
 import {
   DEFAULT_COMPOSE_MARKER_MS,
   DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS,
@@ -772,8 +774,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const {
     turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
-    usage, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
-    openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, activeSessionId, focusNonce,
+    usage, goal, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
+    openReadOnly, exitReadOnly, onQueueRemove, onAnswer, commands, runSlash, slash, sessions, activeSessionId, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts,
     workMode, planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
     registerSurface,
@@ -797,6 +799,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   // rail is a drawer), so only an actually-visible rail takes ownership; hidden or absent hands the
   // reporting back to the transcript rather than dropping it.
   const railOwnsLiveWork = telemetryShown === true;
+  const activeSurfaceGoal = goal?.status === 'active' && !railOwnsLiveWork ? goal : null;
+  const hasStatuslineStats = !!lineCfg && (lineCfg.showModel || lineCfg.showContext || lineCfg.showTokens || lineCfg.showSpeed || lineCfg.showCost);
   // `undefined` until the viewport has actually been measured. Every branch below therefore tests `=== true`
   // or `=== false` and renders NOTHING in between: the boolean-returning hook reports `false` first, which
   // on a phone painted one frame of the desktop controls (inline picker, mode pill, reasoning button) before
@@ -1440,25 +1444,25 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           chevron collapses the whole row in-chat — the quick alternative to the plugin's settings, mainly
           for a phone where the metrics crowd the composer. Collapsed leaves only the chevron to bring it
           back. */}
-      {lineCfg && (lineCfg.showModel || lineCfg.showContext || lineCfg.showTokens || lineCfg.showSpeed || lineCfg.showCost) ? (
+      {activeSurfaceGoal || hasStatuslineStats ? (
         // Exactly ONE line, phone included: a second row here pushes the composer down and eats the little
-        // vertical room a phone has. Each statistic stays whole (`shrink-0 whitespace-nowrap`, needed
-        // because a no-wrap FLEX row still lets each item's own text wrap) — but when the row runs out of
-        // width it is the STATISTICS that give way, cheapest first, and the model name that keeps the room
-        // they free. Which one drops at which width is the `[data-stat]` ladder in chat.css, driven by the
-        // row's own container: the docked telemetry rail narrows it without the viewport changing.
+        // vertical room a phone has. The goal is the high-priority prefix; optional statistics give way as
+        // width tightens. Which statistic drops at which width is the `[data-stat]` ladder in chat.css.
         <div data-testid="chat-statusline" className={`chat-statusline flex min-w-0 items-center gap-x-2 overflow-hidden py-1 font-mono text-muted-foreground sm:gap-x-3 ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
-          <button
-            type="button"
-            onClick={() => setStatuslinePref(statuslineShown ? 'hidden' : 'shown')}
-            aria-expanded={statuslineShown}
-            aria-label={statuslineShown ? t.chat.hideStats : t.chat.showStats}
-            title={statuslineShown ? t.chat.hideStats : t.chat.showStats}
-            className="flex shrink-0 items-center rounded text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <ChevronRight size={11} aria-hidden className={`opacity-60 transition-transform ${statuslineShown ? 'rotate-90' : ''}`} />
-          </button>
-          {statuslineShown ? (
+          {hasStatuslineStats ? (
+            <button
+              type="button"
+              onClick={() => setStatuslinePref(statuslineShown ? 'hidden' : 'shown')}
+              aria-expanded={statuslineShown}
+              aria-label={statuslineShown ? t.chat.hideStats : t.chat.showStats}
+              title={statuslineShown ? t.chat.hideStats : t.chat.showStats}
+              className="flex shrink-0 items-center rounded text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ChevronRight size={11} aria-hidden className={`opacity-60 transition-transform ${statuslineShown ? 'rotate-90' : ''}`} />
+            </button>
+          ) : null}
+          {activeSurfaceGoal ? <GoalStatusInline goal={activeSurfaceGoal} /> : null}
+          {hasStatuslineStats && statuslineShown && lineCfg ? (
             <>
               {lineCfg.showModel && (currentModel || active?.model) ? (() => {
                 const model = currentModel || active?.model || '';
@@ -1542,7 +1546,19 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         className={variant === 'full'
           ? 'chat-composer relative flex items-end gap-1 rounded-2xl border border-border bg-card p-1.5 transition-colors focus-within:border-border-strong'
           : 'relative flex items-end gap-2 p-2'}
-        onSubmit={(e) => { e.preventDefault(); void submit(); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const invocation = parseSlashInvocation(input, commands);
+          // Prompt macros and unknown slash-prefixed prose are real chat turns. A published daemon command
+          // with arguments is executed through the same catalog path as a menu pick; local pickers keep their
+          // previous argument-bearing text behaviour unless the menu invoked them bare.
+          if (invocation && invocation.command.kind !== 'prompt'
+            && (!invocation.argument || invocation.command.execution === 'session-control')) {
+            runSlash(invocation.command, invocation.argument);
+            return;
+          }
+          void submit();
+        }}
       >
         {slashOpen && (
           <div data-testid="chat-slash-menu" className={`absolute bottom-full w-full max-w-md overflow-hidden rounded-lg border border-border bg-muted shadow-lg ${variant === 'full' ? 'left-0 mb-2' : 'left-2 mb-1'}`}>

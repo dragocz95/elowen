@@ -14,7 +14,7 @@ import {
   brainRateLimits,
   DEFAULT_SESSION_ID,
 } from '../../seed/fixtures.ts';
-import type { BrainMessage } from '../../../../lib/types.ts';
+import type { BrainGoal, BrainMessage } from '../../../../lib/types.ts';
 import { registerStream, unregisterStream, emitToStreams } from '../streams.ts';
 import { sseFrame, idleEvent } from '../emitters.ts';
 import { getResponse, getMessages } from '../overrides.ts';
@@ -33,7 +33,8 @@ export interface RecordedSend {
  *  assert the exact payload the web sent upstream — exposed via `GET /__test/calls`. */
 export type RecordedCall =
   | { kind: 'model'; provider?: string; model?: string; session?: string; at: number }
-  | { kind: 'abort'; session?: string; client?: string; at: number };
+  | { kind: 'abort'; session?: string; client?: string; at: number }
+  | { kind: 'command'; name: string; argument?: string; session?: string; at: number };
 
 const recordedSends: RecordedSend[] = [];
 const recordedCalls: RecordedCall[] = [];
@@ -70,6 +71,25 @@ export function resetSentTurns(): void {
 
 /** Serve a backwards page of history (the chat lazy-load): the newest `limit` turns, then older ones as
  *  `before` (a previous page's `nextBefore`, an exclusive index cursor) walks back through the seed. */
+function commandGoal(session: string, argument: string): BrainGoal | null {
+  if (argument === 'clear') return null;
+  return {
+    session_id: session,
+    user_id: 1,
+    status: argument === 'pause' ? 'paused' : argument.startsWith('draft ') ? 'draft' : 'active',
+    goal: argument.startsWith('draft ') ? argument.slice('draft '.length) : argument || 'Browser goal status',
+    draft: argument.startsWith('draft ') ? `outcome: ${argument.slice('draft '.length)}` : '',
+    subgoals: '[{"text":"Inspect","done":true},{"text":"Verify"}]',
+    turns_used: 2,
+    turn_budget: 20,
+    last_verdict: '',
+    last_evidence: 'Command reached the daemon route.',
+    paused_reason: argument === 'pause' ? 'Paused by user.' : '',
+    created_at: new Date(Date.now() - 5_000).toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
 function messagesPage(source: readonly BrainMessage[], limit: number, before?: number): { items: BrainMessage[]; hasMore: boolean; nextBefore: number | null } {
   const end = before === undefined ? source.length : Math.max(0, Math.min(before, source.length));
   const start = Math.max(0, end - limit);
@@ -141,6 +161,17 @@ export function registerBrainRoutes(app: Hono): void {
       at: Date.now(),
     });
     return c.json({ ok: true, accepted: true }, 202);
+  });
+
+  app.post('/brain/command', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; argument?: unknown; session?: unknown };
+    const name = typeof body.name === 'string' ? body.name : '';
+    const argument = typeof body.argument === 'string' ? body.argument : undefined;
+    const session = typeof body.session === 'string' ? body.session : undefined;
+    recordedCalls.push({ kind: 'command', name, ...(argument ? { argument } : {}), ...(session ? { session } : {}), at: Date.now() });
+    if (name !== 'goal') return c.json({ ok: true, message: `/${name}` });
+    const goal = commandGoal(session ?? DEFAULT_SESSION_ID, argument ?? '');
+    return c.json({ ok: true, message: goal ? `Goal ${goal.status}.` : 'Goal cleared.', data: { goal } });
   });
 
   // Switch the caller's conversation to another model (the /model picker). Mirrors the real route's

@@ -23,6 +23,7 @@ class FakeES {
 }
 
 let sendBodies: Record<string, unknown>[] = [];
+let commandBodies: Record<string, unknown>[] = [];
 let renameCalls: { id: string; title: string }[] = [];
 let thinkBodies: Record<string, unknown>[] = [];
 let modelBodies: Record<string, unknown>[] = [];
@@ -35,6 +36,10 @@ let thinkingLevel = 'low';
 const server = setupServer(
   http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
   http.post('*/api/brain/send', async ({ request }) => { sendBodies.push((await request.json()) as Record<string, unknown>); return HttpResponse.json({ ok: true }, { status: 202 }); }),
+  http.post('*/api/brain/command', async ({ request }) => {
+    commandBodies.push((await request.json()) as Record<string, unknown>);
+    return HttpResponse.json({ ok: true, message: 'Goal started.', data: { goal: null } });
+  }),
   http.get('*/api/brain/messages', ({ request }) => new URL(request.url).searchParams.has('limit')
     ? HttpResponse.json({ items: [], hasMore: false, nextBefore: null })
     : HttpResponse.json([])),
@@ -90,6 +95,7 @@ const server = setupServer(
       { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker' },
       { name: 'tasks', description: 'Inspect and manage conversation tasks', kind: 'picker' },
       { name: 'model', description: 'Switch the model', kind: 'picker' },
+      { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', execution: 'session-control', argument: { kind: 'text' } },
       { name: 'help', description: 'List every command', kind: 'info' },
     ],
   })),
@@ -99,7 +105,7 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest });
   (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
 });
-afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; renameCalls = []; thinkBodies = []; modelBodies = []; sessionTasks = [
+afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; commandBodies = []; renameCalls = []; thinkBodies = []; modelBodies = []; sessionTasks = [
   { id: '1', subject: 'Inspect auth', description: 'Check private token handling', status: 'pending', metadata: {}, blockedBy: [], blocks: [] },
   { id: '2', subject: 'Ship fix', description: 'Deploy after verification', status: 'in_progress', metadata: {}, blockedBy: ['1'], blocks: [] },
 ]; thinkingLevel = 'low'; vi.restoreAllMocks(); });
@@ -127,6 +133,14 @@ async function send(text: string) {
 }
 
 describe('web slash commands: work mode + rename', () => {
+  it('routes a typed /goal invocation through the published command instead of sending it to the model', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    await send('/goal Ship the parity fix');
+    await waitFor(() => expect(commandBodies).toEqual([{ name: 'goal', argument: 'Ship the parity fix', session: 'brain-1' }]));
+    expect(sendBodies).toEqual([]);
+  });
+
   it('sends in build mode by default and shows no mode pill', async () => {
     renderChat();
     await waitFor(() => expect(FakeES.instances.length).toBe(1));

@@ -1616,6 +1616,7 @@ export const cs = {
     goal: 'Cíl',
     goalTurns: { one: 'tah', few: 'tahy', many: 'tahů' },
     goalSubgoals: 'Podcíle {done}/{total}',
+    goalProgress: 'Průběh: {text}',
     workflow: 'Workflow',
     workflowOpen: 'Otevřít workflow',
     workflowNodes: 'hotových kroků',

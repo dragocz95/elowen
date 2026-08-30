@@ -1637,6 +1637,7 @@ export const en = {
     goal: 'Goal',
     goalTurns: { one: 'turn', few: 'turns', many: 'turns' },
     goalSubgoals: 'Subgoals {done}/{total}',
+    goalProgress: 'Progress: {text}',
     workflow: 'Workflow',
     workflowOpen: 'Open the workflow',
     workflowNodes: 'completed steps',

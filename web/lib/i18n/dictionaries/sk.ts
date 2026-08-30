@@ -1610,6 +1610,7 @@ export const sk = {
     goal: 'Cieľ',
     goalTurns: { one: 'ťah', few: 'ťahy', many: 'ťahov' },
     goalSubgoals: 'Podciele {done}/{total}',
+    goalProgress: 'Priebeh: {text}',
     workflow: 'Workflow',
     workflowOpen: 'Otvoriť workflow',
     workflowNodes: 'hotových krokov',
