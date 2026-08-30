@@ -3,7 +3,10 @@ import { PANEL_GUTTER_COLUMNS, TOP_RULE_ROWS } from './startScreen.js';
 
 const RECOMMENDED_TUI_COLUMNS = 32;
 const RECOMMENDED_TUI_ROWS = 12;
-const TELEMETRY_MIN_COLUMNS = 36;
+/** One source of truth for the range the telemetry rail can ever occupy — shared with the manual-drag
+ *  clamp (`inputRouter.ts`) and the auto-fit measurement (`telemetryPanel.ts`). */
+export const TELEMETRY_MIN_COLUMNS = 36;
+export const TELEMETRY_MAX_COLUMNS = 68;
 const TELEMETRY_DEFAULT_COLUMNS = 46;
 
 interface LayoutSectionRows {
@@ -97,7 +100,7 @@ export function computeTelemetryRailBudget(input: TelemetryRailBudgetInput): Tel
   if (!input.requested || !input.hasTranscript || columns < 104 || terminalRows < RECOMMENDED_TUI_ROWS) {
     return { columns: 0, gutter: 0, rows: 0 };
   }
-  const wanted = rows(input.preferredColumns ?? TELEMETRY_DEFAULT_COLUMNS, 68);
+  const wanted = rows(input.preferredColumns ?? TELEMETRY_DEFAULT_COLUMNS, TELEMETRY_MAX_COLUMNS);
   const panel = Math.min(Math.max(TELEMETRY_MIN_COLUMNS, wanted), Math.max(0, columns - RECOMMENDED_TUI_COLUMNS - PANEL_GUTTER_COLUMNS));
   if (panel < TELEMETRY_MIN_COLUMNS) return { columns: 0, gutter: 0, rows: 0 };
   return {

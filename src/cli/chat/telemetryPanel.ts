@@ -10,6 +10,7 @@ import type { BrainRateLimits, BrainRateLimitWindow, BrainUsageView, GoalView, M
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { formatDuration, formatK, terminalInlineText } from '../ui/text.js';
 import { goalElapsedSeconds } from './goalState.js';
+import { TELEMETRY_MIN_COLUMNS } from './layoutBudget.js';
 
 const inlineText = terminalInlineText;
 export interface TelemetryState {
@@ -96,6 +97,25 @@ export class TelemetryPanel implements Component {
     if (this.maxRows === 0) return false;
     const functional = this.composeSections(this.sections(this.getState(), width));
     return this.maxRows == null || panelLogo(art, width).length + 2 + functional.rows.length <= this.maxRows;
+  }
+  /** How wide the rail's content actually needs to be, given everything currently populated, capped at
+   *  `maxColumns`. Used to auto-fit the panel to its smallest useful size once at start instead of always
+   *  opening at the fixed default width. */
+  naturalWidth(maxColumns: number): number {
+    const cap = Math.max(TELEMETRY_MIN_COLUMNS, Math.floor(maxColumns));
+    const sections = this.sections(this.getState(), cap); // build at the cap so nothing truncates yet
+    let widest = 0;
+    for (const section of sections) {
+      // Progress bars stretch to fill whatever width they're given and carry no size preference of
+      // their own — excluding them is what keeps this a real "content" measurement instead of always
+      // reporting `cap`. The context bar is always rows[2] when the section is expanded (rows[0]=header,
+      // rows[1]=token/pct/cost line, rows[2]=bar); rate-limit window rows (rows[1..]) are bars too.
+      const measurable = section.id === 'context' ? section.rows.slice(0, 2)
+        : section.id === 'limits' ? section.rows.slice(0, 1)
+        : section.rows;
+      for (const row of measurable) widest = Math.max(widest, visibleWidth(row));
+    }
+    return Math.min(cap, Math.max(TELEMETRY_MIN_COLUMNS, widest + PANEL_BAR_MARGIN * 2));
   }
   isProcessHeaderRow(row: number): boolean {
     return this.processTop >= 0 && this.processPanel.isHeaderRow(row - this.processTop);

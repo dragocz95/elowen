@@ -1573,6 +1573,48 @@ describe('chat application shell ownership', () => {
     composition.stop();
   });
 
+  it('auto-fits the rail to its content on the first visible frame, and a manual drag afterward sticks', async () => {
+    const h = compositionHarness({ columns: 120, rows: 24, turns: 0 });
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:empty-conversation');
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+
+    h.rt.transcript.apply({ type: 'user', text: 'first message' });
+    composition.render('stream:user');
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+
+    const railOverlay = () => h.tui.overlays.find((overlay) => !overlay.removed && overlay.options?.anchor === 'top-right')!;
+    const autoFitted = railOverlay();
+    // The harness's cwd ('~/elowen'), branch ('test') and usage (none) are all short/absent, so the
+    // auto-fit result sits well under the old fixed 46-column default, never below the documented minimum.
+    expect(autoFitted.options?.width).toBeGreaterThanOrEqual(36);
+    expect(autoFitted.options?.width).toBeLessThan(46);
+
+    // Drag the left edge to a deliberately different width.
+    const targetWidth = 55;
+    const edge = h.term.columns - (autoFitted.options!.width as number);
+    const targetX = h.term.columns - targetWidth + 1;
+    const y = TOP_RULE_ROWS + 2;
+    h.tui.emit(`\x1b[<0;${edge};${y}M`);
+    h.tui.emit(`\x1b[<32;${targetX};${y}M`);
+    h.tui.emit(`\x1b[<0;${targetX};${y}m`);
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+    expect(railOverlay().options?.width).toBe(targetWidth);
+
+    // A later, unrelated frame must not fall back to a fresh auto-fit measurement and discard the drag.
+    composition.renderForced('test:later-frame');
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+    expect(railOverlay().options?.width).toBe(targetWidth);
+
+    composition.dispose();
+    composition.stop();
+  });
+
   it('does not arm mascot frames when the visible telemetry budget omits the mascot', async () => {
     const h = compositionHarness({ columns: 104, rows: 24, turns: 40 });
     const composition = makeComposition(h);
@@ -1920,8 +1962,12 @@ describe('chat application shell ownership', () => {
     ];
     h.resources.attachmentChips.set([{ name: 'layout.png', bytes: 1024 }]);
     // Resize the visible telemetry rail through the real mouse router. The old implementation reflowed
-    // here, before prepareFrame/root allocation had made the new bottom stack authoritative.
-    expect(h.tui.emit('\x1b[<0;74;5M')?.consume).toBe(true);
+    // here, before prepareFrame/root allocation had made the new bottom stack authoritative. The rail
+    // auto-fits on its first visible frame, so its starting edge is content-driven, not a fixed width —
+    // grab it from the actually-rendered geometry instead of a stale hardcoded column.
+    const railBefore = h.tui.overlays.find((overlay) => !overlay.removed && overlay.options?.anchor === 'top-right')!;
+    const edge = h.term.columns - (railBefore.options!.width as number);
+    expect(h.tui.emit(`\x1b[<0;${edge};5M`)?.consume).toBe(true);
     expect(h.tui.emit('\x1b[<32;60;5M')?.consume).toBe(true);
     await vi.runOnlyPendingTimersAsync();
     renderMountedRoot(h);

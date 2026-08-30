@@ -13,7 +13,7 @@ import { activeKeymap, createLeaderState } from './keys.js';
 import type { KeybindAction } from './keys.js';
 import { padAnsi, terminalSafeAnsi } from '../ui/text.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
-import { computeTelemetryRailBudget } from './layoutBudget.js';
+import { computeTelemetryRailBudget, TELEMETRY_MAX_COLUMNS } from './layoutBudget.js';
 import type { LayoutBudget } from './layoutBudget.js';
 import { prewarmCodeHighlight, setCodeHighlightListener } from './codeHighlight.js';
 import type { TuiDiagnostics } from './tuiDiagnostics.js';
@@ -200,6 +200,9 @@ export function createChatComposition(
   let mentionHandle: ReturnType<TUI['showOverlay']> | null = null;
   let mentionOverlay: MentionOverlay | null = null;
   let panelWidth = 46;
+  // Auto-fit the rail to its content once, the first frame it becomes visible ("po spuštění"/at launch);
+  // a manual drag consumes this flag too, so it never fights a later resize.
+  let panelWidthAutoFit = true;
   let inputRouter: InputRouter | null = null;
   let overlayController!: OverlayController;
   let telemetry!: TelemetryPanel;
@@ -264,6 +267,15 @@ export function createChatComposition(
     },
   };
   const refreshLayoutBudget = (): LayoutBudget => {
+    // The rail's reserved columns must be final before chatWidth() is read below, so this is decided
+    // ahead of everything else in the frame — never mid-layout, where it would race a stale width.
+    if (panelWidthAutoFit && panelVisible()) {
+      panelWidth = telemetry.naturalWidth(TELEMETRY_MAX_COLUMNS);
+      panelWidthAutoFit = false;
+      // Without this, the overlay's own rendered position/width lags behind the new panelWidth until
+      // some unrelated reflow trigger catches up — exactly like the manual drag-resize callback below.
+      fullOverlayReflowPending = true;
+    }
     const width = chatWidth();
     // Desired queue height is uncapped; computeLayoutBudget is the sole presentation cap.
     queuedMessages.setMaxRows(null);
@@ -1235,6 +1247,9 @@ export function createChatComposition(
       panelVisible,
       panelLeftEdge,
       setPanelWidth: (width) => {
+        // A manual resize is a persistent override: even if it races the not-yet-consumed auto-fit
+        // flag, this drag wins and auto-fit never fires again.
+        panelWidthAutoFit = false;
         if (panelWidth === width) return;
         panelWidth = width;
         fullOverlayReflowPending = true;

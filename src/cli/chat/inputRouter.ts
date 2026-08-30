@@ -11,6 +11,7 @@ import type { ChatViewport } from './chatViewport.js';
 import type { CardPanel, SubagentPanel } from './components.js';
 import type { TelemetryPanel } from './telemetryPanel.js';
 import type { LayoutBudget } from './layoutBudget.js';
+import { TELEMETRY_MAX_COLUMNS, TELEMETRY_MIN_COLUMNS } from './layoutBudget.js';
 import type { MentionOverlay, SlashOverlay } from './suggestionOverlay.js';
 import { TOP_RULE_ROWS } from './startScreen.js';
 import type { AnimationController } from './animationController.js';
@@ -127,7 +128,7 @@ export class InputRouter {
         const edge = context.panelLeftEdge();
         if (this.resizingPanel && release) { this.resizingPanel = false; return { consume: true }; }
         if (this.resizingPanel && event.down) {
-          context.setPanelWidth(Math.max(36, Math.min(68, term.columns - event.x + 1)));
+          context.setPanelWidth(Math.max(TELEMETRY_MIN_COLUMNS, Math.min(TELEMETRY_MAX_COLUMNS, term.columns - event.x + 1)));
           context.renderForced('geometry:telemetry-resize');
           return { consume: true };
         }

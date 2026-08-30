@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { TelemetryPanel, type TelemetryState } from '../../../src/cli/chat/telemetryPanel.js';
+import { TELEMETRY_MAX_COLUMNS, TELEMETRY_MIN_COLUMNS } from '../../../src/cli/chat/layoutBudget.js';
 import type { BrainGoalState } from '../../../src/brain/events.js';
 import type { ProcessInfo } from '../../../src/brain/processRegistry.js';
 
@@ -82,5 +83,32 @@ describe('the telemetry rail keeps a right gutter', () => {
     }
     // The price is the row the bug report called out — it must be present and inside the gutter.
     expect(text).toContain('$888.46');
+  });
+});
+
+describe('the telemetry rail auto-fits its width to its content', () => {
+  const shortState = (): TelemetryState => ({
+    usage: null, cwd: '~/x', branch: 'main', mcp: null, lspEnabled: null, floatOffset: 0,
+  });
+
+  it('shrinks a short, mostly-empty state close to the documented minimum', () => {
+    const width = new TelemetryPanel(shortState).naturalWidth(TELEMETRY_MAX_COLUMNS);
+    expect(width).toBeGreaterThanOrEqual(TELEMETRY_MIN_COLUMNS);
+    expect(width).toBeLessThan(46); // well under the old fixed default
+  });
+
+  it('reports something close to the token/cost line\'s real length for a context-only state', () => {
+    const state: TelemetryState = { ...shortState(), usage: { tokens: 199_999, contextWindow: 200_000, percent: 99.9, totalTokens: 199_999, cost: 888.46 } };
+    const width = new TelemetryPanel(() => state).naturalWidth(TELEMETRY_MAX_COLUMNS);
+    // Driven by the content ("200k / 200k tokens · 100% · $888.46" plus the two-space gutter on each
+    // side), not by the cap — well under TELEMETRY_MAX_COLUMNS, but past the bare minimum.
+    expect(width).toBeGreaterThan(TELEMETRY_MIN_COLUMNS);
+    expect(width).toBeLessThan(TELEMETRY_MAX_COLUMNS - 10);
+  });
+
+  it('caps at TELEMETRY_MAX_COLUMNS when every section is long enough to need it', () => {
+    // fullState() is deliberately built with overflowing content in every section.
+    const width = new TelemetryPanel(fullState).naturalWidth(TELEMETRY_MAX_COLUMNS);
+    expect(width).toBe(TELEMETRY_MAX_COLUMNS);
   });
 });
