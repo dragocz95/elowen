@@ -703,9 +703,10 @@ export function TelemetryPanel({ variant, open = false, collapsed = false, onClo
       aria-label={t.telemetry.title}
       data-testid="telemetry-column"
       data-collapsed={collapsed || undefined}
-      // `h-full` and nothing else: the panel that hosts this owns the width, and the only edge the rail
-      // paints is its left one — which is the resize handle.
-      className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
+      // The panel that hosts this owns the width; `w-full` makes the rail consume it instead of shrink-
+      // wrapping its contents and leaving an empty strip at the viewport edge. The only painted edge is the
+      // resize handle on the left.
+      className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-background"
     >
       {collapsed
         ? <TelemetryStub busy={busy} onToggle={onToggleCollapsed} />
