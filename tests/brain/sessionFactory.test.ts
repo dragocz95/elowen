@@ -138,9 +138,12 @@ async function captureCompactionSettings(
     sessionId: 'sess-compaction-settings',
     agent: {} as Record<string, unknown>,
     subscribe: (l: (event: unknown) => void) => { listeners.push(l); return () => {}; },
-    // The prefill baseline is measured off these: a real PI session always exposes its rendered
-    // prompt and its tool registry, so a fake that omits them is simply incomplete.
-    systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
+    // The prefill baseline is measured off these: a real PI session always exposes its rendered prompt
+    // and its tool registry, so a fake that omits them is simply incomplete. Sized to render exactly
+    // `fixedCostTokens` at chars/4, because a real session renders the prompt it was spawned with — a
+    // fake whose live render disagreed with its own spec would make the trigger and the tail describe
+    // two different sessions.
+    systemPrompt: 'p'.repeat(fixedCostTokens * 4), getAllTools: () => [], getActiveToolNames: () => [],
     messages: [] as unknown[],
     setSteeringMode: vi.fn(),
   };
@@ -152,7 +155,7 @@ async function captureCompactionSettings(
   });
   // The fixed cost is derived from the spec's system prompt at chars/4, so a prompt of `fixedCostTokens
   // * 4 − 2` chars (the empty tools array serializes as "[]") yields exactly the requested estimate.
-  const systemPrompt = 's'.repeat(fixedCostTokens * 4 - 2);
+  const systemPrompt = 's'.repeat(Math.max(0, fixedCostTokens * 4 - 2));
   const { applyCompaction } = await factory.create({
     sessionId: session.sessionId, ownerUserId: 1, runtime: undefined,
     model: { id: 'test-model', provider: 'kimi-coding', contextWindow },
@@ -175,42 +178,44 @@ async function captureCompactionSettings(
 
 describe('BrainSessionFactory compaction settings handed to PI', () => {
   it('hands PI an explicit keepRecentTokens, not the constant default by omission', async () => {
-    // 300k at 50%: trigger 150k, so the post-compaction ceiling is 30k; after the 8k fixed cost and the
-    // 8k summary allowance, 14k remains, and that is a value only this derivation produces. PI's own
-    // constant default (20k) would not survive the ceiling math, so asserting it proves the value is
-    // explicit rather than defaulted by omission.
+    // 300k with an 8k prefill at 50%: half of the 292k usable window sits on top of the prefill, so the
+    // trigger is 154k and the post-compaction ceiling 30.8k; after the prefill and the 8k summary
+    // allowance, 14.8k remains, and that is a value only this derivation produces. PI's own constant
+    // default (20k) would not survive the ceiling math, so asserting it proves the value is explicit
+    // rather than defaulted by omission.
     const { read } = await captureCompactionSettings(300_000, true, 50);
-    expect(read()).toEqual({ enabled: true, reserveTokens: 150_000, keepRecentTokens: 14_000 });
+    expect(read()).toEqual({ enabled: true, reserveTokens: 146_000, keepRecentTokens: 14_800 });
   });
 
   it('keeps the retained tail small relative to a small window', async () => {
     // Regression: keepRecentTokens was never set, so a 32k model kept PI's constant 20k — 62% of the
-    // window — after every compaction. With a realistic fixed cost the trigger (12.8k) sits below the
-    // fixed cost alone, so the tail shrinks to its 2k floor.
+    // window — after every compaction. This is also the case the usable-window arithmetic exists for:
+    // a 27.6k prefill leaves 4.4k of usable window, 40% of which puts the trigger at 29.4k instead of
+    // the old 12.8k, which sat BELOW the prefill alone. The tail still lands on its 2k floor.
     const { read } = await captureCompactionSettings(32_000, true, 40, 27_619);
-    expect(read()).toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 2_000 });
+    expect(read()).toEqual({ enabled: true, reserveTokens: 2_629, keepRecentTokens: 2_000 });
   });
 
   it('re-derives keepRecentTokens from the live threshold on a threshold change', async () => {
     // The tail is a function of the ceiling the TRIGGER implies, so a live percentage change must
-    // re-derive it: on a 200k window, 80% leaves a 32k ceiling and a 16k tail, while tightening to 40%
-    // drops the ceiling to 16k, which the fixed cost and summary allowance consume entirely.
+    // re-derive it: on a 200k window with an 8k prefill, 80% leaves a 32.3k ceiling and a 16.3k tail,
+    // while tightening to 40% drops the ceiling to 16.1k, which the prefill and summary allowance
+    // consume entirely.
     const { read, applyCompaction } = await captureCompactionSettings(200_000, true, 80);
-    expect(read()).toEqual({ enabled: true, reserveTokens: 40_000, keepRecentTokens: 16_000 });
+    expect(read()).toEqual({ enabled: true, reserveTokens: 38_400, keepRecentTokens: 16_320 });
     applyCompaction(true, 40);
-    expect(read()).toEqual({ enabled: true, reserveTokens: 120_000, keepRecentTokens: 2_000 });
+    expect(read()).toEqual({ enabled: true, reserveTokens: 115_200, keepRecentTokens: 2_000 });
   });
 
   it('sizes the retained tail from the post-compaction ceiling, not the window', async () => {
-    // 1M at 50% (trigger 500k) with the measured ~27.6k fixed cost: the 100k ceiling has room to spare,
-    // so the tail sits at PI's own default. 400k at 50% (trigger 200k): the 40k ceiling leaves only
-    // ~4.4k once the fixed cost and the summary allowance are paid for, and that is what the tail gets.
-    // On the 400k capture the derived value differs from PI's 20k default, so deleting the wiring line
-    // turns this test red.
+    // 1M at 50% with the measured ~27.6k prefill: the ceiling has room to spare, so the tail sits at
+    // PI's own default. 400k at 50%: the ceiling leaves only a few thousand tokens once the prefill and
+    // the summary allowance are paid for, and that is what the tail gets. On the 400k capture the
+    // derived value differs from PI's 20k default, so deleting the wiring line turns this test red.
     const roomy = await captureCompactionSettings(1_000_000, true, 50, 27_619);
-    expect(roomy.read()).toEqual({ enabled: true, reserveTokens: 500_000, keepRecentTokens: 20_000 });
+    expect(roomy.read()).toEqual({ enabled: true, reserveTokens: 486_191, keepRecentTokens: 20_000 });
     const tight = await captureCompactionSettings(400_000, true, 50, 27_619);
-    expect(tight.read()).toEqual({ enabled: true, reserveTokens: 200_000, keepRecentTokens: 4_381 });
+    expect(tight.read()).toEqual({ enabled: true, reserveTokens: 186_191, keepRecentTokens: 7_143 });
   });
 });
 
@@ -254,6 +259,31 @@ describe('compactionReserveTokens — the percentage is measured against the usa
     expect(compactionReserveTokens(2_000, true, 100, 1_900)).toBe(256);
   });
 
+  it('never reserves more than the window itself can give back', () => {
+    // The 256-token floor is larger than a tiny window's whole budget, and PI derives its trigger as
+    // `contextWindow − reserveTokens`: a reserve above the window makes that negative, so every single
+    // turn compacts and each compaction is instantly over the threshold again.
+    for (const window of [100, 300, 511, 512]) {
+      const reserve = compactionReserveTokens(window, true, 80, 0);
+      expect(reserve).toBeLessThanOrEqual(window);
+      expect(window - reserve).toBeGreaterThan(0);
+    }
+    expect(compactionReserveTokens(100, true, 80, 0)).toBe(50);
+    expect(compactionReserveTokens(100, false, 80, 0)).toBe(50);
+  });
+
+  it('rounds exactly as the old absolute arithmetic did, including on an odd window', () => {
+    // Reserve is computed as a share of the usable window rather than by subtracting a rounded trigger
+    // from the window; the two disagree by a token wherever the halves do not land evenly, and a session
+    // that has measured no baseline must not see its threshold move at all.
+    for (const window of [200_001, 128_003, 32_767]) {
+      for (const pct of [30, 50, 80, 95]) {
+        expect(compactionReserveTokens(window, true, pct, 0))
+          .toBe(Math.round((window * (100 - pct)) / 100));
+      }
+    }
+  });
+
   it('leaves non-proactive compaction on its emergency margin, prefill or not', () => {
     expect(compactionReserveTokens(200_000, false, 80, 30_000)).toBe(4_096);
     expect(compactionReserveTokens(200_000, false, 80, 0)).toBe(4_096);
@@ -264,35 +294,59 @@ describe('compactionReserveTokens — the percentage is measured against the usa
  *  exact. Taking it is only valid while the request carried nothing but the prefill, which is the whole
  *  reason the sample is gated on the transcript length rather than merely on being first. */
 describe('BrainSessionFactory prefill baseline measured from the provider', () => {
-  const assistantEnd = (input: number, cacheRead = 0) => ({
+  const assistantEnd = (input: number, cacheRead = 0, cacheWrite = 0) => ({
     type: 'message_end',
-    message: { role: 'assistant', stopReason: 'stop', usage: { input, cacheRead } },
+    message: { role: 'assistant', stopReason: 'stop', usage: { input, cacheRead, cacheWrite } },
   });
+  /** One exchange, costing nothing to subtract, so a test asserts the measurement and not the estimator. */
+  const exchange = () => [{ role: 'user', content: '' }, { role: 'assistant', content: [] }];
 
   it('replaces the estimate with the measured prefill and re-applies the threshold in place', async () => {
-    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
-    expect(read().reserveTokens).toBe(40_000); // the empty fake renders no prefill at all
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80, 0);
+    expect(read().reserveTokens).toBe(40_000); // spawned with no prompt at all, so nothing to render
 
-    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    session.messages.push(...exchange());
     emit(assistantEnd(20_000, 10_000)); // 30k of prefill, cached or not — both were sent
 
     // 80% of the 170k usable window on top of the 30k baseline: trigger 166k, reserve 34k.
     expect(read().reserveTokens).toBe(34_000);
   });
 
+  it('counts the tokens the provider reports as cache WRITES, which is where a cold prefix lands', async () => {
+    // The sampled request is by definition the first one, so its prefix is being CREATED in the cache,
+    // not read from it — Anthropic reports those tokens in `cacheWrite` and leaves `input` holding
+    // little more than the user's own message. Reading `input` alone measured almost no prefill at all.
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80, 0);
+    session.messages.push(...exchange());
+    emit(assistantEnd(200, 0, 29_800));
+
+    expect(read().reserveTokens).toBe(34_000);
+  });
+
+  it('takes the user message the request carried back off the measurement', async () => {
+    // `messages.length <= 2` bounds the transcript to one exchange; it does not make it empty. The
+    // provider counted the user's message inside the request, and calling that never-shrinking would let
+    // one long first prompt push the trigger up for the rest of the conversation.
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80, 0);
+    session.messages.push({ role: 'user', content: 'p'.repeat(4_000) }, { role: 'assistant', content: [] });
+    emit(assistantEnd(31_000)); // 30k of prefill plus the 1k message
+
+    expect(read().reserveTokens).toBe(34_000);
+  });
+
   it('ignores a request that carried a conversation, because that is not a prefill', async () => {
-    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80, 0);
     // A respawned session's very first request already has a whole transcript behind it. Measuring it
     // would call the conversation "never-shrinking" and push the trigger towards the hard ceiling.
-    session.messages.push({ role: 'user' }, { role: 'assistant' }, { role: 'user' }, { role: 'assistant' });
+    session.messages.push(...exchange(), ...exchange());
     emit(assistantEnd(120_000));
 
     expect(read().reserveTokens).toBe(40_000);
   });
 
   it('ignores an errored request, whose usage is all-zero', async () => {
-    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
-    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80, 0);
+    session.messages.push(...exchange());
     emit({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', usage: { input: 0, cacheRead: 0 } } });
     expect(read().reserveTokens).toBe(40_000);
 
@@ -302,19 +356,19 @@ describe('BrainSessionFactory prefill baseline measured from the provider', () =
   });
 
   it('measures once, so a later turn cannot restate the conversation as prefill', async () => {
-    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
-    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80, 0);
+    session.messages.push(...exchange());
     emit(assistantEnd(30_000));
     expect(read().reserveTokens).toBe(34_000);
 
-    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    session.messages.push(...exchange());
     emit(assistantEnd(150_000));
     expect(read().reserveTokens).toBe(34_000);
   });
 
   it('drops a measurement a compaction invalidated, back to the rendered estimate', async () => {
-    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
-    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80, 0);
+    session.messages.push(...exchange());
     emit(assistantEnd(30_000));
     expect(read().reserveTokens).toBe(34_000);
 
@@ -324,8 +378,8 @@ describe('BrainSessionFactory prefill baseline measured from the provider', () =
   });
 
   it('keeps the measurement when a compaction was aborted, because nothing was rewritten', async () => {
-    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80);
-    session.messages.push({ role: 'user' }, { role: 'assistant' });
+    const { read, emit, session } = await captureCompactionSettings(200_000, true, 80, 0);
+    session.messages.push(...exchange());
     emit(assistantEnd(30_000));
     emit({ type: 'compaction_end', aborted: true, result: undefined });
     expect(read().reserveTokens).toBe(34_000);

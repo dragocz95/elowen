@@ -173,10 +173,13 @@ export function createCompactionCircuitBreaker(options: CompactionCircuitBreaker
       consecutiveFailures = 0;
       reported = false;
       // Measure the post-compaction floor from what PI itself estimated it kept after the reload, plus
-      // the never-shrinking fixed cost — the two together are what the next shouldCompact check sees.
+      // the never-shrinking prefill — the two together are what the next shouldCompact check sees. It
+      // must be the SAME prefill figure the trigger was derived from, since the two are about to be
+      // compared; `fixedCostTokens` is only the fallback for a budget that has no live render yet.
       // Extension-supplied compactions carry no estimate; keep the last known floor in that case.
       if (event.result.estimatedTokensAfter !== undefined) {
-        lastFloorEstimate = (options.thresholdBudget?.fixedCostTokens ?? 0) + event.result.estimatedTokensAfter;
+        const budget = options.thresholdBudget;
+        lastFloorEstimate = (budget?.prefillBaseline ?? budget?.fixedCostTokens ?? 0) + event.result.estimatedTokensAfter;
         evaluatePointless();
       }
       return;

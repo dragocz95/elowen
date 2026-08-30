@@ -1,4 +1,4 @@
-import { createAgentSession, DefaultResourceLoader, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { createAgentSession, DefaultResourceLoader, estimateTokens, SettingsManager } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
@@ -227,7 +227,11 @@ export const CONTEXT_HARD_CEILING_PCT = 95;
  *  it PI has no room to write a summary, which fails, three times, and stops automatic compaction for
  *  good. */
 function compactionEmergencyFloor(contextWindow: number): number {
-  return Math.max(256, Math.min(4_096, Math.round(contextWindow * 0.05)));
+  const wanted = Math.max(256, Math.min(4_096, Math.round(contextWindow * 0.05)));
+  // A reserve above the window makes PI's trigger (contextWindow − reserveTokens) negative, so EVERY turn
+  // would compact and each compaction would immediately be over the threshold again. Half the window is
+  // the most a floor may ever claim; only a window under 512 tokens can reach this.
+  return Math.min(wanted, Math.max(1, Math.floor(contextWindow / 2)));
 }
 
 export function compactionReserveTokens(
@@ -239,11 +243,17 @@ export function compactionReserveTokens(
   // charged them for context a compaction cannot remove, and on a small window it was worse than
   // inefficient: the post-compaction floor exceeded the trigger, so the circuit breaker judged every
   // compaction pointless and switched automatic compaction off entirely.
+  //
+  // Expressed as a RESERVE rather than as a trigger that is then subtracted, so that with no baseline the
+  // expression is the old one character for character and every existing session keeps its exact
+  // threshold — subtracting a rounded trigger from the window rounds the other way on an odd window.
   const baseline = Math.max(0, Math.min(prefillBaseline, contextWindow));
   const usable = Math.max(0, contextWindow - baseline);
-  const bodyTrigger = baseline + Math.round((usable * atPercent) / 100);
-  const hardTrigger = Math.round((contextWindow * CONTEXT_HARD_CEILING_PCT) / 100);
-  return Math.max(compactionEmergencyFloor(contextWindow), contextWindow - Math.min(bodyTrigger, hardTrigger));
+  const bodyReserve = Math.round((usable * (100 - atPercent)) / 100);
+  // A conversation may never be allowed to run to the brim, however large the prefill grows. Same shape
+  // as bodyReserve so that at 95% with no baseline the two agree exactly rather than by a token.
+  const ceilingReserve = Math.round((contextWindow * (100 - CONTEXT_HARD_CEILING_PCT)) / 100);
+  return Math.max(compactionEmergencyFloor(contextWindow), ceilingReserve, bodyReserve);
 }
 
 /** The recent-message tail PI keeps verbatim after a compaction. PI's default is a CONSTANT 20000 that
@@ -780,9 +790,12 @@ export class BrainSessionFactory {
     const applyCompaction = (proactive: boolean, atPercent: number): void => {
       proactiveCompaction = proactive;
       compactionAtPercent = atPercent;
-      const reserveTokens = compactionReserveTokens(
-        spec.model.contextWindow, proactive, atPercent, thresholdBudget.prefillBaseline ?? 0,
-      );
+      // One prefill figure for the trigger, the tail and the breaker's floor. They are compared against
+      // each other, so measuring them differently is worse than measuring any of them imperfectly:
+      // `fixedCostTokens` reads the raw spec (deferred tools counted, rendered skills and template
+      // missing) and only survives as the fallback for a session with no live render yet.
+      const prefill = thresholdBudget.prefillBaseline ?? fixedCostTokens;
+      const reserveTokens = compactionReserveTokens(spec.model.contextWindow, proactive, atPercent, prefill);
       // The trigger the user's percentage actually sets; the tail and the breaker's guard both key off it.
       const triggerTokens = Math.max(0, spec.model.contextWindow - reserveTokens);
       thresholdBudget.trigger = triggerTokens;
@@ -790,7 +803,7 @@ export class BrainSessionFactory {
         compaction: {
           enabled: true,
           reserveTokens,
-          keepRecentTokens: compactionKeepRecentTokens(triggerTokens, fixedCostTokens),
+          keepRecentTokens: compactionKeepRecentTokens(triggerTokens, prefill),
         },
       });
       // The live percentage change moved the trigger, so the unreachable-threshold guard re-evaluates
@@ -803,18 +816,19 @@ export class BrainSessionFactory {
     applyCompaction(spec.autoCompact, spec.autoCompactAtPct);
     // Seed the guard with the smallest floor this session can reach, so a threshold that cannot be
     // honored is refused BEFORE the first summarization request is spent on it.
-    compactionBreaker.applyBudget(compactionFloorSeedEstimate(fixedCostTokens));
+    compactionBreaker.applyBudget(
+      compactionFloorSeedEstimate(thresholdBudget.prefillBaseline ?? fixedCostTokens));
     // Replace the estimate with the provider's own figure where that is possible. chars/4 is a heuristic
     // and the rendered prompt still misses whatever the wire transform adds, so an exact measurement is
-    // better — but ONLY from a request that carried almost nothing besides the prefill.
+    // better — but ONLY from a request whose transcript was small enough to subtract.
     //
-    // That qualifier is the whole design. `usage.input + usage.cacheRead` is the size of the WHOLE
-    // request, so it equals the prefill only while the transcript is empty. Taking it from the first
-    // message of every compaction epoch (the obvious rule) would measure prefill + summary + retained
-    // tail after a compaction and call it the never-shrinking part — pushing the trigger up until the
-    // hard ceiling was the only thing left holding it, which is exactly the runaway context this feature
-    // exists to prevent. So the sample is accepted only while the transcript is one exchange long, which
-    // is structural rather than a tolerance to tune, and every other moment keeps the render estimate.
+    // That qualifier is the whole design. The provider reports the size of the WHOLE request, so the
+    // prefill is what remains once the transcript that request carried is taken back off. Sampling the
+    // first message of every compaction epoch (the obvious rule) would leave the summary and the retained
+    // tail inside the figure and call that never-shrinking — pushing the trigger up until the hard
+    // ceiling was the only thing left holding it, which is exactly the runaway context this feature
+    // exists to prevent. So the sample is accepted only while the transcript is one exchange long, where
+    // the subtraction has a single short message to account for; every other moment keeps the estimate.
     //
     // Its own subscription, always on: the request recorder has a kill switch and cacheWatch is installed
     // only for Anthropic and the two OpenAI Responses wires, so neither can be relied on to measure a
@@ -837,10 +851,22 @@ export class BrainSessionFactory {
       // An errored or aborted request reports usage as all-zero; measuring the baseline from it would set
       // the trigger from a request that never happened.
       if (message.stopReason === 'error' || message.stopReason === 'aborted') return;
-      // One user message and this reply: anything more and the figure is conversation, not prefill.
+      // One user message and this reply: anything more and what has to be subtracted below is a whole
+      // conversation measured by estimate, which is no longer a measurement.
       if (session.messages.length > 2) { baselineMeasured = true; return; }
       const usage = message.usage;
-      const measured = (usage?.input ?? 0) + (usage?.cacheRead ?? 0);
+      // Every input-side counter, not just `input`. Anthropic reports cache-CREATED prefix tokens in
+      // `cacheWrite` and reads in `cacheRead`, and `input` is what was neither — so on a cold first
+      // request, which is exactly the request sampled here, almost the entire prefill sits outside
+      // `input` and reading it alone would measure little more than the user's own message.
+      const request = (usage?.input ?? 0) + (usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0);
+      // The request also carried the transcript as it stood when it was sent — this reply is not in it,
+      // whether or not PI has already pushed it. Subtracted with PI's own estimator, the same chars/4
+      // ruler `shouldCompact` measures the context with, so both sides of the threshold use one ruler.
+      const carried = session.messages
+        .filter((m) => m !== message)
+        .reduce((sum, m) => sum + estimateTokens(m), 0);
+      const measured = request - carried;
       if (measured <= 0) return;
       baselineMeasured = true;
       thresholdBudget.prefillBaseline = measured;
