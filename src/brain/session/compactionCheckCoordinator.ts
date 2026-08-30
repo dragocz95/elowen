@@ -1,8 +1,36 @@
-import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import type { AgentSession } from '@earendil-works/pi-coding-agent';
+import { isContextOverflow, type AssistantMessage } from '@earendil-works/pi-ai';
+import { localResidentContextTokens } from '../contextBreakdown.js';
 
-type PiAssistantMessage = Extract<AgentSessionEvent, { type: 'message_end' }>['message'];
+type PiAssistantMessage = AssistantMessage;
 type CheckCompaction = (assistantMessage: PiAssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
 type PiCompactionSession = { _checkCompaction?: CheckCompaction };
+const RESIDENT_CONTEXT_TOKENS = Symbol('residentContextTokens');
+type ResidentContextMessage = PiAssistantMessage & { [RESIDENT_CONTEXT_TOKENS]?: number };
+
+/** Carry a boundary-specific local estimate through the coordinator without mutating or persisting the
+ * provider's billing usage. */
+export function withResidentContextTokens(message: PiAssistantMessage, tokens: number): PiAssistantMessage {
+  return { ...message, [RESIDENT_CONTEXT_TOKENS]: tokens } as ResidentContextMessage;
+}
+
+function compactionUsage(message: PiAssistantMessage, tokens: number) {
+  const usage = message.usage ?? {
+    input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  const output = usage.output;
+  return {
+    ...usage,
+    // PI's silent-overflow path reads input + cacheRead, while threshold accounting reads totalTokens.
+    // Give both the same resident-context truth and preserve output for recoverable-length classification.
+    input: Math.max(0, tokens - output),
+    output,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: tokens,
+  };
+}
 
 interface ActiveCheck {
   generation: number;
@@ -40,7 +68,22 @@ export function coordinateNativeCompactionChecks(session: AgentSession): CheckCo
     try {
       let result: boolean;
       try {
-        result = await original(assistantMessage, skipAbortedCheck);
+        const explicit = (assistantMessage as ResidentContextMessage)[RESIDENT_CONTEXT_TOKENS];
+        const residentTokens = explicit ?? localResidentContextTokens(session);
+        let checkedMessage = residentTokens === undefined
+          ? assistantMessage
+          : { ...assistantMessage, usage: compactionUsage(assistantMessage, residentTokens) } as PiAssistantMessage;
+        // PI deliberately ignores direct usage on ordinary errors and falls back to an older assistant.
+        // On cumulative-usage sessions that fallback is the exact stale number we must not reuse. Preserve
+        // genuine overflow recovery, but classify a non-overflow error as a threshold check over the local
+        // resident count. This clone exists only for PI's check; the provider message stays untouched.
+        if (residentTokens !== undefined && checkedMessage.stopReason === 'error') {
+          const contextWindow = session.model?.contextWindow ?? 0;
+          if (!isContextOverflow(checkedMessage, contextWindow)) {
+            checkedMessage = { ...checkedMessage, stopReason: 'stop' } as PiAssistantMessage;
+          }
+        }
+        result = await original(checkedMessage, skipAbortedCheck);
       } catch (error) {
         if (check.generation === state.generation) throw error;
         if (check.prePrompt) throw new Error('session work aborted');

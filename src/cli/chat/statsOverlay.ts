@@ -217,9 +217,8 @@ class StatsOverlay implements Component, Focusable {
     body.push(`${pad}${color.accent('Σ'.padEnd(execW))}${color.text(formatK(totalTokens).padStart(tokW))}${color.faint(formatK(totalCache).padStart(cacheW))}${color.faint(avgTps.padStart(tpsW))}${color.bold(color.text((totalCost != null ? `$${totalCost.toFixed(2)}` : '—').padStart(costW)))}`);
   }
 
-  /** "What is filling the window": one bar per measured category, then the heaviest tools. Every figure
-   *  here is an estimate (the daemon has no provider tokenizer), so the window line names the provider's
-   *  own count separately instead of blending the two into one authoritative-looking number. */
+  /** "What is filling the window": the resident count used by status/compaction, one bar per measured
+   * category, then the heaviest tools. Category figures remain estimator-based. */
   private renderContext(body: string[], bodyWidth: number): void {
     const breakdown = this.data.context;
     body.push(sectionRule('window', bodyWidth));
@@ -233,8 +232,8 @@ class StatsOverlay implements Component, Focusable {
     body.push(kv('window', color.text(formatK(breakdown.contextWindow))
       + (breakdown.compactAtTokens != null ? color.faint(`   compacts at ${formatK(breakdown.compactAtTokens)}`) : '')));
     if (breakdown.reportedTokens != null) {
-      body.push(kv('reported', color.text(formatK(breakdown.reportedTokens))
-        + color.faint('   provider count, last request')));
+      body.push(kv('resident', color.text(formatK(breakdown.reportedTokens))
+        + color.faint('   current request context')));
     }
     body.push('');
     body.push(sectionRule('estimated breakdown', bodyWidth));

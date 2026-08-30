@@ -682,14 +682,13 @@ export interface BrainContextToolCost {
 
 /** What is filling a conversation's context window right now (`GET /brain/context-usage`).
  *
- *  EVERY token figure except `reportedTokens` is an ESTIMATE: the daemon has no tokenizer for the
- *  provider's vocabulary, so categories are measured with the same chars/4 heuristic PI's own compaction
- *  uses. `reportedTokens` is the provider's authoritative count for the last request and is the number a
- *  client should trust for "how full"; the categories answer "of what". They are not expected to match. */
+ *  Category figures use the same chars/4 heuristic as PI compaction. `reportedTokens` is the resident
+ *  context owner's count: provider-backed for ordinary wires, and the structured local estimate for
+ *  Anthropic hosted-search where response usage is cumulative billing data. */
 export interface BrainContextBreakdown {
   model: string;
   contextWindow: number;
-  /** Provider-reported context tokens of the last request; null before anything has been sent. */
+  /** Resident context tokens used by status and compaction; null before the size is known. */
   reportedTokens: number | null;
   /** Sum of every measured category (estimated). */
   estimatedTokens: number;

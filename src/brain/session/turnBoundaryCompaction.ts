@@ -2,12 +2,13 @@ import {
   calculateContextTokens,
   estimateTokens,
   type AgentSession,
-  type AgentSessionEvent,
   type SessionManager,
 } from '@earendil-works/pi-coding-agent';
-import { coordinateNativeCompactionChecks } from './compactionCheckCoordinator.js';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
+import { coordinateNativeCompactionChecks, withResidentContextTokens } from './compactionCheckCoordinator.js';
+import { localResidentContextTokens } from '../contextBreakdown.js';
 
-type PiAssistantMessage = Extract<AgentSessionEvent, { type: 'message_end' }>['message'];
+type PiAssistantMessage = AssistantMessage;
 export interface PendingCompactionMessage {
   text: string;
   images?: readonly { type: 'image'; data: string; mimeType: string }[];
@@ -93,18 +94,23 @@ export function installTurnBoundaryAutoCompaction(
     const assistantUsage = (turn.message as { usage?: Parameters<typeof calculateContextTokens>[0] }).usage;
     const directTokens = assistantUsage ? calculateContextTokens(assistantUsage) : 0;
     const queuedTokens = pendingQueueTokens(session, pendingMessages);
-    const boundaryTokens = directTokens > 0
-      ? directTokens
-        + turn.toolResults.reduce((total, message) => total + estimateTokens(message), 0)
-        + queuedTokens
-      : estimatedContextTokens(turn.context.messages, beforeEntry?.timestamp) + queuedTokens;
-    const fullBoundaryMessage = {
-      ...turn.message,
-      usage: {
-        input: boundaryTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: boundaryTokens,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-    } as PiAssistantMessage;
+    const localTokens = localResidentContextTokens(session, turn.context.messages);
+    const boundaryTokens = localTokens !== undefined
+      ? localTokens + queuedTokens
+      : directTokens > 0
+        ? directTokens
+          + turn.toolResults.reduce((total, message) => total + estimateTokens(message), 0)
+          + queuedTokens
+        : estimatedContextTokens(turn.context.messages, beforeEntry?.timestamp) + queuedTokens;
+    const fullBoundaryMessage = (localTokens !== undefined
+      ? { ...turn.message }
+      : {
+          ...turn.message,
+          usage: {
+            input: boundaryTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: boundaryTokens,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        }) as PiAssistantMessage;
     // AgentSession.abort() owns the Agent controller, while PI auto-compaction owns a separate controller.
     // Bridge the public Agent signal to public abortCompaction() for exactly this awaited boundary check.
     let aborted = signal?.aborted === true;
@@ -123,7 +129,9 @@ export function installTurnBoundaryAutoCompaction(
     signal?.addEventListener('abort', abortCompaction, { once: true });
     if (signal?.aborted) abortCompaction();
     try {
-      await checkCompaction(fullBoundaryMessage);
+      await checkCompaction(localTokens === undefined
+        ? fullBoundaryMessage
+        : withResidentContextTokens(fullBoundaryMessage, boundaryTokens));
     } finally {
       unsubscribe();
       signal?.removeEventListener('abort', abortCompaction);

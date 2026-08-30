@@ -5,6 +5,7 @@ import type {
   BrainContextCategoryId,
   BrainContextToolCost,
 } from '../shared/wireContract.js';
+import { anthropicHostedReplayMetadata } from './session/anthropicHostedToolReplay.js';
 
 /** PI's transcript message. `@earendil-works/pi-agent-core` (where the union lives) is not a direct
  *  dependency, so the type is pulled off the estimator we measure with — the same derivation
@@ -41,6 +42,18 @@ const CATEGORY_ORDER: readonly BrainContextCategoryId[] = ['system', 'tools', 'u
 /** How many tool rows the ranking carries. Enough to name the real consumers, short enough for a modal. */
 const MAX_TOOL_ROWS = 8;
 
+/** Anthropic server-tool delta usage is cumulative billing usage, not the resident request size. Sessions
+ * on that wire opt into the local structured estimate; every other provider keeps PI's native usage. */
+const locallyEstimatedSessions = new WeakSet<AgentSession>();
+
+export function useLocalResidentContextEstimate(session: AgentSession): void {
+  locallyEstimatedSessions.add(session);
+}
+
+export function usesLocalResidentContextEstimate(session: AgentSession): boolean {
+  return locallyEstimatedSessions.has(session);
+}
+
 /** PI's compaction heuristic (chars/4) applied to a raw string, so a tool schema, a system prompt and a
  *  message are all measured on ONE scale — `estimateTokens` uses exactly this formula per content block.
  *  It is an estimate by construction: the daemon has no tokenizer for the provider's vocabulary. */
@@ -51,6 +64,27 @@ function textTokens(text: string): number {
 function schemaTokensOf(tool: ContextToolSchema): number {
   const parameters = tool.parameters === undefined ? '' : JSON.stringify(tool.parameters);
   return textTokens(tool.name + (tool.description ?? '') + parameters);
+}
+
+/** The single resident-context ruler shared by status, the breakdown and Anthropic hosted-search
+ * compaction checks. It measures the structured request inputs that remain resident; billing usage is
+ * intentionally absent. */
+function omittedHostedTokens(message: ContextMessage): number {
+  const replay = anthropicHostedReplayMetadata(message as never);
+  return replay?.content.reduce((sum, block) =>
+    block.type === 'server_tool_use' || block.type === 'tool_search_tool_result'
+      ? sum + textTokens(JSON.stringify(block))
+      : sum, 0) ?? 0;
+}
+
+export function estimateResidentContextTokens(
+  snapshot: Pick<ContextSnapshot, 'systemPrompt' | 'tools' | 'messages'>,
+): number {
+  const messageTokens = snapshot.messages.reduce((total, message) =>
+    total + estimateTokens(message) + omittedHostedTokens(message), 0);
+  return textTokens(snapshot.systemPrompt)
+    + snapshot.tools.reduce((total, tool) => total + schemaTokensOf(tool), 0)
+    + messageTokens;
 }
 
 function share(tokens: number, contextWindow: number): number {
@@ -117,9 +151,11 @@ export function buildContextBreakdown(snapshot: ContextSnapshot): BrainContextBr
     toolResults: 0,
     other: 0,
   };
-  for (const message of snapshot.messages) tokens[categoryOf(message)] += estimateTokens(message);
+  for (const message of snapshot.messages) {
+    tokens[categoryOf(message)] += estimateTokens(message) + omittedHostedTokens(message);
+  }
 
-  const estimatedTokens = CATEGORY_ORDER.reduce((total, id) => total + tokens[id], 0);
+  const estimatedTokens = estimateResidentContextTokens(snapshot);
   // An empty category is omitted rather than sent as a zero: a renderer would otherwise draw a labelled
   // bar with no width, which reads as "measured and tiny" instead of "not present".
   const categories: BrainContextCategory[] = CATEGORY_ORDER
@@ -140,23 +176,54 @@ export function buildContextBreakdown(snapshot: ContextSnapshot): BrainContextBr
   };
 }
 
+function providerContextUsage(session: AgentSession): ReturnType<AgentSession['getContextUsage']> | undefined {
+  try { return session.getContextUsage(); }
+  catch { return undefined; }
+}
+
+function residentInputs(session: AgentSession, messages: readonly ContextMessage[] = session.messages): Pick<ContextSnapshot, 'systemPrompt' | 'tools' | 'messages'> {
+  const active = new Set(session.getActiveToolNames());
+  return {
+    systemPrompt: session.systemPrompt,
+    tools: session.getAllTools()
+      .filter((tool) => active.has(tool.name))
+      .map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+    messages,
+  };
+}
+
+/** Local resident size only for sessions whose provider usage is known to be cumulative. Undefined means
+ * the caller must retain its ordinary provider-backed behavior. */
+export function localResidentContextTokens(
+  session: AgentSession,
+  messages: readonly ContextMessage[] = session.messages,
+): number | undefined {
+  return locallyEstimatedSessions.has(session) ? estimateResidentContextTokens(residentInputs(session, messages)) : undefined;
+}
+
+/** Statusline context usage with the same provider-specific ownership rule as compaction. Billing totals
+ * remain read directly from message usage elsewhere. */
+export function residentContextUsageOf(session: AgentSession): ReturnType<AgentSession['getContextUsage']> | undefined {
+  const providerUsage = providerContextUsage(session);
+  if (!locallyEstimatedSessions.has(session)) return providerUsage;
+  const contextWindow = session.model?.contextWindow ?? providerUsage?.contextWindow ?? 0;
+  if (contextWindow <= 0) return undefined;
+  const tokens = estimateResidentContextTokens(residentInputs(session));
+  return { tokens, contextWindow, percent: (tokens / contextWindow) * 100 };
+}
+
 /** Read the breakdown inputs off a live PI session. The only impure step: everything it touches is a
  *  public read (`systemPrompt`, the tool registry, the transcript, the compaction settings), so building
  *  the report can never change what the next request sends. */
 export function contextSnapshotOf(session: AgentSession, model: string): ContextSnapshot {
-  const usage = session.getContextUsage();
-  const contextWindow = usage?.contextWindow ?? 0;
-  const active = new Set(session.getActiveToolNames());
+  const usage = residentContextUsageOf(session);
+  const contextWindow = usage?.contextWindow ?? session.model?.contextWindow ?? 0;
   const compaction = session.settingsManager.getCompactionSettings();
   return {
     model,
     contextWindow,
     reportedTokens: usage?.tokens ?? null,
-    systemPrompt: session.systemPrompt,
-    tools: session.getAllTools()
-      .filter((tool) => active.has(tool.name))
-      .map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
-    messages: session.messages,
+    ...residentInputs(session),
     // PI compacts once the context exceeds `contextWindow − reserveTokens`, so that difference IS the
     // threshold. Reported only when compaction is enabled and the window is known.
     compactAtTokens: compaction.enabled && contextWindow > 0 ? Math.max(0, contextWindow - compaction.reserveTokens) : null,

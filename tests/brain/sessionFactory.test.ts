@@ -709,8 +709,11 @@ describe('BrainSessionFactory turn-boundary compaction toggle', () => {
    *  coordinator wraps, and the `prepareNextTurnWithContext` hook the installer replaces. */
   function compactionSession() {
     // Held separately: the coordinator REPLACES `_checkCompaction` on the session with its own wrapper.
-    const checkCompaction = vi.fn(async () => false);
+    const checkCompaction = vi.fn(async (message?: { usage?: { totalTokens?: number } }) =>
+      (message?.usage?.totalTokens ?? 0) > 500_000);
+    const listeners: ((event: any) => void)[] = [];
     return {
+      emit: (event: any) => listeners.forEach((listener) => listener(event)),
       checkCompaction,
       sessionId: 'sess-compaction',
       _checkCompaction: checkCompaction,
@@ -719,26 +722,39 @@ describe('BrainSessionFactory turn-boundary compaction toggle', () => {
         state: { messages: [], model: {}, thinkingLevel: 'high' },
         prepareNextTurnWithContext: undefined as unknown,
       },
-      subscribe: () => () => {},
+      subscribe: (listener: (event: any) => void) => { listeners.push(listener); return () => {}; },
       // The prefill baseline is measured off these: a real PI session always exposes its rendered
       // prompt and its tool registry, so a fake that omits them is simply incomplete.
       systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
       messages: [] as unknown[],
+      model: undefined as unknown,
+      settingsManager: undefined as any,
       setSteeringMode: vi.fn(),
     };
   }
 
-  async function createWithAutoCompact(session: ReturnType<typeof compactionSession>, autoCompact: boolean) {
+  async function createWithAutoCompact(
+    session: ReturnType<typeof compactionSession>,
+    autoCompact: boolean,
+    anthropicHosted = false,
+  ) {
     const factory = new BrainSessionFactory({
       store: new BrainStore(openDb(':memory:')),
-      createSession: vi.fn(async () => ({ session })) as never,
+      createSession: vi.fn(async (options: { model?: unknown; settingsManager?: unknown }) => {
+        session.model = options.model;
+        session.settingsManager = options.settingsManager;
+        return { session };
+      }) as never,
       resourceLoaderFactory: () => undefined,
     });
     return factory.create({
       sessionId: session.sessionId, ownerUserId: 1, runtime: undefined,
-      model: { id: 'test-model', provider: 'kimi-coding', contextWindow: 200_000 },
-      cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
-      autoCompact, autoCompactAtPct: 80,
+      model: anthropicHosted
+        ? { id: 'claude-sonnet-5', provider: 'anthropic', api: 'anthropic-messages', contextWindow: 1_000_000 }
+        : { id: 'test-model', provider: 'kimi-coding', contextWindow: 200_000 },
+      cwd: process.cwd(), systemPrompt: session.systemPrompt, appendSystemPrompt: [], skills: [], tools: [],
+      ...(anthropicHosted ? { hostedToolSearch: 'anthropic' } : {}),
+      autoCompact, autoCompactAtPct: anthropicHosted ? 50 : 80,
     } as never);
   }
 
@@ -753,6 +769,103 @@ describe('BrainSessionFactory turn-boundary compaction toggle', () => {
       toolResults: [],
     });
   };
+
+  it('ignores cumulative Anthropic hosted-search usage but compacts on real resident growth', async () => {
+    const session = compactionSession();
+    session.systemPrompt = 's'.repeat(400_000); // 100k
+    session.messages = [{ role: 'user', content: [{ type: 'text', text: 'u'.repeat(596_000) }], timestamp: 1 }]; // 149k
+    const { assessColdCompaction } = await createWithAutoCompact(session, true, true);
+    const reserveBefore = session.settingsManager.getCompactionReserveTokens();
+    const cumulative = {
+      role: 'assistant', content: [], stopReason: 'toolUse', timestamp: 2,
+      usage: {
+        input: 178_000, output: 0, cacheRead: 200_000, cacheWrite: 100_000, totalTokens: 478_000,
+        cost: { input: 1, output: 0, cacheRead: 2, cacheWrite: 3, total: 6 },
+      },
+    };
+    session.emit({ type: 'message_end', message: cumulative });
+    expect(session.settingsManager.getCompactionReserveTokens()).toBe(reserveBefore);
+
+    await expect(session._checkCompaction(cumulative as never)).resolves.toBe(false);
+    expect(session.checkCompaction.mock.calls.at(-1)?.[0]?.usage).toMatchObject({
+      input: 249_000, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 249_000,
+    });
+    expect(cumulative.usage).toMatchObject({
+      input: 178_000, cacheRead: 200_000, cacheWrite: 100_000, totalTokens: 478_000,
+      cost: { cacheRead: 2, cacheWrite: 3, total: 6 },
+    }); // billing and prompt-cache rollups are not mutated
+
+    const residentMessages = session.messages;
+    session.messages = [...residentMessages, {
+      ...cumulative,
+      usage: { ...cumulative.usage, input: 300_000, cacheRead: 500_000, cacheWrite: 100_000, totalTokens: 900_000 },
+    }];
+    expect(assessColdCompaction(60 * 60 * 1000)).toEqual({ eligible: false, reason: 'not-worthwhile' });
+    session.messages = residentMessages;
+
+    cumulative.usage.input = 54_000;
+    cumulative.usage.cacheRead = 150_000;
+    cumulative.usage.cacheWrite = 50_000;
+    cumulative.usage.totalTokens = 254_000;
+    await expect(session._checkCompaction(cumulative as never)).resolves.toBe(false);
+    expect(session.checkCompaction.mock.calls.at(-1)?.[0]?.usage.totalTokens).toBe(249_000);
+
+    await session._checkCompaction({ ...cumulative, stopReason: 'length', usage: { ...cumulative.usage, output: 4_096 } } as never);
+    expect(session.checkCompaction.mock.calls.at(-1)?.[0]).toMatchObject({
+      stopReason: 'length', usage: { totalTokens: 249_000, output: 4_096 },
+    });
+    await session._checkCompaction({ ...cumulative, stopReason: 'error', errorMessage: 'provider overloaded' } as never);
+    expect(session.checkCompaction.mock.calls.at(-1)?.[0]).toMatchObject({
+      stopReason: 'stop', usage: { totalTokens: 249_000 },
+    });
+
+    session.messages = [{ role: 'user', content: [{ type: 'text', text: 'u'.repeat(2_000_000) }], timestamp: 3 }];
+    await expect(session._checkCompaction(cumulative as never)).resolves.toBe(true);
+    expect(session.checkCompaction.mock.calls.at(-1)?.[0]?.usage.totalTokens).toBe(600_000);
+  });
+
+  it('uses the same local estimate at a hosted-search tool boundary', async () => {
+    const session = compactionSession();
+    session.systemPrompt = 's'.repeat(400_000);
+    await createWithAutoCompact(session, true, true);
+    const messages = [{ role: 'user', content: [{ type: 'text', text: 'u'.repeat(596_000) }], timestamp: 1 }];
+    const hook = session.agent.prepareNextTurnWithContext as (turn: unknown) => Promise<unknown>;
+
+    await hook({
+      message: { role: 'assistant', content: [], stopReason: 'toolUse', timestamp: 1, usage: undefined },
+      context: { messages },
+      toolResults: [],
+    });
+    expect(session.checkCompaction.mock.calls.at(-1)?.[0]?.usage).toMatchObject({
+      input: 249_000, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 249_000,
+    });
+
+    await hook({
+      message: {
+        role: 'assistant', content: [], stopReason: 'toolUse', timestamp: 2,
+        usage: { input: 478_000, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 478_000,
+          cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 } },
+      },
+      context: { messages },
+      toolResults: [],
+    });
+
+    expect(session.checkCompaction.mock.calls.at(-1)?.[0]?.usage.totalTokens).toBe(249_000);
+
+    await hook({
+      message: {
+        role: 'assistant', content: [], stopReason: 'length', timestamp: 3,
+        usage: { input: 100_000, output: 4_096, cacheRead: 200_000, cacheWrite: 100_000, totalTokens: 404_096,
+          cost: { input: 1, output: 1, cacheRead: 2, cacheWrite: 3, total: 7 } },
+      },
+      context: { messages },
+      toolResults: [],
+    });
+    expect(session.checkCompaction.mock.calls.at(-1)?.[0]).toMatchObject({
+      stopReason: 'length',
+      usage: { totalTokens: 249_000, input: 244_904, output: 4_096, cacheRead: 0, cacheWrite: 0 },
+    });
+  });
 
   it('starts checking at turn boundaries as soon as auto-compaction is switched on mid-conversation', async () => {
     // Regression: the boundary hook was installed only when auto-compaction was on AT SPAWN, so enabling
@@ -784,7 +897,8 @@ describe('BrainSessionFactory turn-boundary compaction toggle', () => {
 describe('BrainSessionFactory step-drain hold install order', () => {
   // Mirrors compactionSession above, but on a SUB-AGENT session id — the only kind the hold installs on.
   function heldSession() {
-    const checkCompaction = vi.fn(async () => false);
+    const checkCompaction = vi.fn(async (message?: { usage?: { totalTokens?: number } }) =>
+      (message?.usage?.totalTokens ?? 0) > 500_000);
     return {
       checkCompaction,
       sessionId: 'brain-ch-subagent-held',

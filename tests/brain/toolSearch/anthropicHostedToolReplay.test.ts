@@ -18,7 +18,7 @@ const rawContent = () => [
   { type: 'text', text: 'Searching.' },
   { type: 'thinking', thinking: 'first', signature: SIGNATURE_A },
   { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: { query: 'Elowen docs' } },
-  { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_1', content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'DocsSearch' }] } },
+  { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_unmatched', content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'DocsSearch' }] } },
   { type: 'thinking', thinking: 'second', signature: SIGNATURE_B },
   { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } },
 ];
@@ -90,33 +90,65 @@ function fakeSession(responseSse: string, requestMessages: unknown[] = []) {
     return stream;
   });
   const agent = { streamFunction: native };
+  const handlers = new Map<string, (event: any) => unknown>();
+  const listeners: ((event: any) => void)[] = [];
   const replay = createAnthropicHostedToolReplay(MODEL as never);
-  replay.install({ agent } as unknown as AgentSession);
+  replay.extension({ on: vi.fn((name: string, handler: (event: any) => unknown) => handlers.set(name, handler)) } as unknown as ExtensionAPI);
+  replay.install({ agent, subscribe: (listener: (event: any) => void) => { listeners.push(listener); return () => {}; } } as unknown as AgentSession);
   return {
     agent,
     final,
+    handlers,
+    emit: (event: any) => { for (const listener of listeners) listener(event); },
     fetch: vi.fn(async () => new Response(responseSse, { status: 200, headers: { 'content-type': 'text/event-stream' } })),
   };
 }
 
 describe('Anthropic hosted tool-search replay', () => {
-  it('captures the complete raw assistant content and validates the server search pair', () => {
-    expect(captureAnthropicHostedReplay(sse)).toEqual(metadata());
+  it('captures unmatched hosted topology as provider-authoritative raw content', () => {
+    const captured = captureAnthropicHostedReplay(sse);
+    expect(captured).toEqual(metadata());
+    expect(JSON.stringify(JSON.parse(JSON.stringify(captured))?.content)).toBe(JSON.stringify(rawContent()));
   });
 
-  it('gives up on a capture it cannot trust instead of failing the response', () => {
-    // These used to throw, which killed the live turn: an unpaired search call reached production and cost
-    // the user a finished answer. Capturing is an optimisation, and "no metadata" is the same safe outcome
-    // as a response that never used hosted search — nothing malformed is replayed either way.
-    const incomplete = sse.replace(block(3, rawContent()[3]!), '');
-    expect(captureAnthropicHostedReplay(incomplete)).toBeUndefined();
-    const unknownDelta = sse.replace(
+  it('preserves citations deltas in complete hosted responses', () => {
+    const citation = {
+      type: 'web_search_result_location', url: 'https://example.test', title: 'Example',
+      encrypted_index: 'idx', cited_text: 'Searching.',
+    };
+    const withCitation = sse.replace(
       block(0, { type: 'text', text: 'Searching.' }),
-      block(0, { type: 'text', text: 'Searching.' }, [{ type: 'citations_delta', citation: {} }]),
+      block(0, { type: 'text', text: 'Searching.', citations: null }, [
+        { type: 'citations_delta', citation },
+      ]),
     );
-    expect(captureAnthropicHostedReplay(unknownDelta)).toBeUndefined();
-    // A stream cut mid-frame: the tail is not parseable JSON, which is how the production crash surfaced.
-    expect(captureAnthropicHostedReplay(`${sse.slice(0, sse.length - 40)}`)).toBeUndefined();
+    const expected = rawContent();
+    expected[0] = { type: 'text', text: 'Searching.', citations: [citation] };
+    expect(captureAnthropicHostedReplay(withCitation)?.content).toEqual(expected);
+  });
+
+  it('refuses syntactically incomplete or malformed SSE captures', () => {
+    const malformedJson = sse.replace(
+      event('message_stop', { type: 'message_stop' }),
+      'event: message_stop\ndata: {"type":"message_stop"\n\n',
+    );
+    const missingIndex = sse.replace(
+      event('content_block_stop', { type: 'content_block_stop', index: 2 }),
+      event('content_block_stop', { type: 'content_block_stop' }),
+    );
+    const duplicateIndex = sse.replace(
+      block(3, rawContent()[3]!),
+      block(2, rawContent()[3]!),
+    );
+    const unfinishedBlock = sse.replace(
+      event('content_block_stop', { type: 'content_block_stop', index: 4 }),
+      '',
+    );
+    const truncatedFrame = sse.slice(0, sse.length - 1);
+
+    for (const invalid of [malformedJson, missingIndex, duplicateIndex, unfinishedBlock, truncatedFrame]) {
+      expect(captureAnthropicHostedReplay(invalid)).toBeUndefined();
+    }
   });
 
   it('restores the assistant turn verbatim without mutating signed thinking or the input payload', () => {
@@ -129,7 +161,7 @@ describe('Anthropic hosted tool-search replay', () => {
     const restored = restoreAnthropicHostedReplay(payload, [assistant()], 'claude-opus-5') as typeof payload;
 
     expect(payload).toEqual(before);
-    expect(restored.messages[0]?.content).toEqual(rawContent());
+    expect(JSON.stringify(restored.messages[0]?.content)).toBe(JSON.stringify(rawContent()));
     expect(restored.messages[0]?.content[1]).toEqual(before.messages[0]?.content[1]);
     expect(restored.messages[0]?.content[4]).toEqual(before.messages[0]?.content[2]);
     expect(verifyAnthropicHostedReplay(payload, [assistant()], 'claude-opus-5')).toBe(false);
@@ -171,12 +203,79 @@ describe('Anthropic hosted tool-search replay', () => {
     expect(fixture.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('delivers the answer when the capture fails, instead of killing the response', async () => {
-    // REGRESSION (production, 22 Aug 2026): this asserted the opposite — a failed capture had to surface as
-    // an error event. It did, by calling controller.error() on the stream carrying the model's reply, so a
-    // turn on claude-opus-5 died mid-run and the user had to start the agent again. The tap is a passive
-    // observer of someone else's stream; only a broken PROVIDER stream may take that stream down.
-    const fixture = fakeSession(sse.replace(block(3, rawContent()[3]!), ''));
+  it('uses the final successful capture when an earlier provider attempt failed', async () => {
+    const final = assistant(null);
+    const native = vi.fn((_model, _context, options) => {
+      const stream = createAssistantMessageEventStream();
+      void (async () => {
+        const first = await options.fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST', body: JSON.stringify({ model: 'claude-opus-5', messages: [] }),
+        });
+        await first.text().catch(() => undefined);
+        const second = await options.fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST', body: JSON.stringify({ model: 'claude-opus-5', messages: [] }),
+        });
+        await second.text();
+        stream.push({ type: 'done', reason: 'toolUse', message: final as never });
+        stream.end();
+      })();
+      return stream;
+    });
+    const failedBody = new ReadableStream<Uint8Array>({
+      start(controller) { controller.error(new Error('first provider stream failed')); },
+    });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(failedBody, { status: 200, headers: { 'content-type': 'text/event-stream' } }))
+      .mockResolvedValueOnce(new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    const agent = { streamFunction: native };
+    const replay = createAnthropicHostedToolReplay(MODEL as never);
+    replay.install({ agent, subscribe: () => () => {} } as unknown as AgentSession);
+
+    const events = [];
+    const stream = agent.streamFunction(MODEL as never, { messages: [], tools: [] } as never, { fetch } as never);
+    for await (const current of stream) events.push(current);
+
+    expect(events.some((current) => current.type === 'error')).toBe(false);
+    const done = events.find((current) => current.type === 'done');
+    expect(done?.type === 'done' ? anthropicHostedReplayMetadata(done.message) : undefined).toEqual(metadata());
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps replay metadata when the consumer cancels after message_stop instead of reading EOF', async () => {
+    const final = assistant(null);
+    const native = vi.fn((_model, _context, options) => {
+      const stream = createAssistantMessageEventStream();
+      void (async () => {
+        const response = await options.fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST', body: JSON.stringify({ model: 'claude-opus-5', messages: [] }),
+        });
+        const reader = response.body!.getReader();
+        await reader.read();
+        await reader.cancel('response complete');
+        stream.push({ type: 'done', reason: 'toolUse', message: final as never });
+        stream.end();
+      })();
+      return stream;
+    });
+    const agent = { streamFunction: native };
+    const replay = createAnthropicHostedToolReplay(MODEL as never);
+    replay.install({ agent, subscribe: () => () => {} } as unknown as AgentSession);
+    const fetch = vi.fn(async () => new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+
+    const events = [];
+    const stream = agent.streamFunction(MODEL as never, { messages: [], tools: [] } as never, { fetch } as never);
+    for await (const current of stream) events.push(current);
+
+    expect(events.some((current) => current.type === 'error')).toBe(false);
+    const done = events.find((current) => current.type === 'done');
+    expect(done?.type === 'done' ? anthropicHostedReplayMetadata(done.message) : undefined).toEqual(metadata());
+  });
+
+  it('delivers a finished answer but blocks the next request after unsafe hosted capture', async () => {
+    // Capture becomes invalid BEFORE the first hosted block, but must keep observing later complete frames
+    // and latch the unsafe boundary once server_tool_use appears.
+    const unsafeSse = `event: broken\ndata: {not-json}\n\nevent: broken-again\ndata: {still-not-json}\n\n${sse}`;
+    const fixture = fakeSession(unsafeSse);
     const events = [];
     const stream = fixture.agent.streamFunction(
       { id: 'claude-opus-5', provider: 'anthropic', api: 'anthropic-messages' } as never,
@@ -188,9 +287,62 @@ describe('Anthropic hosted tool-search replay', () => {
     const done = events.find((current) => current.type === 'done');
     expect(done).toBeDefined();
     expect(events.some((current) => current.type === 'error')).toBe(false);
-    // The answer survives; only the replay metadata is missing, which is what an unpaired capture means.
     expect(done?.type === 'done' ? done.message.content : []).toEqual(fixture.final.content);
     expect(done?.type === 'done' ? anthropicHostedReplayMetadata(done.message) : 'unset').toBeUndefined();
+
+    const nextEvents = [];
+    const next = fixture.agent.streamFunction(
+      { id: 'claude-opus-5', provider: 'anthropic', api: 'anthropic-messages' } as never,
+      { messages: [assistant(null)], tools: [] } as never,
+      { fetch: fixture.fetch } as never,
+    );
+    for await (const current of next) nextEvents.push(current);
+    expect(fixture.fetch).toHaveBeenCalledTimes(1);
+    expect(nextEvents.at(-1)?.type).toBe('error');
+    expect(nextEvents.at(-1)?.type === 'error' ? nextEvents.at(-1)?.error.errorMessage : '')
+      .toContain('could not be captured safely');
+
+    const persistedUnsafe = JSON.parse(JSON.stringify(done?.type === 'done' ? done.message : null));
+    const respawned = fakeSession(sse, [wireAssistant()]);
+    const respawnEvents = [];
+    const afterRespawn = respawned.agent.streamFunction(
+      { id: 'claude-opus-5', provider: 'anthropic', api: 'anthropic-messages' } as never,
+      { messages: [persistedUnsafe], tools: [] } as never,
+      { fetch: respawned.fetch } as never,
+    );
+    for await (const current of afterRespawn) respawnEvents.push(current);
+    expect(respawned.fetch).not.toHaveBeenCalled();
+    expect(respawnEvents.at(-1)?.type === 'error' ? respawnEvents.at(-1)?.error.errorMessage : '')
+      .toContain('could not be captured safely');
+  });
+
+  it('allows PI compaction to remove an unsafe durable turn and reopen the conversation', async () => {
+    const unsafeSse = `event: broken\ndata: {not-json}\n\n${sse}`;
+    const fixture = fakeSession(unsafeSse);
+    const firstEvents = [];
+    const first = fixture.agent.streamFunction(MODEL as never, { messages: [], tools: [] } as never, { fetch: fixture.fetch } as never);
+    for await (const current of first) firstEvents.push(current);
+    const unsafe = firstEvents.find((current) => current.type === 'done');
+    expect(unsafe?.type).toBe('done');
+
+    fixture.fetch.mockImplementation(async () => new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    const controller = new AbortController();
+    fixture.handlers.get('session_before_compact')?.({ signal: controller.signal });
+    const recoveryEvents = [];
+    const recovery = fixture.agent.streamFunction(
+      MODEL as never,
+      { messages: [unsafe?.type === 'done' ? unsafe.message : null], tools: [] } as never,
+      { fetch: fixture.fetch, signal: controller.signal } as never,
+    );
+    for await (const current of recovery) recoveryEvents.push(current);
+    expect(recoveryEvents.some((current) => current.type === 'error')).toBe(false);
+
+    fixture.emit({ type: 'compaction_end', aborted: false, result: { summary: 'safe compacted context' } });
+    const resumedEvents = [];
+    const resumed = fixture.agent.streamFunction(MODEL as never, { messages: [], tools: [] } as never, { fetch: fixture.fetch } as never);
+    for await (const current of resumed) resumedEvents.push(current);
+    expect(resumedEvents.some((current) => current.type === 'error')).toBe(false);
+    expect(fixture.fetch).toHaveBeenCalledTimes(3);
   });
 
   it.each(['provider SSE error', 'request abort'])('cancels a pending capture on %s instead of hanging the terminal error', async (reason) => {
@@ -249,10 +401,10 @@ describe('Anthropic hosted tool-search replay', () => {
     expect(events.at(-1)?.type === 'error' ? events.at(-1)?.error.errorMessage : '').toContain('missing persisted hosted-search');
   });
 
-  it('registers restoration before provider request', () => {
-    const handlers = new Map<string, (event: { payload: unknown }) => unknown>();
+  it('registers compaction recovery before provider restoration', () => {
+    const handlers = new Map<string, (event: any) => unknown>();
     const replay = createAnthropicHostedToolReplay(MODEL as never);
-    replay.extension({ on: vi.fn((name: string, handler: (event: { payload: unknown }) => unknown) => handlers.set(name, handler)) } as unknown as ExtensionAPI);
-    expect([...handlers.keys()]).toEqual(['before_provider_request']);
+    replay.extension({ on: vi.fn((name: string, handler: (event: any) => unknown) => handlers.set(name, handler)) } as unknown as ExtensionAPI);
+    expect([...handlers.keys()]).toEqual(['session_before_compact', 'before_provider_request']);
   });
 });

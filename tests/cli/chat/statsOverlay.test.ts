@@ -197,8 +197,8 @@ describe('stats overlay — context section', () => {
     expect(text).toContain('tool output');
     expect(text).toContain('Bash');
     expect(text).toContain('compacts at 160k');
-    // The provider's own count is shown as such, never merged into the estimated rows.
-    expect(text).toContain('reported');
+    // The resident count used by status and compaction is named separately from category rows.
+    expect(text).toContain('resident');
   });
 
   it('renders a bar only for the categories that carry tokens', () => {

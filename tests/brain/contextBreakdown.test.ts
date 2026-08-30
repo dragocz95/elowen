@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildContextBreakdown, type ContextMessage, type ContextSnapshot } from '../../src/brain/contextBreakdown.js';
+import type { AgentSession } from '@earendil-works/pi-coding-agent';
+import {
+  buildContextBreakdown,
+  residentContextUsageOf,
+  useLocalResidentContextEstimate,
+  type ContextMessage,
+  type ContextSnapshot,
+} from '../../src/brain/contextBreakdown.js';
 
 /** Messages are sized by PI's chars/4 heuristic, so every fixture below uses a length that is a clean
  *  multiple of 4 — the expected token counts are then hand-computable and the assertions stay literal. */
@@ -104,6 +111,42 @@ describe('context breakdown — categories', () => {
     expect(result.reportedTokens).toBe(4_321);
     expect(result.compactAtTokens).toBe(800);
     expect(result.estimatedTokens).toBe(100);
+  });
+});
+
+describe('resident context ownership', () => {
+  it('keeps Anthropic hosted-search status stable across cumulative usage spikes', () => {
+    let cumulative = 478_000;
+    const session = {
+      model: { contextWindow: 1_000_000 },
+      systemPrompt: 's'.repeat(400_000),
+      getAllTools: () => [],
+      getActiveToolNames: () => [],
+      messages: [user(240_000)],
+      getContextUsage: () => ({ tokens: cumulative, contextWindow: 1_000_000, percent: cumulative / 10_000 }),
+    } as unknown as AgentSession;
+    useLocalResidentContextEstimate(session);
+
+    expect(residentContextUsageOf(session)).toEqual({ tokens: 160_000, contextWindow: 1_000_000, percent: 16 });
+    cumulative = 254_000;
+    expect(residentContextUsageOf(session)).toEqual({ tokens: 160_000, contextWindow: 1_000_000, percent: 16 });
+  });
+
+  it('includes raw hosted blocks omitted from PI message content', () => {
+    const hosted = { type: 'server_tool_use', id: 'srv_1', name: 'tool_search', input: { query: 'x' } };
+    const message = assistant(0) as ContextMessage & { anthropicHostedToolReplay: unknown };
+    message.anthropicHostedToolReplay = { v: 1, content: [hosted] };
+    const result = buildContextBreakdown(snapshot({ messages: [message] }));
+    const expected = Math.ceil(JSON.stringify(hosted).length / 4);
+    expect(result.estimatedTokens).toBe(expected);
+    expect(result.categories).toEqual([{ id: 'assistant', tokens: expected, percent: expected / 10 }]);
+  });
+
+  it('retains provider-backed context usage for ordinary sessions', () => {
+    const session = {
+      getContextUsage: () => ({ tokens: 123_456, contextWindow: 200_000, percent: 61.728 }),
+    } as unknown as AgentSession;
+    expect(residentContextUsageOf(session)).toEqual({ tokens: 123_456, contextWindow: 200_000, percent: 61.728 });
   });
 });
 

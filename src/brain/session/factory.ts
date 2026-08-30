@@ -39,6 +39,11 @@ import { ProviderRequestRecorder } from './providerRequestRecorder.js';
 import { wrapFastModeRuntime, type FastModeRoute } from '../fastMode.js';
 import { recoverMalformedToolCalls } from './malformedToolCallRecovery.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
+import {
+  localResidentContextTokens,
+  useLocalResidentContextEstimate,
+  usesLocalResidentContextEstimate,
+} from '../contextBreakdown.js';
 import { relative, sep } from 'node:path';
 
 let missingBoundaryCompactionWarned = false;
@@ -513,24 +518,23 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         ...(o.compactionModelRouteExtension ? [o.compactionModelRouteExtension] : []),
         ...(o.compactionCircuitBreakerExtension ? [o.compactionCircuitBreakerExtension] : []),
         ...(o.requestProfile ? [providerRequestProfile(o.requestProfile)] : []),
-        // Before cacheMonitor: observability must see the FINAL hosted-search body (deferred definitions +
-        // server tool), not pi-ai's immediate-tools intermediate that never leaves the process.
+        // Hosted tools and recall add provider-visible content before path sanitization. The Anthropic raw
+        // replay then runs AFTER every transform that could touch assistant text: signed thinking is verbatim
+        // provider-owned data and must never be scrubbed or normalized after restoration.
         ...(o.hostedToolSearch?.provider === 'openai'
           ? [((modelId) => (pi: ExtensionAPI): void => { installOpenAIHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
           : []),
         ...(o.hostedToolSearch?.provider === 'anthropic'
           ? [((modelId) => (pi: ExtensionAPI): void => { installAnthropicHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
           : []),
-        // Anthropic requires server_tool_use/tool_search_tool_result to be replayed verbatim. Restore them
-        // before observability and cache breakpoints so both see/hash the exact request sent upstream.
-        ...(o.anthropicHostedReplayExtension ? [o.anthropicHostedReplayExtension] : []),
         ...(o.liveRecall ? [((recall) => (pi: ExtensionAPI): void => { installLiveRecall(pi, recall); })(o.liveRecall)] : []),
-        ...(o.cacheMonitor ? [o.cacheMonitor.extension] : []),
-        // AFTER the monitor, so the snapshot it takes is the payload as pi-ai built it. The monitor hashes
-        // canonically (markers stripped), so the order does not change what it reports — it keeps the
-        // snapshot honest about what this code did or did not touch.
-        ...(o.cacheBreakpoints ? [installCacheBreakpoints] : []),
         ...(o.sanitizePaths ? [providerPathScrubber(o.sanitizePaths)] : []),
+        // Before observability and cache breakpoints so both see/hash the exact final request. Restoring raw
+        // assistant content after the scrubber does not leak a new path: it replays bytes this provider itself
+        // returned, which Anthropic requires for the adjacent signed-thinking blocks to remain valid.
+        ...(o.anthropicHostedReplayExtension ? [o.anthropicHostedReplayExtension] : []),
+        ...(o.cacheMonitor ? [o.cacheMonitor.extension] : []),
+        ...(o.cacheBreakpoints ? [installCacheBreakpoints] : []),
       ],
     },
   });
@@ -716,6 +720,10 @@ export class BrainSessionFactory {
       noTools: 'builtin',
       ...(thinkingLevel ? { thinkingLevel } : {}),
     });
+    // Anthropic server-tool delta usage is cumulative billing usage. Mark this exact hosted-search wire so
+    // status and every native compaction check share the local structured resident-context estimate; all
+    // ordinary provider sessions keep PI's usage-backed behavior.
+    if (anthropicHostedReplay) useLocalResidentContextEstimate(session);
     // Install replay closest to the provider stream. The compaction route wraps it next, so a cross-model
     // fallback reaches replay with the ACTUAL fallback model and bypasses Anthropic capture/restoration.
     // Installing replay outside compaction would classify from the chat model, then parse OpenAI/Kimi SSE
@@ -875,6 +883,10 @@ export class BrainSessionFactory {
       // One user message and this reply: anything more and what has to be subtracted below is a whole
       // conversation measured by estimate, which is no longer a measurement.
       if (session.messages.length > 2) { baselineMeasured = true; return; }
+      // Anthropic hosted-search usage is cumulative billing data. This session already seeded the same
+      // structured local prefill estimate used by status/compaction; replacing it from the response would
+      // move the threshold with server-tool spend.
+      if (usesLocalResidentContextEstimate(session)) { baselineMeasured = true; return; }
       const usage = message.usage;
       // Every input-side counter, not just `input`. Anthropic reports cache-CREATED prefix tokens in
       // `cacheWrite` and reads in `cacheRead`, and `input` is what was neither — so on a cold first
@@ -930,7 +942,8 @@ export class BrainSessionFactory {
     const assessCold: AssessColdCompaction = (lastRequestCacheTtlMs) => assessColdCompaction({
       proactive: () => proactiveCompaction,
       breakerBlocks: () => compactionBreaker.blocks('threshold'),
-      contextTokens: () => estimatedContextTokens(session.messages, latestCompaction(sessionManager)?.timestamp),
+      contextTokens: () => localResidentContextTokens(session)
+        ?? estimatedContextTokens(session.messages, latestCompaction(sessionManager)?.timestamp),
       // Reads the SAME prefill the trigger and the breaker's floor use — this estimate is weighed against
       // the context the threshold arithmetic produced, so a second measure of the same quantity would
       // decide profitability against a session that does not exist.
