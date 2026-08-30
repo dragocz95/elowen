@@ -273,168 +273,109 @@ test('returning from Home opens the full chat at its newest turn', async ({ app,
   expect(bottomGap).toBeLessThanOrEqual(2);
 });
 
-/* THE SECTION NAVIGATION, in a real browser. Both cases below replace one that asserted the opposite —
- * that every sectioned page keeps a horizontal tab row at every width — and they replace it because that
- * arrangement was the defect, not the guarantee:
- *
- *  - a configuration deck (`/account`, `/settings`, every plugin config surface) carries a long,
- *    unordered, growing set of sections whose NAMES are the only way to tell them apart. A horizontal
- *    track answers that by scrolling half of them off the page, so on a 1440px display with room for a
- *    column to spare, four of Account's seven sections were off screen behind a scroll nobody signals;
- *  - and the same track on a phone is worse, not better: seven labels in ~340px means the reader is
- *    shown two of them and has to discover the rest by dragging.
- *
- * A register (`/memory`) is untouched and still tabs — its sections are a filter over ONE collection,
- * which is exactly what a tab row means. That is asserted in the register case further down.
- *
- * These are container queries in JS, not viewport ones: the shape comes from the width the SHELL has
- * (`resolveSectionLayout`, components/ui/WorkspaceShell.tsx), so the same page folds beside a pinned
- * advisor dock as it does on a narrow window. */
-test('a roomy Studio deck navigates by a column beside the surface it configures', async ({ app, seed }, testInfo) => {
+/* THE SECTION NAVIGATION, in a real browser. Every sectioned shell uses the same line tabs. The track
+ * owns horizontal overflow, measured edge state makes hidden sections discoverable, and the page wrapper
+ * never grows wider than its available space. */
+test('a roomy Studio deck uses the shared horizontal section tabs', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-oled');
   await app.setViewportSize({ width: 1440, height: 800 });
   await openStudio(app, '/account');
 
-  // In the PAGE, under the metric rail — the sections belong to the page and change with it, and the top
-  // bar is the one strip that does not. The chat surface still portals its own controls up there.
   const nav = app.locator('.workspace-shell > .workspace-shell__section-navigation');
-  await expect(nav).toHaveAttribute('data-layout', 'sidebar');
-  await expect(app.locator('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar');
-  // A column is a PRESENTATION, not a different control: the same radiogroup, the same accessible name,
-  // the same roving tab stop and arrow keys as the tab row it replaces.
-  const column = nav.locator('[role="radiogroup"]');
-  await expect(column).toHaveAttribute('aria-orientation', 'vertical');
-  await expect(column).toHaveAttribute('data-variant', 'menu');
+  const track = nav.getByRole('radiogroup', { name: 'Account sections' });
+  await expect(nav).toHaveAttribute('data-layout', 'tabs');
+  await expect(app.locator('.workspace-shell')).toHaveAttribute('data-section-layout', 'tabs');
+  await expect(track).toHaveAttribute('aria-orientation', 'horizontal');
+  await expect(track).toHaveAttribute('data-variant', 'line');
+  await expect(track).toHaveAttribute('data-nowrap', 'true');
   await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
-  // Every section is on screen at once, which is the whole point of the column.
+  await expect(nav.locator('.segmented__option > svg')).toHaveCount(0);
   await expect(nav.getByRole('radio')).toHaveCount(7);
 
-  const geometry = await app.evaluate(() => {
-    const shell = document.querySelector<HTMLElement>('.workspace-shell')!;
-    const box = (selector: string) => shell.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
-    const navEl = shell.querySelector<HTMLElement>(':scope > .workspace-shell__section-navigation')!;
-    const contentEl = shell.querySelector<HTMLElement>(':scope > .workspace-shell__content')!;
-    const navStyle = getComputedStyle(navEl);
-    return {
-      nav: navEl.getBoundingClientRect(),
-      content: contentEl.getBoundingClientRect(),
-      hero: box(':scope > .workspace-hero'),
-      position: navStyle.position,
-      stickyTop: parseFloat(navStyle.top),
-      // The content column re-declares the shell's container name, so a settings record folds against the
-      // room IT has rather than against the width of the page plus the column beside it.
-      contentContainer: getComputedStyle(contentEl).containerName,
-      contentType: getComputedStyle(contentEl).containerType,
-      topBar: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--studio-top-bar-height')) * 16,
-    };
-  });
-
-  // 15rem, from --section-sidebar-width. Restated as a number because this measures a box.
-  expect(Math.round(geometry.nav.width)).toBe(240);
-  // The column is to the LEFT of everything it configures.
-  expect(geometry.nav.right).toBeLessThanOrEqual(geometry.content.left);
-  // The hero names the PAGE, not the section, so it spans both columns above them.
-  expect(geometry.hero.width).toBeGreaterThan(geometry.content.width);
-  expect(geometry.nav.top).toBeGreaterThanOrEqual(geometry.hero.bottom - 1);
-  expect(geometry.contentContainer).toBe('workspace-shell');
-  expect(geometry.contentType).toContain('inline-size');
-  // Parked below Studio's own page bar, which is sticky at the top of the SAME scroller: a column parked
-  // at 0 loses its first section behind the bar.
-  expect(geometry.position).toBe('sticky');
-  expect(geometry.stickyTop).toBeGreaterThanOrEqual(geometry.topBar);
-
-  // Changing section from the column drives the page exactly as the tab row did.
   await nav.getByRole('radio', { name: 'Security' }).click();
   await expect(app.getByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
   await expect(nav.getByRole('radio', { name: 'Security' })).toHaveAttribute('aria-checked', 'true');
 
-  // Two columns must not cost the page its width.
-  const overflow = await app.evaluate(() => {
+  const geometry = await app.evaluate(() => {
+    const navEl = document.querySelector<HTMLElement>('.workspace-shell > .workspace-shell__section-navigation')!;
+    const trackEl = navEl.querySelector<HTMLElement>('[role="radiogroup"]')!;
     const main = document.querySelector<HTMLElement>('main')!;
-    return main.scrollWidth - main.clientWidth;
-  });
-  expect(overflow).toBeLessThanOrEqual(1);
-
-  // THE TOOLBAR SHARES THE CONTENT COLUMN, and /account cannot answer that: its toolbar row renders
-  // nothing and `page-toolbar.css` collapses an empty one to `display: none`, which is not a grid item at
-  // all. Settings has a real one — the model search — so the surface that HAS a toolbar is the one asked.
-  // The window is shortened, not narrowed: the layout is chosen from WIDTH, so this stays the sidebar
-  // case while guaranteeing the page is taller than the viewport for the sticky check below.
-  await app.setViewportSize({ width: 1440, height: 420 });
-  await openStudio(app, '/settings?cat=models');
-  await expect(app.locator('.page-toolbar input[type="search"]')).toBeVisible();
-  const settings = await app.evaluate(() => {
-    const shell = document.querySelector<HTMLElement>('.workspace-shell')!;
-    const box = (selector: string) => shell.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
     return {
-      nav: box(':scope > .workspace-shell__section-navigation'),
-      toolbar: box(':scope > .page-toolbar'),
-      content: box(':scope > .workspace-shell__content'),
+      navWidth: navEl.getBoundingClientRect().width,
+      trackWidth: trackEl.getBoundingClientRect().width,
+      navOverflow: navEl.scrollWidth - navEl.clientWidth,
+      pageOverflow: main.scrollWidth - main.clientWidth,
     };
   });
-  expect(settings.toolbar.left).toBeGreaterThanOrEqual(settings.nav.right);
-  // Beside the column, not above it, and still above the surface it narrows.
-  expect(settings.nav.top).toBeLessThanOrEqual(settings.toolbar.top + 1);
-  expect(settings.toolbar.top).toBeLessThan(settings.content.top);
-
-  // AND THE COLUMN ACTUALLY PARKS. `align-self: start` is what makes this true, and it is invisible in
-  // the computed style: a grid item stretched to fill its area is already as tall as its containing block
-  // and simply scrolls away with the page. The model catalog is asked rather than Account because this
-  // needs a surface that is genuinely taller than the window.
-  const parked = await app.evaluate(async () => {
-    const nav = document.querySelector<HTMLElement>('.workspace-shell > .workspace-shell__section-navigation')!;
-    const content = document.querySelector<HTMLElement>('.workspace-shell__content')!;
-    // The scroller is found rather than assumed: which element owns the page's scroll is a shell/skin
-    // decision, and a test that hard-codes `main` measures nothing the day that changes.
-    let scroller: HTMLElement = document.scrollingElement as HTMLElement;
-    for (let node = nav.parentElement; node; node = node.parentElement) {
-      if (node.scrollHeight > node.clientHeight + 4 && /auto|scroll/.test(getComputedStyle(node).overflowY)) { scroller = node; break; }
-    }
-    const before = { nav: nav.getBoundingClientRect().top, content: content.getBoundingClientRect().top };
-    scroller.scrollTop = Math.min(300, scroller.scrollHeight - scroller.clientHeight);
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    return { before, after: { nav: nav.getBoundingClientRect().top, content: content.getBoundingClientRect().top }, moved: scroller.scrollTop };
-  });
-  expect(parked.moved, 'the page has to scroll for a sticky column to mean anything').toBeGreaterThan(0);
-  expect(parked.after.content, 'the surface did not scroll').toBeLessThan(parked.before.content - 1);
-  expect(parked.after.nav, 'the column scrolled away with the surface').toBeGreaterThan(parked.before.nav - parked.moved + 1);
+  expect(Math.abs(geometry.trackWidth - geometry.navWidth)).toBeLessThanOrEqual(1);
+  expect(geometry.navOverflow).toBeLessThanOrEqual(1);
+  expect(geometry.pageOverflow).toBeLessThanOrEqual(1);
 });
 
-test('a narrow Studio deck folds its sections into one picker a finger can hit', async ({ browser, seed }, testInfo) => {
+test('a 390px Studio deck scrolls its tabs internally and signals the hidden edge', async ({ browser, seed }, testInfo) => {
   authedOnly(testInfo);
-  // A COARSE pointer, not merely a small viewport: `@media (pointer: coarse)` is what raises the trigger
-  // to the touch floor, and `viewport` alone leaves the pointer at `fine` (see `studioTouchPage`).
   const { context, page } = await studioTouchPage(browser, seed, 'studio-oled', { width: 390, height: 844 });
   try {
     await openStudio(page, '/account');
 
     const nav = page.locator('.workspace-shell > .workspace-shell__section-navigation');
-    await expect(nav).toHaveAttribute('data-layout', 'select');
-    await expect(page.locator('.workspace-shell')).toHaveAttribute('data-section-layout', 'select');
-    // One control, not seven labels dragged past the edge of a 390px screen.
-    await expect(nav.locator('[role="radiogroup"]')).toHaveCount(0);
-    const picker = nav.getByRole('combobox', { name: 'Account sections' });
-    await expect(picker).toBeVisible();
+    const track = nav.getByRole('radiogroup', { name: 'Account sections' });
+    await expect(nav).toHaveAttribute('data-layout', 'tabs');
+    await expect(page.locator('.workspace-shell')).toHaveAttribute('data-section-layout', 'tabs');
+    await expect(track).toHaveAttribute('data-variant', 'line');
+    await expect(track).toHaveAttribute('data-nowrap', 'true');
+    await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
+    await expect(nav.locator('.segmented__option > svg')).toHaveCount(0);
+    await expect(track).toHaveAttribute('data-overflow', 'true');
+    await expect(track).toHaveAttribute('data-overflow-left', 'false');
+    await expect(track).toHaveAttribute('data-overflow-right', 'true');
 
-    const trigger = (await picker.boundingBox())!;
-    const shell = (await page.locator('.workspace-shell').boundingBox())!;
-    // It is the only navigation on the surface, so it takes the whole line — a trigger sized to its
-    // current label would be a different width on every section.
-    expect(Math.round(trigger.width)).toBeGreaterThanOrEqual(Math.round(shell.width) - 49);
-    expect(Math.round(trigger.height), 'the one way to change section is under the touch floor').toBeGreaterThanOrEqual(TOUCH_TARGET);
-
-    // And it changes the section, which is the only thing it is for.
-    await picker.click();
-    await page.getByRole('option', { name: 'Memory' }).click();
-    await expect(page.getByRole('heading', { level: 1, name: 'Memory' })).toBeVisible();
-    await expect(picker).toHaveText(/Memory/);
-
-    const overflow = await page.evaluate(() => {
+    const initial = await page.evaluate(() => {
+      const navEl = document.querySelector<HTMLElement>('.workspace-shell > .workspace-shell__section-navigation')!;
+      const trackEl = navEl.querySelector<HTMLElement>('[role="radiogroup"]')!;
       const main = document.querySelector<HTMLElement>('main')!;
-      return main.scrollWidth - main.clientWidth;
+      const trackRect = trackEl.getBoundingClientRect();
+      const offscreen = [...trackEl.querySelectorAll<HTMLElement>('[role="radio"]')].find((item) => {
+        const rect = item.getBoundingClientRect();
+        return rect.right > trackRect.right + 1 || rect.left < trackRect.left - 1;
+      });
+      return {
+        navOverflow: navEl.scrollWidth - navEl.clientWidth,
+        trackOverflow: trackEl.scrollWidth - trackEl.clientWidth,
+        pageOverflow: main.scrollWidth - main.clientWidth,
+        offscreenName: offscreen?.getAttribute('aria-label') ?? '',
+        fadeLeft: getComputedStyle(trackEl).getPropertyValue('--segmented-edge-fade-left').trim(),
+        fadeRight: getComputedStyle(trackEl).getPropertyValue('--segmented-edge-fade-right').trim(),
+      };
     });
-    expect(overflow).toBeLessThanOrEqual(1);
+    expect(initial.navOverflow).toBeLessThanOrEqual(1);
+    expect(initial.trackOverflow).toBeGreaterThan(0);
+    expect(initial.pageOverflow).toBeLessThanOrEqual(1);
+    expect(initial.offscreenName).not.toBe('');
+    expect(initial.fadeLeft).toBe('0px');
+    expect(initial.fadeRight).not.toBe('0px');
+
+    const targets = await nav.getByRole('radio').evaluateAll((items) => items.map((item) => {
+      const rect = item.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    }));
+    for (const target of targets) {
+      expect(target.width).toBeGreaterThanOrEqual(TOUCH_TARGET);
+      expect(target.height).toBeGreaterThanOrEqual(TOUCH_TARGET);
+    }
+
+    const offscreen = nav.getByRole('radio', { name: initial.offscreenName, exact: true });
+    await offscreen.evaluate((element) => element.click());
+    await expect(page.getByRole('heading', { level: 1, name: initial.offscreenName })).toBeVisible();
+    await expect(offscreen).toHaveAttribute('aria-checked', 'true');
+    const activeVisible = await track.evaluate((element) => {
+      const active = element.querySelector<HTMLElement>('[aria-checked="true"]')!;
+      const trackRect = element.getBoundingClientRect();
+      const activeRect = active.getBoundingClientRect();
+      return activeRect.left >= trackRect.left - 1 && activeRect.right <= trackRect.right + 1;
+    });
+    expect(activeVisible).toBe(true);
   } finally {
     await context.close();
   }
@@ -446,8 +387,7 @@ test('a Studio register keeps its sections a horizontal tab row at every width',
   await app.setViewportSize({ width: 1440, height: 900 });
   await openStudio(app, REGISTER);
 
-  // A register's sections are a FILTER over one collection, which is what a tab row means. The deck's
-  // column is for a set of unrelated surfaces; this is not that, and must not become it.
+  // Registers retain the same shared horizontal line treatment as every other sectioned workspace.
   const tabs = app.locator('.workspace-shell > .workspace-shell__section-navigation');
   await expect(tabs).toHaveAttribute('data-layout', 'tabs');
   const track = tabs.locator('[role="radiogroup"]');
@@ -518,10 +458,8 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
     expect(column.controlsRight).toBeLessThanOrEqual(column.rowRight + 1);
   }
 
-  // A phone-width deck navigates by the picker, not by a tab row: seven section names do not fit in
-  // ~340px, and the shape is chosen from the width the shell actually has.
-  await app.getByRole('combobox', { name: 'Settings sections' }).click();
-  await app.getByRole('option', { name: 'System' }).click();
+  // The phone uses the same Radix radio track; selecting an offscreen section scrolls it into view.
+  await app.getByRole('radio', { name: 'System' }).click();
   await expect(app.getByRole('heading', { level: 1, name: 'System' })).toBeVisible();
   await expect(app.locator('.page-toolbar__slot .settings-toolbar')).toHaveCount(0);
   await expect(app.locator('.workspace-hero__metrics')).toBeVisible();

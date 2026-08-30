@@ -51,7 +51,7 @@ const isAccountSection = (value: string): value is AccountSection =>
   (CORE_ACCOUNT_SECTIONS as readonly string[]).includes(value) || parsePluginAccountSectionId(value) !== null;
 
 /** Mount a section only after its first visit, then let React Activity retain its local form state.
- *  This avoids eagerly starting every section's queries while making sidebar switches lossless. */
+ *  This avoids eagerly starting every section's queries while making section switches lossless. */
 function AccountPanel({ id, active, visited, children }: {
   id: AccountSection;
   active: AccountSection;

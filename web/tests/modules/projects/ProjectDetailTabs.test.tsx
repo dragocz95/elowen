@@ -37,6 +37,11 @@ describe('ProjectDetailTabs', () => {
     render(<Wrapper><ProjectDetailTabs project={{ id: 7, slug: 'demo', path: '/repo', notes: '', icon: '' }} isAdmin={false} overview={<div>Core overview</div>} /></Wrapper>);
 
     expect(await screen.findByText('Core overview')).toBeInTheDocument();
+    const tabs = screen.getByRole('radiogroup', { name: 'Project sections' });
+    expect(tabs).toHaveAttribute('data-nowrap', 'true');
+    expect(tabs).toHaveClass('overflow-x-auto', 'w-full');
+    expect(tabs).not.toHaveClass('min-w-max');
+    expect(tabs.parentElement).not.toHaveClass('overflow-x-auto');
     fireEvent.click(await screen.findByRole('radio', { name: 'GitHub' }));
     expect(await screen.findByText('Repository for demo')).toBeInTheDocument();
     expect(loadPluginUi).toHaveBeenCalledWith('github', '/plugins/github/web/hash.js', undefined);

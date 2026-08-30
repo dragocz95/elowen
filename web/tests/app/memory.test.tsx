@@ -35,7 +35,12 @@ describe('MemoryPage', () => {
     await screen.findByTestId('memory-row');
     expect(screen.getByTestId('spatial-workspace-layout')).toBeInTheDocument();
     expect(screen.getByTestId('workspace-hero-metrics')).toBeInTheDocument();
-    expect(screen.getByRole('radiogroup', { name: 'Memory' })).toBeInTheDocument();
+    const tabs = screen.getByRole('radiogroup', { name: 'Memory' });
+    expect(tabs).toHaveAttribute('data-variant', 'line');
+    expect(tabs).toHaveAttribute('data-nowrap', 'true');
+    expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'tabs');
+    expect(container.querySelector('.workspace-shell__section-navigation')).toHaveAttribute('data-layout', 'tabs');
+    expect(screen.queryByRole('combobox', { name: 'Memory' })).toBeNull();
     expect(container.querySelectorAll('[data-control-surface]')).toHaveLength(1);
   });
 

@@ -142,8 +142,8 @@ export function ProjectDetailTabs({ project, isAdmin, overview }: {
 
   return (
     <div className="min-w-0">
-      <div className="overflow-x-auto border-b border-border/70 py-3">
-        <Segmented value={active} onChange={setActive} options={options} variant="line" nowrap aria-label={t.projects.detailSections} className="min-w-max" />
+      <div className="min-w-0 border-b border-border/70 py-3">
+        <Segmented value={active} onChange={setActive} options={options} variant="line" nowrap aria-label={t.projects.detailSections} className="w-full" />
       </div>
       {active === 'overview' ? overview
         : active === 'access' && isAdmin ? <ProjectAccessPanel project={project} />

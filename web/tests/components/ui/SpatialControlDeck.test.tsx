@@ -33,7 +33,7 @@ function Deck({ value = 'system', onChange = vi.fn(), status = 'idle' as const, 
 }
 
 describe('SpatialControlDeck', () => {
-  it('renders the active section heading, rail and content surface', () => {
+  it('renders the active section heading, horizontal tabs and content surface', () => {
     render(<Deck />);
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
@@ -50,10 +50,9 @@ describe('SpatialControlDeck', () => {
     expect(onChange).toHaveBeenCalledWith('brain');
   });
 
-  // The rail is mounted directly rather than through the deck: the deck reads the shell profile, and
-  // every design this build ships is a command profile, which mounts the segmented navigation instead.
-  // The rail is still exported and still a fork's page anatomy, so its behaviour is covered here where
-  // it is the subject, not left half-asserted behind a profile nothing selects.
+  // SpatialSectionRail remains a public legacy primitive for bundles that mount it directly. The deck
+  // itself uses WorkspaceShell's shared Segmented tabs, so the rail's independent behaviour stays covered
+  // here without implying that SpatialControlDeck renders it.
   it('exposes the shared rail with live counts and complete roving-keyboard navigation', () => {
     const onChange = vi.fn();
     render(<SpatialSectionRail ariaLabel="Task status" sections={[
@@ -79,15 +78,31 @@ describe('SpatialControlDeck', () => {
     expect(active).toHaveFocus();
   });
 
-  it('turns vertical wheel input into horizontal rail movement without showing a scrollbar', () => {
+  it('consumes vertical wheel input only while the legacy rail can move horizontally', () => {
     render(<SpatialSectionRail ariaLabel="Task status" sections={[
       { id: 'active', label: 'Active', icon: Server },
     ]} value="active" onChange={vi.fn()} />);
     const rail = screen.getByTestId('spatial-section-rail');
-    const scrollBy = vi.fn();
-    Object.defineProperty(rail, 'scrollBy', { value: scrollBy });
-    fireEvent.wheel(rail, { deltaY: 72, deltaX: 0 });
-    expect(scrollBy).toHaveBeenCalledWith({ left: 72, behavior: 'auto' });
+
+    const fitting = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 72 });
+    fireEvent(rail, fitting);
+    expect(fitting.defaultPrevented).toBe(false);
+
+    Object.defineProperties(rail, {
+      clientWidth: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 40 },
+      scrollWidth: { configurable: true, value: 260 },
+      scrollLeft: { configurable: true, writable: true, value: 0 },
+    });
+    const forward = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 72 });
+    fireEvent(rail, forward);
+    expect(forward.defaultPrevented).toBe(true);
+    expect(rail.scrollLeft).toBe(72);
+
+    rail.scrollLeft = 160;
+    const bounded = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 72 });
+    fireEvent(rail, bounded);
+    expect(bounded.defaultPrevented).toBe(false);
   });
 
   it('keeps failed auto-save retry in the heading', () => {
