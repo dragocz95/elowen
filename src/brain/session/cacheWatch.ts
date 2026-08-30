@@ -103,6 +103,14 @@ export function hashCanonical(value: unknown): string {
   return hash(canonical(value));
 }
 
+/** The same canonicalization {@link hashCanonical} digests, exposed as the structure itself. A prefix
+ *  assertion that compares digests can only say THAT two payloads diverged; comparing the canonical
+ *  values names the message and shows the content that moved. Kept beside the hash rather than
+ *  reimplemented in a test so the two can never disagree about what "the same message" means. */
+export function canonicalPayload(value: unknown): unknown {
+  return canonical(value);
+}
+
 /** Total content blocks across the payload's messages. Anthropic resolves a cache hit by scanning back a
  *  limited window of blocks from a breakpoint, so the number of blocks a single step ADDED is what decides
  *  whether the previous cached segment is still reachable — the one figure that separates a fan-out miss
