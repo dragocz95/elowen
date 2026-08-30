@@ -238,12 +238,25 @@ describe('compactionReserveTokens — the percentage is measured against the usa
     expect(compactionReserveTokens(200_000, true, 80, 30_000)).toBe(34_000);
   });
 
-  it('rescues a small window whose prefill used to disable compaction outright', () => {
-    // 32k window with a 29.6k prefill. The old trigger was 25.6k — BELOW the post-compaction floor — so
-    // every compaction measured as pointless and the breaker stopped compacting at all. The hard ceiling
-    // now decides instead: 95% of 32k is 30.4k, leaving a 1.6k reserve, and compaction works again.
+  it('gives a large-prefill session back the working room the old arithmetic spent on its prompt', () => {
+    // 128k window with a 40k prefill at 80%. The old trigger was 102.4k, only 62.4k of it usable; the
+    // percentage was charged for a system prompt and tool set no compaction can remove. Now 80% of the
+    // 88k usable window sits on top of the prefill: trigger 110.4k, so the conversation itself gets the
+    // full 70.4k it was promised.
+    expect(compactionReserveTokens(128_000, true, 80, 40_000)).toBe(17_600);
+    expect(128_000 - compactionReserveTokens(128_000, true, 80, 40_000)).toBe(110_400);
+  });
+
+  it('does not pretend to rescue a window the prefill has genuinely swallowed', () => {
+    // 32k window with a 29.6k prefill. The hard ceiling lifts the trigger from 25.6k to 30.4k, but a
+    // compaction still has to write a summary and keep a tail on top of that prefill, which does not fit
+    // in 32k at all. The threshold arithmetic must not paper over that — the circuit breaker refusing and
+    // telling the user to start a new conversation is the correct outcome, and the test below proves it
+    // is what actually happens. Reserve arithmetic alone cannot make an oversized prompt fit.
     expect(compactionReserveTokens(32_000, true, 80, 29_600)).toBe(1_600);
-    expect(32_000 - compactionReserveTokens(32_000, true, 80, 29_600)).toBe(30_400);
+    const trigger = 32_000 - compactionReserveTokens(32_000, true, 80, 29_600);
+    expect(trigger).toBe(30_400);
+    expect(29_600 + 8_000 + 2_000).toBeGreaterThan(trigger); // prefill + summary + minimal tail
   });
 
   it('never lets the trigger past the hard ceiling, whatever the prefill claims', () => {
@@ -272,16 +285,32 @@ describe('compactionReserveTokens — the percentage is measured against the usa
     expect(compactionReserveTokens(100, false, 80, 0)).toBe(50);
   });
 
-  it('rounds exactly as the old absolute arithmetic did, including on an odd window', () => {
-    // Reserve is computed as a share of the usable window rather than by subtracting a rounded trigger
-    // from the window; the two disagree by a token wherever the halves do not land evenly, and a session
-    // that has measured no baseline must not see its threshold move at all.
-    for (const window of [200_001, 128_003, 32_767]) {
-      for (const pct of [30, 50, 80, 95]) {
-        expect(compactionReserveTokens(window, true, pct, 0))
-          .toBe(Math.round((window * (100 - pct)) / 100));
+  it('rounds exactly as the old absolute arithmetic did, for every window and percentage', () => {
+    // The literal expression this replaced. Reproduced rather than re-derived, because the two algebraic
+    // forms of the same percentage disagree by a token in floating point — `w * (100 - pct) / 100` gives
+    // 3588 where `w * (1 - pct/100)` gives 3587 on a 5125-token window at 30%. A session that has measured
+    // no baseline must not see its threshold move by even that much.
+    const oldReserve = (contextWindow: number, atPercent: number): number =>
+      Math.max(2, Math.round(contextWindow * (1 - atPercent / 100)));
+    // The persisted percentage is clamped to 30..95; the emergency floor is what deliberately differs
+    // below 5120 tokens of window, so the sweep stays above it and that difference has its own test.
+    for (let window = 5_200; window <= 300_000; window += 1_733) {
+      for (let pct = 30; pct <= 95; pct += 1) {
+        expect(compactionReserveTokens(window, true, pct, 0)).toBe(oldReserve(window, pct));
       }
     }
+  });
+
+  it('survives a window or a baseline that is not a usable number', () => {
+    // The window comes from operator configuration and the baseline from a provider's usage report, so
+    // neither is guaranteed to be finite. A single NaN reaching PI as `reserveTokens: NaN` makes every
+    // comparison false and disables compaction silently instead of failing.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      expect(Number.isFinite(compactionReserveTokens(200_000, true, 80, bad))).toBe(true);
+      expect(compactionReserveTokens(200_000, true, 80, bad)).toBe(40_000); // treated as no baseline
+      expect(Number.isFinite(compactionReserveTokens(bad, true, 80, 0))).toBe(true);
+    }
+    expect(compactionReserveTokens(0, true, 80, 0)).toBe(0); // nothing to reserve out of nothing
   });
 
   it('leaves non-proactive compaction on its emergency margin, prefill or not', () => {
@@ -898,7 +927,7 @@ describe('BrainSessionFactory cold-start-compaction assessment', () => {
 
   it('reports a large cold context as eligible, with the estimates PI’s own check would see', async () => {
     const { assess } = await createWithHistory(bigHistory);
-    expect(assess()).toEqual({ eligible: true, contextTokens: 350_000, floorTokens: 28_001 });
+    expect(assess()).toEqual({ eligible: true, contextTokens: 350_000, floorTokens: 28_000 });
   });
 
   it('refuses a context below the break-even — a 4× reduction still loses money', async () => {

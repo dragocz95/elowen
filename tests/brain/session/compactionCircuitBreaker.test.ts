@@ -283,7 +283,7 @@ async function liveFixture(): Promise<{
 describe('Compaction circuit breaker unreachable-threshold guard', () => {
   /** The 32k@40% shape from the review: trigger 12.8k, measured fixed cost ~27.6k — the floor can never
    *  get below the trigger. */
-  const unreachableBudget: CompactionThresholdBudget = { trigger: 12_800, fixedCostTokens: 27_619, floorMargin: 5_000 };
+  const unreachableBudget: CompactionThresholdBudget = { trigger: 12_800, fixedCostTokens: 27_619, floorMargin: 5_000, prefillBaseline: null };
 
   /** One successful compaction that kept `keptTokens` of recent tail + summary. */
   function successfulCompaction(reason: CompactionEnd['reason'], keptTokens: number): AgentSessionEvent {
@@ -340,10 +340,10 @@ describe('Compaction circuit breaker unreachable-threshold guard', () => {
     const breaker = createCompactionCircuitBreaker({ sessionId: 'brain-unreachable', thresholdBudget: unreachableBudget, onTripped: (m) => tripped.push(m) });
     const gate = installGate(breaker);
 
-    // The factory seeds the guard with the smallest achievable floor: fixed cost + summary allowance +
-    // minimal tail (27_619 + 8_000 + 2_000). Even that exceeds the trigger, so the first summarization
-    // request is refused before it is spent.
-    breaker.applyBudget(37_619);
+    // The factory seeds the guard with the least a compaction leaves ON TOP OF the prefill — the summary
+    // allowance plus the minimal tail. Added to the 27_619 prefill that is in force, even that smallest
+    // possible floor exceeds the trigger, so the first summarization request is refused before it is spent.
+    breaker.applyBudget(10_000);
 
     expect(breaker.blocks('threshold')).toBe(true);
     expect(breaker.blocks('overflow')).toBe(false);
@@ -359,12 +359,12 @@ describe('Compaction circuit breaker unreachable-threshold guard', () => {
 
   it('re-opens the gate when the trigger moves above the measured floor', () => {
     // A shared budget holder, mutated exactly as applyCompaction mutates it.
-    const budget: CompactionThresholdBudget = { trigger: 12_800, fixedCostTokens: 27_619, floorMargin: 5_000 };
+    const budget: CompactionThresholdBudget = { trigger: 12_800, fixedCostTokens: 27_619, floorMargin: 5_000, prefillBaseline: null };
     const tripped: string[] = [];
     const breaker = createCompactionCircuitBreaker({ sessionId: 'brain-live', thresholdBudget: budget, onTripped: (m) => tripped.push(m) });
     const gate = installGate(breaker);
 
-    breaker.applyBudget(37_619);
+    breaker.applyBudget(10_000);
     expect(breaker.blocks('threshold')).toBe(true);
     expect(gate('threshold')).toEqual({ cancel: true });
     expect(tripped).toEqual([compactionUnreachableMessage(37_619, 12_800)]);
@@ -387,11 +387,40 @@ describe('Compaction circuit breaker unreachable-threshold guard', () => {
     ]);
   });
 
+  it('re-weighs the floor against the prefill in force, not the one it was measured under', () => {
+    // The guard compares a post-compaction floor against a trigger, and BOTH are derived from the same
+    // prefill figure — an estimate at spawn, replaced by the provider's own number on the first request.
+    // Baking the estimate into the stored floor left the two describing different sessions: a floor
+    // measured under a large estimate, weighed against a trigger derived from a small measurement, kept
+    // the gate shut on a conversation compaction had since become able to help.
+    // The spawn-time estimate says 4k of prefill; the guard seeds a floor of 4k + 10k and finds it
+    // comfortably under the 30k trigger, so compaction is allowed.
+    const budget: CompactionThresholdBudget = { trigger: 30_000, fixedCostTokens: 4_000, floorMargin: 5_000, prefillBaseline: 4_000 };
+    const breaker = createCompactionCircuitBreaker({ sessionId: 'brain-rebaseline', thresholdBudget: budget });
+
+    breaker.applyBudget(10_000);
+    expect(breaker.blocks('threshold')).toBe(false);
+
+    // The provider's own count says the prefill is really 27.6k. The floor is now 37.6k, above the
+    // trigger, and every further threshold compaction would summarize the same un-shrinkable context.
+    // A floor with the old estimate baked into it would stay at 14k and keep looping at full cost.
+    budget.prefillBaseline = 27_619;
+    breaker.applyBudget();
+
+    expect(breaker.blocks('threshold')).toBe(true);
+
+    // …and the same must work in reverse: a smaller measurement re-opens the gate rather than leaving a
+    // conversation permanently refusing a compaction that has become worthwhile.
+    budget.prefillBaseline = 4_000;
+    breaker.applyBudget();
+    expect(breaker.blocks('threshold')).toBe(false);
+  });
+
   it('does not weaken the failure counting: a pointless loop and failures trip independently', () => {
     const breaker = createCompactionCircuitBreaker({ sessionId: 'brain-both', thresholdBudget: unreachableBudget });
 
     // Unreachable from birth (threshold already blocked), yet the failure counter must still count.
-    breaker.applyBudget(37_619);
+    breaker.applyBudget(10_000);
     expect(breaker.blocks('threshold')).toBe(true);
     expect(breaker.blocks('overflow')).toBe(false);
 
@@ -403,7 +432,7 @@ describe('Compaction circuit breaker unreachable-threshold guard', () => {
 
   it('is inert without a budget, so sessions wired before this guard behave exactly as before', () => {
     const breaker = createCompactionCircuitBreaker({ sessionId: 'brain-legacy' });
-    breaker.applyBudget(37_619);
+    breaker.applyBudget(10_000);
     expect(breaker.blocks('threshold')).toBe(false);
 
     // A successful compaction measures a floor, but with no budget there is nothing to compare it to.

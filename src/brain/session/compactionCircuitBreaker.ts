@@ -89,10 +89,11 @@ export interface CompactionCircuitBreaker {
    *  rule instead of each restating the threshold. */
   blocks: (reason: CompactionReason) => boolean;
   /** Re-evaluate the unreachable-threshold guard against the budget currently in force. Called by the
-   *  factory after a live threshold change, and with an explicit `floorEstimate` at spawn to seed the
-   *  guard BEFORE the first (provably pointless) summarization request. Detection only — the user-facing
-   *  report waits for the first threshold compaction the guard actually refuses. */
-  applyBudget: (floorEstimate?: number | null) => void;
+   *  factory after a live threshold change, and with an explicit `floorResidue` at spawn to seed the
+   *  guard BEFORE the first (provably pointless) summarization request. The residue is what a compaction
+   *  leaves ON TOP OF the prefill; the prefill itself is read from the budget at comparison time.
+   *  Detection only — the user-facing report waits for the first threshold compaction it refuses. */
+  applyBudget: (floorResidue?: number | null) => void;
 }
 
 /** Stop a session from retrying a compaction that keeps failing.
@@ -111,21 +112,36 @@ export function createCompactionCircuitBreaker(options: CompactionCircuitBreaker
   // threshold cannot be honored. Deliberately separate from the failure counter — a successful-but-
   // pointless compaction must NOT reset this the way a success resets failures, and a run of failures
   // must not stop counting just because the floor is also too high.
-  let lastFloorEstimate: number | null = null;
+  /** What a compaction leaves BESIDES the prefill: the summary plus the retained tail, seeded from the
+   *  minimum a compaction can produce and replaced by what PI reports it actually kept. The prefill is
+   *  deliberately NOT baked in here — it is added at comparison time — because the same prefill figure
+   *  also defines the trigger, and the two are compared. Storing a snapshot of it would let a floor
+   *  measured under one prefill be weighed against a trigger derived from another, which is how a session
+   *  ends up permanently refusing a compaction that has since become worthwhile (or the reverse). */
+  let lastFloorResidue: number | null = null;
   let pointless = false;
   let pointlessReported = false;
 
   const tripped = (): boolean => consecutiveFailures >= failureLimit();
 
-  /** A threshold compaction is pointless when the last measured post-compaction floor — fixed cost plus
-   *  what PI kept — sits within {@link CompactionThresholdBudget.floorMargin} of the trigger: the next
-   *  attempt would summarize the same un-shrinkable context again and buy no working room. One measured
-   *  floor is enough evidence: the floor is what it is until a smaller summary or a higher trigger.
+  /** The post-compaction context the next `shouldCompact` check would see: the never-shrinking prefill
+   *  in force right now, plus whatever a compaction leaves on top of it. */
+  const floorEstimate = (): number | null => {
+    const budget = options.thresholdBudget;
+    if (!budget || lastFloorResidue === null) return null;
+    return (budget.prefillBaseline ?? budget.fixedCostTokens) + lastFloorResidue;
+  };
+
+  /** A threshold compaction is pointless when the post-compaction floor — the prefill plus what PI kept —
+   *  sits within {@link CompactionThresholdBudget.floorMargin} of the trigger: the next attempt would
+   *  summarize the same un-shrinkable context again and buy no working room. One measured floor is enough
+   *  evidence: the floor is what it is until a smaller summary or a higher trigger.
    *  State only — reporting waits for a refusal, because this runs at every spawn via the seed. */
   const evaluatePointless = (): void => {
     const budget = options.thresholdBudget;
-    if (!budget || lastFloorEstimate === null || budget.trigger === null) return;
-    pointless = lastFloorEstimate + budget.floorMargin >= budget.trigger;
+    const floor = floorEstimate();
+    if (!budget || floor === null || budget.trigger === null) return;
+    pointless = floor + budget.floorMargin >= budget.trigger;
     if (!pointless) pointlessReported = false;
   };
 
@@ -137,13 +153,14 @@ export function createCompactionCircuitBreaker(options: CompactionCircuitBreaker
    *  actually costs the user something, so that is when they are told. */
   const reportPointless = (): void => {
     const trigger = options.thresholdBudget?.trigger;
-    if (pointlessReported || lastFloorEstimate === null || trigger == null) return;
+    const floor = floorEstimate();
+    if (pointlessReported || floor === null || trigger == null) return;
     pointlessReported = true;
     log.warn(
-      `post-compaction context (est. ${lastFloorEstimate} tokens incl. system+tools) stays at/above the ${trigger}-token auto-compact trigger on ${options.sessionId}; `
+      `post-compaction context (est. ${floor} tokens incl. system+tools) stays at/above the ${trigger}-token auto-compact trigger on ${options.sessionId}; `
       + 'automatic threshold compaction stopped — each further attempt would loop at full summarization cost',
     );
-    options.onTripped?.(compactionUnreachableMessage(lastFloorEstimate, trigger));
+    options.onTripped?.(compactionUnreachableMessage(floor, trigger));
   };
 
   const extension = (pi: ExtensionAPI): void => {
@@ -172,14 +189,11 @@ export function createCompactionCircuitBreaker(options: CompactionCircuitBreaker
     if (event.result != null) {
       consecutiveFailures = 0;
       reported = false;
-      // Measure the post-compaction floor from what PI itself estimated it kept after the reload, plus
-      // the never-shrinking prefill — the two together are what the next shouldCompact check sees. It
-      // must be the SAME prefill figure the trigger was derived from, since the two are about to be
-      // compared; `fixedCostTokens` is only the fallback for a budget that has no live render yet.
-      // Extension-supplied compactions carry no estimate; keep the last known floor in that case.
+      // Record what PI itself estimated it kept after the reload. The prefill is added when the floor is
+      // COMPARED, not here, so a later baseline measurement moves the floor and the trigger together.
+      // Extension-supplied compactions carry no estimate; keep the last known residue in that case.
       if (event.result.estimatedTokensAfter !== undefined) {
-        const budget = options.thresholdBudget;
-        lastFloorEstimate = (budget?.prefillBaseline ?? budget?.fixedCostTokens ?? 0) + event.result.estimatedTokensAfter;
+        lastFloorResidue = event.result.estimatedTokensAfter;
         evaluatePointless();
       }
       return;
@@ -195,8 +209,8 @@ export function createCompactionCircuitBreaker(options: CompactionCircuitBreaker
     options.onTripped?.(compactionStoppedMessage(consecutiveFailures));
   };
 
-  const applyBudget = (floorEstimate?: number | null): void => {
-    if (floorEstimate !== undefined) lastFloorEstimate = floorEstimate;
+  const applyBudget = (floorResidue?: number | null): void => {
+    if (floorResidue !== undefined) lastFloorResidue = floorResidue;
     evaluatePointless();
   };
 

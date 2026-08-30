@@ -231,12 +231,23 @@ function compactionEmergencyFloor(contextWindow: number): number {
   // A reserve above the window makes PI's trigger (contextWindow − reserveTokens) negative, so EVERY turn
   // would compact and each compaction would immediately be over the threshold again. Half the window is
   // the most a floor may ever claim; only a window under 512 tokens can reach this.
-  return Math.min(wanted, Math.max(1, Math.floor(contextWindow / 2)));
+  return Math.min(wanted, Math.floor(contextWindow / 2));
+}
+
+/** A count that arithmetic may rely on. The context window comes from operator configuration and the
+ *  baseline from a provider's usage report, so neither is guaranteed to be a finite non-negative number,
+ *  and a single NaN here would reach PI as `reserveTokens: NaN` — which makes every comparison false and
+ *  silently disables compaction rather than failing. */
+function finiteCount(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 export function compactionReserveTokens(
-  contextWindow: number, proactive: boolean, atPercent: number, prefillBaseline = 0,
+  rawContextWindow: number, proactive: boolean, rawAtPercent: number, rawPrefillBaseline = 0,
 ): number {
+  const contextWindow = finiteCount(rawContextWindow);
+  const atPercent = Math.min(100, finiteCount(rawAtPercent));
+  const prefillBaseline = finiteCount(rawPrefillBaseline);
   if (!proactive) return compactionEmergencyFloor(contextWindow);
   // "How full" now means how full the USABLE window is — what is left once the never-shrinking prefill
   // (system prompt + tool definitions) is paid for. Counting the prefill towards the user's percentage
@@ -244,15 +255,16 @@ export function compactionReserveTokens(
   // inefficient: the post-compaction floor exceeded the trigger, so the circuit breaker judged every
   // compaction pointless and switched automatic compaction off entirely.
   //
-  // Expressed as a RESERVE rather than as a trigger that is then subtracted, so that with no baseline the
-  // expression is the old one character for character and every existing session keeps its exact
-  // threshold — subtracting a rounded trigger from the window rounds the other way on an odd window.
-  const baseline = Math.max(0, Math.min(prefillBaseline, contextWindow));
+  // Expressed as a RESERVE of the usable window rather than as a trigger that is then subtracted from the
+  // whole one, and in the OLD expression's exact floating-point shape (`w * (1 - pct/100)`, not
+  // `w * (100 - pct) / 100`, which rounds the other way on windows like 5125 at 30%). With no baseline
+  // `usable` IS the window, so every session that has measured none keeps its threshold to the token.
+  const baseline = Math.min(prefillBaseline, contextWindow);
   const usable = Math.max(0, contextWindow - baseline);
-  const bodyReserve = Math.round((usable * (100 - atPercent)) / 100);
+  const bodyReserve = Math.round(usable * (1 - atPercent / 100));
   // A conversation may never be allowed to run to the brim, however large the prefill grows. Same shape
-  // as bodyReserve so that at 95% with no baseline the two agree exactly rather than by a token.
-  const ceilingReserve = Math.round((contextWindow * (100 - CONTEXT_HARD_CEILING_PCT)) / 100);
+  // again so that at 95% with no baseline the two agree exactly rather than by a token.
+  const ceilingReserve = Math.round(contextWindow * (1 - CONTEXT_HARD_CEILING_PCT / 100));
   return Math.max(compactionEmergencyFloor(contextWindow), ceilingReserve, bodyReserve);
 }
 
@@ -344,11 +356,14 @@ export function compactionKeepRecentTokens(triggerTokens: number, fixedCostToken
   return Math.min(COMPACTION_TAIL_MAX, Math.max(COMPACTION_TAIL_MIN, Math.round(compactionTailHeadroom(triggerTokens, fixedCostTokens))));
 }
 
-/** The smallest post-compaction floor this session can be expected to reach: fixed cost + the summary
- *  allowance + the minimal tail. Seeded into the circuit breaker at spawn so an unreachable threshold is
- *  caught BEFORE the first summarization request, not after it. */
-function compactionFloorSeedEstimate(fixedCostTokens: number): number {
-  return fixedCostTokens + COMPACTION_SUMMARY_ALLOWANCE + COMPACTION_TAIL_MIN;
+/** The least a compaction can leave ON TOP OF the never-shrinking prefill: the summary it writes plus the
+ *  minimal retained tail. Seeded into the circuit breaker at spawn so an unreachable threshold is caught
+ *  BEFORE the first summarization request, not after it. The prefill is deliberately not included — the
+ *  breaker adds whichever figure is in force when it compares the floor against the trigger, so a later
+ *  baseline measurement moves both sides at once instead of weighing a stale floor against a fresh
+ *  trigger. */
+function compactionFloorSeedResidue(): number {
+  return COMPACTION_SUMMARY_ALLOWANCE + COMPACTION_TAIL_MIN;
 }
 
 /** The effective auto-compact percentage for one model: the user's per-model override (keyed
@@ -816,8 +831,7 @@ export class BrainSessionFactory {
     applyCompaction(spec.autoCompact, spec.autoCompactAtPct);
     // Seed the guard with the smallest floor this session can reach, so a threshold that cannot be
     // honored is refused BEFORE the first summarization request is spent on it.
-    compactionBreaker.applyBudget(
-      compactionFloorSeedEstimate(thresholdBudget.prefillBaseline ?? fixedCostTokens));
+    compactionBreaker.applyBudget(compactionFloorSeedResidue());
     // Replace the estimate with the provider's own figure where that is possible. chars/4 is a heuristic
     // and the rendered prompt still misses whatever the wire transform adds, so an exact measurement is
     // better — but ONLY from a request whose transcript was small enough to subtract.
@@ -834,7 +848,14 @@ export class BrainSessionFactory {
     // only for Anthropic and the two OpenAI Responses wires, so neither can be relied on to measure a
     // threshold every session needs.
     let baselineMeasured = false;
-    session.subscribe((event) => {
+    // PI dispatches its listeners synchronously in one loop, so a throw here would abort the listeners
+    // registered after this one — including persistence. A threshold that stays on its estimate is a
+    // rounding problem; a turn that never reaches the store is data loss, so this measurement is never
+    // allowed to be the reason.
+    session.subscribe((event) => { try { measurePrefill(event); } catch (err) {
+      logger('brain-compaction').warn(`prefill baseline measurement failed on ${spec.sessionId}: ${String(err)}`);
+    } });
+    function measurePrefill(event: Parameters<Parameters<typeof session.subscribe>[0]>[0]): void {
       if (event.type === 'compaction_end') {
         // The transcript was rewritten and the tools or system prompt may have moved with it, so a
         // measured figure describes an epoch that no longer exists. Re-seed from the render rather than
@@ -871,7 +892,7 @@ export class BrainSessionFactory {
       baselineMeasured = true;
       thresholdBudget.prefillBaseline = measured;
       applyCompaction(proactiveCompaction, compactionAtPercent);
-    });
+    }
     const boundaryCompactionInstalled = installTurnBoundaryAutoCompaction(
       session, sessionManager, () => proactiveCompaction, spec.pendingCompactionMessages,
     );
@@ -910,8 +931,14 @@ export class BrainSessionFactory {
       proactive: () => proactiveCompaction,
       breakerBlocks: () => compactionBreaker.blocks('threshold'),
       contextTokens: () => estimatedContextTokens(session.messages, latestCompaction(sessionManager)?.timestamp),
-      floorTokens: () => fixedCostTokens + COMPACTION_SUMMARY_ALLOWANCE
-        + compactionKeepRecentTokens(thresholdBudget.trigger ?? spec.model.contextWindow, fixedCostTokens),
+      // Reads the SAME prefill the trigger and the breaker's floor use — this estimate is weighed against
+      // the context the threshold arithmetic produced, so a second measure of the same quantity would
+      // decide profitability against a session that does not exist.
+      floorTokens: () => {
+        const prefill = thresholdBudget.prefillBaseline ?? fixedCostTokens;
+        return prefill + COMPACTION_SUMMARY_ALLOWANCE
+          + compactionKeepRecentTokens(thresholdBudget.trigger ?? spec.model.contextWindow, prefill);
+      },
       summaryOutputTokens: () => COMPACTION_SUMMARY_ALLOWANCE,
     }, lastRequestCacheTtlMs);
     // Last, so observers see the finished session — and before the caller can run a turn on it.
