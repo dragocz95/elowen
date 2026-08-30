@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyView, fromHistory, fromSnapshot, groupToolItems, prependHistory, reduce, submittedPlan } from '../../lib/transcript';
+import { collectSubagents, emptyView, fromHistory, fromSnapshot, groupToolItems, prependHistory, reduce, submittedPlan } from '../../lib/transcript';
 import type { ToolItem } from '../../lib/transcript';
 
 describe('web fromSnapshot: a reconnect frame rebuilds the whole transcript', () => {
@@ -347,6 +347,22 @@ describe('web transcript reducer', () => {
     expect(turn.segments[0].items[0]).toMatchObject({
       id: 'delegate-1', sub: { sessionId: 'brain-ch-subagent-child', status: 'done', tools: 4 },
     });
+  });
+
+  it('keeps reasoning, timestamps, and delivery identical in live updates and reload history', () => {
+    const settled = {
+      sessionId: 'child-parity', status: 'done' as const, task: 'inspect', detail: 'Read src/a.ts',
+      tools: 4, tokens: 800, seconds: 9, model: 'anthropic/sonnet',
+      thinkingLevel: 'high', thinkingLabel: 'High',
+      startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:09',
+      background: true, autoDeliver: true, resultDelivery: 'acknowledged' as const,
+    };
+    const anchor = { role: 'assistant' as const, text: '', segments: [{ kind: 'tool' as const, id: 'delegate-parity', name: 'Delegate' }] };
+    const reloaded = fromHistory([{ ...anchor, segments: [{ ...anchor.segments[0], sub: settled }] }]);
+    const live = reduce(fromHistory([anchor]), { type: 'subagent', id: 'delegate-parity', ...settled });
+
+    expect(collectSubagents(live.turns)).toEqual(collectSubagents(reloaded.turns));
+    expect(collectSubagents(live.turns)).toEqual([settled]);
   });
 
   it('ignores an unknown post-idle sub-agent id without creating a turn', () => {

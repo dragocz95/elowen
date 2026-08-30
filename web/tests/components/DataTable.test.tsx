@@ -302,8 +302,7 @@ describe('register stylesheet', () => {
     const sheet = css('data-table.css');
     expect(sheet).toMatch(/@container \(width < 40rem\)\s*\{[\s\S]*?grid-template-columns:\s*var\(--data-table-mobile-columns/);
     expect(sheet).toMatch(/@container \(width < 40rem\)\s*\{[\s\S]*?\.data-table-mobile\s*\{\s*display:\s*block/);
-    // AgentsTable must retain its native table layout except on this same phone-only container threshold.
-    expect(sheet).toMatch(/@container \(width < 40rem\)\s*\{[\s\S]*?\.agents-table-secondary\s*\{\s*display:\s*none/);
+    expect(sheet).not.toContain('agents-table-secondary');
   });
 
   it('keeps the row-open cell out of the grid and out of the way of pointers', () => {

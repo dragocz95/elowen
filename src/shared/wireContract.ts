@@ -39,6 +39,12 @@ export interface BrainSubagentView {
   tokens?: number;
   seconds: number;
   model?: string;
+  thinkingLevel?: string;
+  thinkingLabel?: string;
+  /** Existing child-session creation time, as stored by SQLite. */
+  startedAt?: string;
+  /** Existing delegated-run update time, as stored by SQLite. */
+  updatedAt?: string;
   background?: boolean;
   autoDeliver?: boolean;
   resultDelivery?: 'pending' | 'acknowledged';

@@ -1,4 +1,4 @@
-import type { BrainCard, BrainMessage, BrainMessageFile, BrainMessageImage, BrainPendingPlan, BrainStreamTailEvent, BrainWorkflowView, ToolOutputView } from './types';
+import type { BrainCard, BrainMessage, BrainMessageFile, BrainMessageImage, BrainPendingPlan, BrainStreamTailEvent, BrainSubagentView, BrainWorkflowView, ToolOutputView } from './types';
 
 /** The workflow DAG a `WorkflowStart` call is running — the shared wire shape (BrainWorkflowView),
  *  attached to its tool item by call id exactly as `sub` is for a delegate call. */
@@ -34,7 +34,7 @@ export type TranscriptEvent =
   | { type: 'file'; ref: string; name: string; size: number; id?: string; caption?: string }
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
   | { type: 'session'; sessionId: string }
-  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged' }
+  | ({ type: 'subagent'; id: string } & BrainSubagentView)
   /** A whole-DAG snapshot of a running `WorkflowStart` call. Attached to its tool row by call id exactly
    *  like `subagent` — attaching (not merely projecting) is what makes it durable, so a reconnect rebuilds
    *  the panel from the transcript instead of losing every workflow it did not witness live. */
@@ -66,19 +66,7 @@ export interface ToolItem { name: string; detail?: string; diff?: string; icon?:
 
 /** Live progress of a delegated sub-agent, attached to its `delegate` tool item by call id — powers the
  *  agents table + the `↳` drill-in. Mirror of the daemon `SubagentState`. */
-export interface SubagentState {
-  sessionId: string;
-  status: 'running' | 'done' | 'error';
-  task: string;
-  detail?: string;
-  tools: number;
-  tokens?: number;
-  seconds: number;
-  model?: string;
-  background?: boolean;
-  autoDeliver?: boolean;
-  resultDelivery?: 'pending' | 'acknowledged';
-}
+export type SubagentState = BrainSubagentView;
 type Segment =
   | { kind: 'text'; text: string }
   | { kind: 'reasoning'; text: string }
@@ -395,10 +383,8 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
     case 'subagent': {
       // Background children can finish after the parent assistant turn is already settled. Patch that
       // historical delegate row by id; do not fabricate an empty streaming turn or re-enable thinking.
-      const patched = attachToToolInTurns(turns, e.id, isSubagentToolName, (item) => ({
-        ...item,
-        sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds, model: e.model, background: e.background, autoDeliver: e.autoDeliver, resultDelivery: e.resultDelivery },
-      }));
+      const { type: _type, id, ...sub } = e;
+      const patched = attachToToolInTurns(turns, id, isSubagentToolName, (item) => ({ ...item, sub }));
       return patched ? { ...view, turns } : view;
     }
     case 'workflow': {

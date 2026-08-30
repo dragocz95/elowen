@@ -396,6 +396,8 @@ describe('TranscriptModel', () => {
       type: 'subagent', id: 'delegate-old', sessionId: 'child-1', status: 'running', task: 'inspect',
       detail: 'Read src/a.ts', tools: 2, tokens: 100, seconds: 3, model: 'test-model',
       thinkingLevel: 'high', thinkingLabel: 'High',
+      startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:03',
+      background: true, autoDeliver: true, resultDelivery: 'pending',
     });
 
     expect(model.turnCount).toBe(beforeTurns);
@@ -403,6 +405,8 @@ describe('TranscriptModel', () => {
     // The child's own reasoning level rides the projection so the drilled-in status bar can show it.
     expect(model.subagents()).toEqual([expect.objectContaining({
       sessionId: 'child-1', status: 'running', thinkingLevel: 'high', thinkingLabel: 'High',
+      startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:03',
+      background: true, autoDeliver: true, resultDelivery: 'pending',
     })]);
 
     const projection = model.subagents();

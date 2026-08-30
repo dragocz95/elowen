@@ -162,6 +162,20 @@ export class ChatPage {
     return this.toolPill(id).getByTestId('chat-tool-output');
   }
 
+  // --- Delegated agents ---
+
+  agentsButton(): Locator {
+    return this.root.getByTestId('chat-agents-open');
+  }
+
+  agentsDialog(): Locator {
+    return this.page.getByRole('dialog', { name: 'Agents' });
+  }
+
+  agentOpenButton(task: string): Locator {
+    return this.agentsDialog().getByRole('button', { name: `Open sub-agent transcript: ${task}` });
+  }
+
   // --- Model picker ---
 
   /** The picker's trigger button — its text is the conversation's CURRENT model (or the "pick a model"

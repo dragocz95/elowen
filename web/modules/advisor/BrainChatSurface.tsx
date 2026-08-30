@@ -1243,6 +1243,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         {subagents.length > 0 && !railOwnsLiveWork && transcriptExtras ? (
           <button
             type="button"
+            data-testid="chat-agents-open"
             onClick={() => setAgentsOpen(true)}
             className="flex items-center gap-1.5 self-start leading-relaxed text-muted-foreground transition-colors hover:text-foreground"
           >

@@ -56,6 +56,9 @@ export interface SubagentState {
   /** The sub-agent's own effective reasoning effort (level id + display label), for the child status bar. */
   thinkingLevel?: string;
   thinkingLabel?: string;
+  /** Existing durable timestamps used by richer clients; optional for legacy transcript rows. */
+  startedAt?: string;
+  updatedAt?: string;
   /** True once the user detached this job from the parent tool wait with Ctrl+B. */
   background?: boolean;
   autoDeliver?: boolean;
