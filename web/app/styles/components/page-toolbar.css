@@ -52,7 +52,7 @@
 }
 /* The ordinary in-content register search is deliberately capped. Once promoted into the canonical page
    row it owns the remaining width instead, matching pages that pass search through WorkspaceShell. */
-.page-toolbar__slot :is(.control-surface-toolbar, .settings-toolbar) .register-search { max-width: none; }
+:root .page-toolbar__slot :is(.control-surface-toolbar, .settings-toolbar) .register-search { max-width: none; }
 
 /* Filters ------------------------------------------------------------------ */
 
