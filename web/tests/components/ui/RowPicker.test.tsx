@@ -29,6 +29,20 @@ function mount(props: Parameters<typeof Harness>[0] = {}) {
   return render(<LanguageProvider><Harness {...props} /></LanguageProvider>);
 }
 
+/** The height has to be asserted on the RENDERED element, not on the class constant. RowPicker builds
+ *  its trigger on Button's `sm` size, which carries `h-8`; `h-9` only wins because `cn`/tailwind-merge
+ *  resolves the conflict in favour of the later class. A source-text assertion would keep passing if
+ *  Button's size changed underneath, while the control silently rendered at the wrong height — which is
+ *  the exact 4px mismatch against Input and SelectTrigger this contract exists to prevent. */
+describe('RowPicker trigger height', () => {
+  it('renders at h-9 and never keeps the h-8 Button size it is built on', () => {
+    mount();
+    const trigger = screen.getByRole('button', { name: 'Vision model' });
+    expect(trigger).toHaveClass('h-9');
+    expect(trigger).not.toHaveClass('h-8');
+  });
+});
+
 describe('RowPicker', () => {
   it('is one compact trigger named for the field, showing the current pick — not a summary card', () => {
     const { container } = mount();

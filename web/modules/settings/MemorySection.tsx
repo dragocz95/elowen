@@ -167,7 +167,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       actions={testButton}
       control={embeddingProviders.length > 0
         ? <ChoiceField title={t.memory.embeddingProvider} options={embeddingProviders.map((p) => ({ value: p.id, label: p.label }))} value={embProvider} onChange={setEmbProvider} picker="always" />
-        : <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} />}
+        : <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />}
     />
   );
   const rowEmbModel = (
@@ -232,7 +232,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       status={catBadge}
       control={providers.length > 0
         ? <ChoiceField title={t.categorization.providerLabel} options={providers.map((p) => ({ value: p.id, label: p.label }))} value={catProvider} onChange={setCatProvider} picker="always" />
-        : <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} />}
+        : <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />}
     />
   );
   const rowCatModel = (

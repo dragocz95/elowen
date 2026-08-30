@@ -56,7 +56,10 @@ describe('settings record control surface', () => {
     // Four files used to spell `w-full justify-between font-normal` by hand: RowPicker plus the
     // multi-picker, timezone and modal-field triggers in PluginConfigEditor, plus the skins row. They are
     // the same control around the same ManageSelectionModal, and the copies are how the heights drifted.
-    const copies = sources().filter((path) => /["']w-full justify-between font-normal/.test(readFileSync(path, 'utf-8')));
+    // The backtick matters: the copy this guard exists to catch was a TEMPLATE LITERAL in RowPicker
+    // (`w-full justify-between font-normal ${className}`), so a scan for quotes alone would have missed
+    // the very regression it is named after.
+    const copies = sources().filter((path) => /["'`]w-full justify-between font-normal/.test(readFileSync(path, 'utf-8')));
     expect(copies.map((p) => p.slice(web.length + 1))).toEqual([]);
   });
 
