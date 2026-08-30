@@ -198,12 +198,17 @@ describe('terminal plugin — configurable outputCap', () => {
     const text = res.content[0].text;
     expect(text).toContain('…[truncated');
     const { head, tail } = shownParts(text);
-    // Both ends survive, and together they still cost exactly what the cap allows. A tail-only cut kept
-    // 10000 bytes of the END and threw away the command's echo and everything printed before the bulk.
-    expect(head).toBe(5_000);
-    expect(tail).toBe(5_000);
+    // Both ends survive and are the same size. A tail-only cut kept 10000 bytes of the END and threw away
+    // the command's echo and everything printed before the bulk.
+    // Halved to the byte, give or take the odd byte an odd budget cannot split evenly.
+    expect(Math.abs(head - tail)).toBeLessThanOrEqual(1);
+    expect(head).toBeGreaterThan(4_000);
+    // The cap bounds the WHOLE result — echo, banner and exit marker included — because a result over the
+    // operator's inline-result threshold is spilled and replaced by a HEAD-ONLY preview, which would throw
+    // away the tail this cut exists to keep.
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(10_000);
     // The banner names the ORIGINAL size, not the size of what survived.
-    expect(text).toContain('dropped 4.9KB of 14.6KB');
+    expect(text).toContain('of 14.6KB');
   });
 
   it('unset outputCap reproduces the default 60000-byte cap exactly', async () => {
@@ -214,7 +219,13 @@ describe('terminal plugin — configurable outputCap', () => {
     const text = over.content[0].text;
     expect(text).toContain('…[truncated');
     const { head, tail } = shownParts(text);
-    expect(head + tail).toBe(60_000);
+    expect(Math.abs(head - tail)).toBeLessThanOrEqual(1);
+    // Regression: with the budget applied to the output alone, a truncated result at the 60 kB default
+    // overshot 60 kB by its own framing — and `toolResultInlineBytes` also defaults to 60 kB, so every
+    // truncated command was spilled to disk and shown as a head-only preview. The feature defeated itself
+    // on the settings almost everyone runs.
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(60_000);
+    expect(head + tail).toBeGreaterThan(59_000);
   });
 
   // One enormous line terminated by a newline used to lose its whole tail: the only newline inside the
@@ -278,6 +289,45 @@ describe('terminal plugin — configurable outputCap', () => {
     expect(head + tail).toBeLessThanOrEqual(10_000);
   });
 
+  it('does not corrupt a multibyte character when the other stream writes between its bytes', async () => {
+    // stdout and stderr had ONE shared StringDecoder. It holds the bytes of an incomplete UTF-8 character
+    // until the next write completes it — and the next write can come from the other stream, so a
+    // character split across stdout chunks was finished with stderr's bytes and both came out mojibake.
+    const reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
+    // Writes the three bytes of € to stdout one at a time, with a stderr write wedged in between.
+    const command = 'node -e "'
+      + 'const b=Buffer.from(\'€\',\'utf8\');'
+      + 'process.stdout.write(b.subarray(0,1));'
+      + 'process.stderr.write(\'ERR\');'
+      + 'process.stdout.write(b.subarray(1));'
+      + 'process.stdout.write(\'|DONE\')"';
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command }), { identity: owner });
+    const body = res.content[0].text.slice(res.content[0].text.indexOf('(cwd: '));
+
+    expect(body).toContain('€');
+    expect(body).toContain('ERR');
+    expect(body).not.toContain('\uFFFD');
+  });
+
+  it('measures the rolling buffer in bytes, so non-Latin output cannot hold three times the cap', async () => {
+    // The buffer compared `output.length` — UTF-16 code units — against a cap the operator sets in kB and
+    // the final cut applies in bytes, so a run printing multibyte text kept far more than it was given.
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { outputCap: 10_000 } },
+    });
+    // 45 kB of three-byte characters: 15000 code units, comfortably under a character-based 20 kB limit.
+    const command = 'node -e "process.stdout.write(\'\\u20ac\'.repeat(15000))"';
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command }), { identity: owner });
+    const text = res.content[0].text;
+
+    expect(text).toContain('…[truncated');
+    expect(text).not.toContain('\uFFFD');
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(10_000);
+    // …and the banner still names the run's real size rather than what the buffer happened to keep.
+    expect(text).toContain('of 43.9KB');
+  });
+
   it('outputCap also bounds the background process rolling buffer', async () => {
     const reg = await loadPlugins({
       dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
@@ -290,6 +340,27 @@ describe('terminal plugin — configurable outputCap', () => {
     await new Promise((r) => setTimeout(r, 500)); // let the short-lived child finish and flush its output
     const out = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'ProcessOutput', { id, all: true }), scope);
     expect(out.content[0].text.length).toBeLessThanOrEqual(10_000 + '\n[exited 0]'.length);
+  });
+
+  it('bounds that buffer in BYTES, so non-Latin output cannot return three times the cap', async () => {
+    // ProcessOutput hands the raw buffer to the model, and the buffer compared UTF-16 code units against
+    // a cap the operator sets in kB — so 15000 three-byte characters sat under a 10000 "character" cap
+    // and came back as 45 kB of context.
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { outputCap: 10_000 } },
+    });
+    const scope = { identity: owner, sessionId: 'brain-terminal-output-cap-bytes' };
+    const command = 'node -e "process.stdout.write(\'\\u20ac\'.repeat(15000))"';
+    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command, background: true }), scope);
+    const id = /Started background process (\S+):/.exec(started.content[0].text)?.[1];
+    expect(id).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 500));
+    const out = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'ProcessOutput', { id, all: true }), scope);
+
+    expect(Buffer.byteLength(out.content[0].text, 'utf8')).toBeLessThanOrEqual(10_000 + '\n[exited 0]'.length);
+    expect(out.content[0].text).toContain('\u20ac');
+    expect(out.content[0].text).not.toContain('\uFFFD'); // cut on a character boundary, not mid-character
   });
 });
 
@@ -509,6 +580,29 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
     expect(out.content[0].text).toContain('early');
     await settle(1500); // let the detached process finish
     expect(nudgedId).toBe(id); // the detached run's exit wakes the conversation, like Bash(background)
+  }, 15_000);
+
+  it('tells a detached run’s FIRST incremental read that its middle was dropped', async () => {
+    // The notice was gated on `all`, but the first incremental read of a detached run starts at offset
+    // zero and returns the whole surviving buffer — so a head and a tail with 300 kB missing between them
+    // came back silently glued, reading as one continuous run that never happened.
+    const session = 'brain-fg-seam';
+    const command = 'node -e "process.stdout.write(\'FIRST\\n\' + \'x\'.repeat(300000) + \'\\nLAST\\n\');'
+      + 'setTimeout(() => {}, 1500)"';
+    const p = inSession(session, 'Bash', { command });
+    await settle(400); // the bulk is printed and the rolling buffer has dropped its middle
+    expect(control().detachForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ detached: 1 });
+    const res = await p;
+    const id = /Moved to background as process (\S+):/.exec(res.content[0].text)?.[1];
+    expect(id).toBeTruthy();
+
+    // No `all`: the default incremental read, which is what a model actually calls.
+    const out = await inSession(session, 'ProcessOutput', { id: id! });
+    expect(out.content[0].text).toContain('was dropped from the middle');
+
+    // …and a later read that starts AFTER the seam must not claim a loss it does not show.
+    const again = await inSession(session, 'ProcessOutput', { id: id! });
+    expect(again.content[0].text).not.toContain('was dropped from the middle');
   }, 15_000);
 
   it('detaching cancels the deadline: the command survives past its per-call timeout', async () => {

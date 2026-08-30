@@ -54,7 +54,9 @@ function clampBytes(text: string, maxBytes: number): string {
 /** What one tool lost, for the operator who has to know WHICH server is spending their context. */
 export interface ExternalToolCap {
   name: string;
-  /** Serialized size of the definition the server supplied. */
+  /** Serialized size of the definition AS THE SERVER SUPPLIED IT — before this pass shortened anything.
+   *  Reporting the post-clamp size would understate the worst offenders by exactly the amount that made
+   *  them worth reporting, leaving the operator looking for a server that seems modest in the log. */
   bytes: number;
   /** Whether the parameter schema was dropped, or only the description shortened. */
   schemaOmitted: boolean;
@@ -72,18 +74,18 @@ export function capExternalToolSchema(
   if (!tool.name.startsWith(MCP_PREFIX)) return tool;
   const description = typeof tool.description === 'string' ? tool.description : '';
   const clampedDescription = clampBytes(description, MAX_EXTERNAL_DESCRIPTION_BYTES);
-  // Measured on what would actually be SENT, so a description this pass already shortened is not counted
-  // against the schema budget as well.
+  const serialized = (desc: string): number => Buffer.byteLength(
+    JSON.stringify({ name: tool.name, description: desc, parameters: tool.parameters }), 'utf8');
+  // The decision is made on what would actually be SENT, so a description this pass already shortened is
+  // not charged against the schema budget as well. What is REPORTED is the original — see ExternalToolCap.
   const candidate = { ...tool, description: clampedDescription };
-  const bytes = Buffer.byteLength(JSON.stringify({
-    name: candidate.name, description: clampedDescription, parameters: candidate.parameters,
-  }), 'utf8');
+  const bytes = serialized(clampedDescription);
   if (bytes <= MAX_EXTERNAL_TOOL_BYTES) {
     if (clampedDescription === description) return tool;
-    onCapped?.({ name: tool.name, bytes, schemaOmitted: false });
+    onCapped?.({ name: tool.name, bytes: serialized(description), schemaOmitted: false });
     return candidate as ToolDefinition;
   }
-  onCapped?.({ name: tool.name, bytes, schemaOmitted: true });
+  onCapped?.({ name: tool.name, bytes: serialized(description), schemaOmitted: true });
   return {
     ...candidate,
     description: clampBytes(

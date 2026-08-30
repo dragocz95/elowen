@@ -71,6 +71,17 @@ describe('capExternalToolSchema', () => {
     expect(onCapped).toHaveBeenCalledWith(expect.objectContaining({ name: 'mcp__x__y', schemaOmitted: false }));
   });
 
+  it('reports the size the server supplied, not the size left after trimming it', () => {
+    // The decision is made on the post-clamp size, but the REPORT has to name the original: understating
+    // the worst offenders by exactly the amount that made them worth reporting leaves the operator
+    // hunting for a server that looks modest in the log.
+    const onCapped = vi.fn();
+    const original = tool('mcp__loud__thing', 100, 'd'.repeat(9_000));
+    capExternalToolSchema(original, onCapped);
+    expect(onCapped.mock.calls[0]![0].bytes).toBeGreaterThan(9_000);
+    expect(onCapped.mock.calls[0]![0].bytes).toBeCloseTo(serializedBytes(original), -2);
+  });
+
   it('reports nothing for a tool it did not have to reduce', () => {
     const onCapped = vi.fn();
     capExternalToolSchema(tool('mcp__small__ok', 100), onCapped);

@@ -99,10 +99,15 @@ class BgProcess {
     this.stderrDecoder = new StringDecoder('utf8');
     const onData = (decoder) => (d) => {
       this.output += decoder.write(d);
-      if (this.output.length > outputCap) {
-        const drop = this.output.length - outputCap;
-        this.output = this.output.slice(drop);
-        this.readOffset = Math.max(0, this.readOffset - drop);
+      // BYTES, not UTF-16 code units: the operator sets this cap in kB, and ProcessOutput hands the raw
+      // buffer to the model, so measuring it in characters let a background process printing non-Latin
+      // text return three times the budget it was given. The cheap length check guards the byte count.
+      if (this.output.length > outputCap && Buffer.byteLength(this.output, 'utf8') > outputCap) {
+        // Front-drop, unlike a foreground run: a background process is READ INCREMENTALLY as it goes, so
+        // its beginning has usually already been delivered and the newest output is what has not.
+        const cut = truncateTailBytes(this.output, outputCap);
+        this.readOffset = Math.max(0, this.readOffset - (this.output.length - cut.length));
+        this.output = cut;
       }
     };
     this.child.stdout.on('data', onData(this.stdoutDecoder));
@@ -145,6 +150,9 @@ class ForegroundRun {
     /** Bytes the rolling buffer below discarded from the middle, so the final result can state the true
      *  size of the run instead of the size of what happened to survive. */
     this.dropped = 0;
+    /** Index in `output` where the discarded middle was cut out, so a read can tell whether the slice it
+     *  is about to return actually spans the seam. `null` until something is dropped. */
+    this.seamAt = null;
     this.exitCode = null;
     this.outputCap = outputCap;
     this.timeoutMs = timeoutMs;
@@ -161,7 +169,11 @@ class ForegroundRun {
     }
     this.launch = prepared.launch;
     this.releaseLease = startLeaseHeartbeat(prepared.lease);
-    this._decoder = new StringDecoder('utf8');
+    // One decoder PER STREAM. A single shared decoder holds the bytes of an incomplete UTF-8 character
+    // until the next write completes it — and the next write may come from the other stream, so a
+    // character split across stdout chunks gets finished with stderr's bytes and both come out mojibake.
+    this._stdoutDecoder = new StringDecoder('utf8');
+    this._stderrDecoder = new StringDecoder('utf8');
     this._timer = null;
     this._resolveDetached = null;
     this.detachedPromise = new Promise((resolve) => { this._resolveDetached = resolve; });
@@ -189,29 +201,37 @@ class ForegroundRun {
       const visible = this.sanitizeOutput(this.output);
       onProgress(visible.length > PROGRESS_TAIL ? visible.slice(visible.length - PROGRESS_TAIL) : visible);
     };
-    const onData = (d) => {
-      this.output += this._decoder.write(d);
+    const onData = (decoder) => (d) => {
+      this.output += decoder.write(d);
       const limit = this.outputCap * 2;
-      if (this.output.length > limit) {
+      // BYTES, not UTF-16 code units. `outputCap` is presented to the operator in kB and the final cut is
+      // made in bytes, so measuring the buffer in characters let a non-Latin run hold three times the
+      // budget it was given. The cheap length check guards the byte count, which only runs once the
+      // buffer could possibly be over.
+      if (this.output.length > limit && Buffer.byteLength(this.output, 'utf8') > limit) {
         // Discard from the MIDDLE, never the front. The head carries the command's own echo, whatever
         // configuration a tool prints on startup and any error raised before the bulk began — a
         // front-dropping buffer threw exactly that away, which would leave the head half of the final
         // head+tail cut showing the middle of the run and calling it the beginning.
-        // Both offsets step off a low surrogate: slicing between the halves of a surrogate pair splits a
-        // character in two and corrupts the output on either side of the seam.
-        const onBoundary = (index) => {
-          const code = this.output.charCodeAt(index);
-          return Number.isNaN(code) || code < 0xdc00 || code > 0xdfff ? index : index + 1;
-        };
-        const keepHead = onBoundary(Math.floor(limit / 2));
-        const resumeAt = onBoundary(keepHead + (this.output.length - limit));
-        const drop = resumeAt - keepHead;
-        this.dropped += Buffer.byteLength(this.output.slice(keepHead, resumeAt), 'utf8');
-        this.output = this.output.slice(0, keepHead) + this.output.slice(resumeAt);
-        // Everything behind the hole moved left by `drop`, so a detached run's incremental cursor has to
-        // move with it. Clamping to the new length instead would park the cursor at the end and make
-        // ProcessOutput report "nothing new" for output that had in fact just arrived.
-        if (this.readOffset > keepHead) this.readOffset = Math.max(keepHead, this.readOffset - drop);
+        //
+        // The same cut the settled result makes, so UTF-8 boundary handling lives in one place instead of
+        // a second hand-rolled copy here — but WITHOUT line alignment. A buffer's job is to retain as many
+        // bytes as its budget allows, and aligning to lines throws away everything between them: 300 kB
+        // that is one enormous line between two short ones collapses to just those two short lines, and
+        // the final cut is then left with nothing to work from. Presentation wants whole lines; a buffer
+        // wants bytes.
+        const cut = truncateMiddle(this.output, { maxBytes: limit, alignToLines: false });
+        if (cut.truncated) {
+          this.dropped += cut.totalBytes - cut.keptBytes;
+          const seamAt = cut.head.length;
+          const removed = this.output.length - (cut.head.length + cut.tail.length);
+          // Everything behind the hole moved left, so a detached run's incremental cursor has to move
+          // with it. Clamping to the new length instead would park the cursor at the end and make
+          // ProcessOutput report "nothing new" for output that had in fact just arrived.
+          if (this.readOffset > seamAt) this.readOffset = Math.max(seamAt, this.readOffset - removed);
+          this.output = cut.head + cut.tail;
+          this.seamAt = seamAt;
+        }
       }
       emitProgress();
     };
@@ -232,8 +252,8 @@ class ForegroundRun {
           finish(error);
           return;
         }
-        this.child.stdout.on('data', onData);
-        this.child.stderr.on('data', onData);
+        this.child.stdout.on('data', onData(this._stdoutDecoder));
+        this.child.stderr.on('data', onData(this._stderrDecoder));
         this.child.once('error', finish);
         this.child.once('close', (code) => {
           this.exitCode = this.killed || this.timedOut ? null : code ?? -1;
@@ -245,11 +265,29 @@ class ForegroundRun {
       killProcessGroup(this.child);
     } finally {
       if (this._timer) { clearTimeout(this._timer); this._timer = null; }
-      this.output += this._decoder.end();
+      this.output += this._stdoutDecoder.end() + this._stderrDecoder.end();
       await this.releaseLease();
     }
   }
 }
+
+/** Keep at most `maxBytes` of UTF-8 from the END, without splitting a character. Used by the background
+ *  rolling buffer, whose beginning has usually already been read incrementally. */
+function truncateTailBytes(content, maxBytes) {
+  const buf = Buffer.from(content, 'utf8');
+  if (buf.length <= maxBytes) return content;
+  let start = buf.length - maxBytes;
+  while (start < buf.length && (buf[start] & 0xc0) === 0x80) start += 1;
+  return buf.subarray(start).toString('utf8');
+}
+
+/** Room set aside for the truncation banner, which is written after the budget is decided and whose exact
+ *  length depends on the sizes it reports. Generous on purpose: overshooting the cap costs the result its
+ *  tail (see formatRunResult), while a hundred spare bytes cost nothing. */
+const TRUNCATION_BANNER_RESERVE = 200;
+/** Output never shrinks below this, however long the command and cwd are. A pathological invocation must
+ *  cost itself its own echo, not the model's view of what the command did. */
+const MIN_RESULT_BODY_BYTES = 2_000;
 
 /** Cut a long output in the MIDDLE, keeping both ends.
  *
@@ -270,7 +308,7 @@ class ForegroundRun {
  *
  *  `maxBytes` bounds the OUTPUT, not the whole block: the banner describing the cut is metadata about the
  *  truncation, exactly as it was while this was tail-only. */
-function truncateMiddle(content, { maxBytes }) {
+function truncateMiddle(content, { maxBytes, alignToLines = true }) {
   const buf = Buffer.from(content, 'utf8');
   if (!(maxBytes >= 2) || buf.length <= maxBytes) {
     return { head: content, tail: '', truncated: false, totalBytes: buf.length, keptBytes: buf.length };
@@ -283,11 +321,11 @@ function truncateMiddle(content, { maxBytes }) {
 
   const headBudget = Math.floor(maxBytes / 2);
   const tailBudget = maxBytes - headBudget;
-  const lastNewline = buf.lastIndexOf(NEWLINE, headBudget - 1);
+  const lastNewline = alignToLines ? buf.lastIndexOf(NEWLINE, headBudget - 1) : -1;
   const headEnd = lastNewline >= 0 ? lastNewline + 1 : backToBoundary(headBudget);
 
   const tailFrom = buf.length - tailBudget;
-  const firstNewline = buf.indexOf(NEWLINE, tailFrom);
+  const firstNewline = alignToLines ? buf.indexOf(NEWLINE, tailFrom) : -1;
   // A newline that IS the last byte would leave an EMPTY tail — which is exactly what one enormous line
   // terminated by a newline produces, and it silently turns head+tail back into head-only. Accept a
   // line-aligned tail only when something follows the newline; otherwise take the raw offset, which is
@@ -316,7 +354,19 @@ function truncateMiddle(content, { maxBytes }) {
  *  is still far better than the previous behaviour, which reported the size of whatever survived and
  *  called it the size of the run. */
 function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped = 0) {
-  const t = truncateMiddle(out, { maxBytes: outputCap });
+  const framing = `$ ${command}\n(cwd: ${cwd})\n${note}[exit ${exitCode}]`;
+  // The cap bounds the WHOLE result, not just the stream inside it.
+  //
+  // This is not tidiness. A tool result larger than the operator's inline-result threshold is spilled to
+  // disk and replaced in the transcript by a HEAD-ONLY preview — which would throw away precisely the tail
+  // this truncation exists to keep. Both defaults are 60 kB, so budgeting only the output meant every
+  // truncated command overshot by the length of its own echo and banner and got its tail deleted by the
+  // spill: the feature defeated itself under the settings almost everyone runs.
+  const budget = Math.max(
+    MIN_RESULT_BODY_BYTES,
+    outputCap - Buffer.byteLength(framing, 'utf8') - TRUNCATION_BANNER_RESERVE,
+  );
+  const t = truncateMiddle(out, { maxBytes: budget });
   const lost = t.totalBytes - t.keptBytes + dropped;
   let body = t.head;
   if (lost > 0) {
@@ -379,13 +429,14 @@ export function register(ctx) {
       // is therefore sanitized as one complete buffer before it is exposed; repeating prior output is safer
       // than returning a cross-boundary fragment that reconstructs a host path.
       const whole = bg.workspaceScoped || all;
-      const text = whole
-        ? bg.sanitizeOutput(bg.output)
-        : bg.sanitizeOutput(bg.output.slice(bg.readOffset));
+      const from = whole ? 0 : bg.readOffset;
+      const text = bg.sanitizeOutput(whole ? bg.output : bg.output.slice(from));
       bg.readOffset = bg.output.length;
-      // Only a WHOLE read can be described by the notice: an incremental slice may not even contain the
-      // seam, and stamping every later read with a loss that happened once would be its own kind of lie.
-      return whole ? withDropNotice(bg, text) : text;
+      // The notice belongs to a slice that actually CONTAINS the seam, which is not the same as a whole
+      // read: the first incremental read of a detached run starts at offset zero and returns the entire
+      // surviving buffer, so gating on `all` handed back a silently glued head and tail. A slice starting
+      // after the seam genuinely does not contain it and must not claim a loss it does not show.
+      return bg.seamAt != null && from <= bg.seamAt ? withDropNotice(bg, text) : text;
     },
     kill: () => bg.kill(),
   });
