@@ -26,9 +26,24 @@ import { inMemoryModelRuntime } from '../../src/brain/providers.js';
  *  value is the payload AFTER the whole extension chain: `request.onPayload()` returns whatever
  *  `before_provider_request` handlers produced, so a test sees exactly what would have gone on the wire.
  *
- *  PI ships `fauxProvider()` for fake responses and it is deliberately NOT used here: it never calls
- *  `onPayload`, so it can only show the pre-conversion `Context` — which is blind to `cache_control` and to
- *  every other egress transform this harness exists to observe. */
+ *  PI ships `fauxProvider()` for fake responses and it is deliberately NOT used here. It registers fine
+ *  (`ModelRegistry.registerProvider` takes a native Provider) and a `FauxResponseFactory` even receives the
+ *  request `Context`, so branching on the prompt is expressible. Three things are not, and between them they
+ *  rule it out for every provider fake in this suite except one:
+ *
+ *   - It calls `onResponse` but NEVER `onPayload`, so it can only show the pre-conversion `Context` — blind
+ *     to `cache_control` and to every other egress transform this harness and `providerRequestRecorder`
+ *     exist to observe.
+ *   - Usage is not scriptable. `withUsageEstimate` overwrites whatever usage a scripted message carries with
+ *     its own chars/4 estimate of the serialized context, so a test cannot state the token count that drives
+ *     `shouldCompact` — which is the entire subject of the compaction and prefill-baseline tests.
+ *   - `RegisterFauxProviderOptions` has no `baseUrl`, `apiKey` or `headers`, so the per-provider routing and
+ *     header-propagation assertions in `compactionModelRoute` have nothing to assert against.
+ *
+ *  Only `malformedToolCallRecovery` could migrate, and one test is not worth a second idiom. Worth reaching
+ *  for if we ever test DEFERRED/background responses, where faux's `pendingFetches` and `cancelDeferred`
+ *  would be real work to hand-roll; its prompt-cache simulation is common-prefix over the serialized context,
+ *  not real breakpoints, so it cannot check ours. */
 
 /** pi-ai marks the last block of the payload's last message. Replicated verbatim so `cacheBreakpoints`
  *  sees the same shape it does in production; it abstains outright when no marker is present. */
