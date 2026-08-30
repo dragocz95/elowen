@@ -10,7 +10,7 @@ import type { BrainRateLimits, BrainRateLimitWindow, BrainUsageView, GoalView, M
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { formatDuration, formatK, terminalInlineText } from '../ui/text.js';
 import { goalElapsedSeconds } from './goalState.js';
-import { TELEMETRY_MIN_COLUMNS } from './layoutBudget.js';
+import { TELEMETRY_MAX_COLUMNS, TELEMETRY_MIN_COLUMNS } from './layoutBudget.js';
 
 const inlineText = terminalInlineText;
 export interface TelemetryState {
@@ -106,16 +106,25 @@ export class TelemetryPanel implements Component {
     const sections = this.sections(this.getState(), cap); // build at the cap so nothing truncates yet
     let widest = 0;
     for (const section of sections) {
-      // Progress bars stretch to fill whatever width they're given and carry no size preference of
-      // their own — excluding them is what keeps this a real "content" measurement instead of always
-      // reporting `cap`. The context bar is always rows[2] when the section is expanded (rows[0]=header,
-      // rows[1]=token/pct/cost line, rows[2]=bar); rate-limit window rows (rows[1..]) are bars too.
-      const measurable = section.id === 'context' ? section.rows.slice(0, 2)
-        : section.id === 'limits' ? section.rows.slice(0, 1)
-        : section.rows;
-      for (const row of measurable) widest = Math.max(widest, visibleWidth(row));
+      for (const row of measurableRows(section)) widest = Math.max(widest, visibleWidth(row));
     }
     return Math.min(cap, Math.max(TELEMETRY_MIN_COLUMNS, widest + PANEL_BAR_MARGIN * 2));
+  }
+  /** The narrowest rail width at which the Context section still shows its token/percent/cost line in
+   *  full. The manual drag-resize clamp (`inputRouter.ts`) uses this as its lower bound, so a user
+   *  dragging the rail inward is never the reason {@link contextSummaryLine} falls into its degraded
+   *  tiers — dropping content is something a hand-driven resize should refuse to do, not something it
+   *  does silently. Measured exactly like {@link naturalWidth} but scoped to Context alone, so it is
+   *  independent of what the other sections happen to want, and recomputed on demand: tokens, percent
+   *  and cost all move while a conversation runs. */
+  contextRequiredWidth(): number {
+    // Build at the rail's own maximum so nothing truncates during the measurement.
+    const section = this.contextSection(this.getState(), TELEMETRY_MAX_COLUMNS);
+    let widest = 0;
+    for (const row of measurableRows(section)) widest = Math.max(widest, visibleWidth(row));
+    // Capped at that same maximum: beyond it no rail width could show the line anyway, and the tiered
+    // fallback in contextSummaryLine stays the safety net for every width this floor does not govern.
+    return Math.min(TELEMETRY_MAX_COLUMNS, Math.max(TELEMETRY_MIN_COLUMNS, widest + PANEL_BAR_MARGIN * 2));
   }
   isProcessHeaderRow(row: number): boolean {
     return this.processTop >= 0 && this.processPanel.isHeaderRow(row - this.processTop);
@@ -198,13 +207,33 @@ export class TelemetryPanel implements Component {
     return rows.map((r) => paintRow(chatTheme().panelBg, r, width));
   }
 
+  /** The Context section on its own, so the drag-resize floor can measure exactly what the rail renders
+   *  instead of a second, drifting copy of the same rows. A folded section keeps just its header; the
+   *  chevron mirrors the Sub-agents/Processes panels and a one-value meta (the context %) keeps the
+   *  folded row informative. */
+  private contextSection(st: TelemetryState, width: number): TelemetrySection {
+    const usage = st.usage;
+    const pct = usage?.percent != null ? `${Math.round(usage.percent)}%` : '—';
+    const tokens = usage ? `${formatK(usage.tokens ?? 0)} / ${formatK(usage.contextWindow)}` : '—';
+    const collapsed = this.collapsedSections.has('context');
+    const header = sectionHeaderRow(
+      sectionHeaderContent(this.chevron('context'), 'Context', collapsed ? `· ${pct}` : ''),
+      this.contentWidth(width),
+    );
+    return {
+      id: 'context', minimumRows: 3,
+      rows: collapsed ? [header] : [
+        header,
+        this.contextSummaryLine(width, tokens, pct, usage),
+        `${' '.repeat(PANEL_BAR_MARGIN)}${this.contextBar(usage?.percent ?? 0, width)}`,
+      ],
+    };
+  }
+
   /** Build complete semantic sections with no separator rows. Keeping those boundaries explicit lets
    * compact rendering preserve Context and Project, then add every enabled useful section before any
    * extra detail. */
   private sections(st: TelemetryState, width: number): TelemetrySection[] {
-    const usage = st.usage;
-    const pct = usage?.percent != null ? `${Math.round(usage.percent)}%` : '—';
-    const tokens = usage ? `${formatK(usage.tokens ?? 0)} / ${formatK(usage.contextWindow)}` : '—';
     // Nested panels render inside the rail, so they get the same gutter-narrowed width as every other
     // section — they add only their own left indent, never a right margin, so the edge is not doubled.
     const inner = this.contentWidth(width);
@@ -218,23 +247,7 @@ export class TelemetryPanel implements Component {
     this.workflowPanel.set(st.workflows ?? []);
     this.workflowPanel.setMaxRows(WORKFLOW_ROWS_SHOWN);
     const workflowRows = this.workflowPanel.render(inner);
-    // A folded section keeps just its header; the chevron mirrors the Sub-agents/Processes panels and
-    // a one-value meta (context %, branch, LSP state) keeps the folded row informative.
-    const contextCollapsed = this.collapsedSections.has('context');
-    const contextHeader = sectionHeaderRow(
-      sectionHeaderContent(this.chevron('context'), 'Context', contextCollapsed ? `· ${pct}` : ''),
-      this.contentWidth(width),
-    );
-    const sections: TelemetrySection[] = [
-      {
-        id: 'context', minimumRows: 3,
-        rows: contextCollapsed ? [contextHeader] : [
-          contextHeader,
-          this.contextSummaryLine(width, tokens, pct, usage),
-          `${' '.repeat(PANEL_BAR_MARGIN)}${this.contextBar(usage?.percent ?? 0, width)}`,
-        ],
-      },
-    ];
+    const sections: TelemetrySection[] = [this.contextSection(st, width)];
     const limitRows = this.rateLimitRows(st.rateLimits ?? null, width);
     const goalRows = this.goalRows(st.goal ?? null, width);
     if (goalRows.length > 0) {
@@ -487,6 +500,17 @@ export class TelemetryPanel implements Component {
       `  ${lspEnabled ? color.success('●') : color.faint('○')} ${color.text(state)} ${color.faint('· /lsp toggles')}`,
     ];
   }
+}
+
+/** The rows of a section that carry a real width preference. Progress bars stretch to fill whatever
+ *  width they're given and want nothing of their own — excluding them is what keeps a width measurement
+ *  a genuine "content" measurement instead of always reporting the cap it was built at. The context bar
+ *  is always rows[2] when the section is expanded (rows[0]=header, rows[1]=token/pct/cost line);
+ *  rate-limit window rows (rows[1..]) are bars too. */
+function measurableRows(section: TelemetrySection): string[] {
+  if (section.id === 'context') return section.rows.slice(0, 2);
+  if (section.id === 'limits') return section.rows.slice(0, 1);
+  return section.rows;
 }
 
 function panelLogo(source: string[], width: number, offset = 0): string[] {

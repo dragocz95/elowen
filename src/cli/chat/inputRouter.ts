@@ -128,7 +128,12 @@ export class InputRouter {
         const edge = context.panelLeftEdge();
         if (this.resizingPanel && release) { this.resizingPanel = false; return { consume: true }; }
         if (this.resizingPanel && event.down) {
-          context.setPanelWidth(Math.max(TELEMETRY_MIN_COLUMNS, Math.min(TELEMETRY_MAX_COLUMNS, term.columns - event.x + 1)));
+          // A hand-driven resize must never be the thing that costs the Context section its token count
+          // or percentage, so the drag stops at whichever floor is higher: the rail's absolute minimum,
+          // or the width the CURRENT token/percent/cost line genuinely needs. Recomputed every frame —
+          // usage, percentage and cost all move while a conversation runs.
+          const floor = Math.max(TELEMETRY_MIN_COLUMNS, context.telemetry.contextRequiredWidth());
+          context.setPanelWidth(Math.max(floor, Math.min(TELEMETRY_MAX_COLUMNS, term.columns - event.x + 1)));
           context.renderForced('geometry:telemetry-resize');
           return { consume: true };
         }

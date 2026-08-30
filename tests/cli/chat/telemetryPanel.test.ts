@@ -141,3 +141,58 @@ describe('the telemetry rail auto-fits its width to its content', () => {
     expect(width).toBe(TELEMETRY_MAX_COLUMNS);
   });
 });
+
+describe('contextRequiredWidth is the floor a manual drag may not cross', () => {
+  const shortState = (): TelemetryState => ({
+    usage: null, cwd: '~/x', branch: 'main', mcp: null, lspEnabled: null, floatOffset: 0,
+  });
+
+  it('matches the real length of the full token/percent/cost line plus the panel gutter', () => {
+    const panel = new TelemetryPanel(fullState);
+    const required = panel.contextRequiredWidth();
+    // The line the floor exists to protect: "200k / 200k tokens · 100% · $888.46".
+    const summary = strip(panel.render(TELEMETRY_MAX_COLUMNS)
+      .map(strip)
+      .find((row) => row.includes('tokens'))!)
+      .replace(/\s+$/u, '')
+      .trimStart();
+    // Row = two-space indent + the line; the rail then keeps PANEL_BAR_MARGIN on each edge.
+    expect(required).toBe(visibleWidth(summary) + PANEL_BAR_MARGIN * 3);
+    expect(required).toBeGreaterThan(TELEMETRY_MIN_COLUMNS);
+  });
+
+  it('keeps every segment at the floor and at every width above it, unlike the old fixed 36', () => {
+    const panel = new TelemetryPanel(fullState);
+    const required = panel.contextRequiredWidth();
+    // The reported bug: the rail's fixed minimum is NOT wide enough for this content, so a drag that
+    // could reach it made the tiered fallback throw the token count away.
+    expect(panel.render(TELEMETRY_MIN_COLUMNS).map(strip).join('\n')).not.toContain('200k / 200k');
+    for (let width = required; width <= TELEMETRY_MAX_COLUMNS; width += 1) {
+      const rendered = panel.render(width).map(strip).join('\n');
+      expect(rendered, `width ${width}`).toContain('200k / 200k');
+      expect(rendered, `width ${width}`).toContain('100%');
+      expect(rendered, `width ${width}`).toContain('$888.46');
+    }
+  });
+
+  it('falls back to TELEMETRY_MIN_COLUMNS when the context content is short or absent', () => {
+    expect(new TelemetryPanel(shortState).contextRequiredWidth()).toBe(TELEMETRY_MIN_COLUMNS);
+  });
+
+  it('never exceeds the rail\'s own maximum width', () => {
+    const huge: TelemetryState = {
+      ...shortState(),
+      usage: { tokens: 999_999_999, contextWindow: 999_999_999, percent: 100, totalTokens: 999_999_999, cost: 123_456.78 },
+    };
+    const required = new TelemetryPanel(() => huge).contextRequiredWidth();
+    expect(required).toBeLessThanOrEqual(TELEMETRY_MAX_COLUMNS);
+  });
+
+  it('drops to the header alone once the user folds the Context section', () => {
+    const panel = new TelemetryPanel(fullState);
+    expect(panel.contextRequiredWidth()).toBeGreaterThan(TELEMETRY_MIN_COLUMNS);
+    panel.toggleSection('context');
+    // A folded section shows no summary line, so it has nothing left to protect.
+    expect(panel.contextRequiredWidth()).toBe(TELEMETRY_MIN_COLUMNS);
+  });
+});

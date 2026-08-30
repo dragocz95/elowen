@@ -13,6 +13,7 @@ import { CardPanel, SubagentPanel } from '../../../src/cli/chat/components.js';
 import { openPicker } from '../../../src/cli/chat/picker.js';
 import type { TuiDiagnostics } from '../../../src/cli/chat/tuiDiagnostics.js';
 import { startScreenBox, startScreenInputTop, TOP_RULE_ROWS } from '../../../src/cli/chat/startScreen.js';
+import { TELEMETRY_MIN_COLUMNS } from '../../../src/cli/chat/layoutBudget.js';
 import { TerminalLifecycle } from '../../../src/cli/chat/terminalLifecycle.js';
 import { terminalPlainText } from '../../../src/cli/ui/text.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
@@ -1610,6 +1611,70 @@ describe('chat application shell ownership', () => {
     await vi.runOnlyPendingTimersAsync();
     renderMountedRoot(h);
     expect(railOverlay().options?.width).toBe(targetWidth);
+
+    composition.dispose();
+    composition.stop();
+  });
+
+  /** Drive the rail's left edge as far right as the mouse can push it and report the resulting width
+   *  plus the rendered rail, exactly as the production drag handler produced them. */
+  const dragRailToNarrowest = async (h: Harness): Promise<{ width: number; rail: string }> => {
+    const railOverlay = () => h.tui.overlays.find((overlay) => !overlay.removed && overlay.options?.anchor === 'top-right')!;
+    const edge = h.term.columns - (railOverlay().options!.width as number);
+    const y = TOP_RULE_ROWS + 2;
+    h.tui.emit(`\x1b[<0;${edge};${y}M`);
+    // The terminal's last column: the narrowest position a user can physically drag the edge to.
+    h.tui.emit(`\x1b[<32;${h.term.columns};${y}M`);
+    h.tui.emit(`\x1b[<0;${h.term.columns};${y}m`);
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+    const width = railOverlay().options!.width as number;
+    return { width, rail: railOverlay().component.render(width).map(terminalPlainText).join('\n') };
+  };
+
+  it('stops a manual rail drag before the Context line has to drop its tokens or percentage', async () => {
+    const h = compositionHarness({ columns: 120, rows: 24, turns: 0 });
+    // A realistic long-usage state: "200k / 200k tokens · 100% · $888.46" needs more than the rail's
+    // fixed 36-column minimum, so before the floor existed dragging all the way in ate the token count.
+    h.rt.usage = { tokens: 199_999, contextWindow: 200_000, percent: 99.9, totalTokens: 199_999, cost: 888.46 };
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:empty-conversation');
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+    h.rt.transcript.apply({ type: 'user', text: 'first message' });
+    composition.render('stream:user');
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+
+    const { width, rail } = await dragRailToNarrowest(h);
+
+    // The user simply cannot reach a width that truncates the summary line.
+    expect(width).toBeGreaterThan(TELEMETRY_MIN_COLUMNS);
+    expect(rail).toContain('200k / 200k');
+    expect(rail).toContain('100%');
+    expect(rail).toContain('$888.46');
+
+    composition.dispose();
+    composition.stop();
+  });
+
+  it('still lets a short context state shrink the rail all the way to TELEMETRY_MIN_COLUMNS', async () => {
+    // The harness default has no usage at all, so nothing in Context needs extra room and the floor
+    // must not become a blanket "the rail is now wider" regression.
+    const h = compositionHarness({ columns: 120, rows: 24, turns: 0 });
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:empty-conversation');
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+    h.rt.transcript.apply({ type: 'user', text: 'first message' });
+    composition.render('stream:user');
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+
+    const { width } = await dragRailToNarrowest(h);
+    expect(width).toBe(TELEMETRY_MIN_COLUMNS);
 
     composition.dispose();
     composition.stop();
