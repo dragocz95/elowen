@@ -1,14 +1,14 @@
 'use client';
 import { useState, type ReactNode } from 'react';
-import { Activity, BrainCircuit, Braces, Code2, Database, Gauge, RotateCcw, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { Activity, BrainCircuit, Braces, Code2, Database, RotateCcw, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { Segmented } from '../../components/ui/Segmented';
-import { Slider } from '../../components/ui/Slider';
 import { Toggle } from '../../components/ui/Toggle';
 import { useTranslation } from '../../lib/i18n';
 import type { BrainProviderCompatibility } from '../../lib/types';
+import { OptionalTemperatureControl } from './OptionalTemperatureControl';
 
 /** Browser seed for a new provider. The daemon resolves the same conservative baseline when an older
  *  client omits the block; providerCompatibilityParity.test.ts keeps both copies identical. */
@@ -68,8 +68,6 @@ export function ProviderCompatibilityModal({ value, onSave, onClose }: {
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(value);
-  const temperatureEnabled = draft.temperature.trim() !== '';
-  const temperature = temperatureEnabled && Number.isFinite(Number(draft.temperature)) ? Number(draft.temperature) : 0.7;
   const patchCompatibility = (next: Partial<BrainProviderCompatibility>) =>
     setDraft((current) => ({ ...current, compatibility: { ...current.compatibility, ...next } }));
   const capabilities: {
@@ -106,33 +104,15 @@ export function ProviderCompatibilityModal({ value, onSave, onClose }: {
         </div>
 
         <div className="flex flex-col divide-y divide-border">
-          <SettingRow
-            icon={Gauge}
-            label={t.brain.temperature}
-            hint={t.brain.temperatureHint}
-            control={(
-              <Toggle
-                checked={temperatureEnabled}
-                onChange={(enabled) => setDraft((current) => ({ ...current, temperature: enabled ? String(temperature) : '' }))}
-                label={t.brain.compatibility.temperatureOverride}
-              />
-            )}
-          >
-            {temperatureEnabled ? (
-              <div className="ml-9 mt-3 flex items-center gap-3">
-                <Slider
-                  value={temperature}
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  onChange={(next) => setDraft((current) => ({ ...current, temperature: String(next) }))}
-                  aria-label={t.brain.temperature}
-                  aria-valuetext={temperature.toFixed(1)}
-                />
-                <span className="w-8 shrink-0 text-right font-mono text-sm tabular-nums text-primary">{temperature.toFixed(1)}</span>
-              </div>
-            ) : null}
-          </SettingRow>
+          <div className="py-3.5">
+            <OptionalTemperatureControl
+              value={draft.temperature}
+              onChange={(temperature) => setDraft((current) => ({ ...current, temperature }))}
+              label={t.brain.temperature}
+              hint={t.brain.temperatureHint}
+              toggleLabel={t.brain.compatibility.temperatureOverride}
+            />
+          </div>
 
           {capabilities.map(({ key, icon, label, hint }) => (
             <SettingRow
