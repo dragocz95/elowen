@@ -172,16 +172,17 @@ export function PulseRings({ people, month, t }: {
   const surfaceColour = new Map(surfaces.map((s, i) => [s.surface, colorFor(i)]));
 
   const peopleSlices: RingSlice<PulsePerson>[] = people.map((person, index) => ({
-    key: String(person.userId), value: monthOf(person).tokens, colour: colorFor(index), datum: person,
+    key: String(person.userId), label: person.label, value: monthOf(person).tokens, colour: colorFor(index), datum: person,
   }));
   const surfaceSlices: RingSlice<Surface>[] = surfaces.map((s) => ({
-    key: s.surface, value: s.tokens, colour: surfaceColour.get(s.surface) ?? colorFor(0), datum: s,
+    key: s.surface, label: surfaceLabel(t, s.surface), value: s.tokens, colour: surfaceColour.get(s.surface) ?? colorFor(0), datum: s,
   }));
   const costSlices: RingSlice<Surface>[] = surfaces.map((s) => ({
-    key: s.surface, value: s.cost ?? 0, colour: surfaceColour.get(s.surface) ?? colorFor(0), datum: s,
+    key: s.surface, label: surfaceLabel(t, s.surface), value: s.cost ?? 0, colour: surfaceColour.get(s.surface) ?? colorFor(0), datum: s,
   }));
   const contextSlices: RingSlice<ContextDatum>[] = CONTEXT_KINDS.map((kind) => ({
     key: kind.key,
+    label: (t.dashboard.pulseContext as Record<string, string>)[kind.key] ?? kind.key,
     value: context?.[kind.key] ?? 0,
     colour: kind.colour,
     datum: { kind, value: context?.[kind.key] ?? 0 },

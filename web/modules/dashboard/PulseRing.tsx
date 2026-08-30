@@ -26,6 +26,7 @@ const CARD_WIDTH = 240;
 export interface RingSlice<T> {
   /** Stable identity for React, never the label: a rename must not remount the slice. */
   key: string;
+  label: string;
   value: number;
   colour: string;
   datum: T;
@@ -85,46 +86,65 @@ export function PulseRing<T>({ title, slices, centerValue, centerLabel, renderCa
           {emptyLabel}
         </div>
       ) : (
-        <div
-          ref={boxRef}
-          className="relative w-full"
-          style={{ height: RING_HEIGHT }}
-          onMouseMove={trackPointer}
-          onMouseLeave={() => setPointer(null)}
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={drawn}
-                dataKey={(d: { slice: RingSlice<T> }) => d.slice.value}
-                innerRadius="64%"
-                outerRadius="92%"
-                paddingAngle={drawn.length > 1 ? 2 : 0}
-                strokeWidth={0}
-                isAnimationActive={false}
-              >
-                {drawn.map((d) => <Cell key={d.slice.key} fill={d.slice.colour} />)}
-              </Pie>
-              <Tooltip
-                content={<RingTooltip<T> render={renderCard} />}
-                // Anchored to the pointer rather than to the sector centre — see `trackPointer`.
-                {...(pointer ? { position: pointer } : {})}
-                // Let it hang outside the chart box: the ring is only a quarter of the row wide, and
-                // clamping the card inside would push it back over the arc it describes.
-                allowEscapeViewBox={{ x: true, y: true }}
-                // The card is large; animating it between slices reads as lag rather than polish.
-                isAnimationActive={false}
-                wrapperStyle={{ zIndex: 20, outline: 'none' }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+        <>
+          <div
+            ref={boxRef}
+            className="relative w-full"
+            style={{ height: RING_HEIGHT }}
+            onMouseMove={trackPointer}
+            onMouseLeave={() => setPointer(null)}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={drawn}
+                  dataKey={(d: { slice: RingSlice<T> }) => d.slice.value}
+                  innerRadius="64%"
+                  outerRadius="92%"
+                  paddingAngle={drawn.length > 1 ? 2 : 0}
+                  strokeWidth={0}
+                  isAnimationActive={false}
+                >
+                  {drawn.map((d) => <Cell key={d.slice.key} fill={d.slice.colour} />)}
+                </Pie>
+                <Tooltip
+                  content={<RingTooltip<T> render={renderCard} />}
+                  // Anchored to the pointer rather than to the sector centre — see `trackPointer`.
+                  {...(pointer ? { position: pointer } : {})}
+                  // Let it hang outside the chart box: the ring is only a quarter of the row wide, and
+                  // clamping the card inside would push it back over the arc it describes.
+                  allowEscapeViewBox={{ x: true, y: true }}
+                  // The card is large; animating it between slices reads as lag rather than polish.
+                  isAnimationActive={false}
+                  wrapperStyle={{ zIndex: 20, outline: 'none' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
 
-          {/* The headline figure sits in the hole. Pointer-events off so it never steals a hover. */}
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <span className="font-mono text-xl leading-none tabular-nums text-foreground">{centerValue}</span>
-            <span className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">{centerLabel}</span>
+            {/* The headline figure sits in the hole. Pointer-events off so it never steals a hover. */}
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <span className="font-mono text-xl leading-none tabular-nums text-foreground">{centerValue}</span>
+              <span className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">{centerLabel}</span>
+            </div>
           </div>
-        </div>
+
+          {/* Recharts sectors expose hover well but not a reliable keyboard target. Native disclosure rows
+              keep every slice name and the same detail card reachable without inventing another popover. */}
+          <ul className="mt-2 flex min-w-0 w-full flex-col gap-1">
+            {drawn.map(({ slice, share }) => (
+              <li key={slice.key}>
+                <details className="group">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <span aria-hidden className="h-2 w-2 shrink-0 rounded-full" style={{ background: slice.colour }} />
+                    <span className="min-w-0 flex-1 truncate text-left">{slice.label}</span>
+                    <span className="font-mono tabular-nums">{share.toFixed(1)} %</span>
+                  </summary>
+                  <div className="mt-2 flex min-w-0 justify-center [&>*]:max-w-full">{renderCard(slice.datum, share, slice.colour)}</div>
+                </details>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );

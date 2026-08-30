@@ -12,7 +12,9 @@ import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
  *  Every compiled skin in this build is a `command` profile, so the only way to prove the branch is GONE
  *  rather than merely unreachable is to force the other value. The mock is hoisted, which is what makes
  *  it reach the module under test: were the branch back, `useShellProfile()` would answer `spatial` here
- *  and the rail would appear instead of the segmented navigation.
+ *  and the rail would appear instead of the segmented navigation. The `lib/shellProfile` module itself
+ *  left with its last consumer (the old dashboard hero), so today the mock stands guard over a path
+ *  that does not resolve — exactly the state a returning branch would have to change first.
  *
  *  The command-profile anatomy is asserted in WorkspaceShell.test.tsx, against the real hook. The two
  *  lists are deliberately written out in both files rather than shared: an anatomy that changed in one

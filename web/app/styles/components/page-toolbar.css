@@ -43,6 +43,8 @@
 .page-toolbar__slot .settings-toolbar {
   position: static;
   z-index: auto;
+  width: 100%;
+  flex: 1 1 100%;
   padding: 0;
   border: 0;
   border-radius: 0;

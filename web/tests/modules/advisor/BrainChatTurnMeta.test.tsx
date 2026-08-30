@@ -118,12 +118,14 @@ describe('sent message metadata', () => {
     const userBubble = within(userTurn).getByTestId('chat-user-bubble');
     const userMeta = within(userTurn).getByTestId('chat-turn-meta');
     expect(userBubble).toContainElement(userMeta);
+    expect(userMeta).toHaveAttribute('data-role', 'user');
     expect(userMeta.querySelector('time')).toHaveAttribute('datetime', '2026-08-22T09:14:58.000Z');
 
     const assistantTurn = screen.getAllByTestId('chat-turn').find((turn) => turn.getAttribute('data-role') === 'assistant')!;
     const assistantBody = within(assistantTurn).getByTestId('chat-assistant-body');
     const assistantMeta = within(assistantTurn).getByTestId('chat-turn-meta');
     expect(assistantBody).not.toContainElement(assistantMeta);
+    expect(assistantMeta).toHaveAttribute('data-role', 'assistant');
     expect(within(assistantMeta).getByTestId('chat-turn-model')).toHaveTextContent('claude-opus-5');
   });
 

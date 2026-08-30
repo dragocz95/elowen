@@ -1,25 +1,32 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
-import { http, HttpResponse } from 'msw';
+import { delay, http, HttpResponse } from 'msw';
 import { DashboardView } from '../../../modules/dashboard/DashboardView';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import { EffectsProvider } from '../../../lib/useEffects';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import { formatCost, formatTokens } from '../../../lib/format';
+import { consumePendingBrainComposer } from '../../../lib/brainDock';
+
+let activityCalls = 0;
+let modelUsageCalls = 0;
+let dayUsageCalls = 0;
 
 const server = setupServer(
-  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', is_admin: true } })),
-  http.get('*/api/activity', () => HttpResponse.json([
-    { id: 1, ts: '2026-06-30 12:00:00', last_ts: '2026-06-30 12:00:00', type: 'turn', target: 'brain-1', detail: '', surface: 'web', count: 2, actor_user_id: 1, actor_label: 'Filip', actor_username: 'admin' },
-  ])),
+  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', name: 'Filip Džudža', is_admin: true } })),
+  http.get('*/api/activity', () => {
+    activityCalls += 1;
+    return HttpResponse.json([
+      { id: 1, ts: '2026-06-30 12:00:00', last_ts: '2026-06-30 12:00:00', type: 'turn', target: 'brain-1', detail: '', surface: 'web', count: 2, actor_user_id: 1, actor_label: 'Filip', actor_username: 'admin' },
+    ]);
+  }),
   http.get('*/api/activity/presence', () => HttpResponse.json([
     { userId: 1, username: 'admin', label: 'Filip', working: true },
   ])),
-  // The pulse tile draws its curves from /activity/pulse, which carries each person's hourly series.
-  // Without this handler the tile renders empty and the assertions below fail for a reason that has
-  // nothing to do with the dashboard.
+  // The strip and the panels all divide this one payload: the strip reads `totals`, the pulse panel the
+  // gauges, the metrics panel the `month` rollup. One handler keeps their numbers consistent.
   http.get('*/api/activity/pulse', () => HttpResponse.json({
     today: '2026-06-30', spendAvailable: true,
     people: [{
@@ -33,69 +40,173 @@ const server = setupServer(
         surfaces: ['web'], days: Array.from({ length: 30 }, () => 2),
       },
     }],
+    month: {
+      from: '2026-06-01', days: 30, tokens: 400_000, cost: 12,
+      surfaces: [{ surface: 'web', turns: 60, tokens: 400_000, cost: 12 }],
+      context: { cacheRead: 300_000, input: 60_000, cacheWrite: 30_000, output: 10_000 },
+    },
     totals: { turns: 2, tokens: 1500, cost: 3.5, activePeople: 1, runningAgents: 0, memoryHits: 12, cacheHitPct: 88 },
     yesterday: { people: 1, turns: 1, tokens: 800 },
     memoryByHour: Array.from({ length: 24 }, () => 0),
   })),
-  // The hero's own reads. Health decides presence (a failing probe greys the mascot to "Offline"),
-  // the plugin listing gates the cron pod, and usage feeds the month figure.
   http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.28.11' })),
   http.get('*/api/plugins/ui', () => HttpResponse.json([])),
-  http.get('*/api/usage/by-model', () => HttpResponse.json([])),
-  http.get('*/api/usage/by-day', () => HttpResponse.json([])),
+  http.get('*/api/system/readiness', () => HttpResponse.json({ checks: [{ id: 'chat', label: 'Chat', ok: true, detail: 'ready' }] })),
+  http.get('*/api/usage/by-model', () => { modelUsageCalls += 1; return HttpResponse.json([]); }),
+  http.get('*/api/usage/by-day', () => { dayUsageCalls += 1; return HttpResponse.json([]); }),
 );
 beforeAll(() => server.listen());
+afterEach(() => {
+  server.resetHandlers();
+  consumePendingBrainComposer();
+  activityCalls = 0;
+  modelUsageCalls = 0;
+  dayUsageCalls = 0;
+});
 afterAll(() => server.close());
 
-describe('DashboardView', () => {
-  it('renders recent activity and team presence', async () => {
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
-    expect(await screen.findByRole('region', { name: 'Activity' })).toBeInTheDocument();
-    expect(await screen.findAllByText(/Filip/)).not.toHaveLength(0);
-    expect(await screen.findByText(/working now: Filip/i)).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Team pulse' })).toBeInTheDocument();
-    // The pulse tile's own content, not just its heading. The ring is not asserted here: jsdom computes
-    // no layout, so Recharts measures zero and renders nothing — see TeamPulseTile.test.tsx.
-    expect(screen.getByText('Active users')).toBeInTheDocument();
+function mount() {
+  const { wrapper: Wrapper } = createWrapper();
+  return render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
+}
+
+describe('DashboardView — first paint', () => {
+  it('greets the signed-in person by first name, with the ask line beneath', async () => {
+    mount();
+    const heading = await screen.findByRole('heading', { level: 1 });
+    // Time-of-day greeting + the account's real first name — never a hardcoded one.
+    await waitFor(() => expect(heading.textContent).toMatch(/^(Good morning|Good afternoon|Good evening), Filip\./));
+    expect(screen.getByText(en.dashboard.heroAsk)).toBeInTheDocument();
   });
 
-  // The hero was deleted wholesale with the agents/work cleanup, because two of its four pods read
-  // that domain — and nothing failed, because nothing asserted it was there. This is that assertion.
-  it('leads with the hero: the greeting, who is mid-turn, and the composer', async () => {
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
+  it('states today in the strip with real figures and mounts no panel', async () => {
+    mount();
+    const strip = screen.getByRole('list', { name: en.dashboard.stripLabel });
+    await waitFor(() => expect(strip.textContent).toContain(formatTokens(1500)));
+    expect(strip.textContent).toContain('2');
+    expect(strip.textContent).toContain(formatCost(3.5, 2));
+    // One person mid-turn → the working figure reads 1. textContent concatenates without whitespace.
+    await waitFor(() => expect(strip.textContent).toContain(`1${en.dashboard.workingNow.toLowerCase()}`));
 
-    // The greeting is time-of-day dependent, so the heading is asserted by role rather than by text.
-    expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
-    // The hero states presence exactly ONCE — as the orbital field's accessible name. The count under the
-    // greeting and the status row above the composer both said the same thing the tiles below already
-    // report, so neither survives; asserting their absence is what keeps them from creeping back.
-    expect(screen.queryByText(/working now: 1/i)).toBeNull();
-    expect(screen.queryByRole('link', { name: /Filip/ })).toBeNull();
-    expect(screen.getByRole('img', { name: /Elowen: /i })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/what can i do for you/i)).toBeInTheDocument();
+    // Progressive disclosure: none of the heavy surfaces exists before its button is pressed.
+    expect(screen.queryByRole('region', { name: en.dashboard.eventStream })).toBeNull();
+    expect(screen.queryByRole('region', { name: en.dashboard.pulse })).toBeNull();
+    expect(screen.queryByRole('region', { name: en.dashboard.metricsTitle })).toBeNull();
+    expect(screen.queryByTestId('pulse-rings')).toBeNull();
+    expect(activityCalls).toBe(0);
+    expect(modelUsageCalls).toBe(0);
+    expect(dayUsageCalls).toBe(0);
+    // The composer, however, is part of the hero itself.
+    expect(screen.getByPlaceholderText(en.dashboard.composerPlaceholder)).toBeInTheDocument();
   });
 
-  /** Heading, then the divider rail — the same anatomy every other page opens with. The figures come from
-   *  the pulse response the page already fetches for presence, so the rail costs no request of its own. */
-  it('opens with the metric rail under the greeting', async () => {
-    const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
+  it('keeps the working count unknown until the pulse request resolves', () => {
+    server.use(http.get('*/api/activity/pulse', async () => {
+      await delay(100);
+      return HttpResponse.json({ people: [], totals: { turns: 0, tokens: 0, cost: 0 } });
+    }));
+    mount();
+
+    const strip = screen.getByRole('list', { name: en.dashboard.stripLabel });
+    expect(strip.textContent).toContain(`—${en.dashboard.workingNow.toLowerCase()}`);
+  });
+});
+
+describe('DashboardView — quick actions', () => {
+  it('seeds the advisor composer through the existing compose channel', async () => {
+    mount();
     await screen.findByRole('heading', { level: 1 });
 
-    const rail = container.querySelector('[data-testid="workspace-hero-metrics"]')!;
-    expect(rail).not.toBeNull();
-    await waitFor(() => expect(rail.textContent).toContain(formatTokens(1500)));
-    const readings = Array.from(rail.querySelectorAll('.workspace-metric')).map((metric) => [
-      metric.querySelector('.workspace-metric__label')!.textContent,
-      metric.querySelector('.workspace-metric__value')!.textContent,
-    ]);
-    expect(readings).toEqual([
-      [en.dashboard.pulseColTurns, '2'],
-      [en.dashboard.pulseColTokens, formatTokens(1500)],
-      [en.dashboard.pulseColCost, formatCost(3.5, 2)],
-      [en.dashboard.workingNow, '1'],
-    ]);
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.pillSummary }));
+    expect(consumePendingBrainComposer()).toBe(en.dashboard.pillSummaryPrompt);
+  });
+
+  it('answers the costs pill with the metrics panel instead of a prompt', async () => {
+    mount();
+    await screen.findByRole('heading', { level: 1 });
+
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.pillCosts }));
+    expect(await screen.findByRole('region', { name: en.dashboard.metricsTitle })).toBeInTheDocument();
+    expect(consumePendingBrainComposer()).toBeNull();
+  });
+
+  it('replaces one quick action with the setup route when chat is not ready', async () => {
+    server.use(http.get('*/api/system/readiness', () => HttpResponse.json({
+      checks: [{ id: 'chat', label: 'Chat', ok: false, detail: 'no provider' }],
+    })));
+    mount();
+
+    expect(await screen.findByRole('link', { name: en.dashboard.finishSetup.cta })).toHaveAttribute('href', '/settings?cat=brain');
+    expect(screen.queryByRole('button', { name: en.dashboard.pillCapabilities })).toBeNull();
+  });
+});
+
+describe('DashboardView — disclosure panels', () => {
+  it('starts panel-only requests only after their panel is revealed', async () => {
+    mount();
+    await screen.findByRole('heading', { level: 1 });
+    expect(activityCalls).toBe(0);
+    expect(modelUsageCalls).toBe(0);
+    expect(dayUsageCalls).toBe(0);
+
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.showFeed }));
+    await waitFor(() => expect(activityCalls).toBe(1));
+    expect(modelUsageCalls).toBe(0);
+    expect(dayUsageCalls).toBe(0);
+
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.showMetrics }));
+    await waitFor(() => expect(modelUsageCalls).toBe(1));
+    expect(dayUsageCalls).toBe(1);
+  });
+
+  it('opens at most one panel and reflects the state in aria-expanded', async () => {
+    mount();
+    await screen.findByRole('heading', { level: 1 });
+    const feedButton = screen.getByRole('button', { name: en.dashboard.showFeed });
+    const pulseButton = screen.getByRole('button', { name: en.dashboard.showPulse });
+
+    fireEvent.click(feedButton);
+    expect(await screen.findByRole('region', { name: en.dashboard.eventStream })).toBeInTheDocument();
+    expect(feedButton).toHaveAttribute('aria-expanded', 'true');
+    expect(pulseButton).toHaveAttribute('aria-expanded', 'false');
+
+    // Opening the pulse REPLACES the feed — the panels are exclusive, not additive.
+    fireEvent.click(pulseButton);
+    expect(await screen.findByRole('region', { name: en.dashboard.pulse })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: en.dashboard.eventStream })).toBeNull();
+    expect(pulseButton).toHaveAttribute('aria-expanded', 'true');
+    expect(feedButton).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('renders the pulse panel with real gauge content', async () => {
+    mount();
+    await screen.findByRole('heading', { level: 1 });
+
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.showPulse }));
+    expect(await screen.findByText(en.dashboard.pulseActivePeople)).toBeInTheDocument();
+  });
+
+  it('moves focus into the opened panel and returns it to the trigger on Escape', async () => {
+    mount();
+    await screen.findByRole('heading', { level: 1 });
+    const feedButton = screen.getByRole('button', { name: en.dashboard.showFeed });
+
+    fireEvent.click(feedButton);
+    const heading = await screen.findByRole('heading', { name: en.dashboard.eventStream });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: en.dashboard.eventStream })).toBeNull();
+    expect(document.activeElement).toBe(feedButton);
+  });
+
+  it('closes an open panel from its own close control', async () => {
+    mount();
+    await screen.findByRole('heading', { level: 1 });
+
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.showMetrics }));
+    await screen.findByRole('region', { name: en.dashboard.metricsTitle });
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.closePanel }));
+    expect(screen.queryByRole('region', { name: en.dashboard.metricsTitle })).toBeNull();
   });
 });

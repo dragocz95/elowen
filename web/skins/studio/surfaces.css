@@ -108,13 +108,6 @@
   letter-spacing: -0.15px;
   line-height: 1.25;
 }
-/* The dashboard's title is a GREETING, not the name of a register — it is the one page whose heading is
-   addressed to the reader — so it carries the same weight as the clock it sits beside instead of the
-   restrained step every working page uses. The date beside the clock stays light; the pair is a strong
-   figure with a quiet qualifier, twice on the same line. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .workspace-hero h1 {
-  font-weight: 600;
-}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__count {
   color: var(--color-subtle-foreground);
   font-size: 0.875rem;
@@ -911,46 +904,11 @@
 /* ---------------------------------------------------------------------------------------------------
  * /dash.
  *
- * The dashboard was the page where the two designs disagreed most. It drew a mascot at the centre of a
- * 20rem field, three pods hung off it at fixed angles, curved SVG filaments tying each one back to the
- * core, and a glowing accent-ringed orb on every pod — an orrery, on the page whose job is to state
- * four numbers. `HeroCosmos` answers this by giving the `command` profile a `grid` mode with no core,
- * no filaments and no orbit maths, which is what leaves the pods for a stylesheet to arrange.
- *
- * What they become is the anatomy the rest of this design already uses: bordered cards, a muted label,
- * a figure, a line of detail.
+ * The Fable dashboard is flat by construction — a metric strip, a centred greeting, quick-action pills,
+ * the composer and one disclosure panel — so the skin no longer rearranges it and only tempers the
+ * composer to this design's language.
  * --------------------------------------------------------------------------------------------------- */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__filaments,
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__core {
-  display: none;
-}
-/* No accent wash behind the hero, and no room held open for an orbit that is not drawn. The tile
-   reserved 22rem for the field and 18rem for the column inside it — measurements for a mascot with
-   three pods circling it — which in the flat layout is 350px of empty page between the composer and the
-   first section heading. The content sets the height now. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-aura {
-  background: none;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-now__field,
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-now__signals {
-  min-height: 0;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .hero-now {
-  padding: 0;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .hero-now__field {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 1rem;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .hero-now__field > div:first-child {
-  gap: 0.75rem;
-  padding: 1rem;
-  border: 1px solid var(--studio-line);
-  border-radius: var(--radius-xl);
-  background: var(--color-document);
-}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .home-composer {
-  min-height: 10rem;
   border-color: var(--studio-line);
   border-radius: var(--radius-lg);
   background: var(--color-muted);
@@ -958,82 +916,11 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .home-composer:focus-within {
   border-color: var(--studio-line-strong);
 }
-/* The composer's 70px accent bloom goes with it. A focused input in this design says so with its ring;
-   a second, coloured halo underneath is the ember language leaking through the one control on the page
-   the reader is most likely to be looking at. */
+/* The composer's 70px accent bloom does not paint here. A focused input in this design says so with its
+   ring; a second, coloured halo underneath is the ember language leaking through the one control on the
+   page the reader is most likely to be looking at. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .home-composer,
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .home-composer:focus-within {
-  box-shadow: none;
-}
-/* `auto-fit` rather than a fixed count: the pod SET is not fixed either — `cron` appears only where the
-   scheduler plugin is installed — so a three-column rule would leave a hole on the instances that have
-   two. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pods {
-  position: relative;
-  inset: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: 0.75rem;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod {
-  position: relative;
-  translate: none;
-  width: auto;
-  align-items: flex-start;
-  gap: 0.625rem;
-  padding: 1rem;
-  border: 1px solid var(--studio-line);
-  border-radius: var(--radius-xl);
-  background: var(--color-document);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod:hover,
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod:focus-visible {
-  border-color: var(--studio-line-strong);
-  background: var(--studio-fill-quiet);
-  transform: none;
-}
-/* A glyph, not an orb. The pod's icon carried a 2.4rem accent ring, an outer radial bloom, four
-   flickering embers and a triple box-shadow — five decorations on a 14px symbol whose whole job is to
-   say which reading this card holds. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb {
-  width: 2rem;
-  height: 2rem;
-  border: 1px solid var(--studio-line);
-  border-radius: var(--radius);
-  background: var(--color-muted);
-  color: var(--color-muted-foreground);
-  box-shadow: none;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb::before,
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__orb::after {
-  display: none;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__label {
-  color: var(--color-muted-foreground);
-  font-size: 0.8125rem;
-  font-weight: 400;
-  letter-spacing: normal;
-  text-transform: none;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__value {
-  font-family: var(--font-sans);
-  font-size: 1.5rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__detail {
-  font-size: 0.8125rem;
-}
-/* The alert pod keeps its meaning and loses its glow: the warning tone moves onto the border and the
-   figure, where it is still unmistakable and no longer lights up a third of the card. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod--alert {
-  border-color: color-mix(in srgb, var(--color-warning) 55%, var(--studio-line));
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .hero-cosmos[data-mode='grid'] .hero-cosmos__pod--alert .hero-cosmos__orb {
-  border-color: color-mix(in srgb, var(--color-warning) 55%, var(--studio-line));
-  background: var(--color-muted);
-  color: var(--color-warning);
   box-shadow: none;
 }
 

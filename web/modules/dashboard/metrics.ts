@@ -1,3 +1,5 @@
+import type { DayUsage } from '../../lib/types';
+
 /** Local-calendar-month-to-date bounds for the dashboard's fixed usage widget: start of the current
  *  local month through "now" (open-ended upper bound — matches the rolling-preset convention in
  *  lib/dateRange.ts, where toMs stays Infinity so nothing can ever fall outside the window). Not a
@@ -6,4 +8,14 @@
 export function currentMonthBounds(now: number): { fromMs: number; toMs: number } {
   const d = new Date(now);
   return { fromMs: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), toMs: Infinity };
+}
+
+/** Fill the trailing UTC week without changing the measured rows. The usage API omits empty days; the
+ *  sparkline needs seven stable slots so its last bar always means today. */
+export function trailingWeek(rows: DayUsage[] | undefined, now: number): DayUsage[] {
+  const byDay = new Map((rows ?? []).map((day) => [day.day, day]));
+  return Array.from({ length: 7 }, (_, index) => {
+    const key = new Date(now - (6 - index) * 86_400_000).toISOString().slice(0, 10);
+    return byDay.get(key) ?? { day: key, tokens: 0, cost: null };
+  });
 }

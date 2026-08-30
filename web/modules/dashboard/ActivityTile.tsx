@@ -141,9 +141,9 @@ export function ActivityTile({ limit = 14 }: { limit?: number }) {
     .filter((e) => e.type !== 'turn' || (e.tools?.length ?? 0) > 0)
     .slice(0, limit);
   return (
-    <section aria-labelledby="dashboard-activity" className="px-1 py-6 @sm:px-3 @2xl:px-5">
+    <section aria-labelledby="dashboard-activity" className="px-4 pb-6 pt-1 @sm:px-6">
       <header className="mb-3 flex items-center justify-between gap-3">
-        <h2 id="dashboard-activity" className="dash-label">{t.dashboard.eventStream}</h2>
+        <h2 id="dashboard-activity" tabIndex={-1} className="dash-label outline-none">{t.dashboard.eventStream}</h2>
         <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[10px] tabular-nums text-muted-foreground">
           <span aria-hidden className="live-dot h-1.5 w-1.5 rounded-full bg-success" />
           {/* Presence is the daemon's live view of running turns. Nobody working → the plain "live"

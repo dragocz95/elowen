@@ -48,9 +48,9 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'components/ui/ProjectIcon.tsx': {
     "usePluginPresent('editor')": 'Project icons are served by the optional editor integration and hide when it is absent.',
   },
-  'modules/dashboard/HeroCosmos.tsx': {
-    "usePluginPresent('cronjob')": 'The next-run pod reads a schedule only the scheduler integration owns; asking without it earns a 503 and the pod would read "nothing scheduled" for an instance that has no scheduler at all.',
-    '/p/cronjob': 'That same pod links to the schedule it reports.',
+  'modules/dashboard/MetricsTile.tsx': {
+    "usePluginPresent('cronjob')": 'The next-run figure reads a schedule only the scheduler integration owns; asking without it earns a 503 and the figure would read "nothing scheduled" for an instance that has no scheduler at all.',
+    '/p/cronjob': 'That same figure links to the schedule it reports.',
     "usePluginPresent('stats')": 'The month figure is core usage and renders either way — only its LINK is gated, because the page it opens belongs to the statistics integration.',
     '/p/stats': 'Target of that gated link.',
   },
