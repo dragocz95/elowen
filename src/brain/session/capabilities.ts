@@ -7,7 +7,9 @@ import { BASH_PERMISSION_TOOLS, bashAlwaysPattern, resolveToolPermission, type A
 import { computeDeferredToolNames, type DeferralOptions, type ToolDeferralCandidate } from '../toolSearch/deferralPolicy.js';
 import type { ToolActivationTarget } from '../toolSearch/toolSearchTool.js';
 import { withReason, stripReason } from '../toolReason.js';
+import { capExternalToolSchema, MAX_EXTERNAL_TOOL_BYTES } from '../toolSchemaCap.js';
 import { frameUntrusted } from '../messageView.js';
+import { logger } from '../../shared/logger.js';
 
 /** Cap on a plugin's refusal text. The reason exists so the model can adapt, which takes a sentence —
  *  anything longer is a plugin spending the user's context, or steering the turn under the guise of an
@@ -336,11 +338,24 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
     : new Set<string>();
   const toolSearchTools = deferred.size > 0 ? (spec.toolSearch?.(deferred) ?? []) : [];
 
-  // ToolSearch returns to its historical stable position between memory and ShareImage. Every composed tool
-  // then gains an optional leading `_reason` (excluded ToolSearch/mcp__* pass through), takes the deny and
-  // granular permission gates, and finally strips `_reason` before the inner handler sees the arguments.
-  return [...memoryTools, ...toolSearchTools, ...shareImageTools, ...pluginTools, ...planTools]
+  // Reported once per composition rather than per tool, so attaching a verbose server names it in the log
+  // instead of the cost being silently absorbed into every request.
+  const capped: string[] = [];
+  // ToolSearch returns to its historical stable position between memory and ShareImage. Externally
+  // authored `mcp__*` definitions are bounded FIRST, so the size check sees what the server actually
+  // supplied. Every composed tool then gains an optional leading `_reason` (excluded ToolSearch/mcp__*
+  // pass through), takes the deny and granular permission gates, and finally strips `_reason` before the
+  // inner handler sees the arguments.
+  const tools = [...memoryTools, ...toolSearchTools, ...shareImageTools, ...pluginTools, ...planTools]
+    .map((tool) => capExternalToolSchema(tool, (name) => capped.push(name)))
     .map(withReason).map(gateDeniedTools).map(gatePermissions).map(stripReason);
+  if (capped.length > 0) {
+    logger('brain-tools').warn(
+      `parameter schema omitted for ${capped.length} external tool(s) over ${MAX_EXTERNAL_TOOL_BYTES} bytes: `
+      + `${capped.join(', ')} — the model is told to pass the arguments the server documents`,
+    );
+  }
+  return tools;
 }
 
 /** The names a turn's ToolPolicy is allowed to HIDE from the model, given the full tool set and which of
