@@ -59,6 +59,10 @@ export function ChatRailSplit({ workspace, docked }: { workspace: ReactNode; doc
   // The live pixel width, republished as the rail's own type tokens. It starts at the default rather than
   // at zero so the first paint is already sized correctly instead of flashing the narrow end of the scale.
   const [railWidth, setRailWidth] = useState(RAIL_DEFAULT_WIDTH);
+  // A persisted collapsed layout contains only 52px, so after a reload the library no longer knows the
+  // expanded size it had before the collapse. Keep the latest expanded width for this mount, seeded with
+  // the designed default; expanding after a reload therefore returns to 340px rather than the 280px minimum.
+  const lastExpandedWidth = useRef(RAIL_DEFAULT_WIDTH);
   const panelIds = docked ? DOCKED_PANEL_IDS : CONTENT_PANEL_IDS;
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -89,7 +93,7 @@ export function ChatRailSplit({ workspace, docked }: { workspace: ReactNode; doc
     appliedCollapse.current = collapsed;
     if (!panel) return;
     if (collapsed) panel.collapse();
-    else panel.expand();
+    else panel.resize(lastExpandedWidth.current);
   }, [collapsed, docked]);
 
   const onResize = useCallback((size: { inPixels: number; asPercentage: number }) => {
@@ -98,6 +102,7 @@ export function ChatRailSplit({ workspace, docked }: { workspace: ReactNode; doc
     // restored layout on mount is another; either way the mirror follows the panel, so the toggle button
     // and its `aria-expanded` report what is actually on screen.
     const isCollapsed = size.inPixels <= RAIL_COLLAPSED_WIDTH + 1;
+    if (!isCollapsed) lastExpandedWidth.current = size.inPixels;
     if (rail && isCollapsed !== rail.collapsed) {
       appliedCollapse.current = isCollapsed;
       rail.setCollapsed(isCollapsed);

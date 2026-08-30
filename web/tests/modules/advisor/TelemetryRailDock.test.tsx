@@ -248,6 +248,12 @@ describe('telemetry rail dock — collapse', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('telemetry-collapse')); });
     await waitFor(() => expect(screen.getByTestId('telemetry-collapse')).toHaveAttribute('aria-expanded', 'false'));
   });
+
+  it('restores an expanded width instead of falling back to the minimum after a persisted collapse', () => {
+    const source = readSource('modules/advisor/ChatRailSplit.tsx');
+    expect(source).toContain('lastExpandedWidth');
+    expect(source).toContain('panel.resize(lastExpandedWidth.current)');
+  });
 });
 
 describe('telemetry rail — one body, two hosts', () => {
