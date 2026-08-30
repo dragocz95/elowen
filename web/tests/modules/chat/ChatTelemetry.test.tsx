@@ -8,6 +8,9 @@ import { createWrapper, setViewport, watchMounts } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 import { ChatView } from '../../../modules/chat/ChatView';
+import { ChatRailSplit } from '../../../modules/advisor/ChatRailSplit';
+import { TelemetryRailProvider } from '../../../modules/advisor/telemetryRailState';
+import { useMobileViewport } from '../../../lib/useMobile';
 
 class FakeES {
   static instances: FakeES[] = [];
@@ -59,15 +62,31 @@ afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; vi.restor
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
+/** The chat page as the SHELL now composes it.
+ *
+ *  The desktop telemetry dock is no longer a child of `ChatView`: it is a resizable panel BESIDE it, owned
+ *  by components/shell/Shell.tsx, which is what lets it reach the viewport's top, right and bottom edges.
+ *  A harness that rendered `ChatView` alone would therefore be testing a page that no longer exists, so
+ *  this mirrors the shell's own decision — the stable split group always owns /chat, while only its trailing
+ *  dock appears on a measured desktop; on a phone the overlay `ChatView` raises itself. */
+function ChatPage() {
+  const mobile = useMobileViewport();
+  return <ChatRailSplit workspace={<ChatView />} docked={mobile === false} />;
+}
+
 function renderChat(node: ReactNode) {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><ToastProvider><BrainChatProvider>{node}</BrainChatProvider></ToastProvider></Wrapper>);
+  return render(
+    <Wrapper><ToastProvider><BrainChatProvider><TelemetryRailProvider>
+      {node}
+    </TelemetryRailProvider></BrainChatProvider></ToastProvider></Wrapper>,
+  );
 }
 
 describe('chat telemetry panel', () => {
   it('renders the desktop column with context, limits, project, MCP and LSP', async () => {
     setViewport(false);
-    renderChat(<ChatView />);
+    renderChat(<ChatPage />);
     expect(await screen.findByTestId('telemetry-column')).toBeInTheDocument();
 
     // Context fill comes from the status poll's usage numbers.
@@ -99,7 +118,7 @@ describe('chat telemetry panel', () => {
   // state) showed the PREVIOUS turn's numbers for the whole turn. The CLI never had this problem.
   it('refreshes context, tokens and cost mid-turn from a step frame, not only once the turn settles', async () => {
     setViewport(false);
-    renderChat(<ChatView />);
+    renderChat(<ChatPage />);
     const context = await screen.findByTestId('telemetry-context');
     expect(context.textContent).toContain('21%'); // the opening numbers, from /brain/status
 
@@ -130,7 +149,7 @@ describe('chat telemetry panel', () => {
     }));
 
     setViewport(false);
-    renderChat(<ChatView />);
+    renderChat(<ChatPage />);
     await screen.findByTestId('telemetry-context');
 
     // A session-event triggers the snapshot refetch that will land late.
@@ -150,7 +169,7 @@ describe('chat telemetry panel', () => {
 
   it('ignores a step frame that carries no usage, leaving the last known numbers standing', async () => {
     setViewport(false);
-    renderChat(<ChatView />);
+    renderChat(<ChatPage />);
     expect((await screen.findByTestId('telemetry-context')).textContent).toContain('21%');
     // `usage` is optional on the event — a step without it must not blank the rail.
     FakeES.instances[0]!.emit('step', { type: 'step', step: 3, maxSteps: 25 });
@@ -168,7 +187,7 @@ describe('chat telemetry panel', () => {
       })),
       http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
     );
-    renderChat(<ChatView />);
+    renderChat(<ChatPage />);
     expect(await screen.findByTestId('telemetry-context')).toBeInTheDocument();
     expect(screen.queryByTestId('telemetry-project')).toBeNull();
     expect(screen.queryByTestId('telemetry-mcp')).toBeNull();
@@ -184,7 +203,7 @@ describe('chat telemetry panel', () => {
       })),
       http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
     );
-    renderChat(<ChatView />);
+    renderChat(<ChatPage />);
     // Even with nothing to report the rail is inhabited — the owl shows, the empty note beside it.
     expect(await screen.findByTestId('telemetry-mascot')).toBeInTheDocument();
     expect(screen.queryByTestId('telemetry-context')).toBeNull();
@@ -192,7 +211,7 @@ describe('chat telemetry panel', () => {
 
   it('mounts NO side column on mobile — the rail opens as a drawer from the header instead', async () => {
     setViewport(true);
-    renderChat(<ChatView />);
+    renderChat(<ChatPage />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
     // The narrow viewport must never carry a second column: not hidden by CSS, simply not mounted.
     expect(screen.queryByTestId('telemetry-column')).toBeNull();
@@ -213,7 +232,7 @@ describe('chat telemetry panel', () => {
   // handing focus back on close a promise worth asserting.
   it('takes focus on open, closes on Escape and returns focus to the control that opened it', async () => {
     setViewport(true);
-    renderChat(<ChatView />);
+    renderChat(<ChatPage />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
     const opener = screen.getByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i });
     opener.focus();
@@ -231,7 +250,7 @@ describe('chat telemetry panel', () => {
   it('never mounts the desktop column on mobile — not even for the pre-effect first commit', async () => {
     setViewport(true);
     const columnWasMounted = watchMounts('[data-testid="telemetry-column"]');
-    renderChat(<ChatView />);
+    renderChat(<ChatPage />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
     // The viewport is unknown on the first commit, so neither variant may be mounted yet: a phone must
     // never build the second column, run its queries and tear it down again a tick later.

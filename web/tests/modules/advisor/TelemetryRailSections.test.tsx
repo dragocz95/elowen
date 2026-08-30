@@ -244,7 +244,7 @@ describe('telemetry rail — live work sections', () => {
     processes = [process1];
     await renderRail();
     const section = await screen.findByTestId('telemetry-processes');
-    const row = section.querySelector('button');
+    const row = within(section).getAllByTestId('telemetry-row')[0]!;
     expect(row).not.toBeNull();
     await act(async () => { fireEvent.click(row!); });
     await screen.findByText('ready on :4500');
@@ -307,7 +307,7 @@ describe('telemetry rail — live work sections', () => {
     expect(section.textContent).toContain('Rail parity');
     expect(section.textContent).toContain('1/3');
 
-    await act(async () => { fireEvent.click(section.querySelector('button')!); });
+    await act(async () => { fireEvent.click(within(section).getAllByTestId('telemetry-row')[0]!); });
     expect(onOpen).toHaveBeenCalledWith('wf-1');
   });
 
@@ -343,7 +343,7 @@ describe('telemetry rail — live work sections', () => {
     expect(section.textContent).toContain('Reads direct callers');
     expect(section.textContent).not.toContain('hotová práce');
 
-    await act(async () => { fireEvent.click(within(section).getByRole('button')); });
+    await act(async () => { fireEvent.click(within(section).getByTestId('telemetry-row')); });
     const dialog = await screen.findByRole('dialog', { name: 'Agents' });
     const table = within(dialog).getByRole('table', { name: 'Delegated sub-agents' });
     expect(within(table).getAllByRole('row')).toHaveLength(3);

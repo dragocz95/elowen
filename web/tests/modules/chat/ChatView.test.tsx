@@ -9,6 +9,9 @@ import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
 import { ChatView } from '../../../modules/chat/ChatView';
+import { ChatRailSplit } from '../../../modules/advisor/ChatRailSplit';
+import { TelemetryRailProvider } from '../../../modules/advisor/telemetryRailState';
+import { useMobileViewport } from '../../../lib/useMobile';
 
 /** Minimal EventSource stand-in — the test only needs to count how many streams get constructed to
  *  prove the single-controller invariant (one stream no matter how many surfaces mount). */
@@ -51,9 +54,16 @@ afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; localStor
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
+/** The chat page as the SHELL composes it: the telemetry dock is a resizable panel BESIDE the page, not a
+ *  child of it, so a harness rendering ChatView alone would exercise a layout the app no longer has. */
+function ChatPage() {
+  const mobile = useMobileViewport();
+  return <ChatRailSplit workspace={<ChatView />} docked={mobile === false} />;
+}
+
 function renderChat(node: ReactNode) {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><ToastProvider><BrainChatProvider>{node}</BrainChatProvider></ToastProvider></Wrapper>);
+  return render(<Wrapper><ToastProvider><BrainChatProvider><TelemetryRailProvider>{node}</TelemetryRailProvider></BrainChatProvider></ToastProvider></Wrapper>);
 }
 
 describe('ChatView (/chat page)', () => {
@@ -109,28 +119,30 @@ describe('ChatView (/chat page)', () => {
     expect(modal).not.toBeInTheDocument();
   });
 
-  it('hides and restores the desktop telemetry rail from the header button, and remembers the choice', async () => {
-    const { unmount } = renderChat(<ChatView />);
+  // The redesign replaced "hidden" with a real 52px stub. Collapsing must therefore take the TELEMETRY
+  // away without taking the rail away: the mascot and the context meter are what a reader keeps in the
+  // corner of their eye while a turn runs, and a rail that unmounted took the agent's state with it.
+  it('collapses the desktop telemetry rail to its stub and restores it from the header button', async () => {
+    renderChat(<ChatPage />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
     expect(await screen.findByTestId('telemetry-column')).toBeInTheDocument();
+    expect(screen.getByTestId('telemetry-head')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /^(Hide telemetry|Skrýt telemetrii)$/i }));
-    expect(screen.queryByTestId('telemetry-column')).toBeNull();
-
-    // The same control brings it back — a hidden rail must not be a one-way door.
-    fireEvent.click(screen.getByRole('button', { name: /^(Show telemetry|Zobrazit telemetrii)$/i }));
+    await waitFor(() => expect(screen.getByTestId('telemetry-stub')).toBeInTheDocument());
+    // Still docked, still reporting the agent — just not the metrics.
     expect(screen.getByTestId('telemetry-column')).toBeInTheDocument();
+    expect(screen.getByTestId('telemetry-mascot')).toBeInTheDocument();
+    expect(screen.queryByTestId('telemetry-head')).toBeNull();
 
-    // Hidden is a per-device display choice, so it survives a remount.
-    fireEvent.click(screen.getByRole('button', { name: /^(Hide telemetry|Skrýt telemetrii)$/i }));
-    unmount();
-    renderChat(<ChatView />);
-    await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
-    await waitFor(() => expect(screen.queryByTestId('telemetry-column')).toBeNull());
+    // The same control brings it back — a collapsed rail must not be a one-way door.
+    fireEvent.click(screen.getByRole('button', { name: /^(Show telemetry|Zobrazit telemetrii)$/i }));
+    await waitFor(() => expect(screen.getByTestId('telemetry-head')).toBeInTheDocument());
+    expect(screen.queryByTestId('telemetry-stub')).toBeNull();
   });
 
   it('toggling the telemetry rail keeps ONE stream, preserves the draft, and never remounts the surface', async () => {
-    const { container } = renderChat(<ChatView />);
+    const { container } = renderChat(<ChatPage />);
     const composer = await screen.findByPlaceholderText(/Write a message|Napište zprávu/i) as HTMLTextAreaElement;
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
 

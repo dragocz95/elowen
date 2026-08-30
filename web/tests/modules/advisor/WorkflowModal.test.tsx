@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -7,11 +7,21 @@ import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 import { ChatView } from '../../../modules/chat/ChatView';
+import { ChatRailSplit } from '../../../modules/advisor/ChatRailSplit';
+import { useMobileViewport } from '../../../lib/useMobile';
+import { TelemetryRailProvider } from '../../../modules/advisor/telemetryRailState';
 
 // The DAG modal is the web's answer to the CLI workflow modal: a running workflow row in the telemetry
 // rail opens the graph, the graph tracks the live snapshot, and a phone gets a readable list instead of a
 // micro-web. What the graph LOOKS like cannot be asserted here — jsdom measures nothing — so these tests
 // cover the wiring, the liveness and the variant choice; the geometry is tested in tests/lib/workflowDag.
+
+
+/** The chat page as the shell composes it — stable split host, dock on desktop, overlay on a phone. */
+function ChatPage() {
+  const mobile = useMobileViewport();
+  return <ChatRailSplit workspace={<ChatView />} docked={mobile === false} />;
+}
 
 class FakeES {
   static instances: FakeES[] = [];
@@ -74,7 +84,8 @@ const NODES: TestNode[] = [
 async function renderChat(mobile = false): Promise<FakeES> {
   setViewport(mobile);
   const { wrapper: Wrapper } = createWrapper();
-  render(<Wrapper><ToastProvider><BrainChatProvider><ChatView /></BrainChatProvider></ToastProvider></Wrapper>);
+  // The dock is a shell-level panel beside the page now, so the harness composes it the way Shell does.
+  render(<Wrapper><ToastProvider><BrainChatProvider><TelemetryRailProvider><ChatPage /></TelemetryRailProvider></BrainChatProvider></ToastProvider></Wrapper>);
   await waitFor(() => expect(FakeES.instances.length).toBe(1));
   return FakeES.instances[0]!;
 }
@@ -83,7 +94,7 @@ async function renderChat(mobile = false): Promise<FakeES> {
 async function openDag(es: FakeES, nodes: TestNode[] = NODES): Promise<void> {
   for (const event of dagEvents(nodes)) es.emit(event.type, event);
   const section = await screen.findByTestId('telemetry-workflow');
-  await act(async () => { fireEvent.click(section.querySelector('button')!); });
+  await act(async () => { fireEvent.click(within(section).getAllByTestId('telemetry-row')[0]!); });
   await screen.findByTestId('workflow-modal');
 }
 
@@ -210,7 +221,7 @@ describe('workflow DAG modal', () => {
       fireEvent.click(screen.getByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i }));
     });
     const section = await screen.findByTestId('telemetry-workflow');
-    await act(async () => { fireEvent.click(section.querySelector('button')!); });
+    await act(async () => { fireEvent.click(within(section).getAllByTestId('telemetry-row')[0]!); });
 
     await screen.findByTestId('workflow-modal');
     // A phone gets the same information in a readable list — never a hand-sized web of boxes.

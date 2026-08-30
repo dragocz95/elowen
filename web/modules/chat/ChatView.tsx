@@ -3,13 +3,13 @@ import { useRef, useState } from 'react';
 import { Library } from 'lucide-react';
 import { useFillHeight } from '../../lib/useFillHeight';
 import { useMobileViewport } from '../../lib/useMobile';
-import { usePersistentState } from '../../lib/usePersistentState';
 import { useTranslation } from '../../lib/i18n';
 import { Modal, ModalBody } from '../../components/ui/Modal';
 import { BrainSessionsPanel } from '../../components/brain/BrainSessionsPanel';
 import { BrainChatSurface } from '../advisor/BrainChatSurface';
 import { ChatHistoryRail } from '../advisor/ChatHistoryRail';
 import { TelemetryPanel } from '../advisor/TelemetryPanel';
+import { useTelemetryRail } from '../advisor/telemetryRailState';
 import { WorkflowModal } from '../advisor/WorkflowModal';
 import { ChatDeckHero } from './ChatDeckHero';
 
@@ -22,33 +22,25 @@ import { ChatDeckHero } from './ChatDeckHero';
  *  composer to the bottom); a longer transcript grows past it and the page itself scrolls — no inner
  *  scroll box, the whole width is used, and older messages page in on scroll-up.
  *
- *  The telemetry rail is a real column beside the transcript on desktop and a right drawer on mobile:
- *  the choice is made here in JS (not by a CSS breakpoint) so a phone never mounts a second column at
- *  all, which is what would squeeze the conversation off a narrow screen. Until the viewport is measured
- *  (the first commit knows nothing) NEITHER variant mounts — guessing desktop would put the column on a
- *  phone for one commit, queries and all. */
-const RAIL_VISIBILITY = ['shown', 'hidden'] as const;
-type RailVisibility = typeof RAIL_VISIBILITY[number];
-
+ *  The telemetry rail is NOT mounted here on desktop any more. It is a full-height dock owned by the
+ *  shell (components/shell/Shell.tsx → ChatRailSplit), because a rail rendered as a sibling of the
+ *  transcript sits inside this page's centred frame and below the top bar — which is exactly the inset the
+ *  redesign removes. What stays here is the phone presentation, where the rail is an overlay rather than a
+ *  column: a second column on a phone would squeeze the conversation off the screen. Until the viewport is
+ *  measured NEITHER variant mounts — guessing desktop would put the column on a phone for one commit.
+ *
+ *  Both ends address one `useTelemetryRail()` state, so the toggle in the conversation's header and the
+ *  panel it toggles cannot disagree about whether the rail is collapsed. */
 export function ChatView() {
   const { t } = useTranslation();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const fillHeight = useFillHeight(surfaceRef);
   const mobile = useMobileViewport();
+  const rail = useTelemetryRail();
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [telemetryOpen, setTelemetryOpen] = useState(false);
   // The full conversation register (BrainSessionsPanel: channels + task agents, admin oversight) lives
   // behind the history drawer as a modal — core data stays reachable with the agents plugin disabled.
   const [registerOpen, setRegisterOpen] = useState(false);
-  // Whether the docked column is shown is a per-device display choice, like the nav pin and the UI scale:
-  // it belongs to the screen you are on, not to the user record. The drawer on a phone is transient and
-  // deliberately NOT persisted — a drawer that reopens itself on every visit is a nuisance, not a setting.
-  const [railVisibility, setRailVisibility] = usePersistentState<RailVisibility>('elowen.chat.telemetry', 'shown', RAIL_VISIBILITY);
-  const railShown = railVisibility === 'shown';
-  // Track the open DAG by workflow id, not by a click-time copy, so the modal follows the live snapshot
-  // while its nodes run — the same rule the rail's process modal follows.
-  const [dagId, setDagId] = useState<string | null>(null);
-  const openDag = (id: string) => { setTelemetryOpen(false); setDagId(id); };
 
   return (
     <>
@@ -67,11 +59,10 @@ export function ChatView() {
           <BrainChatSurface
             variant="full"
             onOpenHistory={() => setHistoryOpen(true)}
-            onOpenTelemetry={mobile ? () => setTelemetryOpen(true) : () => setRailVisibility(railShown ? 'hidden' : 'shown')}
-            telemetryShown={mobile ? undefined : railShown}
+            onOpenTelemetry={mobile ? () => rail?.setMobileOpen(true) : () => rail?.toggleCollapsed()}
+            telemetryShown={mobile ? undefined : !(rail?.collapsed ?? false)}
           />
         </div>
-        {mobile === false && railShown ? <TelemetryPanel variant="column" onOpenWorkflow={openDag} /> : null}
         {/* On the frameless design a phone /chat has no TopBar (see Shell), so the drawer that lists
             conversations is also the only way back to the rest of the app — it carries a "← dashboard"
             link. Studio's ruled bar stays up on a phone with its hamburger, where the link is a spare
@@ -83,10 +74,20 @@ export function ChatView() {
           homeLink={mobile === true}
           onOpenRegister={() => setRegisterOpen(true)}
         />
+        {/* The phone presentation of the same rail: one full-screen overlay on the canonical
+            Dialog/overlay-stack path, rendering the very same body the desktop dock does. */}
         {mobile === true ? (
-          <TelemetryPanel variant="drawer" open={telemetryOpen} onClose={() => setTelemetryOpen(false)} onOpenWorkflow={openDag} />
+          <TelemetryPanel
+            variant="drawer"
+            open={rail?.mobileOpen ?? false}
+            onClose={() => rail?.setMobileOpen(false)}
+            {...(rail ? { onOpenWorkflow: rail.openWorkflow } : {})}
+          />
         ) : null}
-        {dagId ? <WorkflowModal workflowId={dagId} onClose={() => setDagId(null)} /> : null}
+        {/* Tracked by workflow id, not by a click-time copy, so the modal follows the live snapshot while
+            its nodes run — the same rule the rail's process modal follows. The rail raises it and this
+            page renders it, because the rail is no longer a child of this page. */}
+        {rail?.workflowId ? <WorkflowModal workflowId={rail.workflowId} onClose={rail.closeWorkflow} /> : null}
         {/* `lg` is the WIDEST size (92vw, up to 90rem) despite the name — `xl` is a 42rem dialog, which
             squeezed a six-column register into a third of the screen. */}
         {registerOpen ? (

@@ -19,6 +19,8 @@ import { CommandPalette } from './CommandPalette';
 import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
 import { AdvisorLauncher } from '../../modules/advisor/AdvisorLauncher';
 import { BrainChatProvider } from '../../modules/advisor/BrainChatProvider';
+import { ChatRailSplit } from '../../modules/advisor/ChatRailSplit';
+import { TelemetryRailProvider } from '../../modules/advisor/telemetryRailState';
 import { ImpersonationBanner } from './ImpersonationBanner';
 import { useDockState } from '../../lib/useDockState';
 import { useElementWidth } from '../../lib/useElementWidth';
@@ -296,8 +298,23 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // dock-side AdvisorPanel, so its SSE stream / transcript / draft survive dock open-close, the
   // Chat↔Terminál toggle and route changes. It is inert until the first chat open (lazy ensureAttached).
   // Deliberately inside ShellLayout only, never over ShellBody's chromeless /terminal/* branch.
+  // The sidebar + content region — the dock sits OUTSIDE it, so this width = window − dock.
+  const workspaceRegion = (
+    <div ref={regionRef} className="shell-workspace flex min-w-0 flex-1 overflow-hidden" data-studio-ask-open={studioAskOpen || undefined}>
+      {dockLeft ? <>{content}{navigation}</> : <>{navigation}{content}</>}
+    </div>
+  );
+  // /chat always puts the workspace through one stable resizable group HERE, a direct child of the
+  // full-height workspace row. On a measured desktop the group adds the telemetry panel; on a phone it
+  // contains only the conversation and ChatView raises the same rail as a full-screen overlay. Keeping the
+  // group and content panel mounted across that breakpoint preserves the chat's focus, draft and scroll.
+  // Shell-level ownership is what lets the desktop rail sit flush on the viewport's top/right/bottom edges;
+  // inside ChatView it was trapped under the top bar and inside the centred `--chat-max` frame.
+  const railDocked = mobile === false;
+
   return (
     <BrainChatProvider>
+      <TelemetryRailProvider>
       {/* The app shell is exactly one viewport tall, and `dvh` so a phone's collapsing URL bar does not
           leave a dead strip. The division survives because the Account UI-scale preference still puts a
           `zoom` on <html>: a `100dvh` box under `zoom: z` renders at z×viewport, so filling the screen
@@ -307,10 +324,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
         {dockTop ? <AdvisorPanel dock={dock} /> : null}
         <div className="shell-workspace-row flex min-h-0 flex-1 overflow-hidden" data-studio-ask-open={studioAskOpen || undefined}>
           {dockLeft ? <AdvisorPanel dock={dock} /> : null}
-          {/* The sidebar + content region — the dock sits OUTSIDE it, so this width = window − dock. */}
-          <div ref={regionRef} className="shell-workspace flex min-w-0 flex-1 overflow-hidden" data-studio-ask-open={studioAskOpen || undefined}>
-            {dockLeft ? <>{content}{navigation}</> : <>{navigation}{content}</>}
-          </div>
+          {onChat ? <ChatRailSplit workspace={workspaceRegion} docked={railDocked} /> : workspaceRegion}
           {studioAskPanelMounted ? (
             <div
               className="studio-advisor-slot flex h-full shrink-0"
@@ -325,6 +339,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
       </div>
       <CommandPalette />
       {launcherVisible && <AdvisorLauncher onOpen={openAdvisor} />}
+      </TelemetryRailProvider>
     </BrainChatProvider>
   );
 }

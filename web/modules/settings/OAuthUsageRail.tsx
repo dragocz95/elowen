@@ -1,4 +1,5 @@
 import { useTranslation } from '../../lib/i18n';
+import { Progress } from '../../components/ui/shadcn/progress';
 import type { ProviderUsage } from '../../lib/types';
 
 /** Human window label from its minute span, mirroring the CLI rail (300 → "5h", 10080 → "weekly"). */
@@ -10,10 +11,28 @@ function windowLabel(minutes: number | null, weekly: string, windowWord: string)
   return `${Math.round(minutes)}m`;
 }
 
-/** Usage is pressure: the fill shifts accent → warning (70 %) → danger (90 %), matching the CLI meter.
- *  Shared with the chat telemetry panel's context meter so every usage bar reads the same. */
-export function usageFillClass(pct: number): string {
-  return pct >= 90 ? 'bg-destructive' : pct >= 70 ? 'bg-warning' : 'bg-primary';
+/** Usage is pressure, and this is the ONE place its thresholds live: accent below 70 %, warning from
+ *  70 %, danger from 90 %, matching the CLI meter. The subscription windows here and the chat rail's
+ *  context meter both read it, so every meter in the product changes colour at the same number. */
+function usagePressure(pct: number): 'normal' | 'warning' | 'critical' {
+  return pct >= 90 ? 'critical' : pct >= 70 ? 'warning' : 'normal';
+}
+
+/** The ramp addressed at a `Progress` fill. Spelled out per branch rather than composed from a colour
+ *  name because Tailwind scans class names statically — an interpolated `bg-${tone}` would never be
+ *  emitted into the stylesheet. */
+export function usageProgressClass(pct: number): string {
+  switch (usagePressure(pct)) {
+    case 'critical': return 'bg-destructive';
+    case 'warning': return 'bg-warning';
+    default: return 'bg-primary';
+  }
+}
+
+/** A tiny non-zero usage still shows a sliver, so a meter that is barely used never reads as untouched. */
+export function usageMeterValue(pct: number): number {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return clamped > 0 ? Math.max(clamped, 3) : 0;
 }
 
 function resetLabel(resetsAt: number | null): string {
@@ -25,7 +44,8 @@ function resetLabel(resetsAt: number | null): string {
 
 /** The per-account subscription usage rail shown in a connected OAuth row's control column: one slim
  *  meter per window (e.g. 5h, weekly) with its used-percent, coloured by pressure. Renders nothing when
- *  the account reports no windows. A tiny non-zero usage still shows a sliver so it never reads as empty. */
+ *  the account reports no windows. Shared verbatim with the chat telemetry rail's limits section, so the
+ *  two surfaces cannot drift apart. */
 export function OAuthUsageRail({ usage }: { usage: ProviderUsage }) {
   const { t } = useTranslation();
   if (!usage.windows.length) return null;
@@ -44,12 +64,14 @@ export function OAuthUsageRail({ usage }: { usage: ProviderUsage }) {
             <span className="w-12 shrink-0 text-muted-foreground">
               {windowLabel(w.windowMinutes, t.brain.usageWeekly, t.brain.usageWindow)}
             </span>
-            <span data-testid="oauth-usage-track" className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-              <span
-                className={`block h-full rounded-full ${usageFillClass(pct)} transition-[width] duration-500`}
-                style={{ width: `${pct > 0 ? Math.max(pct, 3) : 0}%` }}
-              />
-            </span>
+            <Progress
+              data-testid="oauth-usage-track"
+              className="flex-1"
+              value={pct}
+              indicatorValue={usageMeterValue(pct)}
+              indicatorClassName={usageProgressClass(pct)}
+              aria-label={windowLabel(w.windowMinutes, t.brain.usageWeekly, t.brain.usageWindow)}
+            />
             <span className="w-9 shrink-0 text-right tabular-nums text-foreground">{Math.round(pct)}%</span>
           </div>
         );
