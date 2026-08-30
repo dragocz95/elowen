@@ -1,36 +1,45 @@
 'use client';
-import { useRef } from 'react';
-import { Coins, MessagesSquare, UserRound, Wallet } from 'lucide-react';
-import { FinishSetupBanner } from '../../components/ui/FinishSetupBanner';
+import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
+import { Button } from '../../components/ui/Button';
 import { MotionReveal } from '../../components/ui/Motion';
-import { HeroNowTile } from './HeroNowTile';
-import { JournalTrunk } from './JournalTrunk';
+import { HomeComposer } from './HomeComposer';
 import { ActivityTile } from './ActivityTile';
 import { TeamPulseTile } from './TeamPulseTile';
+import { MetricsTile } from './MetricsTile';
+import { openBrainComposer } from '../../lib/brainDock';
 import { useNow } from '../../lib/useNow';
 import { useTranslation } from '../../lib/i18n';
-import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
-import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
-import { usePulse } from '../../lib/queries';
+import { useBrand } from '../../lib/brand';
+import { useMe, usePulse, useSystemReadiness } from '../../lib/queries';
 import { formatCost, formatTokens } from '../../lib/format';
 import { usePresence } from './usePresence';
 
-/** The workspace home: setup posture, who is working right now, recent activity and team presence.
+/** The workspace home in its Fable shape: a thin strip of today's figures under the top bar, then a
+ *  centred conversational hero — a personalised greeting over the ask line, quick-action pills that seed
+ *  the advisor composer, the composer itself — and three disclosure buttons that reveal at most ONE
+ *  panel (activity, team pulse, metrics) below.
  *
- *  It is a `single` shell, not a register: there is no collection to browse, no section rail and no
- *  count — one working surface under a title block, which is exactly what the variant means. The title
- *  block is the ordinary WorkspaceHero, so the greeting sits at the same measure, in the same type and
- *  with the same gutter as every other page's <h1>; the page used to hand-roll its own frame and its own
- *  heading and drifted from all of them. `mascot: false` because the being already lives in the hero
- *  cosmos below — the hero's decorative panel would be a second one on the same screen. */
+ *  Nothing heavy mounts on first paint on purpose: the feed, the pulse gauges and the donut rings render
+ *  only inside the open panel, so the landing screen states four numbers and asks one question. The
+ *  panels reuse the existing tiles wholesale — same queries, same SSE refresh — so opening one costs the
+ *  requests that panel actually reads and nothing more. */
+
+type PanelId = 'feed' | 'pulse' | 'metrics';
+
+const PANELS: PanelId[] = ['feed', 'pulse', 'metrics'];
+
 export function DashboardView() {
-  const fieldRef = useRef<HTMLDivElement>(null);
-  const nowMs = useNow();
+  const nowMs = useNow(30_000);
   const { t, locale } = useTranslation();
+  const { appName } = useBrand();
   const presence = usePresence();
-  // The SAME request the presence hook and the pulse tile already make — one react-query key, one fetch.
-  // The rail reports the instance's headline totals for today; the tile below divides exactly these
-  // numbers per person and per channel, which is the division of labour the anatomy asks for.
+  const me = useMe();
+  const user = me.data?.user;
+  const readiness = useSystemReadiness(user?.is_admin === true);
+  const needsSetup = readiness.data?.checks?.find((check) => check.id === 'chat')?.ok === false;
+  // The SAME request the presence hook makes — one react-query key, one fetch. The strip reports the
+  // instance's headline totals for today; the panels below divide these numbers further on demand.
   const pulse = usePulse().data;
   const totals = pulse?.totals;
   // Three states, kept apart on purpose: no answer yet, a rollup that cannot price the day, and a day
@@ -40,71 +49,156 @@ export function DashboardView() {
     : totals.cost === null ? t.dashboard.pulseUnpriced
     : formatCost(totals.cost, 2);
 
+  const [open, setOpen] = useState<PanelId | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Move focus to the revealed panel's heading, exactly as the disclosure pattern asks: the button that
+  // was pressed keeps aria-expanded, the reader lands on what expanded.
+  useEffect(() => {
+    if (open) panelRef.current?.querySelector<HTMLElement>('h2')?.focus();
+  }, [open]);
+
+  const closePanel = (returnFocus: boolean) => {
+    const was = open;
+    setOpen(null);
+    if (returnFocus && was) document.getElementById(`dash-reveal-${was}`)?.focus();
+  };
+  const togglePanel = (id: PanelId) => {
+    if (open === id) closePanel(true);
+    else setOpen(id);
+  };
+
   const date = new Date(nowMs);
   const hour = date.getHours();
   const greeting = hour < 12 ? t.dashboard.greetingMorning : hour < 18 ? t.dashboard.greetingAfternoon : t.dashboard.greetingEvening;
-  // Only a fact the reader cannot get from the page itself belongs under the greeting. "1 person working"
-  // and "all quiet" are both restated a few centimetres below — as the working row, as the live tile and
-  // as the pulse — so the line said nothing three times. An unreachable daemon is different: nothing else
-  // on this page can report it, because everything else on this page comes FROM it.
+  // Addressed to whoever is signed in — first name only, from the real account. The nominative is used
+  // as-is: declining a name into the vocative cannot be done reliably for arbitrary names.
+  const firstName = user ? (user.name || user.username).trim().split(/\s+/)[0] : null;
+  // An unreachable daemon is the one fact nothing else on this page can report, because everything else
+  // on this page comes FROM it.
   const statusLine = presence.state === 'offline' ? t.dashboard.presence.offline : undefined;
 
+  // Practical seeds for the advisor composer — the existing compose channel, not a second send path.
+  // The costs pill opens the metrics panel instead: the answer to that one is already on this page.
+  const pills: ({ id: string; label: string; act: () => void } | { id: string; label: string; href: string })[] = [
+    { id: 'summary', label: t.dashboard.pillSummary, act: () => openBrainComposer(t.dashboard.pillSummaryPrompt) },
+    { id: 'plan', label: t.dashboard.pillPlan, act: () => openBrainComposer(t.dashboard.pillPlanPrompt) },
+    { id: 'costs', label: t.dashboard.pillCosts, act: () => setOpen('metrics') },
+    { id: 'agent', label: t.dashboard.pillAgent, act: () => openBrainComposer(t.dashboard.pillAgentPrompt) },
+    { id: 'find', label: t.dashboard.pillFind, act: () => openBrainComposer(t.dashboard.pillFindPrompt) },
+    needsSetup
+      ? { id: 'setup', label: t.dashboard.finishSetup.cta, href: '/settings?cat=brain' }
+      : { id: 'capabilities', label: t.dashboard.pillCapabilities, act: () => openBrainComposer(t.dashboard.pillCapabilitiesPrompt) },
+  ];
+
+  const revealLabel: Record<PanelId, string> = {
+    feed: t.dashboard.showFeed,
+    pulse: t.dashboard.showPulse,
+    metrics: t.dashboard.showMetrics,
+  };
+
   return (
-    <WorkspaceShell
-      variant="single"
-      className="dashboard-view"
-      hero={{
-        eyebrow: t.dashboard.rightNow,
-        title: greeting,
-        description: statusLine,
-        // The clock is the hero's status slot rather than a corner of the tile below: it is a fact ABOUT
-        // this moment, which is what the eyebrow already announces. A baseline row rather than a stacked
-        // pair, so it wraps instead of overflowing on a narrow hero.
-        status: (
-          <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="font-mono text-lg font-semibold tabular-nums text-foreground">
-              {date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}
-            </span>
-            <span className="text-xs capitalize text-muted-foreground">
-              {date.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })}
-            </span>
+    <div className="dashboard-view flex flex-col">
+      {/* Today at a glance: the only permanent figures on the page. One flat row that scrolls on a
+          phone instead of wrapping the hero further down. */}
+      <div className="flex items-center gap-4 border-b border-border pb-3">
+        <div role="list" aria-label={t.dashboard.stripLabel} className="flex min-w-0 items-baseline gap-5 overflow-x-auto whitespace-nowrap [scrollbar-width:none] @sm:gap-8">
+          <span role="listitem" className="flex shrink-0 items-baseline gap-1.5">
+            <b className="font-mono text-[13.5px] font-semibold tabular-nums text-foreground">{totals?.turns ?? '—'}</b>
+            <span className="text-[13px] text-muted-foreground">{t.dashboard.pulseColTurns.toLocaleLowerCase(locale)}</span>
           </span>
-        ),
-        // The canonical divider rail: heading, then figures. Four facts about TODAY, in the order an
-        // operator reads them — how much work happened, what it moved, what it cost, and who is mid-turn
-        // right now. `presence.activeCount` is live and is not one of today's totals, which is why it
-        // comes from the presence hook rather than from `totals.activePeople` ("active at some point").
-        metrics: (
-          <>
-            <WorkspaceMetric label={t.dashboard.pulseColTurns} value={totals?.turns ?? '—'} icon={MessagesSquare} />
-            <WorkspaceMetric label={t.dashboard.pulseColTokens} value={totals ? formatTokens(totals.tokens) : '—'} icon={Coins} />
-            <WorkspaceMetric label={t.dashboard.pulseColCost} value={spendToday} icon={Wallet} />
-            <WorkspaceMetric label={t.dashboard.workingNow} value={presence.activeCount} icon={UserRound} />
-          </>
-        ),
-      }}
-    >
-      <div className="flex flex-col gap-5">
-        <FinishSetupBanner />
-        {/* One field for the hero and the journal: the trunk filament flows from the mascot's core down
-            into the journal spine, so the whole page hangs off the same being. */}
-        <div ref={fieldRef} className="relative flex flex-col gap-5">
-          <JournalTrunk containerRef={fieldRef} />
-          <MotionReveal className="relative z-[1]">
-            <HeroNowTile now={nowMs} presence={presence} />
-          </MotionReveal>
-          {/* The pulse tile takes the full width because it now draws four rings side by side; squeezed
-              into a column they shrink to the point where the arcs stop being comparable, which is the
-              only thing a ring is for. The feed follows underneath — it is a list of short rows and never
-              needed the width it used to be given. */}
-          <MotionReveal delay={0.06} className="relative z-[1] @container">
-            <TeamPulseTile />
-          </MotionReveal>
-          <MotionReveal delay={0.1} className="relative z-[1] @container">
-            <ActivityTile />
-          </MotionReveal>
+          <span role="listitem" className="flex shrink-0 items-baseline gap-1.5">
+            <b className="font-mono text-[13.5px] font-semibold tabular-nums text-foreground">{totals ? formatTokens(totals.tokens) : '—'}</b>
+            <span className="text-[13px] text-muted-foreground">{t.dashboard.pulseColTokens.toLocaleLowerCase(locale)}</span>
+          </span>
+          <span role="listitem" className="flex shrink-0 items-baseline gap-1.5">
+            <b className="font-mono text-[13.5px] font-semibold tabular-nums text-foreground">{spendToday}</b>
+            <span className="text-[13px] text-muted-foreground">{t.dashboard.pulseColCost.toLocaleLowerCase(locale)}</span>
+          </span>
+          <span role="listitem" className="flex shrink-0 items-center gap-1.5">
+            {(presence.activeCount ?? 0) > 0 ? <span aria-hidden className="live-dot h-1.5 w-1.5 rounded-full bg-primary" /> : null}
+            <b className="font-mono text-[13.5px] font-semibold tabular-nums text-foreground">{presence.activeCount ?? '—'}</b>
+            <span className="text-[13px] text-muted-foreground">{t.dashboard.workingNow.toLocaleLowerCase(locale)}</span>
+          </span>
         </div>
+        <span className="ml-auto hidden shrink-0 text-xs text-muted-foreground md:inline">
+          <span className="capitalize">{date.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+          {' · '}
+          <span className="font-mono tabular-nums">{date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}</span>
+        </span>
       </div>
-    </WorkspaceShell>
+
+      <section aria-labelledby="dash-greeting" className="mx-auto w-full max-w-3xl pt-[clamp(3.5rem,13dvh,9rem)] text-center">
+        <MotionReveal>
+          <h1 id="dash-greeting" className="text-[clamp(2.15rem,4.8vw,4.3rem)] font-semibold leading-[1.06] tracking-[-0.03em] text-foreground">
+            {greeting}{firstName ? `, ${firstName}` : ''}<span aria-hidden className="text-primary">.</span>
+          </h1>
+          <p className="mt-3 text-[clamp(1.2rem,2.4vw,2.1rem)] font-normal leading-tight tracking-[-0.014em] text-muted-foreground">
+            {t.dashboard.heroAsk}
+          </p>
+          {statusLine ? <p className="mt-3 text-sm text-muted-foreground">{statusLine}</p> : null}
+        </MotionReveal>
+
+        <MotionReveal delay={0.08}>
+          <ul aria-label={t.dashboard.quickActions} className="mx-auto mt-8 flex max-w-xl flex-wrap justify-center gap-2.5 @sm:mt-10">
+            {pills.map((pill) => {
+              const className = 'inline-flex rounded-full border border-border px-4 py-1.5 text-sm text-foreground transition-[background-color,border-color,transform] hover:-translate-y-px hover:border-muted-foreground hover:bg-accent active:bg-muted';
+              return (
+                <li key={pill.id}>
+                  {'href' in pill
+                    ? <Link href={pill.href} className={className}>{pill.label}</Link>
+                    : <button type="button" onClick={pill.act} className={className}>{pill.label}</button>}
+                </li>
+              );
+            })}
+          </ul>
+        </MotionReveal>
+
+        <MotionReveal delay={0.16}>
+          <div className="mx-auto mt-7 w-full max-w-2xl text-left">
+            <HomeComposer placeholder={t.dashboard.composerPlaceholder} actionLabel={t.dashboard.composerAction.replace('{agentName}', appName)} />
+          </div>
+        </MotionReveal>
+
+        <MotionReveal delay={0.24}>
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 @sm:mt-12">
+            {PANELS.map((id) => (
+              <Button
+                key={id}
+                id={`dash-reveal-${id}`}
+                variant="ghost"
+                size="sm"
+                aria-expanded={open === id}
+                {...(open === id ? { 'aria-controls': `dash-panel-${id}` } : {})}
+                onClick={() => togglePanel(id)}
+                className={open === id ? 'text-foreground' : 'text-muted-foreground'}
+              >
+                {revealLabel[id]}
+              </Button>
+            ))}
+          </div>
+        </MotionReveal>
+      </section>
+
+      {/* Progressive disclosure: at most one panel, mounted only while it is open — which is what keeps
+          the feed, the gauges and the ring charts (and their queries) off the first paint. */}
+      {open ? (
+        <MotionReveal className="mx-auto mt-5 w-full max-w-4xl pb-10">
+          <div
+            id={`dash-panel-${open}`}
+            ref={panelRef}
+            className="dash-panel @container rounded-2xl border border-border bg-card shadow-card"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') { event.stopPropagation(); closePanel(true); }
+            }}
+          >
+            <div className="flex justify-end pr-2 pt-2">
+              <Button variant="ghost" size="sm" onClick={() => closePanel(true)}>{t.dashboard.closePanel}</Button>
+            </div>
+            {open === 'feed' ? <ActivityTile /> : open === 'pulse' ? <TeamPulseTile /> : <MetricsTile now={nowMs} />}
+          </div>
+        </MotionReveal>
+      ) : null}
+    </div>
   );
 }

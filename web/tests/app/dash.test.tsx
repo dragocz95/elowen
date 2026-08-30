@@ -6,6 +6,7 @@ import DashPage from '../../app/dash/page';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 import { EffectsProvider } from '../../lib/useEffects';
+import { en } from '../../lib/i18n/dictionaries/en';
 
 const server = setupServer(
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', is_admin: true } })),
@@ -18,12 +19,14 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('DashPage', () => {
-  it('renders the activity journal and team pulse', async () => {
+  it('opens on the hero with the metric strip and no mounted panel', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><ToastProvider><DashPage /></ToastProvider></EffectsProvider></Wrapper>);
-    expect(await screen.findByRole('region', { name: 'Activity' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Team pulse' })).toBeInTheDocument();
-    expect(await screen.findByText('No activity yet.')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: en.dashboard.stripLabel })).toBeInTheDocument();
+    // The panels are progressive disclosure — none of them exists on first paint.
+    expect(screen.queryByRole('region', { name: en.dashboard.eventStream })).toBeNull();
+    expect(screen.queryByRole('region', { name: en.dashboard.pulse })).toBeNull();
   });
 
   // A pulse payload without `totals` used to throw out of the hero and take the entire route with it.
@@ -41,10 +44,8 @@ describe('DashPage', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><ToastProvider><DashPage /></ToastProvider></EffectsProvider></Wrapper>);
 
-    expect(await screen.findByRole('region', { name: 'Team pulse' })).toBeInTheDocument();
-    // The hero still draws its pods, falling back to zero turns rather than crashing.
-    expect(await screen.findByTestId('hero-cosmos')).toBeInTheDocument();
-    // …and the tile says it has nothing to show instead of half-rendering a broken payload.
-    expect(screen.getByText('Nobody around yet')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
+    // The strip falls back to placeholders rather than crashing on the absent rollup.
+    expect(screen.getByRole('list', { name: en.dashboard.stripLabel })).toBeInTheDocument();
   });
 });

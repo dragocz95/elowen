@@ -4,14 +4,12 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { TeamPulseTile } from '../../../modules/dashboard/TeamPulseTile';
-import { PersonCard } from '../../../modules/dashboard/PulseRings';
 import { createWrapper } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { PulsePerson, PulseResponse } from '../../../lib/types';
 
-/** The ring itself is not asserted here: jsdom computes no layout, so Recharts measures zero and draws
- *  nothing. What CAN be tested is everything around it — the legend, the headline gauges, and the hover
- *  card rendered directly, which is where every number the old table used to show now lives. */
+/** Today's headline gauges. The monthly ring charts moved to the metrics panel — their tests live in
+ *  MetricsTile.test.tsx alongside them. */
 
 const HOURS = 24;
 const MONTH_DAYS = 30;
@@ -66,108 +64,12 @@ function mount(people: PulsePerson[], over: Partial<PulseResponse> = {}) {
   render(<Wrapper><TeamPulseTile /></Wrapper>);
 }
 
-/** Render the hover card the way a ring would, without needing a measured chart. */
-function showCard(p: PulsePerson, share = 50) {
-  render(<PersonCard person={p} share={share} colour="var(--color-primary)" t={en} />);
-}
-
-describe('TeamPulseTile — ring', () => {
+describe('TeamPulseTile — headline', () => {
   it('says so plainly when nobody has been around', async () => {
     mount([]);
     expect(await screen.findByText(en.dashboard.pulseNobody)).toBeInTheDocument();
   });
 
-  it('labels the ring as the month, not today', async () => {
-    // The gauges above it report today; without this label the two windows are indistinguishable.
-    mount([person()]);
-    expect(await screen.findByText(en.dashboard.pulseRingCostUnit)).toBeInTheDocument();
-  });
-
-  it('does not repeat the names underneath the ring', async () => {
-    // Identity lives in the hover card alone. A legend would be a second copy saying nothing more.
-    mount([person(), person({ userId: 2, label: 'Patricie', username: 'patricie' })]);
-
-    await screen.findByText(en.dashboard.pulseRingPeople);
-    expect(screen.queryByText('Filip Džudža')).not.toBeInTheDocument();
-    expect(screen.queryByText('Patricie')).not.toBeInTheDocument();
-  });
-});
-
-describe('TeamPulseTile — hover card', () => {
-  it('carries what the table used to: channel, activity, cost, tokens, cache and memories', () => {
-    showCard(person({
-      month: month({
-        tokens: 1_200_000, cost: 12.5, cacheHitPct: 88, memoryHits: 1377, surfaces: ['web', 'discord'],
-      }),
-    }));
-
-    expect(screen.getByText('$12.50')).toBeInTheDocument();
-    expect(screen.getByText('1.2M')).toBeInTheDocument();
-    expect(screen.getByText('88 %')).toBeInTheDocument();
-    expect(screen.getByText('1,377')).toBeInTheDocument();
-    // Channels are drawn with the shared PlatformIcon, which names each one in its title.
-    expect(screen.getByTitle(/Web app/)).toBeInTheDocument();
-  });
-
-  it('reports the month rather than the day for every figure it can', () => {
-    // The ring divides a month, so a card showing today's numbers beside a month's slice would be
-    // reporting two different windows in one shape.
-    showCard(person({
-      tokens: 5_000, cost: 1.5, memoryHits: 40,
-      month: month({ tokens: 900_000, cost: 40, memoryHits: 1200 }),
-    }));
-
-    expect(screen.getByText('900k')).toBeInTheDocument();
-    expect(screen.getByText('$40.00')).toBeInTheDocument();
-    expect(screen.getByText('1,200')).toBeInTheDocument();
-    expect(screen.queryByText('5.0k')).not.toBeInTheDocument();
-    expect(screen.queryByText('$1.50')).not.toBeInTheDocument();
-  });
-
-  it('shows what someone is working on while they are mid-turn', () => {
-    // The one row that is deliberately live rather than monthly — there is no "what they did over
-    // thirty days", so this reads process state.
-    showCard(person({ working: true, title: 'Tabulky na platformách' }));
-    expect(screen.getByText('Tabulky na platformách')).toBeInTheDocument();
-  });
-
-  it('does not dress up somebody merely seen today as working', () => {
-    // A title belongs to a live turn. Rendering the last one for an idle person would invent activity.
-    showCard(person({ working: false, title: 'stale title' }));
-
-    expect(screen.queryByText('stale title')).not.toBeInTheDocument();
-    expect(screen.getByText(en.dashboard.pulseSeen)).toBeInTheDocument();
-  });
-
-  it('says a turn was never priced instead of reporting it as free', () => {
-    // null cost means nobody priced the turn; showing $0.00 would understate a real bill.
-    showCard(person({ month: month({ cost: null }) }));
-
-    expect(screen.getByText(en.dashboard.pulseUnpriced)).toBeInTheDocument();
-    expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
-  });
-
-  it('leaves the cache ratio blank rather than claiming a cold zero', () => {
-    // Nobody ran a turn, so there is no ratio. "0 %" would read as a catastrophic cache miss.
-    showCard(person({ month: month({ cacheHitPct: null }) }));
-    expect(screen.queryByText('0 %')).not.toBeInTheDocument();
-  });
-
-  it('says a ring has no data rather than drawing an empty circle', async () => {
-    // Every slice is zero, so there is no arc to draw and nothing to hover. An empty ring would read
-    // as a rendering fault; the label says the measurement is simply absent.
-    mount([person({ month: month({ tokens: 0 }) })], {
-      month: {
-        from: '2026-07-28', days: MONTH_DAYS, tokens: 0, cost: null,
-        surfaces: [], context: { cacheRead: 0, input: 0, cacheWrite: 0, output: 0 },
-      },
-    });
-
-    expect((await screen.findAllByText(en.dashboard.pulseRingEmpty)).length).toBeGreaterThan(0);
-  });
-});
-
-describe('TeamPulseTile — headline', () => {
   it('says the rollup is missing rather than showing a confident zero', async () => {
     mount([person()], {
       spendAvailable: false,
