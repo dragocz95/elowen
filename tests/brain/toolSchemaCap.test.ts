@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { capExternalToolSchema, MAX_EXTERNAL_TOOL_BYTES, MAX_EXTERNAL_DESCRIPTION_BYTES } from '../../src/brain/toolSchemaCap.js';
 import { composeSessionTools } from '../../src/brain/session/capabilities.js';
+import { validateToolArguments } from '@earendil-works/pi-ai';
 
 /** A tool definition with a parameter schema of roughly `bytes` serialized size. */
 function tool(name: string, schemaBytes: number, description = 'does a thing'): ToolDefinition {
@@ -30,8 +31,9 @@ describe('capExternalToolSchema', () => {
     expect(capped.description).toContain('parameter schema was too large');
     expect(capped.description).toContain('the server validates them');
     expect(serializedBytes(capped)).toBeLessThan(MAX_EXTERNAL_TOOL_BYTES);
-    expect(onCapped).toHaveBeenCalledWith('mcp__verbose__do_everything', expect.any(Number));
-    expect(onCapped.mock.calls[0]![1]).toBeGreaterThan(MAX_EXTERNAL_TOOL_BYTES);
+    expect(onCapped).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'mcp__verbose__do_everything', schemaOmitted: true }));
+    expect(onCapped.mock.calls[0]![0].bytes).toBeGreaterThan(MAX_EXTERNAL_TOOL_BYTES);
   });
 
   it('never touches a tool of ours, however large its schema', () => {
@@ -48,7 +50,8 @@ describe('capExternalToolSchema', () => {
     const long = '\u5b57'.repeat(1_000); // 3000 bytes, 1000 characters
     const capped = capExternalToolSchema(tool('mcp__x__y', 100, long));
 
-    expect(Buffer.byteLength(capped.description ?? '', 'utf8')).toBeLessThanOrEqual(MAX_EXTERNAL_DESCRIPTION_BYTES + 3);
+    // The cut mark counts against the budget rather than being added on top of it.
+    expect(Buffer.byteLength(capped.description ?? '', 'utf8')).toBeLessThanOrEqual(MAX_EXTERNAL_DESCRIPTION_BYTES);
     expect(capped.description).not.toContain('\uFFFD'); // cut on a character boundary, not mid-character
     expect(capped.description?.endsWith('…')).toBe(true);
   });
@@ -57,7 +60,15 @@ describe('capExternalToolSchema', () => {
     const capped = capExternalToolSchema(tool('mcp__x__y', 20_000, 'd'.repeat(5_000)));
 
     expect(capped.description).toContain('parameter schema was too large');
-    expect(Buffer.byteLength(capped.description ?? '', 'utf8')).toBeLessThanOrEqual(MAX_EXTERNAL_DESCRIPTION_BYTES + 3);
+    expect(Buffer.byteLength(capped.description ?? '', 'utf8')).toBeLessThanOrEqual(MAX_EXTERNAL_DESCRIPTION_BYTES);
+  });
+
+  it('reports a description it shortened even when the schema fitted', () => {
+    // A silently trimmed description is still a third-party tool the model no longer sees in full, so
+    // the operator has to learn about it too — not only about the dropped schemas.
+    const onCapped = vi.fn();
+    capExternalToolSchema(tool('mcp__x__y', 100, 'd'.repeat(5_000)), onCapped);
+    expect(onCapped).toHaveBeenCalledWith(expect.objectContaining({ name: 'mcp__x__y', schemaOmitted: false }));
   });
 
   it('reports nothing for a tool it did not have to reduce', () => {
@@ -75,8 +86,16 @@ describe('composeSessionTools with an oversized external tool', () => {
     const capped = composed.find((t) => t.name === 'mcp__verbose__do_everything')!;
 
     expect(capped.parameters).toEqual({ type: 'object', additionalProperties: true });
-    // The bound must not cost the tool its behaviour: the gates still wrap a working execute.
-    await capped.execute('call-1', { anything: 1 } as never, {} as never);
+    // The replacement is a plain JSON Schema, not a TypeBox one — it has no `[Kind]` symbol. PI's own
+    // argument validator runs BEFORE execute in a real turn, so a schema it rejected would leave the
+    // tool advertised and uncallable, which is worse than the oversized schema this cap exists to stop.
+    const args = validateToolArguments(capped as never, {
+      type: 'toolCall', id: 'call-1', name: capped.name, arguments: { anything: 1, nested: { a: [1, 2] } },
+    } as never);
+    expect(args).toEqual({ anything: 1, nested: { a: [1, 2] } });
+
+    // …and the gates still wrap a working execute around it.
+    await capped.execute('call-1', args as never, {} as never);
     expect(ran).toHaveBeenCalledTimes(1);
   });
 });

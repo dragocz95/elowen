@@ -7,7 +7,7 @@ import { BASH_PERMISSION_TOOLS, bashAlwaysPattern, resolveToolPermission, type A
 import { computeDeferredToolNames, type DeferralOptions, type ToolDeferralCandidate } from '../toolSearch/deferralPolicy.js';
 import type { ToolActivationTarget } from '../toolSearch/toolSearchTool.js';
 import { withReason, stripReason } from '../toolReason.js';
-import { capExternalToolSchema, MAX_EXTERNAL_TOOL_BYTES } from '../toolSchemaCap.js';
+import { capExternalToolSchema, type ExternalToolCap } from '../toolSchemaCap.js';
 import { frameUntrusted } from '../messageView.js';
 import { logger } from '../../shared/logger.js';
 
@@ -340,19 +340,19 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
 
   // Reported once per composition rather than per tool, so attaching a verbose server names it in the log
   // instead of the cost being silently absorbed into every request.
-  const capped: string[] = [];
+  const capped: ExternalToolCap[] = [];
   // ToolSearch returns to its historical stable position between memory and ShareImage. Externally
   // authored `mcp__*` definitions are bounded FIRST, so the size check sees what the server actually
   // supplied. Every composed tool then gains an optional leading `_reason` (excluded ToolSearch/mcp__*
   // pass through), takes the deny and granular permission gates, and finally strips `_reason` before the
   // inner handler sees the arguments.
   const tools = [...memoryTools, ...toolSearchTools, ...shareImageTools, ...pluginTools, ...planTools]
-    .map((tool) => capExternalToolSchema(tool, (name) => capped.push(name)))
+    .map((tool) => capExternalToolSchema(tool, (cap) => capped.push(cap)))
     .map(withReason).map(gateDeniedTools).map(gatePermissions).map(stripReason);
   if (capped.length > 0) {
     logger('brain-tools').warn(
-      `parameter schema omitted for ${capped.length} external tool(s) over ${MAX_EXTERNAL_TOOL_BYTES} bytes: `
-      + `${capped.join(', ')} — the model is told to pass the arguments the server documents`,
+      `bounded ${capped.length} externally authored tool definition(s): `
+      + capped.map((c) => `${c.name} (${c.bytes} bytes, ${c.schemaOmitted ? 'schema omitted' : 'description shortened'})`).join(', '),
     );
   }
   return tools;
