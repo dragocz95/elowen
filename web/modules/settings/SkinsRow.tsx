@@ -7,6 +7,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { SettingsRow } from '../../components/ui/SettingsSurface';
 import { Button } from '../../components/ui/Button';
+import { ROW_TRIGGER_CLASS } from '../../components/ui/RowPicker';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SKINS, skinDisplayName, type SkinName } from '../../lib/skins';
 
@@ -74,7 +75,7 @@ export function SkinsRow() {
             // and it addresses `[data-row-picker]` — without it this one control kept full padding while
             // every other picker in the same column gave it up, and its label truncated instead.
             data-row-picker
-            className="w-full justify-between font-normal"
+            className={ROW_TRIGGER_CLASS}
           >
             <span className="min-w-0 truncate text-left">
               {chosen.length ? t.managePicker.selectedCount.replace('{n}', String(chosen.length)) : t.settings.skins.none}

@@ -167,7 +167,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       actions={testButton}
       control={embeddingProviders.length > 0
         ? <ChoiceField title={t.memory.embeddingProvider} options={embeddingProviders.map((p) => ({ value: p.id, label: p.label }))} value={embProvider} onChange={setEmbProvider} picker="always" />
-        : <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />}
+        : <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} />}
     />
   );
   const rowEmbModel = (
@@ -175,7 +175,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       label={t.memory.embeddingModel}
       description={t.help.embeddingIntro}
       icon={Boxes}
-      control={<ModelCatalogField value={embModel} onChange={setEmbModel} catalog={embCatalog} title={t.memory.embeddingModel} subtitle={t.help.embeddingIntro} variant="line" />}
+      control={<ModelCatalogField value={embModel} onChange={setEmbModel} catalog={embCatalog} title={t.memory.embeddingModel} subtitle={t.help.embeddingIntro} />}
     />
   );
   const rowEmbCustom = (
@@ -183,7 +183,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       label={t.memory.embeddingModelCustom}
       description={t.help.embeddingModelCustom}
       icon={PenLine}
-      control={<Input aria-label={t.memory.embeddingModelCustom} value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" variant="line" />}
+      control={<Input aria-label={t.memory.embeddingModelCustom} value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" />}
     />
   );
   const rowDimensions = (
@@ -199,8 +199,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
           value={dimensions}
           onChange={(e) => setDimensions(e.target.value)}
           placeholder="1536"
-          className="max-w-40 font-mono"
-          variant="line"
+          className="font-mono"
         />
       )}
     />
@@ -233,7 +232,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       status={catBadge}
       control={providers.length > 0
         ? <ChoiceField title={t.categorization.providerLabel} options={providers.map((p) => ({ value: p.id, label: p.label }))} value={catProvider} onChange={setCatProvider} picker="always" />
-        : <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />}
+        : <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} />}
     />
   );
   const rowCatModel = (
@@ -241,7 +240,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       label={t.categorization.modelLabel}
       description={t.help.categorizationIntro}
       icon={Tags}
-      control={<ModelCatalogField value={catModel ?? ''} onChange={(v) => setCatModel(v || null)} catalog={catCatalog} title={t.categorization.modelLabel} subtitle={t.help.categorizationIntro} variant="line" />}
+      control={<ModelCatalogField value={catModel ?? ''} onChange={(v) => setCatModel(v || null)} catalog={catCatalog} title={t.categorization.modelLabel} subtitle={t.help.categorizationIntro} />}
     />
   );
   const rowReclassify = (

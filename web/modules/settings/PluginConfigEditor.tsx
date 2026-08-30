@@ -12,7 +12,7 @@ import { HelpTip } from '../../components/ui/HelpTip';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
-import { RowPicker } from '../../components/ui/RowPicker';
+import { RowPicker, ROW_TRIGGER_CLASS } from '../../components/ui/RowPicker';
 import { Toggle } from '../../components/ui/Toggle';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -87,7 +87,7 @@ function RowMultiPicker({ label, hint, items, value, onChange, groupIcons }: {
         aria-expanded={open}
         onClick={() => setOpen(true)}
         data-row-picker
-        className="w-full justify-between font-normal"
+        className={ROW_TRIGGER_CLASS}
       >
         <span className="min-w-0 truncate text-left">{value.length ? countText(value.length) : t.managePicker.none}</span>
         <ChevronDown size={14} aria-hidden className="opacity-60" />
@@ -190,7 +190,7 @@ function TimezoneField({ label, hint, value, onChange }: { label: string; hint?:
         aria-expanded={open || customOpen}
         onClick={() => setOpen(true)}
         data-row-picker
-        className="w-full justify-between font-normal"
+        className={ROW_TRIGGER_CLASS}
       >
         <span className="min-w-0 truncate text-left">{summary}</span>
         <ChevronDown size={14} aria-hidden className="opacity-60" />
@@ -605,7 +605,7 @@ function ModalFieldRow({ label, description, hint, status, summary, fillsModal, 
             aria-expanded={open}
             onClick={() => setOpen(true)}
             data-row-picker
-            className="w-full justify-between font-normal"
+            className={ROW_TRIGGER_CLASS}
           >
             <span className="min-w-0 truncate text-left">{summary}</span>
             <Pencil size={14} aria-hidden className="opacity-60" />

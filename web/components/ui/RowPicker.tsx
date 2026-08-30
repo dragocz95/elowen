@@ -22,6 +22,17 @@ import { ManageSelectionModal, type ManageSelectionItem } from './ManageSelectio
  *  otherwise offer a screen reader a column of unrelated model names. `aria-haspopup="dialog"` and
  *  `aria-expanded` say what pressing it does. Focus returns here on close through the modal's own
  *  `restoreFocus`, since the dialog is mounted on open rather than opened from a Radix trigger. */
+/** The surface a picker trigger wears inside a settings record.
+ *
+ *  The height is the point. A record's controls share ONE height with `Input` and `SelectTrigger` — both
+ *  `h-9` — so a card mixing a model picker with a text field reads as one ruled table. Button's own `sm`
+ *  size is `h-8`, which is what put the Memory card's pickers 4px shorter than the inputs beside them.
+ *
+ *  It is exported because three field types in `PluginConfigEditor` and the skins row build their own
+ *  trigger around the same `ManageSelectionModal` rather than around this component. Each had copied the
+ *  class string by hand, and a copied string is exactly how the heights drifted apart. */
+export const ROW_TRIGGER_CLASS = 'h-9 w-full justify-between font-normal';
+
 export function RowPicker({ label, summary, icon, title, subtitle, items, value, onChange, groupIcons, emptySelectionHint, variant = 'outline', className = '' }: {
   /** Accessible name of the trigger — what the record is choosing, not what is currently chosen. */
   label: string;
@@ -54,7 +65,7 @@ export function RowPicker({ label, summary, icon, title, subtitle, items, value,
         aria-expanded={open}
         onClick={() => setOpen(true)}
         data-row-picker
-        className={`w-full justify-between font-normal ${className}`}
+        className={`${ROW_TRIGGER_CLASS} ${className}`}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           {icon ? <span aria-hidden className="flex shrink-0">{icon}</span> : null}
