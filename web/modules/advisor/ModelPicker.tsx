@@ -40,12 +40,15 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
           <button
             type="button"
             title={label}
+            // Deliberately NOT aria-labelled: the trigger is named by its qualified model so a user with
+            // several chat panes open can tell which model each one is on. Radix supplies
+            // aria-haspopup/aria-expanded here, and tests/modules/ModelPicker.test.tsx pins the name.
             className={`flex items-center gap-1.5 rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
               variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[220px] px-2.5 text-xs'
             }`}
           >
             <span className="truncate font-mono">{label}</span>
-            <ChevronDown size={variant === 'compact' ? 12 : 14} className="shrink-0" aria-hidden />
+            <ChevronDown size={variant === 'compact' ? 12 : 14} className="shrink-0 opacity-60" aria-hidden />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent

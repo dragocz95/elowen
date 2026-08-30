@@ -43,11 +43,11 @@ export function DateRangeFilter({ value, onChange, compact = false, presets = DE
           // The shared picker-trigger surface, so this control cannot drift from the Select and the
           // project filter it sits beside. `w-auto` because a filter is sized by its label, not by its
           // column, and `inline-flex` because it sits in a wrapping toolbar row.
-          className={cn(selectTriggerVariants(), 'inline-flex w-auto font-medium focus-visible:ring-2 focus-visible:ring-ring')}
+          className={cn(selectTriggerVariants(), 'inline-flex w-auto')}
         >
-          <CalendarDays size={compact ? 13 : 14} aria-hidden className="text-muted-foreground" />
+          <CalendarDays size={14} aria-hidden className="text-muted-foreground" />
           <span className={`${compact ? 'max-w-36' : 'max-w-[14rem]'} truncate`}>{label}</span>
-          <ChevronDown size={compact ? 13 : 14} aria-hidden className="text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+          <ChevronDown size={14} aria-hidden className="shrink-0 opacity-60 transition-transform group-data-[state=open]:rotate-180" />
         </button>
       </PopoverTrigger>
 

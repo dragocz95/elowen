@@ -20,13 +20,20 @@ export interface SelectMenuOption<T extends string = string> {
  * `window.ElowenUiRuntime.components`, so its props are a published contract and did not change with
  * the port.
  */
-export function SelectMenu<T extends string>({ id, value, onChange, options, label, variant = 'default', className = '' }: {
+export function SelectMenu<T extends string>({ id, value, onChange, options, label, variant = 'default', disabled = false, invalid = false, className = '' }: {
   id?: string;
   value: T;
   onChange: (value: T) => void;
   options: SelectMenuOption<T>[];
   label: string;
   variant?: 'default' | 'line';
+  /** Locks the control while a mutation is in flight. Callers were already passing this — the msteams
+   *  account picker among them — and it was silently dropped, leaving the select interactive during the
+   *  save it had just triggered. */
+  disabled?: boolean;
+  /** Marks the current value as rejected. Surfaces as `aria-invalid`, which the trigger styles the same
+   *  way `Input` does, so a bad select and a bad text field read alike. */
+  invalid?: boolean;
   className?: string;
 }) {
   const selected = options.find((option) => option.value === value) ?? options[0];
@@ -39,8 +46,8 @@ export function SelectMenu<T extends string>({ id, value, onChange, options, lab
     // the pre-port component had, and restoring it keeps `min-w-[9.5rem]` in a toolbar and full width
     // in a form behaving exactly as they did.
     <div className={`min-w-0${className ? ` ${className}` : ''}`}>
-    <Select value={value} onValueChange={(next) => onChange(next as T)}>
-      <SelectTrigger id={id} aria-label={label} variant={variant}>
+    <Select value={value} onValueChange={(next) => onChange(next as T)} disabled={disabled}>
+      <SelectTrigger id={id} aria-label={label} variant={variant} aria-invalid={invalid || undefined}>
         {selected?.icon ? <span className="flex shrink-0 text-primary" aria-hidden>{selected.icon}</span> : null}
         <span className="min-w-0 flex-1 truncate text-left">{selected?.label ?? ''}</span>
       </SelectTrigger>

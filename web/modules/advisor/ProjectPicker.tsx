@@ -108,13 +108,14 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
             disabled={moving || !ready}
             title={cwd ? `${t.brainChat.projectPicker}: ${cwd}` : t.brainChat.projectPicker}
             aria-disabled={!ready}
-            className={`flex items-center gap-1.5 rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 ${
+            // Named by its current project, for the same reason as ModelPicker's twin trigger next to it.
+            className={`flex items-center gap-1.5 rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40 ${
               variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[200px] px-2.5 text-xs'
             }`}
           >
             {current ? <ProjectIcon project={current} size={variant === 'compact' ? 12 : 14} /> : null}
             <span className="truncate">{label}</span>
-            <ChevronDown size={variant === 'compact' ? 12 : 14} className="shrink-0" aria-hidden />
+            <ChevronDown size={variant === 'compact' ? 12 : 14} className="shrink-0 opacity-60" aria-hidden />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent

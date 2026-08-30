@@ -92,4 +92,28 @@ describe('SelectMenu', () => {
     expect(trigger).not.toHaveClass('min-w-[9.5rem]');
     expect(trigger.parentElement).toHaveClass('min-w-[9.5rem]');
   });
+
+  /** `disabled` was accepted by callers and dropped on the floor: the msteams account picker passes it
+   *  while its link mutation is in flight, and the control stayed openable throughout that save. The
+   *  prop is part of the published plugin ABI, so a bundle passing it has to actually lock the trigger. */
+  it('locks the trigger while disabled, and does not open on a keystroke', () => {
+    const onChange = vi.fn();
+    render(<SelectMenu value="one" onChange={onChange} options={options} label="Choice" disabled />);
+    const trigger = screen.getByRole('combobox', { name: 'Choice' });
+
+    expect(trigger).toBeDisabled();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  /** A rejected value has to read the same on a select as on a text field, which marks itself with
+   *  `aria-invalid` and is styled off that attribute rather than off a bespoke class. */
+  it('marks a rejected value with aria-invalid, and leaves a good one unmarked', () => {
+    const { rerender } = render(<SelectMenu value="one" onChange={vi.fn()} options={options} label="Choice" />);
+    expect(screen.getByRole('combobox', { name: 'Choice' })).not.toHaveAttribute('aria-invalid');
+
+    rerender(<SelectMenu value="one" onChange={vi.fn()} options={options} label="Choice" invalid />);
+    expect(screen.getByRole('combobox', { name: 'Choice' })).toHaveAttribute('aria-invalid', 'true');
+  });
 });

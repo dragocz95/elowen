@@ -46,11 +46,11 @@ export function ProjectFilterPills({ value, onChange, includeAll = true, variant
             aria-label={t.common.filterProjectsAria}
             // The shared picker-trigger surface — see `selectTriggerVariants`. `max-w-full` on top of
             // it because a long project slug must fold inside the toolbar rather than widen it.
-            className={cn(selectTriggerVariants(), 'inline-flex w-auto max-w-full font-medium focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(selectTriggerVariants(), 'inline-flex w-auto max-w-full')}
           >
-            <FolderGit2 size={13} className="shrink-0 text-primary" aria-hidden />
+            <FolderGit2 size={14} className="shrink-0 text-primary" aria-hidden />
             <span className="max-w-32 truncate">{selected?.slug ?? t.common.filterAllProjects}</span>
-            <ChevronDown size={13} className="shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" aria-hidden />
+            <ChevronDown size={14} className="shrink-0 opacity-60 transition-transform group-data-[state=open]:rotate-180" aria-hidden />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent aria-label={t.common.filterProjectsAria} align="start" sideOffset={8} className="w-64 origin-top-left">

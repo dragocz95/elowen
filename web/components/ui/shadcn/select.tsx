@@ -47,7 +47,7 @@ function SelectValue({ ...props }: React.ComponentProps<typeof SelectPrimitive.V
  *  but tied a ring to the channel-triple token that exists for SHADOWS and glows, with nothing saying
  *  why a control's ring resolved through the brand rather than through `ring`. */
 export const selectTriggerVariants = cva(
-  'group flex h-9 w-full min-w-0 items-center gap-2 text-sm transition-[border-color,background-color,box-shadow] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
+  'group flex h-9 w-full min-w-0 items-center gap-2 text-sm transition-[border-color,background-color,box-shadow] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 aria-invalid:border-destructive aria-invalid:ring-[3px] aria-invalid:ring-destructive/20',
   {
     variants: {
       variant: {
@@ -74,11 +74,16 @@ function SelectTrigger({
       {...props}
     >
       {children}
+      {/* Same glyph as the picker trigger's — `size={14}` at `opacity-60` (see ROW_TRIGGER_CLASS's
+          neighbours in RowPicker). A record can hold a Radix select and a modal picker in adjacent rows,
+          and a 13px chevron beside a 14px one reads as a rendering fault rather than as two controls.
+          The rotation stays: this listbox opens in place, so the trigger genuinely carries an open state,
+          which the modal picker's trigger does not. */}
       <SelectPrimitive.Icon asChild>
         <ChevronDown
-          size={13}
+          size={14}
           aria-hidden
-          className="shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
+          className="shrink-0 opacity-60 transition-transform group-data-[state=open]:rotate-180"
         />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
