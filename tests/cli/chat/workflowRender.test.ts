@@ -103,13 +103,13 @@ describe('workflow CLI rendering', () => {
     const bare = new WorkflowPanel();
     bare.set([WF]);
     bare.setMaxRows(4);
-    expect(strip(bare.render(46)[1]!)).not.toContain('⎇');
+    expect(strip(bare.render(46)[1]!)).not.toContain('[S]');
 
     const sandboxed = new WorkflowPanel();
     sandboxed.set([{ ...WF, workspaceRef: { workspaceId: 'ws_abc123', projectId: 1 } }]);
     sandboxed.setMaxRows(4);
     const lines = sandboxed.render(46);
-    expect(strip(lines[1]!)).toContain('⎇');
+    expect(strip(lines[1]!)).toContain('[S]');
     // The glyph's carve-out must keep every row inside its requested width, even at the panel's narrowest.
     for (const width of [36, 46, 80]) {
       const p = new WorkflowPanel();
@@ -165,18 +165,18 @@ describe('workflow canvas modal', () => {
       nodes: WF.nodes.map((n) => (n.id === 'analyze' ? { ...n, workspaceRef: { workspaceId: 'ws_abc123', projectId: 1 } } : n)),
     };
     // Full canvas (>= MIN_CANVAS_BODY): the running/selected node starts full and shows the glyph in its
-    // card meta row; the dock repeats it as "⎇ sandboxed" so it survives even a compact (non-selected) card.
+    // card meta row; the dock repeats it as "[S] sandboxed" so it survives even a compact (non-selected) card.
     const { modal: canvas } = openModal(() => sandboxedWf);
     const canvasFlat = strip(canvas.render(96).join('\n'));
     show('modal — sandboxed node (canvas)', canvas.render(96));
-    expect(canvasFlat).toContain('⎇');
+    expect(canvasFlat).toContain('[S]');
 
     // Narrow terminal: the same DAG falls back to the wave-grouped list — the glyph must not disappear
     // with the geometry.
     const { modal: list } = openModal(() => sandboxedWf, { columns: 60, rows: 40 });
     const listFlat = strip(list.render(60).join('\n'));
     show('modal — sandboxed node (list fallback)', list.render(60));
-    expect(listFlat).toContain('⎇');
+    expect(listFlat).toContain('[S]');
   });
 
   it('navigates waves with ←→ and the column with ↑↓, clamped at the edges', () => {

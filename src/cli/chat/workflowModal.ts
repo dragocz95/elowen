@@ -229,7 +229,7 @@ class WorkflowModal implements Component, Focusable {
       const selected = node.id === this.selectedId;
       if (selected) selectedRow = rows.length;
       const meta = [
-        node.workspaceRef ? '⎇' : '',
+        node.workspaceRef ? '[S]' : '',
         node.tokens !== undefined ? `${formatK(node.tokens)} tok` : '',
         this.seconds(node, now) !== undefined ? formatDuration(this.seconds(node, now)!) : '',
       ].filter(Boolean).join(' · ');
@@ -261,7 +261,7 @@ class WorkflowModal implements Component, Focusable {
       node.model ? `${color.faint('model ')}${color.text(terminalInlineText(node.model))}` : '',
       secs !== undefined ? color.text(formatDuration(secs)) : '',
       `${color.faint('deps ')}${color.text(terminalInlineText(node.deps.join(', ')) || 'root')}`,
-      node.workspaceRef ? color.faint('⎇ sandboxed') : '',
+      node.workspaceRef ? color.faint('[S] sandboxed') : '',
     ].filter(Boolean).join(color.faint('  ·  '));
     const outcome = node.status === 'running' ? color.accent(`▸ ${terminalInlineText(node.detail ?? 'working…')}`)
       : node.status === 'done' ? color.dim(`▸ ${firstLine(node.result ?? '') || 'no output reported'}`)

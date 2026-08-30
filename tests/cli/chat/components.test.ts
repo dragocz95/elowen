@@ -503,8 +503,8 @@ describe('SubagentPanel', () => {
     const p = new SubagentPanel();
     p.set([running, sandboxed]);
     const lines = p.render(80).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
-    expect(lines[1]).not.toContain('⎇');
-    expect(lines[2]).toContain('⎇');
+    expect(lines[1]).not.toContain('[S]');
+    expect(lines[2]).toContain('[S]');
 
     // The glyph's 2-col carve-out must keep every row inside its requested width even at the panel's
     // narrowest — the mutation this guards is dropping the carve-out and letting a sandboxed row overflow.

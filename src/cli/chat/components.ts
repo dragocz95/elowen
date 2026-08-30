@@ -155,7 +155,7 @@ export interface SubagentPanelEntry {
   background?: boolean;
   autoDeliver?: boolean;
   resultDelivery?: 'pending' | 'acknowledged';
-  /** Sandbox workspace the child was confined to — drives the `⎇` sandboxed-run glyph on this row. */
+  /** Sandbox workspace the child was confined to — drives the `[S]` sandboxed-run marker on this row. */
   workspaceId?: string;
 }
 
@@ -231,12 +231,12 @@ export class SubagentPanel implements Component {
       // the highlight background early (SGR has no stack), so strip SGR here to keep these strings truly
       // plain — the contract the coloured branches below rely on.
       let metaPlain = stripSgr(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
-      // The sandbox glyph (`⎇ `, 2 cols) is carved out of the task budget up front so a workspace-scoped
-      // row keeps the same overall width as an unscoped one instead of overflowing by two columns.
-      const sandboxBudget = e.workspaceId ? 2 : 0;
+      // The terminal-safe sandbox marker (`[S] `, 4 cols) is carved out of the task budget up front so a
+      // workspace-scoped row keeps the same overall width as an unscoped one instead of overflowing.
+      const sandboxBudget = e.workspaceId ? 4 : 0;
       const taskPlain = stripSgr(truncateToWidth(inlineText(e.task), Math.max(10, width - visibleWidth(metaPlain) - 12 - sandboxBudget), '…'));
       const iconPlain = e.status === 'running' ? '●' : e.status === 'done' ? '✓' : '✗';
-      const sandboxGlyphPlain = e.workspaceId ? '⎇ ' : '';
+      const sandboxGlyphPlain = e.workspaceId ? '[S] ' : '';
       const rowPlain = `    ${iconPlain} ${sandboxGlyphPlain}${taskPlain} click`;
       let gap = width - visibleWidth(rowPlain) - visibleWidth(metaPlain) - 2;
       if (gap < 1) {
@@ -253,7 +253,7 @@ export class SubagentPanel implements Component {
         continue;
       }
       const icon = e.status === 'running' ? color.warning('●') : e.status === 'done' ? color.success('✓') : color.error('✗');
-      const sandboxGlyph = e.workspaceId ? `${color.faint('⎇')} ` : '';
+      const sandboxGlyph = e.workspaceId ? `${color.faint('[S]')} ` : '';
       lines.push(`    ${icon} ${sandboxGlyph}${DIM(taskPlain)} ${FAINTC('click')}${' '.repeat(gap)}${FAINTC(metaPlain)}`);
     }
     // A clickable pager row makes the hidden overflow discoverable (the wheel alone was invisible). It
@@ -350,10 +350,10 @@ export class WorkflowPanel implements Component {
         ...(c.error ? [color.error(`${c.error}✗`)] : []),
       ].join(' ');
       let meta = [tally, c.tokens ? FAINTC(`${formatK(c.tokens)} tok`) : ''].filter(Boolean).join('  ');
-      // Same 2-col carve-out as SubagentPanel's `⎇ ` glyph, kept out of the title budget so a
+      // Same 4-col carve-out as SubagentPanel's `[S] ` marker, kept out of the title budget so a
       // workspace-scoped workflow row stays the same overall width as an unscoped one.
-      const sandboxGlyph = w.workspaceRef ? `${color.faint('⎇')} ` : '';
-      const title = DIM(truncateToWidth(inlineText(workflowTitle(w)), Math.max(10, width - visibleWidth(meta) - 12 - (w.workspaceRef ? 2 : 0)), '…'));
+      const sandboxGlyph = w.workspaceRef ? `${color.faint('[S]')} ` : '';
+      const title = DIM(truncateToWidth(inlineText(workflowTitle(w)), Math.max(10, width - visibleWidth(meta) - 12 - (w.workspaceRef ? 4 : 0)), '…'));
       const row = `    ${color.accent('⛓')} ${sandboxGlyph}${title} ${FAINTC('click')}`;
       let gap = width - visibleWidth(row) - visibleWidth(meta) - 2;
       if (gap < 1) {
