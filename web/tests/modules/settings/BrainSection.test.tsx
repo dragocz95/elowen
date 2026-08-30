@@ -105,7 +105,9 @@ import { BrainSection, modelPickerItems } from '../../../modules/settings/BrainS
 const renderSection = () => render(<ToastProvider><BrainSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
 
 beforeEach(() => {
-  saveProviders.mockClear(); disconnect.mockClear(); updateConfig.mockClear();
+  saveProviders.mockReset();
+  saveProviders.mockImplementation((_providers, options) => options?.onSuccess?.());
+  disconnect.mockClear(); updateConfig.mockClear();
   oauthRefetch.mockClear(); rateLimitsRefetch.mockClear();
   oauthFlowMocks.start.mockClear(); oauthFlowMocks.flow.mockClear(); oauthFlowMocks.pending.resolve = null;
   probeMock.probe.mockClear(); probeMock.pending.length = 0;
@@ -258,6 +260,76 @@ describe('BrainSection — OAuth account model picker', () => {
     fireEvent.click(screen.getByRole('button', { name: `${en.managePicker.manage}: ${en.brain.models}` }));
     expect(await screen.findByRole('button', { name: 'new-model' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'old-model' })).toBeNull();
+  });
+
+  it('uses the optional temperature slider in the provider form and preserves zero', () => {
+    renderSection();
+    fireEvent.click(screen.getByRole('button', { name: en.brain.addProvider }));
+    fireEvent.click(screen.getByRole('radio', { name: en.brain.types.anthropic }));
+    fireEvent.change(screen.getByPlaceholderText('CoreSynth Proxy'), { target: { value: 'Anthropic direct' } });
+
+    expect(screen.queryByRole('spinbutton')).toBeNull();
+    fireEvent.click(screen.getByRole('switch', { name: en.brain.compatibility.temperatureOverride }));
+    const slider = screen.getByRole('slider', { name: en.brain.temperature });
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(slider).toHaveAttribute('aria-valuetext', '0.8');
+    fireEvent.keyDown(slider, { key: 'Home' });
+    expect(slider).toHaveAttribute('aria-valuetext', '0.0');
+
+    fireEvent.click(screen.getByRole('button', { name: en.common.save }));
+    const payload = saveProviders.mock.calls.at(-1)![0] as { label: string; temperature?: number }[];
+    expect(payload).toContainEqual(expect.objectContaining({ label: 'Anthropic direct', temperature: 0 }));
+  });
+
+  it('keeps the complete provider draft open after a failed save and blocks duplicate submits', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let saveOptions: { onError?: () => void } | undefined;
+    saveProviders.mockImplementation((_providers, options) => { saveOptions = options; });
+    renderSection();
+    fireEvent.click(screen.getByRole('button', { name: en.brain.addProvider }));
+
+    fireEvent.change(screen.getByPlaceholderText('CoreSynth Proxy'), { target: { value: 'Failure relay' } });
+    fireEvent.change(screen.getByPlaceholderText('sk-…'), { target: { value: 'secret-token' } });
+    fireEvent.change(screen.getByRole('textbox', { name: en.brain.models }), { target: { value: 'model-a\nmodel-b' } });
+    fireEvent.click(screen.getByText(en.brain.compatibility.title).closest('button')!);
+    fireEvent.click(screen.getByRole('switch', { name: en.brain.compatibility.temperatureOverride }));
+    fireEvent.keyDown(screen.getByRole('slider', { name: en.brain.temperature }), { key: 'ArrowRight' });
+    fireEvent.click(screen.getByRole('switch', { name: en.brain.compatibility.supportsLongCacheRetention }));
+    fireEvent.click(screen.getByRole('button', { name: en.common.done }));
+
+    const endpoint = screen.getByPlaceholderText('https://ai.example.com/v1');
+    fireEvent.change(endpoint, { target: { value: 'https://relay.example/v1' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+    await act(async () => { probeFor('https://relay.example/v1')({ models: [] }); });
+
+    const saveButton = screen.getByRole('button', { name: en.common.save });
+    fireEvent.click(saveButton);
+    expect(saveProviders).toHaveBeenCalledTimes(1);
+    expect(saveButton).toBeDisabled();
+    fireEvent.click(saveButton);
+    expect(saveProviders).toHaveBeenCalledTimes(1);
+
+    await act(async () => { saveOptions?.onError?.(); });
+    expect(screen.getByRole('dialog', { name: en.brain.addProvider })).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Failure relay')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('https://relay.example/v1')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('secret-token')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: en.brain.models })).toHaveValue('model-a\nmodel-b');
+
+    fireEvent.click(screen.getByText(en.brain.compatibility.title).closest('button')!);
+    expect(screen.getByRole('switch', { name: en.brain.compatibility.supportsLongCacheRetention })).toBeChecked();
+    expect(screen.getByRole('slider', { name: en.brain.temperature })).toHaveAttribute('aria-valuetext', '0.8');
+    expect(screen.getByText(en.brain.providerSaveError)).toBeInTheDocument();
+  });
+
+  it('closes the provider form only after a successful save', async () => {
+    renderSection();
+    fireEvent.click(screen.getByRole('button', { name: en.brain.addProvider }));
+    fireEvent.click(screen.getByRole('radio', { name: en.brain.types.anthropic }));
+    fireEvent.change(screen.getByPlaceholderText('CoreSynth Proxy'), { target: { value: 'Saved provider' } });
+    fireEvent.click(screen.getByRole('button', { name: en.common.save }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: en.brain.addProvider })).toBeNull());
   });
 
   it('names the provider dialog for assistive technology', () => {

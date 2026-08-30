@@ -21,6 +21,7 @@ import { elowenClient } from '../../lib/elowenClient';
 import type { BrainProvider, BrainProviderCompatibility, BrainProviderType, OAuthFlowState, ElowenConfig } from '../../lib/types';
 import { SettingsGroup, SettingsRow, SettingsState } from '../../components/ui/SettingsSurface';
 import { DEFAULT_PROVIDER_COMPATIBILITY, ProviderCompatibilityModal, providerCompatibilityCustomCount } from './ProviderCompatibilityModal';
+import { OptionalTemperatureControl } from './OptionalTemperatureControl';
 import { DomainFavicon } from './providers';
 
 // UI-only icon slug per OAuth type. The daemon exposes the SUPPORTED type set (the keys of
@@ -194,8 +195,12 @@ function OAuthModelsModal({ type, initial, onSave, onClose }: {
 
 /** Add/edit dialog for one API-key provider entry (endpoint + key + models). OAuth accounts are NOT
  *  added here — they connect via the account cards above, where their model selection also lives. */
-function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
-  draft: Draft; existingIds: string[]; onSave: (d: Draft) => void; onClose: () => void;
+function ProviderModal({ draft: initial, existingIds, saving, onSave, onClose }: {
+  draft: Draft;
+  existingIds: string[];
+  saving: boolean;
+  onSave: (d: Draft) => void;
+  onClose: () => void;
 }) {
   const { t } = useTranslation();
   const [d, setD] = useState(initial);
@@ -237,7 +242,8 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
 
   return (
     <>
-    <Modal title={isNew ? t.brain.addProvider : t.brain.editProvider} icon={Server} size="md" onClose={onClose}>
+    <Modal title={isNew ? t.brain.addProvider : t.brain.editProvider} icon={Server} size="md" onClose={saving ? () => {} : onClose}>
+      <fieldset disabled={saving} className="contents">
       <ModalBody gap={4}>
         {/* The derived id and the "taken" verdict used to sit INSIDE the wrapping label, which put both
             into the input's accessible name. As the field's description and error they describe the
@@ -298,17 +304,13 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
             <ChevronRight size={16} className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" aria-hidden />
           </button>
         ) : (
-          <Field label={t.brain.temperature} hint={t.brain.temperatureHint}>
-            <Input
-              type="number"
-              min={0}
-              max={2}
-              step={0.1}
-              value={d.temperature}
-              onChange={(e) => setD({ ...d, temperature: e.target.value })}
-              placeholder={t.brain.temperaturePlaceholder}
-            />
-          </Field>
+          <OptionalTemperatureControl
+            value={d.temperature}
+            onChange={(temperature) => setD({ ...d, temperature })}
+            label={t.brain.temperature}
+            hint={t.brain.temperatureHint}
+            toggleLabel={t.brain.compatibility.temperatureOverride}
+          />
         )}
         <Field label={t.brain.models} hint={Array.isArray(probed) ? t.brain.modelsHintPicker : d.type === 'openai' ? t.brain.modelsHintAuto : t.brain.modelsHint}>
           {probed === 'loading' ? (
@@ -349,9 +351,18 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
         </Field>
       </ModalBody>
       <ModalFooter>
-        <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
-        <Button variant="accent" icon={Check} disabled={!valid} onClick={() => onSave({ ...d, id })}>{t.common.save}</Button>
+        <Button variant="ghost" disabled={saving} onClick={onClose}>{t.common.cancel}</Button>
+        <Button
+          variant="accent"
+          icon={Check}
+          disabled={!valid || saving}
+          aria-busy={saving}
+          onClick={() => onSave({ ...d, id })}
+        >
+          {t.common.save}
+        </Button>
       </ModalFooter>
+      </fieldset>
     </Modal>
     {compatibilityOpen ? (
       <ProviderCompatibilityModal
@@ -376,6 +387,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
   const { toast } = useToast();
   const { t } = useTranslation();
   const [modal, setModal] = useState<Draft | null>(null);
+  const [providerSavePending, setProviderSavePending] = useState(false);
   const [flow, setFlow] = useState<OAuthFlowState | null>(null);
   const [modelsFor, setModelsFor] = useState<BrainProviderType | null>(null);
   const updateConfig = useUpdateConfig();
@@ -436,6 +448,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
     });
 
   const upsert = (d: Draft) => {
+    if (providerSavePending) return;
     // Blank means "send no temperature", which is a real setting, not a missing one — so '' is omitted
     // rather than coerced to 0. Anything else must clear the same 0..2 bar the daemon enforces: without
     // this the value is POSTed, silently dropped server-side, and the operator is told it saved.
@@ -454,8 +467,21 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
       ...(temperature ? { temperature: parsed } : {}),
     };
     const keyless = providers.map(({ apiKeySet, ...p }) => p);
-    persist(keyless.some((p) => p.id === entry.id) ? keyless.map((p) => (p.id === entry.id ? entry : p)) : [...keyless, entry]);
-    setModal(null);
+    const next = keyless.some((p) => p.id === entry.id)
+      ? keyless.map((p) => (p.id === entry.id ? entry : p))
+      : [...keyless, entry];
+    setProviderSavePending(true);
+    save.mutate(next, {
+      onSuccess: () => {
+        setProviderSavePending(false);
+        setModal(null);
+        toast(t.brain.saved);
+      },
+      onError: () => {
+        setProviderSavePending(false);
+        toast(t.brain.providerSaveError, 'error');
+      },
+    });
   };
 
   const remove = (id: string) => persist(providers.filter((p) => p.id !== id).map(({ apiKeySet, ...p }) => p));
@@ -618,7 +644,15 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
         )}
       </SettingsGroup>
 
-      {modal ? <ProviderModal draft={modal} existingIds={providers.map((p) => p.id)} onSave={upsert} onClose={() => setModal(null)} /> : null}
+      {modal ? (
+        <ProviderModal
+          draft={modal}
+          existingIds={providers.map((p) => p.id)}
+          saving={providerSavePending}
+          onSave={upsert}
+          onClose={() => setModal(null)}
+        />
+      ) : null}
       {modelsFor ? (
         <OAuthModelsModal
           type={modelsFor}

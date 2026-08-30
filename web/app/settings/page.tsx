@@ -41,6 +41,7 @@ import { WorkspaceMetric, type WorkspaceHeroProps } from '../../components/ui/Wo
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { SettingsDocument, SettingsGroup, SettingsRow, SettingsState } from '../../components/ui/SettingsSurface';
 import { SkinsRow } from '../../modules/settings/SkinsRow';
+import { DaysPolicyEditor } from '../../modules/settings/DaysPolicyEditor';
 import { MotionReveal } from '../../components/ui/Motion';
 import { Modal, ModalBody } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -71,6 +72,9 @@ function formatUptime(totalSeconds: number): string {
 
 const CATEGORY_VALUES = SETTINGS_CATEGORY_VALUES;
 type Category = SettingsCategory;
+
+const TOKEN_TTL_PRESETS = [7, 30, 90, 365] as const;
+const SESSION_RETENTION_PRESETS = [7, 10, 30, 90] as const;
 
 /** A deck section id: a core category, or a plugin-contributed `plugin:<name>:<id>` section. Stored
  *  state validates by SHAPE (the plugin listing loads asynchronously); the listing then confirms a
@@ -192,16 +196,16 @@ export default function SettingsPage() {
   // The Elowen AI model whose context-window override is being edited (null = editor closed).
   const [ctxFor, setCtxFor] = useState<{ model: string; key: string; effective: number } | null>(null);
   const [defTokenTtl, setDefTokenTtl] = useState(30);
+  const [tokenTtlOpen, setTokenTtlOpen] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [pushContact, setPushContact] = useState('');
 
   // Conversation auto-cleanup: the daemon's hourly janitor deletes idle conversations older than N
-  // days. Off by default; it never touches running/active/channel sessions. Saved immediately
-  // (toggle) or on blur/Enter (days), clamped to >= 1, reverting an invalid draft. Persists
-  // independently of the token-TTL defaults autosave.
+  // days. Off by default; it never touches running/active/channel sessions. The row stays compact while
+  // the shared days editor lives in a drawer and persists independently of the token-TTL autosave.
   const retention = config.data?.sessionRetention ?? { enabled: false, days: 90 };
-  const [retentionDaysDraft, setRetentionDaysDraft] = useState('');
-  // The retention composite edits in a side drawer opened via its pod's orb (mirrors auto-compact).
+  const [retentionDays, setRetentionDays] = useState(90);
+  const [retentionDaysSaving, setRetentionDaysSaving] = useState(false);
   const [retentionOpen, setRetentionOpen] = useState(false);
 
   // Add / edit model modal state
@@ -231,9 +235,8 @@ export default function SettingsPage() {
     }
   }, [config.data]);
 
-  // The retention days field tracks the stored value directly (not the one-shot seed above), so an
-  // external change is reflected and an invalid draft can revert to the saved number.
-  useEffect(() => { setRetentionDaysDraft(String(retention.days)); }, [retention.days]);
+  // Track server-side retention changes while keeping a just-selected preset visible during its save.
+  useEffect(() => { setRetentionDays(retention.days); }, [retention.days]);
 
   // The run defaults (executor/autonomy/max sessions) moved to the agents plugin's settings deck;
   // only the token TTL stays with the core System section. autoUpdate is NOT bundled here — the
@@ -243,16 +246,26 @@ export default function SettingsPage() {
     catch (error) { toast(String(error), 'error'); throw error; }
   };
 
-  // Retention saves on its own (not bundled with the defaults autosave): the toggle persists
-  // immediately, the days field commits on blur/Enter and reverts an invalid (< 1) draft.
-  const saveRetention = async (next: { enabled?: boolean; days?: number }) => {
-    try { await update.mutateAsync({ sessionRetention: next }); }
-    catch { toast(t.settings.retention.saveError, 'error'); }
+  // Retention saves on its own (not bundled with the defaults autosave): the toggle and canonical day
+  // value persist immediately once the shared editor commits a preset or valid custom whole number.
+  const saveRetention = async (next: { enabled?: boolean; days?: number }): Promise<boolean> => {
+    try {
+      await update.mutateAsync({ sessionRetention: next });
+      return true;
+    } catch {
+      toast(t.settings.retention.saveError, 'error');
+      return false;
+    }
   };
-  const commitRetentionDays = () => {
-    const parsed = Math.floor(Number(retentionDaysDraft));
-    if (!Number.isFinite(parsed) || parsed < 1) { setRetentionDaysDraft(String(retention.days)); return; }
-    if (parsed !== retention.days) void saveRetention({ days: parsed });
+  const setRetentionPolicyDays = (days: number) => {
+    if (retentionDaysSaving) return;
+    const previous = retentionDays;
+    setRetentionDays(days);
+    setRetentionDaysSaving(true);
+    void saveRetention({ days }).then((saved) => {
+      if (!saved) setRetentionDays(previous);
+      setRetentionDaysSaving(false);
+    });
   };
 
   // Auto-persist: every settings form saves itself shortly after a change (no Save buttons anywhere).
@@ -733,28 +746,49 @@ export default function SettingsPage() {
                   label={t.settings.tokenTtl}
                   description={t.help.tokenTtl}
                   icon={KeyRound}
-                  control={<Input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} aria-label={t.settings.tokenTtl} />}
+                  status={<span className="whitespace-nowrap font-mono tabular-nums">{interpolate(t.settings.daysPolicy.value, { n: String(defTokenTtl) })}</span>}
+                  actions={(
+                    <Button variant="ghost" size="sm" icon={KeyRound} onClick={() => setTokenTtlOpen(true)}>
+                      {t.settings.tokenTtlEdit}
+                    </Button>
+                  )}
                 />
               );
-              // The row stays minimal (toggle + the current threshold); the full composite lives
-              // in the side drawer behind the manage button.
               const rowRetention = (
                 <SettingsRow
                   label={t.settings.retention.label}
                   description={t.settings.retention.hint}
                   icon={CalendarClock}
                   control={<Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />}
-                  status={retention.enabled ? <span className="whitespace-nowrap font-mono tabular-nums">{retention.days} {t.settings.retention.days}</span> : undefined}
+                  status={retention.enabled ? <span className="whitespace-nowrap font-mono tabular-nums">{interpolate(t.settings.daysPolicy.value, { n: String(retentionDays) })}</span> : undefined}
                   actions={(
                     <Button variant="ghost" size="sm" icon={CalendarClock} onClick={() => setRetentionOpen(true)}>
-                      {t.managePicker.manage}
+                      {t.settings.retention.edit}
                     </Button>
                   )}
                 />
               );
-              // The drawer is the shared dialog with its own description and body — the hint used to be
-              // repeated as a paragraph inside the scroll region, under a header that already had a slot
-              // for it, and the body carried a second helping of the padding `ModalBody` supplies.
+              const tokenTtlDrawer = tokenTtlOpen ? (
+                <Modal
+                  title={t.settings.tokenTtl}
+                  description={t.help.tokenTtl}
+                  icon={KeyRound}
+                  closeLabel={t.common.close}
+                  intent="inspect"
+                  size="sm"
+                  drawerWidth="default"
+                  onClose={() => setTokenTtlOpen(false)}
+                >
+                  <ModalBody>
+                    <DaysPolicyEditor
+                      value={defTokenTtl}
+                      presets={TOKEN_TTL_PRESETS}
+                      label={t.settings.tokenTtl}
+                      onCommit={setDefTokenTtl}
+                    />
+                  </ModalBody>
+                </Modal>
+              ) : null;
               const retentionDrawer = retentionOpen ? (
                 <Modal
                   title={t.settings.retention.label}
@@ -762,7 +796,7 @@ export default function SettingsPage() {
                   icon={CalendarClock}
                   closeLabel={t.common.close}
                   intent="inspect"
-                  size="md"
+                  size="sm"
                   drawerWidth="default"
                   onClose={() => setRetentionOpen(false)}
                 >
@@ -771,23 +805,14 @@ export default function SettingsPage() {
                       <span className="text-sm text-foreground">{t.settings.retention.label}</span>
                       <Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />
                     </div>
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-tiny font-semibold uppercase tracking-wide text-muted-foreground">{t.settings.retention.olderThan}</span>
-                      <div className="flex items-center gap-2">
-                        <Input
-                          type="number"
-                          min={1}
-                          value={retentionDaysDraft}
-                          disabled={!retention.enabled}
-                          onChange={(e) => setRetentionDaysDraft(e.target.value)}
-                          onBlur={commitRetentionDays}
-                          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                          className="w-24 text-center"
-                          aria-label={t.settings.retention.olderThan}
-                        />
-                        <span className="text-xs text-muted-foreground">{t.settings.retention.days}</span>
-                      </div>
-                    </div>
+                    <fieldset disabled={retentionDaysSaving} className="contents">
+                      <DaysPolicyEditor
+                        value={retentionDays}
+                        presets={SESSION_RETENTION_PRESETS}
+                        label={t.settings.retention.olderThan}
+                        onCommit={setRetentionPolicyDays}
+                      />
+                    </fieldset>
                   </ModalBody>
                 </Modal>
               ) : null;
@@ -813,6 +838,7 @@ export default function SettingsPage() {
                     {rowRetention}
                   </SettingsGroup>
                   {diagnosticsGroup}
+                  {tokenTtlDrawer}
                   {retentionDrawer}
                 </div>
               );

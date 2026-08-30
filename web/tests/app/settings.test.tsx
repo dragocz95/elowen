@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 vi.mock('next/navigation', () => ({ usePathname: () => '/settings', useSearchParams: () => new URLSearchParams(), useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }) }));
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
@@ -11,6 +11,7 @@ import { en } from '../../lib/i18n/dictionaries/en';
 import { formatBytes } from '../../lib/format';
 
 let putBody: unknown = null;
+let putBodies: unknown[] = [];
 const config = {
   allowedExecs: ['elowen:anthropic::opus'], customModels: [], providers: {},
   defaults: { exec: 'elowen:anthropic::opus', autonomy: 'L1', maxSessions: 1 },
@@ -36,9 +37,17 @@ const server = setupServer(
       { name: 'web-2026-08-29.log', source: 'web', bytes: 2_000, modifiedAt: 1 },
     ],
   })),
-  http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json(config); }),
+  http.put('*/api/config', async ({ request }) => {
+    putBody = await request.json();
+    putBodies.push(putBody);
+    return HttpResponse.json(config);
+  }),
 );
-beforeEach(() => localStorage.setItem('elowen.settings.category', 'models'));
+beforeEach(() => {
+  putBody = null;
+  putBodies = [];
+  localStorage.setItem('elowen.settings.category', 'models');
+});
 beforeAll(() => server.listen({ onUnhandledRequest }));
 afterEach(() => { server.resetHandlers(); localStorage.clear(); window.history.replaceState(null, '', '/settings'); });
 afterAll(() => server.close());
@@ -102,6 +111,104 @@ describe('SettingsPage', () => {
     putBody = null;
     fireEvent.click(screen.getByRole('switch', { name: en.settings.retention.label }));
     await waitFor(() => expect((putBody as { sessionRetention: { enabled: boolean } }).sessionRetention).toEqual({ enabled: true }));
+  });
+
+  it('keeps the policy rows compact and edits token TTL through canonical presets', async () => {
+    localStorage.setItem('elowen.settings.category', 'system');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'System' });
+
+    expect(screen.queryByRole('spinbutton')).toBeNull();
+    expect(screen.getByText('30 days')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: en.settings.tokenTtlEdit })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: en.settings.retention.edit })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: en.settings.tokenTtlEdit }));
+    const ttlDialog = screen.getByRole('dialog', { name: en.settings.tokenTtl });
+    expect(within(ttlDialog).getAllByRole('radio').map((radio) => radio.textContent)).toEqual([
+      '7 days', '30 days', '90 days', '365 days', en.settings.daysPolicy.custom,
+    ]);
+    fireEvent.click(within(ttlDialog).getByRole('radio', { name: '365 days' }));
+    await waitFor(() => expect(putBodies).toContainEqual(expect.objectContaining({ security: { tokenTtlDays: 365 } })));
+  });
+
+  it('saves retention presets and custom values from the shared days editor', async () => {
+    localStorage.setItem('elowen.settings.category', 'system');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'System' });
+
+    fireEvent.click(screen.getByRole('button', { name: en.settings.retention.edit }));
+    const retentionDialog = screen.getByRole('dialog', { name: en.settings.retention.label });
+    expect(within(retentionDialog).getAllByRole('radio').map((radio) => radio.textContent)).toEqual([
+      '7 days', '10 days', '30 days', '90 days', en.settings.daysPolicy.custom,
+    ]);
+    fireEvent.click(within(retentionDialog).getByRole('radio', { name: '30 days' }));
+    await waitFor(() => expect(putBodies).toContainEqual({ sessionRetention: { days: 30 } }));
+
+    fireEvent.click(screen.getByRole('radio', { name: en.settings.daysPolicy.custom }));
+    const custom = screen.getByRole('textbox', { name: `Custom duration for ${en.settings.retention.olderThan}` });
+    expect(custom).toHaveAccessibleDescription(en.settings.daysPolicy.days);
+    fireEvent.change(custom, { target: { value: '45' } });
+    fireEvent.blur(custom);
+    await waitFor(() => expect(putBodies).toContainEqual({ sessionRetention: { days: 45 } }));
+
+    fireEvent.change(custom, { target: { value: '60' } });
+    fireEvent.keyDown(custom, { key: 'Enter' });
+    await waitFor(() => expect(putBodies).toContainEqual({ sessionRetention: { days: 60 } }));
+  });
+
+  it('restores an invalid custom day value without saving it', async () => {
+    localStorage.setItem('elowen.settings.category', 'system');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'System' });
+    fireEvent.click(screen.getByRole('button', { name: en.settings.tokenTtlEdit }));
+    fireEvent.click(screen.getByRole('radio', { name: en.settings.daysPolicy.custom }));
+    const custom = screen.getByRole('textbox', { name: `Custom duration for ${en.settings.tokenTtl}` });
+
+    fireEvent.change(custom, { target: { value: '45' } });
+    fireEvent.blur(custom);
+    await waitFor(() => expect(putBodies).toContainEqual(expect.objectContaining({ security: { tokenTtlDays: 45 } })));
+    const callsAfterValid = putBodies.length;
+
+    fireEvent.change(custom, { target: { value: '' } });
+    fireEvent.blur(custom);
+    expect(custom).toHaveValue('45');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(putBodies).toHaveLength(callsAfterValid);
+  });
+
+  it('serializes retention saves, restores a failure and allows retry', async () => {
+    let attempts = 0;
+    let failFirst: (() => void) | undefined;
+    server.use(http.put('*/api/config', async ({ request }) => {
+      const body = await request.json() as { sessionRetention?: { days?: number } };
+      if (body.sessionRetention?.days !== undefined) attempts += 1;
+      if (attempts === 1) {
+        return new Promise<Response>((resolve) => {
+          failFirst = () => resolve(HttpResponse.json({ error: 'save failed' }, { status: 500 }));
+        });
+      }
+      return HttpResponse.json({ ...config, sessionRetention: { enabled: false, days: body.sessionRetention?.days ?? 90 } });
+    }));
+    localStorage.setItem('elowen.settings.category', 'system');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'System' });
+    fireEvent.click(screen.getByRole('button', { name: en.settings.retention.edit }));
+    const dialog = screen.getByRole('dialog', { name: en.settings.retention.label });
+
+    fireEvent.click(within(dialog).getByRole('radio', { name: '30 days' }));
+    await waitFor(() => expect(within(dialog).getByRole('radio', { name: '7 days' })).toBeDisabled());
+    fireEvent.click(within(dialog).getByRole('radio', { name: '7 days' }));
+    expect(attempts).toBe(1);
+
+    await act(async () => { failFirst?.(); });
+    await waitFor(() => expect(within(dialog).getByRole('radio', { name: '90 days' })).toHaveAttribute('aria-checked', 'true'));
+    fireEvent.click(within(dialog).getByRole('radio', { name: '30 days' }));
+    await waitFor(() => expect(attempts).toBe(2));
   });
 
   it('falls back to System for a stale moved-section deep-link', async () => {
