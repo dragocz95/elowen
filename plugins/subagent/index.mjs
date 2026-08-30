@@ -157,6 +157,13 @@ const buildCollectReminder = (finished, stillRunning) => {
   return `${parts.join('\n')}\n`;
 };
 
+const buildNestedCollectReminder = (status) => '<system-reminder>\n'
+  + `<nested-subagents status="${xmlEscape(status)}" />\n`
+  + '<instruction>Your own background sub-agents have not produced an integrated result yet. The outer '
+  + 'delegation is deliberately still open. Do not report this delegated task as complete: keep waiting, '
+  + 'stop only work that is genuinely no longer needed, or state a concrete blocker that makes completion '
+  + 'impossible.</instruction>\n</system-reminder>\n';
+
 export function register(ctx) {
   let run = null; // the host's channel handler, captured on connect
   // One operator knob covers a background job and a workflow alike — see lib/retention.mjs.
@@ -564,11 +571,13 @@ export function register(ctx) {
       // Distil the child's live stream into progress updates: which tool it runs, how many so far, its
       // token spend. Low-frequency events only (tool starts + step boundaries) — text deltas are ignored.
       let lastActivityAt = Date.now();
+      let nestedWorkSeen = false;
       const onEvent = (e) => {
         lastActivityAt = Date.now();
         if (e.type === 'session' && e.sessionId) { state.sessionId = e.sessionId; push('running'); }
         else if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = e.detail ? `${e.name} ${e.detail}` : e.name; push('running'); }
         else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
+        else if ((e.type === 'subagent' || e.type === 'workflow') && e.status === 'running') nestedWorkSeen = true;
       };
       const collectSource = { platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access };
       // See lib/stall.mjs. Aborting the child session is what unblocks the awaited run() — the rejection
@@ -589,6 +598,22 @@ export function register(ctx) {
         const stallTimer = watchForStall();
         try {
           let raw = await run(collectSource, p.task, onEvent);
+          // A delegated parent that launches ITS OWN background sub-agents is not done when its first model
+          // turn says "they are running". Keep the outer Delegate call alive, let the host wait on the nested
+          // child claims and drain their durable results into this child's transcript, then return the newest
+          // integrated answer. Without this seam the parent row became terminal while its children continued,
+          // so their eventual results had no outer lifecycle left to complete.
+          if (nestedWorkSeen && state.sessionId && ctx.settleSubagentChildren) {
+            while (!state.settledExternally) {
+              push('running');
+              const nested = await ctx.settleSubagentChildren(state.sessionId, JOB_WAIT_TIMEOUT_MS);
+              if (nested.status === 'settled') { raw = nested.reply; break; }
+              // Unlike shell jobs, nested sub-agents have a durable recovery path and their result is the
+              // deliverable this parent exists to synthesize. A numeric collect cap would merely recreate
+              // the bug after N windows, so only an explicit stop, stall abort or real error may end it.
+              raw = await run(collectSource, buildNestedCollectReminder(nested.status), onEvent);
+            }
+          }
           // A child that starts terminal background work is still working. Keep the delegate lifecycle
           // open, wait without polling, then give the SAME child a turn to collect output and produce the
           // real conclusion. This is what prevents the parent receiving only "process started". Each turn

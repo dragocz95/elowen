@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPlugins } from '../../src/plugins/loader.js';
@@ -285,5 +285,80 @@ describe('delegate — the access handed to the child', () => {
     } finally {
       childReply = 'child done';
     }
+  });
+});
+
+describe('Delegate — nested background sub-agents', () => {
+  it('returns the child\'s integrated answer instead of its provisional children-started reply', async () => {
+    const settleChildren = vi.fn(async () => ({ status: 'settled' as const, reply: 'all four audits integrated and fixed' }));
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['subagent'], logger: log,
+      delegatedChildren: {
+        runs: () => [],
+        read: () => 'not used',
+        continue: async () => ({ status: 'reply', reply: 'not used' }),
+        settleChildren,
+        stop: async () => ({ stopped: false }),
+      },
+    });
+    const platform = reg.platforms.find((candidate) => candidate.name === 'subagent')!;
+    platform.listen(async (_source: unknown, _text: string, onEvent?: (event: Record<string, unknown>) => void) => {
+      onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-sub-parent' });
+      onEvent?.({ type: 'subagent', sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running' });
+      return 'I started four explorers and will report later.';
+    });
+    const tool = reg.tools.find((candidate) => candidate.name === 'Delegate')!;
+    const result = await runWithPolicy(
+      adminPolicy,
+      () => (tool as unknown as { execute(id: string, params: unknown): Promise<{ content: { text: string }[] }> })
+        .execute('call-parent', { task: 'audit and implement everything' }),
+      { identity: owner, sessionId: 'brain-1' },
+    );
+
+    expect(result.content[0]?.text).toBe('all four audits integrated and fixed');
+    expect(settleChildren).toHaveBeenCalledWith(
+      'brain-1',
+      'brain-ch-subagent-sub-parent',
+      5 * 60_000,
+    );
+  });
+
+  it('does not terminalize the parent after the old eight-window collect ceiling', async () => {
+    let attempt = 0;
+    const settleChildren = vi.fn(async () => {
+      attempt += 1;
+      return attempt <= 9
+        ? { status: 'timeout' as const }
+        : { status: 'settled' as const, reply: 'long-running child tree finally integrated' };
+    });
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['subagent'], logger: log,
+      delegatedChildren: {
+        runs: () => [], read: () => 'not used',
+        continue: async () => ({ status: 'reply', reply: 'not used' }),
+        settleChildren, stop: async () => ({ stopped: false }),
+      },
+    });
+    let turns = 0;
+    const platform = reg.platforms.find((candidate) => candidate.name === 'subagent')!;
+    platform.listen(async (_source: unknown, _text: string, onEvent?: (event: Record<string, unknown>) => void) => {
+      turns += 1;
+      if (turns === 1) {
+        onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-sub-parent' });
+        onEvent?.({ type: 'subagent', sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running' });
+      }
+      return 'still waiting';
+    });
+    const tool = reg.tools.find((candidate) => candidate.name === 'Delegate')!;
+    const result = await runWithPolicy(
+      adminPolicy,
+      () => (tool as unknown as { execute(id: string, params: unknown): Promise<{ content: { text: string }[] }> })
+        .execute('call-long-parent', { task: 'wait for every child' }),
+      { identity: owner, sessionId: 'brain-1' },
+    );
+
+    expect(settleChildren).toHaveBeenCalledTimes(10);
+    expect(turns).toBe(10); // initial turn + nine bounded wait reminders
+    expect(result.content[0]?.text).toBe('long-running child tree finally integrated');
   });
 });

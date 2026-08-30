@@ -1,7 +1,7 @@
 import type { Db } from './db.js';
 import { withWriteLock } from './db.js';
 import type { WorkflowNode, WorkflowUpdate } from '../brain/events.js';
-import { isSubagentSession } from '../brain/sessionId.js';
+import { SUBAGENT_PREFIX } from '../brain/sessionId.js';
 import { logger } from '../shared/logger.js';
 
 /** Validated latest UI state of one delegated child. The child id is a first-class indexed column in
@@ -469,23 +469,37 @@ export class BrainDelegationStore {
 
   listDelegatedChildren(parentSessionId: string, limit = MAX_DELEGATED_CHILDREN): DelegatedChildSummary[] {
     if (!parentSessionId) return [];
+    const capped = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, MAX_DELEGATED_CHILDREN) : MAX_DELEGATED_CHILDREN;
     const rows = this.db.prepare(
       `SELECT c.id, c.title, c.created_at, c.updated_at, c.model, c.provider,
-              r.state, r.updated_at AS run_updated_at,
+              r.state, r.lifecycle, r.updated_at AS run_updated_at,
+              EXISTS(
+                SELECT 1 FROM brain_subagent_runs active
+                 WHERE active.parent_session_id = c.parent_session_id
+                   AND active.child_session_id = c.id
+                   AND active.lifecycle IN ('running', 'recovering')
+              ) AS active_run,
               (SELECT COUNT(*) FROM brain_messages m WHERE m.session_id = c.id) AS messages
          FROM brain_sessions c
          JOIN brain_sessions p ON p.id = c.parent_session_id
          LEFT JOIN brain_subagent_runs r
-           ON r.parent_session_id = c.parent_session_id AND r.child_session_id = c.id
+           ON r.rowid = (
+             SELECT rr.rowid FROM brain_subagent_runs rr
+              WHERE rr.parent_session_id = c.parent_session_id AND rr.child_session_id = c.id
+              -- One row = one Delegate/DelegateContinue call. Creation order, not a later progress update
+              -- on an older call, decides which call is the child's current listing entry.
+              ORDER BY rr.rowid DESC LIMIT 1
+           )
         WHERE c.parent_session_id = ?
           AND c.user_id = p.user_id
-        ORDER BY c.created_at DESC, c.rowid DESC`
-    ).all(parentSessionId) as {
+          AND c.id LIKE ?
+        ORDER BY c.created_at DESC, c.rowid DESC
+        LIMIT ?`
+    ).all(parentSessionId, `${SUBAGENT_PREFIX}%`, capped) as {
       id: string; title: string; created_at: string; updated_at: string;
       model: string | null; provider: string | null;
-      state: string | null; run_updated_at: string | null; messages: number;
+      state: string | null; lifecycle: string | null; run_updated_at: string | null; active_run: number; messages: number;
     }[];
-    const capped = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, MAX_DELEGATED_CHILDREN) : MAX_DELEGATED_CHILDREN;
     // Parsed at most once per listing, and only when a row actually needs it: a conversation that never
     // ran a workflow must not pay to parse DAG snapshots, and one that did must not re-parse per row.
     let nodesBySession: Map<string, { task: string; status: 'running' | 'done' | 'error' }> | undefined;
@@ -495,14 +509,20 @@ export class BrainDelegationStore {
     };
     const out: DelegatedChildSummary[] = [];
     for (const row of rows) {
-      if (out.length >= capped) break;
-      if (!isSubagentSession(row.id)) continue;
       // Malformed run JSON degrades to "no run detail" rather than hiding the child: the transcript is
       // still there and still continuable, which is what this listing exists to expose.
       let state: BrainSubagentRunState | undefined;
       if (row.state) {
         try { state = normalizeSubagentState(JSON.parse(row.state)); } catch { state = undefined; }
       }
+      // `state.status` is the live UI projection. A steered DelegateContinue terminalizes its OWN durable
+      // row while the original call claim keeps that projection visibly `running`; once the process exits
+      // there is no later update to rewrite it. The host-owned lifecycle is therefore authoritative for a
+      // terminal latest row, while running/recovering rows keep the projection's richer status.
+      const lifecycleStatus = row.active_run ? 'running'
+        : row.lifecycle === 'done' ? 'done'
+          : row.lifecycle === 'error' || row.lifecycle === 'recovery_required' || row.lifecycle === 'legacy_interrupted'
+            ? 'error' : undefined;
       // A workflow node has no run row, so its task/status live in the DAG snapshot instead — without
       // this it listed as "unknown" forever, including long after it finished.
       const node = state ? undefined : workflowNodes().get(row.id);
@@ -513,7 +533,7 @@ export class BrainDelegationStore {
       out.push({
         sessionId: row.id,
         title: row.title,
-        ...(state ? { task: state.task, status: state.status } : {}),
+        ...(state ? { task: state.task, status: lifecycleStatus ?? state.status } : {}),
         ...(node ? { task: node.task, status: node.status } : {}),
         ...(model ? { model } : {}),
         messages: Number(row.messages) || 0,
@@ -607,6 +627,22 @@ export class BrainDelegationStore {
       const status = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).status : undefined;
       return status === 'running' || status === 'done' || status === 'error' || status === 'cancelled' ? status : undefined;
     } catch { return undefined; }
+  }
+
+  /** Whether this delegated conversation still owns a live workflow. A workflow can be running between
+   *  node dispatches with ZERO child claims; treating that gap as idle terminalized its outer Delegate. */
+  hasRunningWorkflow(parentSessionId: string): boolean {
+    return this.runningWorkflowIds(parentSessionId, 1).length > 0;
+  }
+
+  runningWorkflowIds(parentSessionId: string, limit = 64): string[] {
+    if (!parentSessionId) return [];
+    const capped = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 64) : 64;
+    return (this.db.prepare(
+      `SELECT workflow_id FROM brain_workflows
+        WHERE parent_session_id = ? AND json_valid(state) AND json_extract(state, '$.status') = 'running'
+        ORDER BY updated_at DESC, rowid DESC LIMIT ?`
+    ).all(parentSessionId, capped) as { workflow_id: string }[]).map((row) => row.workflow_id);
   }
 
   /** Persist a terminal child result before any attempt to wake the parent. Stable result/tool ids make

@@ -144,25 +144,40 @@ export class SubagentRunnerUnavailable extends Error {}
 
 /** The ONLY child-progress shapes that cross the runner boundary.
  *
- *  Deliberately three low-frequency events, mirroring what the delegating plugin actually consumes (the
- *  child's session id, its tool starts, its step token usage). Text deltas, tool-argument deltas and
- *  transcript events are excluded BY THE TYPE: re-amplifying a child's whole stream across an IPC channel
- *  would undo the very event-loop pressure this runner exists to remove. */
+ *  Deliberately low-frequency events, mirroring what the delegating plugin actually consumes: identity,
+ *  tool starts, step usage, and the two nested-work lifecycle signals that decide whether the OUTER
+ *  Delegate may settle. Text deltas, tool arguments, DAG bodies and transcripts stay excluded — forwarding
+ *  those would re-amplify the stream and undo the event-loop isolation the runner exists to provide. */
 export type DelegatedProgressEvent =
   | { type: 'session'; sessionId: string }
   | { type: 'tool'; name: string; detail?: string }
-  | { type: 'step'; step: number; maxSteps: number; usage?: BrainUsage };
+  | { type: 'step'; step: number; maxSteps: number; usage?: BrainUsage }
+  | { type: 'subagent'; sessionId: string; status: 'running' | 'done' | 'error' }
+  | { type: 'workflow'; id: string; toolCallId: string; status: 'running' | 'done' | 'error' | 'cancelled' };
 
 /** Narrow a child's event onto the wire shape, or undefined for everything that must not cross. */
 export function toDelegatedProgress(e: BrainEvent): DelegatedProgressEvent | undefined {
   if (e.type === 'session') return { type: 'session', sessionId: e.sessionId };
   if (e.type === 'tool') return { type: 'tool', name: e.name, ...(e.detail !== undefined ? { detail: e.detail } : {}) };
   if (e.type === 'step') return { type: 'step', step: e.step, maxSteps: e.maxSteps, ...(e.usage ? { usage: e.usage } : {}) };
+  if (e.type === 'subagent') return { type: 'subagent', sessionId: e.sessionId, status: e.status };
+  if (e.type === 'workflow') return { type: 'workflow', id: e.id, toolCallId: e.toolCallId, status: e.status };
   return undefined;
 }
 
-/** Rebuild the daemon-side event replayed into the delegating turn's emitter. */
+/** Rebuild the daemon-side event replayed into the delegating plugin's progress sink. Nested signals are
+ *  intentionally skeletal: only their status is consumed here, while the full durable state stays in the
+ *  runner's shared SQLite store and never crosses IPC. */
 export function fromDelegatedProgress(e: DelegatedProgressEvent): BrainEvent {
+  if (e.type === 'subagent') {
+    return {
+      type: 'subagent', id: `nested:${e.sessionId}`, sessionId: e.sessionId, status: e.status,
+      task: '', tools: 0, seconds: 0,
+    };
+  }
+  if (e.type === 'workflow') {
+    return { type: 'workflow', id: e.id, toolCallId: e.toolCallId, status: e.status, nodes: [] };
+  }
   return e;
 }
 

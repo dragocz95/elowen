@@ -346,5 +346,17 @@ function parseProgressEvent(raw: unknown): DelegatedProgressEvent | undefined {
       : {};
     return { type: 'step', step: v.step, maxSteps: v.maxSteps, ...carried };
   }
+  if (v.type === 'subagent') {
+    const sessionId = str(v.sessionId);
+    const status = v.status === 'running' || v.status === 'done' || v.status === 'error' ? v.status : undefined;
+    return sessionId && status ? { type: 'subagent', sessionId, status } : undefined;
+  }
+  if (v.type === 'workflow') {
+    const id = str(v.id);
+    const toolCallId = str(v.toolCallId);
+    const status = v.status === 'running' || v.status === 'done' || v.status === 'error' || v.status === 'cancelled'
+      ? v.status : undefined;
+    return id && toolCallId && status ? { type: 'workflow', id, toolCallId, status } : undefined;
+  }
   return undefined;
 }

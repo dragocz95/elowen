@@ -42,6 +42,29 @@ describe('parseDaemonMessage — boot', () => {
   });
 });
 
+describe('parseRunnerMessage — delegated progress', () => {
+  it('accepts compact nested lifecycle signals and rejects malformed statuses', () => {
+    expect(parseRunnerMessage({
+      type: 'progress', turnId: 'turn-1',
+      event: { type: 'subagent', sessionId: 'brain-ch-subagent-sub-grand', status: 'running' },
+    })).toEqual({
+      type: 'progress', turnId: 'turn-1',
+      event: { type: 'subagent', sessionId: 'brain-ch-subagent-sub-grand', status: 'running' },
+    });
+    expect(parseRunnerMessage({
+      type: 'progress', turnId: 'turn-1',
+      event: { type: 'workflow', id: 'wf-1', toolCallId: 'call-wf', status: 'done' },
+    })).toEqual({
+      type: 'progress', turnId: 'turn-1',
+      event: { type: 'workflow', id: 'wf-1', toolCallId: 'call-wf', status: 'done' },
+    });
+    expect(parseRunnerMessage({
+      type: 'progress', turnId: 'turn-1',
+      event: { type: 'subagent', sessionId: 'brain-ch-subagent-sub-grand', status: 'paused' },
+    })).toBeUndefined();
+  });
+});
+
 describe('workflow host RPC — runner → daemon and back', () => {
   it('parses a call without accepting a caller session identity', () => {
     expect(parseRunnerMessage({

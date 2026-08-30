@@ -137,9 +137,24 @@ describe('SubagentRunnerHost — the forked runner as seen from the daemon', () 
     await tick();
     const { turnId } = child.received.find((m) => m.type === 'turn') as { turnId: string };
     child.reply({ type: 'progress', turnId, event: { type: 'tool', name: 'Bash', detail: 'ls' } });
+    child.reply({
+      type: 'progress', turnId,
+      event: { type: 'subagent', sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running' },
+    });
+    child.reply({
+      type: 'progress', turnId,
+      event: { type: 'workflow', id: 'wf-1', toolCallId: 'call-wf', status: 'running' },
+    });
     child.reply({ type: 'result', turnId, reply: 'ok' });
     await run;
-    expect(seen).toEqual([{ type: 'tool', name: 'Bash', detail: 'ls' }]);
+    expect(seen).toEqual([
+      { type: 'tool', name: 'Bash', detail: 'ls' },
+      {
+        type: 'subagent', id: 'nested:brain-ch-subagent-sub-grandchild',
+        sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running', task: '', tools: 0, seconds: 0,
+      },
+      { type: 'workflow', id: 'wf-1', toolCallId: 'call-wf', status: 'running', nodes: [] },
+    ]);
   });
 
   // A runner that dies mid-turn leaves parents waiting for ever unless the daemon settles them itself.

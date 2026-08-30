@@ -36,6 +36,10 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
    *  remains, and a source can only ever release its own — a Set per source keeps same-source
    *  re-registration idempotent (the runner mirrors begin edges per call, not per 0↔1 transition). */
   private children = new Map<string, Map<string, Set<ChildClaimSource>>>();
+  /** Event-driven waiters used by a delegated parent that returned from its model turn while its OWN
+   *  background children are still running. The outer Delegate lifecycle stays open until these claims
+   *  settle instead of treating the parent's provisional "children started" reply as its final result. */
+  private childIdleWaiters = new Map<string, Set<() => void>>();
   /** A child can be tracked before its channel spawn finishes. `/stop` records that narrow race here;
    *  ChannelSessionService consumes the marker before prompting (or immediately after an awaited spawn). */
   private pendingAborts = new Set<string>();
@@ -121,7 +125,10 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     if (!claims || !sources) return;
     sources.delete(source);
     if (sources.size === 0) claims.delete(childSessionId);
-    if (claims.size === 0) this.children.delete(parentSessionId);
+    if (claims.size === 0) {
+      this.children.delete(parentSessionId);
+      this.resolveChildIdleWaiters(parentSessionId);
+    }
   }
   childrenOf(parentSessionId: string): string[] { return [...(this.children.get(parentSessionId)?.keys() ?? [])]; }
   /** Whether one specific lifecycle writer still claims this edge. UI progress uses this to distinguish a
@@ -130,7 +137,41 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     return this.children.get(parentSessionId)?.get(childSessionId)?.has(source) === true;
   }
   hasActiveChildren(parentSessionId: string): boolean { return (this.children.get(parentSessionId)?.size ?? 0) > 0; }
-  clearChildren(parentSessionId: string): void { this.children.delete(parentSessionId); }
+  /** Park without polling until this parent's current direct children settle, or until the caller's bounded
+   *  collect window expires. A new child started after an idle resolution belongs to the next collect pass. */
+  waitForChildrenIdle(parentSessionId: string, timeoutMs: number): Promise<'idle' | 'timeout'> {
+    if (!this.hasActiveChildren(parentSessionId)) return Promise.resolve('idle');
+    const bounded = Math.max(0, Math.floor(timeoutMs));
+    if (bounded === 0) return Promise.resolve('timeout');
+    return new Promise((resolve) => {
+      let waiters = this.childIdleWaiters.get(parentSessionId);
+      if (!waiters) { waiters = new Set(); this.childIdleWaiters.set(parentSessionId, waiters); }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settle = (outcome: 'idle' | 'timeout') => {
+        if (timer) clearTimeout(timer);
+        waiters!.delete(onIdle);
+        if (waiters!.size === 0) this.childIdleWaiters.delete(parentSessionId);
+        resolve(outcome);
+      };
+      const onIdle = () => settle('idle');
+      waiters.add(onIdle);
+      timer = setTimeout(() => settle('timeout'), bounded);
+      timer.unref?.();
+      // No async boundary exists above, but keep the post-registration check as a future-proof fence if
+      // this method ever gains instrumentation that can yield between the first check and waiter insert.
+      if (!this.hasActiveChildren(parentSessionId)) onIdle();
+    });
+  }
+  clearChildren(parentSessionId: string): void {
+    this.children.delete(parentSessionId);
+    this.resolveChildIdleWaiters(parentSessionId);
+  }
+  private resolveChildIdleWaiters(parentSessionId: string): void {
+    const waiters = this.childIdleWaiters.get(parentSessionId);
+    if (!waiters) return;
+    this.childIdleWaiters.delete(parentSessionId);
+    for (const resolve of waiters) resolve();
+  }
   beginParentAbort(parentSessionId: string): void {
     this.abortingParents.set(parentSessionId, (this.abortingParents.get(parentSessionId) ?? 0) + 1);
   }

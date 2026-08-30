@@ -71,4 +71,34 @@ describe('LiveSessionRegistry — delegated-child liveness claims', () => {
     expect(r.hasActiveChildren('parent')).toBe(false);
     expect(r.childrenOf('parent')).toEqual([]);
   });
+
+  it('resolves an idle waiter only after the final independent claim is released', async () => {
+    const r = registry();
+    r.setChildRunning('parent', 'child', true);
+    r.setChildRunning('parent', 'child', true, 'progress');
+    let settled = false;
+    const wait = r.waitForChildrenIdle('parent', 1_000).then((outcome) => { settled = true; return outcome; });
+
+    r.setChildRunning('parent', 'child', false, 'progress');
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    r.setChildRunning('parent', 'child', false);
+
+    await expect(wait).resolves.toBe('idle');
+  });
+
+  it('bounds a child-idle wait without changing the live claims', async () => {
+    const r = registry();
+    r.setChildRunning('parent', 'child', true);
+    await expect(r.waitForChildrenIdle('parent', 5)).resolves.toBe('timeout');
+    expect(r.hasActiveChildren('parent')).toBe(true);
+  });
+
+  it('clearChildren releases a parked collector as part of recursive teardown', async () => {
+    const r = registry();
+    r.setChildRunning('parent', 'child', true);
+    const wait = r.waitForChildrenIdle('parent', 1_000);
+    r.clearChildren('parent');
+    await expect(wait).resolves.toBe('idle');
+  });
 });

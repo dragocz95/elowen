@@ -48,6 +48,33 @@ describe('BrainStore.listDelegatedChildren', () => {
     expect(rows[0]!.startedAt).toBe(created.created_at);
   });
 
+  it('lists one latest row per child while any original call remains active, then settles terminally', () => {
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    child('brain-ch-subagent-sub-a', 'root');
+    expect(store.upsertSubagentRun('root', {
+      id: 'delegate-original', sessionId: 'brain-ch-subagent-sub-a', status: 'running',
+      task: 'Original task', tools: 2, seconds: 10,
+    })).toBe(true);
+    // A steered continuation finishes its own tool call while the ORIGINAL child call is still live. The
+    // newest row's lifecycle is done, but the child as a whole must remain visibly running until every call
+    // lifecycle for that child is terminal.
+    expect(store.upsertSubagentRun('root', {
+      id: 'delegate-continue', sessionId: 'brain-ch-subagent-sub-a', status: 'running',
+      task: 'Finish after your children', tools: 0, seconds: 1,
+    }, 'done')).toBe(true);
+
+    expect(store.listDelegatedChildren('root')).toMatchObject([{
+      sessionId: 'brain-ch-subagent-sub-a', task: 'Finish after your children', status: 'running',
+    }]);
+    expect(store.upsertSubagentRun('root', {
+      id: 'delegate-original', sessionId: 'brain-ch-subagent-sub-a', status: 'done',
+      task: 'Original task', tools: 2, seconds: 12,
+    })).toBe(true);
+    expect(store.listDelegatedChildren('root')).toMatchObject([{
+      sessionId: 'brain-ch-subagent-sub-a', task: 'Finish after your children', status: 'done',
+    }]);
+  });
+
   // A workflow node is a real delegated child with a real transcript, but the engine records the DAG
   // rather than a per-child brain_subagent_runs row. It must still be listable (and continuable), so the
   // listing is driven by the session relation and only ENRICHED by the run row.

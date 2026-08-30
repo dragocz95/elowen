@@ -200,9 +200,9 @@ async function runTurn(turnId: string, rawRequest: unknown, text: string): Promi
   dispatchedEdges.add(edge);
   try {
     const reply = await rpcTurn.run({ turnId, sessionId: childSessionId }, () => service.runDelegatedTurn(request, text, (e) => {
-      // ONLY the three low-frequency shapes the delegating plugin consumes. Text deltas, tool-argument
-      // deltas and transcripts must never cross: re-amplifying them over IPC would put back the very
-      // event-loop pressure this process removes.
+      // ONLY the low-frequency shapes the delegating plugin consumes, including nested-work lifecycle
+      // signals. Text deltas, tool arguments, DAG bodies and transcripts never cross: re-amplifying them
+      // over IPC would put back the event-loop pressure this process removes.
       const progress = toDelegatedProgress(e);
       if (progress) send({ type: 'progress', turnId, event: progress });
     }));

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { PluginHookBus } from '../plugins/hookBus.js';
 import { PluginServiceRunner } from '../plugins/serviceRunner.js';
-import type { DelegatedContinueResult, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
+import type { DelegatedChildrenSettlement, DelegatedContinueResult, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
 import { ElicitationRegistry } from './elicitation.js';
 import { CardRegistry } from './cards.js';
 import type { BrainSearchHit, BrainGoalRow, RecoverableRun, RecoverableWorkflow } from '../store/brainStore.js';
@@ -1499,6 +1499,63 @@ export class BrainService {
    *  DelegatedSessionService.readSubagent. */
   readSubagent(parentSessionId: string, childSessionId: string): string {
     return this.delegated.readSubagent(parentSessionId, childSessionId);
+  }
+
+  /** A delegated child returned from its model turn after launching ITS OWN background children. Keep the
+   *  outer Delegate call alive until those children settle, drain their durable results into the child's
+   *  transcript, and return the newest integrated answer. This is event-driven on child claims; bounded
+   *  backoff is used only when result delivery itself remains pending after the children are terminal. */
+  async settleSubagentChildren(
+    parentSessionId: string,
+    childSessionId: string,
+    timeoutMs: number,
+  ): Promise<DelegatedChildrenSettlement> {
+    const parent = this.d.store.getSession(parentSessionId);
+    const child = this.d.store.getSession(childSessionId);
+    if (!parent || !child || child.parent_session_id !== parentSessionId
+      || child.user_id !== parent.user_id || !isSubagentSession(childSessionId)) {
+      throw new Error('unknown sub-agent for this conversation — use DelegateList to choose an id from this conversation');
+    }
+    const workflowControl = (await this.resolvePlugins())?.control('workflow');
+    const hasLiveWorkflow = (): boolean => this.d.store.runningWorkflowIds(childSessionId)
+      .some((workflowId) => workflowControl?.isWorkflowLive({ workflowId }) === true);
+    const budget = Math.max(0, Math.floor(timeoutMs));
+    const deadline = Date.now() + budget;
+    let retryDelayMs = 250;
+    const backoff = async (): Promise<boolean> => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, Math.min(retryDelayMs, remaining));
+        timer.unref?.();
+      });
+      retryDelayMs = Math.min(retryDelayMs * 2, 5_000);
+      return true;
+    };
+    while (true) {
+      if (this.sessions.hasActiveChildren(childSessionId)) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return { status: 'timeout' };
+        const outcome = await this.sessions.waitForChildrenIdle(childSessionId, remaining);
+        if (outcome === 'timeout') return { status: 'timeout' };
+      }
+      // A workflow publishes `running` BEFORE its first node acquires a child claim, and can have the same
+      // zero-child gap between nodes. Ask the owning engine, not the durable row (which can be stale after a
+      // failed terminal snapshot); bounded backoff bridges the gap until a node claim takes over.
+      if (hasLiveWorkflow()) {
+        if (!await backoff()) return { status: 'timeout' };
+        continue;
+      }
+
+      await this.turnRunner.drainPendingSubagentResults(child.user_id, childSessionId);
+      // A result-delivery turn may itself fan out more work. Re-enter both guards before reading the answer,
+      // or a second generation would be cut off exactly like the first one was.
+      if (this.sessions.hasActiveChildren(childSessionId) || hasLiveWorkflow()) continue;
+      if (this.d.store.pendingSubagentResults(childSessionId).length === 0) {
+        return { status: 'settled', reply: this.delegated.readSubagent(parentSessionId, childSessionId, true) };
+      }
+      if (!await backoff()) return { status: 'pending' };
+    }
   }
 
   /** Stop a runaway or no-longer-needed DIRECT sub-agent — see DelegatedSessionService.stopSubagent. */

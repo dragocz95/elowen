@@ -7442,6 +7442,89 @@ describe('BrainService.readSubagent (a parent recovering a stored final result)'
   });
 });
 
+describe('BrainService.settleSubagentChildren (a delegated parent waiting on its own children)', () => {
+  it('keeps the outer child active, waits for its grandchild, then returns the integrated answer', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const child = 'brain-ch-subagent-sub-parent';
+    const grandchild = 'brain-ch-subagent-sub-grandchild';
+    const scope = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: scope });
+    d.store.createSession({ id: grandchild, userId: 1, model: 'm', parentSessionId: child, delegatedAccess: scope });
+    d.store.appendMessage({
+      id: 'assistant-provisional', sessionId: child, parentId: null, role: 'assistant',
+      content: { content: 'I started the explorers and will report later.' },
+    });
+    const sessions = (svc as unknown as {
+      sessions: {
+        setChildRunning(parent: string, childId: string, running: boolean): void;
+        isActiveChild(childId: string): boolean;
+      };
+    }).sessions;
+    sessions.setChildRunning(sessionId, child, true);      // the OUTER Delegate remains alive
+    sessions.setChildRunning(child, grandchild, true);     // nested background work
+    const drain = vi.fn(async () => {
+      d.store.appendMessage({
+        id: 'assistant-integrated', sessionId: child, parentId: null, role: 'assistant',
+        content: { content: 'All explorer findings are integrated and the fix is complete.' },
+      });
+      return { answered: true, requiresUserAction: false, acknowledged: [], deliveredPending: [] };
+    });
+    (svc as unknown as { turnRunner: { drainPendingSubagentResults: unknown } }).turnRunner.drainPendingSubagentResults = drain;
+
+    const settlement = svc.settleSubagentChildren(sessionId, child, 1_000);
+    await Promise.resolve();
+    expect(drain).not.toHaveBeenCalled();
+    sessions.setChildRunning(child, grandchild, false);
+
+    await expect(settlement).resolves.toEqual({
+      status: 'settled',
+      reply: 'All explorer findings are integrated and the fix is complete.',
+    });
+    expect(drain).toHaveBeenCalledWith(1, child);
+    expect(sessions.isActiveChild(child)).toBe(true); // reading the answer did not terminalize the outer call
+  });
+
+  it('does not mistake a running workflow between node claims for an idle child', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const child = 'brain-ch-subagent-sub-workflow-parent';
+    const scope = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: scope });
+    d.store.appendMessage({
+      id: 'assistant-workflow-provisional', sessionId: child, parentId: null, role: 'assistant',
+      content: { content: 'The workflow started.' },
+    });
+    d.store.upsertWorkflowRun(child, {
+      id: 'wf-gap', toolCallId: 'call-wf-gap', status: 'running', background: true, nodes: [],
+    });
+    let workflowLive = true;
+    (svc as unknown as { resolvePlugins: () => Promise<unknown> }).resolvePlugins = async () => ({
+      control: (name: string) => name === 'workflow' ? { isWorkflowLive: () => workflowLive } : undefined,
+    });
+    const drain = vi.fn(async () => {
+      d.store.appendMessage({
+        id: 'assistant-workflow-integrated', sessionId: child, parentId: null, role: 'assistant',
+        content: { content: 'The workflow is complete and integrated.' },
+      });
+      return { answered: true, requiresUserAction: false, acknowledged: [], deliveredPending: [] };
+    });
+    (svc as unknown as { turnRunner: { drainPendingSubagentResults: unknown } }).turnRunner.drainPendingSubagentResults = drain;
+
+    const settlement = svc.settleSubagentChildren(sessionId, child, 1_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(drain).not.toHaveBeenCalled();
+    // Leave the durable row stale-running on purpose: only the engine can say whether the DAG still exists.
+    workflowLive = false;
+
+    await expect(settlement).resolves.toEqual({
+      status: 'settled', reply: 'The workflow is complete and integrated.',
+    });
+  });
+});
+
 describe('BrainService.continueSubagent (a delegating turn picking a sub-agent back up)', () => {
   const SCOPE = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
   const ADMIN_ACCESS = { admin: true, projectIds: [], owner: true, permissionBoundary: null };

@@ -1223,6 +1223,13 @@ export class PluginRegistry {
         const parentSessionId = currentSessionId();
         return parentSessionId && delegatedChildren ? delegatedChildren.runs(parentSessionId, limit) : [];
       },
+      settleSubagentChildren: (sessionId, timeoutMs) => {
+        const parentSessionId = currentSessionId();
+        if (!parentSessionId || !delegatedChildren?.settleChildren) {
+          return Promise.reject(new Error('nested sub-agent settlement is only available inside a conversation turn'));
+        }
+        return delegatedChildren.settleChildren(parentSessionId, sessionId, timeoutMs);
+      },
       // The plugin mints the channel id as `sub-<jobId>`; the router keys the session as
       // subagentSessionId(channelId). Rebuild that here so the single source of the prefix stays in
       // sessionId.ts, never a literal in the plugin. No scope check: it is a pure id derivation, and the

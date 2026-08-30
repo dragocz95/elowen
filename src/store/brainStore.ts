@@ -1059,6 +1059,14 @@ export class BrainStore {
     return this.delegation.workflowStatus(parentSessionId, workflowId);
   }
 
+  hasRunningWorkflow(parentSessionId: string): boolean {
+    return this.delegation.hasRunningWorkflow(parentSessionId);
+  }
+
+  runningWorkflowIds(parentSessionId: string, limit?: number): string[] {
+    return this.delegation.runningWorkflowIds(parentSessionId, limit);
+  }
+
   /** Append a display-only session-event marker (model/mode/rename/reasoning change). Insertion order
    *  (rowid) is the timeline; the marker never touches brain_messages, so it stays out of model context. */
   appendSessionEvent(sessionId: string, kind: SessionEventKind, detail: string): BrainSessionEvent {

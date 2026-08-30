@@ -158,13 +158,20 @@ describe('the delegated-turn wire payload', () => {
 });
 
 describe('the progress events allowed across the boundary', () => {
-  it('passes exactly the three low-frequency shapes the delegating plugin consumes', () => {
+  it('passes the low-frequency progress and nested-lifecycle shapes the delegating plugin consumes', () => {
     expect(toDelegatedProgress({ type: 'session', sessionId: 'brain-ch-subagent-sub-dlg-1' }))
       .toEqual({ type: 'session', sessionId: 'brain-ch-subagent-sub-dlg-1' });
     expect(toDelegatedProgress({ type: 'tool', name: 'Bash', detail: 'ls -la', icon: 'x', id: 't1', command: 'ls -la' }))
       .toEqual({ type: 'tool', name: 'Bash', detail: 'ls -la' }); // icon/id/command are display noise
     expect(toDelegatedProgress({ type: 'step', step: 3, maxSteps: 10, usage: { tokens: 1, contextWindow: 2, percent: 3, totalTokens: 42, cost: 0 } }))
       .toMatchObject({ type: 'step', step: 3, usage: { totalTokens: 42 } });
+    expect(toDelegatedProgress({
+      type: 'subagent', id: 'call-grand', sessionId: 'brain-ch-subagent-sub-grand', status: 'running',
+      task: 'inspect', tools: 1, seconds: 2,
+    })).toEqual({ type: 'subagent', sessionId: 'brain-ch-subagent-sub-grand', status: 'running' });
+    expect(toDelegatedProgress({
+      type: 'workflow', id: 'wf-1', toolCallId: 'call-wf', status: 'running', nodes: [],
+    })).toEqual({ type: 'workflow', id: 'wf-1', toolCallId: 'call-wf', status: 'running' });
   });
 
   it('drops everything else — text deltas and transcripts must never be re-amplified over IPC', () => {

@@ -343,12 +343,12 @@ export class DelegatedSessionService {
    *  empty-text assistant row AFTER the real answer, and the shared helper would then report the child as
    *  having "no final text" even though it plainly does — one row further back. Scanning backward for the
    *  last NON-EMPTY assistant text is what "the sub-agent's answer" actually means here. */
-  readSubagent(parentSessionId: string, childSessionId: string): string {
+  readSubagent(parentSessionId: string, childSessionId: string, allowActive = false): string {
     const row = this.d.store.getSession(childSessionId);
     if (!row || row.parent_session_id !== parentSessionId || !isSubagentSession(childSessionId)) {
       throw new Error('unknown sub-agent for this conversation — use DelegateList to choose an id from this conversation');
     }
-    if (this.d.sessions.isActiveChild(childSessionId)) {
+    if (!allowActive && this.d.sessions.isActiveChild(childSessionId)) {
       throw new Error('that sub-agent is still running — wait for it to finish before reading its final assistant text');
     }
     const scope = this.d.store.delegatedAccessFor(childSessionId);

@@ -44,6 +44,12 @@ export interface SubagentProgressEvent {
  *  RUNNING turn (confirmed in its context) — there is no separate reply; the child's result reaches the
  *  caller through the delegation's own result path (the blocking Delegate return / background delivery). */
 export type DelegatedContinueResult = { status: 'reply'; reply: string } | { status: 'steered' };
+/** A delegated child finished its own model step after spawning background children. The host keeps the
+ *  outer Delegate lifecycle open, waits for those children and their durable result delivery, then returns
+ *  the child's newest integrated answer. `pending` means delivery could not yet be processed safely. */
+export type DelegatedChildrenSettlement =
+  | { status: 'settled'; reply: string }
+  | { status: 'timeout' | 'pending' };
 
 interface DelegatingTurnAccessContract {
   admin: boolean;
@@ -74,6 +80,11 @@ export interface DelegatedChildBridge {
     promote?: boolean,
     workspaceId?: string,
   ): Promise<DelegatedContinueResult>;
+  settleChildren?(
+    parentSessionId: string,
+    childSessionId: string,
+    timeoutMs: number,
+  ): Promise<DelegatedChildrenSettlement>;
   stop(parentSessionId: string, childSessionId: string): Promise<{ stopped: boolean }>;
 }
 
@@ -1464,6 +1475,11 @@ export interface PluginContext {
    *  conversation's or another account's children are not merely hidden but unaddressable. Empty outside
    *  a prompt turn, or when nothing is wired. */
   subagentRuns(limit?: number): DelegatedChildSummary[];
+  /** Keep one direct child's Delegate lifecycle open while THAT child waits for its own background
+   *  sub-agents. The host validates the direct parent/child relation, waits event-first (never by model
+   *  polling), drains the nested durable results into the child's transcript, and returns its newest
+   *  integrated answer. Used by the delegation plugin after it observes a nested running event. */
+  settleSubagentChildren(sessionId: string, timeoutMs: number): Promise<DelegatedChildrenSettlement>;
   /** Translate a delegation JOB id (`dlg-…`, the handle Delegate returns) into the child SESSION id the
    *  durable calls above take. The delegating plugin holds the job→session map only in memory, so a
    *  follow-up by job id stops resolving after a restart; the session id is a pure function of the job id

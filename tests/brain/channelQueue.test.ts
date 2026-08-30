@@ -482,6 +482,35 @@ describe('ChannelSessionService — mid-turn steering (Discord double-message)',
     expect(store.getMessages(childSessionId)).toEqual([]); // and never persisted as a user row
   });
 
+  it('rejects an idle hidden-result turn that appends a fresh but empty assistant', async () => {
+    const store = new BrainStore(openDb(':memory:'));
+    const registry = new LiveSessionRegistry<Brain>();
+    const parentSessionId = 'brain-parent-empty-result';
+    const childChannel = 'subagent-empty-result';
+    const childSessionId = channelSessionId(childChannel);
+    const scope: DelegatedExecutionScope = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
+    store.createSession({ id: parentSessionId, userId: 1, model: 'kimi' });
+    store.createSession({ id: childSessionId, userId: 1, model: 'kimi', parentSessionId, delegatedAccess: scope });
+    const child = fakeBrain('moonshot', 'kimi', undefined, childSessionId);
+    Object.assign(child.session, {
+      sendCustomMessage: vi.fn(async () => {
+        child.session.messages.push({ role: 'assistant', content: '' });
+      }),
+      clearQueue: vi.fn(),
+    });
+    registry.channelTouch(childChannel, child);
+    const svc = new ChannelSessionService({
+      registry, store, users: { get: () => ({ username: 'owner' }) }, spawn: vi.fn(),
+    } as never);
+
+    await expect(svc.send({
+      channelId: childChannel, ownerUserId: 1, parentSessionId,
+      policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] }, trusted: true, ownerSteer: true,
+      delegatedAccess: scope, identity: { platform: 'subagent', userId: 'subagent', admin: true, owner: true },
+      internalSystem: { customType: 'subagent-result', resultId: 'res-empty' },
+    } as never, '<system-reminder>result</system-reminder>')).rejects.toThrow(/not processed/);
+  });
+
   it('fences a fresh nested child while its parent abort is still draining', async () => {
     const store = new BrainStore(openDb(':memory:'));
     const registry = new LiveSessionRegistry<Brain>();

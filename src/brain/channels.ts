@@ -1150,7 +1150,8 @@ export class ChannelSessionService {
         const msgs = ch.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[];
         const last = lastAssistant(msgs);
         const assistantText = last ? extractText(last) : '';
-        if (opts.internalSystem && (!last || last === assistantBefore || last.stopReason === 'error' || last.stopReason === 'aborted')) {
+        if (opts.internalSystem && (!last || last === assistantBefore || last.stopReason === 'error'
+          || last.stopReason === 'aborted' || !assistantText.trim())) {
           throw new Error(last?.errorMessage?.trim() || 'sub-agent result was not processed by the delegated parent');
         }
         if (last?.stopReason === 'error' && !assistantText.trim()) {
