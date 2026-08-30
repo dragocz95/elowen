@@ -55,12 +55,11 @@ describe('design tokens', () => {
     expect(components).toMatch(/@container workspace-shell \(width < 38\.75rem\)[\s\S]*\.settings-row\s*\{[^}]*grid-template-columns:\s*1fr/);
   });
 
-  it('hides the telemetry rail scrollbar with a class the unlayered base rules cannot outrank', () => {
-    // base.css styles `*` scrollbars outside any cascade layer, so a Tailwind arbitrary utility would lose
-    // to it; only the chrome is hidden, never the scrolling itself.
-    expect(components).toMatch(/\.telemetry-rail-scroll\s*\{[^}]*scrollbar-width:\s*none/);
-    expect(components).toMatch(/\.telemetry-rail-scroll::-webkit-scrollbar\s*\{[^}]*display:\s*none/);
-    expect(components).not.toMatch(/\.telemetry-rail-scroll\s*\{[^}]*overflow:\s*hidden/);
+  it('carries no hand-rolled telemetry scroll box now that the rail scrolls on ScrollArea', () => {
+    // The rail's middle band is a Radix ScrollArea, which draws (and hides) its own scrollbar inside its
+    // own DOM. The class that used to suppress the native bar has no element left to sit on, and a rule
+    // matching nothing is how a stylesheet accumulates fiction.
+    expect(components).not.toContain('telemetry-rail-scroll');
   });
 
   it('contains no orphaned redesign visuals, undefined motion token or obsolete detail grid overrides', () => {

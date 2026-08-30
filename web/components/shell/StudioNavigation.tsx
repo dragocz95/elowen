@@ -8,6 +8,7 @@ import { useBrand } from '../../lib/brand';
 import { useHealth, useMe } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { Avatar } from '../ui/Avatar';
+import { SkinSwitcher } from '../ui/SkinSwitcher';
 import { useShellNavigation } from './useShellNavigation';
 import { useNavCustomization } from './NavCustomization';
 import { navOrderIndex } from './navOrder';
@@ -414,6 +415,13 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
         </div>
 
         <footer className="studio-nav__footer">
+          {/* The light/dark control on a phone. The interface's brightness is a SKIN here
+              (`studio-light` / `studio-oled`, see lib/skins.ts) rather than a CSS theme, so the canonical
+              control is the same `SkinSwitcher` the TopBar mounts — not a second switch with its own
+              state. Drawer only: on a desktop column the TopBar already carries it, and two copies of one
+              control on screen is how they drift out of step. It renders nothing when the instance allows
+              fewer than two skins, so an operator who never enabled switching sees no dead affordance. */}
+          {drawer ? <SkinSwitcher /> : null}
           {adminEntries.map((entry, slot) => (
             <div key={entry.id ?? entry.label}>{entryShell(entry, 'footer', slot, destination(entry, entryMenu(entry)))}</div>
           ))}

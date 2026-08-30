@@ -1,21 +1,25 @@
 'use client';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { GitBranch, Target, TerminalSquare, Users, Workflow, X } from 'lucide-react';
+import { ChevronDown, GitBranch, PanelRightClose, PanelRightOpen, Target, TerminalSquare, Users, Workflow, X } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
 import { interpolate } from '../../lib/i18n/interpolate';
 import { elowenClient } from '../../lib/elowenClient';
 import { useBrainProcesses, useBrainRateLimitsAll } from '../../lib/queries';
 import { formatTokens, formatCost, formatDuration } from '../../lib/format';
-import { OAuthUsageRail, usageFillClass } from '../settings/OAuthUsageRail';
+import { OAuthUsageRail, usageProgressClass, usageMeterValue } from '../settings/OAuthUsageRail';
 import { MascotGlyph } from '../../components/ui/SpatialMascot';
-import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
+import { Badge } from '../../components/ui/shadcn/badge';
+import { Button } from '../../components/ui/shadcn/button';
+import { Progress } from '../../components/ui/shadcn/progress';
+import { ScrollArea } from '../../components/ui/shadcn/scroll-area';
+import { Separator } from '../../components/ui/shadcn/separator';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useToast } from '../../components/ui/Toast';
 import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
-import { railTypeVars, useTelemetryRailWidth, RAIL_MIN_WIDTH, RAIL_MAX_WIDTH } from '../../lib/useTelemetryRailWidth';
 import { workflowLabel, workflowProgress } from '../../lib/workflowDag';
 import { useBrainChat } from './BrainChatProvider';
 import { ProcessOutputModal } from './ProcessPanel';
@@ -26,16 +30,19 @@ import type { BrainGoal, ProcessInfo } from '../../lib/types';
 
 /** The owl presides over the rail the way it tops the CLI panel — and it is not decoration: it mirrors
  *  the agent, breathing while a turn runs and settling when it does not, so the rail reads as inhabited
- *  rather than a dashboard. Kept inside the shared body so the desktop column and the mobile drawer show
- *  the same living header.
+ *  rather than a dashboard.
  *
  *  It is also the door to the command field: clicking it opens the orbital field of slash commands as an
  *  overlay. An overlay rather than the rail itself — an orbit needs roughly 26rem before its pods start
  *  colliding with the core, which even the widest rail does not reach.
  *
  *  The flat glyph rather than the full WebGL mascot: that scene frames itself at a fixed pixel size, so a
- *  rail this narrow would crop it down to a pair of eyes. */
-function TelemetryMascot({ busy }: { busy: boolean }) {
+ *  rail this narrow would crop it down to a pair of eyes.
+ *
+ *  `size` is a plain square in pixels rather than a share of the rail. In the redesigned head the mascot
+ *  sits BESIDE the status text instead of above it, so its box is what the header row is built around; a
+ *  percentage-sized owl would re-flow that row on every drag. */
+function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
   const { t } = useTranslation();
   const [fieldOpen, setFieldOpen] = useState(false);
   const mascotRef = useRef<HTMLButtonElement>(null);
@@ -48,7 +55,7 @@ function TelemetryMascot({ busy }: { busy: boolean }) {
     wasOpen.current = fieldOpen;
   }, [fieldOpen]);
   return (
-    <div className="flex justify-center pt-2">
+    <>
       <button
         ref={mascotRef}
         type="button"
@@ -58,123 +65,62 @@ function TelemetryMascot({ busy }: { busy: boolean }) {
         aria-haspopup="dialog"
         aria-expanded={fieldOpen}
         onClick={() => setFieldOpen(true)}
-        // Sized as a share of the rail rather than a fixed size: the column is draggable from 15rem to
-        // 35rem, and a mascot frozen at one size looks lost in a wide rail and crowds a narrow one. The
-        // glyph itself has no intrinsic size (it fills its parent), so the square has to come from here.
-        // The floor is deliberately NOT in proportion to the share: at the narrowest rail the percentage
-        // already yields less than the floor would, so raising it would push the mascot wider than the
-        // column that has to hold it.
-        className="aspect-square w-[84%] min-w-[8rem] max-w-[22rem] rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        style={{ width: size, height: size }}
+        className="shrink-0 rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
       >
         <MascotGlyph state={busy ? 'saving' : 'idle'} />
       </button>
       {fieldOpen ? <CommandOrbit onClose={() => setFieldOpen(false)} /> : null}
-    </div>
-  );
-}
-
-/** The scroll box both variants put around the shared body.
- *
- *  BOTH axes are declared on purpose. `overflow-y: auto` alone is not "scrolls vertically": CSS computes
- *  the other axis from `visible` to `auto` as soon as one axis is not visible, so the rail answered every
- *  child that could not shrink to the current width with a horizontal scrollbar across the whole column —
- *  and the vertical bar a new section brought in narrowed the content box further, which is why adding a
- *  sub-agent was the usual trigger. The horizontal axis is clipped instead: every row below truncates, so
- *  there is nothing to reach sideways, while the vertical axis stays a real scroller for a long rail.
- *
- *  `.telemetry-rail-scroll` (components.css) then hides the bar VISUALLY only — the box still scrolls by
- *  wheel, touch, keyboard and scroll-into-view, and an 8px bar drawn permanently down a 240px companion
- *  column is exactly the noise this rail exists not to add. It is a design-system class rather than a
- *  Tailwind arbitrary utility because base.css styles `*` scrollbars outside any cascade layer, which
- *  beats @layer utilities regardless of specificity. */
-const RAIL_SCROLL = 'telemetry-rail-scroll overflow-y-auto overflow-x-hidden';
-
-/** The phone slide-over, on the shadcn `Dialog` (Radix): the dialog role, the focus trap, Escape and the
- *  layer order among several open overlays are Radix's, so this file no longer writes any of them.
- *
- *  Like the history drawer it does NOT take `useOverlayIsolation`: that stack isolates the background by
- *  marking every OTHER child of <body> inert, which needs an overlay portalled to the body, and this one
- *  renders inside the chat shell — its own body-level ancestor is what would be marked, so the drawer
- *  would disable itself. Radix's `aria-hidden` sweep walks the ancestor chain instead. What the stack
- *  still owns and Radix cannot is where focus goes on the way out: there is no `Dialog.Trigger` to hand
- *  it back to. */
-function TelemetryDrawer({ label, onClose, children }: { label: string; onClose?: () => void; children: ReactNode }) {
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const { restoreFocus } = useReturnFocus();
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose?.(); }}>
-      <div
-        className="overlay-layer-drawer fixed inset-0"
-        // Radix's modal content sets `pointer-events: none` on <body> and re-enables them on itself;
-        // this layer would inherit the block and the backdrop below would stop answering the click that
-        // dismisses the drawer. Opting back in is what `DialogOverlay` does for the same reason.
-        style={{ pointerEvents: 'auto' }}
-      >
-        <div className="absolute inset-0 bg-background/50" onClick={onClose} aria-hidden />
-        <DialogContent
-          ref={surfaceRef}
-          // A right rail that is also its own scroll box, which none of the primitive's presentations
-          // describes; the geometry stays here. Only the geometry: `presentation={null}` drops the shape
-          // classes, but `.overlay-surface` is in the variant BASE and still paints the ground, the
-          // border colour and the raised shadow — so a `bg-card shadow-xl` written here was never what
-          // the reader saw, only a second answer to a question `primitives.css` had already settled.
-          presentation={null}
-          aria-label={label}
-          aria-describedby={undefined}
-          data-testid="telemetry-drawer"
-          className={`animate-drawer-in absolute inset-y-0 right-0 w-72 max-w-[85%] border-l border-border ${RAIL_SCROLL}`}
-          // The backdrop above already owns dismissal, and it is the only owner that knows a nested
-          // overlay's backdrop must not close its parent — the rail raises both a process modal and the
-          // command field from inside itself.
-          onInteractOutside={(event) => event.preventDefault()}
-          // The panel is something to read, so focus anchors on the surface rather than on the close
-          // button Radix would pick; the opener gets it back on the way out.
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            if (surfaceRef.current) focusOverlaySurface(surfaceRef.current);
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            restoreFocus();
-          }}
-        >
-          {children}
-        </DialogContent>
-      </div>
-    </Dialog>
+    </>
   );
 }
 
 /** A section heading: a quiet label with an optional right-aligned meta value, mirroring the CLI rail. */
-function SectionHead({ label, meta }: { label: string; meta?: string }) {
+function SectionHead({ label, meta }: { label: string; meta?: ReactNode }) {
   return (
     <div className="telemetry-section-head flex items-baseline justify-between gap-2 text-tiny uppercase tracking-wide text-subtle-foreground">
       {/* The label truncates like the meta does: it is a translated string, and at the narrow end of the
           rail an uppercase heading like "OTHER PROCESSES" is otherwise a width floor the row cannot go
           under, pushing the whole section past the column. */}
       <span className="min-w-0 truncate">{label}</span>
-      {meta ? <span className="truncate font-mono normal-case tracking-normal">{meta}</span> : null}
+      {meta ? <span className="shrink-0 truncate font-mono normal-case tracking-normal">{meta}</span> : null}
     </div>
   );
 }
 
-/** The context-fill meter. Same pressure colours and same "never read as empty" sliver as the OAuth
- *  limit windows, so both meters in the panel speak one visual language. */
-function ContextMeter({ percent }: { percent: number }) {
-  const pct = Math.max(0, Math.min(100, percent));
+/** A live-work section that can be folded away. Open by default and on every mount: these sections exist
+ *  to be watched while they run, and a fold that persisted would hide a running agent from the one view
+ *  that reports it. Folding is for the reader who wants the rail quiet right now, not a stored setting. */
+function LiveSection({ label, count, testId, children }: {
+  label: string;
+  count: ReactNode;
+  testId: string;
+  children: ReactNode;
+}) {
   return (
-    <span className="block h-1.5 overflow-hidden rounded-full bg-muted">
-      <span
-        className={`block h-full rounded-full ${usageFillClass(pct)} transition-[width] duration-500`}
-        style={{ width: `${pct > 0 ? Math.max(pct, 3) : 0}%` }}
-      />
-    </span>
+    <Collapsible defaultOpen data-testid={testId} className="flex flex-col gap-1">
+      <CollapsibleTrigger className="group flex w-full items-center gap-1.5 text-left [&[data-state=open]_svg]:rotate-0 [&[data-state=closed]_svg]:-rotate-90">
+        <ChevronDown size={11} className="shrink-0 text-subtle-foreground transition-transform" aria-hidden />
+        <span className="min-w-0 flex-1">
+          <SectionHead label={label} meta={<Badge variant="secondary" className="px-1 py-0 text-[10px]">{count}</Badge>} />
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ul className="flex flex-col gap-0.5">{children}</ul>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
 /** One clickable row of a live-work section: a status dot, a truncated label and an optional right-hand
  *  meta column. The label truncates rather than reserving a width, so the row reads the same at both ends
- *  of the rail's 240–560px range. */
+ *  of the rail's 280–560px range.
+ *
+ *  On the shadcn `Button` at `ghost`, with its height pulled down to the rail's 24px rhythm: the
+ *  primitive's own `sm` is 32px, and six of those in a row would stretch a live-work section by a third.
+ *  `title` rather than a `Tooltip` for the truncated label — the app's Tooltip is a CONTROLLED popover
+ *  (see components/ui/shadcn/tooltip.tsx), which would need open state per row in a list that can hold
+ *  dozens, while the native attribute is what a truncated cell is for. */
 function LiveRow({ label, meta, tone, title, onClick, ariaLabel }: {
   label: string;
   meta?: string;
@@ -184,8 +130,12 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel }: {
   ariaLabel: string;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="sm"
+      // Named, because a live-work section now also holds its Collapsible's trigger button: a test (or a
+      // reader) addressing "the button in this section" would otherwise land on the fold, not the row.
+      data-testid="telemetry-row"
       onClick={onClick}
       disabled={!onClick}
       aria-label={ariaLabel}
@@ -193,22 +143,40 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel }: {
       // `min-w-0 flex-1` rather than `w-full`: the row also carries a fixed-size icon (and, in the other-
       // processes section, a badge and a kill button), so a child asking for the row's FULL width starts
       // every layout pass over budget and only truncation inside it saves the row.
-      className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-tiny transition-colors hover:text-foreground disabled:cursor-default"
+      className="h-6 min-w-0 flex-1 justify-start gap-1.5 rounded px-1 text-left text-tiny disabled:cursor-default disabled:opacity-100"
     >
       <span className={`shrink-0 ${tone === 'running' ? 'text-success' : 'text-subtle-foreground'}`} aria-hidden>●</span>
       <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
       {meta ? <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{meta}</span> : null}
-    </button>
+    </Button>
   );
 }
 
-/** The panel's sections, in the CLI rail's order: context fill, goal, subscription limits, workflows,
- *  sub-agents, processes, project, MCP, LSP. A section with nothing to report simply does not render — an
- *  empty rail is quieter than a rail full of dashes. Shared by the desktop column and the mobile drawer. */
+/** The context-fill meter, on the shared `Progress` primitive and the shared pressure ramp, so it and the
+ *  subscription windows below it speak one visual language. */
+function ContextMeter({ percent, label }: { percent: number; label: string }) {
+  const pct = Math.max(0, Math.min(100, percent));
+  return (
+    <Progress
+      value={pct}
+      indicatorValue={usageMeterValue(pct)}
+      indicatorClassName={usageProgressClass(pct)}
+      aria-label={label}
+    />
+  );
+}
+
+/** The scrolling middle band: everything the reader consults rather than everything that is true.
+ *  Context → goal → limits → live work → MCP → LSP, ordered by how often it is looked at rather than by
+ *  how it falls out of the API. A section with nothing to report simply does not render — an empty rail
+ *  is quieter than a rail full of dashes.
+ *
+ *  This is the ONE content source: the desktop dock and the mobile overlay both render this component, so
+ *  the two hosts differ in geometry only and can never drift apart in what they report. */
 function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const { usage, telemetry, activeSessionId, provider, busy, goal, subagents, workflows, setAgentsOpen } = useBrainChat();
+  const { usage, telemetry, activeSessionId, provider, goal, subagents, workflows, setAgentsOpen } = useBrainChat();
   const { data: allProcesses = [] } = useBrainProcesses();
   const qc = useQueryClient();
   // Track the open process by id, not a click-time copy, so the modal follows the live list (it stops
@@ -222,10 +190,8 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   const { data: limitsByProvider = {} } = useBrainRateLimitsAll();
   const limits = provider ? (limitsByProvider[provider] ?? null) : null;
 
-  const project = telemetry.project;
   const mcp = telemetry.mcp;
   const mcpConnected = mcp?.filter((s) => s.status === 'connected') ?? [];
-  const hasProject = !!project?.cwd || !!project?.branch;
   // Only LIVE work belongs in the rail — a finished goal, DAG, agent or process lives on in the
   // transcript, and a section listing settled work would push the running one off the screen.
   const activeGoal: BrainGoal | null = goal?.status === 'active' ? goal : null;
@@ -268,7 +234,6 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
     liveAgents.length > 0,
     processes.length > 0,
     otherProcesses.length > 0,
-    hasProject,
     mcpConnected.length > 0,
     telemetry.lspEnabled !== null,
   ];
@@ -279,20 +244,19 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   const goalMeta = goalTurns ? `${goalTurns} · ${formatDuration(goalElapsed)}` : undefined;
   const subgoals = activeGoal ? goalSubgoalTally(activeGoal.subgoals) : null;
 
+  if (!sections.some(Boolean)) {
+    return <p className="px-3 py-3 text-xs text-muted-foreground">{t.telemetry.empty}</p>;
+  }
+
   return (
     <div className="flex flex-col gap-4 px-3 py-3">
-      <TelemetryMascot busy={busy} />
-      {!sections.some(Boolean) ? (
-        <p className="text-xs text-muted-foreground">{t.telemetry.empty}</p>
-      ) : (
-        <>
       {usage ? (
         <section className="flex flex-col gap-1.5" data-testid="telemetry-context">
           <SectionHead
             label={t.brainChat.context}
             meta={usage.percent == null ? undefined : `${Math.round(usage.percent)}%`}
           />
-          <ContextMeter percent={usage.percent ?? 0} />
+          <ContextMeter percent={usage.percent ?? 0} label={t.brainChat.context} />
           <p className="font-mono text-tiny text-muted-foreground">
             {formatTokens(usage.tokens ?? 0)} / {formatTokens(usage.contextWindow)} · {formatCost(usage.cost, 2)}
           </p>
@@ -321,68 +285,99 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
 
       {limits?.windows.length ? (
         <section className="flex flex-col gap-1.5" data-testid="telemetry-limits">
-          <SectionHead label={t.telemetry.limits} meta={limits.planType ?? undefined} />
+          <SectionHead
+            label={t.telemetry.limits}
+            meta={limits.planType ? <Badge variant="secondary" className="px-1 py-0 text-[10px]">{limits.planType}</Badge> : undefined}
+          />
           <OAuthUsageRail usage={limits} />
         </section>
       ) : null}
 
       {runningWorkflows.length > 0 ? (
-        <section className="flex flex-col gap-1" data-testid="telemetry-workflow">
-          <SectionHead label={t.telemetry.workflow} meta={String(runningWorkflows.length)} />
-          <ul className="flex flex-col gap-0.5">
-            {runningWorkflows.map((wf) => (
-              <li key={wf.id} className="flex items-center gap-1.5">
-                <Workflow size={11} className="shrink-0 text-primary" aria-hidden />
-                {wf.workspaceRef ? (
-                  <span className="shrink-0" title={t.agents.sandboxed}>
-                    <GitBranch size={10} className="text-subtle-foreground" aria-hidden />
-                  </span>
-                ) : null}
-                <LiveRow
-                  label={workflowLabel(wf)}
-                  meta={workflowProgress(wf)}
-                  tone="running"
-                  ariaLabel={t.telemetry.workflowOpen}
-                  title={`${workflowLabel(wf)} — ${workflowProgress(wf)} ${t.telemetry.workflowNodes}`}
-                  {...(onOpenWorkflow ? { onClick: () => onOpenWorkflow(wf.id) } : {})}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
+        <LiveSection label={t.telemetry.workflow} count={runningWorkflows.length} testId="telemetry-workflow">
+          {runningWorkflows.map((wf) => (
+            <li key={wf.id} className="flex items-center gap-1.5">
+              <Workflow size={11} className="shrink-0 text-primary" aria-hidden />
+              {wf.workspaceRef ? (
+                <span className="shrink-0" title={t.agents.sandboxed}>
+                  <GitBranch size={10} className="text-subtle-foreground" aria-hidden />
+                </span>
+              ) : null}
+              <LiveRow
+                label={workflowLabel(wf)}
+                meta={workflowProgress(wf)}
+                tone="running"
+                ariaLabel={t.telemetry.workflowOpen}
+                title={`${workflowLabel(wf)} — ${workflowProgress(wf)} ${t.telemetry.workflowNodes}`}
+                {...(onOpenWorkflow ? { onClick: () => onOpenWorkflow(wf.id) } : {})}
+              />
+            </li>
+          ))}
+        </LiveSection>
       ) : null}
 
       {liveAgents.length > 0 ? (
-        <section className="flex flex-col gap-1" data-testid="telemetry-agents">
-          <SectionHead label={t.telemetry.agents} meta={`${liveAgents.length} ${plural(t.agents.link, liveAgents.length)}`} />
-          <ul className="flex flex-col gap-0.5">
-            {liveAgents.map((agent) => (
-              <li key={agent.sessionId} className="flex items-center gap-1.5">
-                <Users size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
-                {agent.workspaceId ? (
-                  <span className="shrink-0" title={t.agents.sandboxed}>
-                    <GitBranch size={10} className="text-subtle-foreground" aria-hidden />
-                  </span>
-                ) : null}
-                <LiveRow
-                  label={agent.detail || agent.task}
-                  meta={agent.tokens != null ? formatTokens(agent.tokens) : undefined}
-                  tone={agent.status === 'running' ? 'running' : 'idle'}
-                  title={agent.task}
-                  ariaLabel={t.telemetry.agentsOpen}
-                  onClick={() => setAgentsOpen(true)}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
+        <LiveSection
+          label={t.telemetry.agents}
+          count={`${liveAgents.length} ${plural(t.agents.link, liveAgents.length)}`}
+          testId="telemetry-agents"
+        >
+          {liveAgents.map((agent) => (
+            <li key={agent.sessionId} className="flex items-center gap-1.5">
+              <Users size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
+              {agent.workspaceId ? (
+                <span className="shrink-0" title={t.agents.sandboxed}>
+                  <GitBranch size={10} className="text-subtle-foreground" aria-hidden />
+                </span>
+              ) : null}
+              <LiveRow
+                label={agent.detail || agent.task}
+                meta={agent.tokens != null ? formatTokens(agent.tokens) : undefined}
+                tone={agent.status === 'running' ? 'running' : 'idle'}
+                title={agent.task}
+                ariaLabel={t.telemetry.agentsOpen}
+                onClick={() => setAgentsOpen(true)}
+              />
+            </li>
+          ))}
+        </LiveSection>
       ) : null}
 
       {processes.length > 0 ? (
-        <section className="flex flex-col gap-1" data-testid="telemetry-processes">
-          <SectionHead label={t.telemetry.processes} meta={`${processes.length} ${plural(t.telemetry.processesCount, processes.length)}`} />
-          <ul className="flex flex-col gap-0.5">
-            {processes.map((proc) => (
+        <LiveSection
+          label={t.telemetry.processes}
+          count={`${processes.length} ${plural(t.telemetry.processesCount, processes.length)}`}
+          testId="telemetry-processes"
+        >
+          {processes.map((proc) => (
+            <li key={proc.id} className="flex items-center gap-1.5">
+              <TerminalSquare size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
+              <LiveRow
+                label={proc.command}
+                tone="running"
+                title={proc.command}
+                ariaLabel={t.telemetry.processOpen}
+                onClick={() => setOpenProcessId(proc.id)}
+              />
+            </li>
+          ))}
+        </LiveSection>
+      ) : null}
+
+      {/* Everything the open conversation does NOT own: another chat, a channel, or the service an
+          orphaned delegate left running. Kept in its own section so the rail above stays this
+          conversation's, while the one view able to reach a stranded process still exists. The kill
+          button is always visible here (no hover reveal) — the overlay is used on touch, where a
+          hover-only control is unreachable, and killing is the whole point of this section. */}
+      {otherProcesses.length > 0 ? (
+        <LiveSection
+          label={t.telemetry.otherProcesses}
+          count={`${otherProcesses.length} ${plural(t.telemetry.processesCount, otherProcesses.length)}`}
+          testId="telemetry-processes-other"
+        >
+          {otherProcesses.map((proc) => {
+            const origin = processOrigin(proc.sessionId);
+            return (
               <li key={proc.id} className="flex items-center gap-1.5">
                 <TerminalSquare size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
                 <LiveRow
@@ -392,57 +387,27 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
                   ariaLabel={t.telemetry.processOpen}
                   onClick={() => setOpenProcessId(proc.id)}
                 />
+                {origin ? (
+                  <Badge variant="secondary" className="shrink-0 px-1 py-0 text-[10px]" title={proc.sessionId ?? undefined}>
+                    {t.processes[origin]}
+                  </Badge>
+                ) : null}
+                {/* A destructive control sitting directly beside a tappable row needs a finger-sized hit
+                    area of its own; the glyph stays small so the row keeps its quiet density. */}
+                <Button
+                  variant="ghost-destructive"
+                  size="icon"
+                  onClick={() => setConfirmKill(proc)}
+                  aria-label={t.processes.kill}
+                  title={t.processes.kill}
+                  className="size-7 shrink-0 rounded"
+                >
+                  <X size={11} aria-hidden />
+                </Button>
               </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {/* Everything the open conversation does NOT own: another chat, a channel, or the service an
-          orphaned delegate left running. Kept in its own section so the rail above stays this
-          conversation's, while the one view able to reach a stranded process still exists. The kill
-          button is always visible here (no hover reveal) — the drawer is used on touch, where a
-          hover-only control is unreachable, and killing is the whole point of this section. */}
-      {otherProcesses.length > 0 ? (
-        <section className="flex flex-col gap-1" data-testid="telemetry-processes-other">
-          <SectionHead
-            label={t.telemetry.otherProcesses}
-            meta={`${otherProcesses.length} ${plural(t.telemetry.processesCount, otherProcesses.length)}`}
-          />
-          <ul className="flex flex-col gap-0.5">
-            {otherProcesses.map((proc) => {
-              const origin = processOrigin(proc.sessionId);
-              return (
-                <li key={proc.id} className="flex items-center gap-1.5">
-                  <TerminalSquare size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
-                  <LiveRow
-                    label={proc.command}
-                    tone="running"
-                    title={proc.command}
-                    ariaLabel={t.telemetry.processOpen}
-                    onClick={() => setOpenProcessId(proc.id)}
-                  />
-                  {origin ? (
-                    <span className="shrink-0 rounded bg-background px-1 text-[10px] text-muted-foreground" title={proc.sessionId ?? undefined}>
-                      {t.processes[origin]}
-                    </span>
-                  ) : null}
-                  {/* A destructive control sitting directly beside a tappable row needs a finger-sized hit
-                      area of its own; the glyph stays small so the row keeps its quiet density. */}
-                  <button
-                    type="button"
-                    onClick={() => setConfirmKill(proc)}
-                    aria-label={t.processes.kill}
-                    title={t.processes.kill}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-subtle-foreground transition-colors hover:text-destructive"
-                  >
-                    <X size={11} aria-hidden />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
+            );
+          })}
+        </LiveSection>
       ) : null}
 
       {openProcess ? <ProcessOutputModal proc={openProcess} onClose={() => setOpenProcessId(null)} /> : null}
@@ -464,53 +429,224 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
         onClose={() => { if (!killPendingRef.current) setConfirmKill(null); }}
       />
 
-      {hasProject ? (
-        <section className="flex flex-col gap-1" data-testid="telemetry-project">
-          <SectionHead label={t.telemetry.project} />
-          {project?.cwd ? (
-            <p className="truncate font-mono text-tiny text-foreground" title={project.cwd}>{project.cwd}</p>
-          ) : null}
-          {project?.branch ? (
-            // A branch name is one unbreakable token (`agent/chat-rail-no-scroll-20260818`), so without a
-            // truncation of its own it sets the section's minimum width — the same rule the cwd above
-            // already follows.
-            <p className="flex items-baseline gap-1 font-mono text-tiny text-muted-foreground">
-              <span className="shrink-0">{t.telemetry.branch}</span>
-              <span className="min-w-0 truncate text-primary" title={project.branch}>{project.branch}</span>
-            </p>
-          ) : null}
-        </section>
-      ) : null}
-
       {mcpConnected.length > 0 ? (
-        <section className="flex flex-col gap-1" data-testid="telemetry-mcp">
-          <SectionHead
-            label={t.telemetry.mcp}
-            meta={t.telemetry.mcpActive.replace('{active}', String(mcpConnected.length)).replace('{total}', String(mcp?.length ?? 0))}
-          />
-          <ul className="flex flex-col gap-0.5">
-            {mcpConnected.map((s) => (
-              <li key={s.name} className="flex items-center gap-1.5 text-tiny">
-                <span className="shrink-0 text-success" aria-hidden>●</span>
-                <span className="truncate font-mono text-foreground" title={s.name}>{s.name}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <LiveSection
+          label={t.telemetry.mcp}
+          count={t.telemetry.mcpActive.replace('{active}', String(mcpConnected.length)).replace('{total}', String(mcp?.length ?? 0))}
+          testId="telemetry-mcp"
+        >
+          {mcpConnected.map((s) => (
+            <li key={s.name} className="flex items-center gap-1.5 text-tiny">
+              <span className="shrink-0 text-success" aria-hidden>●</span>
+              <span className="truncate font-mono text-foreground" title={s.name}>{s.name}</span>
+            </li>
+          ))}
+        </LiveSection>
       ) : null}
 
       {telemetry.lspEnabled !== null ? (
         <section className="flex flex-col gap-1" data-testid="telemetry-lsp">
           <SectionHead label={t.telemetry.lsp} />
           <p className="flex items-center gap-1.5 text-tiny">
-            <span className={`shrink-0 ${telemetry.lspEnabled ? 'text-success' : 'text-subtle-foreground'}`} aria-hidden>●</span>
-            <span className="text-foreground">{telemetry.lspEnabled ? t.telemetry.lspActive : t.telemetry.lspInactive}</span>
+            <Badge variant={telemetry.lspEnabled ? 'soft-success' : 'secondary'} className="px-1 py-0 text-[10px]">
+              {telemetry.lspEnabled ? t.telemetry.lspActive : t.telemetry.lspInactive}
+            </Badge>
           </p>
         </section>
       ) : null}
-        </>
-      )}
     </div>
+  );
+}
+
+/** The pinned head: who is here and what they are doing, sitting on the viewport's top edge.
+ *
+ *  The mascot moved from a ~230px decorative block to a 56px glyph with the status BESIDE it rather than
+ *  under it, which is what bought the scrolling band its screen. */
+function TelemetryHead({ busy, collapsible, collapsed, onToggle }: {
+  busy: boolean;
+  collapsible: boolean;
+  collapsed: boolean;
+  onToggle?: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div data-testid="telemetry-head" className="flex items-center gap-2 px-3 py-2">
+      <TelemetryMascot busy={busy} size={56} />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-caption font-medium text-foreground">{t.telemetry.title}</span>
+        <Badge variant={busy ? 'soft-primary' : 'secondary'} className="w-fit px-1 py-0 text-[10px]">
+          {busy ? t.telemetry.statusRunning : t.telemetry.statusIdle}
+        </Badge>
+      </div>
+      {collapsible && onToggle ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggle}
+          aria-label={collapsed ? t.telemetry.expand : t.telemetry.collapse}
+          title={collapsed ? t.telemetry.expand : t.telemetry.collapse}
+          aria-expanded={!collapsed}
+          className="size-7 shrink-0 rounded"
+          data-testid="telemetry-collapse"
+        >
+          {collapsed ? <PanelRightOpen size={14} aria-hidden /> : <PanelRightClose size={14} aria-hidden />}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** The pinned foot: which workspace this conversation is standing in, on the viewport's bottom edge.
+ *  Workspace identity is ambient information — it belongs on a status bar, not in the middle of the
+ *  metrics it never changes with. */
+function TelemetryFoot() {
+  const { t } = useTranslation();
+  const { telemetry } = useBrainChat();
+  const project = telemetry.project;
+  if (!project?.cwd && !project?.branch) return null;
+  return (
+    <div data-testid="telemetry-foot" className="flex flex-col gap-0.5 px-3 py-2">
+      <section className="flex flex-col gap-0.5" data-testid="telemetry-project">
+        {project?.cwd ? (
+          <p className="truncate font-mono text-tiny text-foreground" title={project.cwd}>{project.cwd}</p>
+        ) : null}
+        {project?.branch ? (
+          // A branch name is one unbreakable token (`agent/chat-rail-no-scroll-20260818`), so without a
+          // truncation of its own it sets the section's minimum width — the same rule the cwd above
+          // already follows.
+          <p className="flex items-baseline gap-1 font-mono text-tiny text-muted-foreground">
+            <GitBranch size={10} className="shrink-0 text-subtle-foreground" aria-hidden />
+            <span className="shrink-0">{t.telemetry.branch}</span>
+            <span className="min-w-0 truncate text-primary" title={project.branch}>{project.branch}</span>
+          </p>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+/** The collapsed 52px stub. Not zero: the mascot still reports whether a turn is running and the context
+ *  meter still reports how full the window is, which are the two facts worth a permanent 52px. The meter
+ *  is the same `Progress` primitive turned on its side, so the collapsed and expanded rails cannot drift
+ *  into two different meters. */
+function TelemetryStub({ busy, onToggle }: { busy: boolean; onToggle?: () => void }) {
+  const { t } = useTranslation();
+  const { usage } = useBrainChat();
+  const pct = Math.max(0, Math.min(100, usage?.percent ?? 0));
+  return (
+    <div data-testid="telemetry-stub" className="flex h-full flex-col items-center gap-3 py-2">
+      {onToggle ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggle}
+          aria-label={t.telemetry.expand}
+          title={t.telemetry.expand}
+          aria-expanded={false}
+          className="size-7 shrink-0 rounded"
+          data-testid="telemetry-collapse"
+        >
+          <PanelRightOpen size={14} aria-hidden />
+        </Button>
+      ) : null}
+      <TelemetryMascot busy={busy} size={32} />
+      {usage ? (
+        <>
+          {/* A vertical meter out of the horizontal primitive: the box reserves the rotated track's
+              footprint, and the rotation is what makes the fill grow upward. */}
+          <div className="flex h-24 w-6 shrink-0 items-center justify-center">
+            <Progress
+              className="w-24 origin-center -rotate-90"
+              value={usageMeterValue(pct)}
+              indicatorClassName={usageProgressClass(pct)}
+              aria-label={t.brainChat.context}
+            />
+          </div>
+          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{Math.round(pct)}%</span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** Head, body and foot as one continuous band, separated by hairlines rather than by card edges.
+ *
+ *  The head and the foot are pinned and the middle is the only thing that scrolls, which is what lets the
+ *  rail sit flush on all three viewport edges: there is no outer scroller to clip it and no frame inset
+ *  to keep it off the glass. */
+function TelemetryRailContent({ busy, collapsible, onToggle, onOpenWorkflow }: {
+  busy: boolean;
+  collapsible: boolean;
+  onToggle?: () => void;
+  onOpenWorkflow?: (id: string) => void;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <TelemetryHead busy={busy} collapsible={collapsible} collapsed={false} onToggle={onToggle} />
+      <Separator />
+      <ScrollArea data-testid="telemetry-scroll" className="min-h-0 flex-1" type="hover">
+        <TelemetryBody onOpenWorkflow={onOpenWorkflow} />
+      </ScrollArea>
+      <Separator />
+      <TelemetryFoot />
+    </div>
+  );
+}
+
+/** The phone slide-over, on the shadcn `Dialog` (Radix): the dialog role, the focus trap, Escape and the
+ *  layer order among several open overlays are Radix's, so this file no longer writes any of them.
+ *
+ *  Like the history drawer it does NOT take `useOverlayIsolation`: that stack isolates the background by
+ *  marking every OTHER child of <body> inert, which needs an overlay portalled to the body, and this one
+ *  renders inside the chat shell — its own body-level ancestor is what would be marked, so the drawer
+ *  would disable itself. Radix's `aria-hidden` sweep walks the ancestor chain instead. What the stack
+ *  still owns and Radix cannot is where focus goes on the way out: there is no `Dialog.Trigger` to hand
+ *  it back to. */
+function TelemetryDrawer({ label, onClose, children }: { label: string; onClose?: () => void; children: ReactNode }) {
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const { restoreFocus } = useReturnFocus();
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose?.(); }}>
+      <div
+        className="overlay-layer-drawer fixed inset-0"
+        // Radix's modal content sets `pointer-events: none` on <body> and re-enables them on itself;
+        // this layer would inherit the block and the backdrop below would stop answering the click that
+        // dismisses the drawer. Opting back in is what `DialogOverlay` does for the same reason.
+        style={{ pointerEvents: 'auto' }}
+      >
+        <div className="absolute inset-0 bg-background/50" onClick={onClose} aria-hidden />
+        <DialogContent
+          ref={surfaceRef}
+          // A right rail that owns its own internal scrolling, which none of the primitive's presentations
+          // describes; the geometry stays here. Only the geometry: `presentation={null}` drops the shape
+          // classes, but `.overlay-surface` is in the variant BASE and still paints the ground, the
+          // border colour and the raised shadow.
+          presentation={null}
+          aria-label={label}
+          aria-describedby={undefined}
+          data-testid="telemetry-drawer"
+          // Full-bleed on a phone rather than a 18rem sliver: the same three-zone rail, given the whole
+          // screen instead of being squeezed into the margin of a conversation it is covering anyway.
+          className="animate-drawer-in absolute inset-y-0 right-0 flex w-full flex-col overflow-hidden border-l border-border sm:max-w-sm"
+          // The backdrop above already owns dismissal, and it is the only owner that knows a nested
+          // overlay's backdrop must not close its parent — the rail raises both a process modal and the
+          // command field from inside itself.
+          onInteractOutside={(event) => event.preventDefault()}
+          // The panel is something to read, so focus anchors on the surface rather than on the close
+          // button Radix would pick; the opener gets it back on the way out.
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            if (surfaceRef.current) focusOverlaySurface(surfaceRef.current);
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus();
+          }}
+        >
+          {children}
+        </DialogContent>
+      </div>
+    </Dialog>
   );
 }
 
@@ -518,43 +654,46 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
  *  rather than asking for attention: quiet labels, one meter vocabulary, no colour unless a number is
  *  under pressure.
  *
- *  `column` is the desktop layout (a real sidebar beside the transcript); `drawer` is the mobile one,
- *  because a second column on a phone would squeeze the conversation off the screen. The host picks
- *  between them via `useMobileViewport()` — this component never renders both, and neither is mounted
- *  until the viewport has actually been measured.
- *
- *  Only the column is resizable, and the variant is the viewport decision: the host already made it, so
- *  the drag handle needs no media query of its own. A phone drawer has nothing to widen into anyway, and
- *  an edge that swallowed horizontal drags would fight the gesture that closes it. */
-export function TelemetryPanel({ variant, open = false, onClose, onOpenWorkflow }: {
+ *  `column` is the desktop dock and `drawer` is the phone overlay. NEITHER owns its width any more: the
+ *  dock is a `ResizablePanel` in the shell (see components/shell/Shell.tsx), which is what lets it sit
+ *  flush against the top, right and bottom edges of the viewport instead of starting below the chat
+ *  header. This component fills whatever box its host gives it, so the same content works in a 52px stub,
+ *  a 340px dock and a full-screen sheet. */
+export function TelemetryPanel({ variant, open = false, collapsed = false, onClose, onToggleCollapsed, onOpenWorkflow }: {
   variant: 'column' | 'drawer';
   open?: boolean;
+  /** Desktop only: render the 52px stub instead of the full rail. */
+  collapsed?: boolean;
   onClose?: () => void;
+  onToggleCollapsed?: () => void;
   /** Open the navigable DAG view for a workflow row. Absent → the rows are inert (they still report the
    *  running DAGs), so the rail never depends on a host that has no such view to show. */
   onOpenWorkflow?: (id: string) => void;
 }) {
   const { t } = useTranslation();
-  const { width, resizeBy, reset } = useTelemetryRailWidth();
+  const { busy } = useBrainChat();
 
   if (variant === 'drawer') {
     // Mounted only while open, like the history drawer: a closed drawer leaves nothing focusable behind.
     if (!open) return null;
     return (
       <TelemetryDrawer label={t.telemetry.title} onClose={onClose}>
-        <div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
+        <div className="flex shrink-0 items-center gap-1 border-b border-border px-3 py-1.5">
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{t.telemetry.title}</span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={onClose}
             aria-label={t.telemetry.close}
             title={t.telemetry.close}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="size-9 shrink-0"
           >
             <X size={16} aria-hidden />
-          </button>
+          </Button>
         </div>
-        <TelemetryBody onOpenWorkflow={onOpenWorkflow} />
+        <div className="min-h-0 flex-1">
+          <TelemetryRailContent busy={busy} collapsible={false} onOpenWorkflow={onOpenWorkflow} />
+        </div>
       </TelemetryDrawer>
     );
   }
@@ -563,26 +702,14 @@ export function TelemetryPanel({ variant, open = false, onClose, onOpenWorkflow 
     <aside
       aria-label={t.telemetry.title}
       data-testid="telemetry-column"
-      style={{ width, ...railTypeVars(width) }}
-      className="relative flex shrink-0 flex-col border-l border-border"
+      data-collapsed={collapsed || undefined}
+      // `h-full` and nothing else: the panel that hosts this owns the width, and the only edge the rail
+      // paints is its left one — which is the resize handle.
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
     >
-      {/* The handle sits ON the column's own border rather than between the two flex children, so
-          widening the rail never shifts the divider out from under the cursor mid-drag. */}
-      <ResizeHandle
-        orientation="vertical"
-        onDelta={(dx) => resizeBy(-dx)}
-        onReset={reset}
-        label={t.telemetry.resize}
-        value={width}
-        min={RAIL_MIN_WIDTH}
-        max={RAIL_MAX_WIDTH}
-        className="absolute inset-y-0 left-0 z-10"
-      />
-      {/* The border runs the full column height while the content itself follows the reader, so the rail
-          stays legible through a long transcript instead of scrolling away with the first turns. */}
-      <div data-testid="telemetry-scroll" className={`sticky top-0 max-h-[100dvh] ${RAIL_SCROLL}`}>
-        <TelemetryBody onOpenWorkflow={onOpenWorkflow} />
-      </div>
+      {collapsed
+        ? <TelemetryStub busy={busy} onToggle={onToggleCollapsed} />
+        : <TelemetryRailContent busy={busy} collapsible onToggle={onToggleCollapsed} onOpenWorkflow={onOpenWorkflow} />}
     </aside>
   );
 }

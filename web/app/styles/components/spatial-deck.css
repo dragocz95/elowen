@@ -1,7 +1,7 @@
 /* The deck shell's furniture and the settings surface it carries.
    Two things live here, and they are one system: the section rail with the spatial decoration it shares
    (.spatial-section-rail*, .spatial-section-node*, .spatial-identity, .spatial-inline-action,
-   .spatial-mascot*, .telemetry-rail-scroll), and the settings/account surface itself (.settings-document,
+   .spatial-mascot*), and the settings/account surface itself (.settings-document,
    .settings-group*, .settings-row*, .settings-toolbar and their register variants).
    The surface used to sit in web/modules/settings/theme.css, loaded by hand from the root layout even
    though /account and every plugin bundle render it too. It is shared UI, so it belongs in the core
@@ -78,17 +78,6 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .spatial-mascot-fallback--saving::before { animation: ember-breathe 1.1s ease-in-out infinite; }
 .spatial-mascot-fallback--success::before { background: radial-gradient(circle, color-mix(in srgb, var(--color-success) 20%, transparent), rgb(var(--primary-rgb) / 0.04) 48%, transparent 72%); }
 .spatial-mascot-fallback--error::before { background: radial-gradient(circle, color-mix(in srgb, var(--color-destructive) 15%, transparent), transparent 70%); }
-
-/* Chat telemetry rail ------------------------------------------------------ */
-/* The rail scrolls a long panel vertically but never draws the bar: an 8px rule down a 240px companion
-   column is louder than the numbers it measures, and the same body is a phone drawer. Only the chrome is
-   hidden — wheel, touch, keyboard and scroll-into-view are untouched, and the overflow rules themselves
-   stay on the element as utilities.
-   It has to be a real class rather than a Tailwind arbitrary utility: base.css styles `*` scrollbars
-   OUTSIDE any cascade layer, and unlayered declarations beat anything in @layer utilities no matter how
-   specific. Same shape as `.spatial-section-rail` above. */
-.telemetry-rail-scroll { scrollbar-width: none; }
-.telemetry-rail-scroll::-webkit-scrollbar { display: none; }
 
 /* Settings / account surface ----------------------------------------------- */
 
