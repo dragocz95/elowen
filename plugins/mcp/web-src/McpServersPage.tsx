@@ -297,6 +297,7 @@ export function McpServersPage() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string>();
   const [removing, setRemoving] = useState<McpServer>();
+  const [removeError, setRemoveError] = useState<string>();
   const [showTools, setShowTools] = useState(false);
 
   const load = useCallback(async () => {
@@ -377,19 +378,23 @@ export function McpServersPage() {
 
   const removeServer = async () => {
     const target = removing;
-    setRemoving(undefined);
     if (!target) return;
-    setBusy(true); setActionError(undefined);
+    setBusy(true); setActionError(undefined); setRemoveError(undefined);
     try {
       await apiJson(`/plugins/mcp/api/servers/${encodeURIComponent(target.name)}`, {
         method: 'DELETE',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ scope: target.scope }),
       });
-      setEditor(undefined);
       await load();
-    } catch { setActionError(s.actionError); }
-    finally { setBusy(false); }
+      setEditor(undefined);
+      setRemoving(undefined);
+    } catch (error) {
+      const message = utils.apiErrorMessage(error) || s.removeError;
+      setActionError(message);
+      setRemoveError(message);
+      throw error;
+    } finally { setBusy(false); }
   };
 
   const openServer = (server: McpServer) => { setActionError(undefined); setEditor({ key: serverKey(server), draft: serverDraft(server) }); };
@@ -516,7 +521,7 @@ export function McpServersPage() {
             onChange={(draft) => setEditor((current) => (current ? { ...current, draft } : current))}
             onSave={() => void save()}
             onReconnect={() => void reconnect()}
-            onRemove={() => { if (selected) setRemoving(selected); }}
+            onRemove={() => { if (selected) { setRemoveError(undefined); setRemoving(selected); } }}
             onShowTools={() => setShowTools(true)}
           />
         </C.WorkspaceDetailRail>
@@ -540,10 +545,16 @@ export function McpServersPage() {
 
       <C.ConfirmDialog
         open={Boolean(removing)}
-        title={removing ? s.removeConfirm.replace('{name}', removing.name) : ''}
+        title={removing ? s.removeConfirmTitle.replace('{name}', removing.name) : ''}
+        description={removing ? s.removeConfirmDescription
+          .replace('{name}', removing.name)
+          .replace('{scope}', scopeLabel(removing.scope, s))
+          .replace('{transport}', removing.transport.toUpperCase()) : ''}
         confirmLabel={s.removeServer}
-        onClose={() => setRemoving(undefined)}
-        onConfirm={() => void removeServer()}
+        pendingLabel={s.removingServer}
+        error={removeError}
+        onClose={() => { setRemoving(undefined); setRemoveError(undefined); }}
+        onConfirm={removeServer}
       />
     </C.WorkspaceShell>
   );

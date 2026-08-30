@@ -54,6 +54,7 @@ export type PageFilterField = {
 } & ({ active: true; activeLabel: string; onReset: () => void } | { active: false });
 
 interface McpRuntime {
+  apiVersion: 11;
   /** The host's own workspace kit — the same components the built-in pages compose, so this page is
    *  the app's register table and detail drawer rather than a second look-alike of them. */
   components: {
@@ -96,7 +97,7 @@ interface McpRuntime {
 }
 
 interface Registration {
-  requiresApiVersion: number;
+  requiresApiVersion: 11;
   pages: Record<string, ComponentType<{ surface: 'page' | 'deck' }>>;
 }
 

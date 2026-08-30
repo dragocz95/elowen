@@ -2,13 +2,13 @@ import { registerMcpUi } from './runtime';
 import { McpServersPage } from './McpServersPage';
 
 registerMcpUi({
-  // 9: the register composes WorkspaceShell, Pager, RegisterSearch and DataTableChevronCell, and hands
-  // its search and its ownership scope to the shell's `toolbar` — the canonical row, which a host on
-  // API 8 does not accept and would silently ignore.
+  // 11: async ConfirmDialog keeps this destructive request owned while it is pending and reports a
+  // rejection without dismissing it. API 10 remains reserved for the parallel Slider/DirectoryPicker
+  // additions; 11 is their additive superset.
   //
   // Mind the wording here: THIS file's comments survive into the built bundle, and the CSS pipeline
   // extracts utility candidates from that text — so an ordinary English word that happens to name a
   // Tailwind utility adds its whole rule set to the shipped stylesheet for nothing.
-  requiresApiVersion: 9,
+  requiresApiVersion: 11,
   pages: { '': McpServersPage },
 });

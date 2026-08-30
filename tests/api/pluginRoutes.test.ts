@@ -233,15 +233,48 @@ describe('plugin routes', () => {
     expect(config.get().plugins.enabled).toEqual(['skills']);
   });
 
-  it('reports a deferred config save the same way', async () => {
+  it('reports an immediately applied config save as persisted and active', async () => {
+    const { app, config, reloadPlugins, adminTok } = setup();
+
+    const res = await app.request('/plugins/discord/config', patch(adminTok, { values: { guildId: 'g-live' } }));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(config.pluginConfig('discord').guildId).toBe('g-live');
+    expect(reloadPlugins).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a deferred config save as persisted with activation pending', async () => {
     const { app, config, reloadPlugins, adminTok } = setup();
     reloadPlugins.mockResolvedValueOnce(false);
 
     const res = await app.request('/plugins/discord/config', patch(adminTok, { values: { botToken: 'tok-9' } }));
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toMatchObject({ ok: true, pending: true });
+    expect(await res.json()).toEqual({ ok: true, pending: true });
     expect(config.pluginConfig('discord').botToken).toBe('tok-9');
+  });
+
+  it('keeps a post-persistence reload exception success-shaped and pending', async () => {
+    const { app, config, reloadPlugins, adminTok } = setup();
+    reloadPlugins.mockRejectedValueOnce(new Error('registry rebuild failed'));
+
+    const res = await app.request('/plugins/discord/config', patch(adminTok, { values: { guildId: 'g-persisted' } }));
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ ok: true, pending: true });
+    expect(config.pluginConfig('discord').guildId).toBe('g-persisted');
+  });
+
+  it('keeps a pre-persistence failure as a real error and never starts reload', async () => {
+    const { app, config, reloadPlugins, adminTok } = setup();
+    vi.spyOn(config, 'update').mockImplementationOnce(() => { throw new Error('database write failed'); });
+
+    const res = await app.request('/plugins/discord/config', patch(adminTok, { values: { guildId: 'g-lost' } }));
+
+    expect(res.status).toBe(500);
+    expect(config.pluginConfig('discord').guildId).toBeUndefined();
+    expect(reloadPlugins).not.toHaveBeenCalled();
   });
 
   it('rejects a non-admin (403) and an unknown plugin (404)', async () => {

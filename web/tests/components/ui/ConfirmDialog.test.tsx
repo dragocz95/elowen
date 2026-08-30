@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { Activity, StrictMode } from 'react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
 import { Modal } from '../../../components/ui/Modal';
@@ -21,6 +22,13 @@ function pressOutside(layer: HTMLElement) {
 
 const backdrop = () => document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]')!;
 
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 describe('ConfirmDialog', () => {
   it('renders title, description, confirm and cancel when open', () => {
     render(
@@ -38,6 +46,11 @@ describe('ConfirmDialog', () => {
     expect(screen.getByText('Remove my/custom?')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  it('puts initial focus on the safe Cancel action', async () => {
+    render(<ConfirmDialog open title="Delete model" onConfirm={vi.fn()} onClose={vi.fn()} />, { wrapper: W });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus());
   });
 
   it('fires onClose when Cancel is clicked', () => {
@@ -89,5 +102,93 @@ describe('ConfirmDialog', () => {
     render(<ConfirmDialog open title="Delete model" onConfirm={vi.fn()} onClose={onClose} />, { wrapper: W });
     fireEvent.keyDown(screen.getByRole('alertdialog', { name: 'Delete model' }), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks every dismissal path and shows the pending label while an async confirm runs', async () => {
+    const request = deferred();
+    const onClose = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        title="Delete model"
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        onConfirm={() => request.promise}
+        onClose={onClose}
+      />,
+      { wrapper: W },
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(screen.getByRole('button', { name: 'Deleting…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+
+    fireEvent.keyDown(screen.getByRole('alertdialog', { name: 'Delete model' }), { key: 'Escape' });
+    await armOutsidePress();
+    pressOutside(backdrop());
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => { request.resolve(); await request.promise; });
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  });
+
+  it('guards direct duplicate events before the pending render can disable the control', () => {
+    const request = deferred();
+    const onConfirm = vi.fn(() => request.promise);
+    render(<ConfirmDialog open title="Delete model" onConfirm={onConfirm} onClose={vi.fn()} />, { wrapper: W });
+    const confirm = screen.getByRole('button', { name: 'Delete' });
+
+    act(() => {
+      confirm.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      confirm.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the dialog open and reports an async confirmation error', async () => {
+    const request = deferred();
+    const onClose = vi.fn();
+    render(<ConfirmDialog open title="Delete model" onConfirm={() => request.promise} onClose={onClose} />, { wrapper: W });
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await act(async () => { request.reject(new Error('Delete failed')); await request.promise.catch(() => undefined); });
+
+    expect(screen.getByRole('alertdialog', { name: 'Delete model' })).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Delete failed');
+    expect(onClose).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
+  });
+
+  it('reports completion after StrictMode re-runs the effect setup', async () => {
+    const request = deferred();
+    render(
+      <StrictMode><W><ConfirmDialog open title="Delete model" onConfirm={() => request.promise} onClose={vi.fn()} /></W></StrictMode>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    await act(async () => { request.reject(new Error('Strict failure')); await request.promise.catch(() => undefined); });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Strict failure');
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  });
+
+  it('reports completion after an Activity hide-show reactivates the same instance', async () => {
+    const request = deferred();
+    const view = (hidden: boolean) => (
+      <Activity mode={hidden ? 'hidden' : 'visible'}>
+        <W><ConfirmDialog open title="Delete model" onConfirm={() => request.promise} onClose={vi.fn()} /></W>
+      </Activity>
+    );
+    const { rerender } = render(view(false));
+    rerender(view(true));
+    rerender(view(false));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    await act(async () => { request.reject(new Error('Reactivated failure')); await request.promise.catch(() => undefined); });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Reactivated failure');
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
   });
 });

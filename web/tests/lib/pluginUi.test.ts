@@ -23,11 +23,10 @@ describe('plugin UI runtime', () => {
     // each of which every plugin register had hand-rolled its own copy of, plus the full-application
     // takeover, which is the one surface a bundle genuinely cannot build for itself because the overlay
     // layer scale and the focus/inert machinery live in the host. 9 adds the canonical page toolbar and
-    // its condensed filter control, and — the part a bundle cannot see from the component map alone —
-    // `WorkspaceShell` now accepts a `toolbar`, so a register's search and filters land in the same row
-    // as every built-in page's instead of in a band the bundle lays out for itself.
-    expect(PLUGIN_UI_API_VERSION).toBe(9);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(9);
+    // its condensed filter control. 10 belongs to the additive Slider/DirectoryPicker integration. 11
+    // adds the async-safe ConfirmDialog contract, including pending/error ownership across the plugin ABI.
+    expect(PLUGIN_UI_API_VERSION).toBe(11);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(11);
     expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({
       WorkspaceShell: expect.any(Function),
       WorkspaceHero: expect.any(Function),

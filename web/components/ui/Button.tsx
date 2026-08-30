@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from 'react';
+import type { ComponentProps } from 'react';
 import type { LucideIcon } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
@@ -39,7 +39,7 @@ export function buttonClassName(variant: ButtonVariant = 'default', size: Button
   return cn(buttonVariants({ variant: SHADCN_VARIANT[variant], size }), className);
 }
 
-export function Button({ variant = 'default', size = 'default', icon: Icon, className = '', children, ...rest }: { variant?: ButtonVariant; size?: ButtonSize; icon?: LucideIcon } & ButtonHTMLAttributes<HTMLButtonElement>) {
+export function Button({ variant = 'default', size = 'default', icon: Icon, className = '', children, ...rest }: { variant?: ButtonVariant; size?: ButtonSize; icon?: LucideIcon } & ComponentProps<'button'>) {
   return (
     <ShadcnButton variant={SHADCN_VARIANT[variant]} size={size} className={className} {...rest}>
       {Icon ? <Icon size={14} aria-hidden /> : null}

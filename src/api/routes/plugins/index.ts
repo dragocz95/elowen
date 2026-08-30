@@ -13,6 +13,7 @@ import type { ElowenApp, RouteContext } from '../../context.js';
 import { registerBrainOAuthRoutes } from './oauth.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../../brain/tools/index.js';
 import { makeToolIconResolver } from '../../../brain/toolIcons.js';
+import { logger } from '../../../shared/logger.js';
 
 /** Apply a config patch to the stored values, by the ONE rule both config forms follow: a key the caller
  *  did not send is left alone, an explicit `null` clears a non-secret back to its default, and a secret
@@ -60,6 +61,8 @@ function marketplaceFail(c: Context, e: unknown) {
   return c.json({ error: e instanceof Error ? e.message : 'marketplace operation failed' }, status);
 }
 
+const log = logger('plugins');
+
 /** Answer a plugin write whose config change is already persisted, distinguishing whether the live
  *  registry swap happened. `swapped === false` means work was still running, so the runtime is briefly
  *  one generation behind the config and converges when a turn settles — a 202 with `pending: true`, so
@@ -68,6 +71,20 @@ function marketplaceFail(c: Context, e: unknown) {
 function applied(c: Context, body: Record<string, unknown>, swapped: boolean | undefined) {
   if (swapped === false) return c.json({ ...body, pending: true }, 202);
   return c.json(body);
+}
+
+/** A config write is durable before the runtime reload starts. Once persistence succeeds, a reload
+ *  exception is therefore an activation delay, never a failed save: log the operational fault and return
+ *  the same pending contract as an intentional deferral. Persistence exceptions still escape before this
+ *  helper is called and remain real request failures. */
+async function appliedConfig(c: Context, name: string, reload: (() => Promise<boolean>) | undefined) {
+  if (!reload) return applied(c, { ok: true }, undefined);
+  try {
+    return applied(c, { ok: true }, await reload());
+  } catch (error) {
+    log.warn(`plugin config persisted but live activation failed for ${name}; activation remains pending`, error);
+    return c.json({ ok: true, pending: true }, 202);
+  }
 }
 
 /** Admin management of daemon plugins: list what's installed on disk (bundled + user dir) and flip a
@@ -434,8 +451,9 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown> } | null;
     if (!b || typeof b.values !== 'object' || b.values === null) return c.json({ error: 'values must be an object' }, 400);
     const stored = applyConfigPatch(manifest.configSchema ?? [], d.config.pluginConfig(name), b.values);
+    // Persistence is the commit point. Any failure here remains a request failure and no reload starts.
     d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } });
-    return applied(c, { ok: true }, await d.brain?.reloadPlugins());
+    return await appliedConfig(c, name, d.brain ? () => d.brain!.reloadPlugins() : undefined);
   });
 
   app.patch('/plugins/:name', async (c) => {

@@ -410,6 +410,7 @@ function McpServersPage() {
   const [busy, setBusy] = (0, import_react3.useState)(false);
   const [actionError, setActionError] = (0, import_react3.useState)();
   const [removing, setRemoving] = (0, import_react3.useState)();
+  const [removeError, setRemoveError] = (0, import_react3.useState)();
   const [showTools, setShowTools] = (0, import_react3.useState)(false);
   const load = (0, import_react3.useCallback)(async () => {
     setLoading(true);
@@ -491,20 +492,24 @@ function McpServersPage() {
   };
   const removeServer = async () => {
     const target = removing;
-    setRemoving(void 0);
     if (!target) return;
     setBusy(true);
     setActionError(void 0);
+    setRemoveError(void 0);
     try {
       await apiJson(`/plugins/mcp/api/servers/${encodeURIComponent(target.name)}`, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ scope: target.scope })
       });
-      setEditor(void 0);
       await load();
-    } catch {
-      setActionError(s.actionError);
+      setEditor(void 0);
+      setRemoving(void 0);
+    } catch (error) {
+      const message = utils.apiErrorMessage(error) || s.removeError;
+      setActionError(message);
+      setRemoveError(message);
+      throw error;
     } finally {
       setBusy(false);
     }
@@ -615,7 +620,10 @@ function McpServersPage() {
             onSave: () => void save(),
             onReconnect: () => void reconnect(),
             onRemove: () => {
-              if (selected) setRemoving(selected);
+              if (selected) {
+                setRemoveError(void 0);
+                setRemoving(selected);
+              }
             },
             onShowTools: () => setShowTools(true)
           }
@@ -641,10 +649,16 @@ function McpServersPage() {
           C.ConfirmDialog,
           {
             open: Boolean(removing),
-            title: removing ? s.removeConfirm.replace("{name}", removing.name) : "",
+            title: removing ? s.removeConfirmTitle.replace("{name}", removing.name) : "",
+            description: removing ? s.removeConfirmDescription.replace("{name}", removing.name).replace("{scope}", scopeLabel(removing.scope, s)).replace("{transport}", removing.transport.toUpperCase()) : "",
             confirmLabel: s.removeServer,
-            onClose: () => setRemoving(void 0),
-            onConfirm: () => void removeServer()
+            pendingLabel: s.removingServer,
+            error: removeError,
+            onClose: () => {
+              setRemoving(void 0);
+              setRemoveError(void 0);
+            },
+            onConfirm: removeServer
           }
         )
       ]
@@ -654,13 +668,13 @@ function McpServersPage() {
 
 // plugins/mcp/web-src/index.tsx
 registerMcpUi({
-  // 9: the register composes WorkspaceShell, Pager, RegisterSearch and DataTableChevronCell, and hands
-  // its search and its ownership scope to the shell's `toolbar` — the canonical row, which a host on
-  // API 8 does not accept and would silently ignore.
+  // 11: async ConfirmDialog keeps this destructive request owned while it is pending and reports a
+  // rejection without dismissing it. API 10 remains reserved for the parallel Slider/DirectoryPicker
+  // additions; 11 is their additive superset.
   //
   // Mind the wording here: THIS file's comments survive into the built bundle, and the CSS pipeline
   // extracts utility candidates from that text — so an ordinary English word that happens to name a
   // Tailwind utility adds its whole rule set to the shipped stylesheet for nothing.
-  requiresApiVersion: 9,
+  requiresApiVersion: 11,
   pages: { "": McpServersPage }
 });

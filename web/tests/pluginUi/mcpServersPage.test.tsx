@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, beforeAll, afterAll, afterEach } from 'vitest';
-import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
@@ -20,6 +22,12 @@ const strings = (manifest as { web: { strings: Record<string, string> } }).web.s
 /** A row opens through ONE button spanning it, whose accessible name is the manifest's short open
  *  label — not the server name, which is only the text of a cell inside the row. */
 const openLabel = (name: string) => strings.openServer!.replace('{name}', name);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 const server: McpServer = {
   name: 'github',
@@ -48,6 +56,15 @@ const remote: McpServer = {
   reconnecting: false,
   url: 'https://mcp.example.test/',
 };
+
+describe('MCP bundle contract', () => {
+  it('gates the manifest and built registration on plugin UI API 11', () => {
+    const bundle = readFileSync(join(process.cwd(), '..', 'plugins', 'mcp', 'web', 'index.js'), 'utf8');
+    expect((manifest as { web: { requiresApiVersion: number } }).web.requiresApiVersion).toBe(11);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(11);
+    expect(bundle).toMatch(/requiresApiVersion:\s*11/);
+  });
+});
 
 describe('MCP settings form mapping', () => {
   it('round-trips a stdio server without losing command arguments or environment values', () => {
@@ -243,6 +260,49 @@ describe('MCP scope transfer', () => {
 
     expect(await screen.findByText(/local-process MCP servers cannot change scope/)).toBeInTheDocument();
     expect(screen.queryByText(strings.saveError!)).toBeNull();
+  });
+});
+
+describe('MCP server deletion', () => {
+  it('locks pending deletion, blocks a second DELETE and keeps the dialog when the request rejects', async () => {
+    let deleteCalls = 0;
+    let deleteBody: unknown;
+    const response = deferred<Response>();
+    msw.use(
+      http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [server], instance: [], canManageInstance: false })),
+      http.delete('*/api/plugins/mcp/api/servers/github', async ({ request }) => {
+        deleteCalls += 1;
+        deleteBody = await request.json();
+        return await response.promise;
+      }),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: openLabel('github') }));
+    const drawer = within(await screen.findByRole('dialog', { name: 'github' }));
+    fireEvent.click(drawer.getByRole('button', { name: strings.removeServer }));
+
+    const confirmation = within(await screen.findByRole('alertdialog', { name: /github/ }));
+    expect(deleteCalls).toBe(0);
+    expect(confirmation.getByText(new RegExp(strings.scopePersonal!))).toBeInTheDocument();
+    expect(confirmation.getByText(/STDIO/)).toBeInTheDocument();
+    const confirm = confirmation.getByRole('button', { name: strings.removeServer });
+
+    act(() => {
+      confirm.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      confirm.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    await waitFor(() => expect(deleteCalls).toBe(1));
+    expect(confirmation.getByRole('button', { name: strings.removingServer })).toBeDisabled();
+    expect(deleteBody).toEqual({ scope: 'personal' });
+
+    response.resolve(HttpResponse.json({ error: 'delete refused' }, { status: 500 }));
+
+    expect(await confirmation.findByRole('alert')).toHaveTextContent('delete refused');
+    expect(screen.getByRole('alertdialog', { name: /github/ })).toBeInTheDocument();
+    expect(deleteCalls).toBe(1);
+    // Radix makes the register inert behind the alert dialog, but the saved row must still be present.
+    expect(document.querySelector(`button[aria-label="${openLabel('github')}"]`)).not.toBeNull();
   });
 });
 
