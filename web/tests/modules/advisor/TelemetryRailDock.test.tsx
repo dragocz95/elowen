@@ -97,6 +97,7 @@ describe('telemetry rail dock — layout ownership', () => {
     renderDock();
     const rail = await screen.findByTestId('telemetry-column');
     const workspace = screen.getByTestId('workspace');
+    expect(rail).toHaveClass('w-full');
 
     const contentPanel = document.querySelector<HTMLElement>(`[data-panel][id="${CHAT_CONTENT_PANEL_ID}"]`);
     const railPanel = document.querySelector<HTMLElement>(`[data-panel][id="${CHAT_RAIL_PANEL_ID}"]`);
