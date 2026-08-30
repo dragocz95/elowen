@@ -91,6 +91,47 @@ test('no page scrolls sideways at 320px', async ({ page }, testInfo) => {
   }
 });
 
+test('metric rails have one outer hairline and no item separators on core pages', async ({ page }, testInfo) => {
+  authedOnly(testInfo);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  for (const route of ['/settings', '/account', '/users']) {
+    await page.goto(route);
+    await expect(page.locator('.workspace-hero__metrics')).toBeVisible();
+    const geometry = await page.evaluate(() => {
+      const hero = document.querySelector<HTMLElement>('.workspace-hero')!;
+      const rail = document.querySelector<HTMLElement>('.workspace-hero__metrics')!;
+      const railStyle = getComputedStyle(rail);
+      const metrics = [...rail.querySelectorAll<HTMLElement>('.workspace-metric')].map((metric) => {
+        const rect = metric.getBoundingClientRect();
+        const style = getComputedStyle(metric);
+        return { top: rect.top, borderLeft: style.borderLeftWidth, borderRight: style.borderRightWidth };
+      });
+      const main = document.querySelector<HTMLElement>('main')!;
+      return {
+        heroBorderBottom: getComputedStyle(hero).borderBottomWidth,
+        railBorderTop: railStyle.borderTopWidth,
+        paddingTop: Number.parseFloat(railStyle.paddingTop),
+        paddingBottom: Number.parseFloat(railStyle.paddingBottom),
+        flexWrap: railStyle.flexWrap,
+        metrics,
+        pageOverflow: main.scrollWidth - main.clientWidth,
+      };
+    });
+    expect(geometry.heroBorderBottom, route).toBe('1px');
+    expect(geometry.railBorderTop, route).toBe('0px');
+    expect(geometry.paddingTop, route).toBeGreaterThanOrEqual(16);
+    expect(geometry.paddingBottom, route).toBeGreaterThanOrEqual(16);
+    expect(geometry.flexWrap, route).toBe('nowrap');
+    expect(new Set(geometry.metrics.map((metric) => Math.round(metric.top))).size, route).toBe(1);
+    for (const metric of geometry.metrics) {
+      expect(metric.borderLeft, route).toBe('0px');
+      expect(metric.borderRight, route).toBe('0px');
+    }
+    expect(geometry.pageOverflow, route).toBeLessThanOrEqual(1);
+  }
+});
+
 test('the pager can still reach page 2 at 320px', async ({ browser }, testInfo) => {
   authedOnly(testInfo);
   // The original defect: the pager laid its controls out in a non-wrapping row, so "next" ran from

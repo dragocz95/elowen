@@ -33,12 +33,12 @@ function Deck({ value = 'system', onChange = vi.fn(), status = 'idle' as const, 
 }
 
 describe('SpatialControlDeck', () => {
-  it('renders the active section heading, horizontal tabs and content surface', () => {
+  it('renders the active section heading, desktop sidebar and content surface', () => {
     render(<Deck />);
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
     expect(screen.getByText('Runtime and security.')).toBeInTheDocument();
-    expect(screen.getByRole('radiogroup', { name: 'Settings sections' })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'Settings sections' })).toHaveAttribute('aria-orientation', 'vertical');
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('Active section content'));
   });
 
@@ -51,7 +51,7 @@ describe('SpatialControlDeck', () => {
   });
 
   // SpatialSectionRail remains a public legacy primitive for bundles that mount it directly. The deck
-  // itself uses WorkspaceShell's shared Segmented tabs, so the rail's independent behaviour stays covered
+  // itself uses WorkspaceShell's responsive Segmented navigation, so the rail's independent behaviour stays covered
   // here without implying that SpatialControlDeck renders it.
   it('exposes the shared rail with live counts and complete roving-keyboard navigation', () => {
     const onChange = vi.fn();

@@ -273,43 +273,68 @@ test('returning from Home opens the full chat at its newest turn', async ({ app,
   expect(bottomGap).toBeLessThanOrEqual(2);
 });
 
-/* THE SECTION NAVIGATION, in a real browser. Every sectioned shell uses the same line tabs. The track
- * owns horizontal overflow, measured edge state makes hidden sections discoverable, and the page wrapper
- * never grows wider than its available space. */
-test('a roomy Studio deck uses the shared horizontal section tabs', async ({ app, seed }, testInfo) => {
+/* THE SECTION NAVIGATION, in a real browser. Decks use a left menu from 768px upward; phone decks and
+ * every register keep the same single-line track with its measured edge state and internal scrolling. */
+test('a roomy Studio deck uses the shared sticky sidebar beside toolbar and content', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-oled');
   await app.setViewportSize({ width: 1440, height: 800 });
-  await openStudio(app, '/account');
+  await openStudio(app, '/settings?cat=models');
 
-  const nav = app.locator('.workspace-shell > .workspace-shell__section-navigation');
-  const track = nav.getByRole('radiogroup', { name: 'Account sections' });
-  await expect(nav).toHaveAttribute('data-layout', 'tabs');
-  await expect(app.locator('.workspace-shell')).toHaveAttribute('data-section-layout', 'tabs');
-  await expect(track).toHaveAttribute('aria-orientation', 'horizontal');
-  await expect(track).toHaveAttribute('data-variant', 'line');
-  await expect(track).toHaveAttribute('data-nowrap', 'true');
+  const shell = app.locator('.workspace-shell');
+  const nav = shell.locator(':scope > .workspace-shell__section-navigation');
+  const track = nav.getByRole('radiogroup', { name: 'Settings sections' });
+  await expect(nav).toHaveAttribute('data-layout', 'sidebar');
+  await expect(shell).toHaveAttribute('data-section-layout', 'sidebar');
+  await expect(track).toHaveAttribute('aria-orientation', 'vertical');
+  await expect(track).toHaveAttribute('data-variant', 'menu');
+  await expect(track).not.toHaveAttribute('data-nowrap');
   await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
-  await expect(nav.locator('.segmented__option > svg')).toHaveCount(0);
-  await expect(nav.getByRole('radio')).toHaveCount(7);
+  await expect(nav.locator('.segmented__option > svg')).toHaveCount(6);
+  await expect(nav.getByRole('radio')).toHaveCount(6);
 
-  await nav.getByRole('radio', { name: 'Security' }).click();
-  await expect(app.getByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
-  await expect(nav.getByRole('radio', { name: 'Security' })).toHaveAttribute('aria-checked', 'true');
+  await nav.getByRole('radio', { name: 'Data' }).click();
+  await expect(app.getByRole('heading', { level: 1, name: 'Data' })).toBeVisible();
+  await expect(nav.getByRole('radio', { name: 'Data' })).toHaveAttribute('aria-checked', 'true');
 
+  await nav.getByRole('radio', { name: 'Models' }).click();
+  await expect(app.getByRole('heading', { level: 1, name: 'Models' })).toBeVisible();
+  await expect(app.locator('.page-toolbar')).toBeVisible();
   const geometry = await app.evaluate(() => {
-    const navEl = document.querySelector<HTMLElement>('.workspace-shell > .workspace-shell__section-navigation')!;
-    const trackEl = navEl.querySelector<HTMLElement>('[role="radiogroup"]')!;
+    const shellEl = document.querySelector<HTMLElement>('.workspace-shell')!;
+    const hero = shellEl.querySelector<HTMLElement>(':scope > .workspace-hero')!.getBoundingClientRect();
+    const navEl = shellEl.querySelector<HTMLElement>(':scope > .workspace-shell__section-navigation')!;
+    const navRect = navEl.getBoundingClientRect();
+    const toolbarEl = shellEl.querySelector<HTMLElement>(':scope > .page-toolbar')!;
+    const toolbar = toolbarEl.getBoundingClientRect();
+    const contentEl = shellEl.querySelector<HTMLElement>(':scope > .workspace-shell__content')!;
+    const content = contentEl.getBoundingClientRect();
+    const shellRect = shellEl.getBoundingClientRect();
+    const navStyle = getComputedStyle(navEl);
+    const toolbarStyle = getComputedStyle(toolbarEl);
+    const contentStyle = getComputedStyle(contentEl);
     const main = document.querySelector<HTMLElement>('main')!;
     return {
-      navWidth: navEl.getBoundingClientRect().width,
-      trackWidth: trackEl.getBoundingClientRect().width,
-      navOverflow: navEl.scrollWidth - navEl.clientWidth,
+      heroLeft: hero.left, heroRight: hero.right,
+      shellLeft: shellRect.left, shellRight: shellRect.right,
+      navRight: navRect.right, toolbarLeft: toolbar.left, contentLeft: content.left,
+      toolbarRight: toolbar.right, contentRight: content.right,
+      navPosition: navStyle.position, navTop: navStyle.top, navMaxHeight: navStyle.maxHeight,
+      toolbarContainer: toolbarStyle.containerName, contentContainer: contentStyle.containerName,
       pageOverflow: main.scrollWidth - main.clientWidth,
     };
   });
-  expect(Math.abs(geometry.trackWidth - geometry.navWidth)).toBeLessThanOrEqual(1);
-  expect(geometry.navOverflow).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.heroLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.heroRight - geometry.shellRight)).toBeLessThanOrEqual(1);
+  expect(geometry.navRight).toBeLessThanOrEqual(geometry.toolbarLeft + 1);
+  expect(geometry.navRight).toBeLessThanOrEqual(geometry.contentLeft + 1);
+  expect(Math.abs(geometry.toolbarLeft - geometry.contentLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.toolbarRight - geometry.contentRight)).toBeLessThanOrEqual(1);
+  expect(geometry.navPosition).toBe('sticky');
+  expect(geometry.navTop).toBe('66px');
+  expect(geometry.navMaxHeight).not.toBe('none');
+  expect(geometry.toolbarContainer).toBe('workspace-shell');
+  expect(geometry.contentContainer).toBe('workspace-shell');
   expect(geometry.pageOverflow).toBeLessThanOrEqual(1);
 });
 
@@ -381,6 +406,25 @@ test('a 390px Studio deck scrolls its tabs internally and signals the hidden edg
   }
 });
 
+test('Studio deck navigation switches exactly at 767/768', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await useSkin(app, seed, 'studio-light');
+
+  await app.setViewportSize({ width: 767, height: 800 });
+  await openStudio(app, '/account');
+  const shell = app.locator('.workspace-shell');
+  const nav = shell.locator(':scope > .workspace-shell__section-navigation');
+  await expect(shell).toHaveAttribute('data-section-layout', 'tabs');
+  await expect(nav).toHaveAttribute('data-layout', 'tabs');
+  await expect(nav.getByRole('radiogroup')).toHaveAttribute('aria-orientation', 'horizontal');
+
+  await app.setViewportSize({ width: 768, height: 800 });
+  await expect(shell).toHaveAttribute('data-section-layout', 'sidebar');
+  await expect(nav).toHaveAttribute('data-layout', 'sidebar');
+  await expect(nav.getByRole('radiogroup')).toHaveAttribute('aria-orientation', 'vertical');
+  await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
+});
+
 test('a Studio register keeps its sections a horizontal tab row at every width', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-oled');
@@ -412,6 +456,67 @@ test('a Studio register keeps its sections a horizontal tab row at every width',
   await expect(tabs).toHaveAttribute('data-layout', 'tabs');
   await expect(track).toHaveAttribute('aria-orientation', 'horizontal');
   await expect(tabs.locator('[role="combobox"]')).toHaveCount(0);
+});
+
+test('Studio metric rails stay undivided, airy and one-line across Settings, Account and Users', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await useSkin(app, seed, 'studio-oled');
+  await app.setViewportSize({ width: 1440, height: 900 });
+
+  for (const route of ['/settings?cat=system', '/account', '/users']) {
+    await openStudio(app, route);
+    await expect(app.locator('.workspace-hero__metrics')).toBeVisible();
+    const geometry = await app.evaluate(() => {
+      const heroEl = document.querySelector<HTMLElement>('.workspace-hero')!;
+      const railEl = document.querySelector<HTMLElement>('.workspace-hero__metrics')!;
+      const rail = railEl.getBoundingClientRect();
+      const railStyle = getComputedStyle(railEl);
+      const metrics = [...railEl.querySelectorAll<HTMLElement>('.workspace-metric')].map((metric) => {
+        const rect = metric.getBoundingClientRect();
+        const style = getComputedStyle(metric);
+        return { top: rect.top, bottom: rect.bottom, borderLeft: style.borderLeftWidth, borderRight: style.borderRightWidth };
+      });
+      const main = document.querySelector<HTMLElement>('main')!;
+      return {
+        heroBorderBottom: getComputedStyle(heroEl).borderBottomWidth,
+        railBorderTop: railStyle.borderTopWidth,
+        railBorderBottom: railStyle.borderBottomWidth,
+        paddingTop: Number.parseFloat(railStyle.paddingTop),
+        paddingBottom: Number.parseFloat(railStyle.paddingBottom),
+        flexWrap: railStyle.flexWrap,
+        overflowX: railStyle.overflowX,
+        railTop: rail.top,
+        railBottom: rail.bottom,
+        metrics,
+        pageOverflow: main.scrollWidth - main.clientWidth,
+      };
+    });
+    expect(geometry.heroBorderBottom, route).toBe('1px');
+    expect(geometry.railBorderTop, route).toBe('0px');
+    expect(geometry.railBorderBottom, route).toBe('0px');
+    expect(geometry.paddingTop, route).toBeGreaterThanOrEqual(16);
+    expect(geometry.paddingBottom, route).toBeGreaterThanOrEqual(16);
+    expect(geometry.flexWrap, route).toBe('nowrap');
+    expect(geometry.overflowX, route).toBe('auto');
+    expect(new Set(geometry.metrics.map((metric) => Math.round(metric.top))).size, route).toBe(1);
+    for (const metric of geometry.metrics) {
+      expect(metric.borderLeft, route).toBe('0px');
+      expect(metric.borderRight, route).toBe('0px');
+      expect(metric.top, route).toBeGreaterThanOrEqual(geometry.railTop - 1);
+      expect(metric.bottom, route).toBeLessThanOrEqual(geometry.railBottom + 1);
+    }
+    expect(geometry.pageOverflow, route).toBeLessThanOrEqual(1);
+  }
+
+  await app.setViewportSize({ width: 390, height: 844 });
+  await openStudio(app, '/settings?cat=system');
+  const phone = await app.evaluate(() => {
+    const rail = document.querySelector<HTMLElement>('.workspace-hero__metrics')!;
+    const main = document.querySelector<HTMLElement>('main')!;
+    return { railOverflow: rail.scrollWidth - rail.clientWidth, pageOverflow: main.scrollWidth - main.clientWidth };
+  });
+  expect(phone.railOverflow).toBeGreaterThan(0);
+  expect(phone.pageOverflow).toBeLessThanOrEqual(1);
 });
 
 test('Studio pages share metrics, filters, title and actions in one calm order', async ({ app, seed }, testInfo) => {

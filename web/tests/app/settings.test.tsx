@@ -56,9 +56,14 @@ describe('SettingsPage', () => {
   it('matches the reference section order and renders real System diagnostics', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
     const rail = screen.getByRole('radiogroup', { name: 'Settings sections' });
+    expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar');
+    expect(rail).toHaveAttribute('data-variant', 'menu');
+    expect(rail).toHaveAttribute('aria-orientation', 'vertical');
+    expect(rail.querySelectorAll('.segmented__option > svg')).toHaveLength(6);
+    expect(screen.queryByRole('combobox', { name: 'Settings sections' })).toBeNull();
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
       'System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Data',
     ]);

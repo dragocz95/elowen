@@ -168,26 +168,20 @@
   border-top: 0;
 }
 
-/* The metrics become a SENTENCE of readings, not a band of cells. They were boxed compartments divided
-   by vertical hairlines, which is the "command grid" this design was asked to stop being: four boxes
-   under the title on every register, saying "4 users", "1 administrator", "0 projects". The facts are
-   worth keeping and the frame around each one is not, so the rules and the padding go and the strip
-   becomes a spaced row that wraps.
-   The mono goes with them. A metric's value is not always a number — the settings strip reports
-   "Running" and an em dash — and a proportional face with tabular figures keeps the digits aligned
-   without setting an English word in a typewriter. */
+/* Metrics read as one calm sentence of readings, not a row of divided cells. The shared rail owns the
+   single bottom hairline, vertical breathing room and internal overflow; Studio only changes each reading
+   to its compact value-label form and keeps the entire sentence on one line. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1.5rem;
-  overflow: visible;
+  flex-wrap: nowrap;
+  gap: 2rem;
+  overflow-x: auto;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-metric {
-  min-width: 0;
+  min-width: max-content;
   flex: 0 0 auto;
   flex-direction: row;
   align-items: baseline;
-  gap: 0.375rem;
+  gap: 0.5rem;
   padding: 0;
   border: 0;
 }
@@ -497,8 +491,39 @@
   border-radius: var(--radius);
   font-size: 0.8125rem;
 }
-/* Every sectioned workspace uses the same plain line tabs. The wrapper never grows wider than the page;
-   the Segmented track fills it and owns the horizontal scroll when the labels do not fit. */
+/* Configuration decks use the reference's quiet left menu from tablet width upward. It sticks below the
+   Studio top bar, scrolls independently when a plugin contributes a long menu, and uses neutral ink/fill
+   for hover and selection instead of turning the active section into a primary-colour callout. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell[data-section-layout='sidebar'] > .workspace-shell__section-navigation {
+  top: calc(var(--studio-top-bar-height) + 1rem);
+  max-height: calc(100dvh - var(--studio-top-bar-height) - 2rem);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented {
+  width: 100%;
+  gap: 0.25rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option {
+  border-radius: var(--radius);
+  color: var(--color-muted-foreground);
+  background: transparent;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option:hover {
+  color: var(--color-foreground);
+  background: var(--studio-fill-hover);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option[aria-checked='true'] {
+  color: var(--color-foreground);
+  background: var(--studio-fill-active);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__count {
+  color: inherit;
+  opacity: 0.65;
+}
+
+/* Registers and phone decks use the same plain line tabs. The wrapper never grows wider than the page;
+   the Segmented track fills it and owns horizontal scroll when the labels do not fit. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='tabs'] {
   width: 100%;
   min-width: 0;

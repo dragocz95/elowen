@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { useMobileViewport } from '../../lib/useMobile';
 import { consumeHorizontalWheel, revealHorizontalItem } from './horizontalScroll';
 import { Segmented } from './Segmented';
 import { PageToolbar, PageToolbarPortal, PageToolbarProvider, PageToolbarScope, type PageToolbarProps } from './PageToolbar';
@@ -20,9 +21,7 @@ export interface SpatialDeckSection {
   count?: number;
 }
 
-/** The horizontal section selector every shell shares. It is a radiogroup rather than a tablist: the
- *  sections switch a whole page's working surface, not a panel inside one, and the router keeps the
- *  selection. */
+/** The legacy horizontal section selector retained for bundles that mount it directly. */
 export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   sections: SpatialDeckSection[];
   value: string;
@@ -93,29 +92,24 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   );
 }
 
-/** The section navigation, IN THE PAGE.
- *
- * It used to portal itself into the shell's top bar, which put a page's sections in the window chrome
- * beside the global controls — the sections belong to the page, they change with it, and the top bar is
- * the one strip that does not. The chat surface still portals its own conversation controls up there
- * (`PageTopBarPortal`, modules/advisor/BrainChatSurface.tsx); that is a different decision about a
- * different set of controls and is untouched.
- *
- * Every sectioned shell uses the same horizontal, single-line `Segmented` radiogroup. Counts remain beside
- * their labels; icons stay out of the track so a long configuration deck has as much room for names as a
- * register does. */
-function SectionNavigation({ sections, value, onChange, ariaLabel }: WorkspaceShellNavigation) {
+type WorkspaceSectionLayout = 'sidebar' | 'tabs';
+
+/** Registers keep horizontal tabs at every width. Configuration decks use a vertical sidebar from the
+ *  tablet breakpoint upward and the same single-line, touch-scrollable tabs only on phones. */
+function SectionNavigation({ sections, value, onChange, ariaLabel, layout }: WorkspaceShellNavigation & { layout: WorkspaceSectionLayout }) {
+  const tabs = layout === 'tabs';
   return (
-    <nav className="workspace-shell__section-navigation min-w-0" data-layout="tabs" aria-label={ariaLabel}>
+    <nav className="workspace-shell__section-navigation min-w-0" data-layout={layout} aria-label={ariaLabel}>
       <Segmented
         aria-label={ariaLabel}
         value={value}
         onChange={onChange}
-        variant="line"
-        nowrap
+        variant={tabs ? 'line' : 'menu'}
+        nowrap={tabs}
         options={sections.map((section) => ({
           value: section.id,
           label: section.label,
+          icon: tabs ? undefined : section.icon,
           count: section.count,
         }))}
       />
@@ -126,11 +120,8 @@ function SectionNavigation({ sections, value, onChange, ariaLabel }: WorkspaceSh
 /** Which information structure the page carries — NOT a visual theme.
  *
  *  register — a browsable collection with live figures, metrics and optional section tabs.
- *  deck     — a configuration surface with section tabs over one settings surface at a time.
- *  single   — one working surface under a title block, with no section navigation.
- *
- *  All three share the same anatomy (hero, optional navigation, content) and therefore the same gutter, the
- *  same width cap and the same vertical rhythm. The variant only decides which parts are present. */
+ *  deck     — a configuration surface with a desktop/tablet section sidebar and phone tabs.
+ *  single   — one working surface under a title block, with no section navigation. */
 type WorkspaceShellVariant = 'register' | 'deck' | 'single';
 
 interface WorkspaceShellNavigation {
@@ -151,25 +142,16 @@ export interface WorkspaceShellProps {
   className?: string;
 }
 
-/** The canonical page shell. Every full-page workspace in the app is this component; the older
- *  SpatialWorkspaceLayout / SpatialControlDeck / CompactWorkspaceHeader names are thin aliases onto it
- *  so the bundles that call them by name keep working unchanged.
- *
- *  ONE anatomy, top to bottom, on every page and under every design:
- *
- *    heading + description + actions   the hero's head — what this page is
- *    metric rail                       a hairline strip of live figures, directly below it
- *    section navigation                a Segmented track, in the page and not in the window chrome
- *    toolbar row                       search, filters, page actions, and the one portal slot
- *    active filter chips               a line of their own, so the row above does not reflow
- *    content
- *
- *  It no longer branches on the shell profile. The two profiles used to ship different page anatomies —
- *  the rail-and-mascot register versus the command layout — which meant a page could not be reasoned
- *  about without also knowing which design was on the document, and the profile-specific half was the one
- *  no shipped design selected. `SpatialSectionRail` stays exported and fully functional for the bundles
- *  and forks that mount it themselves; the shell simply does not choose it for them. */
+/** The canonical page shell. Public props and the pre-unification aliases stay stable so core pages and
+ *  plugin bundles inherit responsive section navigation without owning a second breakpoint decision. */
 export function WorkspaceShell({ variant = 'register', hero, navigation, toolbar, children, className = '' }: WorkspaceShellProps) {
+  const phone = useMobileViewport();
+  const sectionLayout: WorkspaceSectionLayout | undefined = navigation
+    ? variant === 'deck'
+      ? phone === undefined ? undefined : phone ? 'tabs' : 'sidebar'
+      : 'tabs'
+    : undefined;
+
   const content = (
     <section
       className="workspace-shell__content spatial-content-surface"
@@ -184,10 +166,10 @@ export function WorkspaceShell({ variant = 'register', hero, navigation, toolbar
       <div
         className={`workspace-shell ${className}`.trim()}
         data-variant={variant}
-        data-section-layout={navigation ? 'tabs' : undefined}
+        data-section-layout={sectionLayout}
       >
         <WorkspaceHero {...hero} />
-        {navigation ? <SectionNavigation {...navigation} /> : null}
+        {navigation && sectionLayout ? <SectionNavigation {...navigation} layout={sectionLayout} /> : null}
         <PageToolbar {...toolbar} />
         {content}
       </div>

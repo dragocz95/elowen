@@ -46,26 +46,27 @@
 .workspace-hero__actions { display: flex; flex: none; align-items: center; gap: 0.75rem; margin-inline-start: auto; }
 .workspace-hero__status { display: inline-flex; min-width: 0; flex: 0 0 auto; align-items: center; }
 
-/* THE METRIC RAIL. One hairline, directly under the head, and the figures on it — not a 12rem panel with
-   a decorative column beside them.
+/* THE METRIC RAIL. The hero's own bottom hairline is the only rule around it: individual readings do
+   not draw separators or cell borders. The row never wraps; when the viewport is too narrow it scrolls
+   inside itself, so the page keeps its width and the desktop stays a compact single summary line.
 
-   `order` is load-bearing and cannot be left to DOM order. The base hero is a plain block, where the
-   property does nothing and the markup's own order already reads head → rail. The Studio skin makes
-   .workspace-hero a flex column and gives the head `order: 2` (skins/studio/surfaces.css), so a rail with
-   the initial `order: 0` would paint ABOVE the title — the figures first and the name of the page second.
-   Stating the rail's order here is what makes the anatomy the same under every design, and it belongs
-   here rather than in the skin because it is the shared anatomy that is being pinned, not a skin's look. */
+   `order` is load-bearing and cannot be left to DOM order. The Studio skin makes .workspace-hero a flex
+   column and gives the head `order: 2`, so the rail explicitly follows it under every design. */
 .workspace-hero__metrics {
-  display: grid;
+  display: flex;
   order: 3;
   min-width: 0;
-  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
-  align-items: stretch;
-  border-top: var(--hairline);
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: clamp(1.5rem, 3cqi, 3rem);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  padding-block: 1.125rem 1.25rem;
+  scrollbar-width: none;
 }
+.workspace-hero__metrics::-webkit-scrollbar { display: none; }
 
-.workspace-metric { display: flex; min-width: 8.5rem; flex-direction: column; justify-content: center; padding: 1.2rem 2rem; border-inline-end: var(--hairline); }
-.workspace-metric:last-child { border-inline-end: 0; }
+.workspace-metric { display: flex; min-width: 7rem; flex: 1 0 7rem; flex-direction: column; justify-content: center; padding: 0; border: 0; }
 .workspace-metric__value { display: block; color: var(--color-foreground); font-family: var(--font-mono); font-size: 1.7rem; line-height: 1; }
 .workspace-metric__label { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.65rem; color: var(--color-muted-foreground); font-size: 0.72rem; }
 
@@ -85,7 +86,7 @@
   .workspace-hero__head { align-items: flex-start; flex-direction: column; gap: 1rem; padding-block: 1.25rem; }
   .workspace-hero__actions { width: 100%; flex-wrap: wrap; justify-content: flex-start; margin-inline-start: 0; }
   .workspace-hero__actions > :not(.workspace-hero__status) { flex: 1 1 10rem; justify-content: center; }
-  .workspace-metric { min-width: 7rem; padding: 1rem; }
+  .workspace-metric { min-width: 7rem; }
 }
 
 /* Phone: the register has to START on the first screen. At 390x844 the full-weight hero — title,
@@ -105,11 +106,10 @@
     -webkit-line-clamp: 2;
     line-clamp: 2;
   }
-  .workspace-hero__metrics { display: flex; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; }
-  .workspace-hero__metrics::-webkit-scrollbar { display: none; }
-  .workspace-metric { min-width: 0; flex: 1 0 auto; padding: 0.7rem 0.9rem; }
+  .workspace-hero__metrics { gap: 1.25rem; padding-block: 1rem 1.125rem; }
+  .workspace-metric { min-width: 6.5rem; flex: 0 0 auto; }
   .workspace-metric__value { font-size: 1.15rem; }
-  .workspace-metric__label { margin-top: 0.25rem; white-space: nowrap; }
+  .workspace-metric__label { margin-top: 0.35rem; white-space: nowrap; }
 }
 
 /* A hero action is a primary control and must clear the platform minimum on a touch pointer. The status

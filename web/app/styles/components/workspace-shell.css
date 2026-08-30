@@ -51,20 +51,55 @@
   .workspace-page > .workspace-page__lead > .workspace-hero { padding-block-start: 1rem; }
 }
 
-/* The section navigation is IN THE PAGE, between the metric rail and the toolbar row. The wrapper owns
-   the page rhythm and clips its inline boundary; the shared Segmented inside owns horizontal scrolling. */
+/* Section navigation stays in the page. Registers and phone decks use the single-line Segmented track;
+   the track itself owns wheel/touch scrolling and measured edge fades. */
 .workspace-shell__section-navigation {
   width: 100%;
   min-width: 0;
   max-width: 100%;
+}
+.workspace-shell__section-navigation[data-layout='tabs'] {
   overflow: hidden;
   padding-block: 1rem 0;
 }
 .workspace-shell__section-navigation > .segmented { width: 100%; }
 
-/* THE CONTENT COLUMN IS THE CONTAINER EVERY SURFACE INSIDE IT IS MEASURED AGAINST. `@container
-   workspace-shell` is what settings records, control surfaces and register rows fold against, so the
-   content keeps the name even though every shell now has one full-width column. */
+/* A deck becomes a two-column working surface from 768px upward. The hero and metric rail span the whole
+   measure; the section menu occupies the left column beside BOTH the toolbar and content. The two right
+   boxes re-declare the named container so settings records and toolbar controls respond to the width they
+   actually own rather than to the full shell. */
+.workspace-shell[data-section-layout='sidebar'] {
+  display: grid;
+  grid-template-columns: minmax(12rem, 14rem) minmax(0, 1fr);
+  grid-template-areas:
+    'hero hero'
+    'navigation toolbar'
+    'navigation content';
+  column-gap: clamp(1.5rem, 3cqi, 3rem);
+  align-items: start;
+}
+.workspace-shell[data-section-layout='sidebar'] > .workspace-hero { grid-area: hero; width: 100%; }
+.workspace-shell[data-section-layout='sidebar'] > .workspace-shell__section-navigation {
+  position: sticky;
+  top: 1rem;
+  grid-area: navigation;
+  align-self: start;
+  max-height: calc(100dvh - 2rem);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: 1rem 2rem;
+  scrollbar-width: thin;
+}
+.workspace-shell[data-section-layout='sidebar'] > .page-toolbar {
+  container: workspace-shell / inline-size;
+  grid-area: toolbar;
+}
+.workspace-shell[data-section-layout='sidebar'] > .workspace-shell__content { grid-area: content; }
+.workspace-shell__section-navigation[data-layout='sidebar'] > .segmented { align-items: stretch; }
+
+/* The content column is always the nearest workspace container. In a sidebar deck the toolbar above it
+   gets the same name, so both right-column regions fold against their own measured width. */
 .workspace-shell__content { container: workspace-shell / inline-size; min-width: 0; padding-block: 1rem 2rem; }
 
 @media (pointer: coarse) {

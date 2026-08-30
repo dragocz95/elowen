@@ -1,13 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { Bot, Server, Wrench } from 'lucide-react';
 import { LanguageProvider } from '../../lib/i18n';
 import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
 import { CompactWorkspaceHeader, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
 import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
+import { PHONE_MAX_WIDTH } from '../../lib/breakpoints';
+import { watchMounts } from '../test-utils';
 
 const COMPONENTS = resolve(process.cwd(), 'app', 'styles', 'components');
 const css = (name: string): string => readFileSync(join(COMPONENTS, `${name}.css`), 'utf-8');
@@ -32,6 +34,21 @@ const sections = [
   { id: 'system', label: 'System', description: 'Runtime and security.', icon: Server },
   { id: 'brain', label: 'Models', description: 'Providers and models.', icon: Bot },
 ];
+
+function setViewportWidth(width: number): void {
+  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+    matches: /max-width:\s*(\d+)px/.test(query) && width <= Number(/max-width:\s*(\d+)px/.exec(query)![1]),
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  } as MediaQueryList));
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 /** The class each direct child of an element is identified by. The anatomy of a page is an ORDER, and an
  *  order is the one thing a per-element `toBeInTheDocument` cannot see: every assertion below passed just
@@ -116,9 +133,23 @@ describe('WorkspaceShell', () => {
   });
 });
 
-/** Decks and registers now share one section-navigation contract. The public section model and callers
- *  stay unchanged; the shell always renders the same horizontal Radix radiogroup. */
-describe('the section navigation is one tabs treatment for every sectioned shell', () => {
+/** The public navigation model stays unchanged. WorkspaceShell alone decides whether a deck gets its
+ *  vertical menu or phone tabs; registers never participate in that responsive branch. */
+describe('responsive section navigation', () => {
+  const renderDeck = (count = false) => render(
+    <LanguageProvider>
+      <SpatialControlDeck
+        eyebrow="Settings"
+        ariaLabel="Settings sections"
+        sections={count ? [{ ...sections[0]!, count: 3 }, sections[1]!] : sections}
+        value="system"
+        onChange={vi.fn()}
+      >
+        <div>Section</div>
+      </SpatialControlDeck>
+    </LanguageProvider>,
+  );
+
   const assertTabs = (container: HTMLElement, ariaLabel: string) => {
     const shell = container.querySelector('.workspace-shell');
     const nav = container.querySelector('.workspace-shell__section-navigation');
@@ -132,26 +163,45 @@ describe('the section navigation is one tabs treatment for every sectioned shell
     expect(nav?.querySelectorAll('.segmented__option > svg')).toHaveLength(0);
   };
 
-  it('renders a deck as line tabs, preserving counts without icons or a picker', () => {
-    const { container } = render(
-      <LanguageProvider>
-        <SpatialControlDeck
-          eyebrow="Settings"
-          ariaLabel="Settings sections"
-          sections={[{ ...sections[0]!, count: 3 }, sections[1]!]}
-          value="system"
-          onChange={vi.fn()}
-        >
-          <div>Section</div>
-        </SpatialControlDeck>
-      </LanguageProvider>,
-    );
+  it('renders a deck as a vertical menu on tablet and desktop, preserving icons and counts', async () => {
+    setViewportWidth(PHONE_MAX_WIDTH + 1);
+    const { container } = renderDeck(true);
 
-    assertTabs(container, 'Settings sections');
+    await waitFor(() => expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar'));
+    const nav = container.querySelector('.workspace-shell__section-navigation');
+    expect(nav).toHaveAttribute('data-layout', 'sidebar');
+    const group = screen.getByRole('radiogroup', { name: 'Settings sections' });
+    expect(group).toHaveAttribute('data-variant', 'menu');
+    expect(group).not.toHaveAttribute('data-nowrap');
+    expect(group).toHaveAttribute('aria-orientation', 'vertical');
+    expect(nav?.querySelectorAll('.segmented__option > svg')).toHaveLength(2);
     expect(screen.getByRole('radio', { name: 'System 3' })).toHaveTextContent('System3');
+    expect(screen.queryByRole('combobox')).toBeNull();
   });
 
-  it('renders a register with the identical tabs contract', () => {
+  it('renders a phone deck as line tabs and never mounts the desktop menu first', async () => {
+    setViewportWidth(PHONE_MAX_WIDTH);
+    const sawSidebar = watchMounts(".workspace-shell__section-navigation[data-layout='sidebar']");
+    const { container } = renderDeck();
+
+    await waitFor(() => assertTabs(container, 'Settings sections'));
+    expect(sawSidebar()).toBe(false);
+  });
+
+  it('switches exactly at the 767/768 boundary', async () => {
+    setViewportWidth(PHONE_MAX_WIDTH);
+    const phone = renderDeck();
+    await waitFor(() => expect(phone.container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'tabs'));
+    phone.unmount();
+    vi.restoreAllMocks();
+
+    setViewportWidth(PHONE_MAX_WIDTH + 1);
+    const tablet = renderDeck();
+    await waitFor(() => expect(tablet.container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar'));
+  });
+
+  it('keeps a register on horizontal tabs at every width', () => {
+    setViewportWidth(PHONE_MAX_WIDTH + 1);
     const { container } = render(
       <WorkspaceShell
         variant="register"
@@ -165,14 +215,10 @@ describe('the section navigation is one tabs treatment for every sectioned shell
     assertTabs(container, 'Sections');
   });
 
-  it('keeps the canonical DOM anatomy around the track', () => {
-    const { container } = render(
-      <LanguageProvider>
-        <SpatialControlDeck eyebrow="Settings" ariaLabel="Settings sections" sections={sections} value="system" onChange={vi.fn()}>
-          <div>Section</div>
-        </SpatialControlDeck>
-      </LanguageProvider>,
-    );
+  it('keeps mobile DOM flow hero, tabs, toolbar, content', async () => {
+    setViewportWidth(PHONE_MAX_WIDTH);
+    const { container } = renderDeck();
+    await screen.findByRole('radiogroup', { name: 'Settings sections' });
 
     expect(anatomy(container.querySelector('.workspace-shell'))).toEqual([
       'workspace-hero',
@@ -276,8 +322,8 @@ describe('the shell stylesheets carry one authority per decision', () => {
     const hero = css('workspace-hero');
     const phone = atRuleBody(hero, '@container workspace-hero (width < 34rem)');
     // A compact horizontal strip, not the 12rem metric panel.
-    expect(phone).toMatch(/\.workspace-hero__metrics\s*\{[^}]*display:\s*flex/);
-    expect(phone).toMatch(/\.workspace-metric\s*\{[^}]*padding:\s*0\.7rem/);
+    expect(hero).toMatch(/\.workspace-hero__metrics\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/);
+    expect(phone).toMatch(/\.workspace-hero__metrics\s*\{[^}]*padding-block:\s*1rem 1\.125rem/);
     // The mascot column is gone from the markup, so the stylesheet must not still be hiding one: a rule
     // for an element nobody renders is how a stylesheet keeps describing a page that no longer exists.
     expect(hero).not.toMatch(/\.workspace-hero__mascot|\.workspace-hero__body/);
@@ -285,14 +331,19 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(hero).not.toMatch(/min-height:\s*8\.6rem/);
   });
 
-  it('makes the metric rail one hairline under the heading, in that order under every design', () => {
+  it('keeps one bottom hairline around an undivided, airy metric rail in both skins', () => {
     const hero = css('workspace-hero');
-    expect(hero).toMatch(/\.workspace-hero__metrics\s*\{[^}]*border-top:\s*var\(--hairline\)/);
+    const studio = readFileSync(resolve(process.cwd(), 'skins', 'studio', 'surfaces.css'), 'utf-8');
+    expect(hero).toMatch(/\.workspace-hero\s*\{[^}]*border-bottom:\s*var\(--hairline\)/);
+    expect(hero).not.toMatch(/\.workspace-hero__metrics\s*\{[^}]*border-(top|bottom|inline)/);
+    expect(hero).not.toMatch(/\.workspace-metric\s*\{[^}]*border-inline-end/);
+    expect(hero).toMatch(/\.workspace-hero__metrics\s*\{[^}]*gap:\s*clamp\([^}]*padding-block:\s*1\.125rem 1\.25rem/);
+    expect(studio).toMatch(/\.workspace-hero__metrics\s*\{[^}]*flex-wrap:\s*nowrap[^}]*gap:\s*2rem[^}]*overflow-x:\s*auto/);
+    expect(studio).toMatch(/\.workspace-metric\s*\{[^}]*border:\s*0/);
     // ORDER, not DOM order: the Studio skin makes the hero a flex column and gives the head `order: 2`,
     // so a rail left at the initial `order: 0` paints the figures above the name of the page.
     const railOrder = /\.workspace-hero__metrics\s*\{[^}]*order:\s*(\d+)/.exec(hero);
     expect(railOrder, 'the metric rail must state its order').not.toBeNull();
-    const studio = readFileSync(resolve(process.cwd(), 'skins', 'studio', 'surfaces.css'), 'utf-8');
     const headOrder = /\.workspace-hero__head\s*\{[^}]*order:\s*(\d+)/.exec(studio);
     expect(headOrder, 'the Studio skin no longer orders the head — recheck the rail order').not.toBeNull();
     expect(Number(railOrder![1])).toBeGreaterThan(Number(headOrder![1]));
@@ -348,17 +399,20 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(at('page-toolbar')).toBeGreaterThan(at('spatial-deck'));
   });
 
-  it('keeps the content as the nearest workspace container without a sidebar-only toolbar container', () => {
+  it('restores the sidebar grid, sticky scroll port and right-column containers', () => {
     const shellCss = css('workspace-shell');
+    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\]\s*\{[^}]*grid-template-columns:\s*minmax\(12rem, 14rem\) minmax\(0, 1fr\)[^}]*'hero hero'[^}]*'navigation toolbar'[^}]*'navigation content'/);
+    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-hero\s*\{[^}]*grid-area:\s*hero/);
+    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-shell__section-navigation\s*\{[^}]*position:\s*sticky[^}]*grid-area:\s*navigation[^}]*max-height:[^}]*overflow-y:\s*auto/);
+    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.page-toolbar\s*\{[^}]*container:\s*workspace-shell \/ inline-size[^}]*grid-area:\s*toolbar/);
     expect(shellCss).toMatch(/\.workspace-shell__content\s*\{[^}]*container:\s*workspace-shell \/ inline-size/);
-    expect(shellCss).toMatch(/\.workspace-shell,\s*\n\.workspace-page\s*\{[^}]*container:\s*workspace-shell \/ inline-size/);
-    expect(shellCss).not.toContain("data-section-layout='sidebar'");
+    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-shell__content\s*\{[^}]*grid-area:\s*content/);
     expect(shellCss).not.toContain("data-section-layout='select'");
   });
 
-  it('clips the navigation wrapper while the inner segmented track owns horizontal scrolling', () => {
+  it('clips tab wrappers while the inner segmented track owns horizontal scrolling and edge fades', () => {
     const shellCss = css('workspace-shell');
-    expect(shellCss).toMatch(/\.workspace-shell__section-navigation\s*\{[^}]*max-width:\s*100%[^}]*overflow:\s*hidden/);
+    expect(shellCss).toMatch(/\[data-layout='tabs'\]\s*\{[^}]*overflow:\s*hidden/);
     expect(shellCss).toMatch(/\.workspace-shell__section-navigation > \.segmented\s*\{[^}]*width:\s*100%/);
     const primitives = css('primitives');
     expect(primitives).toMatch(/\.segmented\[data-nowrap='true'\]\s*\{[^}]*mask-image:\s*linear-gradient/);
@@ -372,12 +426,12 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(coarse).toMatch(/\[data-layout='tabs'\] \.segmented__option\s*\{[^}]*min-height:\s*var\(--touch-target\)/);
   });
 
-  it('keeps one Studio line treatment and no sidebar, select or sticky overrides', () => {
+  it('gives Studio a top-bar-aware neutral sidebar and keeps line tabs for phone/register', () => {
     const studio = readFileSync(resolve(process.cwd(), 'skins', 'studio', 'surfaces.css'), 'utf-8');
-    expect(studio).toContain(".workspace-shell__section-navigation[data-layout='tabs'] .segmented__option");
-    expect(studio).not.toContain(".workspace-shell__section-navigation[data-layout='sidebar']");
+    expect(studio).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-shell__section-navigation\s*\{[^}]*top:\s*calc\(var\(--studio-top-bar-height\) \+ 1rem\)[^}]*max-height:/);
+    expect(studio).toContain(".workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option");
+    expect(studio).toMatch(/\[data-layout='sidebar'\] \.segmented__option\[aria-checked='true'\]\s*\{[^}]*color:\s*var\(--color-foreground\)[^}]*background:\s*var\(--studio-fill-active\)/);
     expect(studio).not.toContain(".workspace-shell__section-navigation[data-layout='select']");
-    expect(studio).not.toContain("data-section-layout='sidebar'");
     const tabBlock = studio.slice(studio.indexOf(".workspace-shell__section-navigation[data-layout='tabs']"));
     expect(tabBlock).toMatch(/\.segmented\s*\{[^}]*width:\s*100%/);
   });
