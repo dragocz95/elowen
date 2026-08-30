@@ -357,7 +357,7 @@ export const en = {
     composerAction: 'Open {agentName} chat',
     nextRunLabel: 'Next run',
     noCron: 'No scheduled jobs',
-    last7d: 'Last 7 days',
+    last30d: 'Last 30 days',
     presence: {
       offline: 'Offline',
       idle: 'Ready when you are',
@@ -368,7 +368,6 @@ export const en = {
       error: 'Needs attention',
       waiting: '{count} waiting for your input',
     },
-    today: 'today {cost}',
     live: 'live',
     eventStream: 'Activity',
     eventStreamEmpty: 'No activity yet.',

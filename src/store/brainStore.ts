@@ -530,7 +530,7 @@ export class BrainStore {
 
   /** Daily token/cost spend of the user's own brain sessions for the dashboard tiles — see
    *  {@link BrainUsageStore.usageByDay}. */
-  usageByDay(userId: number, days = 7): { day: string; tokens: number; cost: number | null }[] {
+  usageByDay(userId: number, days = 7): ReturnType<BrainUsageStore['usageByDay']> {
     return this.usage.usageByDay(userId, days);
   }
 

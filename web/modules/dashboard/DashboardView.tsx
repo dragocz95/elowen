@@ -100,8 +100,9 @@ export function DashboardView() {
   return (
     <div className="dashboard-view flex flex-col">
       {/* Today at a glance: the only permanent figures on the page. One flat row that scrolls on a
-          phone instead of wrapping the hero further down. */}
-      <div className="flex items-center gap-4 border-b border-border pb-3">
+          phone instead of wrapping the hero further down. `pt-4` is the shell's own rhythm (ModuleShell
+          gap) — the strip reads as the page's first line, not as part of the app bar above it. */}
+      <div className="flex items-center gap-4 border-b border-border pb-3 pt-4">
         <div role="list" aria-label={t.dashboard.stripLabel} className="flex min-w-0 items-baseline gap-5 overflow-x-auto whitespace-nowrap [scrollbar-width:none] @sm:gap-8">
           <span role="listitem" className="flex shrink-0 items-baseline gap-1.5">
             <b className="font-mono text-[13.5px] font-semibold tabular-nums text-foreground">{totals?.turns ?? '—'}</b>

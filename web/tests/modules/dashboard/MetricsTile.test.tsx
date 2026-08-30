@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -26,8 +26,8 @@ const server = setupServer(
     usage: { input: 4000, output: 2000, cacheRead: 900, cacheWrite: 100, total: 7000, costUsd: 12.34 },
   }])),
   http.get('*/api/usage/by-day', () => HttpResponse.json([
-    { day: '2026-08-28', tokens: 2100, cost: 0.75 },
-    { day: today, tokens: 4321, cost: 1.23 },
+    { day: '2026-08-28', tokens: 2100, input: 1500, output: 300, cacheRead: 200, cacheWrite: 100, cost: 0.75 },
+    { day: today, tokens: 4321, input: 3000, output: 800, cacheRead: 500, cacheWrite: 21, cost: 1.23 },
   ])),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
@@ -93,6 +93,28 @@ describe('MetricsTile — figures', () => {
     expect(screen.getAllByText(formatCost(1.23)).length).toBeGreaterThan(0);
     // The 30-day token figure comes from the pulse month rollup the rings divide.
     expect((await screen.findAllByText('900k')).length).toBeGreaterThan(0);
+  });
+
+  it('draws the thirty-day chart with each day\u2019s date, cost and full token breakdown', async () => {
+    mount([person()]);
+    await screen.findByText(en.dashboard.metricsMonthCost);
+    // jsdom computes no layout, so Recharts draws no geometry — but the chart's textual per-day figures
+    // (the same per-point contract the hover tooltip states) are real DOM once the lazy chunk lands.
+    await waitFor(() => {
+      const rows = Array.from(document.querySelectorAll('figure ul.sr-only li'));
+      expect(rows).toHaveLength(30);
+      const todayRow = rows[rows.length - 1]!;
+      // The x label is the localized date, not the raw UTC key.
+      expect(todayRow.textContent).toContain('Aug 30');
+      expect(todayRow.textContent).toContain(`${en.dashboard.pulseColTokens} 4.3k`);
+      expect(todayRow.textContent).toContain(`${en.dashboard.pulseColCost} ${formatCost(1.23)}`);
+      expect(todayRow.textContent).toContain(`${en.dashboard.pulseContext.input} 3.0k`);
+      expect(todayRow.textContent).toContain(`${en.dashboard.pulseContext.output} 800`);
+      expect(todayRow.textContent).toContain(`${en.dashboard.pulseContext.cacheRead} 500`);
+      expect(todayRow.textContent).toContain(`${en.dashboard.pulseContext.cacheWrite} 21`);
+    });
+    // The window is named so the chart cannot be mistaken for the month figures above it.
+    expect(screen.getAllByText(en.dashboard.last30d).length).toBeGreaterThan(0);
   });
 
   it('withholds the next-run figure on an instance without the scheduler', async () => {

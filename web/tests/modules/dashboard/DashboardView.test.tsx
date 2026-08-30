@@ -13,6 +13,7 @@ import { consumePendingBrainComposer } from '../../../lib/brainDock';
 let activityCalls = 0;
 let modelUsageCalls = 0;
 let dayUsageCalls = 0;
+let dayUsageDays: string | null = null;
 
 const server = setupServer(
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', name: 'Filip Džudža', is_admin: true } })),
@@ -53,7 +54,11 @@ const server = setupServer(
   http.get('*/api/plugins/ui', () => HttpResponse.json([])),
   http.get('*/api/system/readiness', () => HttpResponse.json({ checks: [{ id: 'chat', label: 'Chat', ok: true, detail: 'ready' }] })),
   http.get('*/api/usage/by-model', () => { modelUsageCalls += 1; return HttpResponse.json([]); }),
-  http.get('*/api/usage/by-day', () => { dayUsageCalls += 1; return HttpResponse.json([]); }),
+  http.get('*/api/usage/by-day', ({ request }) => {
+    dayUsageCalls += 1;
+    dayUsageDays = new URL(request.url).searchParams.get('days');
+    return HttpResponse.json([]);
+  }),
 );
 beforeAll(() => server.listen());
 afterEach(() => {
@@ -62,6 +67,7 @@ afterEach(() => {
   activityCalls = 0;
   modelUsageCalls = 0;
   dayUsageCalls = 0;
+  dayUsageDays = null;
 });
 afterAll(() => server.close());
 
@@ -87,6 +93,13 @@ describe('DashboardView — first paint', () => {
     expect(strip.textContent).toContain(formatCost(3.5, 2));
     // One person mid-turn → the working figure reads 1. textContent concatenates without whitespace.
     await waitFor(() => expect(strip.textContent).toContain(`1${en.dashboard.workingNow.toLowerCase()}`));
+
+    // Layout contract: the strip stays a single scrollable row, and its band is set off from the app
+    // bar by the shell rhythm instead of sitting glued to it.
+    expect(strip.className).toContain('overflow-x-auto');
+    expect(strip.className).toContain('whitespace-nowrap');
+    expect(strip.parentElement?.className).toContain('pt-4');
+    expect(strip.parentElement?.className).toContain('pb-3');
 
     // Progressive disclosure: none of the heavy surfaces exists before its button is pressed.
     expect(screen.queryByRole('region', { name: en.dashboard.eventStream })).toBeNull();
@@ -157,6 +170,8 @@ describe('DashboardView — disclosure panels', () => {
     fireEvent.click(screen.getByRole('button', { name: en.dashboard.showMetrics }));
     await waitFor(() => expect(modelUsageCalls).toBe(1));
     expect(dayUsageCalls).toBe(1);
+    // The panel asks for the full thirty-day chart window in that single lazy request.
+    expect(dayUsageDays).toBe('30');
   });
 
   it('opens at most one panel and reflects the state in aria-expanded', async () => {

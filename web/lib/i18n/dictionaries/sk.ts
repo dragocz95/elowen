@@ -341,7 +341,7 @@ export const sk = {
     composerAction: 'Otvoriť chat s {agentName}',
     nextRunLabel: 'Ďalší beh',
     noCron: 'Žiadne naplánované úlohy',
-    last7d: 'Posledných 7 dní',
+    last30d: 'Posledných 30 dní',
     presence: {
       offline: 'Offline',
       idle: 'Pripravená, keď budete vy',
@@ -352,7 +352,6 @@ export const sk = {
       error: 'Vyžaduje pozornosť',
       waiting: '{count} čaká na váš vstup',
     },
-    today: 'dnes {cost}',
     live: 'naživo',
     eventStream: 'Dianie',
     eventStreamEmpty: 'Zatiaľ žiadne udalosti.',

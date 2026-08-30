@@ -341,7 +341,7 @@ export const cs = {
     composerAction: 'Otevřít chat s {agentName}',
     nextRunLabel: 'Další běh',
     noCron: 'Žádné naplánované úlohy',
-    last7d: 'Posledních 7 dní',
+    last30d: 'Posledních 30 dní',
     presence: {
       offline: 'Offline',
       idle: 'Připravená, až budeš ty',
@@ -352,7 +352,6 @@ export const cs = {
       error: 'Vyžaduje pozornost',
       waiting: '{count} čeká na tvůj vstup',
     },
-    today: 'dnes {cost}',
     live: 'živě',
     eventStream: 'Dění',
     eventStreamEmpty: 'Zatím žádné události.',

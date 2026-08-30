@@ -93,9 +93,20 @@ export function registerPluginSurfaceRoutes(app: Hono): void {
       costSource: 'calculated', outputTps: 40 + i, measuredOutput: 500 * (i + 1),
     },
   }))));
-  app.get('/usage/by-day', (c) => c.json(rows(7, (i) => ({
-    day: `2026-08-${String(21 + i).padStart(2, '0')}`, tokens: 10_000 * (i + 1), cost: 0.25 * (i + 1),
-  }))));
+  // Relative days so the dashboard's trailing-30-day chart always has data in its window, with the
+  // input/output/cache breakdown its tooltip states. Every seventh day is deliberately unpriced.
+  app.get('/usage/by-day', (c) => c.json(rows(30, (i) => {
+    const input = 2_000 * (i + 1);
+    const output = 500 * (i + 1);
+    const cacheRead = 8_000 * (i % 5);
+    const cacheWrite = 400 * (i % 3);
+    return {
+      day: new Date(Date.now() - (29 - i) * 86_400_000).toISOString().slice(0, 10),
+      tokens: input + output + cacheRead + cacheWrite,
+      input, output, cacheRead, cacheWrite,
+      cost: i % 7 === 0 ? null : Number((0.15 * (i + 1)).toFixed(4)),
+    };
+  })));
 
   // --- todo: the per-conversation checklist behind the chat's task manager. Long on purpose: the modal
   // that shows it is the phone's FULLSCREEN overlay, and a list shorter than the viewport cannot prove

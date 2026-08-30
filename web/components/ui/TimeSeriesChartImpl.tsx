@@ -1,6 +1,6 @@
 'use client';
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import type { TimeSeriesChartProps, TimeSeriesSeries } from './timeSeriesChartTypes';
+import type { TimeSeriesChartProps, TimeSeriesDetail, TimeSeriesSeries } from './timeSeriesChartTypes';
 
 /** The Recharts half of `TimeSeriesChart`, split out so the library only ever arrives in its own async
  *  chunk. The wrapper is what everything imports; nothing should import this module directly. */
@@ -9,26 +9,41 @@ import type { TimeSeriesChartProps, TimeSeriesSeries } from './timeSeriesChartTy
  *  Czech renders 2400 as "2 400,00 US$", and a narrower axis silently clips the currency off. */
 const AXIS_WIDTH = 78;
 
-interface TooltipEntry { dataKey?: string | number; value?: number | string | null }
+interface TooltipEntry { dataKey?: string | number; value?: number | string | null; payload?: Record<string, unknown> }
 
-function ChartTooltip({ active, label, payload, series }: {
+function ChartTooltip({ active, label, payload, series, detail }: {
   active?: boolean;
   label?: string;
   payload?: TooltipEntry[];
   series: TimeSeriesSeries[];
+  detail: TimeSeriesDetail[];
 }) {
   if (!active || !payload || payload.length === 0) return null;
+  // Detail rows are not drawn, so Recharts carries no payload entry for them — they are read off the
+  // hovered data point itself, which every payload entry references.
+  const point = payload[0]?.payload;
   return (
     <div className="rounded-lg border border-border bg-card px-3 py-2 shadow-[var(--shadow-raised)]">
       <div className="mb-1 truncate font-mono text-[11px] text-muted-foreground">{label}</div>
       {series.map((entry) => {
-        const point = payload.find((row) => row.dataKey === entry.key);
-        if (point?.value == null) return null;
+        const row = payload.find((item) => item.dataKey === entry.key);
+        if (row?.value == null) return null;
         return (
           <div key={entry.key} className="flex items-center gap-2 whitespace-nowrap text-xs">
             <span aria-hidden className="h-2 w-2 shrink-0 rounded-sm" style={{ background: entry.colour }} />
             <span className="text-muted-foreground">{entry.label}</span>
-            <span className="ml-auto font-mono tabular-nums text-foreground">{entry.format(Number(point.value))}</span>
+            <span className="ml-auto font-mono tabular-nums text-foreground">{entry.format(Number(row.value))}</span>
+          </div>
+        );
+      })}
+      {detail.map((entry) => {
+        const value = point?.[entry.key];
+        if (typeof value !== 'number') return null;
+        return (
+          <div key={entry.key} className="flex items-center gap-2 whitespace-nowrap text-xs">
+            <span aria-hidden className="h-2 w-2 shrink-0" />
+            <span className="text-muted-foreground">{entry.label}</span>
+            <span className="ml-auto font-mono tabular-nums text-muted-foreground">{entry.format(value)}</span>
           </div>
         );
       })}
@@ -36,7 +51,7 @@ function ChartTooltip({ active, label, payload, series }: {
   );
 }
 
-export function TimeSeriesChartImpl({ data, series, height = 220, ariaLabel }: TimeSeriesChartProps) {
+export function TimeSeriesChartImpl({ data, series, detail = [], height = 220, ariaLabel }: TimeSeriesChartProps) {
   const usesRightAxis = series.some((entry) => entry.axis === 'right');
   // Ticks are the whole point of promoting a sparkline to a chart, but two units on one canvas cannot
   // share a scale: tokens run to millions and cost to single dollars. Each axis therefore formats with
@@ -88,7 +103,7 @@ export function TimeSeriesChartImpl({ data, series, height = 220, ariaLabel }: T
             ) : null}
             <Tooltip
               cursor={{ fill: 'var(--color-muted)', opacity: 0.35 }}
-              content={<ChartTooltip series={series} />}
+              content={<ChartTooltip series={series} detail={detail} />}
             />
             {series.map((entry) => (entry.variant === 'line' ? (
               <Line
@@ -120,7 +135,7 @@ export function TimeSeriesChartImpl({ data, series, height = 220, ariaLabel }: T
       <ul className="sr-only">
         {data.map((point) => (
           <li key={point.label}>
-            {point.label}: {series.map((entry) => {
+            {point.label}: {[...series, ...detail].map((entry) => {
               const value = point[entry.key];
               return `${entry.label} ${value == null ? '—' : entry.format(Number(value))}`;
             }).join(', ')}

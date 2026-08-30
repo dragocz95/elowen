@@ -1253,9 +1253,9 @@ describe('BrainStore', () => {
 
       it('keeps dropped assistant rows spend in usageByModel + usageByDay', () => {
         store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
-        usageMsg('brain-a', 'old1', { input: 5, totalTokens: 100, cost: 0.1 });
-        usageMsg('brain-a', 'old2', { input: 5, totalTokens: 150, cost: 0.15 });
-        usageMsg('brain-a', 'keep1', { input: 5, totalTokens: 200, cost: 0.2 });
+        usageMsg('brain-a', 'old1', { input: 5, output: 2, cacheRead: 10, cacheWrite: 1, totalTokens: 100, cost: 0.1 });
+        usageMsg('brain-a', 'old2', { input: 5, output: 3, cacheRead: 20, cacheWrite: 2, totalTokens: 150, cost: 0.15 });
+        usageMsg('brain-a', 'keep1', { input: 5, output: 4, cacheRead: 30, cacheWrite: 3, totalTokens: 200, cost: 0.2 });
         // Compact: keep only the last row, drop old1+old2 — their spend must roll onto the divider.
         store.compactSessionMessages('brain-a', { id: 'sum', role: 'compaction', content: { role: 'compactionSummary', summary: 's' } }, 1);
         expect(store.getMessages('brain-a').map((m) => m.id)).toEqual(['sum', 'keep1']);
@@ -1263,7 +1263,14 @@ describe('BrainStore', () => {
         expect(row!.usage.total).toBe(450); // 100 + 150 (rolled up) + 200 (kept)
         expect(row!.usage.input).toBe(15);
         expect(row!.usage.costUsd).toBeCloseTo(0.45);
-        expect(store.usageByDay(1, 3650).reduce((s, d) => s + d.tokens, 0)).toBe(450);
+        const byDay = store.usageByDay(1, 3650);
+        expect(byDay.reduce((s, d) => s + d.tokens, 0)).toBe(450);
+        // The per-day view carries the same component sums the per-model view does — the dashboard's
+        // daily chart states each day's composition from these fields, rolled-up rows included.
+        expect(byDay.reduce((s, d) => s + d.input, 0)).toBe(15);
+        expect(byDay.reduce((s, d) => s + d.output, 0)).toBe(9);
+        expect(byDay.reduce((s, d) => s + d.cacheRead, 0)).toBe(60);
+        expect(byDay.reduce((s, d) => s + d.cacheWrite, 0)).toBe(6);
       });
 
       it('keeps rolled-up spend at its ORIGINAL date even when the summary carries a PI timestamp', () => {

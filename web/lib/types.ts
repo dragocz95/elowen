@@ -919,10 +919,16 @@ export interface UserStats {
   topModel: string | null;
 }
 
-/** One UTC day's rolled-up brain spend. Days without recorded usage are omitted. */
+/** One UTC day's rolled-up brain spend. Days without recorded usage are omitted. `tokens` is the rows'
+ *  own total (it may exceed the four components where a provider counts reasoning separately); `cost`
+ *  stays null when nothing that day carried a price. */
 export interface DayUsage {
   day: string;
   tokens: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
   cost: number | null;
 }
 

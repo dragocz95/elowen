@@ -160,6 +160,16 @@ export interface BrainDescendantUsage {
   totalTokens: number; reasoning: number; cost: number;
 }
 
+/** One UTC day of a user's chat spend as {@link BrainUsageStore.usageByDay} reports it. `tokens` is the
+ *  rows' own `totalTokens` sum (it may exceed the four components where a provider counts reasoning
+ *  separately), and `cost` stays null when nothing that day carried a price — never a fabricated $0. */
+export interface DayUsage {
+  day: string;
+  tokens: number;
+  input: number; output: number; cacheRead: number; cacheWrite: number;
+  cost: number | null;
+}
+
 /** One per-provider/model/UTC-day bucket of usage rolled up from the assistant rows a compaction DROPS,
  *  folded onto the `compaction` divider so historical spend survives (compaction deletes those rows).
  *  Stored as an ARRAY under `$.usageRollup` — one bucket per producing identity and day — under a key that is NEVER
@@ -343,8 +353,10 @@ export class BrainUsageStore {
     return value;
   }
 
-  /** Per-day token and cost totals of the user's brain sessions over the last `days` days. */
-  usageByDay(userId: number, days = 7): { day: string; tokens: number; cost: number | null }[] {
+  /** Per-day token and cost totals of the user's brain sessions over the last `days` days, with the
+   *  same input/output/cache breakdown usageByModel reports — the dashboard's daily chart states a
+   *  day's composition, not just its size. */
+  usageByDay(userId: number, days = 7): DayUsage[] {
     const daysArg = `-${Math.max(0, Math.floor(days) - 1)} days`;
     return this.cachedView(`byDay${userId}${daysArg}`, () => {
       const source = this.hasUsageRollup()
@@ -355,13 +367,17 @@ export class BrainUsageStore {
         `${prefix}
          SELECT date(ts / 1000, 'unixepoch') AS day,
                 COALESCE(SUM(total), 0) AS tokens,
+                COALESCE(SUM(input), 0) AS input,
+                COALESCE(SUM(output), 0) AS output,
+                COALESCE(SUM(cache_read), 0) AS cacheRead,
+                COALESCE(SUM(cache_write), 0) AS cacheWrite,
                 CASE WHEN COUNT(cost) = 0 THEN NULL ELSE SUM(cost) END AS cost
            FROM ${source}
           WHERE user_id = ?
             AND ts IS NOT NULL
             AND ts >= unixepoch(date('now', ?)) * 1000
           GROUP BY day ORDER BY day`
-      ).all(userId, daysArg) as { day: string; tokens: number; cost: number | null }[];
+      ).all(userId, daysArg) as DayUsage[];
     });
   }
 

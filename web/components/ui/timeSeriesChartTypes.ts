@@ -24,9 +24,20 @@ export interface TimeSeriesSeries {
   format: (value: number) => string;
 }
 
+/** A per-point readout the tooltip (and the sr-only figures) state WITHOUT drawing it: a component of a
+ *  drawn series, read straight off the data point. It carries no colour because it has no mark to match. */
+export interface TimeSeriesDetail {
+  /** Key into each point. */
+  key: string;
+  label: string;
+  format: (value: number) => string;
+}
+
 export interface TimeSeriesChartProps {
   data: TimeSeriesPoint[];
   series: TimeSeriesSeries[];
+  /** Undrawn breakdown rows shown under the drawn series in the tooltip and the sr-only list. */
+  detail?: TimeSeriesDetail[];
   height?: number;
   emptyText?: string;
   ariaLabel?: string;

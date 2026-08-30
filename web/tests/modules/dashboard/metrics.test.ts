@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { currentMonthBounds, trailingWeek } from '../../../modules/dashboard/metrics';
+import { currentMonthBounds, trailingDays } from '../../../modules/dashboard/metrics';
 
 describe('currentMonthBounds', () => {
   it('starts at local midnight on the 1st of the current month, open-ended upper bound', () => {
@@ -16,13 +16,13 @@ describe('currentMonthBounds', () => {
   });
 });
 
-describe('trailingWeek', () => {
-  it('keeps measured UTC days in seven fixed slots and fills omitted days', () => {
+describe('trailingDays', () => {
+  it('keeps measured UTC days in fixed slots and fills omitted days', () => {
     const now = Date.UTC(2026, 7, 30, 12);
-    const days = trailingWeek([
-      { day: '2026-08-25', tokens: 2500, cost: 0.5 },
-      { day: '2026-08-30', tokens: 9000, cost: 1.75 },
-    ], now);
+    const days = trailingDays([
+      { day: '2026-08-25', tokens: 2500, input: 2000, output: 100, cacheRead: 300, cacheWrite: 100, cost: 0.5 },
+      { day: '2026-08-30', tokens: 9000, input: 6000, output: 1000, cacheRead: 1500, cacheWrite: 500, cost: 1.75 },
+    ], now, 7);
 
     expect(days).toHaveLength(7);
     expect(days.map((day) => day.day)).toEqual([
@@ -30,5 +30,17 @@ describe('trailingWeek', () => {
     ]);
     expect(days.map((day) => day.tokens)).toEqual([0, 2500, 0, 0, 0, 0, 9000]);
     expect(days[6]?.cost).toBe(1.75);
+    // A measured day keeps its component fields untouched for the chart's breakdown readout.
+    expect(days[1]).toEqual({ day: '2026-08-25', tokens: 2500, input: 2000, output: 100, cacheRead: 300, cacheWrite: 100, cost: 0.5 });
+  });
+
+  it('spans thirty slots ending today for the metrics chart, filler days unpriced with zero components', () => {
+    const now = Date.UTC(2026, 7, 30, 12);
+    const days = trailingDays([], now, 30);
+
+    expect(days).toHaveLength(30);
+    expect(days[29]?.day).toBe('2026-08-30');
+    // An absent day states zero measured tokens and an UNPRICED cost — null, never a fabricated $0.
+    expect(days[0]).toEqual({ day: '2026-08-01', tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: null });
   });
 });
