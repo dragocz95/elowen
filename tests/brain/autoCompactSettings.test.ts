@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ModelRuntime, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { BrainService } from '../../src/brain/brainService.js';
-import { compactionReserveTokens, renderedPrefillTokens } from '../../src/brain/session/factory.js';
+import { renderedPrefillTokens } from '../../src/brain/session/factory.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { openDb } from '../../src/store/db.js';
@@ -90,12 +90,16 @@ function brainHarness(settings: (userId: number) => CliSettings | undefined) {
 }
 
 const reserveOf = (manager: SettingsManager): number => manager.getCompactionReserveTokens();
-/** The reserve `pct` should produce on THIS session. The percentage is measured against the usable window
- *  — what is left once the never-shrinking prefill is paid for — so the expectation has to be computed
- *  from the same baseline production used, through the same function, rather than from a bare window. */
-const expectedReserve = (session: { systemPrompt: string; getAllTools: () => { name: string }[]; getActiveToolNames: () => string[] },
-  contextWindow: number, pct: number): number =>
-  compactionReserveTokens(contextWindow, true, pct, renderedPrefillTokens(session as never));
+/** The reserve `pct` should produce on THIS session, with the percentage arithmetic written out rather
+ *  than borrowed. These tests are about WHICH percentage reaches the session — the owner's, the writer's,
+ *  a per-model override — so routing the expectation through `compactionReserveTokens` would let them pass
+ *  even if that function ignored the percentage entirely.
+ *
+ *  The baseline still comes from `renderedPrefillTokens`, which is a different function and not what is
+ *  under test here: these sessions compose two real tools, so hard-coding their rendered size would make
+ *  an unrelated tool-schema edit fail seven percentage tests for no reason. */
+const expectedReserve = (session: unknown, contextWindow: number, pct: number): number =>
+  Math.round((contextWindow - renderedPrefillTokens(session as never)) * (1 - pct / 100));
 const policy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
 
 describe('auto-compact threshold on channel sessions', () => {
