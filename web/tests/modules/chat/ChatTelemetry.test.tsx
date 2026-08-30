@@ -94,6 +94,10 @@ describe('chat telemetry panel', () => {
     expect(context.textContent).toContain('21%');
     expect(context.textContent).toContain('42k / 200k');
     expect(context.textContent).toContain('$1.23');
+    const contextBar = context.querySelector<HTMLElement>('[role="progressbar"]')!;
+    const contextFill = contextBar.querySelector<HTMLElement>('[data-slot="progress-indicator"]')!;
+    expect(contextBar).toHaveAttribute('aria-valuenow', '21');
+    expect(contextFill).toHaveStyle({ width: '21%' });
 
     // Project: the daemon-reported directory and its git branch — neither existed on the wire before.
     const project = screen.getByTestId('telemetry-project');

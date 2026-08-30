@@ -282,6 +282,17 @@ describe('telemetry rail — one body, two hosts', () => {
 });
 
 describe('telemetry rail — primitives that carry behaviour', () => {
+  it('keeps one readable type scale instead of shrinking the whole rail with its width', () => {
+    const split = readSource('modules/advisor/ChatRailSplit.tsx');
+    const panel = readSource('modules/advisor/TelemetryPanel.tsx');
+    expect(split).not.toContain('railTypeVars');
+    expect(split).not.toContain("'--text-tiny'");
+    expect(panel).not.toContain('text-tiny');
+    expect(panel).not.toContain('text-caption');
+    expect(panel).toContain('text-xs');
+    expect(panel).toContain('text-sm');
+  });
+
   it('scrolls the middle band on a ScrollArea, with head and foot pinned outside it', async () => {
     renderDock();
     const scroll = await screen.findByTestId('telemetry-scroll');
