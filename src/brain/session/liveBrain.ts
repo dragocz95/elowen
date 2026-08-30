@@ -249,6 +249,17 @@ export interface LiveBrain {
    *  genuinely no longer contains them and an empty set is the truthful state. A compaction clears it for
    *  the same reason. */
   injectedMemoryIds?: Set<number>;
+  /** Digests of the ambient blocks this session has already put in front of the model (see
+   *  session/ambientBlock). Absent means "never sent on this session", which is why neither is carried
+   *  across a respawn: like the memory dedup above, these blocks live only in turn framing that is
+   *  stripped before history is persisted, so a rehydrated conversation genuinely no longer contains
+   *  them and re-sending is the truthful behaviour.
+   *
+   *  `permissionsDigest` is an owner-chat concept and `skillsDigest` a shared-room one — a room has no
+   *  interactive permission summary, and every other surface announces its skills once in its cached
+   *  system prompt. */
+  permissionsDigest?: string;
+  skillsDigest?: string;
 }
 
 /** What it takes to spawn one live conversation — composed by BrainService.spawnLive and reused by

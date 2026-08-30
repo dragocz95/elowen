@@ -2801,6 +2801,40 @@ describe('BrainService', () => {
     expect(await variant('four')).toBe('cli/plan-mode-sparse');
   });
 
+  // The permission summary is AMBIENT: it states the boundary rather than instructing the model, and the
+  // gate enforces it whatever the model believes. So a second identical copy — measured at 831 characters
+  // a turn — tells it nothing it cannot already read further up the conversation.
+  it('states the permission boundary once, and again only when it changed', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sent = async (text: string, mode: 'build' | 'plan'): Promise<string> => {
+      await svc.send({ userId: 1, text, mode, session: 'brain-1' });
+      return String(d.session.prompt.mock.calls.at(-1)?.[0] ?? '');
+    };
+
+    // A `/command` turn is expanded from PI's own template and carries no ambient block, so it must not
+    // consume the digest either — otherwise the first real turn after one is silently missing the summary.
+    expect(await sent('/skill:demo', 'plan')).not.toContain('<permissions>');
+
+    expect(await sent('one', 'plan')).toContain('<permissions>');
+    expect(await sent('two', 'plan')).not.toContain('<permissions>');
+    expect(await sent('three', 'plan')).not.toContain('<permissions>');
+
+    // Leaving plan mode drops its non-destructive shell clamp: a genuinely different boundary, so
+    // returning to plan mode restates it rather than leaving the model on a stale summary.
+    await sent('build something', 'build');
+    expect(await sent('four', 'plan')).toContain('<permissions>');
+
+    // And a compaction took the block with it, so it has to be restated even though nothing changed.
+    d.store.appendMessage({
+      id: 'div-perm', sessionId: 'brain-1', parentId: null, role: 'compaction',
+      content: { role: 'compactionSummary' },
+    });
+    expect(await sent('five', 'plan')).toContain('<permissions>');
+    expect(await sent('six', 'plan')).not.toContain('<permissions>');
+  });
+
   // Admission rolls a rejected turn's user row back, so the mode state it carried has to roll back with
   // it: a turn the model never received cannot be what the sparse line means by "earlier in this
   // conversation". Otherwise a failed FIRST plan turn consumed the entry and every later plan turn got a

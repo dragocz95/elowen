@@ -23,6 +23,7 @@ import { summarizePermissions, dedupeRulesKeepingLast, NON_DESTRUCTIVE_BASH_RULE
 import type { PermissionApprovalService } from './permissionApproval.js';
 import type { TurnMode, TurnRequest } from './turnRequest.js';
 import { clientDir, effectiveTurnWorkDir, turnWorkDir } from './workDir.js';
+import { decideAmbientBlock } from '../session/ambientBlock.js';
 import { drainPostCompactionContext } from '../continuity/postCompactionContext.js';
 import { recallMemoryBlock } from '../session/memoryBlock.js';
 import { pluginContextBlock } from '../session/pluginContextBlock.js';
@@ -132,6 +133,7 @@ export class TurnContextBuilder {
         // an error or abort before that must leave the notice/orientation pending, not consumed.
         let commitOrientation = (): void => {};
         let commitSessionNotices = (): void => {};
+        let commitPermissionsDigest = (): void => {};
         // Both halves of the mode state (the mode itself and its reminder cadence) are claims about what
         // the model has ALREADY been shown, so they are committed with the drains above — only once the
         // prompt has reached the provider. A turn rejected before that showed the model nothing.
@@ -168,7 +170,15 @@ export class TurnContextBuilder {
             scoped: (run) => runWithPolicy(live.policy, run, scope),
             alreadyInContext: (live.injectedMemoryIds ??= new Set<number>()),
           });
-          const permissionsBlock = scope.permissions ? `${summarizePermissions(scope.permissions)}\n\n` : '';
+          // Ambient, so it is sent only when it is not already in front of the model — and only counted
+          // as sent once the prompt reaches the provider, hence the commit beside the others below.
+          const permissions = decideAmbientBlock({
+            rendered: scope.permissions ? `${summarizePermissions(scope.permissions)}\n\n` : '',
+            lastDigest: live.permissionsDigest,
+            reset: compacted,
+            remember: (digest) => { live.permissionsDigest = digest; },
+          });
+          commitPermissionsDigest = permissions.commit;
           // Rendered HERE, not in build(), for two reasons the counter cannot survive otherwise. It must
           // be chosen AFTER the drain, because a compaction just deleted the full directive from context
           // and the sparse line's "the full instructions are earlier in this conversation" would then be
@@ -202,7 +212,7 @@ export class TurnContextBuilder {
           prompt = composeTurnPrompt({
             memory: memoryBlock,
             hook: hookBlock,
-            permissions: permissionsBlock,
+            permissions: permissions.block,
             beforeUser: turnContext.beforeUser,
             text: request.text,
             afterUser: turnContext.afterUser,
@@ -216,6 +226,7 @@ export class TurnContextBuilder {
         const result = await operation(prompt);
         commitOrientation();
         commitSessionNotices();
+        commitPermissionsDigest();
         commitMode();
         return result;
       }, scope),

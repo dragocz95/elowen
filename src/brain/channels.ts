@@ -25,6 +25,7 @@ import { extractText, isThinkingOnlyReply, NO_REPLY_NUDGE, lastAssistant } from 
 import { resolvesContributionsPerTurn, channelSessionId, archivedChannelSessionId, contributionOwnerForSession, isChannelSession, isSubagentSession, channelIdOf, mayDeliverToSession } from './sessionId.js';
 import { isPromptCommand } from './slashCommands.js';
 import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js';
+import { decideAmbientBlock } from './session/ambientBlock.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
 import { composeTurnPrompt } from './session/turnPrompt.js';
 import { turnSkillsBlock } from './session/turnSkills.js';
@@ -1034,6 +1035,7 @@ export class ChannelSessionService {
             let prompted = turnText;
             // Assigned by the drain below and called only after the prompt has reached the provider.
             let commitOrientation = (): void => {};
+            let commitSkillsDigest = (): void => {};
             if (!(opts.promptCommand === true && isPromptCommand(turnText, ch.session))) {
               const turnContext = ch.turnContext();
               // The drain stays per-surface (it is stateful and commits only once the prompt reached the
@@ -1066,18 +1068,28 @@ export class ChannelSessionService {
                 }),
                 alreadyInContext: (ch.injectedMemoryIds ??= new Set<number>()),
               });
-              // Blocks a channel deliberately does not carry are simply absent: modes and the interactive
-              // permission summary are owner-chat concepts, and a room has neither.
-              prompted = composeTurnPrompt({
-                // Absent on every surface whose skill announcement already sits in its cached system
-                // prompt; a shared room is the one that cannot have it there — see resolvesContributionsPerTurn.
-                skills: resolvesContributionsPerTurn(sessionId, opts.direct === true)
+              // Absent on every surface whose skill announcement already sits in its cached system
+              // prompt; a shared room is the one that cannot have it there — see resolvesContributionsPerTurn.
+              // Ambient, so a room re-announces only when the announcement actually changed: the block is a
+              // function of the writer's account and the registry, both of which a digest over the rendered
+              // text covers at once. A different writer renders different text and is announced to again.
+              const skills = decideAmbientBlock({
+                rendered: resolvesContributionsPerTurn(sessionId, opts.direct === true)
                   ? await turnSkillsBlock({
                       ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
                       users: this.d.users,
                       contributionUserId: turnContributionUserId,
                     })
                   : '',
+                lastDigest: ch.skillsDigest,
+                reset: compacted,
+                remember: (digest) => { ch.skillsDigest = digest; },
+              });
+              commitSkillsDigest = skills.commit;
+              // Blocks a channel deliberately does not carry are simply absent: modes and the interactive
+              // permission summary are owner-chat concepts, and a room has neither.
+              prompted = composeTurnPrompt({
+                skills: skills.block,
                 memory: memoryBlock,
                 hook: await pluginContextBlock({
                   ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
@@ -1108,6 +1120,7 @@ export class ChannelSessionService {
             // The re-orientation counts as delivered only now, once the prompt carrying it actually
             // reached the provider — an error or abort before this must leave it pending, not consumed.
             commitOrientation();
+            commitSkillsDigest();
             // A parent stop that landed during prompt() must make the child terminally unsuccessful;
             // otherwise an empty aborted assistant is mistaken for a successful "returned nothing" job.
             if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');

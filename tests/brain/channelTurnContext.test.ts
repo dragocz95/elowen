@@ -132,6 +132,80 @@ describe('a channel turn carries the same per-turn context as an owner chat', ()
   });
 });
 
+/** The skill announcement is the one block a shared room cannot put in its cached system prompt, because
+ *  the writer — and so the personal skills the turn may load — changes between turns. It was therefore
+ *  re-sent whole with EVERY message, measured at 4525 characters a turn, saying the same thing to the
+ *  same person over and over. It is ambient (a statement of what this turn can do, not an instruction),
+ *  so a room now re-announces only when the announcement actually changed. */
+describe('a room announces its skills only when the announcement changed', () => {
+  const skill = (name: string) => ({
+    name,
+    description: `does ${name}`,
+    filePath: `/skills/${name}/SKILL.md`,
+    baseDir: `/skills/${name}`,
+    sourceInfo: { source: 'plugin', scope: 'user' },
+    disableModelInvocation: false,
+  });
+  /** Per-account skill sets, so a change of writer is a change of announcement. */
+  const registryFor = (byUser: Record<number, string[]>) => ({
+    hooks: [], hookOwners: [], pluginCapabilities: new Map(),
+    skillsFor: (userId: number | null) => (userId == null ? [] : (byUser[userId] ?? []).map(skill)),
+  });
+
+  it('sends the block on the first turn and omits it on the next', async () => {
+    const { svc, opts, promptOf } = setup(
+      { plugins: async () => registryFor({ 7: ['invoices'] }), users: { get: () => ({ username: 'amy' }) } },
+      'discord-skills-repeat',
+    );
+
+    await svc.send({ ...opts, writerUserId: 7 }, 'first');
+    expect(promptOf()).toContain('<available_skills>');
+    expect(promptOf()).toContain('invoices');
+
+    await svc.send({ ...opts, writerUserId: 7 }, 'second');
+    expect(promptOf()).not.toContain('<available_skills>');
+    // The user's own words are untouched — only the ambient block above them is gone.
+    expect(promptOf()).toContain('second');
+  });
+
+  it('announces again when a different member writes', async () => {
+    const { svc, opts, promptOf } = setup(
+      { plugins: async () => registryFor({ 7: ['invoices'], 8: ['rosters'] }), users: { get: () => ({ username: 'amy' }) } },
+      'discord-skills-writer',
+    );
+
+    await svc.send({ ...opts, writerUserId: 7 }, 'first');
+    expect(promptOf()).toContain('invoices');
+    await svc.send({ ...opts, writerUserId: 7 }, 'second');
+    expect(promptOf()).not.toContain('<available_skills>');
+
+    // A different account authorises a different set: announcing the previous writer's would be both
+    // wrong and a leak, and saying nothing would leave this member's skills unmentioned entirely.
+    await svc.send({ ...opts, writerUserId: 8 }, 'my turn');
+    expect(promptOf()).toContain('<available_skills>');
+    expect(promptOf()).toContain('rosters');
+    expect(promptOf()).not.toContain('invoices');
+  });
+
+  it('announces again after a compaction took the announcement with it', async () => {
+    const { store, svc, sessionId, opts, promptOf } = setup(
+      { plugins: async () => registryFor({ 7: ['invoices'] }), users: { get: () => ({ username: 'amy' }) } },
+      'discord-skills-compacted',
+    );
+
+    await svc.send({ ...opts, writerUserId: 7 }, 'first');
+    await svc.send({ ...opts, writerUserId: 7 }, 'second');
+    expect(promptOf()).not.toContain('<available_skills>');
+
+    store.appendMessage({
+      id: 'div-skills', sessionId, parentId: null, role: 'compaction', content: { role: 'compactionSummary' },
+    });
+
+    await svc.send({ ...opts, writerUserId: 7 }, 'third');
+    expect(promptOf()).toContain('<available_skills>');
+  });
+});
+
 /** A non-image attachment used to reach a room turn as the text note `[Attachment: x.pdf (…)]` — the agent
  *  was told a file existed and given no way to open it, while the same file dropped into the web chat
  *  became a real path in the sender's project. The room now takes that same upload path. */
