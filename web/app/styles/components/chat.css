@@ -48,7 +48,11 @@
   padding-inline: max(var(--shell-gutter), var(--safe-left)) max(var(--shell-gutter), var(--safe-right));
 }
 
-.chat-transcript { padding-block: 1rem; }
+.chat-transcript {
+  --chat-transcript-pad-top: 1rem;
+  --chat-transcript-pad-bottom: 1rem;
+  padding-block: var(--chat-transcript-pad-top) var(--chat-transcript-pad-bottom);
+}
 
 /* The statusline is its own container, so the truncation order below follows the width the row actually
    has — the docked telemetry rail narrows it without the viewport changing at all. */
@@ -75,8 +79,29 @@
    positioned ancestor of its own the fade resolved against the whole surface and was painted off-screen
    above it. The safe-area inset is what keeps the composer clear of a phone's home indicator: the dock
    sits at `bottom: 0`, so with no bottom padding the send button lands underneath it. */
-.chat-composer-dock { position: relative; padding-bottom: var(--safe-bottom); }
+.chat-composer-dock {
+  position: relative;
+  bottom: var(--chat-visual-bottom-offset, 0px);
+  padding-bottom: var(--safe-bottom);
+}
+.chat-surface-full[data-chat-keyboard-open='true'] .chat-composer-dock { padding-bottom: 0; }
 .chat-composer-slot { padding-block: 0.25rem 1rem; }
+
+/* On a phone the sticky dock deliberately overlaps a measured reserve at the end of the transcript. The
+   last turn therefore clears the WHOLE live footer (status, queue, attachments and a growing textarea),
+   while the footer remains one visual layer rather than contributing its height twice. When iOS shrinks
+   only visualViewport, the extra surface tail lives under the keyboard and gives the page enough scroll
+   range to keep that reserve above the shifted dock. Chromium's resized layout reports an offset of zero. */
+@media (width < 48rem) {
+  .chat-surface-full { padding-bottom: var(--chat-visual-bottom-offset, 0px); }
+  .chat-surface-full .chat-transcript {
+    padding-bottom: calc(var(--chat-transcript-pad-bottom) + var(--chat-composer-height, 0px) + 0.375rem);
+  }
+  .chat-surface-full .chat-composer-dock {
+    margin-top: calc(-1 * var(--chat-composer-height, 0px));
+  }
+  .chat-surface-full .chat-composer-slot { padding-bottom: 0.375rem; }
+}
 
 /* The full /chat composer is ONE bordered field with an invisible textarea inside it — the global
    focus ring on that textarea would draw a rectangle inside the box, so the box carries the focus
@@ -93,8 +118,14 @@
   .chat-hero { gap: 0.7rem; padding-block: 0.45rem; }
   .chat-hero__icon { display: none; }
   .chat-hero__metrics { display: none; }
-  .chat-transcript { padding-block: 0.5rem; }
-  .chat-composer-slot { padding-block: 0.25rem 0.4rem; }
+  .chat-transcript {
+    --chat-transcript-pad-top: 0.5rem;
+    --chat-transcript-pad-bottom: 0.5rem;
+  }
+  .chat-composer-slot { padding-top: 0.25rem; }
+}
+@media (height < 34rem) and (width >= 48rem) {
+  .chat-composer-slot { padding-bottom: 0.4rem; }
 }
 
 /* Wide content in assistant prose (markdown tables, fenced code) scrolls inside its own box so the page

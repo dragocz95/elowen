@@ -5,6 +5,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft, Library } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
+import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
 import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
 import { elowenClient } from '../../lib/elowenClient';
@@ -25,8 +27,6 @@ function Highlight({ text, query }: { text: string; query: string }) {
     </>
   );
 }
-
-const MENU_ITEM = 'flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground';
 
 /** The phone slide-over, on the shadcn `Dialog` (Radix): the dialog role, the focus trap, Escape and the
  *  layer order among several open overlays are Radix's, so this file no longer writes any of them.
@@ -107,8 +107,12 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
 
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<BrainSearchHit[] | null>(null);
-  const [menuFor, setMenuFor] = useState<string | null>(null);
   const [renameFor, setRenameFor] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; active: boolean } | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
+  const deleteTargetRef = useRef<typeof deleteTarget>(null);
+  const deletePendingRef = useRef(false);
+  const deleteOpRef = useRef(0);
   const [renameValue, setRenameValue] = useState('');
 
   // Debounced conversation search: ≥2 chars queries the daemon; anything shorter restores the list.
@@ -141,7 +145,6 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
     renameDone.current = false;
     setRenameValue(title);
     setRenameFor(id);
-    setMenuFor(null);
   };
   const cancelRename = () => { renameDone.current = true; setRenameFor(null); };
   const commitRename = async (id: string) => {
@@ -159,7 +162,6 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   // Branch a conversation and open the copy, so the user lands in the new thread and the original stays
   // untouched. The daemon creates it purely in the store, so this is a plain client call like rename.
   const forkSession = async (id: string) => {
-    setMenuFor(null);
     try {
       const fork = await elowenClient.brainForkSession(id);
       openSession({ session: fork.id });
@@ -167,15 +169,59 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   };
 
   const exportSession = (id: string, format: 'html' | 'jsonl') => {
-    setMenuFor(null);
     void elowenClient.brainExportSession(id, format).catch(() => toast(t.chat.exportError, 'error'));
   };
 
-  const removeSession = (id: string, active: boolean) => {
-    setMenuFor(null);
-    dismiss();
-    void deleteSession(id, active);
+  const openDelete = (target: NonNullable<typeof deleteTarget>) => {
+    deleteOpRef.current += 1;
+    deletePendingRef.current = false;
+    deleteTargetRef.current = target;
+    setDeletePending(false);
+    setDeleteTarget(target);
   };
+  const closeDelete = () => {
+    deleteOpRef.current += 1;
+    deletePendingRef.current = false;
+    deleteTargetRef.current = null;
+    setDeletePending(false);
+    setDeleteTarget(null);
+  };
+  const confirmDelete = async (): Promise<void> => {
+    const target = deleteTargetRef.current;
+    if (!target || deletePendingRef.current) return;
+    const operation = ++deleteOpRef.current;
+    deletePendingRef.current = true;
+    setDeletePending(true);
+    try {
+      await deleteSession(target.id, target.active);
+      if (operation !== deleteOpRef.current || deleteTargetRef.current !== target) return;
+      deletePendingRef.current = false;
+      deleteTargetRef.current = null;
+      setDeletePending(false);
+      setDeleteTarget(null);
+      dismiss();
+    } catch {
+      if (operation !== deleteOpRef.current || deleteTargetRef.current !== target) return;
+      // The provider owns the visible failure toast. Keeping the confirmation and list mounted preserves
+      // the exact session state and lets the user retry without rediscovering the conversation.
+      deletePendingRef.current = false;
+      setDeletePending(false);
+    }
+  };
+
+  const actionItems = (session: { id: string; title?: string; active: boolean }): ActionMenuItem[] => [
+    { label: t.chat.rename, icon: Pencil, onSelect: () => beginRename(session.id, session.title || '') },
+    { label: t.chat.fork, icon: GitBranch, onSelect: () => { void forkSession(session.id); } },
+    { label: t.chat.exportHtml, icon: Download, onSelect: () => exportSession(session.id, 'html') },
+    { label: t.chat.exportJsonl, icon: Download, onSelect: () => exportSession(session.id, 'jsonl') },
+    {
+      label: t.brainChat.deleteChat,
+      icon: Trash2,
+      tone: 'danger',
+      onSelect: () => {},
+      onAfterClose: () => openDelete({ id: session.id, title: session.title || t.brainChat.untitled, active: session.active }),
+    },
+  ];
 
   const q = search.trim();
   const listScroll = variant === 'dropdown' ? 'flex flex-col' : 'flex min-h-0 flex-1 flex-col overflow-y-auto';
@@ -288,46 +334,16 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                   <span className="truncate text-sm text-foreground">{s.title || t.brainChat.untitled}</span>
                   <span className="truncate font-mono text-tiny text-muted-foreground">{brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}</span>
                 </button>
-                <div className="relative mr-1">
-                  <button
-                    type="button"
-                    onClick={() => setMenuFor((v) => (v === s.id ? null : s.id))}
-                    aria-label={t.chat.moreActions}
-                    title={t.chat.moreActions}
-                    aria-expanded={menuFor === s.id}
+                <div className="mr-1">
+                  <ActionMenu
+                    label={`${s.title || t.brainChat.untitled}: ${t.chat.moreActions}`}
+                    items={actionItems(s)}
+                    trigger={<MoreVertical size={14} aria-hidden />}
                     // Rename, branch, export and delete are reachable ONLY through this button, so it
-                    // cannot be a hover affordance. A coarse pointer has no hover at all: on a phone the
-                    // control was invisible and every per-conversation action unreachable. It is therefore
-                    // always visible on touch (and always at least a 44px target there), and it reveals
-                    // itself on keyboard focus as well — a tab stop that stays at `opacity-0` is a control
-                    // a keyboard user cannot see they have landed on. Fading in on a fine pointer is the
-                    // only part of the old behaviour worth keeping, and it stays.
-                    className={`overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-all hover:bg-accent hover:text-foreground ${menuFor === s.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100'}`}
-                  >
-                    <MoreVertical size={14} aria-hidden />
-                  </button>
-                  {menuFor === s.id ? (
-                    <>
-                      <div className="fixed inset-0 z-20" onClick={() => setMenuFor(null)} aria-hidden />
-                      <div className="absolute right-0 top-full z-30 mt-1 flex w-44 flex-col rounded-md border border-border bg-card p-1 shadow-lg">
-                        <button type="button" onClick={() => beginRename(s.id, s.title || '')} className={MENU_ITEM}>
-                          <Pencil size={13} aria-hidden /> {t.chat.rename}
-                        </button>
-                        <button type="button" onClick={() => void forkSession(s.id)} className={MENU_ITEM}>
-                          <GitBranch size={13} aria-hidden /> {t.chat.fork}
-                        </button>
-                        <button type="button" onClick={() => exportSession(s.id, 'html')} className={MENU_ITEM}>
-                          <Download size={13} aria-hidden /> {t.chat.exportHtml}
-                        </button>
-                        <button type="button" onClick={() => exportSession(s.id, 'jsonl')} className={MENU_ITEM}>
-                          <Download size={13} aria-hidden /> {t.chat.exportJsonl}
-                        </button>
-                        <button type="button" onClick={() => removeSession(s.id, s.active)} className={`${MENU_ITEM} hover:text-destructive`}>
-                          <Trash2 size={13} aria-hidden /> {t.brainChat.deleteChat}
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
+                    // cannot be a hover affordance. Touch and keyboard always reveal it; fine pointers keep
+                    // the quiet row treatment until hover, focus or Radix's open state.
+                    triggerClassName="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+                  />
                 </div>
               </>
             )}
@@ -348,6 +364,15 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
           </span>
         </button>
       ) : null}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={t.brainChat.deleteChatConfirmTitle}
+        description={deleteTarget ? t.brainChat.deleteChatConfirmDescription.replace('{title}', deleteTarget.title) : undefined}
+        confirmLabel={t.brainChat.deleteChat}
+        confirmDisabled={deletePending}
+        onConfirm={confirmDelete}
+        onClose={closeDelete}
+      />
     </div>
   );
 

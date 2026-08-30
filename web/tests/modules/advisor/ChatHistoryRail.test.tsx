@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { ChatHistoryRail } from '../../../modules/advisor/ChatHistoryRail';
@@ -59,6 +59,38 @@ describe('ChatHistoryRail', () => {
     }
   });
 
+  it('uses the shared Radix action-menu keyboard contract and returns focus on Escape', async () => {
+    renderRail('rail');
+    const trigger = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!;
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+
+    const rename = await screen.findByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i });
+    await waitFor(() => expect(rename).toHaveFocus());
+    fireEvent.keyDown(rename, { key: 'ArrowDown' });
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: /Branch conversation|Větvit konverzaci|Vetviť konverzáciu/i })).toHaveFocus());
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('returns delete-confirm Cancel and Escape focus to the exact row action trigger', async () => {
+    renderRail('rail');
+    const trigger = screen.getAllByRole('button', { name: /More actions|Další akce/i })[1]!;
+
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
+    const firstConfirm = await screen.findByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i });
+    fireEvent.click(within(firstConfirm).getByRole('button', { name: /Cancel|Zrušit/i }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
+    const secondConfirm = await screen.findByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i });
+    fireEvent.keyDown(secondConfirm, { key: 'Escape' });
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
   it('shows a back-to-dashboard link only when homeLink is set (phone /chat has no TopBar)', () => {
     const { wrapper: Wrapper } = createWrapper();
     const linkName = /Přehled|Dashboard|Prehľad/i;
@@ -80,18 +112,58 @@ describe('ChatHistoryRail', () => {
     expect(ctrl.switchSession).toHaveBeenCalledWith({ session: 's2' });
   });
 
-  it('deletes a conversation through the controller (id + active flag)', () => {
+  it('confirms the concrete delete consequence before calling the controller', async () => {
     renderRail('rail');
     openRowMenu(1); // the second, non-active row
+    fireEvent.click(screen.getByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
+    expect(ctrl.deleteSession).not.toHaveBeenCalled();
+
+    const confirmation = await screen.findByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i });
+    expect(confirmation).toHaveTextContent('Second');
     fireEvent.click(screen.getByRole('button', { name: /Delete conversation|Smazat konverzaci/i }));
-    expect(ctrl.deleteSession).toHaveBeenCalledWith('s2', false);
+    await waitFor(() => expect(ctrl.deleteSession).toHaveBeenCalledWith('s2', false));
+  });
+
+  it('keeps the conversation and confirmation in place when deletion fails', async () => {
+    ctrl.deleteSession.mockRejectedValueOnce(new Error('delete failed'));
+    renderRail('rail');
+    openRowMenu(0);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Delete conversation|Smazat konverzaci/i }));
+
+    await waitFor(() => expect(ctrl.deleteSession).toHaveBeenCalledWith('s1', true));
+    expect(screen.getByText('First')).toBeInTheDocument();
+    expect(screen.getByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i })).toBeInTheDocument();
+  });
+
+  it('deduplicates a pending delete and ignores its stale completion after a newer dialog opens', async () => {
+    let resolveDelete!: () => void;
+    ctrl.deleteSession.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveDelete = resolve; }));
+    renderRail('rail');
+
+    openRowMenu(0);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
+    const firstDialog = await screen.findByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i });
+    const confirm = within(firstDialog).getByRole('button', { name: /Delete conversation|Smazat konverzaci/i });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(ctrl.deleteSession).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(firstDialog).getByRole('button', { name: /Cancel|Zrušit/i }));
+    openRowMenu(1);
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
+    const newerDialog = await screen.findByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i });
+    expect(newerDialog).toHaveTextContent('Second');
+
+    resolveDelete();
+    await waitFor(() => expect(screen.getByRole('alertdialog', { name: /Delete this conversation|Smazat tuto konverzaci/i })).toHaveTextContent('Second'));
   });
 
   it('renames via brainRenameSession then invalidates the sessions query', async () => {
     const { qc } = renderRail('rail');
     const invalidate = vi.spyOn(qc, 'invalidateQueries');
     openRowMenu(0);
-    fireEvent.click(screen.getByRole('button', { name: /^Rename$|^Přejmenovat$/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i }));
     const input = screen.getByRole('textbox', { name: /Conversation title|Název konverzace/i });
     fireEvent.change(input, { target: { value: 'New name' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -103,7 +175,7 @@ describe('ChatHistoryRail', () => {
   it('cancels a rename on Escape without committing', () => {
     renderRail('rail');
     openRowMenu(0);
-    fireEvent.click(screen.getByRole('button', { name: /^Rename$|^Přejmenovat$/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i }));
     const input = screen.getByRole('textbox', { name: /Conversation title|Název konverzace/i });
     fireEvent.change(input, { target: { value: 'Discarded' } });
     fireEvent.keyDown(input, { key: 'Escape' });
@@ -114,17 +186,17 @@ describe('ChatHistoryRail', () => {
   it('exports a conversation as HTML and as JSONL', () => {
     renderRail('rail');
     openRowMenu(0);
-    fireEvent.click(screen.getByRole('button', { name: /Export as HTML|Exportovat jako HTML/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Export as HTML|Exportovat jako HTML/i }));
     expect(client.brainExportSession).toHaveBeenCalledWith('s1', 'html');
     openRowMenu(0);
-    fireEvent.click(screen.getByRole('button', { name: /Export as JSONL|Exportovat jako JSONL/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Export as JSONL|Exportovat jako JSONL/i }));
     expect(client.brainExportSession).toHaveBeenCalledWith('s1', 'jsonl');
   });
 
   it('branches a conversation and opens the copy, leaving the source selected until then', async () => {
     renderRail('rail');
     openRowMenu(0);
-    fireEvent.click(screen.getByRole('button', { name: /Branch conversation|Větvit konverzaci|Vetviť konverzáciu/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Branch conversation|Větvit konverzaci|Vetviť konverzáciu/i }));
     await waitFor(() => expect(client.brainForkSession).toHaveBeenCalledWith('s1'));
     // The user lands in the NEW conversation — never back in the one they branched off.
     await waitFor(() => expect(ctrl.switchSession).toHaveBeenCalledWith({ session: 's1-fork' }));

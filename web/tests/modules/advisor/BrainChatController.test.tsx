@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse, delay } from 'msw';
@@ -7,7 +7,7 @@ import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
-import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat } from '../../../modules/advisor/BrainChatProvider';
 import { openBrainSession } from '../../../lib/brainDock';
 
 /** EventSource stand-in that records its URL and lets a test drive per-event listeners by hand — plus a
@@ -76,9 +76,24 @@ function Harness({ surfaces = 1 }: { surfaces?: number }) {
   );
 }
 
-function renderHarness(surfaces = 1) {
+function DeleteProbe() {
+  const { activeSessionId, deleteSession, ensureAttached } = useBrainChat();
+  const [result, setResult] = useState('idle');
+  useEffect(() => { ensureAttached(); }, [ensureAttached]);
+  return (
+    <>
+      <span data-testid="active-session">{activeSessionId}</span>
+      <span data-testid="delete-result">{result}</span>
+      <button type="button" onClick={() => { void deleteSession('brain-1', true).then(() => setResult('deleted')).catch(() => setResult('failed')); }}>delete current</button>
+    </>
+  );
+}
+
+function renderHarness(surfaces = 1, deleteProbe = false) {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><ToastProvider><Harness surfaces={surfaces} /></ToastProvider></Wrapper>);
+  return render(
+    <Wrapper><ToastProvider>{deleteProbe ? <BrainChatProvider><DeleteProbe /></BrainChatProvider> : <Harness surfaces={surfaces} />}</ToastProvider></Wrapper>,
+  );
 }
 
 describe('BrainChat session-bound controller', () => {
@@ -110,6 +125,19 @@ describe('BrainChat session-bound controller', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Send|Odeslat/i })); });
     await waitFor(() => expect(sendBodies.length).toBe(1));
     expect(sendBodies[0]).toMatchObject({ session: 'brain-1', client: clientId, generation: 1 });
+  });
+
+  it('reports a failed conversation delete and preserves the active session state', async () => {
+    server.use(http.delete('*/api/brain/sessions/brain-1', () => HttpResponse.json({ error: 'delete failed' }, { status: 500 })));
+    renderHarness(0, true);
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    expect(screen.getByTestId('active-session')).toHaveTextContent('brain-1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'delete current' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The conversation could not be deleted. Nothing was changed.');
+    expect(screen.getByTestId('delete-result')).toHaveTextContent('failed');
+    expect(screen.getByTestId('active-session')).toHaveTextContent('brain-1');
+    expect(FakeES.instances).toHaveLength(1);
   });
 
   it('keeps the draft and the live stream across a Chat↔Terminál toggle (no remount, no reconnect)', async () => {

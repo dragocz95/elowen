@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { ConversationDiagnosticsModal } from '../../../modules/settings/ConversationDiagnosticsModal';
+import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper, setViewport } from '../../test-utils';
 import { onUnhandledRequest } from '../../msw';
 
@@ -80,7 +81,7 @@ afterAll(() => server.close());
 function renderModal(captureEnabled = true, onEnableCapture = vi.fn()) {
   setViewport(false);
   const { wrapper: Wrapper } = createWrapper();
-  render(<ConversationDiagnosticsModal captureEnabled={captureEnabled} onEnableCapture={onEnableCapture} onClose={vi.fn()} />, { wrapper: Wrapper });
+  render(<ToastProvider><ConversationDiagnosticsModal captureEnabled={captureEnabled} onEnableCapture={onEnableCapture} onClose={vi.fn()} /></ToastProvider>, { wrapper: Wrapper });
   return { onEnableCapture };
 }
 
@@ -172,12 +173,82 @@ describe('ConversationDiagnosticsModal', () => {
     const { onEnableCapture } = renderModal(false);
     expect(await screen.findByText(/Detailed request capture is disabled/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Enable capture' }));
-    expect(onEnableCapture).toHaveBeenCalledTimes(1);
+    expect(onEnableCapture).not.toHaveBeenCalled();
+    const consent = await screen.findByRole('alertdialog', { name: 'Enable exact request capture?' });
+    expect(within(consent).getByText(/exact provider prompts/i)).toBeInTheDocument();
+    fireEvent.click(within(consent).getByRole('button', { name: 'Enable capture' }));
+    await waitFor(() => expect(onEnableCapture).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Legacy hello')).toBeInTheDocument();
     expect(screen.getByText(/best-effort/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Search sessions…'), { target: { value: 'needle' } });
     await waitFor(() => expect(lastSessionQuery).toContain('search=needle'));
+  });
+
+  it('keeps capture consent open and shows a toast when saving fails', async () => {
+    const onEnableCapture = vi.fn(() => Promise.reject(new Error('save failed')));
+    renderModal(false, onEnableCapture);
+    fireEvent.click(await screen.findByRole('button', { name: 'Enable capture' }));
+    const consent = await screen.findByRole('alertdialog', { name: 'Enable exact request capture?' });
+    fireEvent.click(within(consent).getByRole('button', { name: 'Enable capture' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Exact request capture could not be enabled.');
+    expect(screen.getByRole('alertdialog', { name: 'Enable exact request capture?' })).toBeInTheDocument();
+  });
+
+  it('deduplicates capture save and ignores an older completion after consent reopens', async () => {
+    let resolveFirst!: () => void;
+    const onEnableCapture = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce(undefined);
+    renderModal(false, onEnableCapture);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Enable capture' }));
+    const firstConsent = await screen.findByRole('alertdialog', { name: 'Enable exact request capture?' });
+    const confirm = within(firstConsent).getByRole('button', { name: 'Enable capture' });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(onEnableCapture).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(firstConsent).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Enable capture' }));
+    const newerConsent = await screen.findByRole('alertdialog', { name: 'Enable exact request capture?' });
+    resolveFirst();
+    await waitFor(() => expect(screen.getByRole('alertdialog', { name: 'Enable exact request capture?' })).toBe(newerConsent));
+
+    fireEvent.click(within(newerConsent).getByRole('button', { name: 'Enable capture' }));
+    await waitFor(() => expect(onEnableCapture).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Enable exact request capture?' })).not.toBeInTheDocument());
+  });
+
+  it('matches the session filter options to the API wire contract', async () => {
+    renderModal();
+    await screen.findByLabelText('Prompt token segments');
+    fireEvent.click(screen.getByText('Filters'));
+
+    const surface = screen.getByRole('combobox', { name: 'Surface' }) as HTMLSelectElement;
+    const status = screen.getByRole('combobox', { name: 'Status' }) as HTMLSelectElement;
+    expect([...surface.options].map((option) => option.value)).toEqual(['', 'conversation', 'channel', 'subagent']);
+    expect([...status.options].map((option) => option.value)).toEqual(['', 'pending', 'succeeded', 'captured', 'legacy', 'error', 'interrupted']);
+  });
+
+  it('rejects non-positive-integer User IDs and only sends a valid value', async () => {
+    renderModal();
+    await screen.findByLabelText('Prompt token segments');
+    fireEvent.click(screen.getByText('Filters'));
+    const input = screen.getByRole('textbox', { name: 'User ID' });
+
+    for (const invalid of ['abc', '1.5', '-2']) {
+      fireEvent.change(input, { target: { value: invalid } });
+      expect(input).toHaveAttribute('aria-invalid', 'true');
+      expect(screen.getByRole('alert')).toHaveTextContent('Enter a positive whole number.');
+      await waitFor(() => expect(lastSessionQuery).not.toContain('userId='));
+    }
+
+    fireEvent.change(input, { target: { value: '42' } });
+    expect(input).toHaveAttribute('aria-invalid', 'false');
+    expect(screen.queryByText('Enter a positive whole number.')).not.toBeInTheDocument();
+    await waitFor(() => expect(lastSessionQuery).toContain('userId=42'));
   });
 
   it('renders a bounded message window without downloading every payload', async () => {
@@ -198,27 +269,34 @@ describe('ConversationDiagnosticsModal', () => {
     expect(segmentReads).toBe(0);
   });
 
-  it('opens mobile session and tools drawers as nested accessible dialogs', async () => {
+  it('uses one mobile dialog with Radix view switching, focus transfer and whole-dialog Escape', async () => {
     setViewport(true);
+    const onClose = vi.fn();
     const { wrapper: Wrapper } = createWrapper();
-    render(<ConversationDiagnosticsModal captureEnabled onEnableCapture={vi.fn()} onClose={vi.fn()} />, { wrapper: Wrapper });
+    render(<ToastProvider><ConversationDiagnosticsModal captureEnabled onEnableCapture={vi.fn()} onClose={onClose} /></ToastProvider>, { wrapper: Wrapper });
     await screen.findByLabelText('Prompt token segments');
-    expect(screen.getByRole('tab', { name: 'Messages' })).toHaveAttribute('aria-selected', 'true');
-    fireEvent.click(screen.getByText('First prompt'));
-    expect(screen.getByRole('tab', { name: 'Detail' })).toHaveAttribute('aria-selected', 'true');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
-    const sessionsDrawer = await screen.findByRole('dialog', { name: 'Sessions' });
-    expect(within(sessionsDrawer).getByTestId('diagnostics-session-rail')).toBeInTheDocument();
-    // Raised inside the drawer, the way a real Escape arrives: the dialog is Radix-driven now and listens
-    // on the document, which `window` sits above rather than inside.
-    fireEvent.keyDown(sessionsDrawer, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Sessions' })).not.toBeInTheDocument());
-    expect(screen.getByRole('dialog', { name: 'Conversation diagnostics' })).toBeInTheDocument();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    const view = screen.getByRole('radiogroup', { name: 'Diagnostics view' });
+    const content = within(view).getByRole('radio', { name: 'Content' });
+    const sessions = within(view).getByRole('radio', { name: 'Sessions' });
+    const tools = within(view).getByRole('radio', { name: 'Tools' });
+    expect(content).toHaveAttribute('aria-checked', 'true');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
-    const toolsDrawer = await screen.findByRole('dialog', { name: 'Tools' });
-    fireEvent.click(within(toolsDrawer).getByText('alpha_tool'));
+    fireEvent.click(sessions);
+    expect(sessions).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: /Captured conversation/ }));
+    const contentRegion = screen.getByRole('main', { name: 'Request content' });
+    await waitFor(() => expect(contentRegion).toHaveFocus());
+    expect(content).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(tools);
+    expect(tools).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByText('alpha_tool'));
     await waitFor(() => expect(segmentReads).toBe(1));
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 });

@@ -41,6 +41,153 @@ test('@smoke P0-5 scrolling to the top lazy-loads older history once, then retir
   await expect(chat.turns().filter({ hasText: 'Msg 0 (you)' })).toHaveCount(1);
 });
 
+for (const profile of [
+  { name: 'portrait at 125% UI scale', scale: 1.25, open: { width: 390, height: 844 }, keyboard: { width: 390, height: 500 } },
+  { name: 'short landscape at 80% UI scale', scale: 0.8, open: { width: 740, height: 430 }, keyboard: { width: 740, height: 300 } },
+] as const) {
+  test(`mobile keyboard keeps the composer on the visual viewport and the newest turn fully clear — ${profile.name}`, async ({ app, seed }) => {
+    await app.addInitScript((scale) => localStorage.setItem('elowen:ui-scale', String(scale)), profile.scale);
+    await app.setViewportSize(profile.open);
+    await seed.messages(seedTurns);
+    const chat = new ChatPage(app);
+    await chat.goto();
+    await expect(chat.lastTurn()).toContainText('Msg 59 (elowen)');
+
+    // A real iPhone contributes a non-zero inset here. Override the token rather than duplicating env() so
+    // this exercises the same policy in Chromium: the inset applies while closed and disappears once the
+    // resized keyboard viewport already excludes the home-indicator area.
+    await app.evaluate(() => document.documentElement.style.setProperty('--safe-bottom', '34px'));
+    await chat.composer.focus();
+    await app.setViewportSize(profile.keyboard);
+
+    const geometry = () => app.evaluate(() => {
+      const viewportBottom = (window.visualViewport?.offsetTop ?? 0) + (window.visualViewport?.height ?? window.innerHeight);
+      const surface = document.querySelector<HTMLElement>('[data-variant="full"]')!;
+      const dock = document.querySelector<HTMLElement>('[data-testid="chat-composer-dock"]')!;
+      const composer = document.querySelector<HTMLElement>('.chat-composer')!;
+      const transcript = document.querySelector<HTMLElement>('[data-testid="chat-transcript"]')!;
+      const turns = [...document.querySelectorAll<HTMLElement>('[data-testid="chat-turn"]')];
+      const last = turns[turns.length - 1]!;
+      const main = document.querySelector<HTMLElement>('main')!;
+      const composerRect = composer.getBoundingClientRect();
+      const dockRect = dock.getBoundingClientRect();
+      const lastRect = last.getBoundingClientRect();
+      const uiScale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale')) || 1;
+      return {
+        uiScale,
+        keyboardOpen: surface.dataset.chatKeyboardOpen,
+        composerGap: viewportBottom - composerRect.bottom,
+        dockGap: viewportBottom - dockRect.bottom,
+        slotPadding: parseFloat(getComputedStyle(composer.parentElement!).paddingBottom) * uiScale,
+        surfacePadding: parseFloat(getComputedStyle(surface).paddingBottom) * uiScale,
+        lastClearance: composerRect.top - lastRect.bottom,
+        reserveBeyondDock: parseFloat(getComputedStyle(transcript).paddingBottom) * uiScale - dockRect.height,
+        dockSafePadding: parseFloat(getComputedStyle(dock).paddingBottom),
+        horizontalOverflow: main.scrollWidth - main.clientWidth,
+      };
+    });
+
+    await expect.poll(async () => (await geometry()).keyboardOpen).toBe('true');
+    const settled = await geometry();
+    expect(settled.uiScale).toBe(profile.scale);
+    expect(settled.dockGap).toBeGreaterThanOrEqual(-1);
+    expect(settled.dockGap).toBeLessThanOrEqual(12);
+    expect(settled.composerGap).toBeGreaterThanOrEqual(settled.slotPadding - 1);
+    expect(settled.composerGap).toBeLessThanOrEqual(16);
+    expect(settled.surfacePadding).toBe(0);
+    expect(settled.lastClearance).toBeGreaterThanOrEqual(4);
+    expect(settled.reserveBeyondDock).toBeGreaterThanOrEqual(4);
+    expect(settled.reserveBeyondDock).toBeLessThanOrEqual(20);
+    expect(settled.dockSafePadding).toBe(0);
+    expect(settled.horizontalOverflow).toBeLessThanOrEqual(0);
+
+    // A reader who deliberately leaves the newest turn owns the scroll position. A second keyboard-height
+    // change updates the dock geometry but must not call the follow-newest writer behind their back.
+    const main = app.locator('main');
+    await main.hover({ position: { x: profile.keyboard.width / 2, y: 120 } });
+    await app.mouse.wheel(0, -600);
+    const readingAt = await main.evaluate((element) => element.scrollTop);
+    expect(readingAt).toBeGreaterThan(0);
+    await app.setViewportSize({ width: profile.keyboard.width, height: profile.keyboard.height - 40 });
+    await expect.poll(async () => Math.abs((await main.evaluate((element) => element.scrollTop)) - readingAt)).toBeLessThan(40);
+  });
+}
+
+test('an unfocused viewport change becomes the new keyboard baseline before focus', async ({ app, seed }) => {
+  await app.addInitScript(() => localStorage.setItem('elowen:ui-scale', '1'));
+  await app.setViewportSize({ width: 390, height: 844 });
+  await seed.messages(seedTurns);
+  const chat = new ChatPage(app);
+  await chat.goto();
+  await app.evaluate(() => document.documentElement.style.setProperty('--safe-bottom', '34px'));
+
+  // Orientation/split-screen while the composer is NOT focused is the new resting viewport, not a keyboard.
+  await app.setViewportSize({ width: 740, height: 430 });
+  await app.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await chat.composer.focus();
+
+  const keyboardState = () => app.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>('[data-variant="full"]')!;
+    const dock = document.querySelector<HTMLElement>('[data-testid="chat-composer-dock"]')!;
+    return {
+      open: surface.dataset.chatKeyboardOpen,
+      safePadding: parseFloat(getComputedStyle(dock).paddingBottom),
+    };
+  });
+  await expect.poll(async () => (await keyboardState()).open).toBe('false');
+  expect((await keyboardState()).safePadding).toBe(34);
+
+  // Only a further focused viewport shrink is the soft keyboard transition.
+  await app.setViewportSize({ width: 740, height: 300 });
+  await expect.poll(async () => (await keyboardState()).open).toBe('true');
+  expect((await keyboardState()).safePadding).toBe(0);
+});
+
+test('a focused open keyboard survives portrait-landscape rotation', async ({ app, seed }) => {
+  await app.addInitScript(() => localStorage.setItem('elowen:ui-scale', '1'));
+  await app.setViewportSize({ width: 390, height: 844 });
+  await seed.messages(seedTurns);
+  const chat = new ChatPage(app);
+  await chat.goto();
+  await app.evaluate(() => document.documentElement.style.setProperty('--safe-bottom', '34px'));
+  await chat.composer.focus();
+  await app.setViewportSize({ width: 390, height: 500 });
+
+  const geometry = () => app.evaluate(() => {
+    const viewportBottom = (window.visualViewport?.offsetTop ?? 0) + (window.visualViewport?.height ?? window.innerHeight);
+    const surface = document.querySelector<HTMLElement>('[data-variant="full"]')!;
+    const dock = document.querySelector<HTMLElement>('[data-testid="chat-composer-dock"]')!;
+    const composer = document.querySelector<HTMLElement>('.chat-composer')!;
+    const turns = [...document.querySelectorAll<HTMLElement>('[data-testid="chat-turn"]')];
+    const composerRect = composer.getBoundingClientRect();
+    const lastRect = turns[turns.length - 1]!.getBoundingClientRect();
+    return {
+      open: surface.dataset.chatKeyboardOpen,
+      dockSafePadding: parseFloat(getComputedStyle(dock).paddingBottom),
+      composerGap: viewportBottom - composerRect.bottom,
+      lastClearance: composerRect.top - lastRect.bottom,
+    };
+  });
+  await expect.poll(async () => (await geometry()).open).toBe('true');
+
+  // Keep the textarea focused while both layout axes and keyboard-sized viewport change.
+  await app.setViewportSize({ width: 740, height: 300 });
+  await expect.poll(async () => (await geometry()).open).toBe('true');
+  const landscape = await geometry();
+  expect(landscape.dockSafePadding).toBe(0);
+  expect(landscape.composerGap).toBeGreaterThanOrEqual(-1);
+  expect(landscape.composerGap).toBeLessThanOrEqual(16);
+  expect(landscape.lastClearance).toBeGreaterThanOrEqual(4);
+
+  await app.setViewportSize({ width: 390, height: 500 });
+  await expect.poll(async () => (await geometry()).open).toBe('true');
+  const portrait = await geometry();
+  expect(portrait.dockSafePadding).toBe(0);
+  expect(portrait.composerGap).toBeGreaterThanOrEqual(-1);
+  expect(portrait.composerGap).toBeLessThanOrEqual(16);
+  expect(portrait.lastClearance).toBeGreaterThanOrEqual(4);
+});
+
 test('opening a chat and growing its composer keep the newest message in view', async ({ app, seed }) => {
   await seed.messages(seedTurns);
   const chat = new ChatPage(app);
@@ -55,7 +202,7 @@ test('opening a chat and growing its composer keep the newest message in view', 
   await expect.poll(bottomGap, { message: 'growing the composer moved the newest message out of view' }).toBeLessThan(32);
 
   await app.getByRole('button', { name: /Conversation history|Historie konverzací/i }).click();
-  await app.getByRole('button', { name: 'Second conversation' }).click();
+  await app.getByRole('button', { name: /^Second conversation / }).click();
   await expect.poll(async () => {
     const response = await app.request.get(`${DAEMON_URL}/__test/streams?session=brain-2`);
     const body = await response.json() as { streams: unknown[] };

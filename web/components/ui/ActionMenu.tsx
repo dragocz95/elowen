@@ -16,6 +16,10 @@ export type ActionMenuItem = {
   label: string;
   tone?: 'default' | 'danger';
   onSelect: () => void;
+  /** Run only after Radix has closed the menu and restored focus to its stable trigger. Use this when the
+   *  action opens another focus-owning overlay, so that overlay captures the trigger rather than a menuitem
+   *  that is about to unmount. */
+  onAfterClose?: () => void;
 } & (
   | { icon?: LucideIcon; iconNode?: never }
   | { icon?: never; iconNode?: ReactNode }
@@ -57,6 +61,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
   const contentRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openFocus = useRef<OpenFocus>('none');
+  const afterClose = useRef<(() => void) | null>(null);
   // Whether closing should hand focus back to the trigger. It should when the menu owned focus — a
   // keyboard open, a selection, Escape — and must not when it was merely hovered open, or dismissed by
   // a click somewhere else, because that would steal focus from what the reader actually pressed.
@@ -133,6 +138,9 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
             // passed over, so the decision is made here instead.
             event.preventDefault();
             if (restoreFocus.current) triggerRef.current?.focus({ preventScroll: true });
+            const next = afterClose.current;
+            afterClose.current = null;
+            next?.();
           }}
         >
           {items.map((item) => {
@@ -141,7 +149,11 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
               <DropdownMenuItem
                 key={item.label}
                 variant={item.tone === 'danger' ? 'destructive' : 'default'}
-                onSelect={() => { restoreFocus.current = true; item.onSelect(); }}
+                onSelect={() => {
+                  restoreFocus.current = true;
+                  afterClose.current = item.onAfterClose ?? null;
+                  item.onSelect();
+                }}
               >
                 {item.iconNode ?? (Icon ? <Icon size={15} aria-hidden /> : null)}
                 {item.label}

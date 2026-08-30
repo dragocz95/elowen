@@ -1,11 +1,14 @@
 'use client';
-import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useDeferredValue, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle, Braces, ChevronDown, ChevronRight, Copy, Database, Filter,
-  ListFilter, Menu, MessageSquareText, PanelRightOpen, Server, Wrench,
+  ListFilter, MessageSquareText, Server, Wrench,
 } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { Segmented } from '../../components/ui/Segmented';
+import { useToast } from '../../components/ui/Toast';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states';
@@ -34,6 +37,7 @@ type Filters = {
 };
 
 const EMPTY_FILTERS: Filters = { search: '', from: '', to: '', userId: '', surface: '', provider: '', model: '', status: '' };
+const validUserId = (value: string): boolean => value === '' || /^[1-9]\d*$/.test(value);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -224,6 +228,8 @@ function SessionRail({ sessions, selectedId, onSelect, filters, setFilters, hasM
 }) {
   const { t, locale } = useTranslation();
   const d = t.settings.conversationDiagnostics;
+  const userIdErrorId = useId();
+  const userIdIsValid = validUserId(filters.userId);
   const set = (key: keyof Filters, value: string) => setFilters({ ...filters, [key]: value });
   return (
     <div className="flex h-full min-h-0 flex-col border-r border-border bg-background/40" data-testid="diagnostics-session-rail">
@@ -234,11 +240,22 @@ function SessionRail({ sessions, selectedId, onSelect, filters, setFilters, hasM
           <div className="grid grid-cols-2 gap-2 pt-2">
             <Input aria-label={d.from} type="date" value={filters.from} onChange={(event) => set('from', event.target.value)} />
             <Input aria-label={d.to} type="date" value={filters.to} onChange={(event) => set('to', event.target.value)} />
-            <Input aria-label={d.userId} inputMode="numeric" placeholder={d.userId} value={filters.userId} onChange={(event) => set('userId', event.target.value)} />
-            <Select label={d.surface} value={filters.surface} onChange={(value) => set('surface', value)}><option value="">{d.all}</option><option value="conversation">{d.conversation}</option><option value="channel">{d.channel}</option><option value="task">{d.task}</option><option value="subagent">{d.subagent}</option></Select>
+            <div className="min-w-0">
+              <Input
+                aria-label={d.userId}
+                aria-invalid={!userIdIsValid}
+                aria-describedby={!userIdIsValid ? userIdErrorId : undefined}
+                inputMode="numeric"
+                placeholder={d.userId}
+                value={filters.userId}
+                onChange={(event) => set('userId', event.target.value)}
+              />
+              {!userIdIsValid ? <p id={userIdErrorId} role="alert" className="pt-1 text-[10px] leading-tight text-destructive">{d.userIdInvalid}</p> : null}
+            </div>
+            <Select label={d.surface} value={filters.surface} onChange={(value) => set('surface', value)}><option value="">{d.all}</option><option value="conversation">{d.conversation}</option><option value="channel">{d.channel}</option><option value="subagent">{d.subagent}</option></Select>
             <Input aria-label={d.provider} placeholder={d.provider} value={filters.provider} onChange={(event) => set('provider', event.target.value)} />
             <Input aria-label={d.model} placeholder={d.model} value={filters.model} onChange={(event) => set('model', event.target.value)} />
-            <Select label={d.status} value={filters.status} onChange={(value) => set('status', value)}><option value="">{d.all}</option><option value="captured">{d.captured}</option><option value="legacy">{d.legacy}</option><option value="error">{d.error}</option><option value="interrupted">{d.interrupted}</option></Select>
+            <Select label={d.status} value={filters.status} onChange={(value) => set('status', value)}><option value="">{d.all}</option><option value="pending">{d.pending}</option><option value="succeeded">{d.succeeded}</option><option value="captured">{d.captured}</option><option value="legacy">{d.legacy}</option><option value="error">{d.error}</option><option value="interrupted">{d.interrupted}</option></Select>
           </div>
         </details>
       </div>
@@ -304,15 +321,16 @@ function ToolsPanel({ sessionId, requestId, tools, query, setQuery }: { sessionI
   );
 }
 
-export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, onClose }: { captureEnabled: boolean; onEnableCapture: () => void; onClose: () => void }) {
+export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, onClose }: { captureEnabled: boolean; onEnableCapture: () => Promise<void> | void; onClose: () => void }) {
   const { t, locale } = useTranslation();
+  const { toast } = useToast();
   const d = t.settings.conversationDiagnostics;
   const mobile = useMobile();
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const deferredFilters = useDeferredValue(filters);
   const queryFilters = useMemo(() => ({
     search: deferredFilters.search || undefined, from: deferredFilters.from || undefined, to: deferredFilters.to || undefined,
-    userId: deferredFilters.userId ? Number(deferredFilters.userId) : undefined, surface: deferredFilters.surface || undefined,
+    userId: validUserId(deferredFilters.userId) && deferredFilters.userId ? Number(deferredFilters.userId) : undefined, surface: deferredFilters.surface || undefined,
     provider: deferredFilters.provider || undefined, model: deferredFilters.model || undefined, status: deferredFilters.status || undefined,
   }), [deferredFilters]);
   const sessionsQuery = useBrainDebugSessions(queryFilters);
@@ -335,7 +353,13 @@ export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, 
   const [inspectorRaw, setInspectorRaw] = useState(false);
   const [mobileContent, setMobileContent] = useState<'messages' | 'inspector'>('messages');
   const [toolQuery, setToolQuery] = useState('');
-  const [mobilePanel, setMobilePanel] = useState<'sessions' | 'tools' | null>(null);
+  const [mobileView, setMobileView] = useState<'content' | 'sessions' | 'tools'>('content');
+  const [captureConfirmOpen, setCaptureConfirmOpen] = useState(false);
+  const [capturePending, setCapturePending] = useState(false);
+  const capturePendingRef = useRef(false);
+  const captureOpRef = useRef(0);
+  const contentRegionRef = useRef<HTMLElement>(null);
+  const focusContentAfterSessionSelect = useRef(false);
 
   useEffect(() => { setSessionId(null); setRequestId(null); }, [queryFilters]);
   useEffect(() => {
@@ -347,6 +371,11 @@ export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, 
   useEffect(() => {
     setRawOpen(false); setSelectedSegment(null); setInspectorRaw(false); setMobileContent('messages'); setToolQuery(''); setVisibleMessages(100);
   }, [requestId]);
+  useEffect(() => {
+    if (!mobile || mobileView !== 'content' || !focusContentAfterSessionSelect.current) return;
+    focusContentAfterSessionSelect.current = false;
+    contentRegionRef.current?.focus({ preventScroll: true });
+  }, [mobile, mobileView, sessionId]);
 
   const messages = segments.filter((segment) => segment.section !== 'tool' && segment.section !== 'options');
   const filteredMessages = messages.filter((segment) => {
@@ -361,7 +390,43 @@ export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, 
   const legacyItems = legacy.data?.pages.flatMap((page) => page.items) ?? [];
 
   const copy = (value: unknown) => { void navigator.clipboard?.writeText(pretty(value)); };
-  const sessionRail = <SessionRail sessions={sessions} selectedId={sessionId} onSelect={(id) => { setSessionId(id); setMobilePanel(null); }} filters={filters} setFilters={setFilters} hasMore={sessionsQuery.hasNextPage} loadingMore={sessionsQuery.isFetchingNextPage} loadMore={() => void sessionsQuery.fetchNextPage()} />;
+  const selectSession = (id: string) => {
+    setSessionId(id);
+    if (!mobile) return;
+    focusContentAfterSessionSelect.current = true;
+    setMobileView('content');
+  };
+  const openCaptureConfirm = () => {
+    captureOpRef.current += 1;
+    capturePendingRef.current = false;
+    setCapturePending(false);
+    setCaptureConfirmOpen(true);
+  };
+  const closeCaptureConfirm = () => {
+    captureOpRef.current += 1;
+    capturePendingRef.current = false;
+    setCapturePending(false);
+    setCaptureConfirmOpen(false);
+  };
+  const enableCapture = async (): Promise<void> => {
+    if (!captureConfirmOpen || capturePendingRef.current) return;
+    const operation = ++captureOpRef.current;
+    capturePendingRef.current = true;
+    setCapturePending(true);
+    try {
+      await onEnableCapture();
+      if (operation !== captureOpRef.current) return;
+      capturePendingRef.current = false;
+      setCapturePending(false);
+      setCaptureConfirmOpen(false);
+    } catch {
+      if (operation !== captureOpRef.current) return;
+      capturePendingRef.current = false;
+      setCapturePending(false);
+      toast(d.captureEnableError, 'error');
+    }
+  };
+  const sessionRail = <SessionRail sessions={sessions} selectedId={sessionId} onSelect={selectSession} filters={filters} setFilters={setFilters} hasMore={sessionsQuery.hasNextPage} loadingMore={sessionsQuery.isFetchingNextPage} loadMore={() => void sessionsQuery.fetchNextPage()} />;
   const toolsPanel = <ToolsPanel sessionId={sessionId} requestId={requestId} tools={tools} query={toolQuery} setQuery={setToolQuery} />;
 
   return (
@@ -374,17 +439,27 @@ export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, 
       icon={Database}
       presentation="fullscreen"
       onClose={onClose}
-      headerActions={<div className="flex md:hidden"><button type="button" aria-label={d.sessions} className="p-2 text-muted-foreground" onClick={() => setMobilePanel('sessions')}><Menu size={18} /></button><button type="button" aria-label={d.tools} className="p-2 text-muted-foreground" onClick={() => setMobilePanel('tools')}><PanelRightOpen size={18} /></button></div>}
     >
       {!captureEnabled ? (
         <div className="flex flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-xs text-warning">
           <AlertTriangle size={14} />{d.captureDisabled}
-          <Button className="ml-auto" variant="ghost" onClick={onEnableCapture}>{d.enableCapture}</Button>
+          <Button className="ml-auto" variant="ghost" onClick={openCaptureConfirm}>{d.enableCapture}</Button>
+        </div>
+      ) : null}
+      {mobile ? (
+        <div className="border-b border-border px-3 py-2">
+          <Segmented
+            aria-label={d.mobileView}
+            value={mobileView}
+            onChange={(value) => setMobileView(value as 'content' | 'sessions' | 'tools')}
+            options={[{ value: 'content', label: d.content }, { value: 'sessions', label: d.sessions }, { value: 'tools', label: d.tools }]}
+            nowrap
+          />
         </div>
       ) : null}
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)_20rem]">
-        <aside className="hidden min-h-0 md:block">{sessionRail}</aside>
-        <main className="flex min-h-0 min-w-0 flex-col">
+        <aside className={`${mobileView === 'sessions' ? 'block' : 'hidden'} min-h-0 md:block`}>{sessionRail}</aside>
+        <main ref={contentRegionRef} tabIndex={-1} aria-label={d.contentView} className={`${mobileView === 'content' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col outline-none md:flex`}>
           {sessionsQuery.isLoading ? <LoadingState /> : sessionsQuery.isError ? <ErrorState message={d.loadError} onRetry={() => sessionsQuery.refetch()} /> : sessions.length === 0 ? <EmptyState title={d.noSessions} icon={MessageSquareText} /> : selectedSession?.requestCount === 0 ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="border-b border-warning/40 bg-warning/10 px-4 py-3 text-xs text-warning">{d.legacyWarning}</div>
@@ -452,13 +527,18 @@ export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, 
             </>
           )}
         </main>
-        <aside className="hidden min-h-0 border-l border-border md:block">{toolsPanel}</aside>
+        <aside className={`${mobileView === 'tools' ? 'block' : 'hidden'} min-h-0 border-l border-border md:block`}>{toolsPanel}</aside>
       </div>
-      {mobile && mobilePanel ? (
-        <Modal title={mobilePanel === 'sessions' ? d.sessions : d.tools} onClose={() => setMobilePanel(null)}>
-          {mobilePanel === 'sessions' ? sessionRail : toolsPanel}
-        </Modal>
-      ) : null}
+      <ConfirmDialog
+        open={captureConfirmOpen}
+        title={d.captureConfirmTitle}
+        description={d.captureConfirmDescription}
+        confirmLabel={d.enableCapture}
+        confirmVariant="accent"
+        confirmDisabled={capturePending}
+        onConfirm={enableCapture}
+        onClose={closeCaptureConfirm}
+      />
     </Modal>
   );
 }

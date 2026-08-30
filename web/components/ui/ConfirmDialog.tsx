@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle } from 'lucide-react';
 import { ModalBody, ModalFooter } from './Modal';
-import { Button } from './Button';
+import { Button, type ButtonVariant } from './Button';
 import { useTranslation } from '../../lib/i18n';
 import { focusOverlaySurface, useOverlayIsolation } from './overlayStack';
 import { AlertDialog, AlertDialogContent } from './shadcn/alert-dialog';
@@ -14,7 +14,9 @@ interface ConfirmDialogProps {
   title: string;
   description?: string;
   confirmLabel?: string;
-  onConfirm: () => void;
+  confirmVariant?: ButtonVariant;
+  confirmDisabled?: boolean;
+  onConfirm: () => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -34,7 +36,7 @@ export function ConfirmDialog({ open, ...props }: ConfirmDialogProps) {
   return <OpenConfirmDialog {...props} />;
 }
 
-function OpenConfirmDialog({ title, description, confirmLabel, onConfirm, onClose }: Omit<ConfirmDialogProps, 'open'>) {
+function OpenConfirmDialog({ title, description, confirmLabel, confirmVariant = 'danger', confirmDisabled = false, onConfirm, onClose }: Omit<ConfirmDialogProps, 'open'>) {
   const { t } = useTranslation();
   const titleId = useId();
   const descriptionId = useId();
@@ -79,7 +81,7 @@ function OpenConfirmDialog({ title, description, confirmLabel, onConfirm, onClos
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
-            <Button variant="danger" onClick={onConfirm}>{confirmLabel ?? t.common.delete}</Button>
+            <Button variant={confirmVariant} disabled={confirmDisabled} onClick={() => { void onConfirm(); }}>{confirmLabel ?? t.common.delete}</Button>
           </ModalFooter>
         </AlertDialogContent>
       </DialogOverlay>

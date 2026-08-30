@@ -410,7 +410,7 @@ export function PluginsSection() {
         title={removeIsBundled ? t.plugins.remove : t.plugins.uninstall}
         description={(removeIsBundled ? t.plugins.removeConfirm : t.plugins.uninstallConfirm).replace('{name}', confirmRemove ?? '')}
         confirmLabel={removeIsBundled ? t.plugins.remove : t.plugins.uninstall}
-        onConfirm={() => confirmRemove && doUninstall(confirmRemove)}
+        onConfirm={() => { if (confirmRemove) doUninstall(confirmRemove); }}
         onClose={() => setConfirmRemove(null)}
       />
       {consent.dialog}
