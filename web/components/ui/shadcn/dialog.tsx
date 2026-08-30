@@ -177,6 +177,7 @@ function DialogHeader({
   icon: Icon,
   actions,
   closeLabel,
+  closeDisabled = false,
   onClose,
 }: {
   title: string;
@@ -186,6 +187,7 @@ function DialogHeader({
   icon?: LucideIcon;
   actions?: React.ReactNode;
   closeLabel: string;
+  closeDisabled?: boolean;
   onClose: () => void;
 }) {
   return (
@@ -205,11 +207,12 @@ function DialogHeader({
       <button
         type="button"
         aria-label={closeLabel}
+        disabled={closeDisabled}
         onClick={onClose}
         // `accent` is the shadcn token for an interactive surface, and in this app it resolves to a wash
         // of the foreground rather than a step up the surface ramp — a step both designs are free to
         // collapse, and studio-oled does.
-        className="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        className="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
       >
         ×
       </button>

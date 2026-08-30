@@ -26,9 +26,10 @@ describe('plugin UI runtime', () => {
     // its condensed filter control, and — the part a bundle cannot see from the component map alone —
     // `WorkspaceShell` now accepts a `toolbar`, so a register's search and filters land in the same row
     // as every built-in page's instead of in a band the bundle lays out for itself. 10 publishes the
-    // canonical Radix-backed Slider so plugin bundles do not ship a lookalike or reach into host internals.
-    expect(PLUGIN_UI_API_VERSION).toBe(10);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(10);
+    // canonical Radix-backed Slider and DirectoryPicker. 11 adds the async-safe ConfirmDialog contract,
+    // including pending/error ownership across the plugin ABI.
+    expect(PLUGIN_UI_API_VERSION).toBe(11);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(11);
     expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({
       WorkspaceShell: expect.any(Function),
       WorkspaceHero: expect.any(Function),

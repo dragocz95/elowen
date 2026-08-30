@@ -54,7 +54,10 @@
       "loadError": "MCP servery sa nepodarilo načítať.",
       "saveError": "MCP server sa nepodarilo uložiť.",
       "actionError": "Akciu sa nepodarilo dokončiť.",
-      "removeConfirm": "Odobrať MCP server {name}?",
+      "removeConfirmTitle": "Odobrať MCP server „{name}“?",
+      "removeConfirmDescription": "Vlastníctvo: {scope}\nTransport: {transport}\nOdstránením servera sa jeho nástroje okamžite prestanú používať.",
+      "removeError": "MCP server sa nepodarilo odobrať. Zostáva nastavený.",
+      "removingServer": "Odoberanie…",
       "save": "Uložiť",
       "saving": "Ukladanie…"
     }

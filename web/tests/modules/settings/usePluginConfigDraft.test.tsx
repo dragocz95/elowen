@@ -55,6 +55,31 @@ describe('usePluginConfigDraft', () => {
     expect(mutateAsync).toHaveBeenCalledWith({ name: 'test-plugin', values: { mode: 'b' } });
   });
 
+  it('publishes an immediate confirmed value only after the server accepts it', async () => {
+    mutateAsync.mockRejectedValueOnce(new Error('save failed'));
+    const detail = pluginDetail([{ key: 'roles', label: 'Roles', type: 'rolePolicies' }], { roles: [{ roleId: 'support' }] });
+    const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
+
+    await act(async () => {
+      await expect(result.current.commitValue('roles', [])).rejects.toThrow('save failed');
+    });
+
+    expect(result.current.values.roles).toEqual([{ roleId: 'support' }]);
+    expect(mutateAsync).toHaveBeenCalledWith({ name: 'test-plugin', values: { roles: [] } });
+  });
+
+  it('commits a persisted value and reports delayed activation', async () => {
+    mutateAsync.mockResolvedValueOnce({ ok: true, pending: true });
+    const detail = pluginDetail([{ key: 'roles', label: 'Roles', type: 'rolePolicies' }], { roles: [{ roleId: 'support' }] });
+    const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
+
+    let outcome: { pending: boolean } | undefined;
+    await act(async () => { outcome = await result.current.commitValue('roles', []); });
+
+    expect(outcome).toEqual({ pending: true });
+    expect(result.current.values.roles).toEqual([]);
+  });
+
   it('serializes full-snapshot saves so an older response cannot overwrite the latest edit', async () => {
     const first = deferred();
     const second = deferred();

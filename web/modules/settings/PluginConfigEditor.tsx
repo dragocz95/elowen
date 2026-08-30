@@ -9,6 +9,7 @@ import { Button } from '../../components/ui/Button';
 import { Input, textareaClass } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { HelpTip } from '../../components/ui/HelpTip';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { RowPicker } from '../../components/ui/RowPicker';
@@ -24,7 +25,7 @@ import { useBrand } from '../../lib/brand';
 import { useConfig, useBrainModels, useNotificationDestinations, usePlugins, usePluginTools, useProjects } from '../../lib/queries';
 import type { BrainModelOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
-import type { PluginConfigDraft } from '../../lib/usePluginConfigDraft';
+import type { PluginConfigCommitResult, PluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 import { Slider } from '../../components/ui/Slider';
 import { normalizeTokenList, TokenList } from '../../components/ui/TokenList';
@@ -335,64 +336,91 @@ function ModelsField({ label, hint, models, value, onChange }: { label: string; 
 /** Structured editor for a `rolePolicies` field. A role decides admission, the room prompt, and
  *  whether the sender is a platform administrator. Account identity and project/tool permissions come
  *  from the linked Elowen account, so legacy fields stored by older versions are deliberately ignored. */
-function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange: (v: RolePolicy[]) => void }) {
+function RolePoliciesEditor({ value, onChange, onRemove }: {
+  value: RolePolicy[];
+  onChange: (v: RolePolicy[]) => void;
+  onRemove: (v: RolePolicy[]) => Promise<PluginConfigCommitResult>;
+}) {
   const { t } = useTranslation();
   const patch = (i: number, p: Partial<RolePolicy>) => onChange(value.map((r, j) => (j === i ? { ...r, ...p } : r)));
   // Which rows are expanded (by index). Removing a row shifts the indices above it down by one.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [removing, setRemoving] = useState<{ index: number; role: RolePolicy }>();
+  const [removeError, setRemoveError] = useState<string>();
+  const [activationPending, setActivationPending] = useState(false);
   const toggleRow = (i: number) => setExpanded((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
   const addRole = () => { setExpanded((prev) => new Set(prev).add(value.length)); onChange([...value, { roleId: '', name: '', prompt: '' }]); };
-  const removeRole = (i: number) => {
-    onChange(value.filter((_, j) => j !== i));
+  const removeRole = async () => {
+    if (!removing) return;
+    const i = removing.index;
+    setRemoveError(undefined);
+    const outcome = await onRemove(value.filter((_, j) => j !== i));
+    setActivationPending(outcome.pending);
     setExpanded((prev) => { const n = new Set<number>(); for (const idx of prev) { if (idx < i) n.add(idx); else if (idx > i) n.add(idx - 1); } return n; });
+    setRemoving(undefined);
   };
+  const removingName = removing ? (removing.role.name || removing.role.roleId || t.pluginCfg.roleNew) : '';
   return (
-    <div className="flex flex-col gap-3">
-      {value.length === 0 ? <p className="text-xs italic text-muted-foreground">{t.pluginCfg.noRoles}</p> : null}
-      {value.map((r, i) => {
-        const open = expanded.has(i);
-        return (
-          <div key={i} className="rounded-lg border border-border bg-muted/40">
-            <div className="flex items-center gap-2 p-3">
-              <button type="button" onClick={() => toggleRow(i)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                {open ? <ChevronDown size={15} className="shrink-0 text-muted-foreground" aria-hidden /> : <ChevronRight size={15} className="shrink-0 text-muted-foreground" aria-hidden />}
-                <span className="truncate text-sm font-medium text-foreground">{r.name || t.pluginCfg.roleNew}</span>
-                {r.roleId ? <span className="truncate font-mono text-[11px] text-muted-foreground">{r.roleId}</span> : null}
-                {r.admin === true ? <span className="ml-auto shrink-0"><Badge tone="accent">{t.pluginCfg.roleAdminBadge}</Badge></span> : null}
-              </button>
-              <Button variant="ghost" icon={Trash2} aria-label={t.pluginCfg.removeRole} onClick={() => removeRole(i)} />
-            </div>
-            {open ? (
-              <div className="flex flex-col gap-3 border-t border-border p-3">
-                <div className="@container">
-                  <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
-                    <Field label={t.pluginCfg.roleId}>
-                      <Input value={r.roleId} onChange={(e) => patch(i, { roleId: e.target.value })} placeholder="1511041803225272420" className="font-mono" />
-                    </Field>
-                    <Field label={t.pluginCfg.roleName}>
-                      <Input value={r.name} onChange={(e) => patch(i, { name: e.target.value })} placeholder="dev-team" />
-                    </Field>
-                  </div>
-                </div>
-                <label className="flex cursor-pointer items-center gap-2.5">
-                  <Toggle checked={r.admin === true} onChange={(v) => patch(i, { admin: v })} label={t.pluginCfg.roleAdmin} />
-                  <span className="flex flex-col">
-                    <span className="text-sm text-foreground">{t.pluginCfg.roleAdmin}</span>
-                    <span className="text-tiny text-muted-foreground">{t.pluginCfg.roleAdminHint}</span>
-                  </span>
-                </label>
-                <Field label={t.pluginCfg.rolePrompt} hint={t.help.rolePrompt}>
-                  <textarea value={r.prompt} onChange={(e) => patch(i, { prompt: e.target.value })} rows={3} className={textareaClass} />
-                </Field>
+    <>
+      <div className="flex flex-col gap-3">
+        {activationPending ? <p className="text-sm text-warning" role="status">{t.pluginCfg.roleActivationPending}</p> : null}
+        {value.length === 0 ? <p className="text-xs italic text-muted-foreground">{t.pluginCfg.noRoles}</p> : null}
+        {value.map((r, i) => {
+          const open = expanded.has(i);
+          return (
+            <div key={i} className="rounded-lg border border-border bg-muted/40">
+              <div className="flex items-center gap-2 p-3">
+                <button type="button" onClick={() => toggleRow(i)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                  {open ? <ChevronDown size={15} className="shrink-0 text-muted-foreground" aria-hidden /> : <ChevronRight size={15} className="shrink-0 text-muted-foreground" aria-hidden />}
+                  <span className="truncate text-sm font-medium text-foreground">{r.name || t.pluginCfg.roleNew}</span>
+                  {r.roleId ? <span className="truncate font-mono text-[11px] text-muted-foreground">{r.roleId}</span> : null}
+                  {r.admin === true ? <span className="ml-auto shrink-0"><Badge tone="accent">{t.pluginCfg.roleAdminBadge}</Badge></span> : null}
+                </button>
+                <Button variant="ghost" icon={Trash2} aria-label={t.pluginCfg.removeRole} onClick={() => { setRemoveError(undefined); setRemoving({ index: i, role: r }); }} />
               </div>
-            ) : null}
-          </div>
-        );
-      })}
-      <Button variant="ghost" icon={Plus} className="self-start" onClick={addRole}>
-        {t.pluginCfg.addRole}
-      </Button>
-    </div>
+              {open ? (
+                <div className="flex flex-col gap-3 border-t border-border p-3">
+                  <div className="@container">
+                    <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
+                      <Field label={t.pluginCfg.roleId}>
+                        <Input value={r.roleId} onChange={(e) => patch(i, { roleId: e.target.value })} placeholder="1511041803225272420" className="font-mono" />
+                      </Field>
+                      <Field label={t.pluginCfg.roleName}>
+                        <Input value={r.name} onChange={(e) => patch(i, { name: e.target.value })} placeholder="dev-team" />
+                      </Field>
+                    </div>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-2.5">
+                    <Toggle checked={r.admin === true} onChange={(v) => patch(i, { admin: v })} label={t.pluginCfg.roleAdmin} />
+                    <span className="flex flex-col">
+                      <span className="text-sm text-foreground">{t.pluginCfg.roleAdmin}</span>
+                      <span className="text-tiny text-muted-foreground">{t.pluginCfg.roleAdminHint}</span>
+                    </span>
+                  </label>
+                  <Field label={t.pluginCfg.rolePrompt} hint={t.help.rolePrompt}>
+                    <textarea value={r.prompt} onChange={(e) => patch(i, { prompt: e.target.value })} rows={3} className={textareaClass} />
+                  </Field>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        <Button variant="ghost" icon={Plus} className="self-start" onClick={addRole}>
+          {t.pluginCfg.addRole}
+        </Button>
+      </div>
+      <ConfirmDialog
+        open={Boolean(removing)}
+        title={interpolate(t.pluginCfg.removeRoleTitle, { name: removingName })}
+        description={interpolate(t.pluginCfg.removeRoleDescription, { name: removingName })}
+        confirmLabel={t.pluginCfg.removeRole}
+        pendingLabel={t.pluginCfg.removingRole}
+        error={removeError}
+        onClose={() => { setRemoving(undefined); setRemoveError(undefined); }}
+        onConfirm={removeRole}
+        onConfirmError={() => setRemoveError(t.pluginCfg.removeRoleError)}
+      />
+    </>
   );
 }
 
@@ -767,7 +795,13 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         );
       }
       case 'rolePolicies':
-        return <RolePoliciesEditor value={Array.isArray(values[f.key]) ? (values[f.key] as RolePolicy[]) : []} onChange={(v) => set(f.key, v)} />;
+        return (
+          <RolePoliciesEditor
+            value={Array.isArray(values[f.key]) ? (values[f.key] as RolePolicy[]) : []}
+            onChange={(v) => set(f.key, v)}
+            onRemove={(v) => draft.commitValue(f.key, v)}
+          />
+        );
       case 'mcpServers':
         return <McpServersEditor value={Array.isArray(values[f.key]) ? (values[f.key] as McpServerSpec[]) : []} onChange={(v) => set(f.key, v)} />;
       default:

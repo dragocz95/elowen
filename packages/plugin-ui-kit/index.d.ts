@@ -10,13 +10,43 @@ import type { ComponentType } from 'react';
 /** See index.js — bump on incompatible changes to `ElowenUiRuntime`. Deliberately a LITERAL type:
  *  the web app re-declares the value and annotates it with `typeof PLUGIN_UI_API_VERSION`, so a kit
  *  bump that forgets the host fails the web typecheck instead of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 10;
+export declare const PLUGIN_UI_API_VERSION: 11;
+
+/** Public props of `ElowenUiRuntime.components.Slider`. */
+export interface SliderProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'type'> {
+  value: number;
+  onChange: (value: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}
 
 /** Public props of `ElowenUiRuntime.components.DirectoryPicker`. Selection reports the currently open
  *  server directory; closing has no side effect. */
 export interface DirectoryPickerProps {
   initialPath?: string;
   onSelect: (path: string) => void;
+  onClose: () => void;
+}
+
+export type ConfirmDialogButtonVariant = 'default' | 'accent' | 'ghost' | 'danger' | 'ghost-danger' | 'outline' | 'outline-danger';
+
+/** Public props of the API 11 async-safe `ElowenUiRuntime.components.ConfirmDialog`. */
+export interface ConfirmDialogProps {
+  open: boolean;
+  title: string;
+  description?: string;
+  confirmLabel?: string;
+  confirmVariant?: ConfirmDialogButtonVariant;
+  pendingLabel?: string;
+  pending?: boolean;
+  disabled?: boolean;
+  /** Legacy confirm-only disable; unlike `disabled`, Cancel remains available. */
+  confirmDisabled?: boolean;
+  error?: React.ReactNode;
+  /** A promise enables the built-in pending lock; synchronous callbacks remain source-compatible. */
+  onConfirm: () => unknown;
+  onConfirmError?: (error: unknown) => void;
   onClose: () => void;
 }
 

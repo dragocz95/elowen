@@ -131,7 +131,8 @@ export const elowenClient = {
   togglePlugin: (name: string, enabled: boolean, acknowledgeGrants?: string[]) =>
     req<PluginInfo & { pending?: boolean }>(`/plugins/${encodeURIComponent(name)}`, json({ enabled, ...(acknowledgeGrants ? { acknowledgeGrants } : {}) }, 'PATCH')),
   pluginDetail: (name: string) => req<PluginDetail>(`/plugins/${encodeURIComponent(name)}`),
-  savePluginConfig: (name: string, values: Record<string, unknown>) => req<{ ok: boolean }>(`/plugins/${encodeURIComponent(name)}/config`, json({ values }, 'PATCH')),
+  /** A 202 with `pending` means persistence succeeded and only live activation is delayed. */
+  savePluginConfig: (name: string, values: Record<string, unknown>) => req<{ ok: true; pending?: boolean }>(`/plugins/${encodeURIComponent(name)}/config`, json({ values }, 'PATCH')),
   /** Runtime contributions (tools/skills/platforms/hooks/…) owned by one plugin — powers Tools + Hooks detail. */
   pluginContributions: (name: string) => req<PluginContributions>(`/plugins/${encodeURIComponent(name)}/contributions`),
   /** Tail of one plugin's log ring buffer plus derived health. */
