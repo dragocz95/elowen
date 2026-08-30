@@ -26,6 +26,20 @@ const FOOTER_ENTRY_IDS = ['settings', 'users', 'account'];
  *  still the same entry from the same model — it is hidden, restored and reordered exactly like the
  *  others — so this is a presentation rule and not a second source of navigation. */
 const USER_ENTRY_ID = 'account';
+const DRAG_THRESHOLD = 5;
+
+type DragRegion = 'body' | 'footer';
+type DragState = { id: string; region: DragRegion; from: number; to: number; dy: number; span: number };
+type DragPress = {
+  id: string;
+  region: DragRegion;
+  from: number;
+  startY: number;
+  pointerId: number;
+  element: HTMLElement;
+  centers: number[];
+  span: number;
+};
 
 const isFooterEntry = (entry: NavEntry): boolean => entry.id !== undefined && FOOTER_ENTRY_IDS.includes(entry.id);
 
@@ -91,10 +105,136 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
   // THIS surface's own visible order, which is what the first edit seeds the stored order from. Handing
   // over the rail's order instead would reshuffle the sidebar the moment anything was hidden or moved.
   const displayOrder = useMemo(
-    () => [...bodyEntries, ...footerEntries].flatMap((entry) => (entry.id ? [entry.id] : [])),
-    [bodyEntries, footerEntries],
+    () => [...bodyEntries, ...adminEntries, ...(userEntry ? [userEntry] : [])]
+      .flatMap((entry) => (entry.id ? [entry.id] : [])),
+    [adminEntries, bodyEntries, userEntry],
   );
   const customization = useNavCustomization(allWorlds, layout, displayOrder);
+
+  // Desktop Studio keeps the rail's direct-manipulation contract: hold the primary pointer and move a row.
+  // Touch remains scrolling (and uses the context menu's keyboard-equivalent move actions), while the drawer
+  // never rearranges underneath a finger that is trying to dismiss or navigate it.
+  const entryRefs = useRef(new Map<string, HTMLDivElement>());
+  const pressRef = useRef<DragPress | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const suppressClick = useRef(false);
+  const [drag, setDrag] = useState<DragState | null>(null);
+
+  const regionEntries = (region: DragRegion) => region === 'body' ? bodyEntries : adminEntries;
+  const releaseDrag = () => {
+    const press = pressRef.current;
+    const captured = !!dragRef.current;
+    // Clear first: an explicit release emits `lostpointercapture`, whose handler must observe no live drag
+    // rather than re-entering this cleanup against the same pointer.
+    pressRef.current = null;
+    dragRef.current = null;
+    setDrag(null);
+    if (press && captured) {
+      try { press.element.releasePointerCapture(press.pointerId); } catch { /* capture already gone */ }
+    }
+  };
+  const onEntryPointerDown = (event: React.PointerEvent<HTMLDivElement>, entry: NavEntry, region: DragRegion, slot: number) => {
+    if (drawer || !entry.id || event.pointerType === 'touch' || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    suppressClick.current = false;
+    const entries = regionEntries(region);
+    const centers = entries.map((candidate) => {
+      const element = candidate.id ? entryRefs.current.get(candidate.id) : undefined;
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return rect.top + rect.height / 2;
+    });
+    if (centers.some((center) => center === null)) return;
+    const ownRect = event.currentTarget.getBoundingClientRect();
+    const numericCenters = centers as number[];
+    const neighbour = numericCenters[slot + 1] ?? numericCenters[slot - 1];
+    pressRef.current = {
+      id: entry.id,
+      region,
+      from: slot,
+      startY: event.clientY,
+      pointerId: event.pointerId,
+      element: event.currentTarget,
+      centers: numericCenters,
+      span: neighbour === undefined ? ownRect.height : Math.abs(neighbour - numericCenters[slot]),
+    };
+  };
+  const onEntryPointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    const press = pressRef.current;
+    if (!press) return;
+    const dy = event.clientY - press.startY;
+    if (!dragRef.current && Math.abs(dy) < DRAG_THRESHOLD) return;
+    if (!dragRef.current) {
+      try { press.element.setPointerCapture(press.pointerId); } catch { /* pointer already gone */ }
+    }
+    const carried = press.centers[press.from] + dy;
+    let to = press.from;
+    let nearest = Number.POSITIVE_INFINITY;
+    press.centers.forEach((center, index) => {
+      const distance = Math.abs(center - carried);
+      if (distance < nearest) { nearest = distance; to = index; }
+    });
+    const next = { id: press.id, region: press.region, from: press.from, to, dy, span: press.span };
+    dragRef.current = next;
+    setDrag(next);
+  };
+  const onEntryPointerUp = () => {
+    const finished = dragRef.current;
+    if (!finished) { pressRef.current = null; return; }
+    suppressClick.current = true;
+    const targetEntry = regionEntries(finished.region)[finished.to];
+    // A stored layout may interleave destinations that Studio presents in separate body/footer regions.
+    // `reorderNavEntry` consumes an index in THAT persisted visible order, not in this surface's partition.
+    // On the first edit there is no persisted order yet, so the surface order is the only truthful seed.
+    const target = targetEntry?.id
+      ? (layout.order.length === 0
+          ? displayOrder.indexOf(targetEntry.id)
+          : worlds.findIndex((entry) => entry.id === targetEntry.id))
+      : -1;
+    releaseDrag();
+    if (finished.to !== finished.from && target >= 0) customization.reorderTo(finished.id, target);
+  };
+  useEffect(() => {
+    const clearUncapturedPress = () => {
+      if (!dragRef.current) pressRef.current = null;
+    };
+    window.addEventListener('pointerup', clearUncapturedPress);
+    window.addEventListener('pointercancel', releaseDrag);
+    return () => {
+      window.removeEventListener('pointerup', clearUncapturedPress);
+      window.removeEventListener('pointercancel', releaseDrag);
+      releaseDrag();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const entryShell = (entry: NavEntry, region: DragRegion, slot: number, child: React.ReactNode) => {
+    const id = entry.id;
+    const moving = !!id && drag?.id === id;
+    let shift = 0;
+    if (drag?.region === region) {
+      if (moving) shift = drag.dy;
+      else if (drag.from < drag.to && slot > drag.from && slot <= drag.to) shift = -drag.span;
+      else if (drag.from > drag.to && slot < drag.from && slot >= drag.to) shift = drag.span;
+    }
+    return (
+      <div
+        ref={(element) => { if (id && element) entryRefs.current.set(id, element); else if (id) entryRefs.current.delete(id); }}
+        className="studio-nav__entry-shell"
+        data-nav-entry-id={id}
+        data-dragging={moving || undefined}
+        style={shift ? { transform: `translateY(${shift}px)` } : undefined}
+        onPointerDown={(event) => onEntryPointerDown(event, entry, region, slot)}
+        onLostPointerCapture={() => { if (dragRef.current) releaseDrag(); }}
+        onClickCapture={(event) => {
+          if (!suppressClick.current) return;
+          suppressClick.current = false;
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+      >
+        {child}
+      </div>
+    );
+  };
 
   // Which groups the reader has folded shut. Groups start open — a sidebar that hides its destinations
   // by default makes the reader work to find out what exists — so this only ever records a deliberate
@@ -148,6 +288,7 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
     return (
       <Link
         href={entry.href ?? '#'}
+        draggable={false}
         className="studio-nav__item"
         data-active={active || undefined}
         aria-current={currentPage ? 'page' : undefined}
@@ -197,6 +338,9 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
         // Anywhere on the surface that is not a destination opens the editor — that is how a hidden
         // entry is found again.
         onContextMenu={customization.onSurfaceContextMenu}
+        onPointerMove={onEntryPointerMove}
+        onPointerUp={onEntryPointerUp}
+        onPointerCancel={releaseDrag}
       >
         {/* A dialog needs a way out that is not "guess that the strip of backdrop is a target". First in
             the DOM so the open effect above lands focus on it. */}
@@ -222,13 +366,13 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
         </header>
 
         <div className="studio-nav__body">
-          {bodyEntries.map((entry) => {
+          {bodyEntries.map((entry, slot) => {
             const pages = groupPages(entry);
             const key = entry.id ?? entry.label;
             const onEntryMenu = entryMenu(entry);
             // Desktop/rail stays primary-only; peer pages move into the shared TopBar. The mobile drawer
             // keeps the nested destinations because that header strip is intentionally hidden there.
-            if (!pages || !drawer) return <div key={key}>{destination(entry, onEntryMenu)}</div>;
+            if (!pages || !drawer) return <div key={key}>{entryShell(entry, 'body', slot, destination(entry, onEntryMenu))}</div>;
 
             const active = entryIsActive(entry, pathname);
             // A page inherits its world's icon when it brings none, so the row is never iconless in the
@@ -242,34 +386,36 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
             const shown = closed ? pages.filter((item) => entryIsActive(page(item), pathname)) : pages;
             const Icon = entry.icon;
             return (
-              <div key={key} className="studio-nav__group" data-closed={closed || undefined} data-active={active || undefined}>
-                {compact ? null : (
-                  <button
-                    type="button"
-                    className="studio-nav__group-toggle"
-                    data-active={active || undefined}
-                    aria-expanded={!closed}
-                    onClick={() => toggleGroup(key)}
-                    onContextMenu={onEntryMenu}
-                  >
-                    <span className="studio-nav__item-icon" aria-hidden><Icon size={18} strokeWidth={1.5} /></span>
-                    <span className="studio-nav__item-label">{entry.label}</span>
-                    <ChevronRight className="studio-nav__chevron" size={14} aria-hidden />
-                  </button>
-                )}
-                <div className="studio-nav__group-items">
-                  {shown.map((item) => (
-                    <div key={item.id}>{destination(page(item), onEntryMenu)}</div>
-                  ))}
+              <div key={key}>{entryShell(entry, 'body', slot, (
+                <div className="studio-nav__group" data-closed={closed || undefined} data-active={active || undefined}>
+                  {compact ? null : (
+                    <button
+                      type="button"
+                      className="studio-nav__group-toggle"
+                      data-active={active || undefined}
+                      aria-expanded={!closed}
+                      onClick={() => toggleGroup(key)}
+                      onContextMenu={onEntryMenu}
+                    >
+                      <span className="studio-nav__item-icon" aria-hidden><Icon size={18} strokeWidth={1.5} /></span>
+                      <span className="studio-nav__item-label">{entry.label}</span>
+                      <ChevronRight className="studio-nav__chevron" size={14} aria-hidden />
+                    </button>
+                  )}
+                  <div className="studio-nav__group-items">
+                    {shown.map((item) => (
+                      <div key={item.id}>{destination(page(item), onEntryMenu)}</div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ))}</div>
             );
           })}
         </div>
 
         <footer className="studio-nav__footer">
-          {adminEntries.map((entry) => (
-            <div key={entry.id ?? entry.label}>{destination(entry, entryMenu(entry))}</div>
+          {adminEntries.map((entry, slot) => (
+            <div key={entry.id ?? entry.label}>{entryShell(entry, 'footer', slot, destination(entry, entryMenu(entry)))}</div>
           ))}
           {/* The user block, plus the keyboard's way into the menu the right-click opens. That control
               has to exist independently of the entries: hide them all and there is nothing left to open

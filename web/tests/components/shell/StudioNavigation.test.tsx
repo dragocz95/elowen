@@ -9,18 +9,29 @@ import { StudioNavigation } from '../../../components/shell/StudioNavigation';
 import { Modal } from '../../../components/ui/Modal';
 import { createWrapper } from '../../test-utils';
 
-const server = setupServer(http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.26.0' })));
+const savedLayouts: Array<{ hidden: string[]; order: string[] }> = [];
+const server = setupServer(
+  http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.26.0' })),
+  http.patch('*/api/auth/me/nav-settings', async ({ request }) => {
+    const layout = await request.json() as { hidden: string[]; order: string[] };
+    savedLayouts.push(layout);
+    return HttpResponse.json(layout);
+  }),
+);
 beforeAll(() => server.listen());
 afterAll(() => server.close());
-beforeEach(() => { localStorage.clear(); currentPath.value = '/dash'; });
+beforeEach(() => { localStorage.clear(); currentPath.value = '/dash'; savedLayouts.length = 0; });
 
 /** A plugin contributing TWO pages is the only thing in the model that produces a group: one page is a
  *  plain destination, and a world naming a single child (projects) is not a disclosure worth drawing. */
-function mount(props: Parameters<typeof StudioNavigation>[0] = {}) {
+function mount(
+  props: Parameters<typeof StudioNavigation>[0] = {},
+  navLayout: { hidden: string[]; order: string[] } = { hidden: [], order: [] },
+) {
   const { wrapper: Wrapper, client } = createWrapper();
   client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
   client.setQueryData(['health'], { ok: true, version: '0.26.0' });
-  client.setQueryData(['my-nav-settings'], { hidden: [], order: [] });
+  client.setQueryData(['my-nav-settings'], navLayout);
   client.setQueryData(['plugin-ui', 'en'], [
     { name: 'skills', title: 'Skills', nav: [{ label: 'Skills', icon: 'BookOpen', route: '' }], settings: [] },
     {
@@ -44,6 +55,58 @@ describe('StudioNavigation destinations', () => {
     expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects');
     expect(screen.getByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/p/skills');
     expect(screen.getByRole('link', { name: 'Memory' })).toHaveAttribute('href', '/memory');
+  });
+
+  it('reorders desktop destinations by dragging the row and persists the new layout', async () => {
+    const { container } = mount();
+    const rows = Array.from(container.querySelectorAll<HTMLDivElement>('.studio-nav__body [data-nav-entry-id]'));
+    rows.forEach((row, index) => {
+      row.getBoundingClientRect = () => ({
+        x: 0, y: index * 40, top: index * 40, left: 0, right: 220,
+        bottom: index * 40 + 32, width: 220, height: 32, toJSON: () => ({}),
+      });
+    });
+    const home = screen.getByRole('link', { name: 'Home' }).closest<HTMLDivElement>('[data-nav-entry-id]')!;
+    const chat = screen.getByRole('link', { name: 'Chat' }).closest<HTMLDivElement>('[data-nav-entry-id]')!;
+    const homeId = home.dataset.navEntryId!;
+    const chatId = chat.dataset.navEntryId!;
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('draggable', 'false');
+    const homeIndex = rows.indexOf(home);
+    const chatIndex = rows.indexOf(chat);
+
+    fireEvent.pointerDown(home, { pointerType: 'mouse', button: 0, pointerId: 1, clientY: homeIndex * 40 + 16 });
+    fireEvent.pointerMove(home, { pointerType: 'mouse', pointerId: 1, clientY: chatIndex * 40 + 16 });
+    expect(home).toHaveAttribute('data-dragging', 'true');
+    fireEvent.pointerUp(home, { pointerType: 'mouse', pointerId: 1, clientY: chatIndex * 40 + 16 });
+
+    await waitFor(() => expect(savedLayouts).toHaveLength(1));
+    expect(savedLayouts[0].order.indexOf(chatId)).toBeLessThan(savedLayouts[0].order.indexOf(homeId));
+  });
+
+  it('targets the persisted global order when footer entries are interleaved with destinations', async () => {
+    const initial = {
+      hidden: [],
+      order: ['settings', 'home', 'chat', 'projects', 'memory', 'skills', 'work', 'users', 'account'],
+    };
+    const { container } = mount({}, initial);
+    const rows = Array.from(container.querySelectorAll<HTMLDivElement>('.studio-nav__body [data-nav-entry-id]'));
+    rows.forEach((row, index) => {
+      row.getBoundingClientRect = () => ({
+        x: 0, y: index * 40, top: index * 40, left: 0, right: 220,
+        bottom: index * 40 + 32, width: 220, height: 32, toJSON: () => ({}),
+      });
+    });
+    const home = screen.getByRole('link', { name: 'Home' }).closest<HTMLDivElement>('[data-nav-entry-id]')!;
+    const chat = screen.getByRole('link', { name: 'Chat' }).closest<HTMLDivElement>('[data-nav-entry-id]')!;
+    const homeIndex = rows.indexOf(home);
+    const chatIndex = rows.indexOf(chat);
+
+    fireEvent.pointerDown(home, { pointerType: 'mouse', button: 0, pointerId: 1, clientY: homeIndex * 40 + 16 });
+    fireEvent.pointerMove(home, { pointerType: 'mouse', pointerId: 1, clientY: chatIndex * 40 + 16 });
+    fireEvent.pointerUp(home, { pointerType: 'mouse', pointerId: 1, clientY: chatIndex * 40 + 16 });
+
+    await waitFor(() => expect(savedLayouts).toHaveLength(1));
+    expect(savedLayouts[0].order.slice(0, 3)).toEqual(['settings', 'chat', 'home']);
   });
 
   it('puts the account and administration entries in the footer, not among the destinations', () => {

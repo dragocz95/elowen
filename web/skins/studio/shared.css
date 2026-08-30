@@ -352,6 +352,31 @@
   opacity: 1;
 }
 
+/* Direct manipulation uses the same row, not a separate handle: a short move lifts it, opens a gap and
+   commits on release. The wrapper owns only movement; the destination keeps its own hover/focus paint. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__entry-shell {
+  position: relative;
+  transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
+}
+@media (pointer: fine) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav:not([data-mode='drawer']) .studio-nav__entry-shell {
+    cursor: grab;
+  }
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__entry-shell[data-dragging] {
+  z-index: 2;
+  cursor: grabbing;
+  opacity: 0.86;
+  transition: none;
+  will-change: transform;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__entry-shell[data-dragging] .studio-nav__item,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__entry-shell[data-dragging] .studio-nav__group-toggle {
+  background: var(--color-sidebar-accent);
+  color: var(--color-foreground);
+  box-shadow: var(--shadow-card);
+}
+
 /* One destination row: 32px on a fine pointer, an 18px/1.5px glyph and a sentence-case label. Active is a
    change of GROUND and one weight step — no accent bar down the edge, no coloured text. The bar was the design's loudest element
    and it was drawn on the column's inner edge, which meant every nested row needed a correction rule to
@@ -608,7 +633,7 @@
 
 /* Motion is a courtesy, never a requirement: reduced and off are explicit peers because `off` must never
    animate more than `reduced`, even when the operating system itself does not request reduced motion. */
-html:is([data-skin='studio-light'], [data-skin='studio-oled']):is([data-effects='reduced'], [data-effects='off']) :is(.shell-workspace-row, .shell-workspace, .studio-advisor-slot, .advisor-panel--studio-ask, .studio-nav, .studio-nav__brand-lockup, .studio-nav__scrim, .studio-nav__body, .studio-nav__item, .studio-nav__item-label, .studio-nav__item-body, .studio-nav__user-identity, .studio-nav__group-toggle, .studio-nav__chevron, .studio-nav__trigger, .studio-nav__close) {
+html:is([data-skin='studio-light'], [data-skin='studio-oled']):is([data-effects='reduced'], [data-effects='off']) :is(.shell-workspace-row, .shell-workspace, .studio-advisor-slot, .advisor-panel--studio-ask, .studio-nav, .studio-nav__brand-lockup, .studio-nav__scrim, .studio-nav__body, .studio-nav__entry-shell, .studio-nav__item, .studio-nav__item-label, .studio-nav__item-body, .studio-nav__user-identity, .studio-nav__group-toggle, .studio-nav__chevron, .studio-nav__trigger, .studio-nav__close) {
   transition-duration: 1ms;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -620,6 +645,7 @@ html:is([data-skin='studio-light'], [data-skin='studio-oled']):is([data-effects=
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-lockup,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__scrim,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__body,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__entry-shell,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-label,
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item-body,
