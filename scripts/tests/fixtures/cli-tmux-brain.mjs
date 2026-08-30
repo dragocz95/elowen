@@ -431,6 +431,7 @@ const server = createServer(async (req, res) => {
       { name: 'theme', description: 'Choose a terminal theme', kind: 'picker', surfaces: ['cli'] },
       { name: 'think', description: 'Choose reasoning effort', kind: 'picker', surfaces: ['cli'] },
       { name: 'compact', description: 'Compact conversation context', kind: 'action', surfaces: ['cli'] },
+      { name: 'goal', description: 'Create or inspect a persistent goal', kind: 'action', execution: 'session-control', surfaces: ['cli'] },
       { name: 'status', description: 'Show daemon status', kind: 'info', surfaces: ['cli'] },
       { name: 'tools', description: 'Inspect runtime tools', kind: 'info', surfaces: ['cli'] },
       { name: 'skills', description: 'Inspect installed skills', kind: 'info', surfaces: ['cli'] },

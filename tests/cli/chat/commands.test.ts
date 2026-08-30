@@ -15,6 +15,11 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(e
   return { promise: new Promise<T>((done, fail) => { resolve = done; reject = fail; }), resolve, reject };
 }
 
+// wireSubmit deliberately trusts only the daemon-published catalog. These tests exercise local commands,
+// so their runtime fixture must publish the same names instead of an impossible empty catalog.
+const TEST_COMMAND_DEFS = ['maskot', 'goal', 'paste', 'reasoning', 'editor'].map((name) => ({ name })) as never;
+const testAttachmentChips = () => ({ set: vi.fn() });
+
 describe('resolveThinkingLevel', () => {
   it('accepts canonical ids and provider-facing labels without leaking the label to PI', () => {
     const levels = ['low', 'high', 'xhigh', 'max'];
@@ -111,7 +116,7 @@ describe('/maskot toggles and persists the mascot preference', () => {
       wireSubmit(
         state,
         {
-          client: {}, editor, shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          client: {}, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
           lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render } as never,
@@ -172,7 +177,7 @@ describe('sub-agent child submit echo', () => {
       wireSubmit(
         state,
         {
-          client: { subagentSend }, editor, shellContext: {}, attachmentChips: {}, commandDefs: [], tui: {},
+          client: { subagentSend }, editor, shellContext: {}, attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
           lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render } as never,
@@ -216,7 +221,7 @@ describe('application lifetime for local input work', () => {
         state,
         {
           client: { setGoal: () => pending.promise }, editor,
-          shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
           lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render } as never,
@@ -261,7 +266,7 @@ describe('application lifetime for local input work', () => {
         state,
         {
           client: { setGoal: () => pending.promise }, editor,
-          shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
           lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render: vi.fn() } as never,
@@ -312,7 +317,7 @@ describe('application lifetime for local input work', () => {
       wireSubmit(
         state,
         {
-          client, editor, shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          client, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
           lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render: vi.fn() } as never,
@@ -351,7 +356,7 @@ describe('application lifetime for local input work', () => {
             setGoal: vi.fn(async () => { throw new Error('kickoff failed'); }),
             goal: vi.fn(() => refetch.promise),
           },
-          editor, shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
           lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render: vi.fn() } as never,
@@ -396,7 +401,7 @@ describe('application lifetime for local input work', () => {
             setGoal: vi.fn(async () => { throw new Error('kickoff offline'); }),
             goal: vi.fn(async () => { throw new Error('status offline'); }),
           },
-          editor, shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
           lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render: vi.fn() } as never,
@@ -441,7 +446,7 @@ describe('application lifetime for local input work', () => {
         state,
         {
           client: { setGoal, goal: vi.fn(async () => { throw new Error('stale status failure'); }) },
-          editor, shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
           lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render: vi.fn() } as never,
@@ -487,7 +492,7 @@ describe('application lifetime for local input work', () => {
         state,
         {
           client: { goalAction: () => response.promise }, editor,
-          shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
           lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render: vi.fn() } as never,
@@ -528,7 +533,7 @@ describe('application lifetime for local input work', () => {
       const state = new ChatState({ transcript });
       wireSubmit(
         state,
-        { client: {}, editor, shellContext, attachmentChips: {}, commandDefs: [], tui: {}, lifetime } as never,
+        { client: {}, editor, shellContext, attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {}, lifetime } as never,
         { render } as never,
         { stream: {}, pickers: {}, runLocalShell: runLocal } as never,
       );
@@ -570,7 +575,7 @@ describe('application lifetime for local input work', () => {
         state,
         {
           client: {}, editor, shellContext: new LocalShellBuffer(),
-          attachmentChips: { set: vi.fn() }, commandDefs: [], tui: {}, lifetime,
+          attachmentChips: { set: vi.fn() }, commandDefs: TEST_COMMAND_DEFS, tui: {}, lifetime,
         } as never,
         { render } as never,
         { stream: {}, pickers: {}, readClipboardImage: readClipboard } as never,
@@ -614,7 +619,7 @@ describe('application lifetime for local input work', () => {
         state,
         {
           client: { setThinkingLevel: () => response.promise }, editor,
-          shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {}, lifetime,
+          shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {}, lifetime,
         } as never,
         { render } as never,
         { stream: {}, pickers: {} } as never,
@@ -658,8 +663,8 @@ describe('/editor terminal handoff', () => {
       wireSubmit(
         state,
         {
-          client: {}, editor, shellContext: new LocalShellBuffer(), attachmentChips: {},
-          commandDefs: [], tui: {}, lifetime,
+          client: {}, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+          commandDefs: TEST_COMMAND_DEFS, tui: {}, lifetime,
         } as never,
         { render: vi.fn(), renderForced, suspendTerminal, resumeTerminal } as never,
         { stream: {}, pickers: {}, editTextExternally: edit } as never,

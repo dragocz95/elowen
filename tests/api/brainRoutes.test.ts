@@ -947,7 +947,7 @@ describe('brain routes', () => {
     expect(whatsapp.commands.map((c) => c.name)).not.toContain('rename');
     expect(whatsapp.commands.find((c) => c.name === 'fast')).toMatchObject({
       execution: 'session-control',
-      argument: { kind: 'enum', values: ['on', 'off'] },
+      argument: { kind: 'enum', values: ['on', 'off', 'status'] },
     });
   });
 

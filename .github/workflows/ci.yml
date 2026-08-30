@@ -111,10 +111,13 @@ jobs:
       # cannot resolve and the build fails before this job reaches what it is here to test.
       - run: npm ci --prefix web
       - run: npm run build
-      # tests/scripts/distIntegrity.test.ts drives the real build against the checkout to prove it
-      # removes stale output. That is safe on a throwaway runner and destructive on a machine whose
-      # daemon is SERVING this directory, so the test only arms itself here.
+      # The ordinary suite reads built modules in several process-level tests. Keep the destructive dist
+      # integrity probe OUT of that parallel file set: it intentionally deletes and rebuilds dist/, and
+      # racing it against a child importing dist/store/db.js can fail on a transient missing schema.sql.
       - run: npm test
+      # Run the real-build probe alone after the suite. This still proves stale output is removed by the
+      # shipped pipeline without letting its deliberate clean step invalidate another test's fixture.
+      - run: npx vitest run tests/scripts/distIntegrity.test.ts
         env:
           ELOWEN_DIST_BUILD_TEST: '1'
       - run: npm run test:cli-tmux:built

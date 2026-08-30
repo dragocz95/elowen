@@ -42,6 +42,17 @@ describe('CI workflow: jobs that build also install the web dependencies', () =>
     expect(rootBuildJobs.length).toBeGreaterThan(5);
   });
 
+  it('runs the destructive dist build probe outside the parallel daemon suite', () => {
+    const yaml = readFileSync(workflow, 'utf-8');
+    const daemon = yaml.split('\n  daemon:\n')[1]?.split(/\n  [a-z0-9_-]+:\n/, 1)[0] ?? '';
+
+    // distIntegrity deliberately removes dist/ before rebuilding it. Arming that file inside the ordinary
+    // parallel suite races process-level tests importing dist/store/db.js and its copied schema.sql.
+    expect(daemon).toContain('- run: npm test');
+    expect(daemon).toMatch(/- run: npx vitest run tests\/scripts\/distIntegrity\.test\.ts\n\s+env:\n\s+ELOWEN_DIST_BUILD_TEST: '1'/);
+    expect(daemon).not.toMatch(/- run: npm test\n\s+env:\n\s+ELOWEN_DIST_BUILD_TEST/);
+  });
+
   it('still describes plugin bundles as depending on the web app libraries', () => {
     // The pairing above is only correct while plugin bundles really do resolve against web/node_modules.
     // If a future change vendors those libraries, this test should be revisited, not silently kept.
