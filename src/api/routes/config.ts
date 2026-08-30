@@ -329,7 +329,13 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.get('/system/readiness', async (c) => {
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     const cfg = d.config.get();
-    const checks: Array<{ id: string; label: string; ok: boolean; detail: string; hint?: string }> = [];
+    const checks: Array<{
+      id: string; label: string; ok: boolean; detail: string; hint?: string;
+      /** Which plugin contributed the row, so a plugin's own settings screen can show its status
+       *  without a second, divergent health path. Absent on core rows. */
+      plugin?: string;
+      fix?: { label: string; value: string }[];
+    }> = [];
 
     // chat — the embedded brain must resolve a model to answer at all.
     const model = d.brain?.resolvableModel() ?? null;
@@ -352,10 +358,10 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     // Plugin-contributed readiness rows disappear when their plugin is disabled. A throwing check is
     // dropped rather than taking down the whole report.
     const registry = await d.plugins?.get();
-    for (const { fn } of registry?.readinessChecks ?? []) {
+    for (const { plugin, fn } of registry?.readinessChecks ?? []) {
       try {
         const check = await fn();
-        if (check) checks.push(check);
+        if (check) checks.push({ ...check, plugin });
       } catch { /* a broken plugin check must not take down the readiness report */ }
     }
 
