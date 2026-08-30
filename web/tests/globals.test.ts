@@ -41,7 +41,10 @@ describe('design tokens', () => {
     // strip instead. The query is the hero's own NAMED container, never the viewport: the same hero is
     // rendered beside a pinned dock and inside a rail, where the window width says nothing useful.
     expect(components).toMatch(
-      /@container workspace-hero \(width < 34rem\)[\s\S]*?\.workspace-hero__metrics\s*\{[^}]*display:\s*flex;[^}]*overflow-x:\s*auto/,
+      /\.workspace-hero__metrics\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;[^}]*overflow-x:\s*auto/,
+    );
+    expect(components).toMatch(
+      /@container workspace-hero \(width < 34rem\)[\s\S]*?\.workspace-hero__metrics\s*\{[^}]*gap:\s*1\.25rem/,
     );
   });
 
