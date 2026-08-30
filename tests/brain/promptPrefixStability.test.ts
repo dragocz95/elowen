@@ -10,7 +10,18 @@ import { providerPayloadHarness, type WirePayload } from '../helpers/providerPay
  *  These tests exist to catch the specific way that property is easy to lose — a block that stops being
  *  composed into the user message, or starts being composed differently. Omitting a block shortens a NEW
  *  message and must leave the prefix untouched; rewriting an OLD one would not, and would be invisible
- *  until a bill arrived. */
+ *  until a bill arrived.
+ *
+ *  WHAT THIS DOES AND DOES NOT COVER, because the distinction is easy to get wrong from the file name.
+ *  It drives a REAL `createAgentSession` and reads the post-transform payload, so it proves the SHAPE of
+ *  the property: shortening or omitting content in the newest message never rewrites an earlier one, and
+ *  the breakpoint machinery behaves the same when a block disappears. It does NOT run the production
+ *  composers — `recallMemoryBlock`, `decideAmbientBlock` and both turn composers are absent, the blocks
+ *  here are literal strings — and it does not exercise compaction, tool calls, a changing tool set or the
+ *  MCP schema cap. So it is a guard on the INVARIANT, not on the four features that rely on it: a
+ *  regression inside any of those is caught by that feature's own tests, not here. Widening it to drive
+ *  the real composers would mean standing up the whole BrainService in a cache test; the honest split is
+ *  to say so rather than to let the name imply coverage it does not have. */
 
 /** Every message the earlier request sent must still be present, unchanged and in the same position.
  *  Compared through `canonicalPayload` so the `cache_control` marker pi-ai moves onto the payload's last

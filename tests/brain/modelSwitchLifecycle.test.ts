@@ -111,6 +111,31 @@ describe('ConversationLifecycle model switch (invariant 3)', () => {
     expect(store.deleteSession).not.toHaveBeenCalled();
   });
 
+  it('keeps the mode but resets the cadences that describe text the respawn deleted', async () => {
+    // A respawn rebuilds the transcript from the clean stored user rows, so PI's ephemeral framing — the
+    // full mode directive, the post-compaction orientation block — is genuinely gone from what the model
+    // can read. Carrying their counters made the sparse reminder claim "the full instructions are earlier
+    // in this conversation" when they were not, and suppressed an orientation block that no longer
+    // existed. The MODE itself is a fact about the conversation, not a claim about its text, and a
+    // respawn does not change it — carrying it is what stops a spurious "the mode just changed" directive.
+    const sessions = new LiveSessionRegistry<LiveBrain>();
+    const old = live({ provider: 'p', model: 'model-a' });
+    old.lastTurnMode = 'plan';
+    old.orientedForCompaction = 'divider-1';
+    old.modeReminderTurns = 3;
+    sessions.set('brain-1', old);
+    sessions.setActive(1, 'brain-1');
+    let fresh!: LiveBrain;
+    const spawn = vi.fn(async () => { fresh = live({ provider: 'p', model: 'model-b' }); return fresh; });
+    const { lifecycle } = makeLifecycle(sessions, spawn);
+
+    await lifecycle.switchModel(1, { provider: 'p', model: 'model-b' });
+
+    expect(fresh.lastTurnMode).toBe('plan');
+    expect(fresh.orientedForCompaction).toBeUndefined();
+    expect(fresh.modeReminderTurns).toBeUndefined();
+  });
+
   it('a bound (explicit-session) switch leaves the active pointer unmoved, a bare switch moves it', async () => {
     const sessions = new LiveSessionRegistry<LiveBrain>();
     sessions.set('brain-1', live({ provider: 'p', model: 'model-a' }));

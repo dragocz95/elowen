@@ -18,28 +18,35 @@ import { recordSessionEvent } from './sessionEvents.js';
 import { sessionHasWorkInFlight } from './sessionQuiescence.js';
 import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
 
-/** Prompt/cadence state that survives an IN-PLACE respawn — switchModel, restart and the vision hop all
- *  rehydrate the SAME conversation from SQLite, so from the model's side nothing happened: these fields
- *  must return unchanged or the model gets re-sent an orientation/directive it already has. Deliberately
- *  excludes `yoloOverride` and the pending reasoning marker — their own field docs say a respawn resets
- *  them to the persisted default — and is never used by rollover, which opens a brand-new EMPTY
- *  conversation (see maybeRollover): copying it there would make TurnContextBuilder.modeTemplateFor()
- *  emit a sparse mode instruction claiming the full text is already earlier in THAT conversation's
- *  history, which is never true for a fresh id. */
+/** Prompt state that survives an IN-PLACE respawn — switchModel, restart and the vision hop all rehydrate
+ *  the SAME conversation from SQLite.
+ *
+ *  The dividing line is what a field CLAIMS. `lastTurnMode` is a fact about the conversation ("the last
+ *  turn ran in plan mode") and a respawn does not change the mode, so carrying it prevents a spurious
+ *  "the mode just changed" directive on the next turn.
+ *
+ *  The cadence counters used to be carried too, and should not have been: they are claims about what the
+ *  model can still READ. A rehydrated transcript is rebuilt from the clean stored user rows —
+ *  `persistAgentRun` reuses the pre-projected text precisely so PI's ephemeral framing never becomes
+ *  durable history — so the full mode directive and the post-compaction orientation block are genuinely
+ *  gone. Carrying their cadence made the sparse reminder tell the model "the full instructions are
+ *  earlier in this conversation" when they were not, and suppressed an orientation block the transcript
+ *  no longer contained. Resetting costs one full directive per model switch, and it is the same answer
+ *  the memory dedup set and the ambient digests give to the identical question.
+ *
+ *  Also deliberately excludes `yoloOverride` and the pending reasoning marker — their own field docs say a
+ *  respawn resets them to the persisted default — and is never used by rollover, which opens a brand-new
+ *  EMPTY conversation (see maybeRollover). */
 interface InPlaceRespawnState {
   lastTurnMode: LiveBrain['lastTurnMode'];
-  orientedForCompaction: LiveBrain['orientedForCompaction'];
-  modeReminderTurns: LiveBrain['modeReminderTurns'];
 }
 
 function captureInPlaceRespawnState(b: LiveBrain): InPlaceRespawnState {
-  return { lastTurnMode: b.lastTurnMode, orientedForCompaction: b.orientedForCompaction, modeReminderTurns: b.modeReminderTurns };
+  return { lastTurnMode: b.lastTurnMode };
 }
 
 function applyInPlaceRespawnState(fresh: LiveBrain, state: InPlaceRespawnState): void {
   fresh.lastTurnMode = state.lastTurnMode;
-  fresh.orientedForCompaction = state.orientedForCompaction;
-  fresh.modeReminderTurns = state.modeReminderTurns;
 }
 
 interface LifecycleDeps {
