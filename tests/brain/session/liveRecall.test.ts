@@ -784,6 +784,38 @@ describe('compaction', () => {
     expect(String(after[after.length - 1]?.content)).not.toContain('first copy');
   });
 
+  // The other half of that reset: it must withdraw only what IT injected. Turn-start recall composes its
+  // block into the newest user message, which survives compaction in the tail, and clears the shared set
+  // itself from the post-compaction drain. Clearing everything here discarded the ids turn-start recall
+  // had just added for the current turn, so the same memory could be injected a second time inside one
+  // turn — and counted twice against the vitality the retention sweep reads.
+  it('withdraws only its own attachments from the shared set, not turn-start recall’s', async () => {
+    // 5 stands in for a memory turn-start recall put into the surviving user message; 1 is what mid-turn
+    // recall injects into a block the compaction then drops.
+    const shared = new Set<number>([5]);
+    const h = harness({ retrieve: async () => [mem(1, 'Deploy: release.sh')], alreadyInContext: shared });
+
+    const working: Msg[] = [
+      { role: 'user', content: 'fix the deploy' },
+      { role: 'assistant', content: 'inspecting the release path in detail' },
+      { role: 'toolResult', content: 'bash: ./release.sh --dry-run exited 2' },
+      { role: 'assistant', content: 'checking the packaging step next' },
+      { role: 'toolResult', content: 'bash: npm pack produced no tarball' },
+    ];
+    await h.fire(working);
+    await h.fire(working);
+    expect([...shared].sort()).toEqual([1, 5]);
+
+    await h.fire([
+      { role: 'user', content: 'Summary of the conversation so far: working on the deploy path' },
+      { role: 'assistant', content: 'continuing with the release path investigation now' },
+    ]);
+
+    // Its own attachment is gone from the transcript, so id 1 is withdrawn and may be recalled again.
+    // Id 5 is still in front of the model and must stay suppressed.
+    expect([...shared]).toEqual([5]);
+  });
+
   it('treats a compaction that arrives together with steering as a compaction', async () => {
     // A real sequence: the turn compacts, and the user's next instruction lands on top of the summary.
     // The history is now SHORTER than before while the user count has GONE UP, so both signals fire at

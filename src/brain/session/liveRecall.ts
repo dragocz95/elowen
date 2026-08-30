@@ -204,6 +204,9 @@ interface AnchoredBlock {
   anchorIndex: number;
   anchorMessage: ContextMessage;
   frozenMessage: Readonly<ContextMessage>;
+  /** Which memories this attachment put in front of the model. Kept so that dropping the block on a
+   *  compaction can withdraw exactly those ids from the shared already-in-context set. */
+  memoryIds: readonly number[];
 }
 
 /** Per-session state. A turn is identified by the message count at which it started growing, so the
@@ -281,15 +284,20 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       // Only a RISING count is steering. A falling one means compaction replaced the history with a
       // summary, and then a full reset is correct rather than merely acceptable: the blocks this turn
       // injected are gone from the compacted transcript, so re-surfacing the same memories is no longer
-      // duplication — which is why the shared already-in-context set is cleared here too. Leaving it
-      // populated across a compaction would suppress those memories for the rest of the session.
+      // duplication.
       const carried = steering ? turn : undefined;
+      const dropped = compacted ? turn.blocks : [];
       turn = freshTurn();
       if (carried) {
         turn.blocks = carried.blocks;
         turn.steered = true;
       }
-      if (compacted) opts.alreadyInContext().clear();
+      // Withdraw exactly the ids of the attachments being dropped, NOT the whole set. The set is shared
+      // with turn-start recall, which composes its block into the newest user message and clears the set
+      // itself from the post-compaction drain. Clearing everything here discarded ids that recall had
+      // just added for the current turn — whose block is in the surviving tail — so the same memories
+      // could be injected a second time within one turn and counted twice.
+      for (const block of dropped) for (const id of block.memoryIds) opts.alreadyInContext().delete(id);
       // A retrieval still in flight was searching for what the PREVIOUS turn was doing. The reset hands
       // out a fresh byte budget and the next search starts from current work — including a steering
       // instruction — so injecting the superseded result would answer a question nobody is
@@ -403,6 +411,7 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       anchorIndex,
       anchorMessage: structuredClone(anchorMessage),
       frozenMessage: Object.freeze({ role: 'user', content, isMeta: true }),
+      memoryIds: injectedIds,
     });
     return insertAnchoredBlocks(messages, turn.blocks);
   });

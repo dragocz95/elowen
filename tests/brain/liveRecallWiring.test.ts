@@ -159,6 +159,7 @@ describe('live recall wiring — a real session reaches the recall pass', () => 
         seenProjects.push(currentMemoryRecallScope()?.projectId ?? null);
         return [];
       },
+      alreadyInContext: () => new Set<number>(),
     });
     const context = handler;
     if (!context) throw new Error('context handler was never registered');

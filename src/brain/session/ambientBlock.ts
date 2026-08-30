@@ -27,7 +27,15 @@ import { createHash } from 'node:crypto';
  *  Shaped like turnContextBuilder.modeTemplateFor deliberately: the decision is pure, and the write
  *  that records "the model has seen this" happens in `commit`, only once the prompt actually reached
  *  the provider. A turn that errors or is aborted before that showed the model nothing, and must not
- *  leave a digest claiming otherwise. */
+ *  leave a digest claiming otherwise.
+ *
+ *  KNOWN, BOUNDED GAP. The decision is made while composing the prompt, and PI may compact at the start
+ *  of the very call that sends it. An omitted block can therefore be carried away by a compaction the
+ *  composer could not have seen, leaving that one request without it. The next turn's post-compaction
+ *  drain reads durable state, sets `reset`, and the block returns — so the gap is exactly one turn, and
+ *  it is the same shape as the post-compaction orientation block, which is likewise delivered on the
+ *  turn AFTER the compaction it describes. Closing it would need PI to expose a re-composition seam
+ *  after compaction; it does not. */
 export interface AmbientBlockDecision {
   /** What to hand composeTurnPrompt: the full block, or '' when the model already has it. */
   block: string;

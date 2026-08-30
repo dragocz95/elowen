@@ -32,7 +32,7 @@ describe('recallMemoryBlock', () => {
       { id: 8, body: 'today we agreed on X', updated_at: daysAgo(1) },
     ]);
 
-    const block = await recallMemoryBlock({
+    const { block } = await recallMemoryBlock({
       service: svc, userId: 2, text: 'how is it deployed?', enabled: true, scoped: passthrough, now: NOW,
     });
 
@@ -51,7 +51,7 @@ describe('recallMemoryBlock', () => {
       { userId: 2, enabled: true, text: '   ' },      // nothing to retrieve against
     ]) {
       const { service: svc, retrieve } = service([{ id: 1, body: 'x', updated_at: daysAgo(1) }]);
-      const block = await recallMemoryBlock({ ...opts, service: svc, scoped: passthrough, now: NOW });
+      const { block } = await recallMemoryBlock({ ...opts, service: svc, scoped: passthrough, now: NOW });
       expect(block).toBe('');
       expect(retrieve).not.toHaveBeenCalled();
     }
@@ -63,9 +63,10 @@ describe('recallMemoryBlock', () => {
       { markRecalled: () => { throw new Error('counter write failed'); } },
     );
 
-    const block = await recallMemoryBlock({
+    const { block, commit } = await recallMemoryBlock({
       service: svc, userId: 2, text: 'q', enabled: true, scoped: passthrough, now: NOW,
     });
+    commit();
 
     // The memories are already on their way to the prompt; losing them over a counter would be worse.
     expect(block).toContain('still delivered');
@@ -75,7 +76,7 @@ describe('recallMemoryBlock', () => {
     const svc = { retrieve: vi.fn().mockRejectedValue(new Error('embedding provider down')), markRecalled: vi.fn() };
     await expect(recallMemoryBlock({
       service: svc as unknown as MemoryService, userId: 2, text: 'q', enabled: true, scoped: passthrough,
-    })).resolves.toBe('');
+    })).resolves.toMatchObject({ block: '' });
   });
 
   it('prints only what the context window does not already carry', async () => {
@@ -86,9 +87,10 @@ describe('recallMemoryBlock', () => {
     ], { markRecalled });
     const alreadyInContext = new Set<number>([7]);
 
-    const block = await recallMemoryBlock({
+    const { block, commit } = await recallMemoryBlock({
       service: svc, userId: 2, text: 'q', enabled: true, scoped: passthrough, now: NOW, alreadyInContext,
     });
+    commit();
 
     // Retrieval still runs — relevance is a per-turn judgement — but a memory the model can already
     // read is not spent on a second time.
@@ -105,7 +107,7 @@ describe('recallMemoryBlock', () => {
     const markRecalled = vi.fn();
     const { service: svc } = service([{ id: 7, body: 'already on screen', updated_at: daysAgo(1) }], { markRecalled });
 
-    const block = await recallMemoryBlock({
+    const { block } = await recallMemoryBlock({
       service: svc, userId: 2, text: 'q', enabled: true, scoped: passthrough, now: NOW,
       alreadyInContext: new Set<number>([7]),
     });
@@ -118,11 +120,34 @@ describe('recallMemoryBlock', () => {
   it('keeps printing everything when no session set is supplied', async () => {
     const { service: svc } = service([{ id: 7, body: 'unchanged behaviour', updated_at: daysAgo(1) }]);
 
-    const block = await recallMemoryBlock({
+    const { block } = await recallMemoryBlock({
       service: svc, userId: 2, text: 'q', enabled: true, scoped: passthrough, now: NOW,
     });
 
     expect(block).toContain('unchanged behaviour');
+  });
+
+  // A turn can still be refused after its prompt is composed — client fencing, a PI preflight rejection,
+  // a delegation abort — and a refused turn showed the model nothing. Committing during composition left
+  // those memories counted as delivered AND suppressed for the rest of the context window, so the model
+  // would never see them at all.
+  it('counts and suppresses nothing until the prompt is confirmed delivered', async () => {
+    const markRecalled = vi.fn();
+    const { service: svc } = service([{ id: 7, body: 'composed but never sent', updated_at: daysAgo(1) }], { markRecalled });
+    const alreadyInContext = new Set<number>();
+
+    const { block, commit } = await recallMemoryBlock({
+      service: svc, userId: 2, text: 'q', enabled: true, scoped: passthrough, now: NOW, alreadyInContext,
+    });
+
+    expect(block).toContain('composed but never sent');
+    expect(markRecalled).not.toHaveBeenCalled();
+    expect([...alreadyInContext]).toEqual([]);
+
+    commit();
+
+    expect(markRecalled).toHaveBeenCalledWith(2, [7]);
+    expect([...alreadyInContext]).toEqual([7]);
   });
 
   it('is the only place either surface renders recalled memory', () => {

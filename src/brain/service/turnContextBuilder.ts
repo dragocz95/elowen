@@ -134,6 +134,7 @@ export class TurnContextBuilder {
         let commitOrientation = (): void => {};
         let commitSessionNotices = (): void => {};
         let commitPermissionsDigest = (): void => {};
+        let commitRecall = (): void => {};
         // Both halves of the mode state (the mode itself and its reminder cadence) are claims about what
         // the model has ALREADY been shown, so they are committed with the drains above — only once the
         // prompt has reached the provider. A turn rejected before that showed the model nothing.
@@ -160,7 +161,7 @@ export class TurnContextBuilder {
           // mode reminder below is: both make a claim about what the model has been shown. Recalling in
           // build() marked memories as delivered on a `/command` turn that never reaches the provider —
           // inflating use_count, which feeds vitality and therefore what the retention sweep evicts.
-          const memoryBlock = await recallMemoryBlock({
+          const memory = await recallMemoryBlock({
             service: this.d.memoryService,
             // In an owner chat the writer IS the owner, so the same rule ("the memories belong to whoever
             // is writing this turn") simply resolves to the requesting account.
@@ -170,6 +171,7 @@ export class TurnContextBuilder {
             scoped: (run) => runWithPolicy(live.policy, run, scope),
             alreadyInContext: (live.injectedMemoryIds ??= new Set<number>()),
           });
+          commitRecall = memory.commit;
           // Ambient, so it is sent only when it is not already in front of the model — and only counted
           // as sent once the prompt reaches the provider, hence the commit beside the others below.
           const permissions = decideAmbientBlock({
@@ -210,7 +212,7 @@ export class TurnContextBuilder {
           // prefixing the user's words. Keeps the user message body stable/contiguous across mode switches
           // and matches how every other per-turn directive is injected.
           prompt = composeTurnPrompt({
-            memory: memoryBlock,
+            memory: memory.block,
             hook: hookBlock,
             permissions: permissions.block,
             beforeUser: turnContext.beforeUser,
@@ -226,6 +228,7 @@ export class TurnContextBuilder {
         const result = await operation(prompt);
         commitOrientation();
         commitSessionNotices();
+        commitRecall();
         commitPermissionsDigest();
         commitMode();
         return result;

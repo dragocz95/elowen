@@ -1036,6 +1036,7 @@ export class ChannelSessionService {
             // Assigned by the drain below and called only after the prompt has reached the provider.
             let commitOrientation = (): void => {};
             let commitSkillsDigest = (): void => {};
+            let commitRecall = (): void => {};
             if (!(opts.promptCommand === true && isPromptCommand(turnText, ch.session))) {
               const turnContext = ch.turnContext();
               // The drain stays per-surface (it is stateful and commits only once the prompt reached the
@@ -1053,7 +1054,7 @@ export class ChannelSessionService {
               // privacy). Resolved on the real-prompt path only: recalling on a prompt-command turn marked
               // memories as delivered to a model that never saw them.
               const writerUserId = opts.writerUserId;
-              const memoryBlock = await recallMemoryBlock({
+              const memory = await recallMemoryBlock({
                 service: this.d.memoryService,
                 userId: writerUserId,
                 text: senderMsg,
@@ -1068,6 +1069,7 @@ export class ChannelSessionService {
                 }),
                 alreadyInContext: (ch.injectedMemoryIds ??= new Set<number>()),
               });
+              commitRecall = memory.commit;
               // Absent on every surface whose skill announcement already sits in its cached system
               // prompt; a shared room is the one that cannot have it there — see resolvesContributionsPerTurn.
               // Ambient, so a room re-announces only when the announcement actually changed: the block is a
@@ -1090,7 +1092,7 @@ export class ChannelSessionService {
               // permission summary are owner-chat concepts, and a room has neither.
               prompted = composeTurnPrompt({
                 skills: skills.block,
-                memory: memoryBlock,
+                memory: memory.block,
                 hook: await pluginContextBlock({
                   ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
                   ...(this.d.hookAudit ? { hookAudit: this.d.hookAudit } : {}),
@@ -1121,6 +1123,7 @@ export class ChannelSessionService {
             // reached the provider — an error or abort before this must leave it pending, not consumed.
             commitOrientation();
             commitSkillsDigest();
+            commitRecall();
             // A parent stop that landed during prompt() must make the child terminally unsuccessful;
             // otherwise an empty aborted assistant is mistaken for a successful "returned nothing" job.
             if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
