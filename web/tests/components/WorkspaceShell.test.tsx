@@ -402,6 +402,9 @@ describe('the shell stylesheets carry one authority per decision', () => {
   it('restores the sidebar grid, sticky scroll port and right-column containers', () => {
     const shellCss = css('workspace-shell');
     expect(shellCss).toMatch(/\[data-section-layout='sidebar'\]\s*\{[^}]*grid-template-columns:\s*minmax\(12rem, 14rem\) minmax\(0, 1fr\)[^}]*'hero hero'[^}]*'navigation toolbar'[^}]*'navigation content'/);
+    // A hidden toolbar must remove its track altogether. Otherwise the spanning sidebar contributes half
+    // its height to that empty auto row and vertically centres every short account/settings section.
+    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\]:not\(:has\(> \.page-toolbar \.page-toolbar__row > :not\(\.page-toolbar__slot:empty\)\)\)\s*\{[^}]*'hero hero'[^}]*'navigation content'/);
     expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-hero\s*\{[^}]*grid-area:\s*hero/);
     expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-shell__section-navigation\s*\{[^}]*position:\s*sticky[^}]*grid-area:\s*navigation[^}]*max-height:[^}]*overflow-y:\s*auto/);
     expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.page-toolbar\s*\{[^}]*container:\s*workspace-shell \/ inline-size[^}]*grid-area:\s*toolbar/);

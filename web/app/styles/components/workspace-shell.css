@@ -78,6 +78,16 @@
   column-gap: clamp(1.5rem, 3cqi, 3rem);
   align-items: start;
 }
+/* The navigation spans the toolbar and content rows. When the toolbar is empty, leaving its named row in
+   the grid lets the tall navigation divide its intrinsic height between TWO auto tracks; short account or
+   settings panels then begin halfway down the sidebar. Collapse that empty anatomy to one working row.
+   The same DOM condition owns the toolbar's display rule in page-toolbar.css, so a portal arriving later
+   restores the three-row layout without React measuring or duplicating toolbar state. */
+.workspace-shell[data-section-layout='sidebar']:not(:has(> .page-toolbar .page-toolbar__row > :not(.page-toolbar__slot:empty))) {
+  grid-template-areas:
+    'hero hero'
+    'navigation content';
+}
 .workspace-shell[data-section-layout='sidebar'] > .workspace-hero { grid-area: hero; width: 100%; }
 .workspace-shell[data-section-layout='sidebar'] > .workspace-shell__section-navigation {
   position: sticky;
