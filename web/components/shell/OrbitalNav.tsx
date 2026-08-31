@@ -111,8 +111,9 @@ export function railScrollRange(count: number, spacing: number, stageHeight: num
  *  `onToggleCollapse` is what puts the collapse handle on the edge. It is absent whenever collapsing is
  *  not the user's call — a window too narrow for the full rail is already forced compact, and a handle
  *  that cannot change anything is worse than no handle at all. */
-export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, drawer = false, drawerOpen = false, onDrawerClose }: {
+export function OrbitalNav({ compact = false, measured = true, side = 'left', onToggleCollapse, drawer = false, drawerOpen = false, onDrawerClose }: {
   compact?: boolean;
+  measured?: boolean;
   side?: 'left' | 'right';
   onToggleCollapse?: () => void;
   /** On a phone the rail slides in over the content instead of holding a column of its own. Same rail,
@@ -168,8 +169,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
   // close callback is an unstable inline prop from the shell — deliberately not a dependency.
   useEffect(() => { if (drawer) onDrawerClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   const activeIndex = Math.max(0, routeEntries.findIndex((entry) => entryIsActive(entry, pathname)));
-  const stageRef = useRef<HTMLDivElement>(null);
-  const stageHeight = useElementHeight(stageRef);
+  const [stageRef, stageHeight] = useElementHeight<HTMLDivElement>();
   const spacing = railSpacing(routeEntries.length, stageHeight);
   const positions = useMemo(
     () => getStableOffsets(routeEntries.length, spacing),
@@ -398,6 +398,8 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     <nav
       ref={navRef}
       data-side={side}
+      data-mode={drawer ? 'drawer' : compact ? 'rail' : 'full'}
+      data-measured={measured}
       data-testid="future-navigation"
       // As a drawer this is a layer over the page that takes focus and traps Escape, so it says so:
       // a panel with no role is an overlay only the mouse knows about. `aria-modal` is claimed only
@@ -415,7 +417,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
       onPointerMove={endSurfacePress}
       onPointerUp={endSurfacePress}
       onPointerCancel={endSurfacePress}
-      className={`overflow-hidden border-border/45 bg-background ${drawer
+      className={`orbital-nav overflow-hidden border-border/45 bg-background ${drawer
         ? `overlay-layer-nav-drawer overlay-nav-drawer fixed inset-y-0 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
           ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
           : `left-0 border-r ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}`

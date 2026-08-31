@@ -249,7 +249,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   }
 
   return (
-    <div className="flex flex-col gap-4 px-3 py-3">
+    <div className="flex w-full min-w-0 flex-col gap-4 px-3 py-3 [&_li]:min-w-0">
       {usage ? (
         <section className="flex flex-col gap-1.5" data-testid="telemetry-context">
           <SectionHead
@@ -438,7 +438,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           {mcpConnected.map((s) => (
             <li key={s.name} className="flex items-center gap-1.5 text-xs">
               <span className="shrink-0 text-success" aria-hidden>●</span>
-              <span className="truncate font-mono text-foreground" title={s.name}>{s.name}</span>
+              <span className="min-w-0 truncate font-mono text-foreground" title={s.name}>{s.name}</span>
             </li>
           ))}
         </LiveSection>

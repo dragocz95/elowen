@@ -35,7 +35,7 @@
 .page-toolbar__search { min-width: 0; flex: 1 1 16rem; }
 .page-toolbar__slot { display: flex; min-width: 0; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
 .page-toolbar__slot:empty { display: none; }
-.page-toolbar__actions { display: flex; flex: none; align-items: center; gap: 0.5rem; margin-inline-start: auto; }
+.page-toolbar__actions { display: flex; max-width: 100%; min-width: 0; flex: 0 1 auto; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-inline-start: auto; }
 
 /* See the cascade note at the top: a toolbar that portals itself into this row keeps its CONTROLS and
    loses its frame. */

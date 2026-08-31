@@ -205,6 +205,27 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='drawer'][data-open] {
   transform: none;
 }
+/* SSR and the first hydrated commit do not know the measured workspace width yet. Only that explicit
+   state gets the phone fail-safe; once ResizeObserver answers, `data-mode` is the sole layout owner. The
+   1023px ceiling is the exact complement of COMMAND_NAV_COLUMN_MIN_WIDTH (1024px), independent of rem or
+   UI scale. */
+@media (max-width: 1023px) {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-measured='false']:not([data-mode='drawer']) {
+    position: fixed;
+    inset-block: 0;
+    width: 100vw;
+    height: auto;
+    box-shadow: var(--shadow-raised);
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-measured='false']:not([data-mode='drawer'])[data-side='left'] {
+    left: 0;
+    transform: translateX(-100%);
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-measured='false']:not([data-mode='drawer'])[data-side='right'] {
+    right: 0;
+    transform: translateX(100%);
+  }
+}
 /* --color-scrim, not a mix of --color-background: on the light variant the canvas IS near-white, so 70% of it
    over a near-white page darkened nothing and the sheet had no backdrop to slide over. The token is
    declared per variant (tokens.css, overridden in studio-light/skin.css) precisely so this one rule can

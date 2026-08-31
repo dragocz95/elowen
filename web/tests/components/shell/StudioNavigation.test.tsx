@@ -209,8 +209,46 @@ describe('StudioNavigation as an offcanvas sheet', () => {
     mount({ drawer: true, drawerOpen: true, onDrawerClose: onClose });
     const open = screen.getByTestId('studio-navigation');
     expect(open).toHaveAttribute('aria-modal', 'true');
+    expect(open).not.toHaveAttribute('aria-labelledby');
+    expect(open).not.toHaveAttribute('data-presentation');
     expect(open).not.toHaveAttribute('aria-hidden');
     expect(open).not.toHaveAttribute('inert');
+  });
+
+  it('lets Radix hide the page behind the open modal drawer', async () => {
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
+    client.setQueryData(['health'], { ok: true, version: '0.26.0' });
+    client.setQueryData(['my-nav-settings'], { hidden: [], order: [] });
+    client.setQueryData(['plugin-ui', 'en'], []);
+    const view = render(
+      <Wrapper>
+        <main data-testid="drawer-background">Page</main>
+        <StudioNavigation drawer drawerOpen onDrawerClose={onClose} />
+      </Wrapper>,
+    );
+    await waitFor(() => expect(screen.getByTestId('drawer-background')).toHaveAttribute('aria-hidden', 'true'));
+
+    view.rerender(
+      <Wrapper>
+        <main data-testid="drawer-background">Page</main>
+        <StudioNavigation drawer drawerOpen={false} onDrawerClose={onClose} />
+      </Wrapper>,
+    );
+    await waitFor(() => expect(screen.getByTestId('drawer-background')).not.toHaveAttribute('aria-hidden'));
+  });
+
+  it('keeps the drawer customization menu inside the Radix focus scope', async () => {
+    mount({ drawer: true, drawerOpen: true, onDrawerClose: onClose });
+    const drawer = screen.getByRole('dialog', { name: 'Primary' });
+    const before = onClose.mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show hidden' }));
+    const menu = await screen.findByRole('menu');
+    expect(drawer).toContainElement(menu);
+    expect(drawer).toBeInTheDocument();
+    expect(onClose).toHaveBeenCalledTimes(before);
+    await waitFor(() => expect(menu).toContainElement(document.activeElement as HTMLElement));
   });
 
   it('claims no dialog role at all as a column, where it is chrome rather than a layer', () => {
@@ -229,7 +267,7 @@ describe('StudioNavigation as an offcanvas sheet', () => {
     expect(document.activeElement).toBe(close);
     // Counted from here: arriving somewhere already closes the sheet, so the mount itself reports one.
     const before = onClose.mock.calls.length;
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(close, { key: 'Escape' });
     expect(onClose.mock.calls.length).toBe(before + 1);
     fireEvent.click(close);
     expect(onClose.mock.calls.length).toBe(before + 2);
@@ -264,7 +302,7 @@ describe('StudioNavigation as an offcanvas sheet', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Raised dialog' })).not.toBeInTheDocument());
     expect(onClose).toHaveBeenCalledTimes(before);
 
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(before + 1);
   });
 
@@ -282,10 +320,10 @@ describe('StudioNavigation as an offcanvas sheet', () => {
     expect(document.activeElement).toBe(first);
 
     last.focus();
-    fireEvent.keyDown(window, { key: 'Tab' });
+    fireEvent.keyDown(last, { key: 'Tab' });
     expect(document.activeElement).toBe(first);
 
-    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
     expect(document.activeElement).toBe(last);
   });
 
@@ -293,36 +331,34 @@ describe('StudioNavigation as an offcanvas sheet', () => {
     mount({ drawer: true, drawerOpen: true, onDrawerClose: onClose });
     const outside = document.body.appendChild(document.createElement('button'));
     outside.focus();
-    fireEvent.keyDown(window, { key: 'Tab' });
+    fireEvent.keyDown(outside, { key: 'Tab' });
     expect(document.activeElement).toBe(tabRing().first);
     outside.remove();
   });
 
-  it('gives focus back to whatever opened it, but only while focus is still inside', () => {
-    const opener = document.createElement('button');
-    document.body.appendChild(opener);
-    opener.focus();
-
-    // Opened by a re-render rather than mounted open, which is how the shell actually opens it.
+  it('gives focus back to the control that opened it', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
     client.setQueryData(['my-nav-settings'], { hidden: [], order: [] });
-    const view = render(<Wrapper><StudioNavigation drawer drawerOpen={false} onDrawerClose={onClose} /></Wrapper>);
-    expect(document.activeElement).toBe(opener);
 
-    view.rerender(<Wrapper><StudioNavigation drawer drawerOpen onDrawerClose={onClose} /></Wrapper>);
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' }));
+    function ControlledDrawer() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Open navigation</button>
+          <StudioNavigation drawer drawerOpen={open} onDrawerClose={() => setOpen(false)} />
+        </>
+      );
+    }
 
-    view.rerender(<Wrapper><StudioNavigation drawer drawerOpen={false} onDrawerClose={onClose} /></Wrapper>);
-    expect(document.activeElement).toBe(opener);
-
-    // Focus that has since moved elsewhere is the user's, not the sheet's to take back.
-    view.rerender(<Wrapper><StudioNavigation drawer drawerOpen onDrawerClose={onClose} /></Wrapper>);
-    (document.activeElement as HTMLElement).blur();
-    view.rerender(<Wrapper><StudioNavigation drawer drawerOpen={false} onDrawerClose={onClose} /></Wrapper>);
-    expect(document.activeElement).not.toBe(opener);
-
-    opener.remove();
+    render(<Wrapper><ControlledDrawer /></Wrapper>);
+    const opener = screen.getByRole('button', { name: 'Open navigation' });
+    opener.focus();
+    fireEvent.click(opener);
+    const close = screen.getByRole('button', { name: 'Close' });
+    expect(document.activeElement).toBe(close);
+    fireEvent.click(close);
+    await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 });
 

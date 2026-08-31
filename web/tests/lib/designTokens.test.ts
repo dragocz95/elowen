@@ -15,6 +15,7 @@ import { SKINS, SKIN_FAMILY_SHEETS } from '../../lib/skins';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const tokensCss = readFileSync(join(root, 'app', 'styles', 'tokens.css'), 'utf-8');
+const brainChatSurface = readFileSync(join(root, 'modules', 'advisor', 'BrainChatSurface.tsx'), 'utf-8');
 const skinCss = (skin: string) => readFileSync(join(root, 'skins', skin, 'skin.css'), 'utf-8');
 const sharedCss = (sheet: string) => readFileSync(join(root, 'skins', sheet), 'utf-8');
 const SHARED_STYLESHEETS = SKIN_FAMILY_SHEETS.flatMap((entry) => [...entry.sharedStylesheets]);
@@ -203,6 +204,20 @@ const SHADCN_PAIRS = [
 ] as const;
 
 describe('text contrast', () => {
+  it('keeps chat metadata on an opaque AA text token at the caption size', () => {
+    expect(brainChatSurface).toMatch(/chat-turn-meta[^`]*text-caption[^`]*text-muted-foreground/);
+    expect(brainChatSurface).not.toContain('text-muted-foreground/70');
+    expect(parseFloat(baseTokens['--text-caption']!)).toBeGreaterThanOrEqual(0.6875);
+    for (const skin of [null, ...SKINS]) {
+      const tokens = palette(skin);
+      const text = resolveColour(tokens['--color-muted-foreground']!, tokens)!;
+      for (const surface of ['--color-background', '--color-card', '--color-muted']) {
+        const ground = resolveColour(tokens[surface]!, tokens)!;
+        expect(contrast(text, ground), `${skin ?? 'default'} chat metadata on ${surface}`).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      }
+    }
+  });
+
   it('resolves a derived surface rather than skipping it', () => {
     // The resolver is load-bearing: if it silently returned null for a `color-mix` the gate would fail
     // loudly, but if it returned the wrong colour the gate would measure a surface nobody renders.
@@ -231,6 +246,16 @@ describe('text contrast', () => {
 
   it.each([...SKINS])('skin "%s" keeps every text step at WCAG AA on its own surfaces', (skin) => {
     assertReadable(skin, palette(skin));
+  });
+});
+
+describe('Studio conversation role colours', () => {
+  it('keeps user turns blue with white text in both Light and Dark', () => {
+    const light = declarations(skinCss('studio-light'));
+    const dark = declarations(skinCss('studio-oled'));
+    expect(dark['--studio-chat-user-bg']).toBe(light['--studio-chat-user-bg']);
+    expect(dark['--studio-chat-user-text']).toBe(light['--studio-chat-user-text']);
+    expect(contrast(dark['--studio-chat-user-text']!, dark['--studio-chat-user-bg']!)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 });
 

@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT, advisorOpenTarget } from '../../lib/brainDock';
 import { useMobileViewport } from '../../lib/useMobile';
@@ -67,8 +67,9 @@ function useStudioDockViewport(): boolean | undefined {
 
 /** The width sets a FLOOR on how compact the chrome is; the user's pin may only go compacter, never
  *  roomier. So the collapse handle is offered exactly when the pin is what decides — in a window already
- *  too narrow for the full rail, a toggle would be a dead control, and before the first measurement
- *  (`regionW === 0`) there is nothing to decide yet.
+ *  too narrow for the full rail, a toggle would be a dead control. Before the first measurement
+ *  (`regionW === 0`) there is no reliable region decision; the Studio stylesheet owns the phone-width
+ *  first-paint fail-safe so an SSR-stable unknown value cannot consume a 256px content column.
  *
  *  `regionW` is the MEASURED width of the nav+content region (window − advisor dock), in the same CSS
  *  pixels the stylesheet's media queries and `useMobileViewport()` read — see lib/breakpoints.ts. Using
@@ -89,6 +90,7 @@ export function resolveNav(regionW: number, pin: NavPin, profile: ShellProfile =
  *  a state the other never sees. */
 interface ShellNavProps {
   compact: boolean;
+  measured: boolean;
   side: 'left' | 'right';
   drawer: boolean;
   drawerOpen: boolean;
@@ -169,8 +171,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // Measure the region the sidebar + content actually share (everything but a left/right dock). The
   // sidebar's mode (full / rail / drawer) and the mobile top bar key off THIS, so the chrome reacts to
   // real available space. Content inside <main> reacts to its own width via CSS container queries.
-  const regionRef = useRef<HTMLDivElement>(null);
-  const regionW = useElementWidth(regionRef);
+  const [regionRef, regionW, regionMeasured] = useElementWidth<HTMLDivElement>();
   // Each shell profile keeps its own per-device pin. Both begin expanded; Studio's narrower labelled column
   // matches the reference without overwriting the spatial design's preference when skins are switched.
   const [spatialPin, setSpatialPin] = usePersistentState<NavPin>('elowen.nav.pin', 'full', NAV_PINS);
@@ -195,6 +196,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // what decides, and never in the drawer, where there is no column to narrow.
   const navProps: ShellNavProps = {
     compact: mode === 'rail',
+    measured: regionMeasured,
     side: dockLeft ? 'right' : 'left',
     drawer: mode === 'drawer',
     drawerOpen,

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
@@ -40,12 +40,14 @@ describe('resolveNav', () => {
     expect(resolveNav(600, 'rail')).toEqual({ mode: 'drawer', pinnable: false });
   });
 
-  it('shows no handle before the region has been measured, so none flashes on first paint', () => {
+  it('withholds a handle before measurement and uses the drawer once a phone width is known', () => {
     expect(resolveNav(0, 'rail')).toEqual({ mode: 'full', pinnable: false });
+    expect(resolveNav(390, 'full')).toEqual({ mode: 'drawer', pinnable: false });
   });
 
-  it('gives the command profile an expanded first paint and 1024px drawer boundary', () => {
+  it('gives the command profile an SSR-stable first decision and a 1024px drawer boundary', () => {
     expect(resolveNav(0, 'rail', 'command')).toEqual({ mode: 'full', pinnable: false });
+    expect(resolveNav(390, 'full', 'command')).toEqual({ mode: 'drawer', pinnable: false });
     expect(resolveNav(1023, 'rail', 'command')).toEqual({ mode: 'drawer', pinnable: false });
     expect(resolveNav(1024, 'full', 'command')).toEqual({ mode: 'full', pinnable: true });
     expect(resolveNav(1024, 'rail', 'command')).toEqual({ mode: 'rail', pinnable: true });
@@ -61,13 +63,69 @@ describe('Shell', () => {
   it('renders the Studio navigation, ruled app bar and content slot', async () => {
     render(<Shell><span>page-body</span></Shell>);
     // The navigation and Home world appear after the async gate opens.
-    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    expect(await screen.findByTestId('studio-navigation')).toHaveAttribute('data-mode', 'full');
     expect(screen.queryByTestId('future-navigation'), 'the orbital rail belongs to no design this build ships').toBeNull();
     expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
     expect(screen.getByText('page-body')).toBeInTheDocument();
     // The ruled bar, not the floating cluster: sticky and separated from the content it scrolls over.
     expect(screen.getByTestId('future-page-header')).toHaveClass('sticky');
     expect(screen.getByTestId('future-page-header')).toHaveClass('border-b');
+  });
+
+  it('reattaches the shell measurement across the mobile route sequence and never leaves drawer mode', async () => {
+    class TrackingResizeObserver {
+      static instances: TrackingResizeObserver[] = [];
+      node: Element | null = null;
+      disconnected = false;
+      constructor(private readonly callback: ResizeObserverCallback) { TrackingResizeObserver.instances.push(this); }
+      observe(node: Element) { this.node = node; }
+      unobserve() {}
+      disconnect() { this.disconnected = true; }
+      emit(width: number) {
+        this.callback([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+    }
+    const previous = globalThis.ResizeObserver;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = TrackingResizeObserver;
+    pathname = '/dash';
+    const view = render(<Shell><span>page-body</span></Shell>);
+    try {
+      const navigation = await screen.findByTestId('studio-navigation');
+      const header = screen.getByTestId('future-page-header');
+      expect(navigation).toHaveAttribute('data-measured', 'false');
+      expect(header).toHaveAttribute('data-chat-controls-narrow');
+      const topBarObserver = TrackingResizeObserver.instances.find((item) => item.node?.classList.contains('top-bar'))!;
+      act(() => topBarObserver.emit(1200));
+      await waitFor(() => expect(header).not.toHaveAttribute('data-chat-controls-narrow'));
+      act(() => topBarObserver.emit(900));
+      await waitFor(() => expect(header).toHaveAttribute('data-chat-controls-narrow'));
+
+      const regionObserver = () => TrackingResizeObserver.instances.findLast((item) => item.node?.classList.contains('shell-workspace'));
+      const first = regionObserver();
+      expect(first?.node).toBeTruthy();
+      act(() => first?.emit(390));
+      await waitFor(() => expect(screen.getByTestId('studio-navigation')).toHaveAttribute('data-mode', 'drawer'));
+      expect(screen.getByTestId('studio-navigation')).toHaveAttribute('data-measured', 'true');
+
+      let previousNode = first!.node;
+      for (const route of ['/chat', '/projects', '/memory']) {
+        pathname = route;
+        view.rerender(<Shell><span>page-body</span></Shell>);
+        if (route !== '/memory') {
+          await waitFor(() => expect(regionObserver()?.node).not.toBe(previousNode));
+          expect(TrackingResizeObserver.instances.some((item) => item.node === previousNode && item.disconnected)).toBe(true);
+        }
+        const current = regionObserver()!;
+        expect(current.node).toBeTruthy();
+        act(() => current.emit(390));
+        await waitFor(() => expect(screen.getByTestId('studio-navigation')).toHaveAttribute('data-mode', 'drawer'));
+        previousNode = current.node;
+      }
+    } finally {
+      view.unmount();
+      (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = previous;
+      pathname = '/dash';
+    }
   });
 
   it('keeps the ruled bar at every width, on /chat as much as off it', async () => {

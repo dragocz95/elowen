@@ -88,6 +88,13 @@ describe('settings row layout contract', () => {
     expect(block(block(studio, PHONE), '.settings-row[data-trailing] .settings-row__label,')).toMatch(/grid-column:\s*1/);
   });
 
+  it('keeps a short status badge at its min-content width instead of clipping its label', () => {
+    const status = block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__status {");
+    expect(status).toMatch(/flex:\s*none/);
+    expect(status).toMatch(/min-width:\s*max-content/);
+    expect(status).not.toMatch(/overflow:\s*hidden/);
+  });
+
   it("raises the record's controls to a touch target for a coarse pointer", () => {
     const coarse = block(core, '@media (pointer: coarse)');
     for (const control of ['button', "[role='combobox']", "[role='radio']", "[role='switch']"]) {

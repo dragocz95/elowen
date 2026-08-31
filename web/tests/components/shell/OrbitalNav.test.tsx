@@ -74,6 +74,12 @@ describe('orbital navigation geometry', () => {
 });
 
 describe('OrbitalNav', () => {
+  it('publishes the explicit unmeasured state used by the mobile first-paint fail-safe', () => {
+    mountNav({ measured: false });
+    expect(screen.getByTestId('future-navigation')).toHaveAttribute('data-measured', 'false');
+    expect(screen.getByTestId('future-navigation')).toHaveAttribute('data-mode', 'full');
+  });
+
   it('renders only current core and plugin destinations', () => {
     mount();
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/dash');

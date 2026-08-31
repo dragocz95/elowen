@@ -6,7 +6,7 @@ import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
-import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat } from '../../../modules/advisor/BrainChatProvider';
 
 // The stream's first frame is the hydration: durable history plus the running turn's tail, captured
 // atomically server-side. It is what closes the transcript gap a phone lock opens, and it is why the
@@ -56,9 +56,19 @@ afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; historyPa
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
+function UsageProbe() {
+  const { usage, telemetry } = useBrainChat();
+  return (
+    <>
+      <output data-testid="usage-tokens">{usage?.tokens ?? 'none'}</output>
+      <output data-testid="telemetry-project">{telemetry.project?.cwd ?? 'none'}</output>
+    </>
+  );
+}
+
 async function renderChat(): Promise<FakeES> {
   const { wrapper: Wrapper } = createWrapper();
-  render(<Wrapper><ToastProvider><BrainChatProvider><BrainChat /></BrainChatProvider></ToastProvider></Wrapper>);
+  render(<Wrapper><ToastProvider><BrainChatProvider><BrainChat /><UsageProbe /></BrainChatProvider></ToastProvider></Wrapper>);
   await waitFor(() => expect(FakeES.instances.length).toBe(1));
   return FakeES.instances[0]!;
 }
@@ -75,12 +85,14 @@ describe('BrainChat snapshot hydration', () => {
   });
 
   it('opens and renders the history snapshot while the independent status read is still pending', async () => {
+    let statusCalls = 0;
     let resolveStatus!: () => void;
     server.use(http.get('*/api/brain/status', async () => {
-      await new Promise<void>((resolve) => { resolveStatus = resolve; });
+      const call = ++statusCalls;
+      if (call === 1) await new Promise<void>((resolve) => { resolveStatus = resolve; });
       return HttpResponse.json({
         running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [],
-        queued: [{ id: 'q1', text: 'queued while away' }],
+        queued: call === 1 ? [{ id: 'q1', text: 'queued while away' }] : [],
       });
     }));
 
@@ -110,6 +122,98 @@ describe('BrainChat snapshot hydration', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.getAllByText('ahoj odsud')).toHaveLength(1);
     expect(screen.getAllByText('a jeste tohle')).toHaveLength(1);
+  });
+
+  it('refreshes usage after a snapshot boundary and rejects the older status response delivered last', async () => {
+    let statusCalls = 0;
+    let releaseOldStatus!: () => void;
+    server.use(http.get('*/api/brain/status', async () => {
+      const call = ++statusCalls;
+      if (call === 1) await new Promise<void>((resolve) => { releaseOldStatus = resolve; });
+      const tokens = call === 1 ? 550_000 : 70_000;
+      return HttpResponse.json({
+        running: true, sessionId: 'brain-1', model: 'm',
+        usage: { tokens, contextWindow: 1_000_000, percent: tokens / 10_000, totalTokens: tokens, cost: 1 },
+        statusline: null, cards: [], queued: [],
+      });
+    }));
+
+    const es = await renderChat();
+    es.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-1', hasMore: false, nextBefore: null,
+      history: [], events: [],
+    });
+    await waitFor(() => expect(statusCalls).toBe(2));
+    await waitFor(() => expect(screen.getByTestId('usage-tokens')).toHaveTextContent('70000'));
+
+    await act(async () => releaseOldStatus());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId('usage-tokens')).toHaveTextContent('70000');
+  });
+
+  it('lets the latest-started REST usage read win when responses cross', async () => {
+    let statusCalls = 0;
+    let releaseOlder!: () => void;
+    let releaseNewer!: () => void;
+    server.use(http.get('*/api/brain/status', async () => {
+      const call = ++statusCalls;
+      if (call === 1) return HttpResponse.json({
+        running: true, sessionId: 'brain-1', model: 'm', usage: null,
+        statusline: null, cards: [], queued: [],
+      });
+      if (call === 2) await new Promise<void>((resolve) => { releaseOlder = resolve; });
+      if (call === 3) await new Promise<void>((resolve) => { releaseNewer = resolve; });
+      const tokens = call === 2 ? 200_000 : 300_000;
+      return HttpResponse.json({
+        running: true, sessionId: 'brain-1', model: 'm',
+        usage: { tokens, contextWindow: 1_000_000, percent: tokens / 10_000, totalTokens: tokens, cost: 1 },
+        project: call === 2 ? { cwd: '/kept-from-older-status', branch: 'main' } : undefined,
+        statusline: null, cards: [], queued: [],
+      });
+    }));
+
+    const es = await renderChat();
+    es.emit('session-event', {});
+    es.emit('subagent', { id: 'a2', sessionId: 'child-2', status: 'done', task: 'second', tools: 1, seconds: 1 });
+    await waitFor(() => expect(statusCalls).toBe(3));
+
+    await act(async () => releaseNewer());
+    await waitFor(() => expect(screen.getByTestId('usage-tokens')).toHaveTextContent('300000'));
+    await act(async () => releaseOlder());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId('usage-tokens')).toHaveTextContent('300000');
+    expect(screen.getByTestId('telemetry-project')).toHaveTextContent('/kept-from-older-status');
+  });
+
+  it('keeps post-compaction usage authoritative over a slow pre-compaction status read', async () => {
+    let statusCalls = 0;
+    let releaseInitial!: () => void;
+    server.use(http.get('*/api/brain/status', async () => {
+      const call = ++statusCalls;
+      if (call === 1) await new Promise<void>((resolve) => { releaseInitial = resolve; });
+      const tokens = call === 1 ? 550_000 : call === 2 ? 80_000 : 70_000;
+      return HttpResponse.json({
+        running: call === 1, sessionId: 'brain-1', model: 'm',
+        usage: { tokens, contextWindow: 1_000_000, percent: tokens / 10_000, totalTokens: tokens, cost: 1 },
+        statusline: null, cards: [], queued: [],
+      });
+    }));
+
+    const es = await renderChat();
+    es.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-1', hasMore: false, nextBefore: null,
+      history: [], events: [],
+    });
+    await waitFor(() => expect(statusCalls).toBe(2));
+    await waitFor(() => expect(screen.getByTestId('usage-tokens')).toHaveTextContent('80000'));
+
+    es.emit('compacted', {});
+    await waitFor(() => expect(statusCalls).toBe(3));
+    await waitFor(() => expect(screen.getByTestId('usage-tokens')).toHaveTextContent('70000'));
+
+    await act(async () => releaseInitial());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId('usage-tokens')).toHaveTextContent('70000');
   });
 
   it('refetches durable history at idle when the frame reported a truncated journal', async () => {

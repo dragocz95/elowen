@@ -297,7 +297,9 @@ describe('telemetry rail — primitives that carry behaviour', () => {
     renderDock();
     const scroll = await screen.findByTestId('telemetry-scroll');
     expect(scroll).toHaveAttribute('data-slot', 'scroll-area');
-    expect(scroll.querySelector('[data-slot="scroll-area-viewport"]')).not.toBeNull();
+    const viewport = scroll.querySelector('[data-slot="scroll-area-viewport"]');
+    expect(viewport).not.toBeNull();
+    expect(viewport).toHaveClass('[&>div]:!block', '[&>div]:!w-full', '[&>div]:!min-w-0');
     // The head is a sibling of the scroller, not inside it — that is what pins it to the viewport edge.
     expect(scroll.contains(screen.getByTestId('telemetry-head'))).toBe(false);
   });
