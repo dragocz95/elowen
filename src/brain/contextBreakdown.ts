@@ -5,7 +5,7 @@ import type {
   BrainContextCategoryId,
   BrainContextToolCost,
 } from '../shared/wireContract.js';
-import { anthropicHostedReplayMetadata } from './session/anthropicHostedToolReplay.js';
+import { anthropicHostedReplayMetadata, isAnthropicServerOwnedBlock } from './session/anthropicHostedToolReplay.js';
 
 /** PI's transcript message. `@earendil-works/pi-agent-core` (where the union lives) is not a direct
  *  dependency, so the type is pulled off the estimator we measure with — the same derivation
@@ -72,9 +72,7 @@ function schemaTokensOf(tool: ContextToolSchema): number {
 function omittedHostedTokens(message: ContextMessage): number {
   const replay = anthropicHostedReplayMetadata(message as never);
   return replay?.content.reduce((sum, block) =>
-    block.type === 'server_tool_use' || block.type === 'tool_search_tool_result'
-      ? sum + textTokens(JSON.stringify(block))
-      : sum, 0) ?? 0;
+    isAnthropicServerOwnedBlock(block) ? sum + textTokens(JSON.stringify(block)) : sum, 0) ?? 0;
 }
 
 export function estimateResidentContextTokens(

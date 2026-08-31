@@ -93,6 +93,15 @@ const genericServerSse = [
   block(2, genericServerContent[2]!),
   event('message_stop', { type: 'message_stop' }),
 ].join('');
+const genericServerResultContent = [
+  { type: 'web_fetch_tool_result', tool_use_id: 'srvtoolu_web', content: { type: 'web_fetch_result', url: 'https://example.test' } },
+  { type: 'text', text: 'Fetched.' },
+];
+const genericServerResultSse = [
+  block(0, genericServerResultContent[0]!),
+  block(1, genericServerResultContent[1]!),
+  event('message_stop', { type: 'message_stop' }),
+].join('');
 
 const metadata = (): AnthropicHostedReplayMetadata => ({ v: 1, content: rawContent() });
 
@@ -108,6 +117,10 @@ const assistant = (meta: AnthropicHostedReplayMetadata | null = metadata()) => (
   usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
   stopReason: 'toolUse', timestamp: 1,
   ...(meta ? { anthropicHostedToolReplay: meta } : {}),
+});
+
+const assistantWith = (content: unknown[], meta: AnthropicHostedReplayMetadata) => ({
+  ...assistant(null), content, anthropicHostedToolReplay: meta,
 });
 
 const wireAssistant = () => ({
@@ -177,12 +190,46 @@ describe('Anthropic hosted tool-search replay', () => {
     expect(verifyAnthropicHostedReplay(payload, [poisoned], 'claude-opus-5')).toBe(true);
   });
 
-  it('preserves multiple tool-search pairs and incomplete non-search server tools verbatim', () => {
-    expect(captureAnthropicHostedReplay(multiplePairsSse)?.content).toEqual(multiplePairsContent);
-    const generic = captureAnthropicHostedReplay(genericServerSse);
-    expect(generic?.content).toEqual(genericServerContent);
-    expect(anthropicHostedReplayMetadata({ anthropicHostedToolReplay: generic } as never)?.content)
-      .toEqual(genericServerContent);
+  it('restores multiple tool-search pairs around PI redacted thinking verbatim', () => {
+    const captured = captureAnthropicHostedReplay(multiplePairsSse)!;
+    expect(captured.content).toEqual(multiplePairsContent);
+    const stored = assistantWith([
+      { type: 'thinking', thinking: '[Reasoning redacted]', thinkingSignature: 'redacted-thinking', redacted: true },
+    ], captured);
+    const payload = {
+      model: 'claude-opus-5',
+      messages: [{ role: 'assistant', content: [{ type: 'redacted_thinking', data: 'redacted-thinking' }] }],
+      tools: [],
+    };
+    const restored = restoreAnthropicHostedReplay(payload, [stored], 'claude-opus-5') as typeof payload;
+    expect(restored.messages[0]?.content).toEqual(multiplePairsContent);
+    expect(verifyAnthropicHostedReplay(restored, [stored], 'claude-opus-5')).toBe(true);
+  });
+
+  it('restores a mixed generic server call and its result-only continuation across assistant messages', () => {
+    const first = captureAnthropicHostedReplay(genericServerSse)!;
+    const continuation = captureAnthropicHostedReplay(genericServerResultSse)!;
+    expect(first.content).toEqual(genericServerContent);
+    expect(continuation.content).toEqual(genericServerResultContent);
+
+    const storedFirst = assistantWith([
+      genericServerContent[0],
+      { type: 'toolCall', id: 'toolu_probe', name: 'probe', arguments: {} },
+    ], first);
+    const storedContinuation = assistantWith([{ type: 'text', text: 'Fetched.' }], continuation);
+    const payload = {
+      model: 'claude-opus-5',
+      messages: [
+        { role: 'assistant', content: [genericServerContent[0], { type: 'tool_use', id: 'toolu_probe', name: 'probe', input: {} }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_probe', content: 'ok' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Fetched.' }] },
+      ],
+      tools: [],
+    };
+    const restored = restoreAnthropicHostedReplay(payload, [storedFirst, storedContinuation], 'claude-opus-5') as typeof payload;
+    expect(restored.messages[0]?.content).toEqual(genericServerContent);
+    expect(restored.messages[2]?.content).toEqual(genericServerResultContent);
+    expect(verifyAnthropicHostedReplay(restored, [storedFirst, storedContinuation], 'claude-opus-5')).toBe(true);
   });
 
   it('preserves citations deltas in complete hosted responses', () => {

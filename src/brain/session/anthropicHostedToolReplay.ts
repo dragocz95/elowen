@@ -7,7 +7,6 @@ import { logger } from '../../shared/logger.js';
 const log = logger('anthropic-hosted-replay');
 const META_KEY = 'anthropicHostedToolReplay';
 const REPLAY_VERSION = 1;
-const SERVER_BLOCK_TYPES = new Set(['server_tool_use', 'tool_search_tool_result']);
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
 type JsonObject = Record<string, unknown>;
@@ -32,6 +31,12 @@ function record(value: unknown): JsonObject | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as JsonObject
     : undefined;
+}
+
+export function isAnthropicServerOwnedBlock(value: unknown): boolean {
+  const type = record(value)?.type;
+  return type === 'server_tool_use'
+    || (typeof type === 'string' && type !== 'tool_result' && type.endsWith('_tool_result'));
 }
 
 function clone<T>(value: T): T {
@@ -157,7 +162,7 @@ class AnthropicSseCapture {
       throw new Error('Anthropic SSE event was not an object');
     }
     const startedContent = event.type === 'content_block_start' ? record(event.content_block) : undefined;
-    if (startedContent && SERVER_BLOCK_TYPES.has(String(startedContent.type))) this.sawHostedContent = true;
+    if (startedContent && isAnthropicServerOwnedBlock(startedContent)) this.sawHostedContent = true;
     // Once syntax/lifecycle safety is lost, metadata is irrecoverable, but keep parsing later complete frames
     // solely to learn whether hosted content occurred and the next provider boundary must be blocked.
     if (this.abandoned) return;
@@ -227,7 +232,7 @@ function replayMetadata(message: unknown): AnthropicHostedReplayMetadata | undef
   if (meta?.v !== REPLAY_VERSION || !Array.isArray(meta.content)) return undefined;
   const content = meta.content.map(record);
   if (content.some((block) => !block)
-    || !content.some((block) => SERVER_BLOCK_TYPES.has(String(block?.type)))
+    || !content.some(isAnthropicServerOwnedBlock)
     || !hasCompleteToolSearchPairs(content as JsonObject[])) return undefined;
   return { v: REPLAY_VERSION, content: content as JsonObject[] };
 }
@@ -241,10 +246,12 @@ function normalizedKnownContent(content: readonly unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const raw of content) {
     const block = record(raw);
-    if (!block || typeof block.type !== 'string' || SERVER_BLOCK_TYPES.has(block.type)) continue;
+    if (!block || typeof block.type !== 'string' || isAnthropicServerOwnedBlock(block)) continue;
     if (block.type === 'text') {
       const text = typeof block.text === 'string' ? sanitizeSurrogates(block.text) : '';
       if (text.trim()) out.push({ type: 'text', text });
+    } else if (block.type === 'thinking' && block.redacted === true) {
+      out.push({ type: 'redacted_thinking', data: block.thinkingSignature ?? block.signature });
     } else if (block.type === 'thinking') {
       out.push({
         type: 'thinking',

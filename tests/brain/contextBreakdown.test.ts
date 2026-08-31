@@ -136,6 +136,7 @@ describe('resident context ownership', () => {
     const hosted = [
       { type: 'server_tool_use', id: 'srv_1', name: 'tool_search_tool_bm25', input: { query: 'x' } },
       { type: 'tool_search_tool_result', tool_use_id: 'srv_1', content: { type: 'tool_search_tool_search_result', tool_references: [] } },
+      { type: 'web_fetch_tool_result', tool_use_id: 'srv_web', content: { type: 'web_fetch_result', url: 'https://example.test' } },
     ];
     const message = assistant(0) as ContextMessage & { anthropicHostedToolReplay: unknown };
     message.anthropicHostedToolReplay = { v: 1, content: hosted };
