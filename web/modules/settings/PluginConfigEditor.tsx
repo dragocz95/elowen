@@ -576,13 +576,14 @@ const sliderCanonicalValue = (field: PluginConfigField, displayed: number): numb
 /** The record a {@link MODAL_FIELD_TYPES} field wears: a summary trigger in the control cell, and the
  *  real editor in a modal raised from it. The trigger is named after the FIELD, not after what is stored,
  *  so a card full of them still reads as a list of settings to a screen reader. */
-function ModalFieldRow({ label, description, hint, status, summary, fillsModal, trailingLayout, children }: {
+function ModalFieldRow({ label, description, hint, status, summary, fillsModal, trailingLayout, className, children }: {
   label: string;
   description?: string;
   hint?: string;
   status?: ReactNode;
   summary: string;
   trailingLayout?: 'inline' | 'stack';
+  className?: string;
   /** A Monaco surface takes the modal's whole height; a textarea or an entry list scrolls in the body. */
   fillsModal?: boolean;
   children: ReactNode;
@@ -597,6 +598,7 @@ function ModalFieldRow({ label, description, hint, status, summary, fillsModal, 
         hint={hint}
         status={status}
         trailingLayout={trailingLayout}
+        className={className}
         control={
           <Button
             type="button"
@@ -846,6 +848,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           // A risk badge plus a control are two trailing values. Let them wrap instead of letting their
           // combined min-content width overflow left across the label in narrow plugin cards.
           trailingLayout={risk ? 'stack' : undefined}
+          className={risk ? 'plugin-config-risk-row' : undefined}
           summary={editorSummary(f)}
           fillsModal={f.type === 'code' || f.type === 'prompt'}
         >
@@ -864,6 +867,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           hint={[help, t.pluginCfg.secretKeepHint].filter(Boolean).join(' ')}
           status={<span className="flex flex-wrap items-center gap-2">{risk}<Badge tone="success">{t.pluginCfg.secretSet}</Badge></span>}
           trailingLayout="stack"
+          className={risk ? 'plugin-config-risk-row' : undefined}
           actions={
             <Button type="button" variant="ghost" className="h-8" onClick={() => setReplacingSecrets((current) => new Set(current).add(f.key))}>
               {t.pluginCfg.secretReplace}
@@ -874,7 +878,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
     }
     if (f.type === 'secret' && replacingSecrets.has(f.key)) {
       return (
-        <SettingsRow key={f.key} label={label} description={description} hint={help} status={risk ?? undefined} trailingLayout={risk ? 'stack' : undefined}>
+        <SettingsRow key={f.key} label={label} description={description} hint={help} status={risk ?? undefined} trailingLayout={risk ? 'stack' : undefined} className={risk ? 'plugin-config-risk-row' : undefined}>
           <Input
             type="password"
             aria-label={label}
@@ -896,6 +900,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         hint={help}
         status={risk ?? undefined}
         trailingLayout={risk ? 'stack' : undefined}
+        className={risk ? 'plugin-config-risk-row' : undefined}
         control={renderField(f)}
       />
     );

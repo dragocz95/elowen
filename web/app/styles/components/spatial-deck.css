@@ -230,6 +230,13 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 .settings-row__trailing .settings-row__status { margin-top: 0; white-space: nowrap; }
 .settings-row__trailing .settings-row__control { min-width: 0; flex: 1 1 10rem; }
 .settings-row__trailing .settings-row__actions { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 0.5rem; }
+/* A translated risk badge plus a wide control (notably a three-option access-mode segment) can have a
+   combined min-content width larger than the whole plugin card. Right alignment then overflows LEFT,
+   directly across the field label. Only risk rows opt into this shape: the badge gets its own line and
+   the control keeps the full value column, while every ordinary inline settings record stays unchanged. */
+.settings-row.plugin-config-risk-row .settings-row__trailing { flex-wrap: wrap; }
+.settings-row.plugin-config-risk-row .settings-row__control { flex: 1 1 100%; width: 100%; }
+.settings-row.plugin-config-risk-row .settings-row__status { white-space: normal; }
 /* Legacy direct slots retain their tracks for plugin bundles compiled against the earlier anatomy. The
    descendant specificity intentionally matches the phone reset below, whose later rule must release it. */
 .settings-row__control { min-width: 0; grid-column: 2; }

@@ -84,6 +84,7 @@ describe('PluginConfigEditor field layout', () => {
     render(<Wrapper><RiskFixture /></Wrapper>);
 
     expect(screen.getByText('high').closest('.settings-row')).toHaveAttribute('data-trailing', 'stack');
+    expect(screen.getByText('high').closest('.settings-row')).toHaveClass('plugin-config-risk-row');
     expect(screen.getByText('Enabled').closest('.settings-row')).toHaveAttribute('data-trailing', 'inline');
   });
 });
