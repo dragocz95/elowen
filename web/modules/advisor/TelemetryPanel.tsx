@@ -42,9 +42,8 @@ import type { BrainGoal, ProcessInfo } from '../../lib/types';
  *  `size` is a plain square in pixels rather than a share of the rail. In the redesigned head the mascot
  *  sits BESIDE the status text instead of above it, so its box is what the header row is built around; a
  *  percentage-sized owl would re-flow that row on every drag. */
-function TelemetryMascot({ busy, size, showCommandCount = false }: { busy: boolean; size: number; showCommandCount?: boolean }) {
+function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
   const { t } = useTranslation();
-  const { commands } = useBrainChat();
   const [fieldOpen, setFieldOpen] = useState(false);
   const mascotRef = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
@@ -57,31 +56,20 @@ function TelemetryMascot({ busy, size, showCommandCount = false }: { busy: boole
   }, [fieldOpen]);
   return (
     <>
-      <span className="relative shrink-0">
-        <button
-          ref={mascotRef}
-          type="button"
-          data-testid="telemetry-mascot"
-          aria-label={t.brainChat.commandField.open}
-          title={t.brainChat.commandField.open}
-          aria-haspopup="dialog"
-          aria-expanded={fieldOpen}
-          onClick={() => setFieldOpen(true)}
-          style={{ width: size, height: size }}
-          className="block rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-        >
-          <MascotGlyph state={busy ? 'saving' : 'idle'} />
-        </button>
-        {showCommandCount && commands.length > 0 ? (
-          <span
-            data-testid="telemetry-command-count"
-            className="pointer-events-none absolute -right-1 -top-1 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 font-mono text-[8px] leading-4 text-primary-foreground"
-            aria-hidden
-          >
-            {commands.length > 99 ? '99+' : commands.length}
-          </span>
-        ) : null}
-      </span>
+      <button
+        ref={mascotRef}
+        type="button"
+        data-testid="telemetry-mascot"
+        aria-label={t.brainChat.commandField.open}
+        title={t.brainChat.commandField.open}
+        aria-haspopup="dialog"
+        aria-expanded={fieldOpen}
+        onClick={() => setFieldOpen(true)}
+        style={{ width: size, height: size }}
+        className="shrink-0 rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+      >
+        <MascotGlyph state={busy ? 'saving' : 'idle'} />
+      </button>
       {fieldOpen ? <CommandOrbit onClose={() => setFieldOpen(false)} /> : null}
     </>
   );
@@ -627,7 +615,7 @@ function TelemetryStub({ busy, onToggle }: { busy: boolean; onToggle?: () => voi
         </Button>
       ) : null}
       <div className="mt-2 shrink-0">
-        <TelemetryMascot busy={busy} size={32} showCommandCount />
+        <TelemetryMascot busy={busy} size={32} />
       </div>
       <Separator className="my-2 w-7 shrink-0" />
       <ScrollArea

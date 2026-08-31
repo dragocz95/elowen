@@ -761,7 +761,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     const search = document.querySelector<HTMLElement>('.top-bar__search')!;
     const searchIcon = search.querySelector<SVGElement>('svg')!;
     const skinButton = document.querySelector<HTMLElement>('.skin-switcher__button')!;
-    const skinLabel = skinButton.querySelector<HTMLElement>('.skin-switcher__name')!;
+    const skinIcon = skinButton.querySelector<SVGElement>('svg')!;
     const row = document.querySelector<HTMLElement>('.shell-workspace-row')!;
     const workspace = document.querySelector<HTMLElement>('.shell-workspace')!;
     const slot = document.querySelector<HTMLElement>('.studio-advisor-slot')!;
@@ -772,6 +772,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     const advisorText = advisor.querySelector<HTMLElement>('.chat-markdown')!;
     const navToggle = document.querySelector<HTMLElement>('.top-bar__nav-toggle')!;
     const searchStyle = getComputedStyle(search);
+    const skinStyle = getComputedStyle(skinButton);
     const rowStyle = getComputedStyle(row);
     const workspaceStyle = getComputedStyle(workspace);
     const navStyle = getComputedStyle(navElement);
@@ -798,9 +799,13 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
         inActions: search.closest('.top-bar__actions') !== null,
         icon: { width: searchIcon.getAttribute('width'), stroke: searchIcon.getAttribute('stroke-width') },
       },
-      skinHeight: Math.round(skinButton.getBoundingClientRect().height),
-      skinBorder: getComputedStyle(skinButton).borderTopWidth,
-      skinFont: getComputedStyle(skinLabel).fontSize,
+      skin: {
+        width: Math.round(skinButton.getBoundingClientRect().width),
+        height: Math.round(skinButton.getBoundingClientRect().height),
+        border: skinStyle.borderTopWidth,
+        radius: skinStyle.borderRadius,
+        icon: { width: skinIcon.getAttribute('width'), stroke: skinIcon.getAttribute('stroke-width') },
+      },
       bodyFont: getComputedStyle(document.body).fontFamily,
       workspace: {
         x: Math.round(workspaceBox.x),
@@ -846,9 +851,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     brandMarkWidth: shellRhythm.brandMarkWidth,
     brandName: shellRhythm.brandName,
     search: shellRhythm.search,
-    skinHeight: shellRhythm.skinHeight,
-    skinBorder: shellRhythm.skinBorder,
-    skinFont: shellRhythm.skinFont,
+    skin: shellRhythm.skin,
     workspace: shellRhythm.workspace,
     advisor: shellRhythm.advisor,
     advisorHeaderHeight: shellRhythm.advisorHeaderHeight,
@@ -868,9 +871,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     brandName: { display: 'none', size: '18px', family: shellRhythm.brandName.family },
     // Command search is one 32px glyph in the action cluster, not a field holding the middle of the bar.
     search: { width: 32, height: 32, border: '0px', inActions: true, icon: { width: '18', stroke: '1.5' } },
-    skinHeight: 32,
-    skinBorder: '1px',
-    skinFont: '13px',
+    skin: { width: 32, height: 32, border: '0px', radius: '6px', icon: { width: '18', stroke: '1.5' } },
     workspace: {
       x: 16,
       y: 16,

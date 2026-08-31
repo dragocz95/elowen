@@ -101,7 +101,8 @@ describe('chat telemetry panel', () => {
     // The desktop default is the compact instrument strip: every available section remains visible as an
     // icon/micro-meter, and the mascot keeps the command catalog reachable without claiming reading width.
     expect(await screen.findByTestId('telemetry-compact-context')).toHaveTextContent('21%');
-    expect(screen.getByTestId('telemetry-command-count')).toHaveTextContent('12');
+    expect(screen.getByRole('button', { name: 'Open the command field' })).toBeInTheDocument();
+    expect(screen.queryByTestId('telemetry-command-count')).toBeNull();
     expect(await screen.findByTestId('telemetry-compact-limit-0')).toHaveTextContent('64%');
     expect(screen.getByTestId('telemetry-compact-mcp')).toHaveTextContent('1/2');
     expect(screen.getByTestId('telemetry-compact-lsp')).toBeInTheDocument();
