@@ -97,6 +97,49 @@ describe('structured nested toolbar contributions', () => {
     expect(container.querySelector('.control-surface-toolbar')).toBeNull();
   });
 
+  it('renders a structured toolbar in place when no shell provider exists', () => {
+    render(
+      <LanguageProvider>
+        <ControlSurfaceToolbar search={<input aria-label="Bare search" />} filters={[statusField]} />
+      </LanguageProvider>,
+    );
+    expect(screen.getByRole('textbox', { name: 'Bare search' })).toBeInTheDocument();
+    expect(screen.getByTestId('page-filters-trigger')).toBeInTheDocument();
+  });
+
+  it('merges contributed slots without erasing shell-level controls', () => {
+    render(
+      <LanguageProvider>
+        <PageToolbarProvider>
+          <PageToolbar search={<input aria-label="Shell search" />} actions={<button type="button">Shell action</button>} />
+          <ControlSurfaceToolbar filters={[statusField]} />
+        </PageToolbarProvider>
+      </LanguageProvider>,
+    );
+    expect(screen.getByRole('textbox', { name: 'Shell search' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Shell action' })).toBeInTheDocument();
+    expect(screen.getByTestId('page-filters-trigger')).toBeInTheDocument();
+  });
+
+  it('keeps the first mounted active contribution stable across sibling rerenders', () => {
+    const Panels = ({ first, secondLabel }: { first: boolean; secondLabel: string }) => (
+      <LanguageProvider>
+        <PageToolbarProvider>
+          <PageToolbar />
+          {first ? <ControlSurfaceToolbar search={<input aria-label="First search" />} filters={[]} /> : null}
+          <ControlSurfaceToolbar search={<input aria-label={secondLabel} />} filters={[]} />
+        </PageToolbarProvider>
+      </LanguageProvider>
+    );
+    const { rerender } = render(<Panels first secondLabel="Second search" />);
+    expect(screen.getByRole('textbox', { name: 'First search' })).toBeInTheDocument();
+    rerender(<Panels first secondLabel="Second search updated" />);
+    expect(screen.getByRole('textbox', { name: 'First search' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Second search updated' })).toBeNull();
+    rerender(<Panels first={false} secondLabel="Second search updated" />);
+    expect(screen.getByRole('textbox', { name: 'Second search updated' })).toBeInTheDocument();
+  });
+
   it('lets a hidden retained contribution release the row to the visible panel', () => {
     const Panels = ({ active }: { active: 'first' | 'second' }) => (
       <LanguageProvider>

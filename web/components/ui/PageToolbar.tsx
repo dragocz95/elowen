@@ -55,15 +55,24 @@ export function PageToolbarScope({ active, children }: { active: boolean; childr
 export function PageToolbarProvider({ children }: { children: ReactNode }) {
   const [host, setHostState] = useState<HTMLElement | null>(null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
-  const [contribution, setContribution] = useState<PageToolbarContributionValue | null>(null);
+  const [contributions, setContributions] = useState<PageToolbarContributionValue[]>([]);
   const claim = useCallback((id: string) => setOwnerId((current) => current ?? id), []);
   const release = useCallback((id: string) => setOwnerId((current) => current === id ? null : current), []);
   const setHost = useCallback((node: HTMLElement | null) => setHostState(node), []);
   const registerContribution = useCallback((id: string, props: PageToolbarProps) => {
-    setContribution((current) => current && current.ownerId !== id ? current : { ownerId: id, props });
+    setContributions((current) => {
+      const index = current.findIndex((entry) => entry.ownerId === id);
+      if (index < 0) return [...current, { ownerId: id, props }];
+      const previous = current[index]!.props;
+      if (previous.search === props.search && previous.filters === props.filters
+        && previous.actions === props.actions && previous.children === props.children) return current;
+      return current.map((entry, entryIndex) => entryIndex === index ? { ownerId: id, props } : entry);
+    });
   }, []);
   const releaseContribution = useCallback((id: string) => {
-    setContribution((current) => current?.ownerId === id ? null : current);
+    setContributions((current) => current.some((entry) => entry.ownerId === id)
+      ? current.filter((entry) => entry.ownerId !== id)
+      : current);
   }, []);
   const value = useMemo(() => ({ host, ownerId, claim, release, setHost }), [host, ownerId, claim, release, setHost]);
   const contributionRegistry = useMemo(() => ({
@@ -73,7 +82,7 @@ export function PageToolbarProvider({ children }: { children: ReactNode }) {
   return (
     <PageToolbarSlotContext.Provider value={value}>
       <PageToolbarContributionRegistryContext.Provider value={contributionRegistry}>
-        <PageToolbarContributionContext.Provider value={contribution}>
+        <PageToolbarContributionContext.Provider value={contributions[0] ?? null}>
           {children}
         </PageToolbarContributionContext.Provider>
       </PageToolbarContributionRegistryContext.Provider>
@@ -119,6 +128,9 @@ export function PageToolbarContribution({ search, filters, actions, children }: 
     else registry?.release(id);
     return () => registry?.release(id);
   }, [active, contribution, id, registry]);
+  // Bare plugin mounts have no WorkspaceShell provider. Match PageToolbarPortal's fail-open behaviour:
+  // the controls stay usable in place rather than disappearing because there is nowhere to contribute.
+  if (!registry) return active ? <PageToolbar {...contribution} /> : null;
   return null;
 }
 
@@ -137,8 +149,13 @@ export interface PageToolbarProps {
 /** The row itself. Always mounted by the shell, because it carries the portal slot even on a page that
  *  passes it nothing; `page-toolbar.css` collapses a row whose every part is empty. */
 export function PageToolbar(props: PageToolbarProps) {
-  const contribution = useContext(PageToolbarContributionContext);
-  const { search, filters, actions, children } = contribution?.props ?? props;
+  const contribution = useContext(PageToolbarContributionContext)?.props;
+  // A nested panel replaces only the slots it explicitly publishes. This keeps a shell-level action or
+  // search intact when the panel contributes a different axis, while []/null remain deliberate clears.
+  const search = contribution?.search !== undefined ? contribution.search : props.search;
+  const filters = contribution?.filters !== undefined ? contribution.filters : props.filters;
+  const actions = contribution?.actions !== undefined ? contribution.actions : props.actions;
+  const children = contribution?.children !== undefined ? contribution.children : props.children;
   // Not merely an optimisation, and not a second copy of `PageFilters`' own empty-set rule: the filter
   // control reads the dictionary, and the shell mounts this row on EVERY page. Rendering it for a page
   // that declares no filters would make `LanguageProvider` a hard requirement of the canonical shell in

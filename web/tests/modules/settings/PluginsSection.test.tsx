@@ -75,12 +75,13 @@ describe('PluginsSection catalog', () => {
     expect(screen.queryByTestId('page-filter-chips')).toBeNull();
   });
 
-  it('uses the shared settings document, group and toolbar grammar', () => {
+  it('uses the shared settings document, group and canonical page toolbar grammar', () => {
     usePlugins.mockReturnValue({ data: [plugin({ name: 'files' })], isLoading: false });
     const { container } = renderSection();
     expect(container.querySelectorAll('[data-settings-document]')).toHaveLength(1);
     expect(container.querySelector('[data-settings-group]')).toBeInTheDocument();
-    expect(container.querySelector('.settings-toolbar')).toBeInTheDocument();
+    expect(container.querySelector('.page-toolbar')).toBeInTheDocument();
+    expect(container.querySelector('.settings-toolbar')).not.toBeInTheDocument();
     expect(container.querySelector('.page-frame')).not.toBeInTheDocument();
     expect(container.querySelector('[data-testid="installed-plugins-list"]')).not.toHaveClass('border-y');
   });
