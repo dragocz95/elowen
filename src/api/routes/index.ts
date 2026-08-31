@@ -4,6 +4,7 @@ import { registerAuthRoutes } from './auth.js';
 import { registerAuthSsoRoutes } from './authSso.js';
 import { registerProjectRoutes } from './projects.js';
 import { registerActivityRoutes } from './activity.js';
+import { registerDashboardRoutes } from './dashboard.js';
 import { registerBrainRoutes } from './brain.js';
 import { registerConfigRoutes } from './config.js';
 import { registerPluginRoutes } from './plugins/index.js';
@@ -23,6 +24,7 @@ export function registerRoutes(app: ElowenApp, ctx: RouteContext): void {
   registerUsageRoutes(app, ctx);
   registerProjectRoutes(app, ctx);
   registerActivityRoutes(app, ctx);
+  registerDashboardRoutes(app, ctx);
   registerBrainRoutes(app, ctx);
   registerConfigRoutes(app, ctx);
   // BEFORE the admin plugin family: `/plugins/ui` must win over its `/plugins/:name` param route (Hono

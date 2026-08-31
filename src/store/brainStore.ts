@@ -1156,6 +1156,28 @@ export class BrainStore {
     this.delegation.noteSubagentResultFailure(parentSessionId, resultId);
   }
 
+  /** The user's OWN words in one conversation inside a UTC window — the dashboard digest's transcript
+   *  sample. Bounded per session and read through idx_brain_messages_session (never a full-table scan;
+   *  tests/store/dashDigestPlan.test.ts pins the plan). Synthetic meta rows (memory recall injections)
+   *  are skipped — they are the daemon talking to the model, not the user talking. */
+  userMessagesBetween(sessionId: string, fromIso: string, toIso: string, limit: number): string[] {
+    const rows = this.db.prepare(
+      `SELECT content FROM brain_messages
+        WHERE session_id = ? AND role = 'user' AND created_at >= ? AND created_at < ?
+        ORDER BY rowid DESC LIMIT ?`
+    ).all(sessionId, fromIso, toIso, Math.max(1, limit)) as { content: string }[];
+    const out: string[] = [];
+    for (const r of rows) {
+      try {
+        const parsed = JSON.parse(r.content) as { isMeta?: boolean };
+        if (parsed && typeof parsed === 'object' && parsed.isMeta) continue;
+        const text = extractText(parsed).trim();
+        if (text) out.push(text);
+      } catch { /* non-JSON legacy row — not a user utterance we can quote */ }
+    }
+    return out.reverse(); // oldest first, the order a reader expects
+  }
+
   /** Case-insensitive fulltext search across the user's OWN chat conversations. Shared platform
    *  sessions (`brain-ch-*`, which carry other members' messages) are excluded — the search backs the
    *  personal chat sidebar, not the Discord logs.
