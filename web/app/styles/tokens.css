@@ -25,7 +25,9 @@
    the built-in design separates them by 6/255 — in both, a hover expressed as a surface step is
    invisible. A skin may collapse the surface ramp; it may not lower text contrast, so a wash of the text
    colour reads on every design by construction. */
-@theme {
+/* Plugin charts pass token names through runtime props, which Tailwind's source scanner cannot see.
+   Keep the design vocabulary static so those public runtime tokens survive CSS tree-shaking. */
+@theme static {
   /* OLED Ember: true black canvas, warm near-black surfaces, one unmistakable Elowen ember. */
   --color-background: #000000;
   --color-foreground: #f7f3f0;

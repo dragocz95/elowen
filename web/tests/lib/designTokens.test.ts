@@ -44,6 +44,15 @@ function declarations(css: string): Record<string, string> {
 
 const baseTokens = declarations(tokensCss);
 
+describe('runtime token emission', () => {
+  it('keeps the theme static because plugin chart colours are passed through runtime props', () => {
+    expect(stripComments(tokensCss)).toMatch(/@theme\s+static\s*\{/);
+    for (let index = 1; index <= 5; index += 1) {
+      expect(baseTokens[`--color-chart-${index}`]).toBeTruthy();
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------------------------------
 // WCAG contrast
 // ---------------------------------------------------------------------------------------------------
