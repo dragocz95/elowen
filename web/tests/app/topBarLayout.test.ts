@@ -14,6 +14,8 @@ describe('chat top bar responsive ownership', () => {
     expect(topBarSource).toContain('data-chat-controls-narrow');
     expect(topBarSource).toMatch(/!barMeasured \|\| barWidth <= CHAT_BAR_WIDE_MIN/);
     expect(css).toMatch(/\.top-bar--bar\[data-chat-controls-narrow\][^{]*chat-page-toolbar__wide-controls[^}]*display: none/);
+    expect(css).toMatch(/\.top-bar--bar\[data-chat-controls-narrow\][^{]*:is\([^}]*top-bar__search[^}]*top-bar__logout[^}]*skin-switcher__name[^}]*language-switcher__name[^}]*display: none/);
+    expect(languageSwitcherSource).toContain('language-switcher__name');
     expect(css).not.toMatch(/\.top-bar--bar\s*\{[^}]*container(?:-type)?\s*:/);
     expect(css).not.toContain('@container top-bar');
   });

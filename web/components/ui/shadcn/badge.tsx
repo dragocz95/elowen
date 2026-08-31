@@ -33,7 +33,7 @@ const badgeVariants = cva(
         // failed, deprecated — is a state on a row rather than a call to action, and a row of solid chips
         // reads as a row of buttons. The soft form states the same colour at a tenth of the emphasis, and
         // `success` / `warning` have no shadcn variant at all.
-        'soft-primary': 'border-primary/40 bg-primary/10 text-primary',
+        'soft-primary': 'border-primary/40 bg-primary/10 text-foreground',
         'soft-destructive': 'border-destructive/40 bg-destructive/10 text-destructive',
         'soft-success': 'border-success/40 bg-success/10 text-success',
         'soft-warning': 'border-warning/40 bg-warning/10 text-warning',
