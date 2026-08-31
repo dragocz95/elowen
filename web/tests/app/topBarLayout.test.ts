@@ -16,6 +16,12 @@ describe('chat top bar responsive ownership', () => {
     expect(css).not.toContain('@container top-bar');
   });
 
+  it('keeps theme, language and account visible on phones without crowding them with secondary actions', () => {
+    expect(topBarSource).not.toContain("top-bar__actions ml-auto flex shrink-0 items-center gap-0.5 max-[767px]:hidden");
+    expect(topBarSource).toContain("bar ? 'w-8 max-[767px]:hidden'");
+    expect(topBarSource).toContain('top-bar__logout flex w-9 items-center justify-center disabled:opacity-50 max-[767px]:hidden');
+  });
+
   it('lets a mobile toolbar action group shrink and wrap inside its row', () => {
     const rule = toolbarCss.match(/\.page-toolbar__actions\s*\{([^}]*)\}/)?.[1] ?? '';
     expect(rule).toMatch(/max-width:\s*100%/);

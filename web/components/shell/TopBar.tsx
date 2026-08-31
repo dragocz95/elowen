@@ -146,7 +146,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
           not a stylesheet's: a skin that had to un-pill this cluster from outside was overriding four
           declarations to undo four others. */}
       <div className={bar
-        ? 'top-bar__actions ml-auto flex shrink-0 items-center gap-0.5 max-[767px]:hidden'
+        ? 'top-bar__actions ml-auto flex shrink-0 items-center gap-0.5'
         : 'top-bar__actions ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-background/45 p-1 backdrop-blur-xl'}>
         {/* Command search is a control among the others, never a field of its own. A named input parked in
             the middle of the bar claimed the widest slot in the app's chrome for something reached by
@@ -159,7 +159,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
           aria-label={t.common.openCommandPalette}
           title={`${t.common.openCommandPalette} · ⌘K`}
           aria-keyshortcuts="Control+K Meta+K"
-          className={`top-bar__search group flex items-center justify-center ${bar ? 'w-8' : 'gap-2 px-2.5'} ${control}`}
+          className={`top-bar__search group flex items-center justify-center ${bar ? 'w-8 max-[767px]:hidden' : 'gap-2 px-2.5'} ${control}`}
         >
           <Search size={bar ? 18 : 17} strokeWidth={bar ? 1.5 : undefined} aria-hidden />
           {!bar ? <span className="hidden font-mono text-[10px] tracking-wide text-muted-foreground/70 lg:inline">⌘K</span> : null}
@@ -172,13 +172,13 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
             disabled={signingOut}
             aria-label={t.common.logout}
             title={t.common.logout}
-            className={`flex w-9 items-center justify-center disabled:opacity-50 ${control}`}
+            className={`top-bar__logout flex w-9 items-center justify-center disabled:opacity-50 max-[767px]:hidden ${control}`}
           >
             <LogOut size={18} strokeWidth={1.5} aria-hidden />
           </button>
         ) : null}
         <SkinSwitcher collapsed={Boolean(onMenuClick)} />
-      <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
+        <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
         <Link
           href="/account"
           className="top-bar__identity ml-0.5 flex items-center rounded-full ring-primary/30 transition-[opacity,box-shadow] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2"

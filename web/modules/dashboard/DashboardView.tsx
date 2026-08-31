@@ -102,7 +102,7 @@ export function DashboardView() {
       {/* Today at a glance: the only permanent figures on the page. One flat row that scrolls on a
           phone instead of wrapping the hero further down. `pt-4` is the shell's own rhythm (ModuleShell
           gap) — the strip reads as the page's first line, not as part of the app bar above it. */}
-      <div className="flex items-center gap-4 border-b border-border pb-3 pt-4">
+      <div className="flex items-center gap-4 border-b border-border px-4 pb-3 pt-4 md:px-0">
         <div role="list" aria-label={t.dashboard.stripLabel} className="flex min-w-0 items-baseline gap-5 overflow-x-auto whitespace-nowrap [scrollbar-width:none] @sm:gap-8">
           <span role="listitem" className="flex shrink-0 items-baseline gap-1.5">
             <b className="font-mono text-[13.5px] font-semibold tabular-nums text-foreground">{totals?.turns ?? '—'}</b>
@@ -129,7 +129,7 @@ export function DashboardView() {
         </span>
       </div>
 
-      <section aria-labelledby="dash-greeting" className="mx-auto w-full max-w-3xl pt-[clamp(3.5rem,13dvh,9rem)] text-center">
+      <section aria-labelledby="dash-greeting" className="mx-auto w-full max-w-3xl px-4 pt-10 text-center sm:px-0 sm:pt-[clamp(3.5rem,13dvh,9rem)]">
         <MotionReveal>
           <h1 id="dash-greeting" className="text-[clamp(2.15rem,4.8vw,4.3rem)] font-semibold leading-[1.06] tracking-[-0.03em] text-foreground">
             {greeting}{firstName ? `, ${firstName}` : ''}<span aria-hidden className="text-primary">.</span>
@@ -184,7 +184,7 @@ export function DashboardView() {
       {/* Progressive disclosure: at most one panel, mounted only while it is open — which is what keeps
           the feed, the gauges and the ring charts (and their queries) off the first paint. */}
       {open ? (
-        <MotionReveal className="mx-auto mt-5 w-full max-w-4xl pb-10">
+        <MotionReveal className="mx-auto mt-5 w-full max-w-4xl px-4 pb-10 md:px-0">
           <div
             id={`dash-panel-${open}`}
             ref={panelRef}
