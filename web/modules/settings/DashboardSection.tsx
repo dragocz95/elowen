@@ -79,7 +79,10 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
 
   if (!config) return <LoadingState />;
 
-  const providers = config.brain?.providers ?? [];
+  // OAuth accounts (Claude/Codex) carry no API key, so the digest's background RelayClient cannot
+  // authenticate with them — offering one would configure a digest that silently never generates.
+  // Same exclusion the embedding picker applies, for the same reason.
+  const providers = (config.brain?.providers ?? []).filter((p) => !p.type.startsWith('oauth-'));
   const digestStatus = recap.data?.digest?.status;
   const statusBadge = digestStatus === 'ready'
     ? <Badge tone="accent">{t.settings.dashboardSection.statusReady}</Badge>
