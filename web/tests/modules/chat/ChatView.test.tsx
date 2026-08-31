@@ -69,9 +69,11 @@ function renderChat(node: ReactNode) {
 describe('ChatView (/chat page)', () => {
   it('hosts the full surface off ONE controller / ONE EventSource, history hidden by default', async () => {
     renderChat(<ChatView />);
-    // The full composer (the surface) mounts; the conversation list stays hidden until the drawer opens
-    // (only the ACTIVE conversation's title shows in the header — a non-active list row must not render).
+    // The full composer mounts; conversation names stay in the history surface rather than consuming the
+    // narrow page toolbar. Neither the active nor an inactive row renders until history is opened.
     expect(await screen.findByPlaceholderText(/Write a message|Napište zprávu/i)).toBeInTheDocument();
+    expect(document.querySelector('.chat-page-toolbar__title')).toBeNull();
+    expect(screen.queryByText('First chat')).toBeNull();
     expect(screen.queryByText('Second chat')).toBeNull();
     // …and exactly one stream is opened (no second controller / no reconnect).
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
