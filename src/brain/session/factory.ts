@@ -62,6 +62,8 @@ export interface SessionSpec {
   sessionId: string;
   /** Mid-turn memory recall, when the caller wants it for this session. */
   liveRecall?: LiveRecallOptions;
+  /** Live `/skill:name` expansion; avoids PI's stale session-start skills snapshot. */
+  skillCommandExtension?: (pi: ExtensionAPI) => void;
   /** The Elowen user the store row belongs to. */
   ownerUserId: number;
   /** Parent conversation for delegated sessions; persisted for usage/navigation. */
@@ -195,6 +197,8 @@ export interface BrainResourceLoaderOptions {
   remoteCompactionUsable: () => boolean;
   /** Recall memories again mid-turn, searching from the work rather than the opening message. */
   liveRecall?: LiveRecallOptions;
+  /** Live `/skill:name` expansion; avoids PI's stale session-start skills snapshot. */
+  skillCommandExtension?: (pi: ExtensionAPI) => void;
   /** Provider-payload hashes (Anthropic or OpenAI Responses shape) consumed by cacheWatch after each
    *  response. */
   cacheMonitor?: CachePayloadMonitor;
@@ -527,6 +531,7 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         ...(o.hostedToolSearch?.provider === 'anthropic'
           ? [((modelId) => (pi: ExtensionAPI): void => { installAnthropicHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
           : []),
+        ...(o.skillCommandExtension ? [o.skillCommandExtension] : []),
         ...(o.liveRecall ? [((recall) => (pi: ExtensionAPI): void => { installLiveRecall(pi, recall); })(o.liveRecall)] : []),
         ...(o.sanitizePaths ? [providerPathScrubber(o.sanitizePaths)] : []),
         // Before observability and cache breakpoints so both see/hash the exact final request. Restoring raw
@@ -682,6 +687,7 @@ export class BrainSessionFactory {
       remoteCompactionExtension: remoteCompaction?.extension,
       remoteCompactionUsable,
       requestProfile: spec.requestProfile, settingsManager,
+      ...(spec.skillCommandExtension ? { skillCommandExtension: spec.skillCommandExtension } : {}),
       ...(spec.liveRecall ? { liveRecall: spec.liveRecall } : {}),
       ...(cacheMonitor ? { cacheMonitor } : {}),
       ...(spec.model.provider === 'anthropic' ? { cacheBreakpoints: true } : {}),

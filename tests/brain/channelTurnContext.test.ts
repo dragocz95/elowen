@@ -11,9 +11,10 @@ import { openDb } from '../../src/store/db.js';
 import { CardRegistry } from '../../src/brain/cards.js';
 import type { BrainEvent } from '../../src/brain/events.js';
 import type { PluginHook } from '../../src/plugins/api.js';
+import { PluginRegistry } from '../../src/plugins/registry.js';
 
 /** Same minimal fake LiveBrain the other channel suites use — only what send() touches. */
-function fakeBrain(sessionId: string) {
+function fakeBrain(sessionId: string, contributionUserId?: number) {
   const messages: { role?: string; content?: unknown }[] = [];
   const session = {
     isStreaming: false,
@@ -29,7 +30,7 @@ function fakeBrain(sessionId: string) {
   };
   const listeners = new Set<(e: BrainEvent) => void>();
   return {
-    session, sessionId, ownerUserId: 1, model: 'kimi', thinkingLevel: undefined as string | undefined,
+    session, sessionId, ownerUserId: 1, contributionUserId, model: 'kimi', thinkingLevel: undefined as string | undefined,
     providerId: 'moonshot', direct: false, requestProfile: { fast: false }, fastAvailable: false,
     thinkingLabels: {}, pluginToolNames: new Set<string>(),
     turnSender: undefined as number | undefined, interactedAt: undefined as number | undefined,
@@ -43,11 +44,11 @@ function setup(deps: Record<string, unknown> = {}, channelId = 'discord-ctx') {
   const store = new BrainStore(openDb(':memory:'));
   const registry = new LiveSessionRegistry<Brain>();
   const cards = new CardRegistry(() => store);
-  const spawn = vi.fn(async (o: { sessionId: string; ownerUserId: number }) => {
+  const spawn = vi.fn(async (o: { sessionId: string; ownerUserId: number; direct?: boolean; contributionUserId?: number }) => {
     if (!store.getSession(o.sessionId)) {
       store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
     }
-    return fakeBrain(o.sessionId);
+    return fakeBrain(o.sessionId, o.contributionUserId ?? (o.direct ? o.ownerUserId : undefined));
   });
   const svc = new ChannelSessionService({
     registry, store, cards, users: { get: () => ({ username: 'o' }) }, spawn, ...deps,
@@ -75,8 +76,10 @@ describe('a channel turn carries the same per-turn context as an owner chat', ()
         hooks,
         hookOwners: ['calendar'],
         pluginCapabilities: new Map([['calendar', { mutates: ['turnContext'] }]]),
-        // A room announces its available skills with every turn, so the registry is asked for them on the
-        // same path as the hook. No skills here — this test is about the hook block alone.
+        toolOwner: new Map(),
+        toolsFor: () => [],
+        // A room resolves its available skills with every turn. No skills here — this test is about the
+        // hook block alone.
         skillsFor: () => [],
       }),
     });
@@ -92,7 +95,10 @@ describe('a channel turn carries the same per-turn context as an owner chat', ()
   });
 
   it('leaves the prompt alone when no plugin contributes anything', async () => {
-    const { svc, opts, promptOf } = setup({ plugins: async () => ({ hooks: [], hookOwners: [], pluginCapabilities: new Map(), skillsFor: () => [] }) });
+    const { svc, opts, promptOf } = setup({ plugins: async () => ({
+      hooks: [], hookOwners: [], pluginCapabilities: new Map(), toolOwner: new Map(),
+      toolsFor: () => [], skillsFor: () => [],
+    }) });
 
     await svc.send(opts, 'plain question');
 
@@ -154,77 +160,100 @@ describe('a channel turn carries the same per-turn context as an owner chat', ()
   });
 });
 
-/** The skill announcement is the one block a shared room cannot put in its cached system prompt, because
- *  the writer — and so the personal skills the turn may load — changes between turns. It was therefore
- *  re-sent whole with EVERY message, measured at 4525 characters a turn, saying the same thing to the
- *  same person over and over. It is ambient (a statement of what this turn can do, not an instruction),
- *  so a room now re-announces only when the announcement actually changed. */
-describe('a room announces its skills only when the announcement changed', () => {
-  const skill = (name: string) => ({
-    name,
-    description: `does ${name}`,
-    filePath: `/skills/${name}/SKILL.md`,
-    baseDir: `/skills/${name}`,
-    sourceInfo: { source: 'plugin', scope: 'user' },
-    disableModelInvocation: false,
-  });
-  /** Per-account skill sets, so a change of writer is a change of announcement. */
-  const registryFor = (byUser: Record<number, string[]>) => ({
-    hooks: [], hookOwners: [], pluginCapabilities: new Map(),
-    skillsFor: (userId: number | null) => (userId == null ? [] : (byUser[userId] ?? []).map(skill)),
-  });
+/** Shared organization rooms intentionally carry each verified writer's granted tools in one conversation.
+ *  The catalog is therefore resolved per turn from the same real registry predicates as execution, while the
+ *  ambient digest avoids paying for an unchanged block on every message. */
+describe('a shared room resolves sibling skills for the current writer', () => {
+  const plugins = new PluginRegistry();
+  plugins.contextFor('skills', {}, { info() {}, warn() {}, error() {} }).registerTool({
+    name: 'SkillLoad', label: 'Load skill', description: 'Load a skill',
+  } as never);
+  plugins.setUserGrantable('skills', true);
+  plugins.contextFor('raynet', {}, { info() {}, warn() {}, error() {} }).registerSkill({
+    name: 'raynet-crm', description: 'work in Raynet', filePath: '/skills/raynet/SKILL.md', baseDir: '/skills/raynet',
+    sourceInfo: { source: 'plugin', scope: 'user' }, disableModelInvocation: false,
+  } as never);
+  plugins.setUserGrantable('raynet', true);
+  const grants = new Map<number, string[]>([
+    [7, ['skills', 'raynet']],
+    [8, ['skills']],
+    [9, ['skills', 'raynet']],
+  ]);
 
-  it('sends the block on the first turn and omits it on the next', async () => {
-    const { svc, opts, promptOf } = setup(
-      { plugins: async () => registryFor({ 7: ['invoices'] }), users: { get: () => ({ username: 'amy' }) } },
-      'discord-skills-repeat',
-    );
+  it('changes the announcement with the writer and re-announces it after compaction', async () => {
+    const { store, svc, sessionId, opts, promptOf } = setup({
+      plugins: async () => plugins,
+      users: { get: (id: number) => ({ username: `user-${id}`, is_admin: false, granted_plugins: grants.get(id) ?? [] }) },
+    }, 'msteams-shared-skills');
 
     await svc.send({ ...opts, writerUserId: 7 }, 'first');
     expect(promptOf()).toContain('<available_skills>');
-    expect(promptOf()).toContain('invoices');
+    expect(promptOf()).toContain('raynet-crm');
 
     await svc.send({ ...opts, writerUserId: 7 }, 'second');
     expect(promptOf()).not.toContain('<available_skills>');
-    // The user's own words are untouched — only the ambient block above them is gone.
-    expect(promptOf()).toContain('second');
-  });
 
-  it('announces again when a different member writes', async () => {
-    const { svc, opts, promptOf } = setup(
-      { plugins: async () => registryFor({ 7: ['invoices'], 8: ['rosters'] }), users: { get: () => ({ username: 'amy' }) } },
-      'discord-skills-writer',
-    );
+    await svc.send({ ...opts, writerUserId: 8 }, 'without raynet');
+    expect(promptOf()).not.toContain('raynet-crm');
 
-    await svc.send({ ...opts, writerUserId: 7 }, 'first');
-    expect(promptOf()).toContain('invoices');
-    await svc.send({ ...opts, writerUserId: 7 }, 'second');
-    expect(promptOf()).not.toContain('<available_skills>');
-
-    // A different account authorises a different set: announcing the previous writer's would be both
-    // wrong and a leak, and saying nothing would leave this member's skills unmentioned entirely.
-    await svc.send({ ...opts, writerUserId: 8 }, 'my turn');
-    expect(promptOf()).toContain('<available_skills>');
-    expect(promptOf()).toContain('rosters');
-    expect(promptOf()).not.toContain('invoices');
-  });
-
-  it('announces again after a compaction took the announcement with it', async () => {
-    const { store, svc, sessionId, opts, promptOf } = setup(
-      { plugins: async () => registryFor({ 7: ['invoices'] }), users: { get: () => ({ username: 'amy' }) } },
-      'discord-skills-compacted',
-    );
-
-    await svc.send({ ...opts, writerUserId: 7 }, 'first');
-    await svc.send({ ...opts, writerUserId: 7 }, 'second');
-    expect(promptOf()).not.toContain('<available_skills>');
+    await svc.send({ ...opts, writerUserId: 9 }, 'with raynet');
+    expect(promptOf()).toContain('raynet-crm');
 
     store.appendMessage({
       id: 'div-skills', sessionId, parentId: null, role: 'compaction', content: { role: 'compactionSummary' },
     });
-
-    await svc.send({ ...opts, writerUserId: 7 }, 'third');
+    await svc.send({ ...opts, writerUserId: 9 }, 'after compaction');
     expect(promptOf()).toContain('<available_skills>');
+    expect(promptOf()).toContain('raynet-crm');
+  });
+});
+
+describe('direct platform chats resolve sibling skills through real plugin grants', () => {
+  const user = (granted_plugins: string[]) => ({ username: 'amy', is_admin: false, granted_plugins });
+  const registry = () => {
+    const plugins = new PluginRegistry();
+    plugins.contextFor('skills', {}, { info() {}, warn() {}, error() {} }).registerTool({
+      name: 'SkillLoad', label: 'Load skill', description: 'Load a skill',
+    } as never);
+    plugins.setUserGrantable('skills', true);
+    plugins.contextFor('raynet', {}, { info() {}, warn() {}, error() {} }).registerSkill({
+      name: 'raynet-crm', description: 'work in Raynet', filePath: '/skills/raynet/SKILL.md', baseDir: '/skills/raynet',
+      sourceInfo: { source: 'plugin', scope: 'user' }, disableModelInvocation: false,
+    } as never);
+    plugins.setUserGrantable('raynet', true);
+    return plugins;
+  };
+  const send = async (platform: string, grants: string[], toolPolicy?: { deny: Set<string> }) => {
+    const plugins = registry();
+    const { svc, opts, promptOf } = setup({
+      plugins: async () => plugins,
+      users: { get: (id: number) => id === 7 ? user(grants) : { username: 'owner', is_admin: true, granted_plugins: [] } },
+    }, `${platform}-skills-direct`);
+    await svc.send({ ...opts, ownerUserId: 7, direct: true, writerUserId: 7, ...(toolPolicy ? { toolPolicy } : {}) }, 'first');
+    return promptOf();
+  };
+
+  for (const platform of ['msteams', 'discord', 'telegram', 'whatsapp']) {
+    it(`announces a sibling plugin skill in a ${platform} DM when both plugins are granted`, async () => {
+      const prompt = await send(platform, ['skills', 'raynet']);
+      expect(prompt).toContain('<available_skills>');
+      expect(prompt).toContain('raynet-crm');
+    });
+  }
+
+  it('announces nothing when the writer lacks the skills plugin grant', async () => {
+    expect(await send('msteams', ['raynet'])).not.toContain('<available_skills>');
+  });
+
+  it('does not expose the sibling skill when that plugin is not granted', async () => {
+    const prompt = await send('discord', ['skills']);
+    expect(prompt).not.toContain('raynet-crm');
+    expect(prompt).not.toContain('<available_skills>');
+  });
+
+  it('announces nothing when the live tool policy disables SkillLoad', async () => {
+    expect(await send('telegram', ['skills', 'raynet'], { deny: new Set(['SkillLoad']) }))
+      .not.toContain('<available_skills>');
   });
 });
 

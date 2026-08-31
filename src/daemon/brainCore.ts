@@ -2,7 +2,7 @@ import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import type { PluginHostPush, PluginUserView } from '../plugins/api.js';
-import { runWithContributionUser } from '../plugins/policyContext.js';
+import { currentContributionUserId, runWithContributionUser } from '../plugins/policyContext.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -617,6 +617,13 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,
     }).then(async (registry) => {
+      registry.registerHostControl('skillCatalog', {
+        visibleSkills: () => {
+          const userId = currentContributionUserId();
+          return registry.skillsFor(userId, userId == null ? null : users.get(userId));
+        },
+        canonicalBaseDir: (skill) => registry.skillCanonicalBaseDir(skill),
+      });
       if (publishedSitesGateway) {
         registry.registerHostControl('publishedSitesGateway', publishedSitesGateway);
         // A wildcard vhost deliberately survives as a deny tombstone. Whenever the sites owner is absent

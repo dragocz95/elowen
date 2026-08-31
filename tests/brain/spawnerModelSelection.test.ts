@@ -50,6 +50,7 @@ function makeSpawner(settings: Settings | ((userId: number) => Settings | undefi
     store: new BrainStore(openDb(':memory:')),
     runtime: sharedRuntime,
     users: { ensureAdvisorToken: () => 'token', get: () => ({ name: 'Filip', username: 'filip' }) },
+    toolAuthorityFor: () => undefined,
     // The advisor style reaches the model only through the rendered persona, so render it verbatim. The
     // third argument is the account whose per-user prompt OVERRIDE this render may use.
     prompts: {

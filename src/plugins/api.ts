@@ -1164,6 +1164,14 @@ export interface PublishedSitesGatewayControl {
   removeRuntimeSocket(siteId: string): Promise<void>;
 }
 
+/** Core-owned live view of the exact skills the current turn was told it may use. A loader plugin must
+ *  resolve through this rather than rescan only its own files: skills contributed by sibling plugins,
+ *  per-account ownership and user grants have already been applied by the merged registry. */
+export interface SkillCatalogControl {
+  visibleSkills(): readonly PluginSkill[];
+  canonicalBaseDir(skill: PluginSkill): string | null;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -1177,6 +1185,7 @@ export interface KnownControls {
   sandbox: SandboxControl;
   microsoftIdentity: MicrosoftIdentityControl;
   publishedSitesGateway: PublishedSitesGatewayControl;
+  skillCatalog: SkillCatalogControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`

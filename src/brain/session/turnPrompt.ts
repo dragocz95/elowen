@@ -16,10 +16,9 @@
  *  every turn. Blocks that flip turn to turn — a mode directive, one-shot notices — therefore ride UNDER
  *  the message as system reminders, never in front of it. */
 export interface TurnPromptParts {
-  /** The `<available_skills>` announcement, for the one surface that cannot put it in its cached system
-   *  prompt: a shared room, whose writer — and therefore whose personal skills — changes between turns.
-   *  Absent everywhere else, where the block is composed once at spawn. First, because it says what this
-   *  turn is ABLE to do before anything says what it should do. */
+  /** The per-turn `<available_skills>` announcement for platform and delegated sessions. A shared room's
+   *  writer changes; a direct chat or child can carry a live allow/deny policy narrower than its cached spawn.
+   *  First because it says what this turn is ABLE to do before anything says what it should do. */
   skills?: string;
   /** Recalled long-term memory for whoever is writing THIS turn. Already framed as untrusted. */
   memory?: string;

@@ -254,9 +254,8 @@ export interface LiveBrain {
    *  stripped before history is persisted, so a rehydrated conversation genuinely no longer contains
    *  them and re-sending is the truthful behaviour.
    *
-   *  `permissionsDigest` is an owner-chat concept and `skillsDigest` a shared-room one — a room has no
-   *  interactive permission summary, and every other surface announces its skills once in its cached
-   *  system prompt. */
+   *  `permissionsDigest` is an owner-chat concept. `skillsDigest` belongs to platform/delegated sessions,
+   *  where the writer or live tool policy is resolved per turn instead of baked into the cached prompt. */
   permissionsDigest?: string;
   skillsDigest?: string;
 }

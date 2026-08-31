@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 /** Send an AMBIENT prompt block only when it is not already in the model's context.
  *
  *  An ambient block is a passive statement of fact that composeTurnPrompt puts in front of the user's
- *  words on every turn — today the permission summary and, in a shared room, the skill announcement.
+ *  words on every turn — today the permission summary and, on platform/delegated sessions, the skill announcement.
  *  Unlike a directive it does not ask for anything, and unlike recalled memory its content is a
  *  function of session state rather than of the message. So the second identical copy tells the model
  *  nothing it cannot already read further up the same conversation. Measured on captured payloads:

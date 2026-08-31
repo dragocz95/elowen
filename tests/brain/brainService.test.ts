@@ -684,10 +684,11 @@ describe('BrainService', () => {
     expect(seenAppend).toContain('Follow house style.');
   });
 
-  it('feeds one byte-identical skill list to the rendered block and PI expansion', async () => {
+  it('renders the live skill list while PI keeps no stale native expansion snapshot', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('skills', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerTool({ name: 'SkillLoad', label: 'SkillLoad', description: 'load skills' } as never);
     ctx.registerSkill({
       name: 'deploy-checklist',
       description: 'Use when deploying to production.',
@@ -697,19 +698,18 @@ describe('BrainService', () => {
       disableModelInvocation: false,
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
-    let seen: { appendSystemPrompt?: string[]; skills?: PluginSkill[] } | undefined;
-    d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[]; skills?: PluginSkill[] }) => { seen = o; return undefined; };
+    let seen: { appendSystemPrompt?: string[]; skills?: PluginSkill[]; skillCommandExtension?: unknown } | undefined;
+    d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[]; skills?: PluginSkill[]; skillCommandExtension?: unknown }) => { seen = o; return undefined; };
 
     const svc = new BrainService(d as never);
     await svc.start(1);
-    const seenSkills = seen?.skills ?? [];
     const skillsBlocks = (seen?.appendSystemPrompt ?? []).filter((chunk) => chunk.includes('<available_skills>'));
-    expect(seenSkills).toBe(reg.skills);
-    expect(seenSkills.map((s) => s.name)).toEqual(['deploy-checklist']);
-    expect(skillsBlocks).toEqual([formatSkillsForPrompt(seenSkills)]);
+    expect(seen?.skills).toEqual([]);
+    expect(typeof seen?.skillCommandExtension).toBe('function');
+    expect(skillsBlocks).toEqual([formatSkillsForPrompt(reg.skills)]);
   });
 
-  it('uses the same grant-filtered skill list for prompt awareness and PI expansion', async () => {
+  it('uses the same grant-filtered catalog for prompt awareness and live slash expansion', async () => {
     const d = fakeDeps();
     d.users.get = () => ({ name: 'Filip', username: 'filip', is_admin: false, granted_plugins: ['granted'] });
     const reg = new PluginRegistry();
@@ -718,27 +718,31 @@ describe('BrainService', () => {
       sourceInfo: { path: `/plugins/${plugin}/${name}.md`, source: `elowen-plugin:${plugin}`, scope: 'user', origin: 'package' },
       disableModelInvocation: false,
     });
+    reg.contextFor('skills', {}, { info() {}, warn() {}, error() {} })
+      .registerTool({ name: 'SkillLoad', label: 'SkillLoad', description: 'load skills' } as never);
     reg.contextFor('granted', {}, { info() {}, warn() {}, error() {} }).registerSkill(skill('granted-skill', 'granted'));
     reg.contextFor('denied', {}, { info() {}, warn() {}, error() {} }).registerSkill(skill('denied-skill', 'denied'));
     reg.contextFor('open', {}, { info() {}, warn() {}, error() {} }).registerSkill(skill('open-skill', 'open'));
     reg.setUserGrantable('granted', true);
     reg.setUserGrantable('denied', true);
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
-    let seen: { appendSystemPrompt?: string[]; skills?: PluginSkill[] } | undefined;
-    d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[]; skills?: PluginSkill[] }) => { seen = o; return undefined; };
+    let seen: { appendSystemPrompt?: string[]; skills?: PluginSkill[]; skillCommandExtension?: unknown } | undefined;
+    d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[]; skills?: PluginSkill[]; skillCommandExtension?: unknown }) => { seen = o; return undefined; };
 
     const svc = new BrainService(d as never);
     await svc.start(1);
-    const seenSkills = seen?.skills ?? [];
+    const expected = reg.skillsFor(1, d.users.get(1));
     const skillsBlocks = (seen?.appendSystemPrompt ?? []).filter((chunk) => chunk.includes('<available_skills>'));
-    expect(seenSkills.map((s) => s.name)).toEqual(['granted-skill', 'open-skill']);
-    expect(skillsBlocks).toEqual([formatSkillsForPrompt(seenSkills)]);
+    expect(expected.map((s) => s.name)).toEqual(['granted-skill', 'open-skill']);
+    expect(seen?.skills).toEqual([]);
+    expect(typeof seen?.skillCommandExtension).toBe('function');
+    expect(skillsBlocks).toEqual([formatSkillsForPrompt(expected)]);
   });
 
-  // A personal skill is a briefing only its owner asked for. It has to reach that owner's session and no
-  // one else's — and a SHARED channel, where the sender changes from turn to turn, can only carry the
-  // instance-wide set, because the set is fixed at spawn.
-  it('feeds an account its own skills in its own session, and only the shared ones in a channel', async () => {
+  // A personal skill is a briefing only its owner asked for. Owner awareness is cached from that account;
+  // a shared channel resolves the writer per turn. Neither path gives PI a native snapshot that can outlive
+  // a later grant change.
+  it('keeps per-account awareness while every surface uses live slash expansion', async () => {
     const skillFor = (name: string) => ({
       name, description: `Use ${name}.`, filePath: `/s/${name}.md`, baseDir: '/s',
       sourceInfo: { path: `/s/${name}.md`, source: 'elowen-user:skills', scope: 'user', origin: 'package' },
@@ -747,6 +751,7 @@ describe('BrainService', () => {
     const registry = () => {
       const reg = new PluginRegistry();
       const ctx = reg.contextFor('skills', {}, { info() {}, warn() {}, error() {} });
+      ctx.registerTool({ name: 'SkillLoad', label: 'SkillLoad', description: 'load skills' } as never);
       ctx.registerSkill(skillFor('shared-one'));
       ctx.registerSkill(skillFor('mine-only'), { ownerUserId: 1 });
       ctx.registerSkill(skillFor('theirs-only'), { ownerUserId: 2 });
@@ -755,8 +760,8 @@ describe('BrainService', () => {
     const seenFor = async (userId: number, channel = false) => {
       const d = fakeDeps();
       (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => registry());
-      let seen: { name: string }[] | undefined;
-      d.resourceLoaderFactory = (o: { skills?: { name: string }[] }) => { seen = o.skills; return undefined; };
+      let seen: { skills?: { name: string }[]; appendSystemPrompt?: string[]; skillCommandExtension?: unknown } | undefined;
+      d.resourceLoaderFactory = (o: { skills?: { name: string }[]; appendSystemPrompt?: string[]; skillCommandExtension?: unknown }) => { seen = o; return undefined; };
       const svc = new BrainService(d as never);
       if (channel) {
         await svc.channelSend({
@@ -766,12 +771,31 @@ describe('BrainService', () => {
       } else {
         await svc.start(userId);
       }
-      return (seen ?? []).map((sk) => sk.name);
+      return {
+        native: (seen?.skills ?? []).map((skill) => skill.name),
+        awareness: (seen?.appendSystemPrompt ?? []).join('\n'),
+        live: typeof seen?.skillCommandExtension === 'function',
+      };
     };
 
-    expect(await seenFor(1)).toEqual(['shared-one', 'mine-only']);
-    expect(await seenFor(2)).toEqual(['shared-one', 'theirs-only']);
-    expect(await seenFor(1, true)).toEqual(['shared-one']);
+    const mine = await seenFor(1);
+    expect(mine.native).toEqual([]);
+    expect(mine.awareness).toContain('shared-one');
+    expect(mine.awareness).toContain('mine-only');
+    expect(mine.awareness).not.toContain('theirs-only');
+    expect(mine.live).toBe(true);
+
+    const theirs = await seenFor(2);
+    expect(theirs.native).toEqual([]);
+    expect(theirs.awareness).toContain('shared-one');
+    expect(theirs.awareness).toContain('theirs-only');
+    expect(theirs.awareness).not.toContain('mine-only');
+    expect(theirs.live).toBe(true);
+
+    const room = await seenFor(1, true);
+    expect(room.native).toEqual([]);
+    expect(room.awareness).not.toContain('<available_skills>');
+    expect(room.live).toBe(true);
   });
 
   it('feeds registered plugin prompt commands to the resource loader as PI prompt templates', async () => {

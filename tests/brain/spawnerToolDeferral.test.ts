@@ -67,6 +67,7 @@ function makeSpawner(
     store: new BrainStore(openDb(':memory:')),
     runtime: modelRuntime,
     users: { ensureAdvisorToken: () => 'token', get: () => ({ name: 'Filip', username: 'filip' }) },
+    toolAuthorityFor: () => undefined,
     prompts: { render: () => 'PERSONA' },
     url: 'http://x',
     plugins: async () => registry,

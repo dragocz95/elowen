@@ -314,6 +314,7 @@ function room(opts: {
   const store = new BrainStore(openDb(':memory:'));
   const registry = new LiveSessionRegistry<never>();
   const plugins = registryWith(opts.personalTools ?? []);
+  if (opts.skills.length > 0) plugins.contextFor('skills', {}, SILENT).registerTool(bridgedTool('SkillLoad') as never);
   for (const s of opts.skills) {
     plugins.skills.push({ name: s.name, description: `does ${s.name}`, filePath: `/skills/${s.name}.md`, baseDir: '/skills' } as never);
     plugins.skillOwners.push('skills');
@@ -385,16 +386,12 @@ describe('a room turn resolves personal contributions for whoever is writing', (
     expect(r.prompts.at(-1)).toContain('amy-checklist');
     expect(r.prompts.at(-1)).toContain('shared-runbook');
     expect(r.prompts.at(-1)).not.toContain('bob-notes');
-    // In front of the writer's words: it says what the turn is able to do before it says what to do.
     expect(r.prompts.at(-1)!.indexOf('amy-checklist')).toBeLessThan(r.prompts.at(-1)!.indexOf('what now?'));
 
-    // Same room, same session, next turn — a different colleague, a different set.
     await r.write(3, 'and now?');
     expect(r.prompts.at(-1)).toContain('bob-notes');
     expect(r.prompts.at(-1)).not.toContain('amy-checklist');
 
-    // An unlinked sender has no account, so they get the instance set and nobody's private one — never
-    // the room owner's, who is only whoever opened it.
     await r.write(undefined, 'hello?');
     expect(r.prompts.at(-1)).toContain('shared-runbook');
     expect(r.prompts.at(-1)).not.toContain('amy-checklist');
@@ -521,22 +518,28 @@ describe('a room turn resolves personal contributions for whoever is writing', (
 // ---------------------------------------------------------------------------------------------------
 
 describe('the spawner composes a room differently from a session that has one owner', () => {
-  const spawned = async (sessionId: string, opts: { channel?: boolean; direct?: boolean; deferTools?: boolean }) => {
+  const spawned = async (sessionId: string, opts: { channel?: boolean; direct?: boolean; deferTools?: boolean; includeSkillLoad?: boolean; disableSkillLoad?: boolean }) => {
     const plugins = registryWith([
       { name: 'mcp__amy__echo', ownerUserId: 2 },
       { name: 'mcp__bob__echo', ownerUserId: 3 },
     ]);
+    if (opts.includeSkillLoad !== false) plugins.contextFor('skills', {}, SILENT).registerTool(bridgedTool('SkillLoad') as never);
     for (const [name, ownerUserId] of [['shared-runbook', null], ['amy-checklist', 2]] as [string, number | null][]) {
       plugins.skills.push({ name, description: `does ${name}`, filePath: `/s/${name}.md`, baseDir: '/s' } as never);
       plugins.skillOwners.push('skills');
       plugins.skillOwnerUsers.push(ownerUserId);
     }
     const create = vi.fn(async () => ({ session: { sessionId, subscribe: () => () => {} }, applyCompaction: vi.fn() }));
+    const users = { ensureAdvisorToken: () => 'token', get: () => ({
+      name: 'Amy', username: 'amy', is_admin: false, granted_plugins: [],
+      ...(opts.disableSkillLoad ? { disabled_tools: ['SkillLoad'] } : {}),
+    }) };
     const spawner = new LiveSessionSpawner({
       config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://relay.example/v1', models: ['gpt-5'], apiKey: 'k' }] },
       store: new BrainStore(openDb(':memory:')),
       runtime: await inMemoryModelRuntime(),
-      users: { ensureAdvisorToken: () => 'token', get: () => ({ name: 'Amy', username: 'amy' }) },
+      users,
+      toolAuthorityFor: (userId) => toolAuthorityForUser({ users, plugins: { peek: () => plugins } } as never, userId),
       prompts: { render: () => 'PERSONA' },
       url: 'http://x',
       plugins: async () => plugins,
@@ -549,8 +552,13 @@ describe('the spawner composes a room differently from a session that has one ow
         : {}),
     } as never);
     const live = await spawner.spawn({ sessionId, ownerUserId: 2, selection: {}, policy: POLICY, autoCompact: false, ...opts } as never);
-    const spec = create.mock.calls.at(-1)![0] as unknown as { tools: { name: string }[]; appendSystemPrompt: string[] };
-    return { live, tools: spec.tools.map((t) => t.name), append: spec.appendSystemPrompt.join('\n') };
+    const spec = create.mock.calls.at(-1)![0] as unknown as {
+      tools: { name: string }[]; appendSystemPrompt: string[]; skills: unknown[]; skillCommandExtension?: unknown;
+    };
+    return {
+      live, tools: spec.tools.map((t) => t.name), append: spec.appendSystemPrompt.join('\n'),
+      nativeSkills: spec.skills, hasLiveSkillCommand: typeof spec.skillCommandExtension === 'function',
+    };
   };
 
   it('gives a room every account\'s personal tools and no baked-in skills block', async () => {
@@ -570,8 +578,24 @@ describe('the spawner composes a room differently from a session that has one ow
     expect(own.tools).not.toContain('mcp__bob__echo');
     expect(own.live.personalToolOwners).toBeUndefined();
     expect(own.live.contributionUserId).toBe(2);
+    expect(own.nativeSkills).toEqual([]); // PI must not retain a grant snapshot for native /skill expansion.
+    expect(own.hasLiveSkillCommand).toBe(true);
     expect(own.append).toContain('amy-checklist');
     expect(own.append).toContain('shared-runbook');
+  });
+
+  it('does not announce an owner skill when that session has no SkillLoad tool', async () => {
+    const own = await spawned('brain-2', { includeSkillLoad: false });
+    expect(own.tools).not.toContain('SkillLoad');
+    expect(own.append).not.toContain('available_skills');
+    expect(own.append).not.toContain('amy-checklist');
+  });
+
+  it('does not announce an owner skill when their policy explicitly disables SkillLoad', async () => {
+    const own = await spawned('brain-2', { disableSkillLoad: true });
+    expect(own.tools).toContain('SkillLoad');
+    expect(own.append).not.toContain('available_skills');
+    expect(own.append).not.toContain('amy-checklist');
   });
 
   // The deferred-tool awareness block is appended to the CACHED system prompt, which no per-turn pass
@@ -640,6 +664,7 @@ describe('personal-contribution ownership is decided in exactly one place', () =
       'api/routes/auth.ts',            // the admin's tool-pill editor: what ONE account gets in its own chat
       'brain/service/spawner.ts',      // session composition
       'brain/session/turnSkills.ts',   // a room's per-turn announcement
+      'daemon/brainCore.ts',           // live SkillLoad catalog control, under the turn's contribution owner
     ]);
     // …and any of them that also RUNS a turn or composes a session's tool set must name the resolved owner
     // (or the instance set literally). The admin route answers a question ABOUT an account rather than
