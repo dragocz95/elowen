@@ -133,11 +133,14 @@ describe('resident context ownership', () => {
   });
 
   it('includes raw hosted blocks omitted from PI message content', () => {
-    const hosted = { type: 'server_tool_use', id: 'srv_1', name: 'tool_search', input: { query: 'x' } };
+    const hosted = [
+      { type: 'server_tool_use', id: 'srv_1', name: 'tool_search', input: { query: 'x' } },
+      { type: 'tool_search_tool_result', tool_use_id: 'srv_1', content: { type: 'tool_search_tool_search_result', tool_references: [] } },
+    ];
     const message = assistant(0) as ContextMessage & { anthropicHostedToolReplay: unknown };
-    message.anthropicHostedToolReplay = { v: 1, content: [hosted] };
+    message.anthropicHostedToolReplay = { v: 1, content: hosted };
     const result = buildContextBreakdown(snapshot({ messages: [message] }));
-    const expected = Math.ceil(JSON.stringify(hosted).length / 4);
+    const expected = hosted.reduce((sum, block) => sum + Math.ceil(JSON.stringify(block).length / 4), 0);
     expect(result.estimatedTokens).toBe(expected);
     expect(result.categories).toEqual([{ id: 'assistant', tokens: expected, percent: expected / 10 }]);
   });

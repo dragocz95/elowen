@@ -18,7 +18,7 @@ const rawContent = () => [
   { type: 'text', text: 'Searching.' },
   { type: 'thinking', thinking: 'first', signature: SIGNATURE_A },
   { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: { query: 'Elowen docs' } },
-  { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_unmatched', content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'DocsSearch' }] } },
+  { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_1', content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'DocsSearch' }] } },
   { type: 'thinking', thinking: 'second', signature: SIGNATURE_B },
   { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } },
 ];
@@ -41,6 +41,19 @@ const sse = [
   block(5, { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } }),
   event('message_stop', { type: 'message_stop' }),
 ].join('');
+
+const unpairedContent = () => rawContent().filter((block) => block.type !== 'tool_search_tool_result');
+const unpairedSse = [
+  block(0, { type: 'text', text: 'Searching.' }),
+  block(1, { type: 'thinking', thinking: 'first', signature: SIGNATURE_A }),
+  block(2, { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: {} }, [
+    { type: 'input_json_delta', partial_json: '{"query":"Elowen docs"}' },
+  ]),
+  block(3, { type: 'thinking', thinking: 'second', signature: SIGNATURE_B }),
+  block(4, { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } }),
+  event('message_stop', { type: 'message_stop' }),
+].join('');
+const mismatchedSse = sse.replace('"tool_use_id":"srvtoolu_1"', '"tool_use_id":"srvtoolu_unmatched"');
 
 const metadata = (): AnthropicHostedReplayMetadata => ({ v: 1, content: rawContent() });
 
@@ -105,10 +118,21 @@ function fakeSession(responseSse: string, requestMessages: unknown[] = []) {
 }
 
 describe('Anthropic hosted tool-search replay', () => {
-  it('captures unmatched hosted topology as provider-authoritative raw content', () => {
+  it('captures complete hosted topology as provider-authoritative raw content', () => {
     const captured = captureAnthropicHostedReplay(sse);
     expect(captured).toEqual(metadata());
     expect(JSON.stringify(JSON.parse(JSON.stringify(captured))?.content)).toBe(JSON.stringify(rawContent()));
+  });
+
+  it('never persists a hosted call without its exact result and ignores already-poisoned metadata', () => {
+    expect(captureAnthropicHostedReplay(unpairedSse)).toBeUndefined();
+    expect(captureAnthropicHostedReplay(mismatchedSse)).toBeUndefined();
+
+    const poisoned = assistant({ v: 1, content: unpairedContent() });
+    const payload = { model: 'claude-opus-5', messages: [wireAssistant()], tools: [] };
+    expect(anthropicHostedReplayMetadata(poisoned as never)).toBeUndefined();
+    expect(restoreAnthropicHostedReplay(payload, [poisoned], 'claude-opus-5')).toBeUndefined();
+    expect(verifyAnthropicHostedReplay(payload, [poisoned], 'claude-opus-5')).toBe(true);
   });
 
   it('preserves citations deltas in complete hosted responses', () => {
@@ -201,6 +225,28 @@ describe('Anthropic hosted tool-search replay', () => {
     expect(done?.type === 'done' ? anthropicHostedReplayMetadata(done.message) : undefined).toEqual(metadata());
     expect((done?.type === 'done' ? done.message.content : [])).toEqual(fixture.final.content);
     expect(fixture.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('delivers an unpaired hosted response without poisoning the next provider request', async () => {
+    const fixture = fakeSession(unpairedSse);
+    const firstEvents = [];
+    const first = fixture.agent.streamFunction(MODEL as never, { messages: [], tools: [] } as never, { fetch: fixture.fetch } as never);
+    for await (const current of first) firstEvents.push(current);
+
+    const done = firstEvents.find((current) => current.type === 'done');
+    expect(done?.type).toBe('done');
+    expect(done?.type === 'done' ? anthropicHostedReplayMetadata(done.message) : 'unset').toBeUndefined();
+    expect(firstEvents.some((current) => current.type === 'error')).toBe(false);
+
+    const secondEvents = [];
+    const second = fixture.agent.streamFunction(
+      MODEL as never,
+      { messages: [done?.type === 'done' ? done.message : assistant(null)], tools: [] } as never,
+      { fetch: fixture.fetch } as never,
+    );
+    for await (const current of second) secondEvents.push(current);
+    expect(secondEvents.some((current) => current.type === 'error')).toBe(false);
+    expect(fixture.fetch).toHaveBeenCalledTimes(2);
   });
 
   it('uses the final successful capture when an earlier provider attempt failed', async () => {
