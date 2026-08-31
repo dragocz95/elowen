@@ -45,11 +45,48 @@ function mount(save: Save) {
   render(<Wrapper><RoleFixture save={save} /></Wrapper>);
 }
 
+function RiskFixture() {
+  const schema: PluginConfigField[] = [
+    { key: 'accessMode', label: 'Access mode', type: 'enum', risk: 'high', options: [
+      { value: 'read_only', label: 'Read only' },
+      { value: 'read_write', label: 'Read and write (including delete)' },
+    ] },
+    { key: 'enabled', label: 'Enabled', type: 'boolean' },
+  ];
+  const draft = usePluginConfigDraft(
+    'raynet',
+    { configSchema: schema, config: { accessMode: 'read_write', enabled: true } },
+    { save: vi.fn<Save>() },
+  );
+  return (
+    <PluginConfigEditor
+      name="raynet"
+      detail={{ name: 'raynet', configSchema: schema, secretsSet: [] }}
+      fieldLabel={(item) => item.label}
+      fieldHint={(item) => item.hint}
+      fieldOptions={(item) => item.options ?? []}
+      riskText={(risk) => risk}
+      draft={draft}
+      mode="all"
+    />
+  );
+}
+
 async function openRemoval() {
   fireEvent.click(screen.getByRole('button', { name: 'Role policies' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Remove role' }));
   return screen.getByRole('alertdialog', { name: /Support/ });
 }
+
+describe('PluginConfigEditor field layout', () => {
+  it('lets a risk badge wrap away from its control instead of overflowing across the label', () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><RiskFixture /></Wrapper>);
+
+    expect(screen.getByText('high').closest('.settings-row')).toHaveAttribute('data-trailing', 'stack');
+    expect(screen.getByText('Enabled').closest('.settings-row')).toHaveAttribute('data-trailing', 'inline');
+  });
+});
 
 describe('PluginConfigEditor role policy deletion', () => {
   it('does not mutate before confirmation and preserves the controlled draft on persistence failure', async () => {
