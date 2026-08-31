@@ -29,7 +29,19 @@ interface PageToolbarSlotContextValue {
   setHost: (host: HTMLElement | null) => void;
 }
 
+interface PageToolbarContributionValue {
+  ownerId: string;
+  props: PageToolbarProps;
+}
+
+interface PageToolbarContributionRegistryValue {
+  register(id: string, props: PageToolbarProps): void;
+  release(id: string): void;
+}
+
 const PageToolbarSlotContext = createContext<PageToolbarSlotContextValue | null>(null);
+const PageToolbarContributionRegistryContext = createContext<PageToolbarContributionRegistryValue | null>(null);
+const PageToolbarContributionContext = createContext<PageToolbarContributionValue | null>(null);
 const PageToolbarActiveContext = createContext(true);
 
 /** Retained settings/account panels stay mounted while hidden. This scope keeps their toolbars from
@@ -43,11 +55,30 @@ export function PageToolbarScope({ active, children }: { active: boolean; childr
 export function PageToolbarProvider({ children }: { children: ReactNode }) {
   const [host, setHostState] = useState<HTMLElement | null>(null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [contribution, setContribution] = useState<PageToolbarContributionValue | null>(null);
   const claim = useCallback((id: string) => setOwnerId((current) => current ?? id), []);
   const release = useCallback((id: string) => setOwnerId((current) => current === id ? null : current), []);
   const setHost = useCallback((node: HTMLElement | null) => setHostState(node), []);
+  const registerContribution = useCallback((id: string, props: PageToolbarProps) => {
+    setContribution((current) => current && current.ownerId !== id ? current : { ownerId: id, props });
+  }, []);
+  const releaseContribution = useCallback((id: string) => {
+    setContribution((current) => current?.ownerId === id ? null : current);
+  }, []);
   const value = useMemo(() => ({ host, ownerId, claim, release, setHost }), [host, ownerId, claim, release, setHost]);
-  return <PageToolbarSlotContext.Provider value={value}>{children}</PageToolbarSlotContext.Provider>;
+  const contributionRegistry = useMemo(() => ({
+    register: registerContribution,
+    release: releaseContribution,
+  }), [registerContribution, releaseContribution]);
+  return (
+    <PageToolbarSlotContext.Provider value={value}>
+      <PageToolbarContributionRegistryContext.Provider value={contributionRegistry}>
+        <PageToolbarContributionContext.Provider value={contribution}>
+          {children}
+        </PageToolbarContributionContext.Provider>
+      </PageToolbarContributionRegistryContext.Provider>
+    </PageToolbarSlotContext.Provider>
+  );
 }
 
 /** The destination element, rendered by {@link PageToolbar} inside the row. */
@@ -76,6 +107,21 @@ export function PageToolbarPortal({ children }: { children: ReactNode }) {
   return createPortal(children, host);
 }
 
+/** A retained/nested panel can publish the same structured toolbar contract as WorkspaceShell itself.
+ *  The active scope owns the row; hidden panels release it without unmounting their form state. */
+export function PageToolbarContribution({ search, filters, actions, children }: PageToolbarProps) {
+  const id = useId();
+  const active = useContext(PageToolbarActiveContext);
+  const registry = useContext(PageToolbarContributionRegistryContext);
+  const contribution = useMemo(() => ({ search, filters, actions, children }), [search, filters, actions, children]);
+  useLayoutEffect(() => {
+    if (active) registry?.register(id, contribution);
+    else registry?.release(id);
+    return () => registry?.release(id);
+  }, [active, contribution, id, registry]);
+  return null;
+}
+
 export interface PageToolbarProps {
   /** The page's text search. A PERMANENT control and never a filter — see `PageFilters`. */
   search?: ReactNode;
@@ -90,7 +136,9 @@ export interface PageToolbarProps {
 
 /** The row itself. Always mounted by the shell, because it carries the portal slot even on a page that
  *  passes it nothing; `page-toolbar.css` collapses a row whose every part is empty. */
-export function PageToolbar({ search, filters, actions, children }: PageToolbarProps) {
+export function PageToolbar(props: PageToolbarProps) {
+  const contribution = useContext(PageToolbarContributionContext);
+  const { search, filters, actions, children } = contribution?.props ?? props;
   // Not merely an optimisation, and not a second copy of `PageFilters`' own empty-set rule: the filter
   // control reads the dictionary, and the shell mounts this row on EVERY page. Rendering it for a page
   // that declares no filters would make `LanguageProvider` a hard requirement of the canonical shell in
