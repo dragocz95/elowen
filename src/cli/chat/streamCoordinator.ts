@@ -451,13 +451,25 @@ export class StreamCoordinator implements StreamCoordinatorPort {
   /** Put the submitted plan's implement/cancel decision to the user, at most once per ExitPlanMode
    *  call. Called both when a turn settles and when a sub-agent panel closes: a plan that settled
    *  while the panel was open would otherwise never be asked about, because the `idle` that carried
-   *  it is long gone by the time the user comes back. */
+   *  it is long gone by the time the user comes back.
+   *
+   *  Deliberately NOT gated on the local `rt.workMode`. That mirror is seeded 'build' at boot and only
+   *  local keystrokes write it, so it disagrees with the daemon after a CLI restart, a /resume, a
+   *  mid-turn mode toggle, or plan mode driven from another surface — and every one of those swallowed
+   *  the decision. The plan itself is the proof of plan-pending: a `plan` only ever rides a successful
+   *  ExitPlanMode result (the tool refuses outside plan mode with no `details.plan`), the same evidence
+   *  statusService.planState trusts on the daemon. Raising the decision realigns the local mode instead,
+   *  so "Cancel stays in plan mode for further refinement" holds on every path. */
   const maybeRaisePlanDecision = (): void => {
-    if (rt.workMode !== 'plan' || rt.childView) return;
+    if (rt.childView) return;
     const submitted = rt.transcript.lastSubmittedPlan();
     const key = submitted && (submitted.id ?? submitted.plan);
     if (!key || key === rt.planDecisionRaisedFor) return;
     rt.planDecisionRaisedFor = key;
+    // The daemon is plan-pending, so the composer's mode chip must say so BEFORE the picker opens: a
+    // Cancel (Esc) then leaves the next send stamped 'plan', not whatever the local toggle last held.
+    rt.workMode = 'plan';
+    if (!stopped) render('stream:plan-decision');
     flows.openPlanDecision();
   };
 
