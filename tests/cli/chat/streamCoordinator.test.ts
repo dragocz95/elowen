@@ -1725,15 +1725,17 @@ describe('StreamCoordinator — sub-agent drill-in hydration', () => {
 });
 
 describe('StreamCoordinator — plan decision', () => {
-  /** Run a plan-mode turn to `idle` and report how often the implement/cancel decision was raised. */
-  function planDecisionsFor(events: BrainEvent[]): number {
+  /** Run a plan-mode turn to `idle` and report how often the implement/cancel decision was raised.
+   *  `workMode` seeds the LOCAL mode mirror — the decision must not depend on it (the durable plan is
+   *  the evidence), so tests pass a mismatched mode to prove exactly that. */
+  function planDecisionsFor(events: BrainEvent[], workMode: ChatStateSeed['workMode'] = 'plan'): number {
     let onEvent!: (event: BrainEvent) => void;
     const client = {
       stream: (cb: (event: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
       history: () => Promise.resolve([]),
       rebind: () => {},
     } as unknown as BrainClient;
-    const rt = state([], { conversationTitle: 'seeded', workMode: 'plan' });
+    const rt = state([], { conversationTitle: 'seeded', workMode });
     const ac = new AbortController();
     rt.streamAc = ac;
     let decisions = 0;
@@ -1813,5 +1815,101 @@ describe('StreamCoordinator — plan decision', () => {
       { type: 'session-event', kind: 'model', detail: 'claude-opus-5' },
       { type: 'idle' },
     ] as unknown as BrainEvent[])).toBe(1);
+  });
+
+  // A user cycling Shift+Tab while the planning turn runs leaves the local mode mirror on another mode
+  // at idle. The durable plan, not the mirror, is the evidence of plan-pending — gating on the mirror
+  // is what silently swallowed the decision here.
+  it('raises the decision even when the local mode was cycled away mid-turn', () => {
+    for (const workMode of ['build', 'workflow'] as const) {
+      expect(planDecisionsFor([
+        { type: 'tool', name: 'ExitPlanMode', id: 'plan-1' },
+        { type: 'tool_end', id: 'plan-1', plan: '# Migration\n- Step one.' },
+        { type: 'idle' },
+      ], workMode)).toBe(1);
+    }
+  });
+
+  // The regression that kept coming back: the local mode mirror is seeded 'build' at CLI boot and only
+  // local keystrokes write it, while plan-pending is a daemon fact. A CLI (re)started into such a
+  // conversation gets no replayed idle from a restarted daemon — only durable history and control — so
+  // the synthesized idle over the rebuilt plan segment is the one edge that can still ask.
+  it('raises the decision once from a boot snapshot of a plan-pending conversation', () => {
+    let onFrame!: (frame: BrainStreamFrame) => void;
+    const client = {
+      stream: (cb: typeof onFrame, signal: AbortSignal) => {
+        onFrame = cb;
+        return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const rt = state(); // boot default: local workMode 'build'
+    let decisions = 0;
+    const flows = { launchAsk: () => {}, openPlanDecision: () => { decisions += 1; } } as unknown as Flows;
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    stream.openStream(rt.streamAc);
+
+    const snapshot = {
+      type: 'snapshot' as const,
+      sessionId: 'brain-parent',
+      cursor: 3,
+      history: [
+        { role: 'user', text: 'plan the migration' },
+        { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, name: 'ExitPlanMode', id: 'plan-1', plan: '# Migration\n- Step one.' }] },
+      ],
+      events: [] as BrainEvent[],
+      control: { streaming: false, pendingAsk: null, workMode: 'plan' as const, pendingPlan: { id: 'plan-1', plan: '# Migration\n- Step one.' } },
+    };
+    onFrame(snapshot);
+
+    expect(decisions).toBe(1);
+    // Raising realigns the local mirror, so a Cancel keeps the next send in plan mode.
+    expect(rt.workMode).toBe('plan');
+
+    // A reconnect replays the same snapshot — the decision is keyed to the call and must not stack.
+    onFrame(snapshot);
+    expect(decisions).toBe(1);
+    stream.stop();
+  });
+});
+
+describe('StreamCoordinator — background title announcement', () => {
+  // The regression as the user hits it: the idle branch refreshes metadata only while the title is
+  // still EMPTY, and the provisional (written at admission) already satisfies that one shot — so a
+  // generated title landing after the turn settled never reached the CLI. The daemon's `title` event
+  // is the only repair path, and it must trigger a metadata refetch rather than being dropped into
+  // the transcript fold.
+  it('refetches metadata when the daemon announces the generated title after the settled idle', () => {
+    let onEvent!: (event: BrainEvent) => void;
+    const client = {
+      stream: (cb: (event: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => Promise.resolve([]),
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const rt = state(); // fresh conversation: no title yet, boot defaults
+    // The real refresh applies status.title; the provisional is what the store held at that instant.
+    const refreshMeta = vi.fn(async () => { rt.conversationTitle = 'poradíš mi s výběrem brzdových destiček?'; });
+    const stream = new StreamCoordinator(
+      rt, { client }, actions({ refreshMeta }),
+      { launchAsk: () => {}, closeAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    stream.openStream(rt.streamAc);
+
+    onEvent({ type: 'user', text: 'poradíš mi s výběrem brzdových destiček?' });
+    onEvent({ type: 'text', delta: 'jasně —' });
+    onEvent({ type: 'idle' });
+    expect(refreshMeta).toHaveBeenCalledTimes(1); // the one-shot idle refresh landed the provisional
+    onEvent({ type: 'idle' });
+    expect(refreshMeta).toHaveBeenCalledTimes(1); // a replayed idle does not refetch: the gate is closed
+
+    onEvent({ type: 'title', title: 'Výběr brzdových destiček' });
+    expect(refreshMeta).toHaveBeenCalledTimes(2); // the announcement is the only repair for a late title
+    // Metadata, not transcript: the event must not have grown a turn.
+    expect(serialized(rt.transcript)).not.toContain('Výběr brzdových destiček');
+    stream.stop();
   });
 });

@@ -59,20 +59,27 @@ export class ConversationTitler {
 
   /** Generate + persist a title for `sessionId` from its first message. `provisionalTitle` is the exact
    *  seed written before this background job started: the final write is a compare-and-set, so a manual
-   *  rename performed while inference is running always wins. Best-effort: swallows every error. */
-  async run(sessionId: string, firstMessage: string, provisionalTitle: string): Promise<void> {
+   *  rename performed while inference is running always wins. Best-effort: swallows every error.
+   *
+   *  Resolves with the title it actually persisted, undefined when nothing changed (unconfigured, empty
+   *  message, relay error, or the compare-and-set lost to a manual rename) — the caller uses it to
+   *  announce the finished rename to attached clients, which must not happen for a title that never
+   *  landed. Never rejects. */
+  async run(sessionId: string, firstMessage: string, provisionalTitle: string): Promise<string | undefined> {
     const inf = this.inference();
-    if (!inf) return;
+    if (!inf) return undefined;
     const msg = firstMessage.trim();
-    if (!msg) return;
+    if (!msg) return undefined;
     try {
       const { text } = await inf.decide(buildPrompt(msg));
       const title = sanitizeTitle(text);
       if (title && this.store.setTitleIfCurrent(sessionId, provisionalTitle, title)) {
         this.logger?.info('named conversation', { sessionId, model: inf.model });
+        return title;
       }
     } catch (e) {
       this.logger?.warn?.('conversation titling failed', { sessionId, error: e instanceof Error ? e.message : String(e) });
     }
+    return undefined;
   }
 }

@@ -115,6 +115,12 @@ export interface TurnTitling {
    *  turn text, so a conversation opened with an attachment or a prompt macro was named after the
    *  serialized form rather than the sentence the person typed. */
   senderText: string;
+  /** Tell attached clients the background titler finished, with the title it landed. Required wherever a
+   *  client renders the live conversation name: the titler runs on its own clock, so it routinely
+   *  finishes after the turn settled — past the CLI's one-shot idle refresh — and a title that is only
+   *  written to the store stays invisible until the next process restart. Omitted by surfaces with no
+   *  live name on screen (a platform room), per this file's omission-over-branching rule. */
+  announceTitle?: (title: string) => void;
 }
 
 /** Name a brand-new conversation from its first message. A no-op once the row has any title, so it is
@@ -127,8 +133,12 @@ export function titleTurnConversation(parts: TurnTitling): void {
   const provisionalTitle = senderText.slice(0, 60);
   parts.store.setTitle(parts.sessionId, provisionalTitle);
   // Fire-and-forget by contract: ConversationTitler.run never rejects (see its own doc), so a turn is
-  // never failed, delayed or rolled back by the naming of its conversation.
-  void parts.titler?.run(parts.sessionId, senderText, provisionalTitle);
+  // never failed, delayed or rolled back by the naming of its conversation. It resolves with the title
+  // it persisted — undefined when the provisional stands (unconfigured, error, manual rename won) —
+  // and only a LANDED title is announced. Promise.resolve keeps the absent-titler case (and a bare
+  // test double) on the same no-announce path.
+  void Promise.resolve(parts.titler?.run(parts.sessionId, senderText, provisionalTitle))
+    .then((title) => { if (title) parts.announceTitle?.(title); });
 }
 
 export interface TurnSettlement {

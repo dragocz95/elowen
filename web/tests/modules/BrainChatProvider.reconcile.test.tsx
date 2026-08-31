@@ -121,6 +121,23 @@ describe('BrainChatProvider model-switch reconcile', () => {
     expect(brainMessagesPage.mock.calls.length).toBe(pagedCalls);
   });
 
+  it('a pushed title event refetches the sessions registry once — no transcript turn, no SSE reconnect, no history reload', async () => {
+    const { client, wrapper } = createWrapper();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    render(<ToastProvider><BrainChatProvider><Harness /></BrainChatProvider></ToastProvider>, { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    invalidate.mockClear(); // isolate the event from any connect-time invalidations
+
+    // The background titler lands its generated name on the SAME stream, after the first turn settled.
+    await act(async () => { FakeEventSource.instances[0]!.emit('title', JSON.stringify({ title: 'Generated name' })); });
+    // Exactly one invalidation of the authoritative registry query — the same path a manual rename takes.
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['brain-sessions'] }));
+    expect(invalidate.mock.calls.filter(([f]) => JSON.stringify((f as { queryKey?: unknown } | undefined)?.queryKey) === JSON.stringify(['brain-sessions']))).toHaveLength(1);
+    expect(FakeEventSource.instances).toHaveLength(1); // metadata signal: no SSE teardown/reopen
+    expect(screen.getByTestId('turns').textContent).toBe('0'); // and no fabricated transcript turn
+    expect(brainMessagesPage).not.toHaveBeenCalled(); // title never reloads history
+  });
+
   it('a header/dock model switch preserves the composer draft (never wipes unsent text)', async () => {
     renderChat();
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));

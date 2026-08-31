@@ -578,6 +578,10 @@ function useBrainChatController(): BrainChatValue {
         },
         workflow: (workflow) => applyEvent({ type: 'workflow', ...workflow }),
         goal: setGoal,
+        // The generated name landed after the provisional one. The rail's registry query is the one live
+        // owner of conversation titles, so invalidate it exactly like a manual rename does — no transcript
+        // change, no reconnect, no local title copy. Session-agnostic key, so no rollover fence is needed.
+        title: () => { void qc.invalidateQueries({ queryKey: ['brain-sessions'] }); },
         // Seed the same query used by process panels so live push and API hydration cannot diverge.
         process: (processes) => qc.setQueryData(['brain-processes'], processes),
         card: (card) => {
