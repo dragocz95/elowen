@@ -19,6 +19,7 @@ import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { Segmented } from '../../components/ui/Segmented';
 import { ChoiceField } from '../../components/ui/ChoiceField';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
@@ -739,8 +740,16 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         return <TimezoneField label={fieldLabel(f)} hint={fieldHint(f)} value={String(values[f.key] ?? '')} onChange={(value) => set(f.key, value)} />;
       case 'tokenList':
         return <PluginTokenListField label={fieldLabel(f)} placeholder={f.placeholder} value={values[f.key]} browse={f.browse} onChange={(value) => set(f.key, value)} />;
-      case 'enum':
-        return <ChoiceField title={fieldLabel(f)} options={fieldOptions(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
+      case 'enum': {
+        const options = fieldOptions(f);
+        const value = String(values[f.key] ?? '');
+        // Risk modes tend to carry explanatory labels ("including delete", "including anonymize"). A
+        // segmented track exposes every sentence at once and its min-content width crushes the shared label
+        // column. The shared shadcn Select keeps one compact trigger and preserves the full labels in its menu.
+        return f.risk
+          ? <SelectMenu label={fieldLabel(f)} options={options} value={value} onChange={(v) => set(f.key, v)} />
+          : <ChoiceField title={fieldLabel(f)} options={options} value={value} onChange={(v) => set(f.key, v)} />;
+      }
       case 'multiSelect': {
         const sel = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
         return <MultiSelectField label={fieldLabel(f)} options={fieldOptions(f)} value={sel} onChange={(v) => set(f.key, v)} />;

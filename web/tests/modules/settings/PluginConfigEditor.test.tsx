@@ -85,6 +85,8 @@ describe('PluginConfigEditor field layout', () => {
 
     expect(screen.getByText('high').closest('.settings-row')).toHaveAttribute('data-trailing', 'stack');
     expect(screen.getByText('high').closest('.settings-row')).toHaveClass('plugin-config-risk-row');
+    expect(screen.getByRole('combobox', { name: 'Access mode' })).toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: 'Access mode' })).toBeNull();
     expect(screen.getByText('Enabled').closest('.settings-row')).toHaveAttribute('data-trailing', 'inline');
   });
 });
