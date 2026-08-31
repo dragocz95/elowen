@@ -1,4 +1,5 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { useRef } from 'react';
 import { elowenClient } from './elowenClient';
 import { useTranslation } from './i18n';
 import type { MemoryFilters, SlashCommandDef, ProcessInfo, UsageOriginGroup } from './types';
@@ -108,6 +109,32 @@ export const useSystem = () =>
   useQuery({ queryKey: QUERY_KEYS.system, queryFn: elowenClient.system, refetchInterval: 60000 });
 
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: elowenClient.listUsers });
+
+/** How long the dashboard keeps polling a 'generating' digest before settling for the deterministic
+ *  layer: 12 polls × 5 s ≈ one minute — far past a healthy cheap-model generation, short enough that
+ *  a permanently failing generator never polls forever. */
+const DASH_RECAP_POLL_MS = 5_000;
+const DASH_RECAP_POLL_LIMIT = 12;
+
+/** The personalized dashboard recap. Polls only while the daily digest is being generated (bounded),
+ *  then holds still — the strip upgrades in place when the digest lands. */
+export const useDashRecap = () => {
+  const polls = useRef(0);
+  return useQuery({
+    queryKey: ['dash-recap'],
+    queryFn: async () => {
+      const data = await elowenClient.dashRecap();
+      if (data.digest?.status !== 'generating') polls.current = 0;
+      return data;
+    },
+    staleTime: 60_000,
+    refetchInterval: (query) => {
+      if (query.state.data?.digest?.status !== 'generating') return false;
+      polls.current += 1;
+      return polls.current <= DASH_RECAP_POLL_LIMIT ? DASH_RECAP_POLL_MS : false;
+    },
+  });
+};
 
 /** The presence line of the team feed. Invalidated by the same SSE 'activity' event as the feed
  *  itself, so it moves when someone starts or finishes work rather than on a timer. */

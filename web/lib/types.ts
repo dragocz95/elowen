@@ -14,6 +14,35 @@ export interface ElowenConfig {
   brain?: { providers: BrainProvider[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: BrainLimits; hiddenOauth?: string[] };
   /** Operator-tunable runtime knobs — the sibling group of `brain.limits`; absent on an older daemon. */
   runtime?: RuntimeConfig;
+  /** Dashboard personalization (recap strip + agent-written hero); absent on an older daemon. */
+  dashboard?: DashboardConfig;
+}
+
+/** Mirror of the daemon's dashboard config block. */
+export interface DashboardConfig {
+  recapEnabled: boolean;
+  digestEnabled: boolean;
+  greetingEnabled: boolean;
+  pillsEnabled: boolean;
+  continueEnabled: boolean;
+  digest: { providerId: string; model: string };
+}
+
+/** One agent-written clickable action (a quick-action pill or a recap suggestion). */
+export interface DashAction { label: string; prompt: string }
+
+/** GET /dash/recap — the personalized dashboard surface, strictly per-caller. */
+export interface DashRecap {
+  enabled: boolean;
+  continue?: { id: string; title: string; updatedAt: string }[];
+  yesterday?: { turns: number; tokens: number; sessions: string[] } | null;
+  digest?: {
+    status: 'unavailable' | 'generating' | 'ready';
+    greeting?: string;
+    pills?: DashAction[];
+    summary?: string;
+    suggestions?: DashAction[];
+  };
 }
 
 // Operator-tunable brain limits — shared with the daemon via the wire contract (re-exported from it

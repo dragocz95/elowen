@@ -11,7 +11,8 @@ import { openBrainComposer } from '../../lib/brainDock';
 import { useNow } from '../../lib/useNow';
 import { useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
-import { useMe, usePulse, useSystemReadiness } from '../../lib/queries';
+import { useDashRecap, useMe, usePulse, useSystemReadiness } from '../../lib/queries';
+import { RecapStrip } from './RecapStrip';
 import { formatCost, formatTokens } from '../../lib/format';
 import { usePresence } from './usePresence';
 
@@ -74,13 +75,21 @@ export function DashboardView() {
   // Addressed to whoever is signed in — first name only, from the real account. The nominative is used
   // as-is: declining a name into the vocative cannot be done reliably for arbitrary names.
   const firstName = user ? (user.name || user.username).trim().split(/\s+/)[0] : null;
+  // The personalized layer (admin-toggled, per-caller): the agent-written greeting replaces the
+  // static time-of-day line and the agent-written pills replace the static quick actions — each with
+  // the static content as its fallback, so a missing/erroring recap leaves today's page untouched.
+  const recap = useDashRecap().data;
+  const digest = recap?.digest?.status === 'ready' ? recap.digest : undefined;
+  const agentGreeting = digest?.greeting?.trim() || null;
   // An unreachable daemon is the one fact nothing else on this page can report, because everything else
   // on this page comes FROM it.
   const statusLine = presence.state === 'offline' ? t.dashboard.presence.offline : undefined;
 
   // Practical seeds for the advisor composer — the existing compose channel, not a second send path.
   // The costs pill opens the metrics panel instead: the answer to that one is already on this page.
-  const pills: ({ id: string; label: string; act: () => void } | { id: string; label: string; href: string })[] = [
+  // When the agent wrote today's pills (Settings → Dashboard), they take the row over — except while
+  // setup is incomplete, where the setup CTA must stay reachable and the static set wins.
+  const staticPills: ({ id: string; label: string; act: () => void } | { id: string; label: string; href: string })[] = [
     { id: 'summary', label: t.dashboard.pillSummary, act: () => openBrainComposer(t.dashboard.pillSummaryPrompt) },
     { id: 'plan', label: t.dashboard.pillPlan, act: () => openBrainComposer(t.dashboard.pillPlanPrompt) },
     { id: 'costs', label: t.dashboard.pillCosts, act: () => setOpen('metrics') },
@@ -90,6 +99,9 @@ export function DashboardView() {
       ? { id: 'setup', label: t.dashboard.finishSetup.cta, href: '/settings?cat=brain' }
       : { id: 'capabilities', label: t.dashboard.pillCapabilities, act: () => openBrainComposer(t.dashboard.pillCapabilitiesPrompt) },
   ];
+  const pills = !needsSetup && digest?.pills?.length
+    ? digest.pills.map((p, i) => ({ id: `agent-${i}`, label: p.label, act: () => openBrainComposer(p.prompt) }))
+    : staticPills;
 
   const revealLabel: Record<PanelId, string> = {
     feed: t.dashboard.showFeed,
@@ -131,8 +143,10 @@ export function DashboardView() {
 
       <section aria-labelledby="dash-greeting" className="mx-auto w-full max-w-3xl px-4 pt-10 text-center sm:px-0 sm:pt-[clamp(3.5rem,13dvh,9rem)]">
         <MotionReveal>
+          {/* The ember period is the page's signature and is drawn HERE, never by the model — the
+              agent-written greeting arrives with trailing punctuation already stripped. */}
           <h1 id="dash-greeting" className="text-[clamp(2.15rem,4.8vw,4.3rem)] font-semibold leading-[1.06] tracking-[-0.03em] text-foreground">
-            {greeting}{firstName ? `, ${firstName}` : ''}<span aria-hidden className="text-primary">.</span>
+            {agentGreeting ?? <>{greeting}{firstName ? `, ${firstName}` : ''}</>}<span aria-hidden className="text-primary">.</span>
           </h1>
           <p className="mt-3 text-[clamp(1.2rem,2.4vw,2.1rem)] font-normal leading-tight tracking-[-0.014em] text-muted-foreground">
             {t.dashboard.heroAsk}
@@ -161,7 +175,11 @@ export function DashboardView() {
           </div>
         </MotionReveal>
 
-        <MotionReveal delay={0.24}>
+        <MotionReveal delay={0.2}>
+          <RecapStrip recap={recap} />
+        </MotionReveal>
+
+        <MotionReveal delay={0.28}>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 @sm:mt-12">
             {PANELS.map((id) => (
               <Button

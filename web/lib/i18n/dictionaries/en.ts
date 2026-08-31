@@ -355,6 +355,11 @@ export const en = {
     metricsMonthTokens: 'Tokens in 30 days',
     composerPlaceholder: 'What can I do for you?',
     composerAction: 'Open {agentName} chat',
+    recap: {
+      label: 'Yesterday and next steps',
+      fallback: 'Yesterday you worked on: {sessions}.',
+      continueTitle: 'Continue: {title}',
+    },
     nextRunLabel: 'Next run',
     noCron: 'No scheduled jobs',
     last30d: 'Last 30 days',

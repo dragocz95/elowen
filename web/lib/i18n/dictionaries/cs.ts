@@ -339,6 +339,11 @@ export const cs = {
     metricsMonthTokens: 'Tokeny za 30 dní',
     composerPlaceholder: 'Co pro vás mohu udělat?',
     composerAction: 'Otevřít chat s {agentName}',
+    recap: {
+      label: 'Včerejší práce a návrhy',
+      fallback: 'Včera se pracovalo na: {sessions}.',
+      continueTitle: 'Pokračovat: {title}',
+    },
     nextRunLabel: 'Další běh',
     noCron: 'Žádné naplánované úlohy',
     last30d: 'Posledních 30 dní',
