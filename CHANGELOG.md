@@ -5,6 +5,13 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Personal scheduled jobs now carry a host-verified identity for their owner across channel,
+  direct-platform and owner-chat delivery. Plugins can safely use the same account-scoped connections,
+  configuration and allowed tools as any other turn by that user, while mismatched origin/acting accounts
+  fail closed.
+
 ## [0.28.17] - 2026-08-27
 
 The first release since 0.28.11. Versions 0.28.12 through 0.28.16 were tagged during development and

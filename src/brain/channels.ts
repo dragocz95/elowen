@@ -708,6 +708,7 @@ export class ChannelSessionService {
     if (!parentSessionId && !opts.internalSystem) this.d.store.clearSessionPark(sessionId);
     if (opts.ownerSteer && !parentSessionId) throw new Error('invalid delegated access');
     const delegated = parentSessionId ? this.delegatedExecution(opts, sessionId) : undefined;
+    const scheduledTurn = opts.scheduled === true || opts.identity?.automation === 'scheduled';
     const effectiveToolPolicy = delegated?.toolPolicy ?? opts.toolPolicy;
     // `pendingAbort` is deliberately observed (not consumed) on the owner-steer fast path: the original
     // child turn must still consume it after prompt() and report a terminal abort instead of success.
@@ -1184,7 +1185,7 @@ export class ChannelSessionService {
           ownerUserId,
           direct: opts.direct === true,
           trusted: opts.trusted === true,
-          scheduled: opts.scheduled === true,
+          scheduled: scheduledTurn,
           accountUserId: opts.writerUserId ?? null,
           ...(opts.sender ? { sender: { id: opts.sender.id, name: opts.sender.name } } : {}),
           identity: {

@@ -2,7 +2,7 @@ import type { PluginRegistry } from '../plugins/registry.js';
 import { decodeNotificationDestination, encodeNotificationDestination } from '../plugins/destinations.js';
 import type { ChannelRef, KnownControls, ServiceNotice } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
-import { narrowToolAllowList, type ToolPolicy, type TurnIdentity } from '../plugins/policyContext.js';
+import { narrowToolAllowList, type ToolPolicy, type TurnAutomation, type TurnIdentity } from '../plugins/policyContext.js';
 import type { IdentityResolver } from './identity.js';
 import type { ChannelSessionService } from './channels.js';
 import { channelSessionId } from './sessionId.js';
@@ -56,7 +56,7 @@ export interface PlatformOrchestratorDeps {
   restart?: () => ((byUserId: number) => Promise<void>) | undefined;
   /** BOUND send into a user's OWN stored owner-chat conversation. Direct platform origins are handled
    *  here in the orchestrator through ChannelSessionService and the platform outbound adapter instead. */
-  originSend?: (userId: number, sessionId: string | undefined, text: string, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | null>;
+  originSend?: (userId: number, sessionId: string | undefined, text: string, automation: TurnAutomation, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | null>;
   /** The caller's OWN conversations eligible to bind into a channel (the /context picker), resolved from
    *  the platform sender id to their linked Elowen account. Null when that sender is not linked to any
    *  account (they have no bindable sessions). Paginated for the surface pickers. */
@@ -93,7 +93,16 @@ export class PlatformOrchestrator {
       try {
         const onMessage: Parameters<typeof adapter.listen>[0] = async (src, text, onEvent) => {
           const owner = this.d.platformOwner?.();
-          if (owner === undefined || !src.access) return undefined; // unmapped sender → stay silent
+          if (owner === undefined || !src.access || src.platform !== adapter.name) return undefined; // unmapped/malformed sender → stay silent
+          const actingUserId = src.access.actAsUserId;
+          if (actingUserId !== undefined && (!Number.isSafeInteger(actingUserId) || actingUserId <= 0)) return undefined;
+          const scheduledAutomation = src.platform === 'cron' && src.access.scheduled === true;
+          // An origin chooses the account whose existing conversation and policy will execute the turn, so it
+          // must be the SAME host-authenticated account the scheduler says it acts for. Without this equality
+          // check a stale/corrupt job could route a non-admin owner's prompt through an admin's conversation.
+          if (src.origin && (!scheduledAutomation || actingUserId === undefined || src.origin.userId !== actingUserId)) {
+            throw new Error('scheduled origin account does not match the acting account');
+          }
           // Direct-chat scheduled work must remain a CHANNEL turn: owner-chat send() would mint a second
           // live session with owner tooling over the same transcript. The plugin persists this opaque target;
           // core validates it against the durable direct row, runs through ChannelSessionService, then pushes
@@ -118,7 +127,7 @@ export class PlatformOrchestrator {
               // a cold/evicted DM live under that persona for the next human message.
               promptAppend: plugins?.platformPromptsFor?.(destination.platform) ?? undefined,
               toolPolicy: originAuthority,
-              identity: this.d.identity.forDirectChat(src.origin.userId, destination.platform, policy),
+              identity: this.d.identity.forDirectChat(src.origin.userId, destination.platform, policy, 'scheduled'),
               writerUserId: src.origin.userId,
               historyPlatform: destination.platform,
               deliveryTarget: src.origin.deliveryTarget,
@@ -131,7 +140,7 @@ export class PlatformOrchestrator {
           // Owner-chat origins use the bound owner path. A named session may fall through only when it is
           // gone/foreign; an account-bound job without a session never falls into an operator-owned channel.
           if (src.origin && this.d.originSend) {
-            const reply = await this.d.originSend(src.origin.userId, src.origin.sessionId, text, onEvent);
+            const reply = await this.d.originSend(src.origin.userId, src.origin.sessionId, text, 'scheduled', onEvent);
             if (reply !== null) return reply;
             if (src.origin.sessionId === undefined) return undefined;
           }

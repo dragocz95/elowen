@@ -3769,7 +3769,7 @@ describe('BrainService', () => {
     const seen: { type: string; sessionId?: string }[] = [];
     const reply = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
       origin: { sessionId: 'brain-1', userId: 1 },
-      access: { admin: false, projectIds: [], actAsUserId: 1 },
+      access: { admin: false, projectIds: [], actAsUserId: 1, scheduled: true },
     }, 'wake: check deploy', (e) => seen.push(e));
     expect(reply).toBe('echo:wake: check deploy');
     expect(seen.some((e) => e.type === 'session' && e.sessionId === 'brain-1')).toBe(true);
@@ -3780,7 +3780,7 @@ describe('BrainService', () => {
     // 2) Ownership mismatch (the recorded user does not own the session) → channel fallback runs.
     const fb = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
       origin: { sessionId: 'brain-1', userId: 2 },
-      access: { admin: false, projectIds: [], actAsUserId: 2 },
+      access: { admin: false, projectIds: [], actAsUserId: 2, scheduled: true },
     }, 'wake again');
     expect(fb).toBe('echo:wake again');
     expect(d.store.getSession('brain-ch-cron-job-1')).toBeDefined();
@@ -3789,7 +3789,7 @@ describe('BrainService', () => {
     // 3) Vanished origin session → channel fallback too.
     const gone = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
       origin: { sessionId: 'brain-1-vanished', userId: 1 },
-      access: { admin: false, projectIds: [], actAsUserId: 1 },
+      access: { admin: false, projectIds: [], actAsUserId: 1, scheduled: true },
     }, 'wake three');
     expect(gone).toBe('echo:wake three');
     expect(d.store.getMessages('brain-ch-cron-job-1').map((m) => JSON.parse(m.content).content)).toContain('wake three');
@@ -3836,7 +3836,7 @@ describe('BrainService', () => {
     const reply = await handler!({
       platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
       origin: { sessionId: 'brain-ch-msteams-dm-1', userId: 1, deliveryTarget: 'destination:msteams:dm-1' },
-      access: { admin: true, projectIds: [], actAsUserId: 1 },
+      access: { admin: true, projectIds: [], actAsUserId: 1, scheduled: true },
     }, 'scheduled follow-up', (event) => events.push(event));
 
     expect(reply).toBe('echo:scheduled follow-up');

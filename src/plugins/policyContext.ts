@@ -35,9 +35,14 @@ export interface TurnModel { provider?: string; model: string; thinkingLevel?: s
 /** Who is driving the current prompt turn. Plugins that persist per-user state (long-term memory)
  *  key it on this: a linked platform sender resolves to their Elowen username, an unknown sender to
  *  `<platform>:<platformUserId>`, the owner to whatever identity the plugin's config anchors. */
+export type TurnAutomation = 'scheduled';
+
 export interface TurnIdentity {
   platform: string;
   userId: string;
+  /** Host-minted unattended execution kind. Plugins may trust this marker together with `elowenUserId`;
+   *  unlike platform names, role ids or tool parameters it is attached only after core admits the turn. */
+  automation?: TurnAutomation;
   /** The Elowen ACCOUNT id behind this turn, when there is one: the user themselves in their own chat, or
    *  the linked account a platform sender is verified as. Undefined for an unlinked/anonymous sender.
    *  Distinct from `userId`, which for a platform turn is the raw platform id (e.g. a Discord id) — so

@@ -94,9 +94,10 @@ describe('IdentityResolver — owner vs admin gating', () => {
   // A scheduled job somebody owns keeps that account's attribution. The orchestrator separately decides
   // whether its surface admits private account policy or remains bounded by shared-room access.
   it('resolves access.actAsUserId to the acting account, without vouching for it as a sender', () => {
-    const owned = src({ platform: 'cron', userId: 'cron', access: { projectIds: [], admin: false, actAsUserId: 2 } });
+    const owned = src({ platform: 'cron', userId: 'cron', access: { projectIds: [], admin: false, actAsUserId: 2, scheduled: true } });
     const { identity, sender, accountUserId, linkedUserId } = resolver(null).forPlatformTurn(owned, 1);
     expect(identity.elowenUserId).toBe(2);
+    expect(identity.automation).toBe('scheduled');
     expect(accountUserId).toBe(2); // host-authenticated automation remains attributed to this account
     expect(linkedUserId).toBeUndefined(); // but it is not a verified platform sender
     expect(identity.conversation).toBe('shared');
@@ -110,6 +111,12 @@ describe('IdentityResolver — owner vs admin gating', () => {
     const claimed = src({ access: { projectIds: [], admin: false, actAsUserId: 9 } });
     const { identity } = resolver({ id: 2, name: 'Amy', username: 'amy', admin: false }).forPlatformTurn(claimed, 1);
     expect(identity.elowenUserId).toBe(2); // who the message actually came from
+  });
+
+  it('does not mint the scheduled automation marker from a non-cron source', () => {
+    const { identity } = resolver({ id: 2, name: 'Amy', username: 'amy', admin: false })
+      .forPlatformTurn(src({ access: { projectIds: [], admin: false, scheduled: true } }), 1);
+    expect(identity.automation).toBeUndefined();
   });
 
   it('an acting account that no longer exists resolves to nobody, not to the operator', () => {
@@ -139,6 +146,11 @@ describe('IdentityResolver — owner vs admin gating', () => {
   it('cron WITHOUT admin access is not owner (foreign-scoped automation stays scoped)', () => {
     const { identity } = resolver(null).forPlatformTurn(src({ platform: 'cron', access: { projectIds: [3], admin: false } }), 1);
     expect(identity.owner).toBe(false);
+  });
+
+  it('preserves the host-minted marker on owner and direct origin identities', () => {
+    expect(resolver(null).forOwnerChat(2, { allowedProjectIds: [], allowedPaths: () => [] }, 'scheduled').automation).toBe('scheduled');
+    expect(resolver(null).forDirectChat(2, 'msteams', { allowedProjectIds: [], allowedPaths: () => [] }, 'scheduled').automation).toBe('scheduled');
   });
 
   it('sanitizes and code-point clips attacker-controlled platform display names', () => {

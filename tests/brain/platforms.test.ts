@@ -862,15 +862,14 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
 
     const staleOwner = await handler!({
       platform: 'cron', userId: 'cron', channelId: 'stale-owner', roleIds: [],
-      access: { admin: true, projectIds: [], actAsUserId: 99 },
+      access: { admin: true, projectIds: [], actAsUserId: 99, scheduled: true },
     } as never, 'stale owner');
-    const staleOrigin = await handler!({
-      platform: 'cron', userId: 'cron', channelId: 'stale-origin', roleIds: [],
-      origin: { sessionId: 'gone', userId: 99 }, access: { admin: true, projectIds: [] },
-    } as never, 'stale origin');
 
     expect(staleOwner).toBeUndefined();
-    expect(staleOrigin).toBeUndefined();
+    await expect(handler!({
+      platform: 'cron', userId: 'cron', channelId: 'stale-origin', roleIds: [],
+      origin: { sessionId: 'gone', userId: 99 }, access: { admin: true, projectIds: [], actAsUserId: 1, scheduled: true },
+    } as never, 'stale origin')).rejects.toThrow('scheduled origin account does not match the acting account');
     expect(sends).toBe(0);
   });
 
@@ -878,20 +877,20 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     let sent: ChannelSendOpts | undefined;
     let handler: ((src: never, text: string, onEvent?: unknown) => Promise<unknown>) | undefined;
     const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
-    const originCalls: [number, string, string][] = [];
+    const originCalls: [number, string, string, string][] = [];
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
       identity: linkedResolver(false),
       channels: { sessionOwnerUserId: () => undefined, send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
       dispatch: noDispatch,
-      originSend: async (userId, sessionId, text) => { originCalls.push([userId, sessionId!, text]); return 'bound reply'; },
+      originSend: async (userId, sessionId, text, automation) => { originCalls.push([userId, sessionId!, text, automation]); return 'bound reply'; },
     });
     await orch.startAll();
     const reply = await handler!({ platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
-      origin: { sessionId: 'brain-1-abc', userId: 1 }, access: { admin: true, projectIds: [] } } as never, 'wake up');
+      origin: { sessionId: 'brain-1-abc', userId: 1 }, access: { admin: true, projectIds: [], actAsUserId: 1, scheduled: true } } as never, 'wake up');
     expect(reply).toBe('bound reply');
-    expect(originCalls).toEqual([[1, 'brain-1-abc', 'wake up']]);
+    expect(originCalls).toEqual([[1, 'brain-1-abc', 'wake up', 'scheduled']]);
     expect(sent).toBeUndefined(); // the channel path never ran
   });
 
@@ -926,7 +925,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const reply = await handler!({
       platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
       origin: { sessionId: 'brain-ch-discord-dm-7', userId: 2, deliveryTarget: 'destination:discord:dm-7' },
-      access: { admin: false, projectIds: [], actAsUserId: 2 },
+      access: { admin: false, projectIds: [], actAsUserId: 2, scheduled: true },
     } as never, 'wake up', (event) => events.push(event));
 
     expect(reply).toBe('scheduled reply');
@@ -935,7 +934,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       writerUserId: 2, deliveryTarget: 'destination:discord:dm-7', policy: userPolicy,
       promptAppend: ['DIRECT SURFACE'],
     });
-    expect(sent?.identity?.conversation).toBe('direct');
+    expect(sent?.identity).toMatchObject({ conversation: 'direct', elowenUserId: 2, automation: 'scheduled' });
     expect(sent?.toolPolicy).toEqual({ deny: new Set(['DiscordApi']) });
     expect(delivered).toEqual([{ text: 'scheduled reply', channelId: 'dm-7' }]);
     expect(events.at(-1)).toEqual({ type: 'delivery', sessionId: 'brain-ch-discord-dm-7' });
@@ -965,7 +964,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     await expect(handler!({
       platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
       origin: { sessionId: 'brain-ch-discord-dm-7', userId: 2, deliveryTarget: 'destination:discord:dm-7' },
-      access: { admin: false, projectIds: [], actAsUserId: 2 },
+      access: { admin: false, projectIds: [], actAsUserId: 2, scheduled: true },
     } as never, 'wake up', (event) => events.push(event))).rejects.toThrow('offline');
     expect(events.some((event) => event.type === 'delivery')).toBe(false);
   });
@@ -986,7 +985,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     await orch.startAll();
     const reply = await handler!({ platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
       origin: { sessionId: 'brain-1-gone', userId: 1 },
-      access: { admin: false, projectIds: [], actAsUserId: 1 },
+      access: { admin: false, projectIds: [], actAsUserId: 1, scheduled: true },
     } as never, 'wake up');
     expect(reply).toBe('channel reply');
     expect(sent?.channelId).toBe('cron-job-1'); // today's channel-keyed session
@@ -1008,7 +1007,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     // The channel session is anchored on the instance owner, so falling through would persist this
     // person's job transcript under the operator's account. The scheduler keeps the outcome itself.
     const reply = await handler!({ platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
-      origin: { userId: 9 }, access: { admin: false, projectIds: [], actAsUserId: 9 } } as never, 'run it');
+      origin: { userId: 9 }, access: { admin: false, projectIds: [], actAsUserId: 9, scheduled: true } } as never, 'run it');
     expect(reply).toBeUndefined();
     expect(sent).toBeUndefined();
   });

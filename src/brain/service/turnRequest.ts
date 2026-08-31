@@ -1,5 +1,6 @@
 import type { ClientOrigin } from '../../api/clientIp.js';
 import type { BrainWorkMode } from '../../shared/wireContract.js';
+import type { TurnAutomation } from '../../plugins/policyContext.js';
 
 /** One image attached to an owner-chat turn. The bytes are transient PI input; durable history stores
  * only a human-readable attachment marker. */
@@ -40,6 +41,9 @@ export interface TurnRequest {
   session?: string;
   display?: string;
   client?: BoundClientRequest;
+  /** Host-only unattended execution marker. REST and CLI schemas never accept it; scheduled platform
+   *  origins use it to preserve trusted automation provenance alongside the owner's normal authority. */
+  automation?: TurnAutomation;
   /** Internal owner-chat seam: the first prompt admitted by interruptQueued while its parent-abort fence
    * is still closed. Never accepted from REST input. */
   interruptResume?: boolean;

@@ -1,5 +1,5 @@
 import { operatesInstance } from '../shared/instanceOperator.js';
-import type { TurnIdentity } from '../plugins/policyContext.js';
+import type { TurnAutomation, TurnIdentity } from '../plugins/policyContext.js';
 import type { Policy } from '../plugins/policy.js';
 import type { SessionSource } from '../plugins/api.js';
 import type { DelegatedExecutionScope } from './delegatedScope.js';
@@ -47,10 +47,11 @@ export class IdentityResolver {
   }
 
   /** The identity of a user driving their OWN authenticated Elowen chat (web dock / CLI). */
-  forOwnerChat(userId: number, policy: Policy): TurnIdentity {
+  forOwnerChat(userId: number, policy: Policy, automation?: TurnAutomation): TurnIdentity {
     return {
       platform: 'elowen',
       userId: String(userId),
+      ...(automation ? { automation } : {}),
       elowenUserId: userId, // their own authenticated chat — the account IS the sender
       elowenUsername: this.d.users.get(userId)?.username,
       admin: policy.allowedProjectIds === 'all',
@@ -115,6 +116,7 @@ export class IdentityResolver {
     const identity: TurnIdentity = {
       platform: src.platform,
       userId: src.userId,
+      ...(src.platform === 'cron' && src.access?.scheduled === true ? { automation: 'scheduled' as const } : {}),
       elowenUserId: account?.id, // the Elowen account behind this turn (undefined = unlinked sender)
       elowenUsername: account?.username || account?.name,
       // Human platform permissions come only from the linked account. `access.admin` on an ordinary room
@@ -134,11 +136,12 @@ export class IdentityResolver {
   }
 
   /** Identity for host-authenticated automation replaying into a verified direct platform conversation. */
-  forDirectChat(userId: number, platform: string, policy: Policy): TurnIdentity {
+  forDirectChat(userId: number, platform: string, policy: Policy, automation?: TurnAutomation): TurnIdentity {
     const row = this.d.users.get(userId);
     return {
       platform,
       userId: String(userId),
+      ...(automation ? { automation } : {}),
       elowenUserId: userId,
       elowenUsername: row?.username || row?.name,
       admin: policy.allowedProjectIds === 'all',

@@ -418,7 +418,7 @@ export class BrainService {
       // Owner-chat origin work only. Direct platform origins are deliberately intercepted by
       // PlatformOrchestrator and run through ChannelSessionService + the outbound adapter; routing a
       // `brain-ch-*` row through send() would create an owner-chat live session with owner capabilities.
-      originSend: async (userId, sessionId, text, onEvent) => {
+      originSend: async (userId, sessionId, text, automation, onEvent) => {
         // No session named → the account's own default conversation. A scheduled job somebody owns has
         // no originating conversation, but its result belongs to that person, not to a channel session
         // anchored on the instance admin. An account that has never chatted has no row yet, so this
@@ -433,7 +433,7 @@ export class BrainService {
         // only the derived default may be created. Channel rows never cross this boundary.
         const mayCreate = sessionId === undefined && row === undefined;
         if (!mayCreate && !isOwnedUserSession(row, userId, target)) return null;
-        await this.send({ userId, text, mode: 'build', session: target });
+        await this.send({ userId, text, mode: 'build', session: target, automation });
         onEvent?.({ type: 'session', sessionId: target });
         return lastAssistantText(this.d.store, target);
       },

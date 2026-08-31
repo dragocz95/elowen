@@ -1,7 +1,7 @@
 import type { KnownControls } from '../../plugins/api.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
-import type { ToolPolicy } from '../../plugins/policyContext.js';
+import type { ToolPolicy, TurnAutomation } from '../../plugins/policyContext.js';
 import { drainSessionNotices, recordSubagentFinishMarker, recordWorkflowFinishMarker, visibleSubagentUpdate, workDirReorientation } from './sessionEvents.js';
 import type { HookAuditBuffer } from '../../shared/hookAudit.js';
 import type { BrainStore } from '../../store/brainStore.js';
@@ -119,7 +119,7 @@ export class TurnContextBuilder {
     // admission rolls a rejected turn's user row back, so its mode must roll back with it.
     const previousMode = live.lastTurnMode;
     const memSettings = this.d.userSettings?.(request.userId);
-    const scoped = this.scopeOptions(request.userId, live, mode, request.clientCwd);
+    const scoped = this.scopeOptions(request.userId, live, mode, request.clientCwd, request.automation);
     const scope = scoped.scope;
     const hookBlock = await pluginContextBlock({ plugins: () => this.d.plugins(), hookAudit: this.d.hookAudit, text: request.text });
     // Each non-build mode carries its own tuned <system-reminder> directive (a self-contained block in
@@ -276,8 +276,8 @@ export class TurnContextBuilder {
   /** The exact PI identity/policy/permission/emitter scope for an owner-chat turn on `live` — everything
    *  runWithPolicy needs, with NO prompt composition. Shared by build() (which layers memory/hook/context
    *  blocks on top) and buildScope() (which delivers a hidden system message with no user prompt at all). */
-  private scopeOptions(userId: number, live: LiveBrain, mode: TurnMode, clientCwd?: string) {
-    const identity = this.d.identity.forOwnerChat(userId, live.policy);
+  private scopeOptions(userId: number, live: LiveBrain, mode: TurnMode, clientCwd?: string, automation?: TurnAutomation) {
+    const identity = this.d.identity.forOwnerChat(userId, live.policy, automation);
     const elicit = (questions: AskQuestion[]) => this.d.elicitation.ask(
       live.sessionId,
       questions,
