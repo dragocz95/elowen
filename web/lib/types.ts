@@ -249,6 +249,8 @@ export interface ConfigPatch {
   brain?: { providers?: (Omit<BrainProvider, 'apiKeySet'> & { apiKey?: string })[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: Partial<BrainLimits>; hiddenOauth?: string[] };
   /** Runtime knobs merged per-field by the daemon, like the brain limits above. */
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
+  /** Dashboard personalization block, merged per-field by the daemon. */
+  dashboard?: { recapEnabled?: boolean; digestEnabled?: boolean; greetingEnabled?: boolean; pillsEnabled?: boolean; continueEnabled?: boolean; digest?: { providerId?: string; model?: string } };
 }
 export interface UserPatch { is_admin?: boolean; name?: string; username?: string; allowed_execs?: string[]; disabled_tools?: string[]; allowed_tools?: string[]; granted_plugins?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }

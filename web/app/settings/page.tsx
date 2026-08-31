@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 // Aliased: `dynamic` is already this route's Next segment-config export, two lines up.
 import nextDynamic from 'next/dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
-import { SlidersHorizontal, X, Pencil, Gauge, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Tags, Timer, ToggleRight } from 'lucide-react';
+import { SlidersHorizontal, X, Pencil, Gauge, LayoutDashboard, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Tags, Timer, ToggleRight } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
@@ -12,6 +12,7 @@ import { ContextWindowModal } from '../../modules/settings/ContextWindowModal';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
+import { DashboardSection } from '../../modules/settings/DashboardSection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
 import { useBrainModels, useConfig, useMe, usePluginUi, useSystem, useLogFiles } from '../../lib/queries';
@@ -376,6 +377,7 @@ export default function SettingsPage() {
     models: t.settings.modelsSectionHint,
     brain: t.settings.brainSectionHint,
     memory: t.settings.memorySectionHint,
+    dashboard: t.settings.dashboardSectionHint,
     plugins: t.settings.pluginsSectionHint,
     data: t.settings.dataSectionHint,
     system: t.settings.systemSectionHint,
@@ -438,6 +440,19 @@ export default function SettingsPage() {
         <WorkspaceMetric label={t.settings.metric.embeddingProviders} value={brainProviders.filter((p) => !p.type.startsWith('oauth-')).length} icon={Server} />
         <WorkspaceMetric label={t.settings.metric.embeddingModels} value={brainCatalog.filter((m) => m.source !== 'oauth').length} icon={Boxes} />
         <WorkspaceMetric label={t.settings.metric.categorizationModels} value={brainCatalog.length} icon={Tags} />
+      </>
+    ),
+    dashboard: (
+      <>
+        <WorkspaceMetric label={t.settings.dashboardSection.recap} value={config.data?.dashboard?.recapEnabled === false ? t.settings.off : t.settings.on} icon={LayoutDashboard} />
+        <WorkspaceMetric label={t.settings.dashboardSection.digest} value={config.data?.dashboard?.digestEnabled === false ? t.settings.off : t.settings.on} icon={Sparkles} />
+        <WorkspaceMetric
+          label={t.settings.dashboardSection.model}
+          value={config.data?.dashboard?.digest.model
+            ? <span className="font-mono">{config.data.dashboard.digest.model}</span>
+            : t.settings.dashboardSection.providerInherit}
+          icon={Boxes}
+        />
       </>
     ),
     data: (
@@ -852,6 +867,10 @@ export default function SettingsPage() {
 
         <SettingsPanel id="memory" active={category} visited={visitedCategories}>
           <MemorySection onSaveState={reportSaveState} />
+        </SettingsPanel>
+
+        <SettingsPanel id="dashboard" active={category} visited={visitedCategories}>
+          <DashboardSection onSaveState={reportSaveState} />
         </SettingsPanel>
 
         <SettingsPanel id="plugins" active={category} visited={visitedCategories}><PluginsSection /></SettingsPanel>
