@@ -553,6 +553,23 @@ CREATE TABLE IF NOT EXISTS usage_by_origin (
 );
 CREATE INDEX IF NOT EXISTS idx_usage_by_origin_day ON usage_by_origin(day);
 
+-- Per-user daily dashboard digest: the agent-written hero greeting, quick-action pills, yesterday
+-- summary and next-work suggestions, generated once per (user, UTC day) by ONE cheap background
+-- inference (a direct relay call — no brain session is ever created for it) and served from here on
+-- every dashboard visit. `payload` is one validated JSON document ({greeting, pills, summary,
+-- suggestions}) rather than a column per field: the fields are written and read together as a unit.
+-- `status` doubles as the lazy-generation latch — the 'generating' row IS the cross-request mutex
+-- (see DashDigestStore.beginGeneration).
+CREATE TABLE IF NOT EXISTS dash_digests (
+  user_id    INTEGER NOT NULL,
+  day        TEXT NOT NULL,              -- 'YYYY-MM-DD' UTC, same day basis as usage_by_origin
+  status     TEXT NOT NULL CHECK (status IN ('generating','ready','failed')),
+  payload    TEXT NOT NULL DEFAULT '{}',
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,           -- unix ms; drives the retry/stale-generation rules
+  PRIMARY KEY (user_id, day)
+);
+
 -- Durable binding for an admin's interactive `elowen chat` terminal (BrainTerminalService): the tmux
 -- session name → the brain conversation it resumes + the per-terminal auth token minted for it. The token
 -- is stored verbatim (not hashed) because the tmux session survives a daemon restart and teardown must be

@@ -37,6 +37,7 @@ import { bearerFromAuth, type BrainCredentialAccess } from '../brain/providerUsa
 import { BrainStore } from '../store/brainStore.js';
 import { UsageOriginStore, billSettledTurn } from '../store/usageOriginStore.js';
 import { MemoryStore } from '../store/memoryStore.js';
+import { DashDigestStore } from '../store/dashDigestStore.js';
 import { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
 import { MemoryCategorizer } from '../brain/memoryCategorizer.js';
 import type { InferenceClient } from '../inference/types.js';
@@ -354,6 +355,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // instance would start empty and attribute every live turn to `internal`.
   const usageOrigins = new UsageOriginStore(db);
   const memoryStore = new MemoryStore(db);
+  const dashDigests = new DashDigestStore(db);
   const memoryCategoryStore = new MemoryCategoryStore(db);
   // ONE embedding-config mapper shared by the retrieval service AND the background embed queue, so both
   // read the same live config each call (a Settings change applies without a restart). Empty
@@ -467,6 +469,17 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const memoryCategorizer = new MemoryCategorizer({
     categories: memoryCategoryStore, memories: memoryStore, inference: memoryModelInference, logger: log,
   });
+  // The dashboard digest model (Settings → Dashboard). Its own block so the operator can point the
+  // daily digest at a different (usually cheap) model; unset, it deliberately falls back to the
+  // memory/categorization model rather than duplicating that configuration. Null → digest unavailable
+  // (the dashboard then keeps its deterministic layer only).
+  const dashDigestInference = (): InferenceClient | null => {
+    const block = config.get().dashboard.digest;
+    if (!block.providerId || !block.model) return memoryModelInference();
+    const provider = resolveProvider(block.providerId);
+    if (!provider || !provider.apiKey) return memoryModelInference();
+    return new RelayClient({ baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: block.model });
+  };
   // ONE shared plugin registry for the whole daemon (brain chat + platforms):
   // loading is lazy (plugins load on first use, not at boot), and a plugin toggle invalidates every consumer at once —
   // a per-service memo would leave the workers on a stale registry until a daemon restart.
@@ -784,7 +797,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
     embeddings, embeddingConfig, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets,
-    memoryService, embedQueue, memoryModelInference, memoryCategorizer,
+    memoryService, embedQueue, memoryModelInference, memoryCategorizer, dashDigests, dashDigestInference,
     pluginProvider, hookAudit, brain, themes, brand,
     // Sync view of the last loaded registry (undefined before the first load) — for wiring that must
     // read plugin contributions without awaiting the provider.

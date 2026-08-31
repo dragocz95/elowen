@@ -152,4 +152,15 @@ export const configPatchSchema = z.object({
     model: z.string().optional(),
     baseUrl: z.string().optional(),
   }).optional(),
+  dashboard: z.object({
+    recapEnabled: z.boolean().optional(),
+    digestEnabled: z.boolean().optional(),
+    greetingEnabled: z.boolean().optional(),
+    pillsEnabled: z.boolean().optional(),
+    continueEnabled: z.boolean().optional(),
+    digest: z.object({
+      providerId: z.string().optional(),
+      model: z.string().optional(),
+    }).optional(),
+  }).optional(),
 });

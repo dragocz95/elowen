@@ -47,6 +47,42 @@ export interface CategorizationBlock {
   baseUrl: string;
 }
 
+/** Dashboard personalization (the daily digest + agent-written hero). `digest` names the model the
+ *  generator runs on, same contract as `categorization` (provider key reused at call time, no secret);
+ *  empty `providerId`/`model` = fall back to the categorization model. The greeting/pills toggles only
+ *  FILTER what the recap route returns — generation always stores the full payload, so enabling one
+ *  later costs no new inference. Holds no secret → safe to expose verbatim. */
+export interface DashboardBlock {
+  recapEnabled: boolean;
+  digestEnabled: boolean;
+  greetingEnabled: boolean;
+  pillsEnabled: boolean;
+  continueEnabled: boolean;
+  digest: { providerId: string; model: string };
+}
+
+/** Shape-check a stored/patched dashboard block field-by-field: for read() the fallback is the
+ *  default block, for update() it is the current block — which makes the same helper both the
+ *  sanitizer and the per-field merge. */
+function sanitizeDashboard(input: unknown, fallback: DashboardBlock): DashboardBlock {
+  const p = (typeof input === 'object' && input !== null && !Array.isArray(input) ? input : {}) as {
+    recapEnabled?: unknown; digestEnabled?: unknown; greetingEnabled?: unknown; pillsEnabled?: unknown;
+    continueEnabled?: unknown; digest?: { providerId?: unknown; model?: unknown };
+  };
+  const bool = (v: unknown, fb: boolean): boolean => (typeof v === 'boolean' ? v : fb);
+  return {
+    recapEnabled: bool(p.recapEnabled, fallback.recapEnabled),
+    digestEnabled: bool(p.digestEnabled, fallback.digestEnabled),
+    greetingEnabled: bool(p.greetingEnabled, fallback.greetingEnabled),
+    pillsEnabled: bool(p.pillsEnabled, fallback.pillsEnabled),
+    continueEnabled: bool(p.continueEnabled, fallback.continueEnabled),
+    digest: {
+      providerId: typeof p.digest?.providerId === 'string' ? p.digest.providerId : fallback.digest.providerId,
+      model: typeof p.digest?.model === 'string' ? p.digest.model : fallback.digest.model,
+    },
+  };
+}
+
 interface ProviderConfig { bin: string; args: string; skipPermissions: boolean; resume: boolean }
 type Providers = Record<string, ProviderConfig>;
 
@@ -95,6 +131,8 @@ export interface ElowenConfig {
   embedding: EmbeddingBlock;
   /** Memory categorization model (workspace-level; no secret — key reused from the brain provider). */
   categorization: CategorizationBlock;
+  /** Dashboard personalization: daily digest + agent-written hero (no secret → public verbatim). */
+  dashboard: DashboardBlock;
 }
 
 /** How a brain provider authenticates/talks upstream. `openai` = any OpenAI-compatible endpoint;
@@ -746,6 +784,9 @@ const DEFAULT_CONFIG: ElowenConfig = {
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_TOOL_DEFERRAL_ENABLED, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_SUBAGENT_RUNNER_ENABLED, subagentRunnerPoolMax: DEFAULT_SUBAGENT_RUNNER_POOL_MAX, remoteCompactionEnabled: DEFAULT_REMOTE_COMPACTION_ENABLED, providerRequestCaptureEnabled: DEFAULT_PROVIDER_REQUEST_CAPTURE_ENABLED, memoryRetention: defaultMemoryRetention() },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
+  // Greeting/pills are opt-in: they replace a core surface (the hero) for every account on the
+  // instance, so an upgrade must not flip anyone's landing page by itself.
+  dashboard: { recapEnabled: true, digestEnabled: true, greetingEnabled: false, pillsEnabled: false, continueEnabled: true, digest: { providerId: '', model: '' } },
 };
 
 interface Stored {
@@ -789,6 +830,8 @@ interface Stored {
   embedding: EmbeddingBlock;
   /** Categorization model config. Holds no secret (key reused from the brain provider) → public verbatim. */
   categorization: CategorizationBlock;
+  /** Dashboard personalization block. Holds no secret → public verbatim. */
+  dashboard: DashboardBlock;
 }
 
 /** The plugins block for a settings row that predates the plugin system (or whose plugins block is
@@ -840,6 +883,7 @@ const defaultStored = (): Stored => ({
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, remoteCompactionEnabled: DEFAULT_CONFIG.runtime.remoteCompactionEnabled, providerRequestCaptureEnabled: DEFAULT_CONFIG.runtime.providerRequestCaptureEnabled, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
   categorization: { ...DEFAULT_CONFIG.categorization },
+  dashboard: { ...DEFAULT_CONFIG.dashboard, digest: { ...DEFAULT_CONFIG.dashboard.digest } },
 });
 
 export interface ConfigPatch {
@@ -864,6 +908,8 @@ export interface ConfigPatch {
   embedding?: { providerId?: string; model?: string; baseUrl?: string; dimensions?: number | null };
   /** Categorization config merged per-field (like embedding). */
   categorization?: { providerId?: string; model?: string; baseUrl?: string };
+  /** Dashboard block merged per-field (like categorization). */
+  dashboard?: { recapEnabled?: boolean; digestEnabled?: boolean; greetingEnabled?: boolean; pillsEnabled?: boolean; continueEnabled?: boolean; digest?: { providerId?: string; model?: string } };
 }
 
 /** The agent display name feeds the same sinks a theme's brand name does — terminals (control chars =
@@ -951,6 +997,7 @@ export class ConfigStore {
           model: typeof p.categorization?.model === 'string' ? p.categorization.model : d.categorization.model,
           baseUrl: typeof p.categorization?.baseUrl === 'string' ? p.categorization.baseUrl : d.categorization.baseUrl,
         },
+        dashboard: sanitizeDashboard(p.dashboard, d.dashboard),
       };
     } catch { return defaultStored(); } // corrupt row → defaults, never throw
   }
@@ -985,6 +1032,7 @@ export class ConfigStore {
       embedding: s.embedding,
       // Likewise no secret in the categorization block → expose verbatim.
       categorization: s.categorization,
+      dashboard: s.dashboard,
     };
   }
 
@@ -1209,6 +1257,8 @@ export class ConfigStore {
         model: patch.categorization?.model ?? cur.categorization.model,
         baseUrl: patch.categorization?.baseUrl ?? cur.categorization.baseUrl,
       },
+      // The same field-by-field helper read() uses; with `cur` as the fallback it IS the merge.
+      dashboard: sanitizeDashboard(patch.dashboard, cur.dashboard),
     });
     return this.get();
   }
@@ -1221,6 +1271,10 @@ export class ConfigStore {
    *  disabled. The categorizer's inference client is built in bootstrap from the referenced brain
    *  provider (endpoint+key), so no mapper is needed here. */
   categorizationConfig(): CategorizationBlock { return this.read().categorization; }
+
+  /** The persisted dashboard block (daemon-side). The digest inference client is built in bootstrap
+   *  from the referenced brain provider, falling back to the categorization model when unset. */
+  dashboardConfig(): DashboardBlock { return this.read().dashboard; }
 
   /** Daemon-side brain provider list including plaintext API keys. Never routed to any client. */
   brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; api?: BrainProviderApi; compatibility?: BrainProviderCompatibility; apiKey: string | null; temperature?: number }[] {

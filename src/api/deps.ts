@@ -76,6 +76,12 @@ export interface ServerDeps {
   usageOrigins?: import('../store/usageOriginStore.js').UsageOriginStore;
   /** Elowen RAW memory persistence (user-scoped): facts, packed-Float32 embeddings, audit events. */
   memoryStore?: import('../store/memoryStore.js').MemoryStore;
+  /** Per-user daily dashboard digest cache (agent-written hero + recap). Absent → /dash/recap
+   *  serves the deterministic layer with digest 'unavailable'. */
+  dashDigests?: import('../store/dashDigestStore.js').DashDigestStore;
+  /** Builds the digest generator's inference client per call (dashboard block → categorization
+   *  fallback). Null → digest unavailable. Absent (minimal wiring) → same. */
+  dashDigestInference?: () => import('../inference/types.js').InferenceClient | null;
   /** Per-user memory categories (labels + LLM-facing descriptions). Absent → the category routes 400. */
   memoryCategoryStore?: import('../store/memoryCategoryStore.js').MemoryCategoryStore;
   /** Each account's own values for plugins that declare a `userConfigSchema`. Reachable by the account
