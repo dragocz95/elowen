@@ -207,7 +207,7 @@ export const PLAN_MODE_WRITE_TOOLS: ReadonlySet<string> = new Set(['Write', 'Edi
 function planWriteDenial(toolName: string, params: unknown): string | undefined {
   if (currentTurnMode() !== 'plan' || !PLAN_MODE_WRITE_TOOLS.has(toolName)) return undefined;
   const sessionId = currentSessionId();
-  const rawPath = (params as { path?: unknown } | null | undefined)?.path;
+  const rawPath = (params as { file_path?: unknown } | null | undefined)?.file_path;
   // Deny by default: no session to scope a plan to, or a path that is not even a string, is refused
   // rather than waved through. There is no benign call shaped like that in plan mode.
   if (!sessionId || typeof rawPath !== 'string' || !isSessionPlanPath(sessionId, rawPath)) {
