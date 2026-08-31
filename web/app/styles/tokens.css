@@ -90,6 +90,10 @@
      three states, and borrowing `primary` or `chart-*` for them would say something they do not mean. */
   --color-success: #32c986;
   --color-success-foreground: var(--color-primary-foreground);
+  /* Toasts are outcome banners, not tiny status marks. GitHub's Primer success green gives them the
+     saturated diff/merge signal Filip expects while keeping white body text above AA contrast. */
+  --color-toast-success: #1f883d;
+  --color-toast-success-foreground: #ffffff;
   --color-warning: #edae49;
   --color-info: #62a8ea;
 
@@ -201,6 +205,9 @@
      own veil here instead. The default is the mix the app's hand-written scrims already spell out, so
      the token means the same thing everywhere it is read. */
   --color-scrim: color-mix(in srgb, var(--color-background) 70%, transparent);
+  /* Inspection drawers may preserve more of the visual context they describe. This is a tint of the
+     canonical scrim, not a second palette, so every skin keeps control of the resulting veil. */
+  --color-scrim-soft: color-mix(in srgb, var(--color-scrim) 45%, transparent);
 }
 
 /* A phone is held at arm's length and read at a glance, so the two smallest text tokens grow on small

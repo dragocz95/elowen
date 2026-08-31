@@ -44,7 +44,7 @@ function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>)
  *  editing dialog belongs to the modal band above it, so a dialog raised from a rail paints over the
  *  rail it came from rather than fighting it for DOM order. `Modal.tsx` derives it; nothing else picks
  *  it by hand. */
-const dialogOverlayVariants = cva('fixed inset-0 flex bg-[var(--color-scrim)]', {
+const dialogOverlayVariants = cva('fixed inset-0 flex', {
   variants: {
     presentation: {
       center: 'items-center justify-center',
@@ -61,24 +61,31 @@ const dialogOverlayVariants = cva('fixed inset-0 flex bg-[var(--color-scrim)]', 
       drawer: 'overlay-layer-drawer',
       modal: 'overlay-layer-modal',
     },
+    scrim: {
+      default: 'bg-[var(--color-scrim)]',
+      soft: 'bg-[var(--color-scrim-soft)]',
+    },
   },
-  defaultVariants: { presentation: 'center', layer: 'modal' },
+  defaultVariants: { presentation: 'center', layer: 'modal', scrim: 'default' },
 });
 
 type DialogPresentation = NonNullable<VariantProps<typeof dialogOverlayVariants>['presentation']>;
 type DialogLayer = NonNullable<VariantProps<typeof dialogOverlayVariants>['layer']>;
+type DialogScrim = NonNullable<VariantProps<typeof dialogOverlayVariants>['scrim']>;
 
 function DialogOverlay({
   className = '',
   presentation = 'center',
   layer = 'modal',
+  scrim = 'default',
   style,
   ...props
-}: React.ComponentProps<'div'> & { presentation?: DialogPresentation; layer?: DialogLayer }) {
+}: React.ComponentProps<'div'> & { presentation?: DialogPresentation; layer?: DialogLayer; scrim?: DialogScrim }) {
   return (
     <div
       data-slot="dialog-overlay"
-      className={cn(dialogOverlayVariants({ presentation, layer }), className)}
+      data-scrim={scrim}
+      className={cn(dialogOverlayVariants({ presentation, layer, scrim }), className)}
       style={{
         // Radix's modal content sets `pointer-events: none` on <body> so that nothing outside it can be
         // pressed, and re-enables them on itself. This layer is a child of <body> and would inherit the

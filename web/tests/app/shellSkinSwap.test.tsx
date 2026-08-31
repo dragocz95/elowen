@@ -72,10 +72,15 @@ describe('switching between the two designs', () => {
     fireEvent.change(probe, { target: { value: 'unsaved draft' } });
     expect(mounts).toBe(1);
 
-    // The switcher is the real way a reader changes design: one button, no reload.
-    fireEvent.click(await screen.findByRole('button', { name: 'Skin: Light' }));
+    // The switcher is the real way a reader changes design: one icon-only button, no reload. Its accessible
+    // name still carries the current skin while the top bar no longer spends width on Light/Dark text.
+    const switcher = await screen.findByRole('button', { name: 'Skin: Light' });
+    expect(switcher.textContent).toBe('');
+    expect(switcher.querySelector('svg')).toHaveClass('lucide-sun');
+    fireEvent.click(switcher);
 
     await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('studio-oled'));
+    expect(screen.getByRole('button', { name: 'Skin: Dark' }).querySelector('svg')).toHaveClass('lucide-moon');
     expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
     expect(screen.queryByTestId('future-navigation')).toBeNull();
 

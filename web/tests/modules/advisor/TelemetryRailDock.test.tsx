@@ -21,6 +21,11 @@ import {
 } from '../../../lib/telemetryRail';
 
 const server = setupServer(
+  http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
+  http.post('*/api/brain/visibility', () => HttpResponse.json({ ok: true })),
+  http.get('*/api/brain/messages', ({ request }) => new URL(request.url).searchParams.has('limit')
+    ? HttpResponse.json({ items: [], hasMore: false, nextBefore: null })
+    : HttpResponse.json([])),
   http.get('*/api/brain/status', () => HttpResponse.json({ running: false, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [] })),
   http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
   http.get('*/api/brain/sessions', () => HttpResponse.json([])),
@@ -194,43 +199,31 @@ describe('telemetry rail dock — resizing', () => {
     const source = readSource('modules/advisor/ChatRailSplit.tsx');
     expect(source).toContain('minSize={RAIL_MIN_WIDTH}');
     expect(source).toContain('maxSize={RAIL_MAX_WIDTH}');
-    expect(source).toContain('defaultSize={RAIL_DEFAULT_WIDTH}');
+    expect(source).toContain('defaultSize={RAIL_COLLAPSED_WIDTH}');
     expect(source).toContain('collapsedSize={RAIL_COLLAPSED_WIDTH}');
     expect(source).toContain('collapsible');
     expect([RAIL_MIN_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_MAX_WIDTH, RAIL_COLLAPSED_WIDTH]).toEqual([280, 340, 560, 52]);
   });
 
-  it('persists the layout through the library rather than a second width store', async () => {
+  it('starts every desktop visit compact instead of restoring a wide layout', async () => {
     renderDock();
     await screen.findByTestId('telemetry-column');
     const source = readSource('modules/advisor/ChatRailSplit.tsx');
-    // One persisted source of truth: the group's own layout, under the rail's key, for both named panels.
-    expect(source).toContain('useDefaultLayout');
-    expect(source).toContain('id: RAIL_LAYOUT_STORAGE_KEY');
-    expect(source).toContain('DOCKED_PANEL_IDS');
-    expect(source).toContain('panelIds,');
-    expect(source).toContain('defaultLayout={defaultLayout}');
-    expect(source).toContain('onLayoutChanged={onLayoutChanged}');
-    // Collapse/expand and double-click reset are imperative library moves. Filtering persistence to pointer
-    // or keyboard interactions would discard those user actions and restore the previous width on reload.
-    expect(source).not.toContain('onlySaveAfterUserInteractions');
-    // The hand-rolled px key the rail used before the redesign is gone for good.
+    expect(source).not.toContain('useDefaultLayout');
+    expect(source).not.toContain('defaultLayout=');
+    expect(source).not.toContain('onLayoutChanged=');
+    expect(source).toContain('defaultSize={RAIL_COLLAPSED_WIDTH}');
+    // Expansion width remains an in-memory visit detail, not another persisted answer to the initial state.
+    expect(source).toContain('lastExpandedWidth');
     expect(existsSync('lib/useTelemetryRailWidth.ts')).toBe(false);
     expect(readSource('modules/advisor/telemetryRailState.tsx')).not.toContain('usePersistentState');
   });
 });
 
 describe('telemetry rail dock — collapse', () => {
-  it('collapses to the icon stub and back, keeping the agent readable either way', async () => {
+  it('starts as the compact instrument strip and expands on demand', async () => {
     renderDock();
-    await screen.findByTestId('telemetry-column');
-    // Expanded: the full three-zone rail.
-    expect(screen.getByTestId('telemetry-head')).toBeInTheDocument();
-    expect(screen.queryByTestId('telemetry-stub')).toBeNull();
-
-    await act(async () => { fireEvent.click(screen.getByTestId('telemetry-collapse')); });
     const stub = await screen.findByTestId('telemetry-stub');
-    // A stub, not an empty gutter: the mascot still reports whether a turn is running.
     expect(stub).toBeInTheDocument();
     expect(screen.getByTestId('telemetry-mascot')).toBeInTheDocument();
     expect(screen.queryByTestId('telemetry-head')).toBeNull();
@@ -239,17 +232,20 @@ describe('telemetry rail dock — collapse', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('telemetry-collapse')); });
     await waitFor(() => expect(screen.getByTestId('telemetry-head')).toBeInTheDocument());
     expect(screen.queryByTestId('telemetry-stub')).toBeNull();
-  });
 
-  it('reports the collapsed state to assistive tech', async () => {
-    renderDock();
-    await screen.findByTestId('telemetry-column');
-    expect(screen.getByTestId('telemetry-collapse')).toHaveAttribute('aria-expanded', 'true');
     await act(async () => { fireEvent.click(screen.getByTestId('telemetry-collapse')); });
-    await waitFor(() => expect(screen.getByTestId('telemetry-collapse')).toHaveAttribute('aria-expanded', 'false'));
+    await waitFor(() => expect(screen.getByTestId('telemetry-stub')).toBeInTheDocument());
   });
 
-  it('restores an expanded width instead of falling back to the minimum after a persisted collapse', () => {
+  it('reports the compact state to assistive tech', async () => {
+    renderDock();
+    await screen.findByTestId('telemetry-stub');
+    expect(screen.getByTestId('telemetry-collapse')).toHaveAttribute('aria-expanded', 'false');
+    await act(async () => { fireEvent.click(screen.getByTestId('telemetry-collapse')); });
+    await waitFor(() => expect(screen.getByTestId('telemetry-collapse')).toHaveAttribute('aria-expanded', 'true'));
+  });
+
+  it('restores the visit\'s expanded width instead of falling back to the minimum', () => {
     const source = readSource('modules/advisor/ChatRailSplit.tsx');
     expect(source).toContain('lastExpandedWidth');
     expect(source).toContain('panel.resize(lastExpandedWidth.current)');
@@ -293,8 +289,10 @@ describe('telemetry rail — primitives that carry behaviour', () => {
     expect(panel).toContain('text-sm');
   });
 
-  it('scrolls the middle band on a ScrollArea, with head and foot pinned outside it', async () => {
+  it('scrolls the expanded middle band on a ScrollArea, with head and foot pinned outside it', async () => {
     renderDock();
+    await screen.findByTestId('telemetry-stub');
+    await act(async () => { fireEvent.click(screen.getByTestId('telemetry-collapse')); });
     const scroll = await screen.findByTestId('telemetry-scroll');
     expect(scroll).toHaveAttribute('data-slot', 'scroll-area');
     const viewport = scroll.querySelector('[data-slot="scroll-area-viewport"]');

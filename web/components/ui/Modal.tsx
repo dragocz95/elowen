@@ -33,6 +33,10 @@ interface ModalProps {
    *  answer is currently the full viewport either way. A dialog is an editing surface unless it says
    *  otherwise. */
   intent?: OverlayIntent;
+  /** A softer veil is reserved for inspection surfaces whose surrounding visual context is part of what
+   *  the reader is inspecting (for example a selected node in the memory brain). Geometry, focus isolation
+   *  and dismissal stay identical; only the shared scrim token changes. */
+  scrim?: 'default' | 'soft';
   /** Accessible name of the header's close control. Defaults to the app's own "Close"; passed only by
    *  callers that already hold a translated label of their own. */
   closeLabel?: string;
@@ -60,7 +64,7 @@ interface ModalProps {
  *   - the backdrop press, which must stop at the backdrop it was aimed at so a nested dialog cannot also
  *     close its parent. Radix's own outside-press dismissal is turned off for that reason, rather than
  *     left running as a second way to close the same dialog. */
-export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', drawerWidth, closeLabel }: ModalProps) {
+export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', scrim = 'default', drawerWidth, closeLabel }: ModalProps) {
   const wide = (drawerWidth ?? (size === 'lg' ? 'wide' : 'default')) === 'wide';
   const automatic = useOverlayPresentation(intent);
   const resolved = presentation === 'auto' ? automatic : presentation;
@@ -92,6 +96,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
         ref={overlayRef}
         presentation={resolved}
         layer={layer}
+        scrim={scrim}
         // A backdrop dismissal has to be a press that BEGAN on the backdrop, not merely a click event
         // whose target happens to be it. `click` fires on the common ancestor of the press and the
         // release, so a press that starts on a control and ends anywhere else still arrives here with

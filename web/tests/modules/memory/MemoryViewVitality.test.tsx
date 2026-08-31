@@ -12,6 +12,7 @@ const categories = vi.fn();
 vi.mock('../../../lib/queries', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useMemories: (filters?: unknown) => memories(filters),
+  useMemory: (id: number) => ({ data: MEMORY_SET.find((memory) => memory.id === id), isError: false, isLoading: false }),
   useMemoryCategories: () => categories(),
 }));
 
@@ -81,5 +82,18 @@ describe('MemoryView vitality column', () => {
       expect(bodies[0]).toContain('stale low value');
       expect(bodies[2]).toContain('frequently used');
     });
+  });
+
+  it('keeps the brain visible behind a selected memory and uses the softer inspection scrim', async () => {
+    const view = renderView();
+    fireEvent.click(await screen.findByRole('radio', { name: 'Brain' }));
+    const [node] = await screen.findAllByTestId('memory-leaf-node');
+    fireEvent.click(node!);
+
+    const detail = await screen.findByRole('dialog');
+    expect(view.container.querySelector('.brain-map')).not.toBeNull();
+    expect(screen.queryByTestId('memory-row')).toBeNull();
+    expect(detail.parentElement).toHaveAttribute('data-scrim', 'soft');
+    expect(detail.parentElement).toHaveClass('bg-[var(--color-scrim-soft)]');
   });
 });

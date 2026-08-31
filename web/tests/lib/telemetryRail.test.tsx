@@ -4,7 +4,6 @@ import {
   RAIL_MAX_WIDTH,
   RAIL_DEFAULT_WIDTH,
   RAIL_COLLAPSED_WIDTH,
-  RAIL_LAYOUT_STORAGE_KEY,
   CHAT_CONTENT_PANEL_ID,
   CHAT_RAIL_PANEL_ID,
 } from '../../lib/telemetryRail';
@@ -26,14 +25,13 @@ describe('telemetry rail size contract', () => {
     expect(RAIL_DEFAULT_WIDTH).toBeLessThan(RAIL_MAX_WIDTH);
   });
 
-  // A collapsed rail is a 52px stub, never zero: the mascot and the context meter stay on screen, so the
-  // reader can still see whether a turn is running without reopening the panel.
-  it('never collapses the rail to nothing', () => {
+  // Compact telemetry is a real 52px instrument strip, never zero: commands and section summaries remain
+  // visible without reopening the full panel.
+  it('never compacts the rail to nothing', () => {
     expect(RAIL_COLLAPSED_WIDTH).toBeGreaterThan(0);
   });
 
-  it('names the persisted layout and both panels, so a remembered width survives a remount', () => {
-    expect(RAIL_LAYOUT_STORAGE_KEY).toMatch(/^elowen:/);
+  it('names both panels so the separator owns a deterministic pair', () => {
     expect(CHAT_CONTENT_PANEL_ID).not.toBe(CHAT_RAIL_PANEL_ID);
   });
 });

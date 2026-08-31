@@ -37,6 +37,7 @@ const STATUS = {
 
 const server = setupServer(
   http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
+  http.post('*/api/brain/visibility', () => HttpResponse.json({ ok: true })),
   http.get('*/api/brain/messages', ({ request }) => new URL(request.url).searchParams.has('limit')
     ? HttpResponse.json({ items: [], hasMore: false, nextBefore: null })
     : HttpResponse.json([])),
@@ -51,7 +52,9 @@ const server = setupServer(
   http.get('*/api/brain/sessions', () => HttpResponse.json([
     { id: 'brain-1', title: 'First chat', model: 'm', updated_at: '2026-07-08', running: false, active: true },
   ])),
-  http.get('*/api/brain/commands', () => HttpResponse.json({ commands: [] })),
+  http.get('*/api/brain/commands', () => HttpResponse.json({
+    commands: Array.from({ length: 12 }, (_, index) => ({ name: `command-${index}`, description: '' })),
+  })),
 );
 
 beforeAll(() => {
@@ -83,12 +86,29 @@ function renderChat(node: ReactNode) {
   );
 }
 
+async function expandDesktopTelemetry(): Promise<void> {
+  await screen.findByTestId('telemetry-stub');
+  fireEvent.click(screen.getByTestId('telemetry-collapse'));
+  await screen.findByTestId('telemetry-head');
+}
+
 describe('chat telemetry panel', () => {
   it('renders the desktop column with context, limits, project, MCP and LSP', async () => {
     setViewport(false);
     renderChat(<ChatPage />);
     expect(await screen.findByTestId('telemetry-column')).toBeInTheDocument();
 
+    // The desktop default is the compact instrument strip: every available section remains visible as an
+    // icon/micro-meter, and the mascot keeps the command catalog reachable without claiming reading width.
+    expect(await screen.findByTestId('telemetry-compact-context')).toHaveTextContent('21%');
+    expect(screen.getByTestId('telemetry-command-count')).toHaveTextContent('12');
+    expect(await screen.findByTestId('telemetry-compact-limit-0')).toHaveTextContent('64%');
+    expect(screen.getByTestId('telemetry-compact-mcp')).toHaveTextContent('1/2');
+    expect(screen.getByTestId('telemetry-compact-lsp')).toBeInTheDocument();
+    expect(screen.getByTestId('telemetry-compact-project')).toBeInTheDocument();
+    expect(screen.getByTestId('telemetry-compact-scroll')).toHaveAttribute('data-slot', 'scroll-area');
+
+    await expandDesktopTelemetry();
     // Context fill comes from the status poll's usage numbers.
     const context = await screen.findByTestId('telemetry-context');
     expect(context.textContent).toContain('21%');
@@ -123,6 +143,7 @@ describe('chat telemetry panel', () => {
   it('refreshes context, tokens and cost mid-turn from a step frame, not only once the turn settles', async () => {
     setViewport(false);
     renderChat(<ChatPage />);
+    await expandDesktopTelemetry();
     const context = await screen.findByTestId('telemetry-context');
     expect(context.textContent).toContain('21%'); // the opening numbers, from /brain/status
 
@@ -154,6 +175,7 @@ describe('chat telemetry panel', () => {
 
     setViewport(false);
     renderChat(<ChatPage />);
+    await expandDesktopTelemetry();
     await screen.findByTestId('telemetry-context');
 
     // A session-event triggers the snapshot refetch that will land late.
@@ -174,6 +196,7 @@ describe('chat telemetry panel', () => {
   it('ignores a step frame that carries no usage, leaving the last known numbers standing', async () => {
     setViewport(false);
     renderChat(<ChatPage />);
+    await expandDesktopTelemetry();
     expect((await screen.findByTestId('telemetry-context')).textContent).toContain('21%');
     // `usage` is optional on the event — a step without it must not blank the rail.
     FakeES.instances[0]!.emit('step', { type: 'step', step: 3, maxSteps: 25 });
@@ -192,6 +215,12 @@ describe('chat telemetry panel', () => {
       http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
     );
     renderChat(<ChatPage />);
+    expect(await screen.findByTestId('telemetry-compact-context')).toBeInTheDocument();
+    expect(screen.queryByTestId('telemetry-compact-project')).toBeNull();
+    expect(screen.queryByTestId('telemetry-compact-mcp')).toBeNull();
+    expect(screen.queryByTestId('telemetry-compact-lsp')).toBeNull();
+    expect(screen.queryByTestId('telemetry-compact-limit-0')).toBeNull();
+    await expandDesktopTelemetry();
     expect(await screen.findByTestId('telemetry-context')).toBeInTheDocument();
     expect(screen.queryByTestId('telemetry-project')).toBeNull();
     expect(screen.queryByTestId('telemetry-mcp')).toBeNull();
@@ -208,8 +237,9 @@ describe('chat telemetry panel', () => {
       http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
     );
     renderChat(<ChatPage />);
-    // Even with nothing to report the rail is inhabited — the owl shows, the empty note beside it.
+    // Even with nothing to report the compact rail is inhabited — the owl and expand control remain.
     expect(await screen.findByTestId('telemetry-mascot')).toBeInTheDocument();
+    expect(screen.queryByTestId('telemetry-compact-context')).toBeNull();
     expect(screen.queryByTestId('telemetry-context')).toBeNull();
   });
 

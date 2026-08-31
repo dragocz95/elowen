@@ -3,7 +3,7 @@ import { Progress } from '../../components/ui/shadcn/progress';
 import type { ProviderUsage } from '../../lib/types';
 
 /** Human window label from its minute span, mirroring the CLI rail (300 → "5h", 10080 → "weekly"). */
-function windowLabel(minutes: number | null, weekly: string, windowWord: string): string {
+export function usageWindowLabel(minutes: number | null, weekly: string, windowWord: string): string {
   if (minutes === 10_080) return weekly;
   if (minutes == null || minutes <= 0) return windowWord;
   if (minutes % 1_440 === 0) return `${minutes / 1_440}d`;
@@ -62,7 +62,7 @@ export function OAuthUsageRail({ usage }: { usage: ProviderUsage }) {
             title={reset ? t.brain.usageResets.replace('{time}', reset) : undefined}
           >
             <span className="w-12 shrink-0 text-muted-foreground">
-              {windowLabel(w.windowMinutes, t.brain.usageWeekly, t.brain.usageWindow)}
+              {usageWindowLabel(w.windowMinutes, t.brain.usageWeekly, t.brain.usageWindow)}
             </span>
             <Progress
               data-testid="oauth-usage-track"
@@ -70,7 +70,7 @@ export function OAuthUsageRail({ usage }: { usage: ProviderUsage }) {
               value={pct}
               indicatorValue={usageMeterValue(pct)}
               indicatorClassName={usageProgressClass(pct)}
-              aria-label={windowLabel(w.windowMinutes, t.brain.usageWeekly, t.brain.usageWindow)}
+              aria-label={usageWindowLabel(w.windowMinutes, t.brain.usageWeekly, t.brain.usageWindow)}
             />
             <span className="w-9 shrink-0 text-right tabular-nums text-foreground">{Math.round(pct)}%</span>
           </div>

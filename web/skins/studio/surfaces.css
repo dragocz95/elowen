@@ -882,8 +882,11 @@
    its scrim exactly — and this rule, being unlayered, replaces it for Studio with a veil derived per variant
    from --color-scrim (measured on light: the page reads 3.68:1 darker, a white dialog stands 3.84:1 off
    the veil). */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-layer-modal {
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-layer-modal:not([data-scrim='soft']) {
   background: var(--color-scrim);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .overlay-layer-modal[data-scrim='soft'] {
+  background: var(--color-scrim-soft);
 }
 
 /* Floating menus. `.overlay-surface` above carries the raised shadow, but a menu is not one of those —

@@ -31,23 +31,25 @@ const Ctx = createContext<TelemetryRailState | null>(null);
 export function TelemetryRailProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const mobile = useMobileViewport();
-  // Deliberately NOT persisted here. The docked panel already saves its own layout (and a collapsed panel
-  // is just a layout), so a second stored flag would be a second answer to "how wide is the rail" — free
-  // to disagree with the first after any drag. This is the live mirror of the panel's state: the panel
-  // reports it on mount and on every resize, and a toggle here drives the panel back.
-  const [collapsed, setCollapsed] = useState(false);
+  // Desktop telemetry is an ambient instrument strip, not a dashboard that should claim 340px on arrival.
+  // Expansion is transient: a fresh provider and every new visit to /chat start compact, while the panel's
+  // resize callback remains the live source of truth during the visit.
+  const [collapsed, setCollapsed] = useState(true);
   // A drawer that reopened itself on every visit would be a nuisance rather than a setting, so the mobile
   // overlay is transient by design.
   const [mobileOpen, setMobileOpen] = useState(false);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
 
-  // The provider intentionally outlives route content so the desktop panel does not lose its live mirror,
-  // but transient overlays belong to /chat. Leaving the route closes both; crossing to desktop also closes
-  // the phone drawer so narrowing later cannot resurrect an overlay the user already left behind.
+  // The provider intentionally outlives route content, but every transient chat surface belongs to the
+  // current visit. Leaving /chat resets the desktop rail to compact and closes its overlays. Entering a phone
+  // viewport does the same for the hidden desktop dock, so widening later cannot resurrect an old expansion.
   useEffect(() => {
     if (pathname !== '/chat') {
+      setCollapsed(true);
       setMobileOpen(false);
       setWorkflowId(null);
+    } else if (mobile === true) {
+      setCollapsed(true);
     } else if (mobile === false) {
       setMobileOpen(false);
     }

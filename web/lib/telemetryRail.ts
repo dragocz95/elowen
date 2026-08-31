@@ -11,14 +11,11 @@ export const RAIL_MIN_WIDTH = 280;
 export const RAIL_DEFAULT_WIDTH = 340;
 export const RAIL_MAX_WIDTH = 560;
 
-/** Collapsed the rail is a 52px stub, not zero: telemetry goes away, but the mascot, the vertical context
- * meter and its percentage stay on screen. A rail that collapsed to nothing would take the agent's state
- * with it, and the reader would have to reopen the panel to learn whether a turn is still running. */
+/** Compact desktop telemetry is a 52px instrument strip, not an empty gutter: command access, context and
+ * subscription pressure, live work, MCP/LSP and project identity remain reachable without taking reading
+ * width from the conversation. A fresh desktop visit deliberately starts at this size. */
 export const RAIL_COLLAPSED_WIDTH = 52;
 
-/** The group layout `useDefaultLayout` persists, and the panel ids it keys the saved layout by. Both
- * panels are named so a conditionally-mounted group restores the right sizes instead of redistributing
- * them across whatever happens to be rendered on the next mount. */
-export const RAIL_LAYOUT_STORAGE_KEY = 'elowen:chat-rail-layout';
+/** Stable panel ids keep the separator's ARIA ownership deterministic across responsive mounts. */
 export const CHAT_CONTENT_PANEL_ID = 'chat-content';
 export const CHAT_RAIL_PANEL_ID = 'chat-telemetry';
