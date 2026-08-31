@@ -37,7 +37,7 @@ export function LanguageSwitcher({ collapsed = false }: { collapsed?: boolean })
           aria-label={`${t.common.language}: ${currentName}`}
           title={`${t.common.language}: ${currentName}`}
           className={collapsed
-            ? 'flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+            ? 'flex h-7 w-7 min-h-[var(--touch-target)] min-w-[var(--touch-target)] items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
             : 'flex h-9 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'}
           style={{ transitionDuration: 'var(--motion-fast)' }}
         >

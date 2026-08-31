@@ -12,7 +12,9 @@ describe('Segmented', () => {
     render(<Segmented options={opts} value="b" onChange={() => {}} />);
     const radios = screen.getAllByRole('radio');
     expect(radios).toHaveLength(3);
-    expect(screen.getByRole('radio', { name: 'B' }).getAttribute('aria-checked')).toBe('true');
+    const active = screen.getByRole('radio', { name: 'B' });
+    expect(active.getAttribute('aria-checked')).toBe('true');
+    expect(active).toHaveClass('data-[state=checked]:text-foreground');
   });
 
   it('fires onChange with the clicked value', () => {

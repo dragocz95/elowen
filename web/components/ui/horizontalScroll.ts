@@ -1,5 +1,25 @@
 const EDGE_EPSILON = 1;
 
+export interface HorizontalOverflowState {
+  overflow: boolean;
+  left: boolean;
+  right: boolean;
+}
+
+export const NO_HORIZONTAL_OVERFLOW: HorizontalOverflowState = { overflow: false, left: false, right: false };
+
+/** Measure which horizontal edges currently hide content. Shared by every swipeable one-line control so
+ *  an edge fade reflects actual geometry rather than permanently decorating tracks that already fit. */
+export function horizontalOverflowState(track: HTMLElement): HorizontalOverflowState {
+  const maxScrollLeft = Math.max(0, track.scrollWidth - track.clientWidth);
+  const overflow = maxScrollLeft > EDGE_EPSILON;
+  return {
+    overflow,
+    left: overflow && track.scrollLeft > EDGE_EPSILON,
+    right: overflow && track.scrollLeft < maxScrollLeft - EDGE_EPSILON,
+  };
+}
+
 function wheelUnit(track: HTMLElement, deltaMode: number): number {
   if (deltaMode === WheelEvent.DOM_DELTA_PIXEL) return 1;
   if (deltaMode === WheelEvent.DOM_DELTA_PAGE) return Math.max(1, track.clientHeight);

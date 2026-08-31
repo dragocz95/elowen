@@ -70,7 +70,7 @@ const radioGroupItemVariants = cva(
         variant: 'default',
         className: [
           'rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-          'data-[state=checked]:bg-primary/15 data-[state=checked]:text-primary',
+          'data-[state=checked]:bg-primary/15 data-[state=checked]:text-foreground',
         ],
       },
       {
@@ -87,7 +87,7 @@ const radioGroupItemVariants = cva(
         variant: 'menu',
         className: [
           'w-full justify-start rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-          'data-[state=checked]:bg-primary/15 data-[state=checked]:text-primary',
+          'data-[state=checked]:bg-primary/15 data-[state=checked]:text-foreground',
         ],
       },
       {

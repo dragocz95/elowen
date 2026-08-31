@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Bot, Server, Wrench } from 'lucide-react';
 import { LanguageProvider } from '../../lib/i18n';
 import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
@@ -48,7 +48,7 @@ function setViewportWidth(width: number): void {
   } as MediaQueryList));
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 /** The class each direct child of an element is identified by. The anatomy of a page is an ORDER, and an
  *  order is the one thing a per-element `toBeInTheDocument` cannot see: every assertion below passed just
@@ -85,6 +85,44 @@ describe('WorkspaceShell', () => {
     expect(screen.getByRole('radiogroup', { name: 'Sections' })).toBeInTheDocument();
     expect(screen.queryByTestId('spatial-section-rail')).toBeNull();
     expect(screen.getByTestId('spatial-workspace-layout')).toContainElement(screen.getByText('Register'));
+  });
+
+  it('shows a measured edge fade only where the metric rail hides more content', () => {
+    let resize: (() => void) | undefined;
+    vi.stubGlobal('ResizeObserver', class ResizeObserver {
+      constructor(callback: ResizeObserverCallback) { resize = () => callback([], this); }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    render(
+      <WorkspaceShell
+        variant="register"
+        hero={{
+          title: 'Memory',
+          metrics: <><WorkspaceMetric label="Active" value={4} /><WorkspaceMetric label="Categories" value={8} /></>,
+        }}
+      >
+        <div>Register</div>
+      </WorkspaceShell>,
+    );
+    const rail = screen.getByTestId('workspace-hero-metrics');
+    Object.defineProperties(rail, {
+      clientWidth: { configurable: true, value: 100 },
+      scrollWidth: { configurable: true, value: 260 },
+      scrollLeft: { configurable: true, writable: true, value: 0 },
+    });
+
+    act(() => resize?.());
+    expect(rail).toHaveAttribute('data-overflow', 'true');
+    expect(rail).toHaveAttribute('data-overflow-left', 'false');
+    expect(rail).toHaveAttribute('data-overflow-right', 'true');
+    expect(rail.style.getPropertyValue('--workspace-metrics-fade-right')).toBe('var(--workspace-metrics-fade-size)');
+
+    rail.scrollLeft = 160;
+    fireEvent.scroll(rail);
+    expect(rail).toHaveAttribute('data-overflow-left', 'true');
+    expect(rail).toHaveAttribute('data-overflow-right', 'false');
   });
 
   it('keeps the mascot prop as an inert visual state input and mounts no artwork for it', () => {
@@ -338,6 +376,9 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(hero).not.toMatch(/\.workspace-hero__metrics\s*\{[^}]*border-(top|bottom|inline)/);
     expect(hero).not.toMatch(/\.workspace-metric\s*\{[^}]*border-inline-end/);
     expect(hero).toMatch(/\.workspace-hero__metrics\s*\{[^}]*gap:\s*clamp\([^}]*padding-block:\s*1\.125rem 1\.25rem/);
+    expect(hero).toMatch(/\.workspace-hero__metrics\s*\{[^}]*mask-image:\s*linear-gradient/);
+    expect(hero).toContain('var(--workspace-metrics-fade-left)');
+    expect(hero).toContain('var(--workspace-metrics-fade-right)');
     expect(studio).toMatch(/\.workspace-hero__metrics\s*\{[^}]*flex-wrap:\s*nowrap[^}]*gap:\s*2rem[^}]*overflow-x:\s*auto/);
     expect(studio).toMatch(/\.workspace-metric\s*\{[^}]*border:\s*0/);
     // ORDER, not DOM order: the Studio skin makes the hero a flex column and gives the head `order: 2`,

@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 const css = readFileSync(join(import.meta.dirname, '..', '..', 'app', 'styles', 'components', 'page-bar.css'), 'utf8');
 const toolbarCss = readFileSync(join(import.meta.dirname, '..', '..', 'app', 'styles', 'components', 'page-toolbar.css'), 'utf8');
 const topBarSource = readFileSync(join(import.meta.dirname, '..', '..', 'components', 'shell', 'TopBar.tsx'), 'utf8');
+const skinSwitcherSource = readFileSync(join(import.meta.dirname, '..', '..', 'components', 'ui', 'SkinSwitcher.tsx'), 'utf8');
+const languageSwitcherSource = readFileSync(join(import.meta.dirname, '..', '..', 'components', 'ui', 'LanguageSwitcher.tsx'), 'utf8');
 
 describe('chat top bar responsive ownership', () => {
   it('folds chat controls from a callback-ref measurement without creating a Popper containing block', () => {
@@ -20,6 +22,9 @@ describe('chat top bar responsive ownership', () => {
     expect(topBarSource).not.toContain("top-bar__actions ml-auto flex shrink-0 items-center gap-0.5 max-[767px]:hidden");
     expect(topBarSource).toContain("bar ? 'w-8 max-[767px]:hidden'");
     expect(topBarSource).toContain('top-bar__logout flex w-9 items-center justify-center disabled:opacity-50 max-[767px]:hidden');
+    expect(topBarSource).toContain("onMenuClick ? 'min-h-[var(--touch-target)] min-w-[var(--touch-target)] justify-center'");
+    expect(skinSwitcherSource).toContain("collapsed ? 'min-h-[var(--touch-target)] min-w-[var(--touch-target)] justify-center px-0'");
+    expect(languageSwitcherSource).toContain("min-h-[var(--touch-target)] min-w-[var(--touch-target)]");
   });
 
   it('lets a mobile toolbar action group shrink and wrap inside its row', () => {

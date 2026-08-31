@@ -1,8 +1,9 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { SpatialMascotState } from './SpatialMascot';
+import { horizontalOverflowState, NO_HORIZONTAL_OVERFLOW, type HorizontalOverflowState } from './horizontalScroll';
 
 /** The ONE workspace hero. Every page shell — the registers (Memory, Projects, Users, every plugin
  *  register), the control decks (Settings, Account) and the single-surface pages (the editor) — opens
@@ -34,6 +35,56 @@ export interface WorkspaceHeroProps {
   metrics?: ReactNode;
 }
 
+function WorkspaceHeroMetrics({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState<HorizontalOverflowState>(NO_HORIZONTAL_OVERFLOW);
+  const measure = useCallback(() => {
+    const track = ref.current;
+    if (!track) return;
+    const next = horizontalOverflowState(track);
+    setOverflow((current) => (
+      current.overflow === next.overflow && current.left === next.left && current.right === next.right
+        ? current
+        : next
+    ));
+  }, []);
+
+  useEffect(() => {
+    const track = ref.current;
+    if (!track) return;
+    measure();
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    const mutationObserver = new MutationObserver(measure);
+    resizeObserver?.observe(track);
+    mutationObserver.observe(track, { characterData: true, childList: true, subtree: true });
+    track.addEventListener('scroll', measure, { passive: true });
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver.disconnect();
+      track.removeEventListener('scroll', measure);
+    };
+  }, [measure]);
+
+  const edgeStyle = {
+    '--workspace-metrics-fade-left': overflow.left ? 'var(--workspace-metrics-fade-size)' : '0px',
+    '--workspace-metrics-fade-right': overflow.right ? 'var(--workspace-metrics-fade-size)' : '0px',
+  } as CSSProperties;
+
+  return (
+    <div
+      ref={ref}
+      className="workspace-hero__metrics"
+      data-testid="workspace-hero-metrics"
+      data-overflow={overflow.overflow}
+      data-overflow-left={overflow.left}
+      data-overflow-right={overflow.right}
+      style={edgeStyle}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function WorkspaceHero({ eyebrow, title, count, description, status, action, icon: Icon, mascot = false, metrics }: WorkspaceHeroProps) {
   const hasActions = status != null || action != null;
 
@@ -58,7 +109,7 @@ export function WorkspaceHero({ eyebrow, title, count, description, status, acti
           </div>
         ) : null}
       </header>
-      {metrics != null ? <div className="workspace-hero__metrics" data-testid="workspace-hero-metrics">{metrics}</div> : null}
+      {metrics != null ? <WorkspaceHeroMetrics>{metrics}</WorkspaceHeroMetrics> : null}
     </section>
   );
 }

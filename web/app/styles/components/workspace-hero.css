@@ -61,8 +61,18 @@
   gap: clamp(1.5rem, 3cqi, 3rem);
   overflow-x: auto;
   overscroll-behavior-inline: contain;
+  --workspace-metrics-fade-size: 1.25rem;
+  --workspace-metrics-fade-left: 0px;
+  --workspace-metrics-fade-right: 0px;
   padding-block: 1.125rem 1.25rem;
   scrollbar-width: none;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--workspace-metrics-fade-left),
+    black calc(100% - var(--workspace-metrics-fade-right)),
+    transparent 100%
+  );
 }
 .workspace-hero__metrics::-webkit-scrollbar { display: none; }
 

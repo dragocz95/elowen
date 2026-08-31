@@ -26,7 +26,7 @@ export function SkinSwitcher({ collapsed = false, placement = 'topbar' }: { coll
       onClick={cycle}
       aria-label={label}
       title={`${label} — ${t.common.skinCycle}`}
-      className="skin-switcher__button flex h-9 items-center gap-1.5 rounded-full px-2.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+      className={`skin-switcher__button flex h-9 items-center gap-1.5 rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground ${collapsed ? 'min-h-[var(--touch-target)] min-w-[var(--touch-target)] justify-center px-0' : 'px-2.5'}`}
     >
       <Palette size={18} strokeWidth={1.5} aria-hidden />
       {/* The name is the only way to tell two dark skins apart at a glance. A top bar may hide it until

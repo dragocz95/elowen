@@ -181,7 +181,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
         <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
         <Link
           href="/account"
-          className="top-bar__identity ml-0.5 flex items-center rounded-full ring-primary/30 transition-[opacity,box-shadow] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2"
+          className={`top-bar__identity ml-0.5 flex items-center rounded-full ring-primary/30 transition-[opacity,box-shadow] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 ${onMenuClick ? 'min-h-[var(--touch-target)] min-w-[var(--touch-target)] justify-center' : ''}`}
           title={me.data?.user ? (me.data.user.name || me.data.user.username) : t.common.daemon}
         >
           {me.data?.user ? (
