@@ -13,7 +13,10 @@ function titlerWith(reply: string | Error | null) {
 describe('ConversationTitler — names a new conversation from its first message', () => {
   it('sets a sanitized title (drops "Title:", wrapping quotes, trailing dot, extra lines)', async () => {
     const { titler, setTitleIfCurrent } = titlerWith('Title: "Brake pads for a Cadillac".\nsome rambling');
-    await titler.run('sess-1', 'what are these brake pads for?', 'what are these brake pads for?');
+    // Resolving WITH the landed title is load-bearing: it is what the caller announces to attached
+    // clients, so a title that resolved as undefined here would never reach a live CLI header.
+    await expect(titler.run('sess-1', 'what are these brake pads for?', 'what are these brake pads for?'))
+      .resolves.toBe('Brake pads for a Cadillac');
     expect(setTitleIfCurrent).toHaveBeenCalledWith('sess-1', 'what are these brake pads for?', 'Brake pads for a Cadillac');
   });
 
@@ -65,7 +68,9 @@ describe('ConversationTitler — names a new conversation from its first message
     const pending = titler.run('sess-7', 'opening message', 'provisional');
     current = 'My manual title';
     release({ text: 'Generated title' });
-    await pending;
+    // Resolves undefined when the compare-and-set lost: a title that never landed must also never be
+    // announced to attached clients (the announce path keys on this resolved value).
+    await expect(pending).resolves.toBeUndefined();
 
     expect(current).toBe('My manual title');
     expect(setTitleIfCurrent).toHaveBeenCalledWith('sess-7', 'provisional', 'Generated title');

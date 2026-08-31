@@ -146,6 +146,10 @@ export class TurnAdmission {
         titler: this.d.titler,
         sessionId: this.input.live.sessionId,
         senderText: this.input.display ?? this.input.text,
+        // The generated title lands whenever the relay answers — routinely after this turn settled, past
+        // the CLI's one-shot idle title refresh. Announce it on the live stream (like a manual rename's
+        // session-event) or the attached client keeps the provisional first-message name all session.
+        announceTitle: (title) => this.input.live.replay.publish({ type: 'title', title }),
       });
     }
     this.echo();

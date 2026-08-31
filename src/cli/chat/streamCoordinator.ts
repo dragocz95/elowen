@@ -143,6 +143,14 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         if (event.type === 'queue') { rt.queued = event.items; render('stream:queue'); return; }
         if (event.type === 'process') { rt.processes = event.processes; render('stream:process'); return; }
         if (event.type === 'goal') { rt.setGoal(event.goal); render('stream:goal'); return; }
+        // The background titler landed the generated conversation name — routinely AFTER the idle branch
+        // below took its one-shot title refresh (the provisional written at admission already satisfied
+        // it). Metadata, not transcript: refetch status so the header and the terminal tab pick the final
+        // name up through the same path every other metadata change uses.
+        if (event.type === 'title') {
+          void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:title'); });
+          return;
+        }
         if (event.type === 'compacted') { if (!fromSnapshot) refetchHistory(); return; }
 
         // Binding is control state, not transcript state. Commit it before any hydration buffer can defer

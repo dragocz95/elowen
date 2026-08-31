@@ -1875,3 +1875,41 @@ describe('StreamCoordinator — plan decision', () => {
     stream.stop();
   });
 });
+
+describe('StreamCoordinator — background title announcement', () => {
+  // The regression as the user hits it: the idle branch refreshes metadata only while the title is
+  // still EMPTY, and the provisional (written at admission) already satisfies that one shot — so a
+  // generated title landing after the turn settled never reached the CLI. The daemon's `title` event
+  // is the only repair path, and it must trigger a metadata refetch rather than being dropped into
+  // the transcript fold.
+  it('refetches metadata when the daemon announces the generated title after the settled idle', () => {
+    let onEvent!: (event: BrainEvent) => void;
+    const client = {
+      stream: (cb: (event: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => Promise.resolve([]),
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const rt = state(); // fresh conversation: no title yet, boot defaults
+    // The real refresh applies status.title; the provisional is what the store held at that instant.
+    const refreshMeta = vi.fn(async () => { rt.conversationTitle = 'poradíš mi s výběrem brzdových destiček?'; });
+    const stream = new StreamCoordinator(
+      rt, { client }, actions({ refreshMeta }),
+      { launchAsk: () => {}, closeAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    stream.openStream(rt.streamAc);
+
+    onEvent({ type: 'user', text: 'poradíš mi s výběrem brzdových destiček?' });
+    onEvent({ type: 'text', delta: 'jasně —' });
+    onEvent({ type: 'idle' });
+    expect(refreshMeta).toHaveBeenCalledTimes(1); // the one-shot idle refresh landed the provisional
+    onEvent({ type: 'idle' });
+    expect(refreshMeta).toHaveBeenCalledTimes(1); // a replayed idle does not refetch: the gate is closed
+
+    onEvent({ type: 'title', title: 'Výběr brzdových destiček' });
+    expect(refreshMeta).toHaveBeenCalledTimes(2); // the announcement is the only repair for a late title
+    // Metadata, not transcript: the event must not have grown a turn.
+    expect(serialized(rt.transcript)).not.toContain('Výběr brzdových destiček');
+    stream.stop();
+  });
+});

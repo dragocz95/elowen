@@ -176,6 +176,13 @@ export type BrainEvent =
    * including the initial active row before the long kickoff turn settles. `null` means the goal was
    * cleared. Clients should replace their current goal state wholesale and may otherwise ignore it. */
   | { type: 'goal'; goal: BrainGoalState | null }
+  /** The background ConversationTitler replaced the provisional conversation name with its generated
+   *  one. Metadata, not transcript: the store row is the authority (a status refetch returns the same
+   *  value), this is only the change SIGNAL — without it an attached client that already took its
+   *  one-shot title refresh keeps showing the raw first message for the rest of the session, because
+   *  the titler finishes on its own clock, often after the first turn settled. Carries the title so a
+   *  client may apply it without a fetch. Safe to ignore (the next metadata refresh shows it). */
+  | { type: 'title'; title: string }
   | { type: 'idle'; usage?: BrainUsage; model?: string; durationMs?: number; completedAt?: string }
   | { type: 'error'; message: string };
 

@@ -39,6 +39,7 @@ interface LiveStreamHandlers {
   subagent: (frame: SubagentFrame) => void;
   workflow: (frame: WorkflowFrame) => void;
   goal: (goal: BrainGoal | null) => void;
+  title: () => void;
   process: (processes: ProcessInfo[]) => void;
   card: (card: BrainCard) => void;
   queue: (items: { id: string; text: string }[]) => void;
@@ -194,6 +195,10 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     onFrame('workflow', (e) => handlers.workflow(JSON.parse((e as MessageEvent).data) as WorkflowFrame));
     // Goal null is authoritative and must be applied unconditionally.
     onFrame('goal', (e) => handlers.goal((JSON.parse((e as MessageEvent).data) as { goal: BrainGoal | null }).goal));
+    // The background titler replaced the provisional conversation name. Metadata, not transcript: the
+    // payload's title is deliberately dropped — the sessions registry query is the single authority and
+    // the handler refetches it, so no local copy can go stale.
+    onFrame('title', () => handlers.title());
     // Process events are full snapshots pushed on spawn/exit/kill, sharing the hydration query's shape.
     onFrame('process', (e) => handlers.process((JSON.parse((e as MessageEvent).data) as { processes: ProcessInfo[] }).processes));
     onFrame('card', (e) => handlers.card((JSON.parse((e as MessageEvent).data) as { card: BrainCard }).card));

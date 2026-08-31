@@ -4326,6 +4326,41 @@ describe('BrainService memory integration', () => {
     expect(curatorPrompt).toContain('zapamatuj si, že preferuju strict mode');
   });
 
+  // The reported regression: the background titler finishes on its own clock — routinely after the turn
+  // settled — and used to write the generated title ONLY to the store. An attached CLI takes its single
+  // automatic title refresh at the terminal idle, which the provisional (written at admission) already
+  // satisfies, so a title landing later never reached a live client until the next process restart. The
+  // `title` announcement is the repair path: it must fire exactly when the late inference lands, carry
+  // the generated name, and not fire before it landed.
+  it('announces a late generated title on the live stream after the turn already settled', async () => {
+    const d = fakeDeps();
+    let releaseTitle!: (v: { text: string }) => void;
+    const decide = vi.fn((prompt: string) => {
+      // Only the titling call is held open; any other background inference answers immediately.
+      if (prompt.includes('very short title')) return new Promise<{ text: string }>((r) => { releaseTitle = r; });
+      return Promise.resolve({ text: '[]' });
+    });
+    (d as Record<string, unknown>).inference = () => ({ model: 'cheap', decide });
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const seen: { type: string; title?: string }[] = [];
+    svc.subscribe(1, (e) => seen.push(e as { type: string; title?: string }));
+
+    await svc.send({ userId: 1, text: 'poradíš mi s výběrem brzdových destiček?' });
+    // The turn is fully settled while the titling inference is still in flight — the exact ordering the
+    // CLI's one-shot idle refresh races. Nothing may be announced yet, and the store still holds the
+    // provisional first-message title.
+    expect(seen.map((e) => e.type)).not.toContain('title');
+    expect(d.store.getSession('brain-1')?.title).toBe('poradíš mi s výběrem brzdových destiček?');
+
+    releaseTitle({ text: 'Výběr brzdových destiček' });
+    await new Promise((r) => setImmediate(r));
+    expect(d.store.getSession('brain-1')?.title).toBe('Výběr brzdových destiček');
+    const titles = seen.filter((e) => e.type === 'title');
+    expect(titles).toHaveLength(1);
+    expect(titles[0]?.title).toBe('Výběr brzdových destiček');
+  });
+
   // Turn-start recall is a REMOTE embedding call with a 30 s deadline, and every client renders the sent
   // bubble from the daemon's `user` event alone (no optimistic client-side push). While that event was
   // published behind the retrieval, a sent message stayed invisible for its whole duration — measured at
