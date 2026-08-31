@@ -54,6 +54,45 @@ const unpairedSse = [
   event('message_stop', { type: 'message_stop' }),
 ].join('');
 const mismatchedSse = sse.replace('"tool_use_id":"srvtoolu_1"', '"tool_use_id":"srvtoolu_unmatched"');
+const orphanResultSse = [
+  block(0, { type: 'text', text: 'Searching.' }),
+  block(1, rawContent()[3]!),
+  block(2, { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } }),
+  event('message_stop', { type: 'message_stop' }),
+].join('');
+const duplicateResultSse = [
+  block(0, { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: { query: 'Elowen docs' } }),
+  block(1, rawContent()[3]!),
+  block(2, rawContent()[3]!),
+  block(3, { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } }),
+  event('message_stop', { type: 'message_stop' }),
+].join('');
+const multiplePairsContent = [
+  { type: 'redacted_thinking', data: 'redacted-thinking' },
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: { query: 'docs' } },
+  { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_1', content: { type: 'tool_search_tool_search_result', tool_references: [] } },
+  { type: 'server_tool_use', id: 'srvtoolu_2', name: 'tool_search_tool_regex', input: { pattern: 'Bash' } },
+  { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_2', content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'Bash' }] } },
+];
+const multiplePairsSse = [
+  block(0, multiplePairsContent[0]!),
+  block(1, multiplePairsContent[1]!),
+  block(2, multiplePairsContent[2]!),
+  block(3, multiplePairsContent[3]!),
+  block(4, multiplePairsContent[4]!),
+  event('message_stop', { type: 'message_stop' }),
+].join('');
+const genericServerContent = [
+  { type: 'text', text: 'I will fetch and inspect in parallel.' },
+  { type: 'server_tool_use', id: 'srvtoolu_web', name: 'web_fetch', input: { url: 'https://example.test' } },
+  { type: 'tool_use', id: 'toolu_probe', name: 'probe', input: {} },
+];
+const genericServerSse = [
+  block(0, genericServerContent[0]!),
+  block(1, genericServerContent[1]!),
+  block(2, genericServerContent[2]!),
+  event('message_stop', { type: 'message_stop' }),
+].join('');
 
 const metadata = (): AnthropicHostedReplayMetadata => ({ v: 1, content: rawContent() });
 
@@ -124,15 +163,26 @@ describe('Anthropic hosted tool-search replay', () => {
     expect(JSON.stringify(JSON.parse(JSON.stringify(captured))?.content)).toBe(JSON.stringify(rawContent()));
   });
 
-  it('never persists a hosted call without its exact result and ignores already-poisoned metadata', () => {
-    expect(captureAnthropicHostedReplay(unpairedSse)).toBeUndefined();
-    expect(captureAnthropicHostedReplay(mismatchedSse)).toBeUndefined();
+  it('never persists incomplete, mismatched, orphaned, or duplicated tool-search pairs', () => {
+    for (const invalid of [unpairedSse, mismatchedSse, orphanResultSse, duplicateResultSse]) {
+      expect(captureAnthropicHostedReplay(invalid)).toBeUndefined();
+    }
+  });
 
+  it('ignores already-poisoned tool-search metadata during rehydration', () => {
     const poisoned = assistant({ v: 1, content: unpairedContent() });
     const payload = { model: 'claude-opus-5', messages: [wireAssistant()], tools: [] };
     expect(anthropicHostedReplayMetadata(poisoned as never)).toBeUndefined();
     expect(restoreAnthropicHostedReplay(payload, [poisoned], 'claude-opus-5')).toBeUndefined();
     expect(verifyAnthropicHostedReplay(payload, [poisoned], 'claude-opus-5')).toBe(true);
+  });
+
+  it('preserves multiple tool-search pairs and incomplete non-search server tools verbatim', () => {
+    expect(captureAnthropicHostedReplay(multiplePairsSse)?.content).toEqual(multiplePairsContent);
+    const generic = captureAnthropicHostedReplay(genericServerSse);
+    expect(generic?.content).toEqual(genericServerContent);
+    expect(anthropicHostedReplayMetadata({ anthropicHostedToolReplay: generic } as never)?.content)
+      .toEqual(genericServerContent);
   });
 
   it('preserves citations deltas in complete hosted responses', () => {

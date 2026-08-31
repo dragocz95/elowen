@@ -44,11 +44,13 @@ function sanitizeSurrogates(text: string): string {
   return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
 }
 
-function hasCompleteServerPairs(content: readonly JsonObject[]): boolean {
+const TOOL_SEARCH_NAMES = new Set(['tool_search_tool_bm25', 'tool_search_tool_regex']);
+
+function hasCompleteToolSearchPairs(content: readonly JsonObject[]): boolean {
   const uses = new Map<string, number>();
   const results = new Map<string, number>();
   for (const block of content) {
-    if (block.type === 'server_tool_use') {
+    if (block.type === 'server_tool_use' && TOOL_SEARCH_NAMES.has(String(block.name))) {
       if (typeof block.id !== 'string') return false;
       uses.set(block.id, (uses.get(block.id) ?? 0) + 1);
     } else if (block.type === 'tool_search_tool_result') {
@@ -56,7 +58,8 @@ function hasCompleteServerPairs(content: readonly JsonObject[]): boolean {
       results.set(block.tool_use_id, (results.get(block.tool_use_id) ?? 0) + 1);
     }
   }
-  if (uses.size === 0 || uses.size !== results.size) return false;
+  if (uses.size === 0 && results.size === 0) return true;
+  if (uses.size !== results.size) return false;
   return [...uses].every(([id, count]) => count === 1 && results.get(id) === 1);
 }
 
@@ -79,8 +82,8 @@ class AnthropicSseCapture {
    *
    *  Everything here observes a stream the model's answer is riding on. A syntactically complete response
    *  can still be unsafe to replay: Anthropic accepts a hosted search while producing the answer, but rejects
-   *  that assistant message on the next request unless every server_tool_use has its matching result. Such a
-   *  response survives without replay metadata; malformed or truncated hosted content remains fail-closed. */
+   *  that assistant message on the next request unless every built-in tool-search call has its matching result.
+   *  Such a response survives without replay metadata; malformed or truncated hosted content remains fail-closed. */
   feed(chunk: Uint8Array): void {
     try {
       this.buffer += this.decoder.decode(chunk, { stream: true });
@@ -103,7 +106,7 @@ class AnthropicSseCapture {
       if (this.abandoned) return { unsafeHostedContent: this.sawHostedContent };
       if (!this.sawHostedContent) return { unsafeHostedContent: false };
       const content = indexes.map((index) => clone(this.blocks.get(index)!.block));
-      if (!hasCompleteServerPairs(content)) {
+      if (!hasCompleteToolSearchPairs(content)) {
         log.warn('hosted-search replay not captured, continuing without it: response contained an incomplete search pair');
         return { unsafeHostedContent: false };
       }
@@ -223,7 +226,9 @@ function replayMetadata(message: unknown): AnthropicHostedReplayMetadata | undef
   const meta = record(record(message)?.[META_KEY]);
   if (meta?.v !== REPLAY_VERSION || !Array.isArray(meta.content)) return undefined;
   const content = meta.content.map(record);
-  if (content.some((block) => !block) || !hasCompleteServerPairs(content as JsonObject[])) return undefined;
+  if (content.some((block) => !block)
+    || !content.some((block) => SERVER_BLOCK_TYPES.has(String(block?.type)))
+    || !hasCompleteToolSearchPairs(content as JsonObject[])) return undefined;
   return { v: REPLAY_VERSION, content: content as JsonObject[] };
 }
 
