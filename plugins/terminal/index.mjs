@@ -37,6 +37,29 @@ const clampSeconds = (value, def, min, max) => {
   return Math.min(Math.max(Math.round(n), min), max);
 };
 
+/** A blocking local restart of elowen-daemon can never complete from Bash: systemd SIGTERMs the daemon
+ *  that owns this tool call, while the daemon's graceful drain waits for this very tool call to settle.
+ *  On boot the interrupted deployment resumes and can issue the same restart again, creating a 10-minute
+ *  loop. Inspect only shell command segments whose executable is sudo/systemctl, so a legitimate remote
+ *  command such as `ssh host 'sudo systemctl restart elowen-daemon'` is not mistaken for a self-restart. */
+const isBlockingSelfRestart = (command) => String(command).split(/&&|\|\||[;\n]/u).some((raw) => {
+  const words = raw.trim().split(/\s+/u).filter(Boolean);
+  if (words.length === 0) return false;
+  const executable = (word) => word.replace(/^['"]|['"]$/gu, '').split('/').pop();
+  let index = 0;
+  if (executable(words[index]) === 'sudo') {
+    index += 1;
+    // Elowen's managed command uses plain sudo; accept the common flag-only form as well without trying
+    // to become a shell/sudo parser. A flag with its own value is deliberately not guessed at.
+    while (words[index]?.startsWith('-')) index += 1;
+  }
+  if (executable(words[index]) !== 'systemctl') return false;
+  const args = words.slice(index + 1).map((word) => word.replace(/^['"]|['"]$/gu, ''));
+  const restart = args.indexOf('restart');
+  if (restart < 0 || args.includes('--no-block')) return false;
+  return args.slice(restart + 1).some((unit) => unit === 'elowen-daemon' || unit === 'elowen-daemon.service');
+});
+
 /** Short process id shared by the foreground-detach and background spawn paths. */
 const newProcessId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
@@ -557,6 +580,9 @@ export function register(ctx) {
     }),
     execute: async (_id, p, _signal, onUpdate) => {
       try {
+        if (isBlockingSelfRestart(p.command)) {
+          return ok('Error: refused a blocking restart of elowen-daemon from inside its own service. Run `sudo systemctl restart --no-block elowen-daemon elowen-web` as a standalone Bash call; verify health only after the recovered turn resumes. Do not retry the blocking command.');
+        }
         const cwd = guardCwd(p.cwd);
         if (!p.background) {
           // An explicit per-call `timeout` overrides the configured default, clamped to [1 s, 10 min]; the

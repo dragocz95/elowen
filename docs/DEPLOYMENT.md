@@ -222,7 +222,7 @@ npm ci
 npm ci --prefix web
 npm run build
 npm run build:web
-sudo systemctl restart elowen-daemon elowen-web
+sudo systemctl restart --no-block elowen-daemon elowen-web
 curl -fsS http://127.0.0.1:4400/health
 ```
 

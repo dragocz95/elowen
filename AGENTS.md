@@ -42,7 +42,14 @@ Only after explicit approval:
 ```bash
 npm run build
 npm run build:web                 # when web/ changed
-sudo systemctl restart elowen-daemon elowen-web
+sudo systemctl restart --no-block elowen-daemon elowen-web
+```
+
+The restart must be its own command. Wait for the recovered turn/process, then verify in a separate
+command:
+
+```bash
+systemctl is-active elowen-daemon elowen-web
 curl -fsS http://127.0.0.1:4400/health
 ```
 

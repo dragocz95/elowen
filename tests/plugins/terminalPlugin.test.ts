@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -97,6 +97,20 @@ describe('terminal plugin', () => {
   it('admin all-access runs with no roots (defaults to process cwd)', async () => {
     const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', { command: 'echo adminok' }), { identity: owner });
     expect(res.content[0].text).toContain('adminok');
+  });
+
+  it('refuses a blocking restart of its own daemon before the command can execute', async () => {
+    const fakeSudo = join(dir, 'sudo');
+    const reached = join(dir, 'blocking-restart-executed');
+    writeFileSync(fakeSudo, `#!/bin/sh\nprintf reached > ${JSON.stringify(reached)}\n`);
+    chmodSync(fakeSudo, 0o755);
+
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `${fakeSudo} systemctl restart elowen-daemon elowen-web`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toMatch(/refused.*--no-block/i);
+    expect(existsSync(reached)).toBe(false);
   });
 
   it('a user with no repos cannot run anything', async () => {
