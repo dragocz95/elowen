@@ -712,4 +712,42 @@ describe('MarketplaceService.sweep', () => {
     expect(existsSync(join(userDir, 'real'))).toBe(true);
     rmSync(userDir, { recursive: true, force: true });
   });
+
+  it('repairs an installed plugin link left pointing at a deleted daemon workspace', () => {
+    const base = tmpDir('mkt-sweep-hostmods');
+    const host = join(base, 'current-host-node-modules');
+    const stale = join(base, 'deleted-workspace', 'node_modules');
+    mkdirSync(host, { recursive: true });
+    const { svc, userDir } = setup({ registryEntries: [] });
+    (svc as unknown as { opts: { hostNodeModules?: string } }).opts.hostNodeModules = host;
+
+    const pluginDir = join(userDir, 'todo');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(join(pluginDir, 'elowen-plugin.json'), '{}');
+    symlinkSync(stale, join(pluginDir, 'node_modules'), 'dir');
+
+    svc.sweep();
+
+    expect(lstatSync(join(pluginDir, 'node_modules')).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(pluginDir, 'node_modules'))).toBe(host);
+  });
+
+  it('does not replace a manually installed plugin node_modules directory', () => {
+    const base = tmpDir('mkt-sweep-manual-mods');
+    const host = join(base, 'host-node-modules');
+    mkdirSync(host, { recursive: true });
+    const { svc, userDir } = setup({ registryEntries: [] });
+    (svc as unknown as { opts: { hostNodeModules?: string } }).opts.hostNodeModules = host;
+
+    const pluginDir = join(userDir, 'manual');
+    const modules = join(pluginDir, 'node_modules');
+    mkdirSync(modules, { recursive: true });
+    writeFileSync(join(pluginDir, 'elowen-plugin.json'), '{}');
+    writeFileSync(join(modules, 'owned.txt'), 'manual');
+
+    svc.sweep();
+
+    expect(lstatSync(modules).isDirectory()).toBe(true);
+    expect(readFileSync(join(modules, 'owned.txt'), 'utf-8')).toBe('manual');
+  });
 });

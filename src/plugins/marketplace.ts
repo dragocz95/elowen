@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { Type } from 'typebox';
 import { Check, Errors } from 'typebox/value';
@@ -389,20 +389,24 @@ export class MarketplaceService {
     return restored;
   }
 
-  /** Clear leftover `.staging-*` / `.old-*` scratch dirs from an interrupted install. Called once on
-   *  daemon startup so the user plugin dir never accretes crash debris.
+  /** Clear interrupted-install debris and reconcile installed plugins with this daemon's dependencies.
    *
-   *  This is also what resolves a daemon that died between a deferred install landing on disk and its
-   *  apply being proven: the parked swap lives in memory only, so the reboot simply loads the new folder
-   *  from disk like any other, and its now-meaningless backup is swept here. A plugin that then fails to
-   *  load is reported by the loader and is disable-able, which is the same position an interrupted
-   *  daemon leaves every other half-finished write in — no separate recovery path to keep correct. */
+   *  A marketplace plugin resolves its SDK imports through `<plugin>/node_modules -> <host>`. The daemon
+   *  can legitimately move between checkouts (a deployment symlink, a sandbox used for an upgrade), so a
+   *  link that was correct when the plugin was installed can later point at a deleted tree. Repairing it
+   *  at boot keeps an otherwise unchanged enabled plugin loadable after that move. Real node_modules
+   *  directories are user-owned manual installs and are deliberately left alone. */
   sweep(): void {
     if (!existsSync(this.opts.userPluginsDir)) return;
-    for (const entry of readdirSync(this.opts.userPluginsDir)) {
-      if (entry.startsWith('.staging-') || entry.startsWith('.old-')) {
-        rmSync(join(this.opts.userPluginsDir, entry), { recursive: true, force: true });
+    for (const entry of readdirSync(this.opts.userPluginsDir, { withFileTypes: true })) {
+      const pluginDir = join(this.opts.userPluginsDir, entry.name);
+      if (entry.name.startsWith('.staging-') || entry.name.startsWith('.old-')) {
+        rmSync(pluginDir, { recursive: true, force: true });
+        continue;
       }
+      if (!entry.isDirectory() || !existsSync(join(pluginDir, 'elowen-plugin.json'))) continue;
+      try { this.linkHostModules(pluginDir); }
+      catch (error) { log.warn(`plugin ${entry.name}: host node_modules repair failed: ${errMsg(error)}`); }
     }
   }
 
@@ -663,16 +667,24 @@ export class MarketplaceService {
     }
   }
 
-  /** Symlink `<pluginDir>/node_modules -> hostNodeModules` so the plugin's bare SDK imports resolve —
-   *  the same `node_modules -> <host>` convention manually-installed user plugins already use. No-op when
-   *  the host path is unset (tests) or a node_modules already exists. Throws on failure so the caller rolls
-   *  back (an unresolvable plugin is worse than a clean failure). Uninstall's rmSync only unlinks this
-   *  symlink — it never recurses into the shared host modules (verified). */
+  /** Symlink `<pluginDir>/node_modules -> hostNodeModules` so the plugin's bare SDK imports resolve.
+   *  Existing real directories belong to manual installs and are left untouched. Existing symlinks are
+   *  validated rather than accepted by name alone: a daemon moved to another checkout must not keep a
+   *  plugin wired to the deleted workspace it happened to run from when the plugin was installed. */
   private linkHostModules(pluginDir: string): void {
-    if (!this.opts.hostNodeModules) return;
+    const host = this.opts.hostNodeModules;
+    if (!host) return;
     const link = join(pluginDir, 'node_modules');
-    if (existsSync(link)) return;
-    symlinkSync(this.opts.hostNodeModules, link, 'dir');
+    try {
+      const entry = lstatSync(link);
+      if (!entry.isSymbolicLink()) return;
+      const target = resolve(dirname(link), readlinkSync(link));
+      if (target === resolve(host)) return;
+      unlinkSync(link);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    symlinkSync(host, link, 'dir');
   }
 
   private validateStaging(name: string, dir: string): void {
