@@ -54,10 +54,11 @@
   --color-ember: #ff9a62;
   --color-ember-bright: #ffd09a;
 
-  /* ChatGPT-like conversation semantics on the full-width working surface. The user's bubble is a raised
-     neutral rather than the accent: filled with a red accent, a bubble reads as an error. */
-  --studio-chat-user-bg: #1c2022;
-  --studio-chat-user-text: #fcfcfe;
+  /* User turns keep the same blue identity in both Studio variants. The dark document already provides
+     the contrast around the bubble; changing the role colour between themes makes the conversation
+     grammar feel inconsistent and makes user turns harder to scan. */
+  --studio-chat-user-bg: #0068e1;
+  --studio-chat-user-text: #ffffff;
   --studio-chat-composer: #080d0f;
   --studio-chat-code: #080d0f;
   --studio-chat-composer-radius: 28px;

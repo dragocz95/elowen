@@ -234,6 +234,16 @@ describe('text contrast', () => {
   });
 });
 
+describe('Studio conversation role colours', () => {
+  it('keeps user turns blue with white text in both Light and Dark', () => {
+    const light = declarations(skinCss('studio-light'));
+    const dark = declarations(skinCss('studio-oled'));
+    expect(dark['--studio-chat-user-bg']).toBe(light['--studio-chat-user-bg']);
+    expect(dark['--studio-chat-user-text']).toBe(light['--studio-chat-user-text']);
+    expect(contrast(dark['--studio-chat-user-text']!, dark['--studio-chat-user-bg']!)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+  });
+});
+
 describe('shadcn surface/foreground pairs', () => {
   function assertPairsReadable(design: string, tokens: Record<string, string>) {
     for (const [surface, foreground] of SHADCN_PAIRS) {
