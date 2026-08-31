@@ -8,7 +8,7 @@ import { usePersistentState } from '../../lib/usePersistentState';
 import { useToast } from '../../components/ui/Toast';
 import { useBrainSessions, useBrainCommands, useConfig } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
-import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainUsage, BrainWorkMode, McpServerStatus, SessionTask, SlashCommandDef, StatuslineConfig } from '../../lib/types';
+import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainStreamSnapshotFrame, BrainUsage, BrainWorkMode, McpServerStatus, SessionTask, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { collectSubagents, collectWorkflows, emptyView, fromSnapshot, reduce, submittedPlan, upsertCard, type ChatTurn, type ChatView, type SubagentState, type TranscriptEvent, type WorkflowState } from '../../lib/transcript';
 import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/brainSession';
 import { subscribeRevive } from '../../lib/useRevive';
@@ -85,6 +85,19 @@ interface BrainTelemetry {
   mcp: McpServerStatus[] | null;
 }
 const EMPTY_TELEMETRY: BrainTelemetry = { project: null, lspEnabled: null, mcp: null };
+
+/** A reconnect snapshot replays its tail in daemon order. Usage is cumulative within that order, so the
+ *  final usage-bearing step/idle is the authoritative value at the snapshot boundary. */
+function snapshotUsage(events: BrainStreamSnapshotFrame['events']): BrainUsage | undefined {
+  let latest: BrainUsage | undefined;
+  for (const event of events) {
+    if ((event.type === 'step' || event.type === 'idle') && event.usage && typeof event.usage === 'object') {
+      latest = event.usage as BrainUsage;
+    }
+  }
+  return latest;
+}
+
 /** Read the telemetry sections off a status response, normalizing "absent" to null. */
 const telemetryOf = (st: BrainStatus): BrainTelemetry => ({
   project: st.project ?? null,
@@ -293,11 +306,22 @@ function useBrainChatController(): BrainChatValue {
   // So stamp every stream write and let a REST write commit only if no stream write beat it — the same
   // shape as the history epoch fence, applied to usage.
   const usageStampRef = useRef(0);
+  const usageReadIdRef = useRef(0);
+  type UsageReadFence = { stamp: number; readId: number };
+  /** Advance the ordered stream epoch without changing the visible value. Every snapshot and compaction
+   *  boundary uses this, even when it carries no usage payload. */
+  const fenceUsage = (): number => (usageStampRef.current += 1);
+  /** A REST-vs-REST fence as well as the stream fence: the latest-started read is the only one allowed to
+   *  publish usage. Other fields from an older status response still hydrate at their own owners. */
+  const startUsageRead = (): UsageReadFence => ({
+    stamp: usageStampRef.current,
+    readId: usageReadIdRef.current += 1,
+  });
   /** Commit a usage value from the LIVE STREAM — always wins, and fences any REST read still in flight. */
-  const setUsage = (u: BrainUsage | null): void => { usageStampRef.current += 1; setUsageState(u); };
-  /** Commit a usage value from a REST snapshot, but only if the stream has not moved since `stamp`. */
-  const setUsageIfFresh = (u: BrainUsage | null, stamp: number): void => {
-    if (stamp === usageStampRef.current) setUsageState(u);
+  const setUsage = (u: BrainUsage | null): void => { fenceUsage(); setUsageState(u); };
+  /** Commit usage from REST only when neither an ordered boundary nor a newer REST read superseded it. */
+  const setUsageIfFresh = (u: BrainUsage | null, fence: UsageReadFence): void => {
+    if (fence.stamp === usageStampRef.current && fence.readId === usageReadIdRef.current) setUsageState(u);
   };
   const [telemetry, setTelemetry] = useState<BrainTelemetry>(EMPTY_TELEMETRY);
   const [goal, setGoal] = useState<BrainGoal | null>(null);
@@ -447,7 +471,7 @@ function useBrainChatController(): BrainChatValue {
     // immediately: status includes cumulative descendant usage and used to hold the transcript empty for
     // seconds before the browser was even allowed to request its first history frame.
     const statusHydrationStamp = { ...hydrationStampRef.current };
-    const statusUsageStamp = usageStampRef.current;
+    const statusUsageRead = startUsageRead();
     const status = elowenClient.brainStatus(boundSessionRef.current).catch(() => null);
     stream.openLive({
       generation,
@@ -469,6 +493,26 @@ function useBrainChatController(): BrainChatValue {
           // The snapshot replaces the transcript, so discard any older history page still in flight.
           replaceHistoryWindow(snap.nextBefore ?? null, snap.hasMore ?? false);
           const folded = fromSnapshot(snap);
+          const replayedUsage = snapshotUsage(snap.events);
+          // The snapshot itself is an ordered boundary even when its journal contains no usage-bearing
+          // event: a REST sample started before reconnect belongs to the transcript it just replaced.
+          fenceUsage();
+          if (replayedUsage) {
+            setUsageState(replayedUsage);
+          } else {
+            // The connect-time status sample predates this boundary and was intentionally fenced above. A
+            // journal with no step/idle does not imply zero usage, so refresh usage alone from the session
+            // the snapshot just authoritatively bound; every other status field remains owned by the original
+            // hydration read below.
+            const usageSession = boundSessionRef.current;
+            const usageRead = startUsageRead();
+            void elowenClient.brainStatus(usageSession)
+              .then((status) => {
+                if (generation !== genRef.current || boundSessionRef.current !== usageSession) return;
+                setUsageIfFresh(status.usage, usageRead);
+              })
+              .catch(() => { /* best-effort; the next live usage event can still hydrate it */ });
+          }
           // Daemon control state wins over journal shape: the bounded journal may omit terminal events or
           // survive an internal retry. Older daemons have no control field, where the fold remains authoritative.
           const control = snap.control;
@@ -526,9 +570,9 @@ function useBrainChatController(): BrainChatValue {
           // Child usage is persisted before terminal progress. Refresh immediately, fenced so a late read
           // cannot overwrite a newer step or idle snapshot.
           if (subagent.status !== 'running') {
-            const stamp = usageStampRef.current;
+            const usageRead = startUsageRead();
             void elowenClient.brainStatus(boundSessionRef.current)
-              .then((status) => { if (generation === genRef.current) setUsageIfFresh(status.usage, stamp); })
+              .then((status) => { if (generation === genRef.current) setUsageIfFresh(status.usage, usageRead); })
               .catch(() => { /* best-effort */ });
           }
         },
@@ -558,17 +602,29 @@ function useBrainChatController(): BrainChatValue {
           setInput((current) => (current.trim() ? current : text));
           bumpFocus();
         },
-        // Compaction rewrites durable history to a divider plus kept tail, so refetch the exact model context.
-        compacted: () => { void loadHistory(genRef.current).catch(() => { /* best-effort */ }); },
+        // Compaction starts a new usage epoch as well as rewriting durable history. Fence every status sample
+        // taken before the boundary, then hydrate the compacted context; a newer step/idle still wins while
+        // this read is in flight through the same stamp check.
+        compacted: () => {
+          fenceUsage();
+          const usageRead = startUsageRead();
+          void loadHistory(genRef.current).catch(() => { /* best-effort */ });
+          void elowenClient.brainStatus(boundSessionRef.current)
+            .then((status) => {
+              if (generation !== genRef.current) return;
+              setUsageIfFresh(status.usage, usageRead);
+            })
+            .catch(() => { /* best-effort */ });
+        },
         // In-place model/mode/reasoning changes keep the same stream. Refresh history and status without
         // reconnecting; usage stays fenced against a newer stream event.
         sessionEvent: () => {
           void loadHistory(genRef.current).catch(() => { /* best-effort */ });
-          const stamp = usageStampRef.current;
+          const usageRead = startUsageRead();
           void elowenClient.brainStatus(boundSessionRef.current)
             .then((status) => {
               if (generation !== genRef.current) return;
-              setUsageIfFresh(status.usage, stamp);
+              setUsageIfFresh(status.usage, usageRead);
               setTelemetry(telemetryOf(status));
               setLineCfg(status.statusline);
               hydrationStampRef.current.model += 1;
@@ -627,7 +683,7 @@ function useBrainChatController(): BrainChatValue {
     // A rollover retargeted the stream while this explicit-session status read was in flight; every field in
     // that response belongs to the conversation we already left.
     if (fresh.session !== statusHydrationStamp.session) return;
-    setUsageIfFresh(st.usage, statusUsageStamp);
+    setUsageIfFresh(st.usage, statusUsageRead);
     setTelemetry(telemetryOf(st));
     setLineCfg(st.statusline);
     if (fresh.model === statusHydrationStamp.model) {
@@ -926,7 +982,7 @@ function useBrainChatController(): BrainChatValue {
         setStatsOpen(true);
         // Refresh usage data for the modal — fenced, so opening it mid-turn cannot roll the statusline
         // back to a figure the stream has already moved past.
-        { const stamp = usageStampRef.current; void elowenClient.brainStatus(boundSessionRef.current).then((s) => { if (s) setUsageIfFresh(s.usage, stamp); }).catch(() => undefined); }
+        { const usageRead = startUsageRead(); void elowenClient.brainStatus(boundSessionRef.current).then((s) => { if (s) setUsageIfFresh(s.usage, usageRead); }).catch(() => undefined); }
         return;
       }
       if (cmd.name === 'reasoning') { setReasoningOpen(true); return; }
