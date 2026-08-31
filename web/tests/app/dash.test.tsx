@@ -26,6 +26,7 @@ describe('DashPage', () => {
     const strip = screen.getByRole('list', { name: en.dashboard.stripLabel });
     expect(heading).toBeInTheDocument();
     expect(strip).toBeInTheDocument();
+    expect(strip).toHaveClass('[scrollbar-width:none]', '[&::-webkit-scrollbar]:hidden');
     expect(strip.parentElement).toHaveClass('px-4', 'md:px-0');
     expect(heading.closest('section')).toHaveClass('px-4', 'pt-10', 'sm:px-0', 'sm:pt-[clamp(3.5rem,13dvh,9rem)]');
     // The panels are progressive disclosure — none of them exists on first paint.
