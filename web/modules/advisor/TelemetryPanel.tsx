@@ -1,14 +1,14 @@
 'use client';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, GitBranch, PanelRightClose, PanelRightOpen, Target, TerminalSquare, Users, Workflow, X } from 'lucide-react';
+import { Braces, ChevronDown, Clock3, Gauge, GitBranch, PanelRightClose, PanelRightOpen, Server, Target, TerminalSquare, Users, Workflow, X, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
 import { interpolate } from '../../lib/i18n/interpolate';
 import { elowenClient } from '../../lib/elowenClient';
 import { useBrainProcesses, useBrainRateLimitsAll } from '../../lib/queries';
 import { formatTokens, formatCost, formatDuration } from '../../lib/format';
-import { OAuthUsageRail, usageProgressClass, usageMeterValue } from '../settings/OAuthUsageRail';
+import { OAuthUsageRail, usageProgressClass, usageMeterValue, usageWindowLabel } from '../settings/OAuthUsageRail';
 import { MascotGlyph } from '../../components/ui/SpatialMascot';
 import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
 import { Badge } from '../../components/ui/shadcn/badge';
@@ -42,8 +42,9 @@ import type { BrainGoal, ProcessInfo } from '../../lib/types';
  *  `size` is a plain square in pixels rather than a share of the rail. In the redesigned head the mascot
  *  sits BESIDE the status text instead of above it, so its box is what the header row is built around; a
  *  percentage-sized owl would re-flow that row on every drag. */
-function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
+function TelemetryMascot({ busy, size, showCommandCount = false }: { busy: boolean; size: number; showCommandCount?: boolean }) {
   const { t } = useTranslation();
+  const { commands } = useBrainChat();
   const [fieldOpen, setFieldOpen] = useState(false);
   const mascotRef = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
@@ -56,20 +57,31 @@ function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
   }, [fieldOpen]);
   return (
     <>
-      <button
-        ref={mascotRef}
-        type="button"
-        data-testid="telemetry-mascot"
-        aria-label={t.brainChat.commandField.open}
-        title={t.brainChat.commandField.open}
-        aria-haspopup="dialog"
-        aria-expanded={fieldOpen}
-        onClick={() => setFieldOpen(true)}
-        style={{ width: size, height: size }}
-        className="shrink-0 rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-      >
-        <MascotGlyph state={busy ? 'saving' : 'idle'} />
-      </button>
+      <span className="relative shrink-0">
+        <button
+          ref={mascotRef}
+          type="button"
+          data-testid="telemetry-mascot"
+          aria-label={t.brainChat.commandField.open}
+          title={t.brainChat.commandField.open}
+          aria-haspopup="dialog"
+          aria-expanded={fieldOpen}
+          onClick={() => setFieldOpen(true)}
+          style={{ width: size, height: size }}
+          className="block rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        >
+          <MascotGlyph state={busy ? 'saving' : 'idle'} />
+        </button>
+        {showCommandCount && commands.length > 0 ? (
+          <span
+            data-testid="telemetry-command-count"
+            className="pointer-events-none absolute -right-1 -top-1 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 font-mono text-[8px] leading-4 text-primary-foreground"
+            aria-hidden
+          >
+            {commands.length > 99 ? '99+' : commands.length}
+          </span>
+        ) : null}
+      </span>
       {fieldOpen ? <CommandOrbit onClose={() => setFieldOpen(false)} /> : null}
     </>
   );
@@ -525,16 +537,81 @@ function TelemetryFoot() {
   );
 }
 
-/** The collapsed 52px stub. Not zero: the mascot still reports whether a turn is running and the context
- *  meter still reports how full the window is, which are the two facts worth a permanent 52px. The meter
- *  is the same `Progress` primitive turned on its side, so the collapsed and expanded rails cannot drift
- *  into two different meters. */
+/** One instrument in the compact rail. It keeps the 52px strip readable without inventing a second
+ *  dashboard: icon = section identity, optional micro-meter = pressure, mono value = the one number worth
+ *  seeing without expanding. Every instrument opens the full rail for detail; native title carries the
+ *  complete label for mouse users while `aria-label` names the same action to assistive tech. */
+function CompactTelemetryItem({ id, icon: Icon, label, value, progress, tone = 'muted', onOpen }: {
+  id: string;
+  icon: LucideIcon;
+  label: string;
+  value?: string;
+  progress?: number;
+  tone?: 'muted' | 'primary' | 'success' | 'warning';
+  onOpen?: () => void;
+}) {
+  const title = value ? `${label}: ${value}` : label;
+  const content = (
+    <>
+      <Icon
+        size={14}
+        className={tone === 'primary' ? 'text-primary' : tone === 'success' ? 'text-success' : tone === 'warning' ? 'text-warning' : 'text-subtle-foreground'}
+        aria-hidden
+      />
+      {progress != null ? (
+        <Progress
+          className="h-1 w-7"
+          value={Math.max(0, Math.min(100, progress))}
+          indicatorValue={usageMeterValue(progress)}
+          indicatorClassName={usageProgressClass(progress)}
+          aria-hidden
+        />
+      ) : null}
+      {value ? <span className="max-w-full truncate font-mono text-[9px] leading-none tabular-nums text-muted-foreground">{value}</span> : null}
+    </>
+  );
+  const className = "flex h-auto w-10 flex-col items-center gap-1 rounded-md px-1 py-1.5";
+  if (!onOpen) {
+    return <div data-testid={`telemetry-compact-${id}`} className={className} title={title}>{content}</div>;
+  }
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      data-testid={`telemetry-compact-${id}`}
+      onClick={onOpen}
+      aria-label={title}
+      title={title}
+      className={className}
+    >
+      {content}
+    </Button>
+  );
+}
+
+/** The collapsed 52px instrument strip. It mirrors every section that can appear in the expanded body:
+ *  context, subscription windows, active goal/work, processes, MCP, LSP and project identity. Sections
+ *  without data stay absent exactly as they do in the full rail. The middle is independently scrollable,
+ *  so even a short desktop can reach every instrument without widening the conversation gutter. */
 function TelemetryStub({ busy, onToggle }: { busy: boolean; onToggle?: () => void }) {
   const { t } = useTranslation();
-  const { usage } = useBrainChat();
-  const pct = Math.max(0, Math.min(100, usage?.percent ?? 0));
+  const { usage, telemetry, activeSessionId, provider, goal, subagents, workflows } = useBrainChat();
+  const { data: limitsByProvider = {} } = useBrainRateLimitsAll();
+  const { data: allProcesses = [] } = useBrainProcesses();
+  const limits = provider ? (limitsByProvider[provider] ?? null) : null;
+  const activeGoal = goal?.status === 'active' ? goal : null;
+  const liveAgents = subagents.filter((agent) => agent.status === 'running' || agent.resultDelivery === 'pending');
+  const runningWorkflows = workflows.filter((workflow) => workflow.status === 'running');
+  const owned = ownedSessionIds(activeSessionId, subagents);
+  const liveProcesses = allProcesses.filter((process) => process.running && process.completionMode !== 'foreground');
+  const ownProcesses = liveProcesses.filter((process) => isOwnProcess(process, owned));
+  const otherProcesses = liveProcesses.filter((process) => !isOwnProcess(process, owned));
+  const connectedMcp = telemetry.mcp?.filter((server) => server.status === 'connected') ?? [];
+  const projectTitle = [telemetry.project?.cwd, telemetry.project?.branch].filter(Boolean).join(' · ');
+  const contextPct = Math.max(0, Math.min(100, usage?.percent ?? 0));
+
   return (
-    <div data-testid="telemetry-stub" className="flex h-full flex-col items-center gap-3 py-2">
+    <div data-testid="telemetry-stub" className="flex h-full min-h-0 flex-col items-center bg-background py-2">
       {onToggle ? (
         <Button
           variant="ghost"
@@ -543,26 +620,95 @@ function TelemetryStub({ busy, onToggle }: { busy: boolean; onToggle?: () => voi
           aria-label={t.telemetry.expand}
           title={t.telemetry.expand}
           aria-expanded={false}
-          className="size-7 shrink-0 rounded"
+          className="size-8 shrink-0 rounded"
           data-testid="telemetry-collapse"
         >
           <PanelRightOpen size={14} aria-hidden />
         </Button>
       ) : null}
-      <TelemetryMascot busy={busy} size={32} />
-      {usage ? (
-        <>
-          {/* A vertical meter out of the horizontal primitive: the box reserves the rotated track's
-              footprint, and the rotation is what makes the fill grow upward. */}
-          <div className="flex h-24 w-6 shrink-0 items-center justify-center">
-            <Progress
-              className="w-24 origin-center -rotate-90"
-              value={usageMeterValue(pct)}
-              indicatorClassName={usageProgressClass(pct)}
-              aria-label={t.brainChat.context}
+      <div className="mt-2 shrink-0">
+        <TelemetryMascot busy={busy} size={32} showCommandCount />
+      </div>
+      <Separator className="my-2 w-7 shrink-0" />
+      <ScrollArea
+        data-testid="telemetry-compact-scroll"
+        className="min-h-0 w-full flex-1 [&_[data-slot=scroll-area-scrollbar]]:hidden"
+        type="scroll"
+      >
+        <div className="flex w-full flex-col items-center gap-1 pb-2">
+          {usage ? (
+            <CompactTelemetryItem
+              id="context"
+              icon={Gauge}
+              label={t.brainChat.context}
+              value={`${Math.round(contextPct)}%`}
+              progress={contextPct}
+              onOpen={onToggle}
             />
-          </div>
-          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{Math.round(pct)}%</span>
+          ) : null}
+          {limits?.windows.map((window, index) => {
+            const pct = Math.max(0, Math.min(100, window.usedPercent));
+            const windowName = usageWindowLabel(window.windowMinutes, t.brain.usageWeekly, t.brain.usageWindow);
+            return (
+              <CompactTelemetryItem
+                key={`${window.windowMinutes ?? 'window'}-${index}`}
+                id={`limit-${index}`}
+                icon={Clock3}
+                label={`${t.telemetry.limits} · ${windowName}`}
+                value={`${Math.round(pct)}%`}
+                progress={pct}
+                onOpen={onToggle}
+              />
+            );
+          })}
+          {activeGoal ? (
+            <CompactTelemetryItem
+              id="goal"
+              icon={Target}
+              label={activeGoal.goal}
+              value={activeGoal.turn_budget > 0 ? `${activeGoal.turns_used}/${activeGoal.turn_budget}` : String(activeGoal.turns_used)}
+              tone="primary"
+              onOpen={onToggle}
+            />
+          ) : null}
+          {runningWorkflows.length > 0 ? (
+            <CompactTelemetryItem id="workflows" icon={Workflow} label={t.telemetry.workflow} value={String(runningWorkflows.length)} tone="primary" onOpen={onToggle} />
+          ) : null}
+          {liveAgents.length > 0 ? (
+            <CompactTelemetryItem id="agents" icon={Users} label={t.telemetry.agents} value={String(liveAgents.length)} tone="success" onOpen={onToggle} />
+          ) : null}
+          {ownProcesses.length > 0 ? (
+            <CompactTelemetryItem id="processes" icon={TerminalSquare} label={t.telemetry.processes} value={String(ownProcesses.length)} tone="success" onOpen={onToggle} />
+          ) : null}
+          {otherProcesses.length > 0 ? (
+            <CompactTelemetryItem id="other-processes" icon={TerminalSquare} label={t.telemetry.otherProcesses} value={String(otherProcesses.length)} tone="warning" onOpen={onToggle} />
+          ) : null}
+          {connectedMcp.length > 0 ? (
+            <CompactTelemetryItem
+              id="mcp"
+              icon={Server}
+              label={t.telemetry.mcp}
+              value={`${connectedMcp.length}/${telemetry.mcp?.length ?? 0}`}
+              tone="success"
+              onOpen={onToggle}
+            />
+          ) : null}
+          {telemetry.lspEnabled !== null ? (
+            <CompactTelemetryItem
+              id="lsp"
+              icon={Braces}
+              label={`${t.telemetry.lsp}: ${telemetry.lspEnabled ? t.telemetry.lspActive : t.telemetry.lspInactive}`}
+              value={telemetry.lspEnabled ? '●' : '○'}
+              tone={telemetry.lspEnabled ? 'success' : 'muted'}
+              onOpen={onToggle}
+            />
+          ) : null}
+        </div>
+      </ScrollArea>
+      {projectTitle ? (
+        <>
+          <Separator className="my-2 w-7 shrink-0" />
+          <CompactTelemetryItem id="project" icon={GitBranch} label={projectTitle} tone="primary" onOpen={onToggle} />
         </>
       ) : null}
     </div>
