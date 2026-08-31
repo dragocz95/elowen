@@ -223,6 +223,12 @@ npm ci --prefix web
 npm run build
 npm run build:web
 sudo systemctl restart --no-block elowen-daemon elowen-web
+```
+
+Run the restart as its own command. After the recovered process continues, verify the services separately:
+
+```bash
+systemctl is-active elowen-daemon elowen-web
 curl -fsS http://127.0.0.1:4400/health
 ```
 

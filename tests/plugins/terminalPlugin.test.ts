@@ -47,6 +47,12 @@ const tmpDir = (tag: string): string => {
   allDirs.add(p);
   return p;
 };
+const markerExecutable = (dir: string, name: string, marker: string): string => {
+  const executable = join(dir, name);
+  writeFileSync(executable, `#!/bin/sh\nprintf reached > ${JSON.stringify(marker)}\n`);
+  chmodSync(executable, 0o755);
+  return executable;
+};
 process.once('exit', cleanupDirs);
 afterAll(() => {
   process.off('exit', cleanupDirs);
@@ -100,13 +106,59 @@ describe('terminal plugin', () => {
   });
 
   it('refuses a blocking restart of its own daemon before the command can execute', async () => {
-    const fakeSudo = join(dir, 'sudo');
     const reached = join(dir, 'blocking-restart-executed');
-    writeFileSync(fakeSudo, `#!/bin/sh\nprintf reached > ${JSON.stringify(reached)}\n`);
-    chmodSync(fakeSudo, 0o755);
+    const fakeSudo = markerExecutable(dir, 'sudo', reached);
 
     const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
       command: `${fakeSudo} systemctl restart elowen-daemon elowen-web`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toMatch(/refused.*--no-block/i);
+    expect(existsSync(reached)).toBe(false);
+  });
+
+  it('allows the standalone non-blocking self-restart form to execute', async () => {
+    const reached = join(dir, 'nonblocking-restart-executed');
+    const fakeSudo = markerExecutable(dir, 'sudo', reached);
+
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `${fakeSudo} systemctl restart --no-block elowen-daemon elowen-web`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toContain('[exit 0]');
+    expect(existsSync(reached)).toBe(true);
+  });
+
+  it('does not mistake a quoted compound SSH restart for a local self-restart', async () => {
+    const reached = join(dir, 'remote-restart-executed');
+    const fakeSsh = markerExecutable(dir, 'ssh', reached);
+
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `${fakeSsh} prod 'cd /var/www/elowen && sudo systemctl restart elowen-daemon'`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toContain('[exit 0]');
+    expect(existsSync(reached)).toBe(true);
+  });
+
+  it('allows systemctl remote-host restarts to execute', async () => {
+    const reached = join(dir, 'host-restart-executed');
+    const fakeSystemctl = markerExecutable(dir, 'systemctl', reached);
+
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `${fakeSystemctl} --host prod restart elowen-daemon`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toContain('[exit 0]');
+    expect(existsSync(reached)).toBe(true);
+  });
+
+  it('refuses a blocking self-restart behind a pipeline and env wrapper', async () => {
+    const reached = join(dir, 'wrapped-restart-executed');
+    const fakeSudo = markerExecutable(dir, 'sudo', reached);
+
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `printf ready | env ${fakeSudo} systemctl restart elowen-daemon`,
     }), { identity: owner });
 
     expect(res.content[0].text).toMatch(/refused.*--no-block/i);

@@ -37,26 +37,97 @@ const clampSeconds = (value, def, min, max) => {
   return Math.min(Math.max(Math.round(n), min), max);
 };
 
+/** Tokenize top-level shell commands just far enough for the restart safety check below. Control
+ *  operators split commands only OUTSIDE quotes, so an SSH payload remains an argument of `ssh` rather
+ *  than masquerading as a local command. This is deliberately not an execution parser: the real shell
+ *  still owns expansion and syntax; we only need executable positions and literal systemctl arguments. */
+const shellCommandWords = (command) => {
+  const commands = [];
+  let words = [];
+  let word = '';
+  let started = false;
+  let quote = null;
+  let escaped = false;
+  const pushWord = () => {
+    if (!started) return;
+    words.push(word);
+    word = '';
+    started = false;
+  };
+  const pushCommand = () => {
+    pushWord();
+    if (words.length > 0) commands.push(words);
+    words = [];
+  };
+  const input = String(command);
+  for (let index = 0; index < input.length; index++) {
+    const char = input[index];
+    if (escaped) { word += char; started = true; escaped = false; continue; }
+    if (quote) {
+      if (char === quote) quote = null;
+      else if (quote === '"' && char === '\\') escaped = true;
+      else { word += char; started = true; }
+      continue;
+    }
+    if (char === '\\') { escaped = true; started = true; continue; }
+    if (char === "'" || char === '"') { quote = char; started = true; continue; }
+    if (/\s/u.test(char)) { pushWord(); continue; }
+    if (char === ';' || char === '\n' || char === '|' || char === '&') {
+      pushCommand();
+      if ((char === '|' || char === '&') && input[index + 1] === char) index += 1;
+      continue;
+    }
+    word += char;
+    started = true;
+  }
+  if (escaped) word += '\\';
+  pushCommand();
+  return commands;
+};
+
+const executableName = (word) => word?.replace(/^[({]+|[)}]+$/gu, '').split('/').pop();
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/u;
+const SUDO_OPTIONS_WITH_VALUE = new Set(['-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt', '-C', '--close-from', '-D', '--chdir', '-R', '--chroot', '-r', '--role', '-t', '--type']);
+
 /** A blocking local restart of elowen-daemon can never complete from Bash: systemd SIGTERMs the daemon
  *  that owns this tool call, while the daemon's graceful drain waits for this very tool call to settle.
  *  On boot the interrupted deployment resumes and can issue the same restart again, creating a 10-minute
- *  loop. Inspect only shell command segments whose executable is sudo/systemctl, so a legitimate remote
- *  command such as `ssh host 'sudo systemctl restart elowen-daemon'` is not mistaken for a self-restart. */
-const isBlockingSelfRestart = (command) => String(command).split(/&&|\|\||[;\n]/u).some((raw) => {
-  const words = raw.trim().split(/\s+/u).filter(Boolean);
-  if (words.length === 0) return false;
-  const executable = (word) => word.replace(/^['"]|['"]$/gu, '').split('/').pop();
+ *  loop. Transparent wrappers are unwrapped, but SSH payloads and systemctl remote-host calls stay allowed. */
+const isBlockingSelfRestart = (command) => shellCommandWords(command).some((words) => {
   let index = 0;
-  if (executable(words[index]) === 'sudo') {
-    index += 1;
-    // Elowen's managed command uses plain sudo; accept the common flag-only form as well without trying
-    // to become a shell/sudo parser. A flag with its own value is deliberately not guessed at.
-    while (words[index]?.startsWith('-')) index += 1;
+  for (;;) {
+    const executable = executableName(words[index]);
+    if (executable === 'env') {
+      index += 1;
+      while (words[index]?.startsWith('-') || ENV_ASSIGNMENT.test(words[index] ?? '')) {
+        if (words[index] === '-u' || words[index] === '--unset') index += 1;
+        index += 1;
+      }
+      continue;
+    }
+    if (executable === 'command' || executable === 'exec' || executable === 'nohup') {
+      index += 1;
+      while (words[index]?.startsWith('-')) index += 1;
+      continue;
+    }
+    if (executable === 'sudo') {
+      index += 1;
+      while (words[index]?.startsWith('-')) {
+        const option = words[index];
+        index += 1;
+        if (SUDO_OPTIONS_WITH_VALUE.has(option) && !option.includes('=')) index += 1;
+      }
+      continue;
+    }
+    break;
   }
-  if (executable(words[index]) !== 'systemctl') return false;
-  const args = words.slice(index + 1).map((word) => word.replace(/^['"]|['"]$/gu, ''));
+  if (executableName(words[index]) !== 'systemctl') return false;
+  const args = words.slice(index + 1);
   const restart = args.indexOf('restart');
   if (restart < 0 || args.includes('--no-block')) return false;
+  const remote = args.slice(0, restart).some((arg) =>
+    arg === '-H' || arg === '--host' || arg.startsWith('--host=') || /^-H.+/u.test(arg));
+  if (remote) return false;
   return args.slice(restart + 1).some((unit) => unit === 'elowen-daemon' || unit === 'elowen-daemon.service');
 });
 
