@@ -670,11 +670,26 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row:hover {
   background: var(--studio-fill-hover);
 }
-/* No boxed icon. Every record drew a 33px accent-ringed disc beside its title, which turned a settings
-   card into a column of badges and spent the accent on decoration one record at a time. The title is
-   the record's identity. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__icon {
+/* Generic glyphs do not need a box: the title is the record's identity. A provider's own mark is
+   different information, so its explicitly tagged brand slot stays visible as a compact neutral square. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__icon[data-icon-kind='glyph'] {
   display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__icon[data-icon-kind='brand'] {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--studio-line);
+  border-radius: var(--radius-sm);
+  background: var(--studio-fill-quiet);
+  color: var(--color-muted-foreground);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row:hover .settings-row__icon[data-icon-kind='brand'],
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row:focus-within .settings-row__icon[data-icon-kind='brand'] {
+  border-color: var(--studio-line);
+  box-shadow: none;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__title {
   display: inline-flex;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { BrainCircuit } from 'lucide-react';
 import { MAX_ROW_ACTIONS, SettingsDocument, SettingsGroup, SettingsRow } from '../../../components/ui/SettingsSurface';
 import { SpatialRow } from '../../../components/ui/SpatialPrimitives';
 import { createWrapper } from '../../test-utils';
@@ -40,6 +41,18 @@ describe('SettingsSurface', () => {
  *  in a narrow container — is pinned in tests/app/settingsThemeGlobal.test.ts, against the stylesheets. */
 describe('SettingsRow anatomy', () => {
   const trailing = (container: HTMLElement) => container.querySelector('.settings-row__trailing')!;
+
+  it('marks supplied icon nodes as brands and Lucide icons as glyphs', () => {
+    const { container } = render(
+      <>
+        <SettingsRow label="Provider" iconNode={<span data-testid="provider-mark" />} />
+        <SettingsRow label="Runtime" icon={BrainCircuit} />
+      </>,
+    );
+
+    expect(screen.getByTestId('provider-mark').closest('.settings-row__icon')).toHaveAttribute('data-icon-kind', 'brand');
+    expect(container.querySelector('.settings-row:nth-child(2) .settings-row__icon')).toHaveAttribute('data-icon-kind', 'glyph');
+  });
 
   it('puts status, control and actions in one trailing cell, in that order', () => {
     const { container } = render(
