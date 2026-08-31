@@ -118,6 +118,7 @@ export async function buildApp(opts: BuildOpts) {
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainCreds, brainOauth, embeddings,
     brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets, embedQueue, memoryCategorizer,
+    dashDigests, dashDigestInference,
     pluginProvider, hookAudit, brain, themes, brand, setPluginHostPush,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
@@ -263,7 +264,8 @@ export async function buildApp(opts: BuildOpts) {
     pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth,
     brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain,
     restartDaemon, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets,
-    memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes,
+    memoryCategorizer, dashDigests, dashDigestInference,
+    embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes,
     killAccountProcesses: async (userId) => processRegistry.killAccount(userId) + (subagentRunner ? await subagentRunner.killAccountProcesses(userId) : 0),
     ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
