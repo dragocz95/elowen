@@ -14,6 +14,8 @@ let activityCalls = 0;
 let modelUsageCalls = 0;
 let dayUsageCalls = 0;
 let dayUsageDays: string | null = null;
+/** What /dash/recap answers; tests override per case. The default keeps the static hero. */
+let dashRecap: Record<string, unknown> = { enabled: true, continue: [], yesterday: null, digest: { status: 'unavailable' } };
 
 const server = setupServer(
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', name: 'Filip Džudža', is_admin: true } })),
@@ -50,6 +52,7 @@ const server = setupServer(
     yesterday: { people: 1, turns: 1, tokens: 800 },
     memoryByHour: Array.from({ length: 24 }, () => 0),
   })),
+  http.get('*/api/dash/recap', () => HttpResponse.json(dashRecap)),
   http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.28.11' })),
   http.get('*/api/plugins/ui', () => HttpResponse.json([])),
   http.get('*/api/system/readiness', () => HttpResponse.json({ checks: [{ id: 'chat', label: 'Chat', ok: true, detail: 'ready' }] })),
@@ -68,6 +71,7 @@ afterEach(() => {
   modelUsageCalls = 0;
   dayUsageCalls = 0;
   dayUsageDays = null;
+  dashRecap = { enabled: true, continue: [], yesterday: null, digest: { status: 'unavailable' } };
 });
 afterAll(() => server.close());
 
@@ -151,6 +155,46 @@ describe('DashboardView — quick actions', () => {
 
     expect(await screen.findByRole('link', { name: en.dashboard.finishSetup.cta })).toHaveAttribute('href', '/settings?cat=brain');
     expect(screen.queryByRole('button', { name: en.dashboard.pillCapabilities })).toBeNull();
+  });
+});
+
+describe('DashboardView — agent-written hero', () => {
+  const ready = {
+    enabled: true,
+    continue: [{ id: 's-1', title: 'Dashboard redesign', updatedAt: '2026-08-30 22:41:00' }],
+    yesterday: { turns: 14, tokens: 1_200_000, sessions: ['Dashboard redesign'] },
+    digest: {
+      status: 'ready',
+      greeting: 'Hey Filip, ready to ship',
+      pills: [{ label: 'Deploy recap', prompt: 'Deploy the recap strip to production' }],
+      summary: 'You mostly worked on the **dashboard**.',
+      suggestions: [{ label: 'Finish tests', prompt: 'Finish the regression tests' }],
+    },
+  };
+
+  it('replaces the headline and the pill row with the digest content, keeping the ember period', async () => {
+    dashRecap = ready;
+    mount();
+    const heading = await screen.findByRole('heading', { level: 1 });
+    await waitFor(() => expect(heading.textContent).toBe('Hey Filip, ready to ship.'));
+    // Generated pills take the row over; the static set is gone.
+    expect(await screen.findByRole('button', { name: 'Deploy recap' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: en.dashboard.pillSummary })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Deploy recap' }));
+    expect(consumePendingBrainComposer()).toBe('Deploy the recap strip to production');
+    // The recap strip below the composer carries the summary and the suggestion.
+    expect(screen.getByText('dashboard')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Finish tests/ })).toBeInTheDocument();
+  });
+
+  it('keeps the static hero when setup is incomplete, whatever the digest says', async () => {
+    dashRecap = ready;
+    server.use(http.get('*/api/system/readiness', () => HttpResponse.json({
+      checks: [{ id: 'chat', label: 'Chat', ok: false, detail: 'no provider' }],
+    })));
+    mount();
+    expect(await screen.findByRole('link', { name: en.dashboard.finishSetup.cta })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Deploy recap' })).toBeNull();
   });
 });
 

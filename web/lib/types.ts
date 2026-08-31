@@ -19,7 +19,7 @@ export interface ElowenConfig {
 }
 
 /** Mirror of the daemon's dashboard config block. */
-export interface DashboardConfig {
+interface DashboardConfig {
   recapEnabled: boolean;
   digestEnabled: boolean;
   greetingEnabled: boolean;

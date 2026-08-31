@@ -25,10 +25,10 @@ export interface DigestInput {
   memories: string[];
 }
 
-/** Per-message and total character budgets for the transcript sample. The digest runs on a cheap
- *  model; the sample exists to give it the user's own voice and topics, not the full history. */
-export const MESSAGE_CHARS = 200;
-export const MEMORY_CHARS = 200;
+/** Per-message and per-memory character budgets for the model's context sample. The digest runs on a
+ *  cheap model; the sample exists to give it the user's own voice and topics, not the full history. */
+const MESSAGE_CHARS = 200;
+const MEMORY_CHARS = 200;
 
 /** Build the instruction prompt. English instructions with a hard same-language rule, like the
  *  conversation titler: a Czech user gets a Czech dashboard without anyone configuring a locale. */
@@ -115,8 +115,6 @@ export class DashDigestGenerator {
     inference: () => InferenceClient | null;
     logger?: Logger;
   }) {}
-
-  configured(): boolean { return this.deps.inference() !== null; }
 
   /** Run generation for a row already claimed via store.beginGeneration. */
   async run(userId: number, day: string, input: DigestInput): Promise<void> {

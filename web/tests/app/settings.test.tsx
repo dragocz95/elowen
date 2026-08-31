@@ -62,10 +62,10 @@ describe('SettingsPage', () => {
     expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar');
     expect(rail).toHaveAttribute('data-variant', 'menu');
     expect(rail).toHaveAttribute('aria-orientation', 'vertical');
-    expect(rail.querySelectorAll('.segmented__option > svg')).toHaveLength(6);
+    expect(rail.querySelectorAll('.segmented__option > svg')).toHaveLength(7);
     expect(screen.queryByRole('combobox', { name: 'Settings sections' })).toBeNull();
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Data',
+      'System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Dashboard', 'Data',
     ]);
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
     // The dials are a lazy chunk, so the reading lands a tick after the section itself. Spaced before
