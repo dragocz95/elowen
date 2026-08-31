@@ -3,7 +3,7 @@ import * as p from '../ui/prompts.js';
 import { defaultLifecycleDeps, runLifecycle } from '../commands.js';
 import { readInstallInfo } from '../installInfo.js';
 import { waitHealthy } from '../launcher.js';
-import { SERVICES, systemctl } from '../systemd.js';
+import { restartServices } from '../systemd.js';
 import { clearMarker, isOnboarded, readMarker } from './marker.js';
 import { runOnboarding } from './wizard.js';
 
@@ -107,12 +107,12 @@ function tmuxInstallHint(): string {
 const READY_BUDGET_MS = 20_000;
 
 /** How long the pre-flight check keeps probing before the daemon counts as unhealthy. Everything that
- *  follows REPLACES a running daemon (systemctl restart, or down+up), which SIGTERMs the agents it is
+ *  follows REPLACES a running daemon (managed restart, or down+up), which SIGTERMs the agents it is
  *  running — one timed-out probe (a load spike, a GC pause) is too thin a reason for that. Kept short so
  *  the ordinary "nothing is running yet" case is still recovered promptly. */
 const HEALTH_BUDGET_MS = 5000;
 
-/** Bring the daemon up the right way for this box: nothing if it's already healthy, else systemctl on an
+/** Bring the daemon up the right way for this box: nothing if it's already healthy, else the managed restart on an
  *  `elowen install` box (never a second, port-conflicting detached daemon), otherwise the local lifecycle.
  *  Readiness goes through the shared readiness wait (the same probe the launcher, `ensureDaemon` and the
  *  installer use): a bare non-throwing fetch read a wedged daemon's 500 as "up" and let the wizard run on
@@ -133,8 +133,8 @@ async function bringUp(base: string, env: NodeJS.ProcessEnv, version: string): P
   if (readInstallInfo()) {
     // `restart`, not `start`: systemd considers a wedged unit active, so `start` is a no-op on the very
     // state that got us here and setup would just wait out the budget. `restart` also starts a stopped unit.
-    const r = await systemctl('restart', ...SERVICES);
-    if (r.code !== 0) throw new Error(`systemctl restart failed (code ${r.code})`);
+    const r = await restartServices('all');
+    if (r.code !== 0) throw new Error(`managed restart failed (code ${r.code})`);
     const [healthy] = await waitHealthy([`${base}/health`], { budgetMs: READY_BUDGET_MS });
     if (!healthy) throw new Error(`daemon did not become healthy within ${READY_BUDGET_MS / 1000}s of a restart (journalctl -u elowen-daemon)`);
     return;

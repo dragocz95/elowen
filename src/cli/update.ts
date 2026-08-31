@@ -135,6 +135,18 @@ export function acquireUpdateLock(env: NodeJS.ProcessEnv, deps: UpdateLockDeps):
 
 export interface UpdateResult { updated: boolean; from: string; to: string }
 
+/** The systemd half of an update restart. Exactly one canonical non-blocking attempt is allowed: falling
+ *  back to a blocking legacy command can deadlock when the updater runs inside the daemon cgroup. */
+export async function restartSystemdAfterUpdate(
+  latest: string,
+  restart: (target: 'all') => Promise<{ code: number; stdout: string }> = restartServices,
+): Promise<void> {
+  const result = await restart('all');
+  if (result.code !== 0) {
+    throw new Error(`installed ${latest} but the safe restart failed (code ${result.code}) — re-run elowen install to refresh sudoers, then run elowen restart all`);
+  }
+}
+
 /** Check npm for a newer release; if there is one, install it and restart the (running) services so
  *  the new binary takes over. The DB migrates itself on the next boot (openDb runs additive
  *  migrations), so no migration step is needed here. Returns what happened for the menu to report. */
@@ -170,8 +182,7 @@ export async function update(env: NodeJS.ProcessEnv, deps: UpdateDeps): Promise<
         // before the elowen-web job is ever enqueued, leaving the web UI on the old build. With --no-block
         // both jobs are handed to systemd (PID 1) up front and run to completion regardless of this
         // process dying. (Cost: we can't observe the restart result — only that it was enqueued.)
-        const r = await restartServices('all');
-        if (r.code !== 0) throw new Error(`installed ${latest} but the safe restart failed (code ${r.code}) — re-run elowen install to refresh sudoers, then run elowen restart all`);
+        await restartSystemdAfterUpdate(latest);
         return;
       }
       await stop(e);

@@ -9,7 +9,7 @@ describe('cli/index.needsDaemon', () => {
   });
 
   it('is false for help, lifecycle and unknown commands', () => {
-    for (const cmd of ['--help', '-h', 'help', '--version', 'install', 'up', 'down', 'status', 'update', 'wat', undefined]) {
+    for (const cmd of ['--help', '-h', 'help', '--version', 'install', 'up', 'down', 'status', 'restart', 'update', 'wat', undefined]) {
       expect(needsDaemon(cmd)).toBe(false);
     }
   });

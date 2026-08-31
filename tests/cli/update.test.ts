@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { update, reinstall, reinstallNpmArgs, acquireUpdateLock, type ReinstallIO, type UpdateLockDeps } from '../../src/cli/update.js';
+import * as updateModule from '../../src/cli/update.js';
 
 const registry = (version: string) => (async () => new Response(JSON.stringify({ version }), { status: 200 })) as unknown as typeof fetch;
 
@@ -53,6 +54,24 @@ describe('cli/update.update', () => {
     const down = (async () => new Response('nope', { status: 503 })) as unknown as typeof fetch;
     const r = await update({} as NodeJS.ProcessEnv, { current: '1.2.0', fetch: down, install: async () => { throw new Error('must not install'); }, restart: async () => {}, lock });
     expect(r).toEqual({ updated: false, from: '1.2.0', to: '1.2.0' });
+  });
+});
+
+describe('cli/update safe systemd restart', () => {
+  it('makes one non-blocking attempt and never retries with a legacy command after failure', async () => {
+    type Restart = (target: 'all') => Promise<{ code: number; stdout: string }>;
+    type RestartAfterUpdate = (latest: string, restart?: Restart) => Promise<void>;
+    const restartAfterUpdate = (updateModule as unknown as { restartSystemdAfterUpdate?: RestartAfterUpdate }).restartSystemdAfterUpdate;
+    expect(typeof restartAfterUpdate).toBe('function');
+    if (!restartAfterUpdate) return;
+    const calls: string[] = [];
+
+    await expect(restartAfterUpdate('1.3.0', async (target) => {
+      calls.push(target);
+      return { code: 1, stdout: '' };
+    })).rejects.toThrow('safe restart failed');
+
+    expect(calls).toEqual(['all']);
   });
 });
 

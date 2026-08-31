@@ -4,6 +4,7 @@ const runLifecycle = vi.fn(async () => true);
 const runHeadlessSetup = vi.fn(async () => {});
 const parseHeadlessFlags = vi.fn(() => ({}));
 const systemctl = vi.fn(async () => ({ code: 0, stdout: '' }));
+const restartServices = vi.fn(async () => ({ code: 0, stdout: '' }));
 /** Whether this box looks like an `elowen install` one (systemd units) or a plain local install. */
 let installed = false;
 vi.mock('../../../src/cli/commands.js', () => ({
@@ -17,6 +18,7 @@ vi.mock('../../../src/cli/installInfo.js', () => ({
 vi.mock('../../../src/cli/systemd.js', () => ({
   SERVICES: ['elowen-daemon', 'elowen-web'],
   systemctl: (...args: unknown[]) => systemctl(...(args as [])),
+  restartServices: (...args: unknown[]) => restartServices(...(args as [])),
 }));
 vi.mock('../../../src/cli/setup/headless.js', () => ({
   parseHeadlessFlags: (...args: unknown[]) => parseHeadlessFlags(...(args as [])),
@@ -49,6 +51,8 @@ beforeEach(() => {
   runHeadlessSetup.mockClear();
   systemctl.mockClear();
   systemctl.mockImplementation(async () => ({ code: 0, stdout: '' }));
+  restartServices.mockClear();
+  restartServices.mockImplementation(async () => ({ code: 0, stdout: '' }));
   parseHeadlessFlags.mockClear();
   parseHeadlessFlags.mockImplementation(() => ({}));
 });
@@ -137,10 +141,10 @@ describe('cli/setup/command bringUp recovery', () => {
     installed = true;
     // Unhealthy for as long as the wedged daemon is left alone; healthy once the restart has landed.
     let restarted = false;
-    systemctl.mockImplementation(async () => { restarted = true; return { code: 0, stdout: '' }; });
+    restartServices.mockImplementation(async () => { restarted = true; return { code: 0, stdout: '' }; });
     vi.stubGlobal('fetch', vi.fn(async () => (restarted ? new Response('{"ok":true}', { status: 200 }) : new Response('boom', { status: 500 }))));
     await runSetupFast(['--non-interactive']);
-    expect(systemctl).toHaveBeenCalledWith('restart', 'elowen-daemon', 'elowen-web');
+    expect(restartServices).toHaveBeenCalledWith('all');
     expect(runLifecycle).not.toHaveBeenCalled(); // never a second, port-conflicting local daemon
     expect(runHeadlessSetup).toHaveBeenCalledOnce();
   });

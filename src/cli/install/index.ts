@@ -560,15 +560,7 @@ export async function install(args: string[] = []): Promise<void> {
   const summary = [
     `Open       ${url}`,
     adminUser ? `Sign in    ${adminUser}` : 'Sign in    create an admin in the web UI',
-    ...(MAC ? [
-      `Status     launchctl print gui/$(id -u)/io.elowen.daemon`,
-      `Logs       tail -f ~/.config/elowen/logs/launchd-daemon.log`,
-      `Restart    launchctl kickstart -k gui/$(id -u)/io.elowen.daemon`,
-    ] : [
-      `Status     systemctl status elowen-daemon elowen-web`,
-      `Logs       journalctl -u elowen-daemon -f`,
-      `Restart    systemctl restart elowen-daemon elowen-web`,
-    ]),
+    ...serviceSummary(MAC),
   ].join('\n');
   const doneBody = [...summary.split('\n'), '', `ELOWEN is live at ${url}`];
   // Interactive install ends on a distinct terminal DONE screen, held until the operator dismisses it
@@ -576,4 +568,19 @@ export async function install(args: string[] = []): Promise<void> {
   // keypress, so it just prints the frame.
   if (unattended) p.note(doneBody.join('\n'), 'ELOWEN is ready');
   else await p.doneScreen('ELOWEN is ready', doneBody);
+}
+
+/** Platform-specific service commands printed on the installer's final screen. Linux restart guidance
+ *  goes through the CLI so an operator copying it from inside an Elowen turn cannot reintroduce the
+ *  blocking self-restart deadlock. Kept pure for the summary contract test. */
+export function serviceSummary(mac: boolean): string[] {
+  return mac ? [
+    `Status     launchctl print gui/$(id -u)/io.elowen.daemon`,
+    `Logs       tail -f ~/.config/elowen/logs/launchd-daemon.log`,
+    `Restart    launchctl kickstart -k gui/$(id -u)/io.elowen.daemon`,
+  ] : [
+    `Status     systemctl status elowen-daemon elowen-web`,
+    `Logs       journalctl -u elowen-daemon -f`,
+    `Restart    elowen restart all`,
+  ];
 }
