@@ -93,7 +93,7 @@ const toastVariants = cva(
       // (rather than hardcoding a second colour) keeps the edge correct when a skin repaints the status
       // colours.
       status: {
-        success: 'bg-success text-success-foreground border-[color-mix(in_srgb,var(--color-success)_72%,var(--color-success-foreground))]',
+        success: 'bg-[var(--color-toast-success)] text-[var(--color-toast-success-foreground)] border-[color-mix(in_srgb,var(--color-toast-success)_72%,var(--color-toast-success-foreground))]',
         error: 'bg-destructive text-destructive-foreground border-[color-mix(in_srgb,var(--color-destructive)_72%,var(--color-destructive-foreground))]',
       },
     },

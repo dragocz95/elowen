@@ -20,10 +20,12 @@ const dock = () => document.querySelector<HTMLElement>('[data-slot="toast-viewpo
 const card = (node: HTMLElement) => node.closest<HTMLElement>('[data-slot="toast"]');
 
 describe('Toast', () => {
-  it('shows a toast message when fired', async () => {
+  it('shows a saturated success toast when fired', async () => {
     render(<ToastProvider><Trigger /></ToastProvider>, { wrapper: W });
     fireEvent.click(screen.getByRole('button', { name: 'go' }));
-    expect(await within(dock()).findByText(MESSAGE)).toBeInTheDocument();
+    const toast = card(await within(dock()).findByText(MESSAGE));
+    expect(toast).toBeInTheDocument();
+    expect(toast).toHaveClass('bg-[var(--color-toast-success)]', 'text-[var(--color-toast-success-foreground)]');
   });
 
   /** The role is the app's policy and not Radix's — a Radix toast carries no role of its own. An error

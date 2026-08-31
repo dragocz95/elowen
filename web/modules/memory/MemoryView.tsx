@@ -412,7 +412,7 @@ export function MemoryView() {
           : tab === 'brain' ? (
             memories.isLoading ? <ControlSurfaceState><LoadingState variant="cards" /></ControlSurfaceState>
             : memories.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} /></ControlSurfaceState>
-            : <MemoryBrainMap memories={memories.data ?? []} categories={categories.data ?? []} onSelectMemory={(id) => { setSelectedId(id); setTab('list'); }} />
+            : <MemoryBrainMap memories={memories.data ?? []} categories={categories.data ?? []} onSelectMemory={setSelectedId} />
           )
           : memories.isLoading ? <ControlSurfaceState><LoadingState variant="cards" /></ControlSurfaceState>
           : memories.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} /></ControlSurfaceState>
@@ -507,6 +507,11 @@ export function MemoryView() {
           </div>
           )}
         </ControlSurfaceDocument>
+        {tab === 'brain' && selectedId != null ? (
+          <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)} scrim="soft">
+            <MemoryDetail memoryId={selectedId} />
+          </WorkspaceDetailRail>
+        ) : null}
       </WorkspaceShell>
 
       {/* Floating bulk toolbar. Merge needs ≥2; soft-delete shows outside the trash, restore inside it,
