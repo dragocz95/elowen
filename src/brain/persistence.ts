@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dbTsToIso } from '../shared/time.js';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
-import type { BrainRunMessage, BrainStore } from '../store/brainStore.js';
+import type { BrainMessageRow, BrainRunMessage, BrainStore } from '../store/brainStore.js';
 import { extractText, NO_REPLY_NUDGE } from './messageView.js';
 import { HISTORY_IMAGE_PLACEHOLDER } from './session/historyImageStripping.js';
 import { externalizeImageBlocks } from './chatImages.js';
@@ -119,6 +119,20 @@ function projectPendingMessage(store: BrainStore, sessionId: string, message: un
   store.appendPendingMessage({ id: randomUUID(), sessionId, role, content });
 }
 
+/** The exact row sequence a crash-interrupted turn may graduate into durable history.
+ *
+ *  Settled rows are always retained — notably a mid-turn user steer can be interleaved BETWEEN provisional
+ *  assistant/tool rows. Pending rows are retained only through the last prefix where every tool call has a
+ *  matching result. Filtering the raw rowid sequence rather than concatenating settled + pending preserves
+ *  that interleaving and gives the status read model and the recovery write path one definition of truth. */
+export function recoverablePartialTurnRows(rows: readonly BrainMessageRow[]): BrainMessageRow[] {
+  const pending = rows.filter((row) => row.pending !== 0);
+  if (pending.length === 0) return [...rows];
+  const keep = answeredToolCallPrefix(pending.map((row) => row.content));
+  let pendingIndex = 0;
+  return rows.filter((row) => row.pending === 0 || pendingIndex++ < keep);
+}
+
 /** Rows still marked pending when a session is (re)spawned belong to a turn that never settled — the
  *  daemon went down mid-run. They are the only record that work happened, so they graduate to history.
  *
@@ -129,10 +143,13 @@ function projectPendingMessage(store: BrainStore, sessionId: string, message: un
  *  fragment of a step that never happened. Their cost is whatever PI recorded per message: the provider
  *  cost stamp is an `agent_end` act, and that never came. */
 export function settlePartialTurn(store: BrainStore, sessionId: string): void {
-  const pending = store.pendingMessages(sessionId);
+  const rows = store.getMessages(sessionId);
+  const pending = rows.filter((row) => row.pending !== 0);
   if (pending.length === 0) return;
-  const keep = answeredToolCallPrefix(pending.map((row) => row.content));
-  for (const row of pending.slice(keep)) store.deleteMessage(sessionId, row.id);
+  const keep = new Set(recoverablePartialTurnRows(rows).map((row) => row.id));
+  for (const row of pending) {
+    if (!keep.has(row.id)) store.deleteMessage(sessionId, row.id);
+  }
   store.settlePendingMessages(sessionId);
 }
 

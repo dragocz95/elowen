@@ -31,9 +31,14 @@ class FakeES {
 }
 
 let historyPageRequests = 0;
+let startRequests = 0;
 
 const server = setupServer(
-  http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
+  http.post('*/api/brain/start', () => {
+    startRequests += 1;
+    return HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 });
+  }),
+  http.post('*/api/brain/visibility', () => HttpResponse.json({ ok: true })),
   http.get('*/api/brain/messages', ({ request }) => {
     if (!new URL(request.url).searchParams.has('limit')) return HttpResponse.json([]);
     historyPageRequests += 1;
@@ -52,7 +57,7 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest });
   (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
 });
-afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; historyPageRequests = 0; vi.restoreAllMocks(); });
+afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; historyPageRequests = 0; startRequests = 0; vi.restoreAllMocks(); });
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
@@ -107,8 +112,9 @@ describe('BrainChat snapshot hydration', () => {
     await screen.findByText('queued while away');
   });
 
-  it('replaces the transcript from the frame, so a repeated snapshot cannot double a rendered turn', async () => {
+  it('replaces the transcript from a native reconnect snapshot without starting the session again', async () => {
     const es = await renderChat();
+    expect(startRequests).toBe(1);
     const frame = {
       type: 'snapshot', sessionId: 'brain-1', hasMore: false, nextBefore: null,
       history: [{ role: 'user', text: 'ahoj odsud', id: 'm1' }],
@@ -122,6 +128,7 @@ describe('BrainChat snapshot hydration', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.getAllByText('ahoj odsud')).toHaveLength(1);
     expect(screen.getAllByText('a jeste tohle')).toHaveLength(1);
+    expect(startRequests).toBe(1);
   });
 
   it('refreshes usage after a snapshot boundary and rejects the older status response delivered last', async () => {
