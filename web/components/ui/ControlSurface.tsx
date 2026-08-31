@@ -1,5 +1,6 @@
 'use client';
 import type { HTMLAttributes, ReactNode } from 'react';
+import { PageToolbarContribution, type PageToolbarProps } from './PageToolbar';
 import { WorkspaceLeadPortal } from './WorkspaceShell';
 
 export function ControlSurfaceDocument({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -23,14 +24,34 @@ export function ControlSurfaceDocument({ children, className = '' }: { children:
  *  of the layout lives, and a design that wants to retune one has something to address. */
 export type ControlSurfaceToolbarLayout = 'inline' | 'split' | 'stacked';
 
-export function ControlSurfaceToolbar({ children, layout = 'inline', className = '', testId, promote = true }: {
-  children: ReactNode;
+interface ControlSurfaceToolbarBase {
   layout?: ControlSurfaceToolbarLayout;
   className?: string;
   testId?: string;
-  /** Promote the page's primary filters above its title. Nested informational toolbars opt out. */
+}
+
+type LegacyControlSurfaceToolbarProps = ControlSurfaceToolbarBase & {
+  children: ReactNode;
+  search?: never;
+  filters?: never;
+  actions?: never;
+  /** Promote the page's primary filters into the canonical toolbar row. */
   promote?: boolean;
-}) {
+};
+
+type StructuredControlSurfaceToolbarProps = ControlSurfaceToolbarBase & PageToolbarProps & {
+  /** Structured search/filter/action contributions are page-level by definition. */
+  promote?: true;
+};
+
+export type ControlSurfaceToolbarProps = LegacyControlSurfaceToolbarProps | StructuredControlSurfaceToolbarProps;
+
+export function ControlSurfaceToolbar({
+  children, search, filters, actions, layout = 'inline', className = '', testId, promote = true,
+}: ControlSurfaceToolbarProps) {
+  if (search !== undefined || filters !== undefined || actions !== undefined) {
+    return <PageToolbarContribution search={search} filters={filters} actions={actions}>{children}</PageToolbarContribution>;
+  }
   const toolbar = <div className={`control-surface-toolbar ${className}`} data-layout={layout} data-testid={testId}>{children}</div>;
   return promote ? <WorkspaceLeadPortal>{toolbar}</WorkspaceLeadPortal> : toolbar;
 }
