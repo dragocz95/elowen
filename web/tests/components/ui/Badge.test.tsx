@@ -8,6 +8,12 @@ describe('Badge', () => {
     expect(screen.getByText('working')).toHaveClass('font-mono');
   });
 
+  it('keeps a soft accent fill but uses full-strength ink for readable status text', () => {
+    render(<Badge tone="accent">Configured</Badge>);
+    expect(screen.getByText('Configured')).toHaveClass('bg-primary/10', 'text-foreground');
+    expect(screen.getByText('Configured')).not.toHaveClass('text-primary');
+  });
+
   it('gives the quiet tone less emphasis than the ordinary one', () => {
     // Both tones resolved to the shadcn `secondary` variant, so `tone="muted"` produced a chip identical
     // to the default one: a caller asking for less emphasis got exactly the same paint, and the tone

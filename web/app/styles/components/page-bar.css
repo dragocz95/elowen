@@ -78,3 +78,7 @@
    this bar use fixed positioning, and a containment ancestor would silently change their origin. */
 .top-bar--bar[data-chat-controls-narrow] .chat-page-toolbar__wide-controls { display: none; }
 .top-bar--bar[data-chat-controls-narrow] .chat-page-toolbar__overflow { display: block; }
+/* The same measured constraint also compacts GLOBAL actions. Search and sign-out are secondary here (the
+   command menu and account screen own them), while skin, language and account remain reachable as icons.
+   This keeps the account hit target inside a chat panel narrowed by the telemetry rail. */
+.top-bar--bar[data-chat-controls-narrow] :is(.top-bar__search, .top-bar__logout, .skin-switcher__name, .language-switcher__name) { display: none; }

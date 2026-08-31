@@ -42,7 +42,7 @@ export function LanguageSwitcher({ collapsed = false }: { collapsed?: boolean })
           style={{ transitionDuration: 'var(--motion-fast)' }}
         >
           <Languages size={collapsed ? 16 : 18} strokeWidth={1.5} aria-hidden />
-          {!collapsed && <span className="font-mono uppercase tracking-wide">{locale}</span>}
+          {!collapsed && <span className="language-switcher__name font-mono uppercase tracking-wide">{locale}</span>}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent aria-label={t.common.language} align="end" sideOffset={8} className="min-w-36">
