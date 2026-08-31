@@ -5,7 +5,7 @@ import { cva } from 'class-variance-authority';
 import type { LucideIcon } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
-import { consumeHorizontalWheel, revealHorizontalItem } from './horizontalScroll';
+import { consumeHorizontalWheel, horizontalOverflowState, NO_HORIZONTAL_OVERFLOW, revealHorizontalItem, type HorizontalOverflowState } from './horizontalScroll';
 import { RadioGroup, RadioGroupItem } from './shadcn/radio-group';
 
 export interface SegmentedOption {
@@ -57,15 +57,6 @@ const segmentedCountVariants = cva('segmented__count text-muted-foreground', {
   },
 });
 
-interface OverflowState {
-  overflow: boolean;
-  left: boolean;
-  right: boolean;
-}
-
-const NO_OVERFLOW: OverflowState = { overflow: false, left: false, right: false };
-const EDGE_EPSILON = 1;
-
 /** A connected single-choice control for modes, filters, types, priorities and section views.
  *
  *  This is a Radix RadioGroup rather than a ToggleGroup because one value is always selected and clicking
@@ -91,7 +82,7 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const [overflowState, setOverflowState] = useState<OverflowState>(NO_OVERFLOW);
+  const [overflowState, setOverflowState] = useState<HorizontalOverflowState>(NO_HORIZONTAL_OVERFLOW);
   const selectedIndex = options.findIndex((option) => option.value === value);
   const optionContentKey = options.map((option) => `${option.value}\u0000${option.label}\u0000${option.count ?? ''}`).join('\u0001');
   const orientation = variant === 'menu' ? 'vertical' : 'horizontal';
@@ -100,17 +91,11 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
   const measureOverflow = useCallback(() => {
     const track = trackRef.current;
     if (!track || !nowrap) {
-      setOverflowState((current) => current === NO_OVERFLOW ? current : NO_OVERFLOW);
+      setOverflowState((current) => current === NO_HORIZONTAL_OVERFLOW ? current : NO_HORIZONTAL_OVERFLOW);
       return;
     }
 
-    const maxScrollLeft = Math.max(0, track.scrollWidth - track.clientWidth);
-    const overflow = maxScrollLeft > EDGE_EPSILON;
-    const next = {
-      overflow,
-      left: overflow && track.scrollLeft > EDGE_EPSILON,
-      right: overflow && track.scrollLeft < maxScrollLeft - EDGE_EPSILON,
-    };
+    const next = horizontalOverflowState(track);
     setOverflowState((current) => (
       current.overflow === next.overflow && current.left === next.left && current.right === next.right
         ? current
