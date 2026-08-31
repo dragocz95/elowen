@@ -22,7 +22,7 @@ export function ControlSurfaceDocument({ children, className = '' }: { children:
  *  was writing a declaration that could only win by luck. Two call sites did exactly that; a third passed
  *  `flex-wrap`, which the stylesheet already said. Naming the three arrangements puts them where the rest
  *  of the layout lives, and a design that wants to retune one has something to address. */
-export type ControlSurfaceToolbarLayout = 'inline' | 'split' | 'stacked';
+type ControlSurfaceToolbarLayout = 'inline' | 'split' | 'stacked';
 
 interface ControlSurfaceToolbarBase {
   layout?: ControlSurfaceToolbarLayout;
