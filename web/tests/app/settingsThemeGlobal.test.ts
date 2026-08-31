@@ -74,6 +74,23 @@ describe('settings row layout contract', () => {
     expect(block(core, BASE_ROW)).toMatch(/min-height:\s*2\.75rem/);
   });
 
+  it('withholds only glyph icons in Studio and presents brand icons as neutral compact marks', () => {
+    expect(block(studio, ".settings-row__icon[data-icon-kind='glyph'] {")).toMatch(/display:\s*none/);
+
+    const brand = block(studio, ".settings-row__icon[data-icon-kind='brand'] {");
+    expect(brand).toMatch(/display:\s*grid/);
+    expect(brand).toMatch(/width:\s*1\.75rem/);
+    expect(brand).toMatch(/height:\s*1\.75rem/);
+    expect(brand).toMatch(/border:\s*1px solid var\(--studio-line\)/);
+    expect(brand).toMatch(/border-radius:\s*var\(--radius-sm\)/);
+    expect(brand).toMatch(/background:\s*var\(--studio-fill-quiet\)/);
+    expect(brand).toMatch(/color:\s*var\(--color-muted-foreground\)/);
+
+    const brandInteraction = block(studio, ".settings-row:hover .settings-row__icon[data-icon-kind='brand'],");
+    expect(brandInteraction).toMatch(/border-color:\s*var\(--studio-line\)/);
+    expect(brandInteraction).toMatch(/box-shadow:\s*none/);
+  });
+
   it("never wraps an inline record's trailing cell, at any width", () => {
     // Declared outside every container query, so it holds on a 1440px card and on a 320px one alike.
     expect(block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing {")).toMatch(/flex-wrap:\s*nowrap/);

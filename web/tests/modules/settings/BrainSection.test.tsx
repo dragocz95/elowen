@@ -130,6 +130,21 @@ describe('BrainSection — OAuth account model picker', () => {
     expect(container.querySelector('.border-y.divide-y')).toBeNull();
   });
 
+  it('renders a configured provider favicon through the brand icon slot', () => {
+    hostedMocks.status.mockImplementation(() => new Promise(() => {}));
+    (CONFIG.brain.providers as unknown[]).push({
+      id: 'coresynth', label: 'CoreSynth', type: 'openai',
+      baseUrl: 'https://api.coresynth.io/v1', models: ['model-a'], apiKeySet: true,
+    });
+
+    renderSection();
+    const row = screen.getByText('CoreSynth').closest('.settings-row');
+    const icon = row?.querySelector(".settings-row__icon[data-icon-kind='brand']");
+
+    expect(icon).toBeTruthy();
+    expect(icon?.querySelector('img')).toHaveAttribute('src', 'https://coresynth.io/favicon.ico');
+  });
+
   it('shows persisted Azure verification status and probes the exact configured deployment', async () => {
     (CONFIG.brain.providers as unknown[]).push({
       id: 'azure', label: 'Azure production', type: 'openai', api: 'openai-responses',

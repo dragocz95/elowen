@@ -143,8 +143,8 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, co
   return (
     <div className={`settings-row ${className}`} data-trailing={trailingLayout}>
       <div className="settings-row__label">
-        {iconNode ? <span className="settings-row__icon" aria-hidden>{iconNode}</span>
-          : Icon ? <span className="settings-row__icon" aria-hidden><Icon size={15} strokeWidth={1.75} /></span> : null}
+        {iconNode ? <span className="settings-row__icon" data-icon-kind="brand" aria-hidden>{iconNode}</span>
+          : Icon ? <span className="settings-row__icon" data-icon-kind="glyph" aria-hidden><Icon size={15} strokeWidth={1.75} /></span> : null}
         <div className="min-w-0">
           <span className="settings-row__title">
             <span>{label}</span>
