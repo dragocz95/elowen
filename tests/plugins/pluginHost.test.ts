@@ -125,7 +125,7 @@ describe('ctx.host capability gates', () => {
       provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1',
       user: { id: 2, username: 'external', isAdmin: false }, linkedAt: '2026-08-19 05:00:00',
     }),
-    linkOrProvision: () => ({ user: { id: 2, username: 'external', isAdmin: false }, created: true }),
+    linkOrProvision: async () => ({ user: { id: 2, username: 'external', isAdmin: false }, created: true }),
     linkExisting: () => ({
       provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1',
       user: { id: 2, username: 'external', isAdmin: false }, linkedAt: '2026-08-19 05:00:00',

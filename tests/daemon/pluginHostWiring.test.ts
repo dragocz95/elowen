@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildBrainCore } from '../../src/daemon/brainCore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
-import type { PluginElowenCli, PluginHostStores } from '../../src/plugins/api.js';
+import type { PluginElowenCli, PluginHostExternalUsers, PluginHostStores } from '../../src/plugins/api.js';
 
 describe('buildBrainCore plugin-host wiring', () => {
   let dir: string;
@@ -12,6 +12,7 @@ describe('buildBrainCore plugin-host wiring', () => {
     rmSync(dir, { recursive: true, force: true });
     delete (globalThis as { __hostStores?: unknown }).__hostStores;
     delete (globalThis as { __hostCli?: unknown }).__hostCli;
+    delete (globalThis as { __hostExternalUsers?: unknown }).__hostExternalUsers;
   });
 
   /** Boot a core against a throwaway bundled-plugin dir holding exactly one plugin. */
@@ -21,8 +22,8 @@ describe('buildBrainCore plugin-host wiring', () => {
     const pluginDir = join(pluginsDir, 'probe');
     mkdirSync(pluginDir, { recursive: true });
     writeFileSync(join(pluginDir, 'elowen-plugin.json'), JSON.stringify({
-      name: 'probe', version: '0.1.0', apiVersion: '1', description: 'probe', entry: 'index.mjs',
-      capabilities: { reads: ['stores', 'elowen-cli'], mutates: ['events'] },
+      name: 'probe', version: '0.1.0', apiVersion: '1', description: 'probe', entry: 'index.mjs', userGrantable: true,
+      capabilities: { reads: ['stores', 'elowen-cli'], mutates: ['events', 'users'] },
     }));
     writeFileSync(join(pluginDir, 'index.mjs'), pluginBody);
     const core = await buildBrainCore({
@@ -34,7 +35,11 @@ describe('buildBrainCore plugin-host wiring', () => {
     });
     core.config.update({ plugins: { enabled: ['probe'] } });
     await core.pluginProvider.get();
-    const captured = globalThis as { __hostStores?: PluginHostStores; __hostCli?: PluginElowenCli };
+    const captured = globalThis as {
+      __hostStores?: PluginHostStores;
+      __hostCli?: PluginElowenCli;
+      __hostExternalUsers?: PluginHostExternalUsers;
+    };
     return { core, captured };
   }
 
@@ -99,6 +104,36 @@ describe('buildBrainCore plugin-host wiring', () => {
       expect(stores.usersRead.list().find((u) => u.id === owner.id)).toEqual({
         id: owner.id, username: 'owner', name: 'Filip Džudža', avatar: `${owner.id}.png`, isAdmin: true,
       });
+    } finally { core.db.close(); }
+  });
+
+  it('applies the Microsoft template when a Teams plugin provisions a new account through the host seam', async () => {
+    const { core, captured } = await bootWith(
+      `export function register(ctx){ globalThis.__hostExternalUsers = ctx.host.externalUsers(); }`,
+      { username: 'owner', password: 'pw-for-test-only' },
+    );
+    const externalUsers = captured.__hostExternalUsers;
+    if (!externalUsers) throw new Error('the probe plugin never captured the external-users seam');
+    try {
+      core.db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'shared','/shared')").run();
+      core.config.update({ plugins: { config: { msteams: {
+        ssoDefaultProjects: ['2'],
+        ssoDefaultPlugins: ['probe'],
+        ssoAllowedTools: ['MemorySearch'],
+        ssoDefaultYolo: true,
+      } } } });
+
+      const result = await externalUsers.linkOrProvision({
+        provider: 'msteams', tenantId: 'tenant', subjectId: 'subject',
+        preferredUsername: 'new.person', name: 'New Person', email: 'new@example.test',
+      });
+      const user = core.users.get(result.user.id)!;
+
+      expect(result.created).toBe(true);
+      expect(core.userProjects.forUser(user.id)).toEqual([2]);
+      expect(user.granted_plugins).toEqual(['probe']);
+      expect(user.allowed_tools).toEqual(['MemorySearch']);
+      expect(core.userSettings.permissionSettings(user.id).yolo).toBe(true);
     } finally { core.db.close(); }
   });
 });

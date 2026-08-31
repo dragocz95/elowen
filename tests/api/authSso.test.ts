@@ -47,6 +47,7 @@ interface SetupOptions {
   ssoDefaultModel?: string;
   ssoDefaultPlugins?: string[];
   ssoAllowedTools?: string[];
+  ssoDefaultYolo?: boolean;
   knownModels?: string[];
   knownPlugins?: string[];
   knownTools?: string[];
@@ -82,6 +83,7 @@ function setup(options: SetupOptions = {}) {
           ssoDefaultModel: options.ssoDefaultModel,
           ssoDefaultPlugins: options.ssoDefaultPlugins,
           ssoAllowedTools: options.ssoAllowedTools,
+          ssoDefaultYolo: options.ssoDefaultYolo,
         },
       },
     },
@@ -555,7 +557,7 @@ describe('Microsoft SSO routes', () => {
     ['legacy CSV', '1, 999, invalid'],
     ['selection array', ['1', '999', 'invalid']],
   ])('provisions a passwordless non-admin with defaults from the %s project shape', async (_shape, ssoDefaultProjects) => {
-    const { start, signFor, callback, db, users, userProjects } = setup({
+    const { start, signFor, callback, db, users, userSettings, userProjects } = setup({
       oid: UNKNOWN_OID,
       bind: false,
       ssoProvision: 'tenant',
@@ -564,6 +566,7 @@ describe('Microsoft SSO routes', () => {
       ssoDefaultModel: 'relay/gpt-5',
       ssoDefaultPlugins: ['agents', 'removed-plugin'],
       ssoAllowedTools: ['Bash', 'RemovedTool'],
+      ssoDefaultYolo: true,
       knownModels: ['relay/gpt-5'],
       knownPlugins: ['agents'],
       knownTools: ['Bash'],
@@ -590,6 +593,7 @@ describe('Microsoft SSO routes', () => {
       allowed_tools: ['Bash'],
     });
     expect(userProjects.forUser(body.user.id)).toEqual([1]);
+    expect(userSettings.permissionSettings(body.user.id).yolo).toBe(true);
     expect(db.prepare('SELECT 1 FROM user_projects WHERE project_id = 999').get()).toBeUndefined();
     expect(users.verify(body.user.username, 'new.user@example.com')).toBeNull();
     expect(users.verify(body.user.username, '')).toBeNull();

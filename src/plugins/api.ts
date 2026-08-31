@@ -535,7 +535,10 @@ export interface PluginHostExternalUsers {
   resolvePlatformUser?(platform: string, platformUserId: string, verifiedEmail?: string): PluginUserView | null;
   resolve(provider: string, tenantId: string, subjectId: string): PluginUserView | null;
   describe(provider: string, tenantId: string, subjectId: string): PluginExternalUserBinding | null;
-  linkOrProvision(input: PluginExternalUserInput): PluginExternalUserResult;
+  /** Create + provision a new external account, or return the existing binding unchanged. The Promise is
+   *  load-bearing: catalog validation happens before creation, so defaults cannot be applied from stale
+   *  plugin/model/tool names. */
+  linkOrProvision(input: PluginExternalUserInput): Promise<PluginExternalUserResult>;
   linkExisting(input: PluginExternalUserBindingInput): PluginExternalUserBinding;
 }
 

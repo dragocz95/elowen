@@ -18,7 +18,7 @@ import { PlatformLinkConflictError, UserSettingStore } from '../store/userSettin
 import { platformIdentity } from '../shared/platformIdentity.js';
 import { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
 import { PluginSecretVault } from '../store/pluginSecretVault.js';
-import { isPluginAllowedForUser } from '../shared/pluginAccess.js';
+import { grantablePluginNames, isPluginAllowedForUser } from '../shared/pluginAccess.js';
 import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
 import { setPluginPromptSources, rawTemplate } from '../prompts/index.js';
@@ -55,7 +55,7 @@ import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/sessi
 import { dataDir, dbPath as configuredDbPath, setSpillNamespaceResolver } from '../shared/paths.js';
 import { setCompactionFailureLimit } from '../brain/session/compactionCircuitBreaker.js';
 import { makeToolOutputPolicy } from '../brain/toolOutput.js';
-import { BUILTIN_TOOL_OUTPUT_SHOWN } from '../brain/tools/index.js';
+import { BUILTIN_TOOL_OUTPUT_SHOWN, builtinToolMetas } from '../brain/tools/index.js';
 import type { DelegatedChildBridge } from '../plugins/api.js';
 import type { DelegatedTurnRunner } from '../brain/delegatedTurn.js';
 import type { Policy } from '../plugins/policy.js';
@@ -66,6 +66,7 @@ import { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import { predictsRunnerDispatch } from '../subagent/dispatch.js';
 import { setWorkflowLivenessProbe, workflowEngineProbeFrom } from '../brain/service/statusService.js';
 import { resolvePolicy } from '../plugins/policy.js';
+import { MicrosoftAccountProvisioner } from '../auth/msProvisioning.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -381,6 +382,31 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // The provider's own memo is a Promise, which a synchronous status read cannot await; refreshed by the
   // same `.then` that refreshes the output-show snapshot, so it can never lag behind a reload.
   let loadedPluginRegistry: PluginRegistry | undefined;
+  const microsoftProvisioner = new MicrosoftAccountProvisioner({
+    config,
+    users,
+    userSettings,
+    projects,
+    userProjects,
+    project: homeProject,
+    catalogs: {
+      models: async () => {
+        const cfg = brainConfig();
+        return cfg ? (await listBrainModels(cfg)).map((model) => elowenExec(model.provider, model.model)) : [];
+      },
+      plugins: async () => {
+        const removed = new Set(config.get().plugins.removed);
+        return grantablePluginNames(discoverPlugins(pluginDirs)
+          .map((plugin) => plugin.manifest)
+          .filter((manifest) => !removed.has(manifest.name)));
+      },
+      tools: async () => {
+        if (!loadedPluginRegistry) throw new Error('plugin catalog is not loaded');
+        return [...builtinToolMetas().map((tool) => tool.name), ...loadedPluginRegistry.tools.map((tool) => tool.name)];
+      },
+    },
+    log,
+  });
   /** Resolve Sandbox roots from the LIVE merged registry. A missing/invalid control contributes nothing;
    * callers retain the registered Project roots and never widen from a stale plugin generation. */
   function sandboxWorkspaceRoots(accountUserId: number, projectIds: readonly number[]): { projectId: number; path: string }[] {
@@ -568,8 +594,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
               linkedAt: binding.linkedAt,
             } : null;
           },
-          linkOrProvision: (input) => {
-            const result = users.linkExternalIdentity(input);
+          linkOrProvision: async (input) => {
+            const result = input.provider === 'msteams'
+              ? await microsoftProvisioner.linkOrProvision(input)
+              : users.linkExternalIdentity(input);
             return {
               created: result.created,
               user: asPluginUser(result.user),

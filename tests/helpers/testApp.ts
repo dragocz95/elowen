@@ -60,7 +60,7 @@ export function pluginTestHost(w: { db: Db; config?: ConfigStore; projects?: Pro
     externalUsers: {
       resolve: () => null,
       describe: () => null,
-      linkOrProvision: () => { throw new Error('not wired in tests'); },
+      linkOrProvision: async () => { throw new Error('not wired in tests'); },
       linkExisting: () => { throw new Error('not wired in tests'); },
     },
     prompts: {
