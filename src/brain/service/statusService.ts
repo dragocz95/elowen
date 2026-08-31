@@ -24,6 +24,7 @@ import type { BrainStreamSnapshot } from '../session/liveEventReplay.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import { gitBranch } from './gitBranch.js';
 import { clientDir } from './workDir.js';
+import { recoverablePartialTurnRows } from '../persistence.js';
 
 /** One row in the caller's conversation list (the pickers' "attached" marker rides `attached`). */
 export interface SessionListItem { id: string; title: string; provider: string; model: string; updated_at: string; running: boolean; active: boolean; attached: number }
@@ -220,10 +221,30 @@ export class BrainStatusService {
     });
   }
 
-  /** The one place user-facing settled history is shaped: rows plus every sidecar. Callers may pass an
-   *  already-filtered settled subset (streamSnapshot's journaled-user removal); every ordinary history
-   *  and paging path starts from the store's shared settled read model. */
-  private shapedHistory(sessionId: string, rows = this.d.store.getSettledMessages(sessionId)): BrainMessageView[] {
+  /** The live brain that owns a replay journal for this conversation, regardless of whether it is a
+   *  personal owner chat or a platform channel. A pending row must stay out of durable history while this
+   *  exists because the replay journal already supplies its ordered live representation. */
+  private liveBrain(sessionId: string): LiveBrain | undefined {
+    return this.d.sessions.get(sessionId)
+      ?? (isChannelSession(sessionId) ? this.d.sessions.channelGet(channelIdOf(sessionId)) : undefined);
+  }
+
+  /** The one user-facing transcript read model.
+   *
+   *  Ordinarily only settled rows display. The narrow exception is the restart gap after a graceful drain:
+   *  a durable `parked_at` marker says this turn must resume, while the absence of a live brain says no replay
+   *  journal exists to render its provisional assistant/tool tail. In that gap the safe recoverable prefix is
+   *  the only record of completed work, so expose exactly the rows `settlePartialTurn` will later retain.
+   *  Cold, unparked and remotely running sessions stay on settled-only history. */
+  private displayRows(sessionId: string): BrainMessageRow[] {
+    const settled = this.d.store.getSettledMessages(sessionId);
+    if (!this.d.store.getSession(sessionId)?.parked_at || this.liveBrain(sessionId)) return settled;
+    return recoverablePartialTurnRows(this.d.store.getMessages(sessionId));
+  }
+
+  /** Shape display rows plus every sidecar. Callers may pass an already-filtered subset (streamSnapshot's
+   *  journaled-user removal); every ordinary history and paging path starts from {@link displayRows}. */
+  private shapedHistory(sessionId: string, rows = this.displayRows(sessionId)): BrainMessageView[] {
     return shapeBrainMessages(
       rows,
       this.subagentRuns(sessionId),
@@ -518,19 +539,18 @@ export class BrainStatusService {
   streamSnapshot(userId: number, sessionId: string, history?: MessagePageOpts): BrainStreamSnapshot {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId) throw new Error('unknown session');
-    const live = this.d.sessions.get(sessionId)
-      ?? (isChannelSession(sessionId) ? this.d.sessions.channelGet(channelIdOf(sessionId)) : undefined);
+    const live = this.liveBrain(sessionId);
     const replay = live?.replay.transportSnapshot() ?? { cursor: 0, events: [], run: 0, eventCursors: [] };
     const orderedUserRows = new Set(replay.events.flatMap((event) =>
       event.type === 'user' && event.durableId ? [event.durableId] : []));
     // Journaled users are already durable, but replaying them is what preserves their position among
-    // pre/post-steer deltas. Pending assistant/tool rows are read only for control state (a plan submitted
-    // between message_end and agent_end) and never enter the user-facing history sequence.
+    // pre/post-steer deltas. `displayRows` keeps pending assistant/tool rows out while this live journal
+    // exists, and exposes the recoverable prefix only during the parked post-restart gap where it does not.
     const rawRows = this.d.store.getMessages(sessionId);
-    const settledRows = this.d.store.getSettledMessages(sessionId);
+    const displayRows = this.displayRows(sessionId);
     const clean = this.shapedHistory(
       sessionId,
-      settledRows.filter((message) => !orderedUserRows.has(message.id)),
+      displayRows.filter((message) => !orderedUserRows.has(message.id)),
     );
     // Window AFTER the removal, never before: cutting first would let an unsettled row consume a slot of
     // the window and drop a real turn out of the page. The removed rows all belong to the UNSETTLED run,

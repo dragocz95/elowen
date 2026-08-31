@@ -4762,6 +4762,59 @@ describe('sub-agent session tap + owner steering', () => {
     attached.off();
   });
 
+  it('hydrates a parked interrupted tail when no live replay journal exists, with paging parity', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    d.store.appendMessage({
+      id: 'restart-user', sessionId, parentId: null, role: 'user',
+      content: { role: 'user', content: 'start the deployment' },
+    });
+    d.emit({ type: 'agent_start' });
+    d.emit({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'restarting now' },
+          { type: 'toolCall', id: 'restart-call', name: 'Bash', arguments: { command: 'elowen restart all' } },
+        ],
+      },
+    });
+    d.emit({
+      type: 'message_end',
+      message: {
+        role: 'toolResult', toolCallId: 'restart-call', toolName: 'Bash', isError: false,
+        content: [{ type: 'text', text: 'Restart queued: all' }],
+      },
+    });
+    d.store.appendMessage({
+      id: 'restart-steer', sessionId, parentId: null, role: 'user',
+      content: { role: 'user', content: 'keep going after the restart' },
+    });
+    d.emit({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'finished before restart' }] },
+    });
+    const finalPendingId = d.store.pendingMessages(sessionId).at(-1)!.id;
+    (svc as unknown as { sessions: { dispose(id: string): void } }).sessions.dispose(sessionId);
+
+    // A merely cold session is still settled-only: pending rows from a remote/unknown run are not ours to
+    // expose. The durable park marker is the evidence that this exact local turn crossed a graceful restart.
+    const cold = (await svc.tapSessionSnapshot(1, sessionId, () => {})).snapshot;
+    expect(cold.history.some((view) => view.id === finalPendingId)).toBe(false);
+
+    d.store.markSessionParked(sessionId);
+    const parked = (await svc.tapSessionSnapshot(1, sessionId, () => {})).snapshot;
+    expect(parked.history.some((view) => view.id === finalPendingId && view.text === 'finished before restart')).toBe(true);
+    expect(parked.history.map((view) => view.id)).toContain('restart-steer');
+
+    const page = svc.messagesPage(1, sessionId, { limit: 2 });
+    expect(page.items.map((view) => view.id)).toEqual(parked.history.slice(-2).map((view) => view.id));
+    expect(page.hasMore).toBe(true);
+    expect(page.nextBefore).toBe(parked.history.length - 2);
+  });
+
   it('keeps a pending mid-turn assistant out of snapshot history without duplicating its replay anchor', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
@@ -4790,6 +4843,8 @@ describe('sub-agent session tap + owner steering', () => {
       },
     });
     expect(d.store.pendingMessages(sessionId)).toHaveLength(1);
+    // A park marker alone must not expose the pending row while this process still owns its replay journal.
+    d.store.markSessionParked(sessionId);
 
     const childId = 'brain-ch-subagent-snapshot-live';
     d.store.createSession({ id: childId, userId: 1, model: 'm', parentSessionId: sessionId });

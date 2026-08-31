@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb, type Db } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import {
-  answeredToolCallPrefix, settlePartialTurn, projectUserTurn, createSessionPersistenceProjector,
+  answeredToolCallPrefix, recoverablePartialTurnRows, settlePartialTurn, projectUserTurn, createSessionPersistenceProjector,
 } from '../../src/brain/persistence.js';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 
@@ -116,6 +116,22 @@ describe('a turn interrupted by a daemon restart', () => {
 
     settlePartialTurn(store, 's1');
     expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult']);
+  });
+
+  it('defines the same ordered rows for parked display and later settlement', () => {
+    projectUserTurn(store, 's1', 'do the thing');
+    midTurn(assistantCalling('t1'), toolResult('t1'));
+    projectUserTurn(store, 's1', 'steer between steps');
+    midTurn(assistantSaying('finished before restart'), assistantCalling('t2')); // unsafe suffix
+
+    const displayed = recoverablePartialTurnRows(store.getMessages('s1'));
+    expect(displayed.map((row) => row.role)).toEqual(['user', 'assistant', 'toolResult', 'user', 'assistant']);
+    expect(displayed.map((row) => JSON.parse(row.content).content?.[0]?.text ?? JSON.parse(row.content).content))
+      .toContain('finished before restart');
+
+    settlePartialTurn(store, 's1');
+    expect(store.getMessages('s1').map((row) => row.id)).toEqual(displayed.map((row) => row.id));
+    expect(store.getMessages('s1').every((row) => row.pending === 0)).toBe(true);
   });
 
   it('leaves a conversation with no interrupted turn completely alone', () => {
