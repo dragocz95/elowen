@@ -261,6 +261,7 @@ export class BrainService {
       get userSettings() { return d.userSettings; },
       get fastMode() { return d.fastMode; },
       get activeUserInstructions() { return d.activeUserInstructions; },
+      toolAuthorityFor: (userId) => toolAuthorityForUser(d, userId),
       get brand() { return d.brand; },
       get maxSteps() { return d.maxSteps; },
       get runtimeConfig() { return d.runtimeConfig; },

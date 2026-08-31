@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { controlCommandsFrom } from '../../packages/plugin-shared/chatCommands.mjs';
 import { PluginRegistry } from '../../src/plugins/registry.js';
@@ -23,6 +26,19 @@ describe('PluginRegistry', () => {
     expect(reg.hooks).toHaveLength(1);
     expect(reg.projectIndicatorProviders).toEqual([{ plugin: 'demo', fn: indicators }]);
     expect(ctx.config).toEqual({ k: 1 });
+  });
+
+  it('reserves SkillLoad for the canonical skills plugin', () => {
+    const warn = vi.fn();
+    const reg = new PluginRegistry();
+    reg.contextFor('rogue', {}, { info() {}, warn, error() {} })
+      .registerTool({ name: 'SkillLoad', label: 'rogue', description: 'rogue' } as never);
+    expect(reg.tools.map((tool) => tool.name)).not.toContain('SkillLoad');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("reserved for plugin 'skills'"));
+
+    reg.contextFor('skills', {}, noopLog)
+      .registerTool({ name: 'SkillLoad', label: 'canonical', description: 'canonical' } as never);
+    expect(reg.toolOwner.get('SkillLoad')).toBe('skills');
   });
 
   describe('toolsFor (per-account tool sets)', () => {
@@ -94,6 +110,44 @@ describe('PluginRegistry', () => {
       expect(reg.skillsFor(undefined).map((s) => s.name)).toEqual(['shared']);
       // `skills` stays the full catalogue for the surfaces that manage it.
       expect(reg.skills).toHaveLength(3);
+    });
+
+    it('returns one name and lets the owner personal definition shadow the instance definition', () => {
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('skills', {}, noopLog);
+      const shared = fakeSkill('same-name');
+      const personal = { ...fakeSkill('same-name'), description: 'personal body' };
+      ctx.registerSkill(shared);
+      ctx.registerSkill(personal, { ownerUserId: 4 });
+      ctx.registerSkill({ ...fakeSkill('same-name'), description: 'later duplicate' });
+
+      expect(reg.skillsFor(4, accessUser())).toEqual([personal]);
+      expect(reg.skillsFor(5, accessUser())).toEqual([shared]);
+      expect(reg.skillsFor(null)).toEqual([shared]);
+    });
+
+    it('pins the canonical base directory when the skill is registered', () => {
+      const root = mkdtempSync(join(tmpdir(), 'elowen-skill-root-'));
+      try {
+        const first = join(root, 'first');
+        const second = join(root, 'second');
+        const link = join(root, 'current');
+        mkdirSync(first);
+        mkdirSync(second);
+        writeFileSync(join(first, 'SKILL.md'), '# first\n');
+        writeFileSync(join(second, 'SKILL.md'), '# second\n');
+        symlinkSync(first, link, 'dir');
+        const reg = new PluginRegistry();
+        const skill = { ...fakeSkill('pinned'), filePath: join(link, 'SKILL.md'), baseDir: link };
+        reg.contextFor('skills', {}, noopLog).registerSkill(skill);
+        expect(reg.skillCanonicalBaseDir(skill)).toBe(realpathSync(first));
+
+        rmSync(link);
+        symlinkSync(second, link, 'dir');
+        expect(reg.skillCanonicalBaseDir(skill)).toBe(realpathSync(first));
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
 
     it('shows a grant-gated plugin skill to a user who holds its grant', () => {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -91,6 +91,10 @@ function toolDeclared(name: string, declared: readonly string[]): boolean {
   return declared.some((d) => (d.endsWith('*') ? name.startsWith(d.slice(0, -1)) : name === d));
 }
 
+/** Cross-plugin contracts whose name is itself an authority boundary. A different plugin cannot claim
+ *  the name first and make core mistake an unrelated implementation for the canonical capability. */
+const RESERVED_TOOL_OWNERS = new Map<string, string>([['SkillLoad', 'skills']]);
+
 /** The minimal shape of the SHARED embedder the registry exposes to plugins as `ctx.embeddings` — the
  *  public `embed`/`embedBatch` of the ONE EmbeddingService the memory subsystem uses. Kept structural so
  *  the registry never imports the concrete class; bootstrap passes the live instance. Signatures take a
@@ -119,6 +123,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
     'hostnameBase', 'syncSites', 'ensureSite', 'removeSite', 'deny', 'status',
     'prepareRuntimeSocket', 'sealRuntimeSocket', 'removeRuntimeSocket',
   ],
+  skillCatalog: ['visibleSkills', 'canonicalBaseDir'],
 };
 
 /** A missing account is not plugin-access open mode: shared channels and unlinked callers
@@ -184,6 +189,9 @@ export class PluginRegistry {
   /** At least one registration for this name lacked the workspace-safe declaration. */
   readonly workspaceUnsafeTools = new Set<string>();
   readonly skills: PluginSkill[] = [];
+  /** Canonical base directory captured when a skill is registered. SkillLoad reads through this pinned
+   *  boundary so a later symlink re-point cannot move an advertised skill onto an arbitrary host path. */
+  private readonly skillCanonicalBaseDirs = new Map<PluginSkill, string | null>();
   readonly promptFragments: string[] = [];
   /** Static Markdown fragments loaded from a platform plugin's `prompt/*.md` directory. Unlike global
    *  prompt fragments, these apply only to sessions arriving through the named platform. */
@@ -308,6 +316,7 @@ export class PluginRegistry {
       if (other.workspaceUnsafeTools.has(t.name)) this.workspaceUnsafeTools.add(t.name);
     }
     this.skills.push(...other.skills);
+    for (const skill of other.skills) this.skillCanonicalBaseDirs.set(skill, other.skillCanonicalBaseDir(skill));
     this.promptFragments.push(...other.promptFragments);
     for (const [platform, fragments] of other.platformPromptFragments) {
       const current = this.platformPromptFragments.get(platform) ?? [];
@@ -643,18 +652,50 @@ export class PluginRegistry {
    *  `userId`. Pass null for a session that serves nobody in particular (a shared channel, a task worker) —
    *  it then sees only instance-wide skills from non-grantable plugins. A missing account fails closed for
    *  grant-gated plugins; it is not the predicate's open mode because these callers run inside a user-backed
-   *  daemon. Return the original array when nothing was removed so unchanged prompts remain byte-identical. */
+   *  daemon.
+   *
+   *  The returned catalog has one definition per name. A personal definition shadows an instance one for
+   *  its owner; otherwise the first registered definition wins, matching every other flat plugin namespace.
+   *  Keeping that decision HERE means the prompt, PI's `/skill:` expansion and SkillLoad all consume the
+   *  exact same object. Return the original array when nothing was removed so unchanged prompts remain
+   *  byte-identical. */
   skillsFor(userId: number | null | undefined, user?: Partial<PluginAccessUser> | null): PluginSkill[] {
     const accessUser: PluginAccessUser = user
       ? { is_admin: user.is_admin === true, granted_plugins: user.granted_plugins ?? [] }
       : UNGRANTED_PLUGIN_USER;
-    const filtered = this.skills.filter((_, i) => {
+    const selected: PluginSkill[] = [];
+    const selectedOwners: (number | null)[] = [];
+    const byName = new Map<string, number>();
+    let changed = false;
+    for (let i = 0; i < this.skills.length; i++) {
+      const skill = this.skills[i]!;
       const ownerUserId = this.skillOwnerUsers[i] ?? null;
-      if (ownerUserId !== null && (userId == null || ownerUserId !== userId)) return false;
+      if (ownerUserId !== null && (userId == null || ownerUserId !== userId)) { changed = true; continue; }
       const plugin = this.skillOwners[i]!;
-      return isPluginAllowedForUser(accessUser, { name: plugin, userGrantable: this.userGrantable.has(plugin) });
-    });
-    return filtered.length === this.skills.length ? this.skills : filtered;
+      if (!isPluginAllowedForUser(accessUser, { name: plugin, userGrantable: this.userGrantable.has(plugin) })) {
+        changed = true;
+        continue;
+      }
+      const prior = byName.get(skill.name);
+      if (prior === undefined) {
+        byName.set(skill.name, selected.length);
+        selected.push(skill);
+        selectedOwners.push(ownerUserId);
+        continue;
+      }
+      changed = true;
+      if (ownerUserId !== null && selectedOwners[prior] === null) {
+        selected[prior] = skill;
+        selectedOwners[prior] = ownerUserId;
+      }
+    }
+    return !changed && selected.length === this.skills.length ? this.skills : selected;
+  }
+
+  /** Canonical skill directory captured at registration, or null when the advertised root was already
+   *  missing/unreadable. Identity-keyed so the exact object selected by skillsFor carries its own boundary. */
+  skillCanonicalBaseDir(skill: PluginSkill): string | null {
+    return this.skillCanonicalBaseDirs.get(skill) ?? null;
   }
 
   /** Plugin-contributed tools visible on the daemon's `/mcp` endpoint for one authenticated account.
@@ -858,6 +899,11 @@ export class PluginRegistry {
       // unconstrained — older manifests predate this, and plugins are owner-installed (defense-in-depth,
       // not a fortress): the value is that an honest manifest can't be silently out-registered.
       registerTool: (t, opts) => {
+        const reservedOwner = RESERVED_TOOL_OWNERS.get(t.name);
+        if (reservedOwner && reservedOwner !== name) {
+          scoped.warn(`registerTool('${t.name}') refused: reserved for plugin '${reservedOwner}'`);
+          return;
+        }
         if (provides?.tools && !toolDeclared(t.name, provides.tools)) {
           scoped.warn(`registerTool('${t.name}') refused: not declared in manifest provides.tools`);
           return;
@@ -871,6 +917,8 @@ export class PluginRegistry {
       },
       registerSkill: (s, opts) => {
         this.skills.push(s);
+        try { this.skillCanonicalBaseDirs.set(s, realpathSync(s.baseDir)); }
+        catch { this.skillCanonicalBaseDirs.set(s, null); }
         this.skillOwners.push(name);
         this.skillOwnerUsers.push(opts?.ownerUserId ?? null);
       },

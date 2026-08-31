@@ -7,6 +7,11 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ### Fixed
 
+- `SkillLoad` now resolves the same live, grant-filtered skill catalog advertised to the current turn,
+  including skills contributed by sibling plugins and personal skills inherited by delegated agents.
+  Workspace-confined children can use the loader without gaining arbitrary host-filesystem access.
+- Anthropic hosted-tool replay now preserves generic result-only continuations and redacted thinking while
+  refusing to replay incomplete built-in tool-search pairs that the next Messages request would reject.
 - Personal scheduled jobs now carry a host-verified identity for their owner across channel,
   direct-platform and owner-chat delivery. Plugins can safely use the same account-scoped connections,
   configuration and allowed tools as any other turn by that user, while mismatched origin/acting accounts

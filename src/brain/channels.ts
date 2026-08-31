@@ -841,10 +841,9 @@ export class ChannelSessionService {
           // durably; the live-parent lookup remains only for legacy rows minted before that field existed.
           settingsUserId: opts.writerUserId ?? delegated?.scope.settingsUserId
             ?? this.parentSettingsUserId(parentSessionId) ?? ownerUserId,
-          // Only a DELEGATED child names one. An ordinary room deliberately composes the instance set and
-          // announces the writer's per turn: PI's skill set is fixed for the life of a session, so
-          // composing it from whoever spoke first would leave that person's private skills expandable for
-          // everyone who writes afterwards.
+          // Only a DELEGATED child names one explicitly. Direct chats already derive the same account from
+          // `direct + ownerUserId` inside the spawner; a shared room deliberately composes from nobody so the
+          // first writer's personal contributions do not become the session-wide set.
           ...(parentSessionId
             ? (() => {
                 // The durable delegated scope is the cross-process source of truth. The parent live record
@@ -1068,19 +1067,16 @@ export class ChannelSessionService {
                 alreadyInContext: (ch.injectedMemoryIds ??= new Set<number>()),
               });
               commitRecall = memory.commit;
-              // Absent on every surface whose skill announcement already sits in its cached system
-              // prompt; a shared room is the one that cannot have it there — see resolvesContributionsPerTurn.
-              // Ambient, so a room re-announces only when the announcement actually changed: the block is a
-              // function of the writer's account and the registry, both of which a digest over the rendered
-              // text covers at once. A different writer renders different text and is announced to again.
+              // Resolve the catalog from the SAME contribution owner, plugin grants and live tool policy as
+              // execution. A shared organization room intentionally carries its writers' tool activity in one
+              // conversation; the digest avoids repeating an unchanged catalog on every turn.
               const skills = decideAmbientBlock({
-                rendered: resolvesContributionsPerTurn(sessionId, opts.direct === true)
-                  ? await turnSkillsBlock({
-                      ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
-                      users: this.d.users,
-                      contributionUserId: turnContributionUserId,
-                    })
-                  : '',
+                rendered: await turnSkillsBlock({
+                  ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
+                  users: this.d.users,
+                  contributionUserId: turnContributionUserId,
+                  toolPolicy: effectiveToolPolicy,
+                }),
                 lastDigest: ch.skillsDigest,
                 reset: compacted,
                 remember: (digest) => { ch.skillsDigest = digest; },

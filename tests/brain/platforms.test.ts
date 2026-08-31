@@ -299,8 +299,8 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
   describe('a direct 1:1 chat', () => {
     /** One inbound direct message, against a channel store whose row is owned by `rowOwner`
      *  (undefined = the conversation does not exist yet). */
-    const runDirect = async (rowOwner: number | undefined): Promise<ChannelSendOpts> => {
-      const sent = await runDirectWithAdoption(rowOwner);
+    const runDirect = async (rowOwner: number | undefined, platform = 'discord'): Promise<ChannelSendOpts> => {
+      const sent = await runDirectWithAdoption(rowOwner, platform);
       return sent.opts;
     };
 
@@ -308,12 +308,13 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
      *  real compare-and-swap: it only reports a transfer while the row still sits on the account named. */
     const runDirectWithAdoption = async (
       rowOwner: number | undefined,
+      platform = 'discord',
     ): Promise<{ opts: ChannelSendOpts; adoptCalls: [string, number, number][] }> => {
       let sent: ChannelSendOpts | undefined;
       let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
       const adoptCalls: [string, number, number][] = [];
       let owner = rowOwner;
-      const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+      const adapter = { name: platform, listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
       const channels = {
         sessionOwnerUserId: () => rowOwner,
         adoptPersonalChat: (sessionId: string, from: number, to: number) => {
@@ -335,18 +336,27 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
         dispatch: noDispatch,
       });
       await orch.startAll();
-      await handler!({ platform: 'discord', userId: 'D9', channelId: 'c1', roleIds: [], direct: true, access: { admin: false, projectIds: [3] } } as never, 'hi');
+      await handler!({ platform, userId: 'D9', channelId: 'c1', roleIds: [], direct: true, access: { admin: false, projectIds: [3] } } as never, 'hi');
       return { opts: sent!, adoptCalls };
     };
 
     it('anchors a brand-new one on its own sender and exposes only the validated direct identity', async () => {
       const sent = await runDirect(undefined);
-      expect(sent).toMatchObject({ direct: true, ownerUserId: 2 });
+      expect(sent).toMatchObject({ direct: true, ownerUserId: 2, writerUserId: 2 });
       expect(sent.policy).toBe(userPolicy);
       expect(sent.toolPolicy).toEqual({ deny: new Set(['DiscordApi']) });
       expect(sent.identity?.conversation).toBe('direct');
       expect(sent.deliveryTarget).toBe('destination:discord:c1');
     });
+
+    for (const platform of ['msteams', 'discord', 'telegram', 'whatsapp']) {
+      it(`carries the verified account into the channel turn for a ${platform} DM`, async () => {
+        const sent = await runDirect(undefined, platform);
+        expect(sent).toMatchObject({ direct: true, ownerUserId: 2, writerUserId: 2 });
+        expect(sent.identity).toMatchObject({ conversation: 'direct', elowenUserId: 2 });
+        expect(sent.deliveryTarget).toBe(`destination:${platform}:c1`);
+      });
+    }
 
     // A private chat lands on the operator when its sender had not linked their account yet, or when the
     // bot opened the chat proactively and there was no sender to anchor on. That fallback used to be

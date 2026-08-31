@@ -17,12 +17,13 @@ import { buildPromptTemplates } from '../slashCommands.js';
 import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
-import { currentWorkDir } from '../../plugins/policyContext.js';
+import { currentWorkDir, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
 import { DEFAULT_AUTO_COMPACT_PCT, type LiveBrain, type SpawnOpts, type QueuedMsg, type TurnContextBlocks } from '../session/liveBrain.js';
 import { renderTurnContextFrame } from '../session/turnContextFrame.js';
+import { liveSkillCommandExtension } from '../session/turnSkills.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
 import { clientDir, turnWorkDir } from './workDir.js';
@@ -46,6 +47,8 @@ interface SpawnerDeps {
   userSettings?: BrainDeps['userSettings'];
   fastMode?: BrainDeps['fastMode'];
   activeUserInstructions?: BrainDeps['activeUserInstructions'];
+  /** The single account tool-authority resolver used by every turn surface. */
+  toolAuthorityFor(userId: number): ToolPolicy | undefined;
   brand?: BrainDeps['brand'];
   maxSteps?: () => number;
   runtimeConfig?: BrainDeps['runtimeConfig'];
@@ -374,7 +377,15 @@ export class LiveSessionSpawner {
     });
     // WHOSE skills this session may see. The SAME list has to reach both the awareness block and the
     // factory's skillsOverride below: feeding the model one set and PI another would either advertise a
-    // skill `/skill:` cannot expand, or hide one it still can.
+    // skill `/skill:` cannot expand, or hide one it still can. A cached announcement exists only in owner
+    // chat; every platform/delegated turn renders under its live effective ToolPolicy in channels.ts.
+    const staticSkillToolPolicy = contributionOwnerUserId == null
+      ? { allow: new Set<string>() }
+      : this.d.toolAuthorityFor(contributionOwnerUserId);
+    const staticSkillLoadVisible = opts.channel !== true
+      && plugins?.toolOwner.get('SkillLoad') === 'skills'
+      && allTools.some((tool) => tool.name === 'SkillLoad')
+      && toolPermitted('SkillLoad', staticSkillToolPolicy);
     const skills = plugins?.skillsFor(contributionOwnerUserId, contributionOwnerUser) ?? [];
     // Plugin prompt-command macros → PI PromptTemplate[]: PI exposes them as `/name` slash commands and
     // expands their arguments natively in prompt()/steer()/followUp(). Every surface just sends the raw
@@ -400,13 +411,11 @@ export class LiveSessionSpawner {
     // exist; `skills` still flows to the factory's `skillsOverride` so PI expands `/skill:name` natively.
     // `formatSkillsForPrompt` already drops disable-model-invocation skills, so the toggle is honoured.
     //
-    // A SHARED room omits it here and renders the same block per turn instead (ChannelSessionService),
-    // because the set it should name is the WRITER'S and the writer changes between turns. Announcing the
-    // instance set in the cached prefix and authorising the writer's set at execute time would tell the
-    // model about the wrong list either way round; this keeps announcement and authorisation on the one
-    // decision `contributionOwnerForSession` makes. Everything else — owner chat, a 1:1 DM, a sub-agent —
-    // has exactly one contribution owner for the whole session and keeps the cheap cached block.
-    const skillsBlock = !opts.pathView && skills.length && !perTurnContributions
+    // Every platform or delegated session omits it here and renders under the live turn policy in
+    // ChannelSessionService. Shared rooms need the writer-specific catalog; a direct chat or child has one
+    // contribution owner but may still carry a narrower allow/deny boundary than its composed tool superset.
+    // Owner chat alone has one sender and a stable account policy, so it keeps the cheap cached block.
+    const skillsBlock = !opts.pathView && staticSkillLoadVisible && skills.length && !perTurnContributions
       ? formatSkillsForPrompt(skills)
       : '';
     // Deferred-tools awareness: names (+ short descriptions) of the withheld MCP tools so the model knows
@@ -517,7 +526,14 @@ export class LiveSessionSpawner {
       seedMessages: opts.seedMessages,
       runtime: this.d.runtime, model, providerId, compactionFallbackModel: route.compactionFallback, cwd,
       ...(opts.pathView ? { displayCwd: '.', contextRoot: opts.pathView.root, sanitizePaths: opts.pathView.sanitize } : {}),
-      systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
+      systemPrompt: persona, appendSystemPrompt: append,
+      // Skill bodies are expanded by the live input extension below. Feeding PI this session-start snapshot
+      // would let `/skill:name` survive a later grant revocation even though SkillLoad and the prompt catalog
+      // already follow the live authority.
+      skills: [], promptTemplates,
+      ...(plugins ? {
+        skillCommandExtension: liveSkillCommandExtension({ plugins: async () => plugins, users: this.d.users }),
+      } : {}),
       tools: allTools, toolSearch: toolSearchHandle, hostedToolSearch,
       thinkingLevel: opts.thinkingLevel, requestProfile,
       fastMode: { enabled: fastEnabled, routeFor: fastRouteFor },
