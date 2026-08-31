@@ -85,6 +85,7 @@ elowen up          # start local daemon and web UI
 elowen down        # stop them; waits for running work
 elowen down --force # stop immediately
 elowen status      # show service state and health
+elowen restart all # safely queue a daemon + web restart
 elowen doctor      # readiness checks and remediation hints
 elowen update      # install the latest release and restart
 ```

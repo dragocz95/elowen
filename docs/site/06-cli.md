@@ -130,10 +130,11 @@ elowen up
 elowen down              # graceful stop; waits for running turns
 elowen down --force      # stop immediately
 elowen status
+elowen restart <daemon|web|all>
 elowen update
 ```
 
-`status` reports daemon and Web UI state. `down` waits for active turns and delegated work unless `--force` is supplied. `update` checks for a newer npm release and restarts the local installation in place.
+`status` reports daemon and Web UI state. `restart` safely hands the selected managed service restart to the supervisor without waiting inside the daemon. `down` waits for active turns and delegated work unless `--force` is supplied. `update` checks for a newer npm release and restarts the local installation in place.
 
 ## Local files and environment
 

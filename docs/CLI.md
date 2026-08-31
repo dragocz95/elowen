@@ -31,6 +31,7 @@ The CLI sends `Authorization: Bearer <token>` directly to the daemon. The Web UI
 | `elowen up` | Start the daemon and Web UI. |
 | `elowen down [--force]` | Stop services gracefully, or immediately with `--force`/`-f`. |
 | `elowen status` | Show daemon and Web UI process/health state. |
+| `elowen restart <daemon\|web\|all>` | Queue a safe non-blocking restart of the selected managed service(s). |
 | `elowen update` | Check for a newer npm release and restart in place. |
 | `elowen menu` | Open the interactive service launcher. |
 
