@@ -177,7 +177,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
             <LogOut size={18} strokeWidth={1.5} aria-hidden />
           </button>
         ) : null}
-        <SkinSwitcher collapsed={Boolean(onMenuClick)} />
+        <SkinSwitcher collapsed />
         <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
         <Link
           href="/account"

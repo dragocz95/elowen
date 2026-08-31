@@ -1,5 +1,5 @@
 'use client';
-import { Palette } from 'lucide-react';
+import { Moon, Sun } from 'lucide-react';
 import { useSkin } from '../../lib/skinContext';
 import { skinDisplayName } from '../../lib/skins';
 import { useTranslation } from '../../lib/i18n';
@@ -19,6 +19,7 @@ export function SkinSwitcher({ collapsed = false, placement = 'topbar' }: { coll
 
   const name = skinDisplayName(t, choice);
   const label = `${t.common.skin}: ${name}`;
+  const Icon = choice === 'studio-oled' ? Moon : Sun;
 
   return (
     <button
@@ -28,7 +29,7 @@ export function SkinSwitcher({ collapsed = false, placement = 'topbar' }: { coll
       title={`${label} — ${t.common.skinCycle}`}
       className={`skin-switcher__button flex h-9 items-center gap-1.5 rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground ${collapsed ? 'min-h-[var(--touch-target)] min-w-[var(--touch-target)] justify-center px-0' : 'px-2.5'}`}
     >
-      <Palette size={18} strokeWidth={1.5} aria-hidden />
+      <Icon size={18} strokeWidth={1.5} aria-hidden />
       {/* The name is the only way to tell two dark skins apart at a glance. A top bar may hide it until
           there is room; the drawer explicitly owns a labelled row and must not inherit that viewport rule.
           `collapsed` is the icon-only top-bar form, where the title and aria-label still name the skin. */}
