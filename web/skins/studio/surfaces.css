@@ -478,12 +478,6 @@
   transition-duration: var(--motion-fast);
   transition-timing-function: var(--ease-out);
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .skin-switcher__button {
-  height: 2rem;
-  border: 1px solid var(--studio-line);
-  border-radius: var(--radius);
-  font-size: 0.8125rem;
-}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .top-bar--bar .top-bar__actions > .relative > button {
   border: 0;
   border-radius: var(--radius);
