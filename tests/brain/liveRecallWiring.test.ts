@@ -56,6 +56,7 @@ async function buildWithLiveRecall(
     cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
     autoCompact: false,
     liveRecall: {
+      sessionId: session.sessionId,
       budget: () => ({ passes: 10, count: 8, bytes: 6000 }),
       enabled: () => true,
       retrieve: async (q: string) => retrieve(q),
@@ -185,6 +186,7 @@ describe('live recall wiring — a real session reaches the recall pass', () => 
     const seenProjects: (number | null)[] = [];
     const pi = { on: (event: string, fn: unknown) => { if (event === 'context') handler = fn as CapturedHandlers['context']; } };
     installLiveRecall(pi as never, {
+      sessionId: 'brain-1',
       budget: () => ({ passes: 10, count: 2, bytes: 1000 }),
       enabled: () => true,
       retrieve: async () => {

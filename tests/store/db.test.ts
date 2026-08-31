@@ -168,6 +168,26 @@ describe('openDb', () => {
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memory_categories_user_project'").get()).toBeTruthy();
   });
 
+  it('migrates memory usage events with content-free live recall correlation', () => {
+    dir = mkdtempSync(join(tmpdir(), 'elowen-db-'));
+    const path = join(dir, 'old.db');
+    const old = new Database(path);
+    old.exec(`CREATE TABLE memory_usage_events (
+      id INTEGER PRIMARY KEY, memory_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+      used_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    old.prepare('INSERT INTO memory_usage_events (memory_id, user_id) VALUES (7, 1)').run();
+    old.close();
+
+    const db = openDb(path);
+    const columns = (db.prepare('PRAGMA table_info(memory_usage_events)').all() as { name: string }[])
+      .map((column) => column.name);
+    expect(columns).toEqual(expect.arrayContaining(['session_id', 'turn_id', 'search_index']));
+    expect(db.prepare('SELECT session_id, turn_id, search_index FROM memory_usage_events WHERE memory_id = 7').get())
+      .toEqual({ session_id: null, turn_id: null, search_index: null });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memory_usage_events_turn'").get()).toBeTruthy();
+  });
+
   it('migrates a pre-work_dir brain_sessions table (adds the column, existing rows read cwd-less)', () => {
     dir = mkdtempSync(join(tmpdir(), 'elowen-db-'));
     const path = join(dir, 'old.db');

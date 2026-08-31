@@ -22,6 +22,7 @@ import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
 import { DEFAULT_AUTO_COMPACT_PCT, type LiveBrain, type SpawnOpts, type QueuedMsg, type TurnContextBlocks } from '../session/liveBrain.js';
+import { renderTurnContextFrame } from '../session/turnContextFrame.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
 import { clientDir, turnWorkDir } from './workDir.js';
@@ -530,6 +531,7 @@ export class LiveSessionSpawner {
       // the operator's limits take effect on a conversation that is already running.
       ...(memService && liveRecallAllowed(sessionId, ownerUserId) ? {
         liveRecall: {
+          sessionId,
           // Lazily created on the live session and shared with turn-start recall, so the two paths
           // cannot deliver the same memory twice into one context window.
           alreadyInContext: () => (live.injectedMemoryIds ??= new Set<number>()),
@@ -559,9 +561,9 @@ export class LiveSessionSpawner {
           },
           // Marked here rather than inside retrieve(): a turn issues several passes whose results
           // overlap, and only the ones that survive the dedup actually reach the model.
-          onInjected: (ids) => {
+          onInjected: (ids, recall) => {
             const userId = recallUserId();
-            if (userId !== null) memService.markRecalled(userId, ids);
+            if (userId !== null) memService.markRecalled(userId, ids, recall);
           },
         },
       } : {}),
@@ -613,12 +615,9 @@ export class LiveSessionSpawner {
         if (!value?.trim()) continue;
         (provider.placement === 'after-user' ? afterUser : beforeUser).push(value);
       }
-      const frame = (parts: string[], placement: 'before-user' | 'after-user'): string => parts.length
-        ? `<context placement="${placement}">\n${parts.join('\n')}\n</context>\n\n`
-        : '';
       return {
-        beforeUser: frame(beforeUser, 'before-user'),
-        afterUser: frame(afterUser, 'after-user'),
+        beforeUser: renderTurnContextFrame(beforeUser, 'before-user'),
+        afterUser: renderTurnContextFrame(afterUser, 'after-user'),
       };
     };
     live = {
