@@ -25,7 +25,7 @@ describe('chat top bar responsive ownership', () => {
     expect(topBarSource).toContain("bar ? 'w-8 max-[767px]:hidden'");
     expect(topBarSource).toContain('top-bar__logout flex w-9 items-center justify-center disabled:opacity-50 max-[767px]:hidden');
     expect(topBarSource).toContain("onMenuClick ? 'min-h-[var(--touch-target)] min-w-[var(--touch-target)] justify-center'");
-    expect(skinSwitcherSource).toContain("collapsed ? 'min-h-[var(--touch-target)] min-w-[var(--touch-target)] justify-center px-0'");
+    expect(skinSwitcherSource).toContain("collapsed ? 'h-8 w-8 justify-center rounded-md px-0 pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]'");
     expect(languageSwitcherSource).toContain("min-h-[var(--touch-target)] min-w-[var(--touch-target)]");
   });
 

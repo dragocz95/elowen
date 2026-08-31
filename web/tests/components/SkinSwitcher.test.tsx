@@ -22,12 +22,12 @@ afterEach(() => {
   document.cookie = 'elowen-skin=; path=/; max-age=0';
 });
 
-const mount = (allowedSkins: string[], initialChoice: SkinName | null = null) => {
+const mount = (allowedSkins: string[], initialChoice: SkinName | null = null, collapsed = false) => {
   const { wrapper: Wrapper } = createWrapper();
   return render(
     <Wrapper>
       <SkinProvider allowedSkins={allowedSkins} initialChoice={initialChoice} fallback={null}>
-        <SkinSwitcher />
+        <SkinSwitcher collapsed={collapsed} />
       </SkinProvider>
     </Wrapper>,
   );
@@ -44,6 +44,14 @@ describe('SkinSwitcher', () => {
   it('does not render for a single allowed skin either', () => {
     mount(['studio-oled']);
     expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('uses the same compact ghost geometry as the other top-bar actions', () => {
+    mount(['studio-light', 'studio-oled'], 'studio-light', true);
+    const button = screen.getByRole('button', { name: 'Skin: Light' });
+    expect(button).toHaveClass('h-8', 'w-8', 'rounded-md', 'hover:bg-accent', 'hover:text-foreground');
+    expect(button).not.toHaveClass('min-h-[var(--touch-target)]', 'rounded-full');
+    expect(button).toHaveClass('pointer-coarse:h-[var(--touch-target)]', 'pointer-coarse:w-[var(--touch-target)]');
   });
 
   it('cycles the live document attribute, which is the entire mechanism', () => {
