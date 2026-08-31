@@ -50,6 +50,9 @@ describe('mobile navigation drawer — appearance control', () => {
     const control = screen.getByRole('button', { name: /skin|vzhled/i });
     expect(control).toBeInTheDocument();
     expect(control).toHaveAccessibleName();
+    const name = control.querySelector('.skin-switcher__name');
+    expect(name).not.toBeEmptyDOMElement();
+    expect(name).not.toHaveClass('hidden', 'lg:inline');
   });
 
   it('actually switches the document skin from the drawer', () => {

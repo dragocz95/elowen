@@ -86,6 +86,8 @@ describe('settled turn metadata', () => {
     // HISTORY's user row predates the timestamp column, so the agent turn owns the only stamp here.
     const metas = screen.getAllByTestId('chat-turn-meta');
     expect(metas).toHaveLength(1);
+    expect(metas[0]).toHaveClass('text-caption', 'text-muted-foreground');
+    expect(metas[0]?.className).not.toContain('text-muted-foreground/');
 
     const turns = screen.getAllByTestId('chat-turn');
     expect(turns.at(-1)!.contains(metas[0]!)).toBe(true);

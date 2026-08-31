@@ -73,7 +73,8 @@
 }
 .top-bar__page-slot .chat-page-toolbar__fade { display: none; }
 .chat-page-toolbar__overflow { display: none; }
-@media (min-width: 768px) and (max-width: 1150px) {
-  .top-bar__page-slot .chat-page-toolbar__wide-controls { display: none; }
-  .top-bar__page-slot .chat-page-toolbar__overflow { display: block; }
-}
+/* Measured by TopBar itself. Unknown is narrow, so the first frame can never let a wide picker group
+   overlap the global actions. No container-type here: the non-portalled Radix/Floating UI poppers inside
+   this bar use fixed positioning, and a containment ancestor would silently change their origin. */
+.top-bar--bar[data-chat-controls-narrow] .chat-page-toolbar__wide-controls { display: none; }
+.top-bar--bar[data-chat-controls-narrow] .chat-page-toolbar__overflow { display: block; }

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, MoreHorizontal, X } from 'lucide-react';
 import { useBrand } from '../../lib/brand';
 import { useHealth, useMe } from '../../lib/queries';
@@ -13,7 +13,8 @@ import { useShellNavigation } from './useShellNavigation';
 import { useNavCustomization } from './NavCustomization';
 import { navOrderIndex } from './navOrder';
 import { entryIsActive, type NavEntry } from './navEntry';
-import { useNavDrawerFocus } from '../ui/focusCycle';
+import { Dialog, DialogContent, DialogOverlay } from '../ui/shadcn/dialog';
+import { useReturnFocus } from '../ui/overlayStack';
 
 /** The entries Studio presents in its footer region rather than in the scrolling body: the account and
  *  the administration pages, which are where you GO from the studio rather than what you work in.
@@ -66,6 +67,46 @@ function isCollapseShortcut(event: KeyboardEvent): boolean {
   return event.code === 'Backslash' || event.key === '\\';
 }
 
+/** The drawer mounts on open so the shared return-focus helper captures the actual hamburger. Radix owns
+ *  modality, background aria isolation, Escape and the focus trap; this wrapper only supplies the opener
+ *  because the shell has no `Dialog.Trigger` for Radix to remember. */
+function StudioNavigationDialog({ children, label, onClose, returnFocusTo }: { children: React.ReactElement; label: string; onClose?: () => void; returnFocusTo: HTMLElement | null }) {
+  const { restoreFocus } = useReturnFocus();
+  const restoreDrawerFocus = useCallback(() => {
+    if (returnFocusTo?.isConnected && !returnFocusTo.inert && !returnFocusTo.closest('[inert]')) {
+      returnFocusTo.focus({ preventScroll: true });
+      return;
+    }
+    restoreFocus();
+  }, [restoreFocus, returnFocusTo]);
+  // The shell may close by changing the controlled prop directly (route arrival, close button), bypassing
+  // Radix's close event. A layout cleanup runs before the surface leaves the DOM and restores only when
+  // focus is still inside it; focus the user moved elsewhere remains theirs.
+  useLayoutEffect(() => () => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest('[data-testid="studio-navigation"]')) restoreDrawerFocus();
+  }, [restoreDrawerFocus]);
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose?.(); }}>
+      <DialogOverlay presentation="sheet" layer="drawer" className="studio-nav__scrim" data-open>
+        <DialogContent
+          asChild
+          presentation={null}
+          aria-label={label}
+          aria-labelledby={undefined}
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreDrawerFocus();
+          }}
+        >
+          {children}
+        </DialogContent>
+      </DialogOverlay>
+    </Dialog>
+  );
+}
+
 /** Studio's navigation column: a header naming the product, a scrolling grouped body of destinations and
  *  a footer holding administration and the signed-in account. It renders the SAME navigation model the
  *  spatial rail does — one registry, one arrangement, one active-route rule — in the flat, dense
@@ -75,8 +116,9 @@ function isCollapseShortcut(event: KeyboardEvent): boolean {
  *  states WHAT it is (`studio-nav__*` classes) and WHAT STATE it is in (`data-*` attributes). Nothing
  *  here carries a utility class the skin would then have to out-specify, and nothing here paints. It is
  *  mounted exclusively under a `command` shell profile, i.e. only while one of those stylesheets is on. */
-export function StudioNavigation({ compact = false, side = 'left', onToggleCollapse, drawer = false, drawerOpen = false, onDrawerClose }: {
+export function StudioNavigation({ compact = false, measured = true, side = 'left', onToggleCollapse, drawer = false, drawerOpen = false, onDrawerClose }: {
   compact?: boolean;
+  measured?: boolean;
   side?: 'left' | 'right';
   onToggleCollapse?: () => void;
   drawer?: boolean;
@@ -243,15 +285,9 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
   const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>({});
   const toggleGroup = (id: string) => setClosedGroups((current) => ({ ...current, [id]: !current[id] }));
 
-  const navRef = useRef<HTMLElement | null>(null);
   // Arriving somewhere is the end of navigating, so the sheet gets out of the way on its own. The close
   // callback is an unstable inline prop from the shell — deliberately not a dependency.
   useEffect(() => { if (drawer) onDrawerClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // An overlay the keyboard cannot close, that focus never enters and that Tab walks straight out of,
-  // is a layer only the mouse knows about — and `aria-modal` below would be a promise this sheet does
-  // not keep. The shared hook owns all of it, identically here and in the spatial rail's drawer.
-  useNavDrawerFocus({ enabled: drawer, open: drawerOpen, containerRef: navRef, onClose: onDrawerClose });
 
   // The fold is a desktop affordance, so the shortcut exists exactly where the control does: `onToggleCollapse`
   // is absent in the drawer and in a window already forced to the icon column, where it could change nothing.
@@ -267,6 +303,14 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
   }, [onToggleCollapse]);
 
   const hidden = drawer && !drawerOpen;
+  const drawerReturnFocusRef = useRef<HTMLElement | null>(null);
+  const previousDrawerOpenRef = useRef(false);
+  if (drawer && drawerOpen && !previousDrawerOpenRef.current && typeof document !== 'undefined') {
+    drawerReturnFocusRef.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null;
+  }
+  previousDrawerOpenRef.current = drawerOpen;
   const mode = drawer ? 'drawer' : compact ? 'rail' : 'full';
   const user = me.data?.user;
 
@@ -311,21 +355,12 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
     ? (event: React.MouseEvent) => customization.onEntryContextMenu(event, entry)
     : customization.onSurfaceContextMenu);
 
-  return (
-    <>
-      {drawer ? (
-        <div
-          aria-hidden
-          onClick={onDrawerClose}
-          className="studio-nav__scrim overlay-layer-nav-drawer"
-          data-open={drawerOpen || undefined}
-        />
-      ) : null}
+  const navigation = (
       <nav
-        ref={navRef}
         className={`studio-nav${drawer ? ' overlay-layer-nav-drawer overlay-nav-drawer' : ''}`}
         data-testid="studio-navigation"
         data-mode={mode}
+        data-measured={measured}
         data-side={side}
         data-open={drawer && drawerOpen ? true : undefined}
         data-ready={layoutReady || undefined}
@@ -348,7 +383,13 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
         {drawer ? (
           <button
             type="button"
-            onClick={onDrawerClose}
+            onClick={() => {
+              const target = drawerReturnFocusRef.current;
+              onDrawerClose?.();
+              queueMicrotask(() => {
+                if (target?.isConnected && !target.inert && !target.closest('[inert]')) target.focus({ preventScroll: true });
+              });
+            }}
             aria-label={t.common.close}
             className="studio-nav__close overlay-touch-target"
           >
@@ -421,7 +462,7 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
               state. Drawer only: on a desktop column the TopBar already carries it, and two copies of one
               control on screen is how they drift out of step. It renders nothing when the instance allows
               fewer than two skins, so an operator who never enabled switching sees no dead affordance. */}
-          {drawer ? <SkinSwitcher /> : null}
+          {drawer ? <SkinSwitcher placement="drawer" /> : null}
           {adminEntries.map((entry, slot) => (
             <div key={entry.id ?? entry.label}>{entryShell(entry, 'footer', slot, destination(entry, entryMenu(entry)))}</div>
           ))}
@@ -456,8 +497,20 @@ export function StudioNavigation({ compact = false, side = 'left', onToggleColla
             </button>
           </div>
         </footer>
+        {/* Shadcn menus are intentionally not portalled. In drawer mode they must remain descendants of
+            Radix Content so its FocusScope and DismissableLayer treat them as part of the active dialog. */}
+        {drawer ? customization.overlays : null}
       </nav>
-      {customization.overlays}
+  );
+
+  return (
+    <>
+      {drawer && drawerOpen ? (
+        <StudioNavigationDialog label={t.common.primaryNav} onClose={onDrawerClose} returnFocusTo={drawerReturnFocusRef.current}>
+          {navigation}
+        </StudioNavigationDialog>
+      ) : navigation}
+      {drawer ? null : customization.overlays}
     </>
   );
 }

@@ -530,7 +530,7 @@ function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen
   const settled = turn.role === 'elowen' ? turn.durationMs != null : Boolean(turn.createdAt);
   if (!settled) return null;
   return (
-    <div data-testid="chat-turn-meta" data-role={turn.role === 'you' ? 'user' : 'assistant'} className={`chat-turn-meta ${turn.role === 'you' ? 'mt-1.5' : 'mt-1'} flex items-center gap-2 text-[10px] leading-none text-muted-foreground/70`}>
+    <div data-testid="chat-turn-meta" data-role={turn.role === 'you' ? 'user' : 'assistant'} className={`chat-turn-meta ${turn.role === 'you' ? 'mt-1.5' : 'mt-1'} flex items-center gap-2 text-caption leading-none text-muted-foreground`}>
       {turn.createdAt ? <time dateTime={turn.createdAt}>{localDateTime(turn.createdAt, locale, false)}</time> : null}
       {turn.role === 'elowen' && turn.model ? (
         <span data-testid="chat-turn-model" className="inline-flex min-w-0 items-center gap-1" title={turn.model}>

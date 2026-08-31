@@ -200,6 +200,25 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
   min-height: var(--touch-target);
 }
 
+/* The spatial shell has the same unmeasured first frame as Studio. Below the exact 1024px navigation
+   boundary, keep only an explicitly unmeasured full/rail node out of flex flow; once measured, its
+   `data-mode` classes own the layout without a viewport override. */
+@media (max-width: 1023px) {
+  .orbital-nav[data-measured='false']:not([data-mode='drawer']) {
+    position: fixed;
+    inset-block: 0;
+    width: 17rem;
+  }
+  .orbital-nav[data-measured='false']:not([data-mode='drawer'])[data-side='left'] {
+    left: 0;
+    transform: translateX(-100%);
+  }
+  .orbital-nav[data-measured='false']:not([data-mode='drawer'])[data-side='right'] {
+    right: 0;
+    transform: translateX(100%);
+  }
+}
+
 /* The navigation drawer's panel is fixed to the viewport, so the safe area is its own responsibility:
    without it the first destination sits under the notch and the last under the home indicator. */
 .overlay-nav-drawer {

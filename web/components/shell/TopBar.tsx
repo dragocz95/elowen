@@ -10,6 +10,7 @@ import { navigationWorldForPath } from '../../modules/registry';
 import { Avatar } from '../ui/Avatar';
 import { LanguageSwitcher } from '../ui/LanguageSwitcher';
 import { SkinSwitcher } from '../ui/SkinSwitcher';
+import { useElementWidth } from '../../lib/useElementWidth';
 import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
 
 /** How the page's chrome claims its room.
@@ -23,6 +24,9 @@ import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
  *  It is a typed property of the SHELL, chosen once from `shellProfileFor()` — never a skin id read here,
  *  and never a utility class fighting an unlayered stylesheet for the same layout. */
 export type PageBarVariant = 'floating' | 'bar';
+
+/** Below this actual bar width the chat's wide picker group folds behind its overflow menu. */
+const CHAT_BAR_WIDE_MIN = 1150;
 
 /** Page chrome: the reader's location plus the universal actions. */
 export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide = 'left', showLocation = true, variant = 'floating', hideOnPhone = false }: {
@@ -58,6 +62,10 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
       ? t.nav.system
       : undefined;
   const bar = variant === 'bar';
+  const [barRef, barWidth, barMeasured] = useElementWidth<HTMLElement>();
+  // Unknown is narrow on purpose: wide route controls are the only branch that can overrun the global
+  // actions, and the first ResizeObserver frame replaces this fail-safe with the bar's real width.
+  const chatControlsNarrow = bar && (!barMeasured || barWidth <= CHAT_BAR_WIDE_MIN);
   const NavOpenIcon = navSide === 'right' ? PanelRightOpen : PanelLeftOpen;
   const NavCloseIcon = navSide === 'right' ? PanelRightClose : PanelLeftClose;
 
@@ -69,7 +77,9 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
 
   return (
     <header
+      ref={barRef}
       data-testid="future-page-header"
+      data-chat-controls-narrow={chatControlsNarrow || undefined}
       className={`${bar
         ? 'top-bar top-bar--bar sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-background px-4'
         : 'top-bar relative z-30 flex min-h-16 shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-3'}${hideOnPhone ? ' max-[767px]:hidden' : ''}`}
