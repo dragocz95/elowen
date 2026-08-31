@@ -14,7 +14,11 @@ function ScrollArea({
     <ScrollAreaPrimitive.Root data-slot="scroll-area" className={cn('relative', className)} {...props}>
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
+        // Radix gives this generated direct child `display: table; min-width: 100%` inline. That is useful
+        // for two-axis areas, but a vertical rail then grows to its longest unbreakable label and clips the
+        // numbers at the trailing edge. This primitive composes only a vertical scrollbar, so its content
+        // owner is explicitly a block constrained to the viewport width.
+        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 [&>div]:!block [&>div]:!w-full [&>div]:!min-w-0"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

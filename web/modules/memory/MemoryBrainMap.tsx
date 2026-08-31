@@ -232,7 +232,8 @@ function LeafNode({ node, lit, active, onSelect }: { node: MemoryNode; lit: bool
       type="button"
       onClick={(e) => { e.stopPropagation(); onSelect(node); }}
       title={node.memory.body}
-      className="group absolute z-10 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center transition-opacity"
+      data-testid="memory-leaf-node"
+      className="group absolute z-10 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center transition-opacity"
       style={{ left: `${node.x}%`, top: `${node.y}%`, opacity: lit ? 1 : 0.14 }}
     >
       <span aria-hidden className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full blur-md transition-opacity" style={{ backgroundColor: node.color, opacity: active ? 0.55 : 0.3 }} />
@@ -245,7 +246,7 @@ function LeafNode({ node, lit, active, onSelect }: { node: MemoryNode; lit: bool
         }}
       />
       <span
-        className="brain-chip brain-node-label pointer-events-none absolute top-5 left-1/2 max-w-[10rem] -translate-x-1/2 truncate rounded-md px-1.5 py-0.5 text-[10px] shadow-[var(--shadow-card)]"
+        className="brain-chip brain-node-label pointer-events-none absolute top-7 left-1/2 max-w-[10rem] -translate-x-1/2 truncate rounded-md px-1.5 py-0.5 text-[10px] shadow-[var(--shadow-card)]"
         data-active={active}
       >
         {node.memory.body}

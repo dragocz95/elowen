@@ -222,11 +222,11 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    into a two-row block on a wide card. `stack` keeps `wrap`, because a record that declared it is
    carrying several values on purpose. */
 .settings-row[data-trailing='inline'] .settings-row__trailing { flex-wrap: nowrap; }
-/* And what pays for the `nowrap`: on a line that cannot break, something has to give way. The control
-   already shrinks (`min-width: 0` below), so the status is what ELLIPSES — it is a state word or a count
-   by contract, and an unbreakable one would otherwise push the actions past the card's edge instead of
-   wrapping as it used to. A `stack` record is excluded: its status has a line to itself and wraps. */
-.settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The short status is atomic — often a Badge — so it must keep its min-content width. Shrinking this
+   wrapper clipped "Configured" inside the badge while the control beside it still owned a generous flex
+   basis. The control is the elastic part of an inline record; multi-value rows that need full-width bands
+   declare `stack` instead. */
+.settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__status { flex: none; min-width: max-content; }
 .settings-row__trailing .settings-row__status { margin-top: 0; white-space: nowrap; }
 .settings-row__trailing .settings-row__control { min-width: 0; flex: 1 1 10rem; }
 .settings-row__trailing .settings-row__actions { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 0.5rem; }

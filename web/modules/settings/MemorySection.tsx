@@ -163,6 +163,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       label={t.memory.embeddingProvider}
       description={t.help.embeddingProvider}
       icon={Server}
+      trailingLayout="stack"
       status={embBadge}
       actions={testButton}
       control={embeddingProviders.length > 0
@@ -229,6 +230,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       label={t.categorization.providerLabel}
       description={interpolate(t.help.categorizationProvider, { agentName })}
       icon={Server}
+      trailingLayout="stack"
       status={catBadge}
       control={providers.length > 0
         ? <ChoiceField title={t.categorization.providerLabel} options={providers.map((p) => ({ value: p.id, label: p.label }))} value={catProvider} onChange={setCatProvider} picker="always" />
