@@ -7,7 +7,6 @@ import { logger } from '../../shared/logger.js';
 const log = logger('anthropic-hosted-replay');
 const META_KEY = 'anthropicHostedToolReplay';
 const REPLAY_VERSION = 1;
-const SERVER_BLOCK_TYPES = new Set(['server_tool_use', 'tool_search_tool_result']);
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
 type JsonObject = Record<string, unknown>;
@@ -34,6 +33,12 @@ function record(value: unknown): JsonObject | undefined {
     : undefined;
 }
 
+export function isAnthropicServerOwnedBlock(value: unknown): boolean {
+  const type = record(value)?.type;
+  return type === 'server_tool_use'
+    || (typeof type === 'string' && type !== 'tool_result' && type.endsWith('_tool_result'));
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -42,6 +47,25 @@ function clone<T>(value: T): T {
 // payload AFTER pi converts its internal assistant message, not against the unprojected stored text.
 function sanitizeSurrogates(text: string): string {
   return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
+const TOOL_SEARCH_NAMES = new Set(['tool_search_tool_bm25', 'tool_search_tool_regex']);
+
+function hasCompleteToolSearchPairs(content: readonly JsonObject[]): boolean {
+  const uses = new Map<string, number>();
+  const results = new Map<string, number>();
+  for (const block of content) {
+    if (block.type === 'server_tool_use' && TOOL_SEARCH_NAMES.has(String(block.name))) {
+      if (typeof block.id !== 'string') return false;
+      uses.set(block.id, (uses.get(block.id) ?? 0) + 1);
+    } else if (block.type === 'tool_search_tool_result') {
+      if (typeof block.tool_use_id !== 'string') return false;
+      results.set(block.tool_use_id, (results.get(block.tool_use_id) ?? 0) + 1);
+    }
+  }
+  if (uses.size === 0 && results.size === 0) return true;
+  if (uses.size !== results.size) return false;
+  return [...uses].every(([id, count]) => count === 1 && results.get(id) === 1);
 }
 
 interface CaptureOutcome {
@@ -61,10 +85,10 @@ class AnthropicSseCapture {
 
   /** Capturing is BEST-EFFORT and must never fail the turn it is watching.
    *
-   *  Everything here observes a stream the model's answer is riding on. Anthropic owns the semantics of
-   *  every syntactically complete server block topology, including unmatched calls/results. A malformed or
-   *  truncated hosted response still cannot be replayed: the finished answer survives, then the wrapper
-   *  blocks the next provider request before it can send modified signed thinking. */
+   *  Everything here observes a stream the model's answer is riding on. A syntactically complete response
+   *  can still be unsafe to replay: Anthropic accepts a hosted search while producing the answer, but rejects
+   *  that assistant message on the next request unless every built-in tool-search call has its matching result.
+   *  Such a response survives without replay metadata; malformed or truncated hosted content remains fail-closed. */
   feed(chunk: Uint8Array): void {
     try {
       this.buffer += this.decoder.decode(chunk, { stream: true });
@@ -87,6 +111,10 @@ class AnthropicSseCapture {
       if (this.abandoned) return { unsafeHostedContent: this.sawHostedContent };
       if (!this.sawHostedContent) return { unsafeHostedContent: false };
       const content = indexes.map((index) => clone(this.blocks.get(index)!.block));
+      if (!hasCompleteToolSearchPairs(content)) {
+        log.warn('hosted-search replay not captured, continuing without it: response contained an incomplete search pair');
+        return { unsafeHostedContent: false };
+      }
       return { metadata: { v: REPLAY_VERSION, content }, unsafeHostedContent: false };
     } catch (error) {
       this.abandon(error);
@@ -134,7 +162,7 @@ class AnthropicSseCapture {
       throw new Error('Anthropic SSE event was not an object');
     }
     const startedContent = event.type === 'content_block_start' ? record(event.content_block) : undefined;
-    if (startedContent && SERVER_BLOCK_TYPES.has(String(startedContent.type))) this.sawHostedContent = true;
+    if (startedContent && isAnthropicServerOwnedBlock(startedContent)) this.sawHostedContent = true;
     // Once syntax/lifecycle safety is lost, metadata is irrecoverable, but keep parsing later complete frames
     // solely to learn whether hosted content occurred and the next provider boundary must be blocked.
     if (this.abandoned) return;
@@ -204,7 +232,8 @@ function replayMetadata(message: unknown): AnthropicHostedReplayMetadata | undef
   if (meta?.v !== REPLAY_VERSION || !Array.isArray(meta.content)) return undefined;
   const content = meta.content.map(record);
   if (content.some((block) => !block)
-    || !content.some((block) => SERVER_BLOCK_TYPES.has(String(block?.type)))) return undefined;
+    || !content.some(isAnthropicServerOwnedBlock)
+    || !hasCompleteToolSearchPairs(content as JsonObject[])) return undefined;
   return { v: REPLAY_VERSION, content: content as JsonObject[] };
 }
 
@@ -217,10 +246,12 @@ function normalizedKnownContent(content: readonly unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const raw of content) {
     const block = record(raw);
-    if (!block || typeof block.type !== 'string' || SERVER_BLOCK_TYPES.has(block.type)) continue;
+    if (!block || typeof block.type !== 'string' || isAnthropicServerOwnedBlock(block)) continue;
     if (block.type === 'text') {
       const text = typeof block.text === 'string' ? sanitizeSurrogates(block.text) : '';
       if (text.trim()) out.push({ type: 'text', text });
+    } else if (block.type === 'thinking' && block.redacted === true) {
+      out.push({ type: 'redacted_thinking', data: block.thinkingSignature ?? block.signature });
     } else if (block.type === 'thinking') {
       out.push({
         type: 'thinking',

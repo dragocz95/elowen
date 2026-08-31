@@ -133,13 +133,19 @@ describe('resident context ownership', () => {
   });
 
   it('includes raw hosted blocks omitted from PI message content', () => {
-    const hosted = { type: 'server_tool_use', id: 'srv_1', name: 'tool_search', input: { query: 'x' } };
+    const hosted = [
+      { type: 'server_tool_use', id: 'srv_1', name: 'tool_search_tool_bm25', input: { query: 'x' } },
+      { type: 'tool_search_tool_result', tool_use_id: 'srv_1', content: { type: 'tool_search_tool_search_result', tool_references: [] } },
+      { type: 'web_fetch_tool_result', tool_use_id: 'srv_web', content: { type: 'web_fetch_result', url: 'https://example.test' } },
+    ];
     const message = assistant(0) as ContextMessage & { anthropicHostedToolReplay: unknown };
-    message.anthropicHostedToolReplay = { v: 1, content: [hosted] };
+    message.anthropicHostedToolReplay = { v: 1, content: hosted };
     const result = buildContextBreakdown(snapshot({ messages: [message] }));
-    const expected = Math.ceil(JSON.stringify(hosted).length / 4);
+    const expected = hosted.reduce((sum, block) => sum + Math.ceil(JSON.stringify(block).length / 4), 0);
     expect(result.estimatedTokens).toBe(expected);
-    expect(result.categories).toEqual([{ id: 'assistant', tokens: expected, percent: expected / 10 }]);
+    expect(result.categories).toHaveLength(1);
+    expect(result.categories[0]).toMatchObject({ id: 'assistant', tokens: expected });
+    expect(result.categories[0]?.percent).toBeCloseTo(expected / 10);
   });
 
   it('retains provider-backed context usage for ordinary sessions', () => {
