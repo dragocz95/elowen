@@ -103,7 +103,7 @@ export function DashboardView() {
           phone instead of wrapping the hero further down. `pt-4` is the shell's own rhythm (ModuleShell
           gap) — the strip reads as the page's first line, not as part of the app bar above it. */}
       <div className="flex items-center gap-4 border-b border-border px-4 pb-3 pt-4 md:px-0">
-        <div role="list" aria-label={t.dashboard.stripLabel} className="flex min-w-0 items-baseline gap-5 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden @sm:gap-8">
+        <div role="list" aria-label={t.dashboard.stripLabel} style={{ scrollbarWidth: 'none' }} className="flex min-w-0 items-baseline gap-5 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden @sm:gap-8">
           <span role="listitem" className="flex shrink-0 items-baseline gap-1.5">
             <b className="font-mono text-[13.5px] font-semibold tabular-nums text-foreground">{totals?.turns ?? '—'}</b>
             <span className="text-[13px] text-muted-foreground">{t.dashboard.pulseColTurns.toLocaleLowerCase(locale)}</span>
