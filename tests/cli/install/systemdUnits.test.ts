@@ -134,6 +134,8 @@ describe('install/systemdUnits.elowenSudoers', () => {
     // --no-block: a web-triggered self-update must enqueue BOTH unit restarts before the daemon's own
     // restart kills the updater process (else elowen-web never restarts). The pin includes the flag.
     expect(s).toMatch(/^elowen ALL=\(root\) NOPASSWD: \/usr\/bin\/systemctl restart --no-block elowen-daemon elowen-web/m);
+    expect(s).toContain(', /usr/bin/systemctl restart --no-block elowen-daemon,');
+    expect(s).toContain(', /usr/bin/systemctl restart --no-block elowen-web,');
     expect(s).toContain('/usr/bin/systemctl is-active elowen-daemon elowen-web');
   });
   it('does not grant a blanket systemctl (least privilege)', () => {

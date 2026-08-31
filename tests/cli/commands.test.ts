@@ -15,6 +15,7 @@ function fakeDeps() {
       stop: async () => { calls.push('stop'); },
       status: async () => { calls.push('status'); return { daemon: svc(), web: svc() }; },
       update: async () => { calls.push('update'); return { updated: false, from: '1.1.1', to: '1.1.1' }; },
+      restart: async (target: string) => { calls.push(`restart:${target}`); },
     },
   };
 }
@@ -39,6 +40,19 @@ describe('cli/commands.runLifecycle', () => {
     const { calls, deps } = fakeDeps();
     expect(await runLifecycle('update', {} as NodeJS.ProcessEnv, deps)).toBe(true);
     expect(calls).toContain('update');
+  });
+  it.each(['daemon', 'web', 'all'] as const)('queues a safe restart of the explicit %s target', async (target) => {
+    const { calls, deps } = fakeDeps();
+    expect(await runLifecycle('restart', {} as NodeJS.ProcessEnv, deps, [target])).toBe(true);
+    expect(calls).toContain(`restart:${target}`);
+    expect(calls).toContain(`log:Restart queued: ${target}`);
+  });
+  it.each([[], ['everything']])('refuses a missing or invalid restart target: %j', async (argv) => {
+    const { calls, deps } = fakeDeps();
+    await expect(runLifecycle('restart', {} as NodeJS.ProcessEnv, deps, argv)).rejects.toThrow(
+      'usage: elowen restart <daemon|web|all>',
+    );
+    expect(calls.some((call) => call.startsWith('restart:'))).toBe(false);
   });
   it('returns false for a non-lifecycle command (falls through to the API CLI)', async () => {
     const { deps } = fakeDeps();

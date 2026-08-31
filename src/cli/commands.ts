@@ -1,6 +1,7 @@
 import { start as realStart, stop as realStop, status as realStatus, type RunState, type SvcStatus } from './launcher.js';
 import { update as realUpdate, type UpdateResult } from './update.js';
 import { callElowenApi } from '../shared/apiClient.js';
+import { restartServices, type RestartTarget } from './systemd.js';
 
 /** `elowen api <METHOD> <path> [jsonBody]` — generic authenticated REST passthrough. Reads
  *  ELOWEN_URL/ELOWEN_TOKEN from the env the daemon injects into every spawned agent, so an agent can
@@ -31,6 +32,7 @@ export interface LifecycleDeps {
   stop: (env: NodeJS.ProcessEnv, opts?: { force?: boolean }) => Promise<void>;
   status: (env: NodeJS.ProcessEnv) => Promise<{ daemon: SvcStatus; web: SvcStatus }>;
   update: (env: NodeJS.ProcessEnv, deps: { current: string }) => Promise<UpdateResult>;
+  restart: (target: RestartTarget) => Promise<void>;
 }
 
 export function defaultLifecycleDeps(version: string): LifecycleDeps {
@@ -41,6 +43,10 @@ export function defaultLifecycleDeps(version: string): LifecycleDeps {
     stop: realStop,
     status: realStatus,
     update: realUpdate,
+    restart: async (target) => {
+      const result = await restartServices(target);
+      if (result.code !== 0) throw new Error(`restart failed (code ${result.code})`);
+    },
   };
 }
 
@@ -87,6 +93,15 @@ export async function runLifecycle(
       deps.log('Checking for updates…');
       const r = await deps.update(env, { current: deps.version });
       deps.log(r.updated ? `Updated ${r.from} → ${r.to}` : `Already up to date (${r.to})`);
+      return true;
+    }
+    case 'restart': {
+      const target = argv[0];
+      if (argv.length !== 1 || (target !== 'daemon' && target !== 'web' && target !== 'all')) {
+        throw new Error('usage: elowen restart <daemon|web|all>');
+      }
+      await deps.restart(target);
+      deps.log(`Restart queued: ${target}`);
       return true;
     }
     default:

@@ -47,6 +47,7 @@ SERVICE
   up                              start the daemon (:4400) and web UI (:4500) in the background
   down [--force]                  stop the daemon and web UI (waits for running turns; --force kills now)
   status                          show which services are running and healthy
+  restart <daemon|web|all>        safely queue a systemd restart and return before the daemon stops
   update                          update to the latest npm release and restart in place
 
 CHAT

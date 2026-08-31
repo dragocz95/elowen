@@ -134,12 +134,12 @@ WantedBy=timers.target
  *  helper grant is not a shell and accepts no path or command. Every command is pinned literally and the
  *  completed file is validated with `visudo -c` before it is trusted. */
 export function elowenSudoers(user: string, reinstallCmd: string): string {
-  // Built from SERVICES so the pinned restart command can't drift from what `systemctl('restart',
-  // '--no-block', ...SERVICES)` actually issues (sudo matches arguments positionally). --no-block lets a
-  // web-triggered self-update enqueue BOTH unit restarts before the daemon's own restart kills it.
+  // Built from SERVICES so the pinned restart commands can't drift from restartServices() (sudo matches
+  // arguments positionally). The combined form serves update/`restart all`; the individual forms serve
+  // `restart daemon|web`. Every form is --no-block so an in-daemon caller returns before systemd stops it.
   const units = SERVICES.join(' ');
   return `# Managed by elowen install — lets the ${user} service user restart its own units and self-update in place (auto-update + manual update).
-${user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${units}, /usr/bin/systemctl is-active ${units}
+${user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${units}, /usr/bin/systemctl restart --no-block ${SERVICES[0]}, /usr/bin/systemctl restart --no-block ${SERVICES[1]}, /usr/bin/systemctl is-active ${units}
 ${user} ALL=(root) NOPASSWD: ${reinstallCmd}
 ${user} ALL=(root) NOPASSWD: ${SITE_GATEWAY_HELPER_PATH} ""
 `;

@@ -113,7 +113,7 @@ describe('terminal plugin', () => {
       command: `${fakeSudo} systemctl restart elowen-daemon elowen-web`,
     }), { identity: owner });
 
-    expect(res.content[0].text).toMatch(/refused.*--no-block/i);
+    expect(res.content[0].text).toMatch(/refused.*elowen restart all/i);
     expect(existsSync(reached)).toBe(false);
   });
 
@@ -161,7 +161,7 @@ describe('terminal plugin', () => {
       command: `printf ready | env ${fakeSudo} systemctl restart elowen-daemon`,
     }), { identity: owner });
 
-    expect(res.content[0].text).toMatch(/refused.*--no-block/i);
+    expect(res.content[0].text).toMatch(/refused.*elowen restart all/i);
     expect(existsSync(reached)).toBe(false);
   });
 

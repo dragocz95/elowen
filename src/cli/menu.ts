@@ -5,7 +5,7 @@ import { maybeOfferSetup } from './setup/command.js';
 import { openBrowser } from './setup/browser.js';
 import { readInstallInfo, type InstallInfo } from './installInfo.js';
 import { update } from './update.js';
-import { SERVICES, runCmd, systemctl, servicesActive } from './systemd.js';
+import { SERVICES, restartServices, runCmd, systemctl, servicesActive } from './systemd.js';
 import { launchdLogTail, launchdRestart, launchdServicesActive, launchdStart, launchdStatusText, launchdStop } from './launchd.js';
 import { launchChat } from './chat/launch.js';
 
@@ -32,7 +32,7 @@ const serviceOps = (): ServiceOps => (process.platform === 'darwin'
   : {
     kind: 'systemd',
     active: () => servicesActive(),
-    run: (action) => systemctl(action, ...SERVICES),
+    run: (action) => action === 'restart' ? restartServices('all') : systemctl(action, ...SERVICES),
     statusText: async () => (await systemctl('status', '--no-pager', '-n', '0', ...SERVICES)).stdout.trim() || '(no output)',
     logsText: async () => (await runCmd('journalctl', ['-u', 'elowen-daemon', '-n', '20', '--no-pager'])).stdout.trim() || '(no logs - try: journalctl -u elowen-daemon)',
   });

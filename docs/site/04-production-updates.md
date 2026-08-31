@@ -61,7 +61,7 @@ Useful commands:
 
 ```bash
 sudo systemctl status elowen-daemon elowen-web
-sudo systemctl restart --no-block elowen-daemon elowen-web
+elowen restart all
 sudo systemctl stop elowen-daemon elowen-web
 sudo systemctl enable elowen-daemon elowen-web
 ```

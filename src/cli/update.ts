@@ -7,7 +7,7 @@ import { dirname, basename, join } from 'node:path';
 import { isNewer } from './version.js';
 import { start, stop, isAlive } from './launcher.js';
 import { readInstallInfo } from './installInfo.js';
-import { SERVICES, systemctl } from './systemd.js';
+import { restartServices } from './systemd.js';
 import { launchdRestart } from './launchd.js';
 import { dataDir } from '../shared/paths.js';
 import { fetchLatestVersion } from '../shared/registry.js';
@@ -170,15 +170,8 @@ export async function update(env: NodeJS.ProcessEnv, deps: UpdateDeps): Promise<
         // before the elowen-web job is ever enqueued, leaving the web UI on the old build. With --no-block
         // both jobs are handed to systemd (PID 1) up front and run to completion regardless of this
         // process dying. (Cost: we can't observe the restart result — only that it was enqueued.)
-        const r = await systemctl('restart', '--no-block', ...SERVICES);
-        if (r.code === 0) return;
-        // A box provisioned before `--no-block` was added to the sudoers pin denies the new arg list
-        // (sudo matches arguments exactly), so the agent-user restart fails here. Fall back to the legacy
-        // command — which the old drop-in still permits — so self-update never hard-breaks. Re-running
-        // `elowen install` re-pins sudoers with --no-block and restores the elowen-web restart fix; until
-        // then a web-triggered update degrades to the old behavior (daemon restarts, web may not).
-        const legacy = await systemctl('restart', ...SERVICES);
-        if (legacy.code !== 0) throw new Error(`installed ${latest} but the restart failed (code ${legacy.code}) — services run the old build until restarted`);
+        const r = await restartServices('all');
+        if (r.code !== 0) throw new Error(`installed ${latest} but the safe restart failed (code ${r.code}) — re-run elowen install to refresh sudoers, then run elowen restart all`);
         return;
       }
       await stop(e);

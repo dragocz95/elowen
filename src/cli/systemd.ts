@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 
 /** The two units `elowen install` provisions. Shared so the menu and the updater drive the same names. */
 export const SERVICES = ['elowen-daemon', 'elowen-web'];
+export type RestartTarget = 'daemon' | 'web' | 'all';
 
 /** Run a command, resolving its exit code + stdout (never rejects). */
 export function runCmd(cmd: string, args: string[]): Promise<{ code: number; stdout: string }> {
@@ -18,6 +19,18 @@ export function runCmd(cmd: string, args: string[]): Promise<{ code: number; std
 export function systemctl(...args: string[]): Promise<{ code: number; stdout: string }> {
   const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
   return asRoot ? runCmd('systemctl', args) : runCmd('sudo', ['systemctl', ...args]);
+}
+
+/** Queue a managed service restart and return as soon as PID 1 owns the job. Waiting here is unsafe when
+ *  the caller itself runs inside elowen-daemon's cgroup: systemd stops the daemon while its graceful
+ *  drain waits for the calling process. Keep target mapping in this one CLI seam so every operator path
+ *  uses the same non-blocking argument order the installer pins in sudoers. */
+export function restartServices(
+  target: RestartTarget,
+  run: typeof systemctl = systemctl,
+): Promise<{ code: number; stdout: string }> {
+  const units = target === 'all' ? SERVICES : [`elowen-${target}`];
+  return run('restart', '--no-block', ...units);
 }
 
 /** Whether all ELOWEN units report active. */

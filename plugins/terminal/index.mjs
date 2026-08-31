@@ -652,7 +652,7 @@ export function register(ctx) {
     execute: async (_id, p, _signal, onUpdate) => {
       try {
         if (isBlockingSelfRestart(p.command)) {
-          return ok('Error: refused a blocking restart of elowen-daemon from inside its own service. Run `sudo systemctl restart --no-block elowen-daemon elowen-web` as a standalone Bash call; verify health only after the recovered turn resumes. Do not retry the blocking command.');
+          return ok('Error: refused a blocking restart of elowen-daemon from inside its own service. Run `elowen restart all` as a standalone Bash call; verify health only after the recovered turn resumes. Do not retry the blocking command.');
         }
         const cwd = guardCwd(p.cwd);
         if (!p.background) {

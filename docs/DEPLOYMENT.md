@@ -222,7 +222,7 @@ npm ci
 npm ci --prefix web
 npm run build
 npm run build:web
-sudo systemctl restart --no-block elowen-daemon elowen-web
+elowen restart all
 ```
 
 Run the restart as its own command. After the recovered process continues, verify the services separately:
