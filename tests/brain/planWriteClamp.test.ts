@@ -94,14 +94,14 @@ describe('plan-mode write clamp', () => {
 
   it('lets a planning turn write its own plan file', async () => {
     const { gated, ran } = composed('Write');
-    const res = await call(gated, { path: join(home, planPath) }, { mode: 'plan', permissions: perms() });
+    const res = await call(gated, { file_path: join(home, planPath) }, { mode: 'plan', permissions: perms() });
     expect(ran()).toBe(1);
     expect(res.content[0]!.text).toBe('ran Write');
   });
 
   it('refuses a planning write to anywhere else, and does not run the tool', async () => {
     const { gated, ran } = composed('Write');
-    const res = await call(gated, { path: join(home, 'src/index.ts') }, { mode: 'plan', permissions: perms() });
+    const res = await call(gated, { file_path: join(home, 'src/index.ts') }, { mode: 'plan', permissions: perms() });
     expect(ran()).toBe(0);
     expect(res.content[0]!.text).toContain('Plan mode is read-only');
   });
@@ -111,14 +111,14 @@ describe('plan-mode write clamp', () => {
   // happen to have permissions configured.
   it('refuses even when the turn carries no permission scope at all', async () => {
     const { gated, ran } = composed('Write');
-    const res = await call(gated, { path: join(home, 'src/index.ts') }, { mode: 'plan' });
+    const res = await call(gated, { file_path: join(home, 'src/index.ts') }, { mode: 'plan' });
     expect(ran()).toBe(0);
     expect(res.content[0]!.text).toContain('Plan mode is read-only');
   });
 
   it('refuses a write whose path is missing or not a string', async () => {
     const { gated, ran } = composed('Write');
-    for (const params of [{}, { path: 42 }, { path: null }, null]) {
+    for (const params of [{}, { file_path: 42 }, { file_path: null }, { path: join(home, planPath) }, null]) {
       const res = await call(gated, params, { mode: 'plan', permissions: perms() });
       expect(res.content[0]!.text).toContain('Plan mode is read-only');
     }
@@ -129,28 +129,28 @@ describe('plan-mode write clamp', () => {
   // turn and arbitrary write access.
   it('clamps Edit as well as Write', async () => {
     const { gated, ran } = composed('Edit');
-    const res = await call(gated, { path: join(home, 'src/index.ts') }, { mode: 'plan', permissions: perms() });
+    const res = await call(gated, { file_path: join(home, 'src/index.ts') }, { mode: 'plan', permissions: perms() });
     expect(ran()).toBe(0);
     expect(res.content[0]!.text).toContain('Plan mode is read-only');
   });
 
   it('leaves writes alone outside plan mode', async () => {
     const { gated, ran } = composed('Write');
-    await call(gated, { path: join(home, 'src/index.ts') }, { mode: 'build', permissions: perms() });
-    await call(gated, { path: join(home, 'src/index.ts') }, { permissions: perms() });
+    await call(gated, { file_path: join(home, 'src/index.ts') }, { mode: 'build', permissions: perms() });
+    await call(gated, { file_path: join(home, 'src/index.ts') }, { permissions: perms() });
     expect(ran()).toBe(2);
   });
 
   it('leaves non-writing tools alone inside plan mode', async () => {
     const { gated, ran } = composed('Read');
-    await call(gated, { path: join(home, 'src/index.ts') }, { mode: 'plan', permissions: perms() });
+    await call(gated, { file_path: join(home, 'src/index.ts') }, { mode: 'plan', permissions: perms() });
     expect(ran()).toBe(1);
   });
 
   it('refuses a traversal that leaves the plans directory', async () => {
     const { gated, ran } = composed('Write');
     const escape = join(home, '.config/elowen/plans', '..', '..', '..', 'victim.md');
-    const res = await call(gated, { path: escape }, { mode: 'plan', permissions: perms() });
+    const res = await call(gated, { file_path: escape }, { mode: 'plan', permissions: perms() });
     expect(ran()).toBe(0);
     expect(res.content[0]!.text).toContain('Plan mode is read-only');
   });
