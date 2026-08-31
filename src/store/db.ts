@@ -193,6 +193,12 @@ function applyAdditiveMigrations(db: Db): void {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_categories_user_project ON memory_categories(user_id, project_id) WHERE project_id IS NOT NULL');
   // Which model performed a memory mutation (curator/categorizer). Nullable — human/API events have none.
   addColumn(db, 'memory_events', 'model', 'TEXT');
+  // Live recall correlation contains no prompt text: it lets operators prove whether one session/turn
+  // received the same memory twice. Other delivery paths predate this metadata and remain NULL.
+  addColumn(db, 'memory_usage_events', 'session_id', 'TEXT');
+  addColumn(db, 'memory_usage_events', 'turn_id', 'TEXT');
+  addColumn(db, 'memory_usage_events', 'search_index', 'INTEGER');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_memory_usage_events_turn ON memory_usage_events(session_id, turn_id, search_index)');
   // The provider entry a conversation last ran on, kept beside `model` so a respawn can restore the
   // exact provider+model pair it was running. A model id alone is ambiguous (two entries can expose the
   // same one), so an empty value here means "unknown" and the caller falls back to preference order.

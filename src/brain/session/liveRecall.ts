@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { PiAgentMessage } from './historyImageStripping.js';
+import { stripTurnContextFrames } from './turnContextFrame.js';
 import { isMetaUserMessage, isUserTurn } from './userTurn.js';
 import { frameUntrusted, TOOL_SUBJECT_KEYS } from '../messageView.js';
 import { memoryAgeDays, memoryStalenessNote } from '../memoryStaleness.js';
@@ -48,7 +50,15 @@ interface LiveRecallBudget {
   bytes: number;
 }
 
+export interface LiveRecallCorrelation {
+  sessionId: string;
+  turnId: string;
+  searchIndex: number;
+}
+
 export interface LiveRecallOptions {
+  /** Durable conversation identity written to logs and usage events; never query content. */
+  sessionId: string;
   budget: () => LiveRecallBudget;
   /** Whether the owner has the feature switched on. Checked per pass so the toggle takes effect on a
    *  conversation that is already running, rather than after the next respawn. */
@@ -58,7 +68,9 @@ export interface LiveRecallOptions {
    *  Retrieval alone must not count as a recall: several searches in a turn return overlapping sets and the
    *  dedup below drops the repeats, so marking at retrieval time inflates use_count — and use_count
    *  drives vitality, which drives eviction. Only this callback sees what truly reached the model. */
-  onInjected?: (ids: number[]) => void;
+  onInjected?: (ids: number[], correlation: LiveRecallCorrelation) => void;
+  /** Injectable id generator for deterministic tests; production uses an opaque UUID per recall turn. */
+  createTurnId?: () => string;
   /** Memory ids already printed into this context window, SHARED with turn-start recall. Read per pass
    *  rather than captured, because it lives on the session and this extension outlives no session.
    *  Session-scoped rather than turn-scoped: the blocks below freeze into history, so a memory injected
@@ -146,7 +158,7 @@ function stripRuntimeFrames(text: string): string {
   for (const tag of ['user_memories', 'permissions', 'system-reminder', 'plugin_context']) {
     clean = clean.replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/\\s*${tag}\\s*>`, 'gi'), ' ');
   }
-  return clean;
+  return stripTurnContextFrames(clean);
 }
 
 /** Build the search query from what the turn has been DOING — the tail of tool results and assistant
@@ -212,6 +224,8 @@ interface AnchoredBlock {
 /** Per-session state. A turn is identified by the message count at which it started growing, so the
  *  budget resets naturally when a new turn begins rather than needing a turn-start event. */
 interface TurnState {
+  /** Opaque correlation id for this recall turn. It carries no prompt content. */
+  id: string;
   /** Set when this turn was redirected mid-flight, so the query may include that new instruction. */
   steered: boolean;
   /** Search count for the per-turn embedding safety cap. */
@@ -224,28 +238,40 @@ interface TurnState {
   loggedSkip: boolean;
 }
 
-function freshTurn(): TurnState {
-  return { steered: false, searches: 0, bytes: 0, blocks: [], lastQuery: '', loggedSkip: false };
+function freshTurn(id: string): TurnState {
+  return { id, steered: false, searches: 0, bytes: 0, blocks: [], lastQuery: '', loggedSkip: false };
 }
 
 /** The one retrieval a session may have in flight. The hook mutates the object from the promise's own
  *  handlers and reads `settled` on later searches — consume-if-ready, never await. */
 interface PendingRetrieval {
   issuedAt: number;
+  correlation: LiveRecallCorrelation;
   settled: boolean;
   found: LiveRecallMemory[];
 }
 
 export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): void {
   const now = opts.now ?? Date.now;
+  const createTurnId = opts.createTurnId ?? randomUUID;
   const log = logger('brain-live-recall');
-  let turn = freshTurn();
+  let turn = freshTurn(createTurnId());
   let pending: PendingRetrieval | undefined;
   let lastUserCount = -1;
   let lastLength = -1;
 
-  const issueRetrieval = (query: string, maxCount: number, byteBudget: number): PendingRetrieval => {
-    const issued: PendingRetrieval = { issuedAt: now(), settled: false, found: [] };
+  const correlation = (searchIndex = turn.searches): LiveRecallCorrelation => ({
+    sessionId: opts.sessionId,
+    turnId: turn.id,
+    searchIndex,
+  });
+  const issueRetrieval = (
+    query: string,
+    maxCount: number,
+    byteBudget: number,
+    recall: LiveRecallCorrelation,
+  ): PendingRetrieval => {
+    const issued: PendingRetrieval = { issuedAt: now(), correlation: recall, settled: false, found: [] };
     // The rejection handler is attached HERE, at creation: nothing ever awaits this promise, so a
     // rejection would otherwise escape as an unhandled one and take the process with it. Recall is
     // best-effort — a failure settles the slot empty, and the next pass consumes the nothing, frees
@@ -254,7 +280,10 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       (found) => { issued.settled = true; issued.found = found; },
       (e: unknown) => {
         issued.settled = true;
-        log.warn(`live recall failed: ${e instanceof Error ? e.message : String(e)}`);
+        // Provider errors may echo request/query text. The correlation is enough to investigate the
+        // failed delivery without copying prompt content into a production log.
+        void e;
+        log.warn('live recall failed', issued.correlation);
       },
     );
     return issued;
@@ -287,7 +316,7 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       // duplication.
       const carried = steering ? turn : undefined;
       const dropped = compacted ? turn.blocks : [];
-      turn = freshTurn();
+      turn = freshTurn(createTurnId());
       if (carried) {
         turn.blocks = carried.blocks;
         turn.steered = true;
@@ -317,7 +346,13 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       // was never wired, every session ran on the zero fallback, and this gate returned in silence.
       if (!turn.loggedSkip) {
         turn.loggedSkip = true;
-        log.info(`off this turn: searches=${budget.passes} count=${budget.count} bytes=${budget.bytes} enabled=${opts.enabled()}`);
+        log.info('off this turn', {
+          ...correlation(0),
+          searchesBudget: budget.passes,
+          countBudget: budget.count,
+          byteBudget: budget.bytes,
+          enabled: opts.enabled(),
+        });
       }
       return reEmit();
     }
@@ -326,14 +361,20 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
     // flight injects nothing and does NOT get awaited — the model proceeds and a later search collects
     // it. Skipping here consumes no byte budget.
     let found: LiveRecallMemory[] | undefined;
+    let foundCorrelation: LiveRecallCorrelation | undefined;
     if (pending) {
       if (pending.settled) {
         found = pending.found;
+        foundCorrelation = pending.correlation;
         pending = undefined;
       } else if (now() - pending.issuedAt <= PENDING_ABANDON_MS) {
         return reEmit();
       } else {
-        log.warn(`live recall abandoned a retrieval still unsettled after ${PENDING_ABANDON_MS}ms`);
+        log.warn('live recall abandoned an unsettled retrieval', {
+          ...pending.correlation,
+          elapsedMs: now() - pending.issuedAt,
+          abandonAfterMs: PENDING_ABANDON_MS,
+        });
         pending = undefined;
       }
     }
@@ -349,9 +390,12 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
         // are the same silence in the log, and the two need completely different fixes.
         if (!turn.loggedSkip) {
           turn.loggedSkip = true;
-          log.info(query.length < MIN_QUERY_CHARS
-            ? `no search: only ${query.length} chars of work so far (need ${MIN_QUERY_CHARS})`
-            : 'no search: the work has not moved since the last search');
+          log.info('no search', {
+            ...correlation(),
+            reason: query.length < MIN_QUERY_CHARS ? 'query_too_short' : 'unchanged_query',
+            queryChars: query.length,
+            minimumQueryChars: MIN_QUERY_CHARS,
+          });
         }
         return reEmit();
       }
@@ -360,19 +404,22 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       // memory, while the byte budget independently bounds model-facing context growth.
       turn.lastQuery = query;
       turn.searches += 1;
-      log.info(`searching (#${turn.searches}): ${JSON.stringify(query.slice(0, 120))}`);
-      pending = issueRetrieval(query, budget.count, budget.bytes - turn.bytes);
+      const recall = correlation();
+      log.info('searching', { ...recall, queryChars: query.length });
+      pending = issueRetrieval(query, budget.count, budget.bytes - turn.bytes, recall);
       return reEmit();
     }
 
+    const recall = foundCorrelation ?? correlation();
     const injected = opts.alreadyInContext();
     const fresh = found.filter((m) => !injected.has(m.id));
     if (fresh.length === 0) {
       // Distinguishes "the search came back empty" from "everything it found is already in context" —
       // the first points at the similarity floor, the second is the dedup working as intended.
-      log.info(found.length === 0
-        ? 'search returned no memory above the similarity floor'
-        : `search returned ${found.length} memory(ies), all already in this context window`);
+      log.info(found.length === 0 ? 'search returned no memory' : 'search results already in context', {
+        ...recall,
+        foundCount: found.length,
+      });
       return reEmit();
     }
 
@@ -418,21 +465,24 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
     // the rest of the session. Undone rather than pre-checked, because the write is the only thing that
     // knows whether it worked.
     try {
-      opts.onInjected?.(injectedIds);
+      opts.onInjected?.(injectedIds, recall);
     } catch (e) {
       for (const id of injectedIds) injected.delete(id);
       turn.blocks.pop();
       turn.bytes -= Buffer.byteLength(content);
-      log.warn(`live recall could not record what it injected, withdrawing it: ${e instanceof Error ? e.message : String(e)}`);
+      // Store errors can contain SQL values. Keep only the content-free correlation in production logs.
+      void e;
+      log.warn('live recall could not record its injection; withdrawing it', recall);
       return reEmit();
     }
 
     // The only positive signal that recall fired at all: without it a silent no-op and a working feature
     // look identical from the outside, and the failure path is the only thing that logs.
-    log.info(
-      `recalled ${rendered.length} memory(ies) mid-turn on search #${turn.searches} `
-      + `(ids ${injectedIds.join(',')}, ${turn.bytes} bytes used)`,
-    );
+    log.info('recalled memories mid-turn', {
+      ...recall,
+      recalledCount: rendered.length,
+      bytesUsed: turn.bytes,
+    });
     return insertAnchoredBlocks(messages, turn.blocks);
   });
 }

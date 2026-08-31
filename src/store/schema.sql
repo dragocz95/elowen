@@ -619,7 +619,10 @@ CREATE TABLE IF NOT EXISTS memory_usage_events (
   id INTEGER PRIMARY KEY,
   memory_id INTEGER NOT NULL,
   user_id INTEGER NOT NULL,
-  used_at TEXT NOT NULL DEFAULT (datetime('now'))
+  used_at TEXT NOT NULL DEFAULT (datetime('now')),
+  session_id TEXT,
+  turn_id TEXT,
+  search_index INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_memory_usage_events_memory ON memory_usage_events(memory_id, used_at);
 CREATE INDEX IF NOT EXISTS idx_memory_usage_events_used_at ON memory_usage_events(used_at);

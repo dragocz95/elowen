@@ -39,6 +39,13 @@ export interface MemoryPatch {
   status?: string;
 }
 
+/** Optional, content-free correlation for a recall that happened inside a live model turn. */
+export interface MemoryUsageContext {
+  sessionId: string;
+  turnId: string;
+  searchIndex: number;
+}
+
 export interface ListMemoriesOpts {
   status?: string; // default 'active'; pass '' or 'all' to include every status
   kind?: string;
@@ -276,17 +283,21 @@ export class MemoryStore {
    *  move without its event (or the reverse) would make the curve disagree with the number shown next
    *  to it. The event is written only for rows the UPDATE actually matched, so a foreign or missing id
    *  logs nothing. */
-  markUsed(userId: number, ids: number[]): void {
+  markUsed(userId: number, ids: number[], context?: MemoryUsageContext): void {
     if (ids.length === 0) return;
     const bump = this.db.prepare(
       "UPDATE memories SET use_count = use_count + 1, last_used_at = datetime('now') WHERE id = ? AND user_id = ?"
     );
     const logUse = this.db.prepare(
-      "INSERT INTO memory_usage_events (memory_id, user_id, used_at) VALUES (?, ?, datetime('now'))"
+      `INSERT INTO memory_usage_events
+        (memory_id, user_id, used_at, session_id, turn_id, search_index)
+       VALUES (?, ?, datetime('now'), ?, ?, ?)`
     );
     this.db.transaction(() => {
       for (const id of ids) {
-        if (bump.run(id, userId).changes > 0) logUse.run(id, userId);
+        if (bump.run(id, userId).changes > 0) {
+          logUse.run(id, userId, context?.sessionId ?? null, context?.turnId ?? null, context?.searchIndex ?? null);
+        }
       }
     })();
   }

@@ -1,4 +1,4 @@
-import type { MemoryRow, MemoryStore } from '../store/memoryStore.js';
+import type { MemoryRow, MemoryStore, MemoryUsageContext } from '../store/memoryStore.js';
 import type { EmbeddingConfig, EmbeddingService } from '../embeddings/embeddingService.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
 import { parseDbTs } from '../shared/time.js';
@@ -291,9 +291,9 @@ export class MemoryService {
    *  prompt once (measured 2026-08-03: 156 of 441 marks, 35%, were such phantoms). Inflated use_count
    *  feeds straight into vitality, which decides what the retention sweep evicts — so the caller that
    *  knows what it actually handed over is the only one that can mark honestly. */
-  markRecalled(userId: number, ids: number[]): void {
+  markRecalled(userId: number, ids: number[], context?: MemoryUsageContext): void {
     if (ids.length === 0) return;
-    this.store.markUsed(userId, ids);
+    this.store.markUsed(userId, ids, context);
     this.onRecalled?.(userId);
   }
 

@@ -284,14 +284,34 @@ describe('MemoryStore', () => {
   // The counter alone cannot say WHEN a memory was used, so the chart replays this log instead. Writing
   // the event in the same transaction as the bump is what keeps the two from drifting apart.
   it('markUsed logs one recall event per bump, oldest first', () => {
-    const m = store.add(1, { body: 'x' }, 'agent', '');
-    store.markUsed(1, [m.id]);
-    store.markUsed(1, [m.id]);
+    const db = openDb(':memory:');
+    const s = new MemoryStore(db);
+    const m = s.add(1, { body: 'x' }, 'agent', '');
+    s.markUsed(1, [m.id]);
+    s.markUsed(1, [m.id]);
 
-    const history = store.usageHistory(1, m.id);
+    const history = s.usageHistory(1, m.id);
     expect(history).toHaveLength(2);
-    expect(store.get(1, m.id)?.use_count).toBe(2);
+    expect(s.get(1, m.id)?.use_count).toBe(2);
     expect([...history].sort()).toEqual(history);
+    expect(db.prepare(
+      'SELECT session_id, turn_id, search_index FROM memory_usage_events WHERE memory_id = ? ORDER BY id'
+    ).all(m.id)).toEqual([
+      { session_id: null, turn_id: null, search_index: null },
+      { session_id: null, turn_id: null, search_index: null },
+    ]);
+  });
+
+  it('markUsed stores content-free live recall correlation when supplied', () => {
+    const db = openDb(':memory:');
+    const s = new MemoryStore(db);
+    const m = s.add(1, { body: 'x' }, 'agent', '');
+
+    s.markUsed(1, [m.id], { sessionId: 'brain-1', turnId: 'turn-a', searchIndex: 2 });
+
+    expect(db.prepare(
+      'SELECT session_id, turn_id, search_index FROM memory_usage_events WHERE memory_id = ?'
+    ).get(m.id)).toEqual({ session_id: 'brain-1', turn_id: 'turn-a', search_index: 2 });
   });
 
   it('markUsed logs nothing for a memory the caller does not own', () => {

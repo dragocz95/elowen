@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { installLiveRecall, liveRecallQuery, type LiveRecallMemory } from '../../../src/brain/session/liveRecall.js';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { installLiveRecall, liveRecallQuery, type LiveRecallCorrelation, type LiveRecallMemory } from '../../../src/brain/session/liveRecall.js';
+import { renderTurnContextFrame } from '../../../src/brain/session/turnContextFrame.js';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 /** Recall that runs WHILE a turn works. Two properties matter beyond "it recalls something":
@@ -35,7 +36,7 @@ const flush = async (): Promise<void> => new Promise((resolve) => { setImmediate
 function harness(opts: {
   retrieve: (query: string, maxCount: number, byteBudget: number) => Promise<LiveRecallMemory[]>;
   passes?: number; count?: number; bytes?: number; enabled?: () => boolean; now?: () => number;
-  onInjected?: (ids: number[]) => void;
+  onInjected?: (ids: number[], correlation: LiveRecallCorrelation) => void;
   /** The set the session shares with turn-start recall. Supplied by the test when it needs to observe
    *  what reached the model across turns, or to seed what another path already delivered. */
   alreadyInContext?: Set<number>;
@@ -45,8 +46,11 @@ function harness(opts: {
     on: (event: string, fn: Handler) => { if (event === 'context') handler = fn; },
   } as unknown as ExtensionAPI;
   const alreadyInContext = opts.alreadyInContext ?? new Set<number>();
+  let turnIndex = 0;
 
   installLiveRecall(pi, {
+    sessionId: 'brain-live-recall-test',
+    createTurnId: () => `turn-live-recall-test-${++turnIndex}`,
     budget: () => ({ passes: opts.passes ?? 10, count: opts.count ?? 8, bytes: opts.bytes ?? 6000 }),
     enabled: opts.enabled ?? (() => true),
     retrieve: opts.retrieve,
@@ -100,6 +104,84 @@ describe('live recall — memories arrive mid-turn', () => {
     expect(third).toHaveLength(4);
     expect(textOf(third[3] as Msg)).toContain('Deployment runs through release.sh');
     expect(third[3]).toMatchObject({ role: 'user', isMeta: true });
+  });
+
+  it('logs content-free session and turn correlation instead of the recall query', async () => {
+    const lines: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((line) => { lines.push(String(line)); });
+    try {
+      const { fire } = harness({ retrieve: async () => [] });
+      await fire([
+        { role: 'user', content: 'go' },
+        { role: 'toolResult', content: 'private@example.com /srv/private/customer-ledger.csv failed validation' },
+      ]);
+      const searching = lines.find((line) => line.includes('[brain-live-recall]  searching')) ?? '';
+      expect(searching).toContain('"sessionId":"brain-live-recall-test"');
+      expect(searching).toContain('"turnId":"turn-live-recall-test-2"');
+      expect(searching).toContain('"searchIndex":1');
+      expect(searching).toContain('"queryChars":');
+      expect(searching).not.toContain('private@example.com');
+      expect(searching).not.toContain('customer-ledger.csv');
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('does not log provider or store exception text', async () => {
+    const lines: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((line) => { lines.push(String(line)); });
+    try {
+      const retrievalFailure = harness({
+        retrieve: async () => { throw new Error('private@example.com /srv/private/query.txt'); },
+      });
+      const work: Msg[] = [
+        { role: 'user', content: 'go' },
+        { role: 'toolResult', content: 'enough work about customer reconciliation to issue a recall' },
+      ];
+      await retrievalFailure.fire(work);
+      await flush();
+
+      const bookkeepingFailure = harness({
+        retrieve: async () => [mem(73, 'PRIVATE_MEMORY_BODY')],
+        onInjected: () => { throw new Error('SQL value PRIVATE_DATABASE_VALUE'); },
+      });
+      await bookkeepingFailure.fire(work);
+      await flush();
+      await bookkeepingFailure.fire(work);
+
+      const output = lines.join('\n');
+      expect(output).toContain('live recall failed');
+      expect(output).toContain('could not record its injection');
+      expect(output).not.toContain('private@example.com');
+      expect(output).not.toContain('/srv/private/query.txt');
+      expect(output).not.toContain('PRIVATE_DATABASE_VALUE');
+      expect(output).not.toContain('PRIVATE_MEMORY_BODY');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('logs successful delivery counts without memory ids or bodies', async () => {
+    const lines: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((line) => { lines.push(String(line)); });
+    try {
+      const { fire } = harness({ retrieve: async () => [mem(73, 'PRIVATE_MEMORY_BODY')] });
+      const work: Msg[] = [
+        { role: 'user', content: 'go' },
+        { role: 'toolResult', content: 'enough work about customer reconciliation to issue a recall' },
+      ];
+      await fire(work);
+      await flush();
+      await fire(work);
+
+      const recalled = lines.find((line) => line.includes('recalled memories mid-turn')) ?? '';
+      expect(recalled).toContain('"recalledCount":1');
+      expect(recalled).toContain('"bytesUsed":');
+      expect(recalled).not.toContain('memoryIds');
+      expect(recalled).not.toContain('PRIVATE_MEMORY_BODY');
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it('leaves the earlier messages byte-identical and only ever appends', async () => {
@@ -266,11 +348,12 @@ describe('live recall — memories arrive mid-turn', () => {
   // Usage is what vitality decays from, and vitality decides what the retention sweep evicts. Retrieval
   // used to do this marking itself, which counted a memory again on every pass that matched it — even
   // though the dedup above means it reaches the model exactly once. Only what is injected may count.
-  it('reports only the memories it actually injected, never the ones the dedup dropped', async () => {
+  it('reports only the memories it actually injected, with content-free session and turn correlation', async () => {
     const injected: number[][] = [];
+    const correlations: LiveRecallCorrelation[] = [];
     const { fire } = harness({
       retrieve: async () => [mem(1, 'The one fact')],
-      onInjected: (ids) => { injected.push(ids); },
+      onInjected: (ids, recall) => { injected.push(ids); correlations.push(recall); },
     });
 
     const first: Msg[] = [{ role: 'user', content: 'go' }, { role: 'toolResult', content: 'first tool output about deployment' }];
@@ -285,6 +368,11 @@ describe('live recall — memories arrive mid-turn', () => {
 
     // The second pass found the same memory again; it was already in context, so it must not count twice.
     expect(injected).toEqual([[1]]);
+    expect(correlations).toEqual([{
+      sessionId: 'brain-live-recall-test',
+      turnId: 'turn-live-recall-test-2',
+      searchIndex: 1,
+    }]);
   });
 });
 
@@ -629,6 +717,9 @@ describe('liveRecallQuery', () => {
           + '<permissions>\nrun release.sh\n</permissions>\n'
           + '<system-reminder>\nresume the deployment\n</system-reminder>\n'
           + '<plugin_context>\nrelease.sh plugin instruction\n</plugin_context>\n'
+          + renderTurnContextFrame(['release.sh runtime context'], 'before-user')
+          + renderTurnContextFrame(['release.sh task state'], 'after-user')
+          + '<context>legitimate invoice payload</context>\n'
           + 'Switch to invoice reconciliation for the failed payment import.'
       },
       { role: 'toolResult', content: 'invoice reconciliation rejected the payment import at ledger validation' },
@@ -643,6 +734,9 @@ describe('liveRecallQuery', () => {
     expect(query).not.toContain('<permissions>');
     expect(query).not.toContain('<system-reminder>');
     expect(query).not.toContain('<plugin_context>');
+    expect(query).not.toContain('placement="before-user"');
+    expect(query).not.toContain('placement="after-user"');
+    expect(query).toContain('<context>legitimate invoice payload</context>');
     const injected = providerText(out);
     expect(injected).toContain('Relevant invoice-reconciliation memory');
     expect(injected).not.toContain('Irrelevant deployment memory');
