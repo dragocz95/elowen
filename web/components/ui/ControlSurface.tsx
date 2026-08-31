@@ -39,9 +39,12 @@ type LegacyControlSurfaceToolbarProps = ControlSurfaceToolbarBase & {
   promote?: boolean;
 };
 
-type StructuredControlSurfaceToolbarProps = ControlSurfaceToolbarBase & PageToolbarProps & {
+type StructuredControlSurfaceToolbarProps = PageToolbarProps & {
   /** Structured search/filter/action contributions are page-level by definition. */
   promote?: true;
+  layout?: never;
+  className?: never;
+  testId?: never;
 };
 
 export type ControlSurfaceToolbarProps = LegacyControlSurfaceToolbarProps | StructuredControlSurfaceToolbarProps;

@@ -11,7 +11,8 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { RegisterSearch } from '../../components/ui/RegisterSearch';
-import { PageFilterChips, PageFilters, type PageFilterField } from '../../components/ui/PageFilters';
+import type { PageFilterField } from '../../components/ui/PageFilters';
+import { ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 import { Segmented } from '../../components/ui/Segmented';
 import { Toggle } from '../../components/ui/Toggle';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -25,7 +26,7 @@ import { useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib
 import { usePluginConsent } from './usePluginConsent';
 import type { PluginInfo, MarketplaceEntry } from '../../lib/types';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
-import { SettingsGroup, SettingsState, SettingsToolbar } from '../../components/ui/SettingsSurface';
+import { SettingsGroup, SettingsState } from '../../components/ui/SettingsSurface';
 
 /** Marketplace categories, derived from a plugin's `provides`/name (see `categorize`). */
 type Category = 'platforms' | 'tools' | 'memory' | 'automation' | 'ui' | 'security' | 'development';
@@ -365,19 +366,15 @@ export function PluginsSection() {
   return (
     <>
       <SettingsGroup density="compact">
-        {/* The section's controls belong to the page, so they go up into the canonical toolbar row through
-            its portal. Search and the installed/available switch stay VISIBLE — they are the two controls
-            every visit uses — and only the category axis folds behind the shared filter control. */}
-        <SettingsToolbar>
-          <RegisterSearch value={query} onChange={setQuery} placeholder={t.plugins.searchPlaceholder} label={t.plugins.searchPlaceholder} />
+        {/* Search and the installed/available switch stay visible; the category axis folds behind the
+            shared filter trigger and its active chip is rendered by the canonical page toolbar. */}
+        <ControlSurfaceToolbar
+          search={<RegisterSearch value={query} onChange={setQuery} placeholder={t.plugins.searchPlaceholder} label={t.plugins.searchPlaceholder} />}
+          filters={[categoryField]}
+        >
           <Segmented variant="line" value={view} onChange={(v) => { setView(v as 'installed' | 'available'); setCategory('all'); }} options={viewOptions} aria-label={t.plugins.tabInstalled} />
           <HelpTip>{t.help.pluginsManage}</HelpTip>
-          <PageFilters fields={[categoryField]} />
-        </SettingsToolbar>
-        {/* The chips are their own line under the row, not part of it: the toolbar sits in the shell above
-            this surface, so they render at the top of the section body — directly beneath it either way,
-            and without making the row reflow every time a category is picked. */}
-        <PageFilterChips fields={[categoryField]} />
+        </ControlSurfaceToolbar>
 
         {view === 'installed' ? (
           installed.length === 0 ? <SettingsState><EmptyState title={t.plugins.empty} /></SettingsState>

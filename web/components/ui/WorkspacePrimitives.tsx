@@ -4,6 +4,7 @@ import { type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { SpatialWorkspaceHero, WorkspaceHero, WorkspaceMetric, type SpatialWorkspaceHeroProps } from './WorkspaceHero';
 import { WorkspaceShell, type SpatialDeckSection } from './WorkspaceShell';
+import type { PageToolbarProps } from './PageToolbar';
 import { Modal, ModalBody } from './Modal';
 
 // The hero, its metric and the page shell live in their own modules so the control deck can mount them
@@ -44,6 +45,7 @@ export interface SpatialWorkspaceLayoutProps {
     onChange: (id: string) => void;
     ariaLabel: string;
   };
+  toolbar?: PageToolbarProps;
   children: ReactNode;
   className?: string;
 }
@@ -51,10 +53,10 @@ export interface SpatialWorkspaceLayoutProps {
 /** The register shell, kept under its pre-unification name: eleven plugin bundles across two
  *  repositories mount it, and the plugin API version is a compatibility ceiling that cannot express a
  *  removal. A thin alias onto WorkspaceShell's `register` variant. */
-export function SpatialWorkspaceLayout({ hero, navigation, children, className = '' }: SpatialWorkspaceLayoutProps) {
+export function SpatialWorkspaceLayout({ hero, navigation, toolbar, children, className = '' }: SpatialWorkspaceLayoutProps) {
   const { metrics, mascotState = 'idle', ...heroProps } = hero;
   return (
-    <WorkspaceShell variant="register" className={className} hero={{ ...heroProps, mascot: mascotState, metrics }} navigation={navigation}>
+    <WorkspaceShell variant="register" className={className} hero={{ ...heroProps, mascot: mascotState, metrics }} navigation={navigation} toolbar={toolbar}>
       {children}
     </WorkspaceShell>
   );
