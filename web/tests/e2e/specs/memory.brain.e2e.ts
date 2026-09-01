@@ -31,7 +31,7 @@ const categories = Array.from({ length: 6 }, (_, index) => ({
   created_at: '2026-09-01 08:00:00',
 }));
 
-test('the brain renders every memory on a scrollable, readable canvas', async ({ app, seed }, testInfo) => {
+test('the brain renders every memory on one responsive canvas with drawer-only detail', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   test.setTimeout(120_000);
   await seed.response('memory', memories);
@@ -51,12 +51,14 @@ test('the brain renders every memory on a scrollable, readable canvas', async ({
     scrollWidth: element.scrollWidth,
     scrollHeight: element.scrollHeight,
   }));
-  expect(geometry.scrollWidth).toBeGreaterThan(geometry.clientWidth);
-  expect(geometry.scrollHeight).toBeGreaterThanOrEqual(geometry.clientHeight);
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth + 1);
+  expect(geometry.scrollHeight).toBeLessThanOrEqual(geometry.clientHeight + 1);
 
   const selectedLabel = await leaves.first().getAttribute('aria-label');
   await leaves.first().click();
   await expect(app.locator('[data-testid="memory-node-label"]')).toHaveText(selectedLabel ?? '');
+  await expect(app.locator('.overlay-layer-drawer')).toHaveCount(1);
+  await expect(app.locator('.brain-map aside')).toHaveCount(0);
   expect(Number(await leaves.nth(1).getAttribute('fill-opacity'))).toBeGreaterThanOrEqual(0.4);
 
   await app.setViewportSize({ width: 390, height: 844 });

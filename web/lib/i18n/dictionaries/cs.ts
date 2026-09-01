@@ -1083,13 +1083,9 @@ export const cs = {
     viewList: 'Seznam',
     // Neuronový mozek paměti
     brainCore: 'Paměťový kortex',
-    brainCoreDesc: 'Střed vaší paměti — odsud vychází vše, co si asistent trvale pamatuje.',
     brainEmpty: 'Zatím není co mapovat.',
     brainEmptyHint: 'S přibývajícími vzpomínkami se zde rozsvítí neuronová mapa.',
-    brainSelectHint: 'Vyberte uzel a prohlédněte si ho.',
     brainCategoryCount: '{n} vzpomínek',
-    brainDetailCategory: 'Kategorie',
-    brainDetailMemory: 'Vzpomínka',
   },
   pills: {
     showMore: "+{n} dalších",

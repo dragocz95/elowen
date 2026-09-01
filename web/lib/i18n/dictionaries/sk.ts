@@ -1078,13 +1078,9 @@ export const sk = {
     viewList: 'Zoznam',
     // Neural memory brain
     brainCore: 'Pamäťový kortex',
-    brainCoreDesc: 'Stred vašej pamäte — odtiaľto vychádza všetko, čo si asistent trvalo pamätá.',
     brainEmpty: 'Zatiaľ nie je čo mapovať.',
     brainEmptyHint: 'S pribúdajúcimi spomienkami sa tu rozsvieti neuronová mapa.',
-    brainSelectHint: 'Vyberte uzol a prezrite si ho.',
     brainCategoryCount: '{n} spomienok',
-    brainDetailCategory: 'Kategória',
-    brainDetailMemory: 'Spomienka',
   },
   pills: {
     showMore: "+{n} ďalších",

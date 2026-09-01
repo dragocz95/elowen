@@ -1104,13 +1104,9 @@ export const en = {
     viewList: 'List',
     // Neural memory brain
     brainCore: 'Memory cortex',
-    brainCoreDesc: 'The center of your memory — everything the assistant durably knows radiates from here.',
     brainEmpty: 'Nothing to map yet.',
     brainEmptyHint: 'As memories accumulate, a neural map lights up here.',
-    brainSelectHint: 'Select a node to inspect it.',
     brainCategoryCount: '{n} memories',
-    brainDetailCategory: 'Category',
-    brainDetailMemory: 'Memory',
   },
   pills: {
     showMore: "+{n} more",

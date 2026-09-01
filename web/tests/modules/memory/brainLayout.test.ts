@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBrainGraph, isInsideBrain, MIN_NODE_GAP, neighborIds } from '../../../modules/memory/brainLayout';
+import { buildBrainGraph, isCircleInsideBrain, isInsideBrain, MIN_NODE_GAP, neighborIds } from '../../../modules/memory/brainLayout';
 import type { Memory, MemoryCategory } from '../../../lib/types';
 
 const mem = (over: Partial<Memory> = {}): Memory => ({
@@ -46,6 +46,9 @@ describe('buildBrainGraph', () => {
       ...first.hubs.map((hub) => ({ ...hub, radius: hub.size / 2 })),
       ...first.leaves.map((leaf) => ({ ...leaf, radius: 4 })),
     ];
+    for (const circle of circles) {
+      expect(isCircleInsideBrain(circle.x, circle.y, circle.radius, first.width, first.height)).toBe(true);
+    }
     let minimumGap = Number.POSITIVE_INFINITY;
     for (let i = 0; i < circles.length; i += 1) {
       for (let j = i + 1; j < circles.length; j += 1) {

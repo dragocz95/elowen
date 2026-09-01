@@ -6,23 +6,31 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const MIN_NODE_SPACING = 14;
 export const MIN_NODE_GAP = 6;
 const MIN_CANVAS_WIDTH = 960;
-const CANVAS_ASPECT = 1.6;
+const CANVAS_ASPECT = 1037 / 733;
 const HUB_MIN_PX = 26;
 const HUB_MAX_PX = 48;
 
-const BRAIN_FIELDS: ReadonlyArray<{ cx: number; cy: number; rx: number; ry: number }> = [
-  { cx: 33, cy: 37, rx: 15, ry: 17 },
-  { cx: 48, cy: 33, rx: 19, ry: 18 },
-  { cx: 65, cy: 39, rx: 16, ry: 17 },
-  { cx: 41, cy: 55, rx: 18, ry: 17 },
-  { cx: 61, cy: 57, rx: 15, ry: 15 },
-  { cx: 53, cy: 74, rx: 10, ry: 9 },
+interface BrainSilhouetteSlice { y: number; minX: number; maxX: number }
+
+// Normalized outer bounds of neural-brain-map.png. The map asset is a deterministic crop of the original
+// artwork, so the brain can fill the card without a CSS zoom while every node still shares its coordinates.
+const BRAIN_SILHOUETTE: ReadonlyArray<BrainSilhouetteSlice> = [
+  { y: 9, minX: 29, maxX: 77 },
+  { y: 17, minX: 21, maxX: 84 },
+  { y: 27, minX: 15, maxX: 90 },
+  { y: 40, minX: 10, maxX: 94 },
+  { y: 50, minX: 8, maxX: 90 },
+  { y: 60, minX: 10, maxX: 76 },
+  { y: 71, minX: 13, maxX: 65 },
+  { y: 78, minX: 18, maxX: 53 },
+  { y: 86, minX: 26, maxX: 47 },
+  { y: 89, minX: 34, maxX: 42 },
 ];
 
 type BrainNodeKind = 'core' | 'category' | 'memory';
 interface NodeBase { id: string; kind: BrainNodeKind; x: number; y: number; color: string }
 interface CoreNode extends NodeBase { kind: 'core'; total: number }
-export interface CategoryNode extends NodeBase {
+interface CategoryNode extends NodeBase {
   kind: 'category';
   category: MemoryCategory;
   label: string;
@@ -56,16 +64,45 @@ function canvasSize(memoryCount: number, categoryCount: number): { width: number
   return { width, height: Math.ceil((width / CANVAS_ASPECT) / 16) * 16 };
 }
 
+function silhouetteBounds(normalizedY: number): { minX: number; maxX: number } | null {
+  const first = BRAIN_SILHOUETTE[0]!;
+  const last = BRAIN_SILHOUETTE.at(-1)!;
+  if (normalizedY < first.y || normalizedY > last.y) return null;
+  for (let index = 1; index < BRAIN_SILHOUETTE.length; index += 1) {
+    const upper = BRAIN_SILHOUETTE[index]!;
+    if (normalizedY > upper.y) continue;
+    const lower = BRAIN_SILHOUETTE[index - 1]!;
+    const progress = (normalizedY - lower.y) / (upper.y - lower.y);
+    return {
+      minX: lower.minX + (upper.minX - lower.minX) * progress,
+      maxX: lower.maxX + (upper.maxX - lower.maxX) * progress,
+    };
+  }
+  return { minX: last.minX, maxX: last.maxX };
+}
+
 /** The silhouette is defined in normalized coordinates but evaluated in virtual-canvas pixels, so growing
- * the canvas adds room without stretching or flattening the brain on narrow viewports. */
-export function isInsideBrain(x: number, y: number, width: number, height: number): boolean {
+ * the graph adds placement room while its responsive SVG still fits the available page width. */
+function isInsideBrainInset(x: number, y: number, width: number, height: number, insetPx: number): boolean {
   const nx = (x / width) * 100;
   const ny = (y / height) * 100;
-  return BRAIN_FIELDS.some(({ cx, cy, rx, ry }) => {
-    const dx = (nx - cx) / rx;
-    const dy = (ny - cy) / ry;
-    return dx * dx + dy * dy <= 1;
-  });
+  const insetX = (insetPx / width) * 100;
+  const insetY = (insetPx / height) * 100;
+  const current = silhouetteBounds(ny);
+  const above = silhouetteBounds(ny - insetY);
+  const below = silhouetteBounds(ny + insetY);
+  if (!current || !above || !below) return false;
+  const minX = Math.max(current.minX, above.minX, below.minX) + insetX;
+  const maxX = Math.min(current.maxX, above.maxX, below.maxX) - insetX;
+  return nx >= minX && nx <= maxX;
+}
+
+export function isInsideBrain(x: number, y: number, width: number, height: number): boolean {
+  return isInsideBrainInset(x, y, width, height, 0);
+}
+
+export function isCircleInsideBrain(x: number, y: number, radius: number, width: number, height: number): boolean {
+  return isInsideBrainInset(x, y, width, height, radius);
 }
 
 function clampToBrainShape(
@@ -75,14 +112,15 @@ function clampToBrainShape(
   attractorY: number,
   width: number,
   height: number,
+  insetPx: number,
 ): { x: number; y: number } {
-  if (isInsideBrain(x, y, width, height)) return { x, y };
+  if (isInsideBrainInset(x, y, width, height, insetPx)) return { x, y };
   let nx = x;
   let ny = y;
   for (let i = 0; i < 72; i += 1) {
     nx = attractorX + (nx - attractorX) * 0.92;
     ny = attractorY + (ny - attractorY) * 0.92;
-    if (isInsideBrain(nx, ny, width, height)) return { x: nx, y: ny };
+    if (isInsideBrainInset(nx, ny, width, height, insetPx)) return { x: nx, y: ny };
   }
   return { x: attractorX, y: attractorY };
 }
@@ -127,6 +165,7 @@ function hubPosition(
       core.y,
       width,
       height,
+      nodeRadius + 8,
     );
     if (farEnough({ ...candidate, radius: nodeRadius }, placed)) return candidate;
   }
@@ -156,6 +195,7 @@ function leafPosition(
       attractor.y,
       width,
       height,
+      10,
     );
     if (farEnough({ ...candidate, radius: 4 }, placed)) return candidate;
   }
@@ -174,6 +214,7 @@ function leafPosition(
       core.y,
       width,
       height,
+      10,
     );
     if (farEnough({ ...candidate, radius: 4 }, placed)) return candidate;
   }

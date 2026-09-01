@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { LanguageProvider } from '../../../lib/i18n';
 import type { Memory } from '../../../lib/types';
 import { MemoryBrainMap } from '../../../modules/memory/MemoryBrainMap';
@@ -19,6 +19,19 @@ describe('MemoryBrainMap', () => {
     expect(leaves.every((leaf) => leaf.tagName.toLowerCase() === 'circle')).toBe(true);
     expect(screen.getAllByRole('button').filter((button) => button.getAttribute('tabindex') === '0')).toHaveLength(1);
     expect(screen.queryByText(/not shown/i)).toBeNull();
+  });
+
+  it('fits the full graph without an inner scroller and delegates memory detail to the page drawer', () => {
+    const onSelectMemory = vi.fn();
+    render(<LanguageProvider><MemoryBrainMap memories={[memory(1), memory(2)]} categories={[]} onSelectMemory={onSelectMemory} /></LanguageProvider>);
+
+    expect(screen.getByTestId('brain-viewport')).toHaveClass('overflow-hidden');
+    expect(screen.getByTestId('brain-viewport')).not.toHaveClass('overflow-auto');
+    expect(screen.getByTestId('brain-canvas')).toHaveClass('h-full', 'w-full');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Memory node 1' }));
+    expect(onSelectMemory).toHaveBeenCalledWith(1);
+    expect(screen.getAllByText('Memory node 1')).toHaveLength(1);
   });
 
   it('keeps the selected memory label readable outside the dimmed point opacity', () => {
