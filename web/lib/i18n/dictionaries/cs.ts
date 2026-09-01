@@ -446,10 +446,10 @@ export const cs = {
     modelsSectionHint: 'Nastavte dostupné modely workerů a asistenta v aplikaci.',
     brainSectionHint: 'Spravujte identitu asistenta, propojené AI účty, poskytovatele a runtime limity.',
     memorySectionHint: 'Vyberte embedding a kategorizační modely používané sdílenou pamětí.',
-    dashboard: 'Dashboard',
+    dashboard: 'Rekapitulace',
     dashboardSectionHint: 'Nastavte personalizovaný dashboard: denní přehled, pozdrav a rychlé akce psané asistentem.',
     dashboardSection: {
-      title: 'Personalizace dashboardu',
+      title: 'Rekapitulace',
       recap: 'Personalizovaný přehled',
       recapDesc: 'Zobrazit každému uživateli jeho poslední konverzace a včerejšek pod polem zprávy.',
       digest: 'AI přehled',

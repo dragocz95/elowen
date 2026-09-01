@@ -113,6 +113,10 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
         label={t.settings.dashboardSection.digest}
         description={t.settings.dashboardSection.digestDesc}
         icon={Sparkles}
+        // Three trailing values (state badge, regenerate action, switch) do not share a phone's value
+        // column: an `inline` record keeps them on ONE non-wrapping line at every width, so the badge and
+        // the button overran the label. Same shape and same declaration as the embedding provider record.
+        trailingLayout="stack"
         status={statusBadge}
         actions={
           <Button variant="ghost" size="sm" icon={RefreshCw} disabled={regenerating || !digestEnabled} onClick={onRegenerate}>

@@ -248,11 +248,28 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    trailing cell and nothing else: the ceiling only has to hold where the record compresses, and applying
    it to every button in the app would inflate toolbars a finger reaches perfectly well already. */
 @media (pointer: coarse) {
-  .settings-row__trailing button,
+  /* `:not([role='switch'])` is load-bearing: a Radix switch IS a `<button>`, so the generic rule below
+     would raise its box before the switch's own rule is ever consulted. */
+  .settings-row__trailing button:not([role='switch']),
   .settings-row__trailing [role='button'],
   .settings-row__trailing [role='combobox'],
-  .settings-row__trailing [role='radio'],
-  .settings-row__trailing [role='switch'] { min-height: 2.75rem; }
+  .settings-row__trailing [role='radio'] { min-height: 2.75rem; }
+  /* A SWITCH IS THE ONE CONTROL WHOSE SHAPE CARRIES ITS MEANING. Its track is 36x20 and fully rounded, so
+     raising the box itself to 44px does not enlarge a target — it inflates the track into an orange blob
+     with the thumb adrift in the middle, which is what every toggle in Settings looked like on a phone.
+     The finger gets the same 44px through a centered overlay that reaches past the track, leaving the
+     rendered switch its designed proportions. */
+  .settings-row__trailing [role='switch'] { position: relative; }
+  .settings-row__trailing [role='switch']::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: var(--touch-target);
+    min-width: var(--touch-target);
+    transform: translate(-50%, -50%);
+  }
 }
 
 .settings-toolbar { position: sticky; top: 0; z-index: var(--z-sticky); border-radius: var(--radius-lg); background: linear-gradient(180deg, var(--color-document) 88%, transparent); }

@@ -462,10 +462,10 @@ export const en = {
     modelsSectionHint: 'Control which worker and assistant models are available in the application.',
     brainSectionHint: 'Manage the assistant identity, connected AI accounts, providers and runtime limits.',
     memorySectionHint: 'Choose the embedding and categorization models used by shared memory.',
-    dashboard: 'Dashboard',
+    dashboard: 'Recap',
     dashboardSectionHint: 'Control the personalized dashboard: the daily digest, agent-written greeting and quick actions.',
     dashboardSection: {
-      title: 'Dashboard personalization',
+      title: 'Recap',
       recap: 'Personalized recap',
       recapDesc: 'Show each user their recent conversations and yesterday under the message box.',
       digest: 'AI digest',

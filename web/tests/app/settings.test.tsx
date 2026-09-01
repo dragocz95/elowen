@@ -65,7 +65,7 @@ describe('SettingsPage', () => {
     expect(rail.querySelectorAll('.segmented__option > svg')).toHaveLength(7);
     expect(screen.queryByRole('combobox', { name: 'Settings sections' })).toBeNull();
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Dashboard', 'Data',
+      'System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Recap', 'Data',
     ]);
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
     // The dials are a lazy chunk, so the reading lands a tick after the section itself. Spaced before
