@@ -38,6 +38,7 @@ import { BrainStore } from '../store/brainStore.js';
 import { UsageOriginStore, billSettledTurn } from '../store/usageOriginStore.js';
 import { MemoryStore } from '../store/memoryStore.js';
 import { DashDigestStore } from '../store/dashDigestStore.js';
+import { piInferenceClient } from '../brain/piInference.js';
 import { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
 import { MemoryCategorizer } from '../brain/memoryCategorizer.js';
 import type { InferenceClient } from '../inference/types.js';
@@ -470,15 +471,18 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     categories: memoryCategoryStore, memories: memoryStore, inference: memoryModelInference, logger: log,
   });
   // The dashboard digest model (Settings → Dashboard). Its own block so the operator can point the
-  // daily digest at a different (usually cheap) model; unset, it deliberately falls back to the
-  // memory/categorization model rather than duplicating that configuration. Null → digest unavailable
-  // (the dashboard then keeps its deterministic layer only).
+  // daily digest at a different model; unset, it deliberately falls back to the memory/categorization
+  // route rather than duplicating that configuration. Runs through piInferenceClient — the brain's own
+  // provider stack — so OAuth accounts (Claude, Codex) work here exactly like API-key endpoints do;
+  // the RelayClient path could never authenticate those (Filip's explicit ask, 1. 9. 2026).
+  // Null → digest unavailable (the dashboard then keeps its deterministic layer only).
   const dashDigestInference = (): InferenceClient | null => {
-    const block = config.get().dashboard.digest;
-    if (!block.providerId || !block.model) return memoryModelInference();
-    const provider = resolveProvider(block.providerId);
-    if (!provider || !provider.apiKey) return memoryModelInference();
-    return new RelayClient({ baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: block.model });
+    const dash = config.get().dashboard.digest;
+    const cat = config.get().categorization;
+    const route = dash.providerId && dash.model
+      ? { providerId: dash.providerId, model: dash.model }
+      : cat.providerId && cat.model ? { providerId: cat.providerId, model: cat.model } : null;
+    return piInferenceClient({ runtime: brainRuntime, config: brainConfig, route: () => route });
   };
   // ONE shared plugin registry for the whole daemon (brain chat + platforms):
   // loading is lazy (plugins load on first use, not at boot), and a plugin toggle invalidates every consumer at once —

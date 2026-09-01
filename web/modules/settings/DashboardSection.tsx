@@ -79,10 +79,10 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
 
   if (!config) return <LoadingState />;
 
-  // OAuth accounts (Claude/Codex) carry no API key, so the digest's background RelayClient cannot
-  // authenticate with them — offering one would configure a digest that silently never generates.
-  // Same exclusion the embedding picker applies, for the same reason.
-  const providers = (config.brain?.providers ?? []).filter((p) => !p.type.startsWith('oauth-'));
+  // Every brain provider qualifies, OAuth accounts included: since 1. 9. 2026 the digest runs through
+  // the brain's own provider stack (piInferenceClient), which authenticates Claude/Codex accounts the
+  // same way live conversations do. The earlier oauth exclusion guarded the RelayClient-only path.
+  const providers = config.brain?.providers ?? [];
   const digestStatus = recap.data?.digest?.status;
   const statusBadge = digestStatus === 'ready'
     ? <Badge tone="accent">{t.settings.dashboardSection.statusReady}</Badge>
