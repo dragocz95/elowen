@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { AdaptiveBrandMark } from '../../components/ui/AdaptiveBrandMark';
 
-export interface ProviderMeta { id: string; label: string; color: string; binHint: string; argsHint: string; icon: string; /** Provider has no skip-permissions command-line flag (its tools either run without confirmation or auto-approval is set in the tool's own config), so the toggle is a no-op and hidden. */ noBypassFlag?: boolean; /** Runs inside the Elowen daemon (embedded brain) — no binary/args to configure. */ embedded?: boolean }
+export interface ProviderMeta { id: string; label: string; color: string; binHint: string; argsHint: string; icon: string; /** A single-color mark rendered through currentColor so local surface contrast is automatic. */ monochrome?: boolean; /** Provider has no skip-permissions command-line flag (its tools either run without confirmation or auto-approval is set in the tool's own config), so the toggle is a no-op and hidden. */ noBypassFlag?: boolean; /** Runs inside the Elowen daemon (embedded brain) — no binary/args to configure. */ embedded?: boolean }
 
 const ICON_PATHS = ['favicon.ico', 'favicon.png', 'favicon.svg'] as const;
 
@@ -54,10 +55,27 @@ export function DomainFavicon({ baseUrl, fallback, size = 15 }: { baseUrl?: stri
 export const PROVIDERS: ProviderMeta[] = [
   { id: 'claude-code', label: 'Claude Code', color: '#d97757', binHint: 'claude', argsHint: '--permission-mode acceptEdits', icon: '/providers/anthropic.png' },
   { id: 'opencode', label: 'OpenCode', color: '#7c8cff', binHint: 'opencode', argsHint: '--pure', icon: '/providers/opencode.png' },
-  { id: 'codex', label: 'Codex', color: '#ededed', binHint: 'codex', argsHint: '--full-auto', icon: '/providers/openai.svg' },
+  { id: 'codex', label: 'Codex', color: '#ededed', binHint: 'codex', argsHint: '--full-auto', icon: '/providers/openai.svg', monochrome: true },
   { id: 'kilo', label: 'Kilo Code', color: '#c2e812', binHint: 'kilo', argsHint: '', icon: '/providers/kilo.svg', noBypassFlag: true },
   { id: 'elowen', label: 'Elowen AI', color: '#3b82f6', binHint: '', argsHint: '', icon: '/icon.png', embedded: true },
 ];
+
+export function ProviderIcon({ meta, alt = '', size = 14, className = '' }: {
+  meta: ProviderMeta;
+  alt?: string;
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <AdaptiveBrandMark
+      src={meta.icon}
+      size={size}
+      monochrome={meta.monochrome}
+      alt={alt}
+      className={className}
+    />
+  );
+}
 
 export function ProviderLogo({ meta, alt, size = 36 }: { meta: ProviderMeta; alt?: string; size?: number }) {
   return (
@@ -65,8 +83,7 @@ export function ProviderLogo({ meta, alt, size = 36 }: { meta: ProviderMeta; alt
       className="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted"
       style={{ width: size, height: size }}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={meta.icon} alt={alt ?? meta.label} width={size * 0.62} height={size * 0.62} style={{ objectFit: 'contain' }} />
+      <ProviderIcon meta={meta} alt={alt ?? meta.label} size={size * 0.62} />
     </span>
   );
 }

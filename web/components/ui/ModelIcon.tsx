@@ -2,13 +2,15 @@
 import { Cpu } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { modelIconSlug } from '../../lib/modelIcon';
+import { AdaptiveBrandMark } from './AdaptiveBrandMark';
 
 // lobe-icons ships this one colored mark as WebP rather than SVG. Knowing its real primary format
 // avoids a guaranteed 404 before the old onError fallback could swap extensions.
 const WEBP_PRIMARY = new Set(['xiaomimimo-color']);
 
 /** Brand icon for a model, resolved from its name/exec string via lobe-icons.
- *  Mono (currentColor) variants are inverted so they read on the OLED surface. */
+ *  Monochrome variants use a currentColor mask, so the same asset reads on every local surface rather than
+ *  guessing from the root skin and disappearing inside a light popover or a dark rail. */
 export function ModelIcon({ name, size = 20, className = '' }: { name?: string | null; size?: number; className?: string }) {
   const icon = modelIconSlug(name);
   const [fallback, setFallback] = useState(false);
@@ -25,15 +27,16 @@ export function ModelIcon({ name, size = 20, className = '' }: { name?: string |
 
   if (!icon || failed) return <Cpu size={size} className={`text-muted-foreground ${className}`} aria-hidden />;
 
-  const ext = WEBP_PRIMARY.has(icon.slug) || (icon.color && fallback) ? 'webp' : 'svg';
+  if (!icon.color) {
+    return <AdaptiveBrandMark src={`/models/${icon.slug}.svg`} size={size} monochrome className={className} />;
+  }
+
+  const ext = WEBP_PRIMARY.has(icon.slug) || fallback ? 'webp' : 'svg';
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
+    <AdaptiveBrandMark
       src={`/models/${icon.slug}.${ext}`}
-      alt=""
-      className={`shrink-0 object-contain ${icon.color ? '' : 'invert'} ${className}`}
-      style={{ width: size, height: size }}
-      aria-hidden
+      size={size}
+      className={className}
       onError={onError}
     />
   );

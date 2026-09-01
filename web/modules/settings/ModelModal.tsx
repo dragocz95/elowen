@@ -8,7 +8,7 @@ import { Field } from '../../components/ui/Field';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { useTranslation } from '../../lib/i18n';
 import { type ProviderId, execProvider, execModel, buildExec } from '../../lib/modelProvider';
-import { providerMeta } from './providers';
+import { ProviderIcon, providerMeta } from './providers';
 
 type Choice = ProviderId | 'other';
 
@@ -75,8 +75,7 @@ export function ModelModal({ initial, existingExecs, activeProviders, onClose, o
                   className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 transition-colors ${active ? 'border-primary bg-primary/[0.07]' : 'border-border bg-card hover:border-border-strong'}`}
                 >
                   {meta
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    ? <img src={meta.icon} alt="" width={18} height={18} style={{ objectFit: 'contain' }} aria-hidden />
+                    ? <ProviderIcon meta={meta} size={18} />
                     : <Cpu size={18} className="text-muted-foreground" aria-hidden />}
                   <span className="text-[11px] text-foreground">{meta?.label ?? t.settings.providerOther}</span>
                 </button>

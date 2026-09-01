@@ -6,7 +6,7 @@ import { useAssignProject, useUpdateUser } from '../../lib/mutations';
 import type { Project, User as ElowenUser } from '../../lib/types';
 import { allModels } from '../../lib/execPresets';
 import { brainModelId, brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
-import { PROVIDERS, providerMeta } from '../settings/providers';
+import { PROVIDERS, ProviderIcon, providerMeta } from '../settings/providers';
 import { useToast } from '../../components/ui/Toast';
 import { ElowenApiError } from '../../lib/elowenClient';
 import { Input } from '../../components/ui/Input';
@@ -28,10 +28,7 @@ import { PluginUserPanels } from './PluginUserPanels';
 function ProviderGroupIcon({ provider }: { provider: ProviderId }) {
   const meta = providerMeta(provider);
   if (!meta) return null;
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={meta.icon} alt="" width={13} height={13} style={{ objectFit: 'contain' }} aria-hidden />
-  );
+  return <ProviderIcon meta={meta} size={13} />;
 }
 
 /** Admin-only: assign a user to projects (the access boundary for non-admins). A compact summary

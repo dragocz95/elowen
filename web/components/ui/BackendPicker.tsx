@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { ModelIcon } from './ModelIcon';
 import { type ManageSelectionItem } from './ManageSelectionModal';
 import { RowPicker } from './RowPicker';
-import { providerMeta } from '../../modules/settings/providers';
+import { ProviderIcon, providerMeta } from '../../modules/settings/providers';
 import { execProvider, brainModelId, SOURCE_BADGE, type ProviderId } from '../../lib/modelProvider';
 import { useBrainModels, useConfig } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
@@ -12,10 +12,7 @@ import { useTranslation } from '../../lib/i18n';
 function WorkerGroupIcon({ provider }: { provider: ProviderId }) {
   const meta = providerMeta(provider);
   if (!meta) return null;
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={meta.icon} alt="" width={14} height={14} style={{ objectFit: 'contain' }} aria-hidden />
-  );
+  return <ProviderIcon meta={meta} size={14} />;
 }
 
 /** Per-role reasoning backend picker: a compact row trigger + a Manage modal that reuses the
