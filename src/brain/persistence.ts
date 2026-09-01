@@ -47,6 +47,11 @@ function durableGeneratedMessage(message: unknown, role: string, provider: strin
 
 export function projectEvent(store: BrainStore, sessionId: string, event: AgentSessionEvent, imagesDir?: string, turnDurationMs?: number | null): string | undefined {
   if (event.type !== 'agent_end') return undefined;
+  // The durable session row owns persistence. PI may finish dispatching a queued terminal event after its
+  // live session was disposed, while a delete or an unspoken-session cleanup has already removed that row.
+  // Such an event has no conversation to belong to and must not create orphan message rows. Checking the
+  // owner explicitly also keeps BrainStore's strict usage-epoch lookup intact for every real write.
+  if (!store.getSession(sessionId)) return undefined;
   // `null` explicitly means this agent_end is an intermediate retry/recovery prefix. Undefined keeps the
   // backwards-compatible direct-call behavior of reading timing off the event itself.
   const settledDurationMs = turnDurationMs === undefined
@@ -112,9 +117,11 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
 function projectPendingMessage(store: BrainStore, sessionId: string, message: unknown, imagesDir?: string): void {
   const role = (message as { role?: string }).role ?? 'assistant';
   if (role !== 'assistant' && role !== 'toolResult') return;
+  const durableSession = store.getSession(sessionId);
+  if (!durableSession) return;
   // This row and the one `agent_end` writes later hold the same message, so both externalize it. Naming
   // the file after its own bytes is what keeps that from doubling: the second write finds the file there.
-  const provider = store.getSession(sessionId)?.provider ?? '';
+  const provider = durableSession.provider ?? '';
   const content = durableGeneratedMessage(message, role, provider, imagesDir);
   store.appendPendingMessage({ id: randomUUID(), sessionId, role, content });
 }
@@ -455,6 +462,7 @@ export function persistCompaction(
   sessionId: string,
   options: { omitTrailingOverflowError?: boolean } = {},
 ): void {
+  if (!store.getSession(sessionId)) return;
   let messages = session.messages as { role?: string; stopReason?: string }[];
   if (options.omitTrailingOverflowError) {
     const last = messages.at(-1);

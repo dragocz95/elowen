@@ -4,8 +4,13 @@ import type { ExternalIdentityInput, ExternalIdentityResult, UserStore } from '.
 import type { UserProjectStore } from '../store/userProjectStore.js';
 import type { UserSettingStore } from '../store/userSettingStore.js';
 import { logger } from '../shared/logger.js';
+import { PLATFORM_IDENTITIES, type PlatformIdentityDescriptor } from '../shared/platformIdentity.js';
 
-const PROVIDER = 'msteams';
+const MICROSOFT_IDENTITY = (PLATFORM_IDENTITIES as readonly PlatformIdentityDescriptor[])
+  .find((descriptor) => descriptor.bootstrap?.verifiedEmailUnique);
+if (!MICROSOFT_IDENTITY?.bootstrap) throw new Error('Microsoft provisioning requires an authenticated platform identity descriptor');
+export const MICROSOFT_EXTERNAL_PROVIDER = MICROSOFT_IDENTITY.bootstrap.externalProvider;
+const MICROSOFT_PLUGIN = MICROSOFT_IDENTITY.platform;
 
 export interface MicrosoftProvisioningCatalogs {
   models(): Promise<readonly string[]>;
@@ -76,7 +81,7 @@ export class MicrosoftAccountProvisioner {
   }
 
   private config(): MicrosoftProvisioningConfig {
-    const raw = this.d.config.pluginConfig(PROVIDER);
+    const raw = this.d.config.pluginConfig(MICROSOFT_PLUGIN);
     return {
       defaultProjects: projectIds(raw.ssoDefaultProjects),
       defaultModels: stringList(raw.ssoDefaultModels),

@@ -67,6 +67,10 @@
      three states, and borrowing `primary` or `chart-*` for them would say something they do not mean. */
   --color-success: #32c986;
   --color-success-foreground: var(--color-primary-foreground);
+  /* Toasts are outcome banners, not tiny status marks. GitHub's Primer success green gives them the
+     saturated diff/merge signal Filip expects while keeping white body text above AA contrast. */
+  --color-toast-success: #1f883d;
+  --color-toast-success-foreground: #ffffff;
   --color-warning: #edae49;
   --color-info: #62a8ea;
 

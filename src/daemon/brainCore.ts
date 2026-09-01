@@ -68,7 +68,7 @@ import { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import { predictsRunnerDispatch } from '../subagent/dispatch.js';
 import { setWorkflowLivenessProbe, workflowEngineProbeFrom } from '../brain/service/statusService.js';
 import { resolvePolicy } from '../plugins/policy.js';
-import { MicrosoftAccountProvisioner } from '../auth/msProvisioning.js';
+import { MICROSOFT_EXTERNAL_PROVIDER, MicrosoftAccountProvisioner } from '../auth/msProvisioning.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -622,7 +622,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             } : null;
           },
           linkOrProvision: async (input) => {
-            const result = input.provider === 'msteams'
+            const result = input.provider === MICROSOFT_EXTERNAL_PROVIDER
               ? await microsoftProvisioner.linkOrProvision(input)
               : users.linkExternalIdentity(input);
             return {
