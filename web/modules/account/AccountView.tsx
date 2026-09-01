@@ -2,7 +2,7 @@
 import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, SquareTerminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { ElowenApiError } from '../../lib/elowenClient';
+import { ElowenApiError, apiErrorMessage } from '../../lib/elowenClient';
 import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
 
 /** The platform links this form edits, keyed exactly like the daemon's `CliSettings`. */
@@ -216,19 +216,22 @@ export function AccountView() {
 
   // Picking an Elowen AI model writes ONLY model+modelProvider (the cli-settings PATCH merges, so
   // CliSection's other fields are untouched) and the daemon restarts a running brain on the new model.
-  // The picker hands back a `provider::model` key ('' = clear to the server default).
-  const applyElowen = (key: string) => {
-    const prev = elowenSel;
-    setElowenSel(key);
-    const sep = key.indexOf('::');
-    const provider = sep > -1 ? key.slice(0, sep) : '';
-    const model = sep > -1 ? key.slice(sep + 2) : '';
-    saveModel.mutate(
-      { model: key ? model : '', modelProvider: key ? provider : '' },
-      // Revert the optimistic highlight if the server rejects the pick, so it can't drift from state.
-      { onError: () => { setElowenSel(prev); toast(t.account.saveError, 'error'); } },
-    );
-  };
+  // The picker hands back a `provider::model` key ('' = clear to the server default). An immediate
+  // autosave keeps rapid selections serialized and gives the picker the same retryable status as its peers.
+  const modelSave = useAutoSaveStatus([elowenSel], async () => {
+    const sep = elowenSel.indexOf('::');
+    const provider = sep > -1 ? elowenSel.slice(0, sep) : '';
+    const model = sep > -1 ? elowenSel.slice(sep + 2) : '';
+    try {
+      const saved = await saveModel.mutateAsync({ model: elowenSel ? model : '', modelProvider: elowenSel ? provider : '' });
+      const canonical = saved.model ? `${saved.modelProvider ?? ''}::${saved.model}` : '';
+      if (canonical !== elowenSel) setElowenSel(canonical);
+    } catch (error) {
+      toast(apiErrorMessage(error), 'error');
+      throw error;
+    }
+  }, { ready: elowenSeeded, delay: 0 });
+  const applyElowen = (key: string) => setElowenSel(key);
 
   useEffect(() => {
     const supported = isPushSupported();
@@ -308,7 +311,7 @@ export function AccountView() {
   const profileFeedback = combineSaveFeedback(
     { status: profileSave.status, retry: profileSave.retry },
     { status: linksSave.status, retry: linksSave.retry },
-    { status: saveModel.isError ? 'error' : saveModel.isPending ? 'saving' : saveModel.isSuccess ? 'saved' : 'idle', retry: () => applyElowen(elowenSel) },
+    { status: modelSave.status, retry: modelSave.retry },
     // Plugin connectors in the Linked accounts drawer report here too — without this their save state
     // would be recorded and then read by nobody, since `profile` takes its feedback from this fold.
     sectionFeedback.profile ?? { status: 'idle' },

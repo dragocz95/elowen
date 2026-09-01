@@ -211,7 +211,6 @@ describe('SettingsPage', () => {
     expect(attempts).toBe(1);
 
     await act(async () => { failFirst?.(); });
-    await waitFor(() => expect(within(dialog).getByRole('radio', { name: '90 days' })).toHaveAttribute('aria-checked', 'true'));
     fireEvent.click(within(dialog).getByRole('radio', { name: '30 days' }));
     await waitFor(() => expect(attempts).toBe(2));
   });

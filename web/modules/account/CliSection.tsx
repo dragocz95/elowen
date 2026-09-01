@@ -261,7 +261,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         )}
       />
       {/* Permission rules are one more record of this card; the rule editor itself opens in a drawer. */}
-      <PermissionRulesCard />
+      <PermissionRulesCard onSaveState={onSaveState} />
       </SpatialGroup>
       <ConfirmDialog
         open={confirmYolo}

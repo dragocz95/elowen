@@ -63,7 +63,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
   useEffect(() => {
     if (config && !limitsSeeded) { setLimits(config.brain?.limits ?? BRAIN_LIMIT_DEFAULTS); setLimitsSeeded(true); }
   }, [config, limitsSeeded]);
-  const { status: limitsStatus, retry: retryLimits } = useAutoSaveStatus([limits], async () => {
+  const { status: limitsStatus, retry: retryLimits, flush: flushLimits } = useAutoSaveStatus([limits], async () => {
     if (!limits) return;
     try {
       const saved = await updateConfig.mutateAsync({ brain: { limits } });
@@ -105,7 +105,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
       setRuntimeSeeded(true);
     }
   }, [config, runtimeSeeded]);
-  const { status: runtimeStatus, retry: retryRuntime } = useAutoSaveStatus([runtime], async () => {
+  const { status: runtimeStatus, retry: retryRuntime, flush: flushRuntime } = useAutoSaveStatus([runtime], async () => {
     if (!runtime) return;
     try {
       // Tool loading owns its own explicit save. Omitting only those fields prevents this debounced editor
@@ -168,8 +168,8 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
           icon={Gauge}
           control={(
             <Slider
-              min={100} max={1000} step={100}
-              value={Math.min(1000, Math.max(100, Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200))}
+              min={1} max={1000} step={1}
+              value={Math.min(1000, Math.max(1, Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200))}
               onChange={(n) => setMaxSteps(String(n))}
               aria-label={t.brain.maxSteps}
               className="w-40"
@@ -218,6 +218,9 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
               applied={appliedLimits}
               onChange={(fn) => setLimits((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setLimitsOpen(false)}
+              status={limitsStatus}
+              retry={retryLimits}
+              flush={flushLimits}
             />
       ) : null}
       {runtime && runtimeOpen ? (
@@ -226,6 +229,9 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
               applied={appliedRuntime}
               onChange={(fn) => setRuntime((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setRuntimeOpen(false)}
+              status={runtimeStatus}
+              retry={retryRuntime}
+              flush={flushRuntime}
             />
       ) : null}
       {runtime && toolLoadingOpen ? (
@@ -247,6 +253,9 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
               applied={appliedRetention}
               onChange={(fn) => setRuntime((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setRetentionOpen(false)}
+              status={runtimeStatus}
+              retry={retryRuntime}
+              flush={flushRuntime}
             />
       ) : null}
     </>

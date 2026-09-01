@@ -115,6 +115,20 @@ describe('ManageSelectionModal', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('blocks header close, Escape and Cancel while an async save is pending', async () => {
+    let resolve!: () => void;
+    const onSave = vi.fn(() => new Promise<void>((done) => { resolve = done; }));
+    const { onClose } = mount({ onSave });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).not.toHaveBeenCalled();
+    resolve();
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
   it('shows the empty-selection hint in the footer when nothing is selected', () => {
     mount({ selected: new Set<string>(), emptySelectionHint: 'empty = everything allowed' });
     expect(screen.getByText('empty = everything allowed')).toBeInTheDocument();

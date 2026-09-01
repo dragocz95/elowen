@@ -126,11 +126,16 @@ describe('PermissionRulesCard', () => {
     expect(patches[0]).toEqual({ tools: { Write: 'ask' } });
   });
 
-  it('reconciles a phantom rule away when the save fails (refetch on error)', async () => {
+  it('keeps a failed edit visible and retries it from the shared status', async () => {
     const settings: PermissionSettings = { yolo: false, unattendedAsks: 'allow', tools: {}, bash: { 'git status*': 'allow' } };
+    let failed = true;
+    const patches: unknown[] = [];
     server.use(
       http.get('*/api/auth/me/permissions', () => HttpResponse.json(settings)),
-      http.patch('*/api/auth/me/permissions', () => new HttpResponse(null, { status: 500 })),
+      http.patch('*/api/auth/me/permissions', async ({ request }) => {
+        patches.push(await request.json());
+        return failed ? new HttpResponse(null, { status: 500 }) : HttpResponse.json(settings);
+      }),
     );
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><PermissionRulesCard /></ToastProvider></Wrapper>);
@@ -138,11 +143,12 @@ describe('PermissionRulesCard', () => {
 
     fireEvent.change(d.getByLabelText(en.cli.permPatternPlaceholder), { target: { value: 'npm run build*' } });
     fireEvent.click(d.getByRole('button', { name: en.cli.permAdd }));
-    // The optimistic row appears immediately...
     expect(await d.findByText('npm run build*')).toBeTruthy();
-    // ...then the failed save triggers a refetch that reseeds the list back to the server truth,
-    // so the non-persisted rule vanishes — no phantom left behind. The real server rule stays.
-    await waitFor(() => expect(d.queryByText('npm run build*')).toBeNull());
-    expect(d.getByText('git status*')).toBeTruthy();
+    const retry = await screen.findByRole('button', { name: en.common.retry });
+    failed = false;
+    fireEvent.click(retry);
+    await waitFor(() => expect(patches).toHaveLength(2));
+    expect(patches[1]).toEqual({ bash: { 'git status*': 'allow', 'npm run build*': 'allow' } });
+    expect(await screen.findByText(en.common.saved)).toBeInTheDocument();
   });
 });

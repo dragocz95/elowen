@@ -6,6 +6,8 @@ import { HelpTip } from '../../components/ui/HelpTip';
 import { Slider } from '../../components/ui/Slider';
 import { formatTokens } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
+import type { SaveStatus } from '../../lib/useAutoSaveStatus';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import type { BrainLimits } from '../../lib/types';
 
 /** Fallback for seeding the Limits form before the daemon's config arrives (it always sends real values). */
@@ -67,16 +69,21 @@ function toCanonicalValue(field: BrainLimitField, displayValue: number): number 
 
 /** Modal editor for operator-tunable brain limits. Edits flow straight back into the caller's state,
  *  which auto-saves through the shared status controller, so there is no Save button. */
-export function BrainLimitsModal({ limits, applied, onChange, onClose, presentation }: {
+export function BrainLimitsModal({ limits, applied, onChange, onClose, status = 'idle', retry, flush, presentation }: {
   limits: BrainLimits;
   /** Fields the daemon clamped on the last save, each carrying the value actually in force. A clamp used
    *  to be invisible here, which left the operator believing a refused value had taken effect. */
   applied?: Partial<BrainLimits>;
   onChange: (next: (cur: BrainLimits) => BrainLimits) => void;
   onClose: () => void;
+  status?: SaveStatus;
+  retry?: () => void;
+  flush?: () => void;
   presentation?: 'center' | 'drawer';
 }) {
   const { t } = useTranslation();
+  const closeDisabled = status === 'saving' || status === 'error';
+  const close = () => { flush?.(); onClose(); };
   /** A canonical value in the row's own display unit. Token counts are a 4-chars-per-token estimate
    *  already, so the fractional tail of an odd character budget is rounded away. */
   const displayLabel = (field: BrainLimitField, canonical: number): string => {
@@ -86,7 +93,7 @@ export function BrainLimitsModal({ limits, applied, onChange, onClose, presentat
     return String(value);
   };
   return (
-    <Modal title={t.brain.limits.title} description={t.brain.limits.hint} icon={SlidersHorizontal} size="md" onClose={onClose} presentation={presentation}>
+    <Modal title={t.brain.limits.title} description={t.brain.limits.hint} icon={SlidersHorizontal} size="md" onClose={close} closeDisabled={closeDisabled} presentation={presentation}>
       <ModalBody>
         <div className="flex flex-col divide-y divide-border">
           {BRAIN_LIMIT_FIELDS.map((field) => {
@@ -127,8 +134,8 @@ export function BrainLimitsModal({ limits, applied, onChange, onClose, presentat
           })}
         </div>
       </ModalBody>
-      <ModalFooter>
-        <Button variant="accent" onClick={onClose}>{t.common.done}</Button>
+      <ModalFooter status={<AutoSaveStatus status={status} onRetry={retry} />}>
+        <Button variant="accent" onClick={close} disabled={closeDisabled}>{t.common.done}</Button>
       </ModalFooter>
     </Modal>
   );

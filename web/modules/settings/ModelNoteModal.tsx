@@ -22,9 +22,10 @@ export function ModelNoteModal({ label, exec, initial, onClose, onSave }: {
   const { t } = useTranslation();
   const [note, setNote] = useState(initial);
   const { status, retry, flush } = useAutoSaveStatus([note], () => onSave(note.trim()));
+  const closeDisabled = status === 'saving' || status === 'error';
   const close = async () => { const finalStatus = await flush(); if (finalStatus !== 'error') onClose(); };
   return (
-    <Modal title={t.settings.modelNoteLabel} description={label} onClose={close} closeDisabled={status === 'saving'} size="md" icon={FileText}>
+    <Modal title={t.settings.modelNoteLabel} description={label} onClose={close} closeDisabled={closeDisabled} size="md" icon={FileText}>
       <ModalBody>
         <Field label={`${label} · ${exec}`} hint={t.help.modelNote}>
           <textarea
@@ -40,7 +41,7 @@ export function ModelNoteModal({ label, exec, initial, onClose, onSave }: {
         </Field>
       </ModalBody>
       <ModalFooter status={<AutoSaveStatus status={status} onRetry={retry} />}>
-        <Button variant="accent" onClick={close} disabled={status === 'saving'}>{t.common.done}</Button>
+        <Button variant="accent" onClick={close} disabled={closeDisabled}>{t.common.done}</Button>
       </ModalFooter>
     </Modal>
   );

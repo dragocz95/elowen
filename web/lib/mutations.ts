@@ -175,7 +175,13 @@ function invalidatePluginViews(qc: ReturnType<typeof useQueryClient>) {
 /** Install a registry plugin into the user plugin dir (enabled by default). Applies live via hot-reload. */
 export function useInstallPlugin() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { name: string; enable?: boolean; acknowledgeGrants?: string[] }) => elowenClient.installPlugin(v.name, v.enable ?? true, v.acknowledgeGrants), onSuccess: () => invalidatePluginViews(qc) });
+  return useMutation({
+    mutationFn: (v: { name: string; enable?: boolean; acknowledgeGrants?: string[] }) => elowenClient.installPlugin(v.name, v.enable ?? true, v.acknowledgeGrants),
+    onSuccess: () => invalidatePluginViews(qc),
+    // A grant refusal still leaves the downloaded plugin inert on disk. Refresh both views so cancelling
+    // the consent question reflects that committed, disabled install instead of leaving stale catalog data.
+    onError: (error) => { if ((error as { details?: { installed?: unknown } }).details?.installed === true) invalidatePluginViews(qc); },
+  });
 }
 /** Update an installed user plugin to the registry's newer version. */
 export function useUpdatePlugin() {

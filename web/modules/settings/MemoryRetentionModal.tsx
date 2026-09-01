@@ -7,6 +7,8 @@ import { Slider } from '../../components/ui/Slider';
 import { Toggle } from '../../components/ui/Toggle';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
+import type { SaveStatus } from '../../lib/useAutoSaveStatus';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import type { MemoryRetentionConfig, RuntimeConfig } from '../../lib/types';
 
 /** Fallback for seeding the retention block before the daemon's config arrives — mirrors the daemon's
@@ -35,16 +37,21 @@ const HALF_LIFE_RANGE: readonly [number, number] = [0, 90];
 /** Modal editor for memory auto-retention (the `runtime.memoryRetention` block, sibling of the Runtime
  *  limits editor). Edits flow straight back into the caller's state, which auto-saves through the shared
  *  status controller, so there is no Save button. */
-export function MemoryRetentionModal({ runtime, applied, onChange, onClose, presentation }: {
+export function MemoryRetentionModal({ runtime, applied, onChange, onClose, status = 'idle', retry, flush, presentation }: {
   runtime: RuntimeConfig;
   /** Fields the daemon clamped on the last save, each carrying the value actually in force — otherwise a
    *  refused value would look to the operator like it had taken effect. */
   applied?: Partial<MemoryRetentionConfig>;
   onChange: (next: (cur: RuntimeConfig) => RuntimeConfig) => void;
   onClose: () => void;
+  status?: SaveStatus;
+  retry?: () => void;
+  flush?: () => void;
   presentation?: 'center' | 'drawer';
 }) {
   const { t } = useTranslation();
+  const closeDisabled = status === 'saving' || status === 'error';
+  const close = () => { flush?.(); onClose(); };
   const retention = runtime.memoryRetention ?? DEFAULT_MEMORY_RETENTION;
 
   const patch = (next: Partial<MemoryRetentionConfig>) =>
@@ -59,7 +66,7 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
   const halfLifeLabel = (value: number): string => (value === 0 ? t.brain.retention.never : daysLabel(value));
 
   return (
-    <Modal title={t.brain.retention.title} description={t.brain.retention.hint} icon={ShieldCheck} size="md" onClose={onClose} presentation={presentation}>
+    <Modal title={t.brain.retention.title} description={t.brain.retention.hint} icon={ShieldCheck} size="md" onClose={close} closeDisabled={closeDisabled} presentation={presentation}>
       <ModalBody>
         <div className="flex flex-col divide-y divide-border">
           <div className="flex items-center gap-2.5 py-3.5">
@@ -161,8 +168,8 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, pres
           </div>
         </div>
       </ModalBody>
-      <ModalFooter>
-        <Button variant="accent" onClick={onClose}>{t.common.done}</Button>
+      <ModalFooter status={<AutoSaveStatus status={status} onRetry={retry} />}>
+        <Button variant="accent" onClick={close} disabled={closeDisabled}>{t.common.done}</Button>
       </ModalFooter>
     </Modal>
   );

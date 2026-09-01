@@ -12,6 +12,7 @@ import { HelpTip } from '../../components/ui/HelpTip';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { RowPicker, ROW_TRIGGER_CLASS } from '../../components/ui/RowPicker';
 import { Toggle } from '../../components/ui/Toggle';
 import { BrainModelField } from '../../components/ui/BrainModelField';
@@ -594,7 +595,11 @@ function ModalFieldRow({ label, description, hint, status, summary, fillsModal, 
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const close = () => { void saveState?.flush(); setOpen(false); };
+  const closeDisabled = saveState?.status === 'saving' || saveState?.status === 'error';
+  const close = async () => {
+    const finalStatus = await saveState?.flush();
+    if (finalStatus !== 'error') setOpen(false);
+  };
   return (
     <>
       <SettingsRow
@@ -622,10 +627,10 @@ function ModalFieldRow({ label, description, hint, status, summary, fillsModal, 
         }
       />
       {open ? (
-        <Modal title={label} description={description} size="lg" closeDisabled={saveState?.status === 'saving'} onClose={close}>
+        <Modal title={label} description={description} size="lg" onClose={close} closeDisabled={closeDisabled}>
           {fillsModal ? <div className="min-h-0 flex-1 overflow-hidden">{children}</div> : <ModalBody>{children}</ModalBody>}
           <ModalFooter status={saveState && saveState.status !== 'idle' ? <AutoSaveStatus status={saveState.status} onRetry={saveState.retry} /> : undefined}>
-            <Button variant="accent" onClick={close} disabled={saveState?.status === 'saving'}>{t.common.done}</Button>
+            <Button variant="accent" onClick={close} disabled={closeDisabled}>{t.common.done}</Button>
           </ModalFooter>
         </Modal>
       ) : null}

@@ -7,6 +7,8 @@ import { Slider } from '../../components/ui/Slider';
 import { Toggle } from '../../components/ui/Toggle';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
+import type { SaveStatus } from '../../lib/useAutoSaveStatus';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import type { RuntimeConfig, RuntimeLimits } from '../../lib/types';
 
 /** Fallback for seeding the Runtime form before the daemon's config arrives (it always sends real values). */
@@ -79,16 +81,21 @@ function toCanonicalValue(field: RuntimeLimitField, displayValue: number): numbe
 /** Modal editor for the operator-tunable runtime knobs (the sibling of the brain Limits editor). Edits
  *  flow straight back into the caller's state, which auto-saves through the shared status controller, so
  *  there is no Save button. */
-export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, presentation }: {
+export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, status = 'idle', retry, flush, presentation }: {
   runtime: RuntimeConfig;
   /** Fields the daemon clamped on the last save, each carrying the value actually in force — otherwise a
    *  refused value would look to the operator like it had taken effect. */
   applied?: Partial<RuntimeLimits>;
   onChange: (next: (cur: RuntimeConfig) => RuntimeConfig) => void;
   onClose: () => void;
+  status?: SaveStatus;
+  retry?: () => void;
+  flush?: () => void;
   presentation?: 'center' | 'drawer';
 }) {
   const { t } = useTranslation();
+  const closeDisabled = status === 'saving' || status === 'error';
+  const close = () => { flush?.(); onClose(); };
   /** A canonical value in the row's own display unit. */
   const displayLabel = (field: RuntimeLimitField, canonical: number): string => {
     const value = canonical / DISPLAY_DIVISORS[field.kind];
@@ -99,7 +106,7 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, presen
     return String(value);
   };
   return (
-    <Modal title={t.brain.runtime.title} description={t.brain.runtime.hint} icon={Gauge} size="md" onClose={onClose} presentation={presentation}>
+    <Modal title={t.brain.runtime.title} description={t.brain.runtime.hint} icon={Gauge} size="md" onClose={close} closeDisabled={closeDisabled} presentation={presentation}>
       <ModalBody>
         <div className="flex flex-col divide-y divide-border">
           {RUNTIME_LIMIT_FIELDS.map((field) => {
@@ -172,8 +179,8 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, presen
           </div>
         </div>
       </ModalBody>
-      <ModalFooter>
-        <Button variant="accent" onClick={onClose}>{t.common.done}</Button>
+      <ModalFooter status={<AutoSaveStatus status={status} onRetry={retry} />}>
+        <Button variant="accent" onClick={close} disabled={closeDisabled}>{t.common.done}</Button>
       </ModalFooter>
     </Modal>
   );

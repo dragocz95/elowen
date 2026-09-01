@@ -32,7 +32,7 @@ type Pending = { name: string; grants: string[]; kind: 'enable' | 'install' };
 export function usePluginConsent(opts: {
   onSuccess?: (res: PluginInfo & { pending?: boolean }) => void;
   onError?: (e: unknown) => void;
-  onInstalled?: (res: PluginInfo) => void;
+  onInstalled?: (res: PluginInfo & { pending?: boolean }) => void;
   onInstallError?: (e: unknown) => void;
   onSettled?: () => void;
 }) {
@@ -91,10 +91,30 @@ export function usePluginConsent(opts: {
     });
   };
 
-  const confirm = () => {
-    if (!asking) return;
-    if (asking.kind === 'install') installPlugin(asking.name, asking.grants);
-    else setEnabled(asking.name, true, asking.grants);
+  const confirm = async () => {
+    const current = asking;
+    if (!current) return;
+    try {
+      if (current.kind === 'install') {
+        const result = await install.mutateAsync({ name: current.name, acknowledgeGrants: current.grants });
+        setAsking(null);
+        opts.onInstalled?.(result);
+      } else {
+        const result = await toggle.mutateAsync({ name: current.name, enabled: true, acknowledgeGrants: current.grants });
+        setAsking(null);
+        opts.onSuccess?.(result);
+      }
+    } catch (e) {
+      const grants = askedGrants(e);
+      if (grants) {
+        setAsking({ name: current.name, grants, kind: current.kind });
+      } else {
+        (current.kind === 'install' ? opts.onInstallError : opts.onError)?.(dependencyError(e) ?? e);
+      }
+      throw e;
+    } finally {
+      if (current.kind === 'install') opts.onSettled?.();
+    }
   };
 
   const dialog: ReactNode = asking ? (

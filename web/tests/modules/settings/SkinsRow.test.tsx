@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,5 +91,21 @@ describe('SkinsRow', () => {
     expect(screen.queryByText('Default')).toBeNull();
     expect(screen.getByText(en.common.skinNames.studioLight)).toBeInTheDocument();
     expect(screen.getByText(en.common.skinNames.studioOled)).toBeInTheDocument();
+  });
+
+  it('autosaves a changed selection and exposes Retry after failure', async () => {
+    useConfig.mockReturnValue({ data: { allowedSkins: ['studio-light'] } });
+    mutateAsync.mockRejectedValueOnce(new Error('offline'));
+    renderRow();
+    fireEvent.click(screen.getByRole('button', { name: en.settings.skins.manage }));
+    fireEvent.click(screen.getByRole('button', { name: en.common.skinNames.studioOled }));
+    fireEvent.click(screen.getByRole('button', { name: en.managePicker.saveChanges }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ allowedSkins: ['studio-light', 'studio-oled'] }), { timeout: 2000 });
+    expect(screen.getByRole('button', { name: en.common.retry })).toBeInTheDocument();
+
+    mutateAsync.mockResolvedValueOnce({ allowedSkins: ['studio-light', 'studio-oled'] });
+    fireEvent.click(screen.getByRole('button', { name: en.common.retry }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(en.common.saved)).toBeInTheDocument();
   });
 });

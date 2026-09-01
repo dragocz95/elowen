@@ -150,6 +150,8 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
   const readOnly = props.readOnly === true;
   const editable = props.readOnly === true ? undefined : props;
   const { saving = false, emptySelectionHint, single = false } = editable ?? {};
+  const [internalSaving, setInternalSaving] = useState(false);
+  const isSaving = saving || internalSaving;
   const { t } = useTranslation();
   const [local, setLocal] = useState<Set<string>>(() => new Set(editable?.selected));
   const [query, setQuery] = useState('');
@@ -187,7 +189,8 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
   const countText = countLabel ?? ((n: number) => t.managePicker.selectedCount.replace('{n}', String(n)));
 
   const save = async () => {
-    if (!editable) return;
+    if (!editable || isSaving) return;
+    setInternalSaving(true);
     try {
       const result = editable.onSave(new Set(local));
       // Synchronous pickers should close in the same interaction frame. Async persistence still
@@ -196,11 +199,13 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
       onClose();
     } catch {
       // The caller surfaces the failure (toast); keep the modal open so the user can retry.
+    } finally {
+      setInternalSaving(false);
     }
   };
 
   return (
-    <Modal title={title} description={subtitle} onClose={onClose} size="xl">
+    <Modal title={title} description={subtitle} onClose={onClose} closeDisabled={isSaving} size="xl">
       <ModalBody gap={4}>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -294,9 +299,9 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
           ? <Button type="button" onClick={onClose}>{t.common.close}</Button>
           : (
             <>
-              <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>{t.common.cancel}</Button>
-              <Button type="button" variant="accent" onClick={save} disabled={saving}>
-                {saving ? t.common.saving : t.managePicker.saveChanges}
+              <Button type="button" variant="ghost" onClick={onClose} disabled={isSaving}>{t.common.cancel}</Button>
+              <Button type="button" variant="accent" onClick={save} disabled={isSaving}>
+                {isSaving ? t.common.saving : t.managePicker.saveChanges}
               </Button>
             </>
           )}
