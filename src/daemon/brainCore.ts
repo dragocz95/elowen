@@ -456,16 +456,26 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     memoryStore, embeddings, users: { list: () => users.list() }, embeddingConfig, logger: log,
   });
   // The workspace-level MEMORY model (Settings → Memory). ONE cheap model drives BOTH post-turn
-  // auto-save (the curator distilling durable facts) AND category classification — it resolves the
-  // referenced brain provider's endpoint+key at call time (no second secret stored), mirroring how
-  // embeddings reuse the brain key. Null when unconfigured/keyless → both no-op (memory still works via
-  // the explicit Memory* tools). Memory is deliberately its own concern.
+  // auto-save (the curator distilling durable facts) AND category classification. Since 1. 9. 2026 it
+  // resolves through piInferenceClient — the same provider stack live conversations use — so an OAuth
+  // account (Claude/Codex) qualifies here exactly like an API-key endpoint; the picker always offered
+  // those, and pointing at one used to silently disable the curator, categorizer AND the conversation
+  // titler (Filip asked for one source of truth with the dashboard digest). Null when unconfigured →
+  // all three no-op (memory still works via the explicit Memory* tools).
   const memoryModelInference = (): InferenceClient | null => {
     const block = config.get().categorization;
     if (!block.providerId || !block.model) return null;
-    const provider = resolveProvider(block.providerId);
-    if (!provider || !provider.apiKey) return null;
-    return new RelayClient({ baseUrl: block.baseUrl || provider.baseUrl, apiKey: provider.apiKey, model: block.model });
+    // Legacy escape hatch: an explicit baseUrl override predates the pi-backed path, only ever worked
+    // with an API key, and bypasses the provider registry on purpose — keep it byte-compatible.
+    if (block.baseUrl) {
+      const provider = resolveProvider(block.providerId);
+      if (!provider || !provider.apiKey) return null;
+      return new RelayClient({ baseUrl: block.baseUrl, apiKey: provider.apiKey, model: block.model });
+    }
+    return piInferenceClient({
+      runtime: brainRuntime, config: brainConfig,
+      route: () => ({ providerId: block.providerId, model: block.model }),
+    });
   };
   const memoryCategorizer = new MemoryCategorizer({
     categories: memoryCategoryStore, memories: memoryStore, inference: memoryModelInference, logger: log,
