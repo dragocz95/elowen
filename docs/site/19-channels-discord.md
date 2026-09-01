@@ -8,85 +8,92 @@ group: Channels
 
 # Discord
 
-The Discord plugin connects an Elowen bot to a Discord server. It uses the Discord Gateway for messages and registers slash commands with Discord.
+The Discord plugin connects an Elowen bot to Discord through the Gateway and Discord REST API. It supports guild channels and threads, slash commands, live tool activity, attachments, voice, proactive notifications, and Discord server-management tools.
 
 For shared identity and conversation rules, see [Channels](channels).
 
 ## Connect the bot
 
 1. Open the [Discord Developer Portal](https://discord.com/developers/applications) and create an application.
-2. Open **Bot**, create or reset the bot token, and copy it to a secure location.
-3. Under **Privileged Gateway Intents**, enable **Message Content Intent**.
-4. Invite the bot to the server with the permissions required for guild messages and registered application commands.
-5. In Elowen, open **Settings → Plugins → Discord** and paste the token into **Bot token**.
-6. Configure at least one role policy, then enable or reload the plugin.
+2. Under **Bot**, create or reset the bot token and store it securely.
+3. Enable **Message Content Intent** under **Privileged Gateway Intents**. Enable **Server Members Intent** if you need `DiscordListMembers`.
+4. Invite the bot with permission to read and send messages, use application commands, and perform any server operations you plan to request.
+5. In **Settings → Plugins → Discord**, enter the token and configure at least one role policy.
+6. Enable or reload the plugin.
 
-The bot only handles guild messages. Direct messages do not contain a guild member role set, so they cannot match a Discord role policy.
+The adapter serves real members in guild channels and threads. Direct messages and group DMs are ignored because they do not provide a guild member context. System messages, bot messages, and messages from a configured-out guild are also ignored.
 
-## Role policies
+## Admission and permissions
 
-Configure policies in **Settings → Plugins → Discord → Role policies**. The first matching policy wins; a member with no matching policy is ignored.
+Configure **Role policies** in **Settings → Plugins → Discord**. Policies are evaluated in order and the first matching policy wins. A member without a match is ignored. A `*` policy matches every guild member, including members with no additional roles; put it last.
 
-A policy matches a Discord role ID. Use `*` as a final catch-all policy for members who do not have a more specific mapped role. The `admin` flag makes the policy an operator policy for shared-channel controls and Discord administration features.
+A policy can define a role name and extra room instructions. The Discord role is the admission and room-access mapping; it is not an Elowen account. Personal settings and account-owned conversations require the sender's Discord ID to be linked to an Elowen account; project and tool access come from that linked account.
 
-A role policy can also provide a role name and additional room instructions. Project access, tool permissions, and personal memory come from the sender's linked Elowen account, not from the Discord role.
+Set `admin: true` on the effective policy to grant trusted shared-channel status. This is required for shared channel controls such as `/model`, `/reasoning`, `/context`, `/display`, and `/voice`, and for admin-only session controls such as `/restart`. The role alone does not make the sender the Elowen owner or grant owner-only `Elowen*` tools or the owner API token; those depend on the sender's separately linked account. Plugin tools are additionally subject to the current Elowen tool policy and the bot's Discord permissions; destructive Discord operations can still fail with a Discord permission error.
 
-## Replies and scope
+Each guild channel or thread has one shared conversation and shared channel settings. A reply is posted back to the current channel or thread; use Discord tools only when you explicitly need to operate on another destination.
 
-- `respondWithoutMention` — `true` by default, so the bot answers every message it can see from an admitted sender. Set it to `false` to require an @mention.
-- `guildId` — optional server ID restriction. Empty means every server where the bot is installed.
-- `threadIds` — optional comma-separated thread IDs. When set, the bot responds only in those threads.
-- `notifyChannelId` — optional channel ID for proactive cron, tick, escalation, and restart messages. Empty disables proactive pushes.
+## Replies, threads, and destinations
+
+- `respondWithoutMention` — `true` by default, so an admitted sender's visible message is answered. Set it to `false` to require an @mention.
+- `guildId` — optional server ID restriction. Empty means every guild where the bot is installed.
+- `threadIds` — optional token list of thread IDs. When non-empty, the bot responds only in those threads. The setting accepts one ID per token and retains compatibility with comma- or newline-separated values.
+- `notifyChannelId` — optional notification destination for cron/tick results and escalations. Choose a text channel or active public/private thread in the destination picker; empty disables proactive pushes. Legacy raw IDs remain valid.
+
+The destination picker requires both `botToken` and `guildId`. It lists text channels and active public/private threads, but not categories, voice/news/stage channels, forum/media parents, or archived threads. The plugin also exposes the admin API route `/plugins/discord/channels` for this list.
 
 ## Commands
 
-The running daemon supplies the command list. The Discord adapter renders the controls as slash commands, select menus, and buttons.
+The running daemon supplies the command catalog; Discord renders applicable commands as slash commands, select menus, and buttons. Plugin prompt commands may add further slash commands when their plugin is enabled.
 
 | Command | Purpose |
 |---------|---------|
-| `/model` | Open a paginated model picker. |
-| `/reasoning` | Open the reasoning-effort picker. |
-| `/context` | Move one of the invoking sender's own conversations into this channel. |
-| `/display` | Configure tool activity, answer delivery, tool output, and tool message layout. |
-| `/voice` | Toggle spoken replies; accepts `on`, `off`, or a bare toggle. |
-| `/new` | Start a fresh channel conversation. |
+| `/model` | Open a paginated shared-channel model picker; admin policy required. |
+| `/reasoning` | Choose the shared-channel reasoning effort; admin policy required. |
+| `/context` | Move one of the invoking sender's own linked conversations into this channel; admin policy required. |
+| `/display` | Configure shared tool activity, answer delivery, tool output, and message layout; admin policy required. |
+| `/voice` | Toggle spoken replies with `on`, `off`, or no value to toggle; admin policy required. |
+| `/new` | Start a fresh conversation for this channel or thread. |
 | `/stop` | Stop the running turn. |
-| `/stats` | Show model, context usage, and usage. |
+| `/stats` | Show model, context, and usage information. |
 | `/compact` | Summarize the conversation to free context. |
-| `/fast` | Set the linked account Fast preference; its optional value is `on`, `off`, or `status`. |
-| `/restart` | Restart the daemon; admin only. |
-| `/help` | Show the commands available to the current sender. |
-
-Model, reasoning, display, voice, and context controls are shared channel state. They require an admin policy.
+| `/fast` | Set the linked account Fast preference; accepts `on`, `off`, or `status`. |
+| `/restart` | Restart the daemon; admin policy required. |
+| `/help` | Show commands available on the current surface. |
 
 ## Presentation
 
-Set defaults in **Settings → Plugins → Discord** or override them in a channel with `/display`:
+Set defaults in **Settings → Plugins → Discord** or override them per channel with `/display`:
 
-- **Tool activity:** `off`, `status`, or `live`.
+- **Tool activity:** `off`, `status`, or `live` (live output includes bounded command progress).
 - **Answer delivery:** `final` or `live`.
 - **Tool output:** `hidden`, `summary`, or `tail`.
 - **Tool message layout:** `single` or `per_tool`.
 
-`deleteToolActivityAfterTurn` can replace one live progress message with the final answer. `runtimeFooter` appends a small model and context line. `showReasoning` is off by default.
+`deleteToolActivityAfterTurn` replaces the live progress message with the final answer. `runtimeFooter` appends a compact model and context line. `reactions` controls processing reactions and is enabled by default. `showReasoning` is disabled by default.
 
-## Channel history and media
+## Conversation, media, and voice settings
 
-`historyLimit` is `0` by default. Set it from `0` to `100` to load that many recent Discord messages when a **brand-new** channel conversation starts. Ongoing conversations do not fetch history again.
+- `historyLimit` defaults to `0`; set `0`–`100` to load that many recent messages only when a brand-new channel conversation starts. Ongoing conversations do not re-fetch history.
+- `visionModel` selects the model for image turns; empty uses the channel's normal model.
+- `maxImageBytes` defaults to `5242880` bytes and `maxImages` to `4`.
+- `maxFileBytes` defaults to `26214400` bytes and `maxFiles` to `5`; oversized or excess attachments are noted instead of downloaded.
+- `maxUploadImages` defaults to `4` generated images per reply.
+- `language` defaults to `en` and controls the bot's service messages; `cs` and `sk` are also available.
 
-For images, set `visionModel` to a vision-capable model, or leave it empty to use the channel's normal model. `maxImageBytes` defaults to `5242880` bytes and `maxImages` defaults to `4`. Non-image attachments use `maxFileBytes` and `maxFiles`; generated replies use `maxUploadImages`.
+Voice uses a configured OpenAI-compatible provider from **Settings → Elowen AI**:
 
-## Voice
+- `voiceProvider` selects the provider; leave it empty to keep voice unavailable.
+- `stt` enables incoming voice transcription and is off by default; `sttModel` defaults to `whisper-1`.
+- `tts` enables spoken replies when set to `true`; it is off by default. `ttsModel` defaults to `gpt-4o-mini-tts`.
+- `ttsVoice` defaults to `alloy` and accepts provider-supported voice IDs, for example `alloy`, `echo`, `fable`, `onyx`, `nova`, or `shimmer`.
 
-Voice uses a configured OpenAI-compatible provider from **Settings → Brain**. In the Discord plugin settings:
+`/voice` changes the setting for the current channel and requires an admin policy. Non-image files use the `maxFileBytes` and `maxFiles` limits; audio is handled separately and transcription is limited to 25 MiB per clip. Generated images and shared files are uploaded as Discord attachments.
 
-- `voiceProvider` selects the provider.
-- `stt` enables transcription of incoming voice messages; it is off by default.
-- `sttModel` defaults to `whisper-1`.
-- `tts` sets the default for spoken replies; it is off by default.
-- `ttsModel` defaults to `gpt-4o-mini-tts`.
-- `ttsVoice` defaults to `alloy` and accepts `alloy`, `echo`, `fable`, `onyx`, `nova`, or `shimmer`.
+## Discord tools
 
-`/voice` changes the setting for the current channel and requires an admin policy.
+The plugin provides `DiscordApi` plus 24 structured tools for server info, channels, threads, members, roles, pins, and message management. Use `DiscordListChannels` first when a request names a channel or thread; it returns IDs and active threads. `DiscordReadChannel` returns message IDs suitable for pinning or deleting.
+
+Raw `DiscordApi` is an escape hatch for REST v10 operations not covered by a structured tool and can make irreversible changes. Prefer the structured tools, verify targets before destructive actions, and remember that Elowen tool policy and Discord bot permissions both apply.
 
 [Next: Telegram](channels-telegram)

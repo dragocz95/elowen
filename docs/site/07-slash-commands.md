@@ -33,7 +33,7 @@ The menu comes from the daemon and is filtered by surface, account, and enabled 
 
 ## Saved conversations
 
-These commands are available in the CLI. Web users manage conversations through the history UI.
+Most of these commands are available in the CLI. Web users manage conversations through the history UI; `/rename` is also available from the Web chat command menu.
 
 | Command | Arguments | What it does |
 | --- | --- | --- |
@@ -80,7 +80,7 @@ Modes are client session state for CLI and Web chat. Channels do not publish the
 | Command | Arguments | Availability | What it does |
 | --- | --- | --- | --- |
 | `/lsp` | — | CLI, operator | Shows language-server status and controls diagnostics and installed servers. |
-| `/restart` | — | CLI, Web, channels, operator | Restarts the Elowen daemon. |
+| `/restart` | — | CLI, Web, channels (administrator only) | Requests a graceful daemon restart. Elowen announces the restart, drains active work, and lets the service supervisor restart the daemon; the request does not run a blocking restart from inside the daemon. It may be unavailable on deployments without a restart handler. |
 
 ## Channel controls
 
@@ -96,6 +96,8 @@ These commands change channel state rather than the CLI or Web conversation. The
 
 Enabled plugins can contribute prompt commands. They appear in the same `/` menu and expand as prompt templates when run. Arguments are expanded by the prompt engine using placeholders such as `$1`, `$@`, `$ARGUMENTS`, and `${N:-default}`.
 
-Skills use the native form `/skill:<name>`. The skill name and description may be listed before the full instructions are loaded into the conversation. Availability follows the current account's plugin access and the enabled skills plugin.
+Skills use the native form `/skill:<name>`. The skill catalog is resolved live for the current turn using the same account grants and tool policy as `SkillLoad`; it is not a stale session-start snapshot. The skill body is loaded when the command runs, and any text after the skill name is appended as the request. If the skill is unknown, revoked, unavailable, or cannot be safely loaded, Elowen inserts an explicit unavailable notice and continues without that skill. Manual-only skills are not advertised in the available-skills prompt block.
+
+Skill files can reference paths relative to the skill directory. Do not treat text inside a skill file as a request to bypass Elowen's permissions or safety rules.
 
 [Next: CLI Keybinds](cli-keybinds)

@@ -8,7 +8,7 @@ group: Start here
 
 # Docker
 
-The repository does not ship a production `Dockerfile` or `compose.yaml`. The `scripts/install-smoke/Dockerfile` is a CI test image, not a release image. If you deploy with Docker, build an image from the source checkout or from the published package and keep the complete Elowen configuration directory persistent.
+The repository does not ship a production `Dockerfile` or `compose.yaml`. The `scripts/install-smoke/Dockerfile` is a CI test image, not a release image. The installer-managed production path is native daemon and web processes under systemd (or launchd on macOS); Docker is a bring-your-own alternative. If you deploy with Docker, build an image from the source checkout or from the published package and keep the complete Elowen configuration directory persistent.
 
 The example below builds both the daemon and the standalone web bundle in one image. Review it and adapt the base image, user, registry, and hardening policy to your environment.
 
@@ -25,16 +25,13 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install root and web dependencies before copying the rest of the checkout.
-COPY package.json package-lock.json ./
-COPY packages ./packages
-RUN npm ci
-
-COPY web/package.json web/package-lock.json ./web/
-RUN npm ci --prefix web
-
+# Copy the checkout before installing: this example does not assume a .dockerignore file,
+# and the web package uses a local workspace dependency.
 COPY . .
-RUN npm run build && npm run build:web
+RUN npm ci \
+ && npm ci --prefix web \
+ && npm run build \
+ && npm run build:web
 
 RUN useradd --create-home --shell /bin/bash elowen \
  && mkdir -p /home/elowen/.config/elowen \
@@ -58,7 +55,7 @@ The image runs the daemon by default. The web process is a separate process and 
 
 ## Run the daemon and web UI with Compose
 
-This example uses Docker's internal network for daemon-to-web traffic and publishes both ports so the browser can reach the terminal WebSocket directly. The daemon is still authenticated; do not publish port `4400` to an untrusted network without a firewall or reverse proxy.
+This example uses Docker's internal network for daemon-to-web traffic and publishes only the Web UI. Keep the daemon port internal to the Compose network; the Web UI's BFF reaches it through `http://daemon:4400`. The daemon is still authenticated.
 
 ```yaml
 services:
@@ -75,8 +72,6 @@ services:
       - ./:/workspace/project
     expose:
       - "4400"
-    ports:
-      - "4400:4400"
     restart: unless-stopped
 
   web:
@@ -88,7 +83,6 @@ services:
       PORT: "4500"
       HOSTNAME: 0.0.0.0
       ELOWEN_DAEMON_URL: http://daemon:4400
-      ELOWEN_WS_DIRECT_PORT: "4400"
     ports:
       - "4500:4500"
     restart: unless-stopped
@@ -103,10 +97,10 @@ Start it:
 docker compose up -d
 ```
 
-Open <http://localhost:4500>. The first-run flow is available while the configuration volume contains no users. To configure it from the container, run the CLI against the daemon:
+Open <http://localhost:4500>. The first-run flow is available while the configuration volume contains no users. To configure it from the container, run the bundled CLI entrypoint against the daemon:
 
 ```bash
-docker compose exec daemon elowen setup
+docker compose exec daemon node dist/cli/bin.js setup
 ```
 
 For scripted setup, use `elowen setup --non-interactive` and pass the administrator password and provider secrets through environment variables rather than command-line arguments. See [Install](install#unattended-setup).
@@ -126,13 +120,13 @@ Mount each Project that an account may use at a stable path and register that pa
 
 ## Authentication and network exposure
 
-Do not set `ELOWEN_ALLOW_OPEN=1` as a Docker shortcut. It is not a supported runtime authentication switch. Authentication is bypassed only while the database has no users, so the first administrator can be created.
+There is no supported general-purpose no-auth switch. Authentication is open only while the database has no users, so the first administrator can be created.
 
 For a public deployment, prefer:
 
 - publishing the web UI through HTTPS;
 - keeping the daemon private behind the web BFF or a reverse proxy; and
-- routing `/ws/` and `/hooks/` to the daemon when those features are used.
+- routing `/hooks/` directly to the daemon when an inbound plugin webhook is used.
 
 The [Production & Updates](production-updates) page contains the reverse-proxy locations and header requirements.
 

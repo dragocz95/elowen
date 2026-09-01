@@ -8,8 +8,8 @@ tool execution.
 
 Source read: `/tmp/claude-code`, a read-only clone at commit `6f6f12b3` (2026-05-07). This is TypeScript/Bun
 source, not officially published — mechanisms are described in prose and cited by `path:line`; no code is
-copied verbatim. Elowen is `/var/www/elowen` at v0.27.80, branch `main`, built on PI
-(`@earendil-works/pi-coding-agent`).
+copied verbatim. Elowen is this checkout at release `0.28.24` (public GitHub/npm remain on `0.28.17`), built on
+PI (`@earendil-works/pi-coding-agent`).
 
 Each finding: what Claude Code does, the mechanism, what Elowen does today, the gain from adopting it, cost/
 risk, and a verdict (**ADOPT** / **ADAPT** / **SKIP**) with priority. The summary table is at the end,
@@ -309,7 +309,7 @@ require the full parser swap.
 
 ---
 
-## 8. OS-level sandbox for shell execution — Claude Code has one, Elowen has none
+## 8. OS-level sandbox for shell execution — partial Elowen support
 
 **Claude Code.** `SandboxManager` / `shouldUseSandbox` (`tools/BashTool/shouldUseSandbox.ts`) can run a
 command inside an OS-level restricted environment (referenced throughout as sandboxing that "auto-allow[s]
@@ -321,37 +321,29 @@ explicitly request (`BashTool.tsx:242`), and user/dynamic config can exclude spe
 sandboxing (`shouldUseSandbox.ts:19-30`, "not a security bug to be able to bypass excludedCommands... the
 sandbox permission system... is the actual security control").
 
-**Elowen.** The terminal plugin runs commands via PI's local shell backend with **no sandboxing at all** —
-confinement is only `cwd` (via `ctx.assertPathAllowed`, `plugins/terminal/index.mjs:1-6`) plus the
-permission-rule pattern matching covered in finding 7.
+**Elowen.** Terminal execution has confined and direct paths. Workspace-scoped and explicitly force-confined
+execution goes through the `sandbox` plugin and requires a successful bubblewrap probe: it binds only resolved
+project/workspace roots, uses a restricted environment and HOME, and isolates namespaces. Fresh configuration
+also confines non-operator commands by default. Owners/admins run direct, and an operator may deliberately set
+`sandbox.confineNonOperators=false`, allowing granted non-operators to use the same direct foreground/background
+path. The shell permission rules in finding 7 still apply before either path.
 
-> **Superseded (22 Aug 2026).** Where this document says terminal tools are owner-only, they are now
-> handed out by GRANTING the `userGrantable` `terminal` plugin to an account (admins have it implicitly);
-> the plugin no longer gates on the owner bit itself. The sandboxing analysis below is unaffected — a
-> shell still reads any absolute path, which is exactly why the grant means granting the host.
-
-The plugin's own header comment is explicit about the
-resulting gap: "cwd guarding does NOT contain a shell that reads absolute paths outside the repo (e.g. the
-prod config DB), so ALL terminal tools are OWNER-ONLY" (`plugins/terminal/index.mjs:4-6`) — i.e. Elowen's
-current mitigation for "no sandbox" is "only the verified human owner can reach this tool at all," not a
-technical containment boundary. A command approved by the pattern rules — including any hole in those rules,
-per finding 7 — runs with the full privileges of the daemon's OS user.
+This is a meaningful improvement over the previous owner-only mitigation, but not a universal sandbox
+boundary: bubblewrap availability is probed at runtime, direct execution is intentionally unsandboxed, and a
+confined workspace still has whatever access its bound roots and network mode provide. The relevant ownership
+and confinement code lives in `plugins/sandbox/lib/execution.mjs` and `plugins/terminal/index.mjs`.
 
 **Gain.** This is the layer that would make finding 7's inevitable rule-matching gaps non-catastrophic: a
 process-level jail (network/filesystem restriction) means a rule that lets through something it shouldn't
 still can't do unbounded damage.
 
-**Cost/risk.** High. Real OS sandboxing (Linux landlock/bubblewrap/seccomp, or a container boundary) is
-a substantial platform-specific engineering project, and Elowen's daemon architecture (long-lived process,
-plugin tools calling into the same Node process, git worktree operations that need real filesystem access)
-would need a deliberate design for what's inside vs. outside the jail before implementation starts.
+**Cost/risk.** High. The confined path is implemented with Linux bubblewrap and still depends on host support,
+carefully resolved roots, HOME handling, and an explicit network mode. Direct execution remains outside that boundary for operators and for non-operators when the instance override disables confinement, so the two paths must not be conflated.
 
-**Verdict: ADOPT, high priority (design first).** Given that today's containment is "only the owner may call
-Bash at all" rather than any technical bound on what a permitted Bash call can do, this is the single
-highest-leverage item in this review — but it should start as a scoped design doc (what needs real
-fs/network access — worktree git operations, npm/build tooling — vs. what doesn't), not a direct port of
-Claude Code's sandbox, since Elowen's daemon/plugin architecture differs enough that the boundary has to be
-re-derived, not copied.
+**Verdict: PARTIAL in 0.28.24; retain as a high-priority hardening area.** The core workspace/delegated
+boundary exists, but it is not universal and does not replace the shell permission rules. Future work should
+focus on fail-closed behavior when bubblewrap is unavailable and on auditing which operations are allowed to
+use direct execution, rather than copying Claude Code's single-process sandbox design.
 
 ---
 
@@ -460,7 +452,7 @@ be watching; Elowen's read-only sub-agent boundary is enforced structurally and 
 | # | Finding | Verdict | Priority | Why |
 |---|---|---|---|---|
 | 7 | Tree-sitter AST bash parsing (fail-closed) + per-flag command validation | **ADOPT** (parser) / **ADAPT** (flags) | High | Directly hardens shell safety; current hand-rolled segmenter carries the same parser-differential risk Claude Code moved away from — and produced a live false positive while this report was being written |
-| 8 | OS-level sandbox for shell execution | **ADOPT** (design first) | High | Today's containment is "owner-only access," not a technical bound on what a permitted command can do |
+| 8 | OS-level sandbox for shell execution | **PARTIAL in 0.28.24** | High | Workspace/forced confinement uses bubblewrap; operators and the explicit non-operator override still run direct |
 | 5 | Hook input-rewriting on `tools.call.before` | **ADAPT** | Medium | Small, contained addition to an existing mechanism; explicitly do NOT externalize hooks into user-configurable shell commands (new supply-chain risk) |
 | 11 | Native `defer_loading` API flag instead of active-set removal | **ADAPT** (spike first) | Low–Medium | Would reduce prompt-cache churn Elowen already identified, but availability outside Claude Code's own API access is unconfirmed |
 | 1 | Per-input `isReadOnly`/`isConcurrencySafe`/`isDestructive` tool metadata | **ADAPT** | Low | Real gap only for input-dependent (e.g. MCP) tools; native tools already covered by name/pattern allow-lists |
@@ -474,6 +466,6 @@ be watching; Elowen's read-only sub-agent boundary is enforced structurally and 
 
 ---
 
-*Note: the Elowen-side claims in this document were produced by a research agent reading the source; they
-have not been independently re-verified line by line. Treat `path:line` references as starting points, not
-as established fact.*
+*Status note: the Elowen-side claims above were reconciled against this checkout at `0.28.24`; cited paths and
+line numbers are illustrative and may move. Findings labelled ADOPT/ADAPT remain proposals unless explicitly
+marked implemented.*

@@ -39,8 +39,6 @@ The input also supports these local features:
 - **`/cd [path]`** shows or changes the CLI working directory. It affects later prompts, shell commands, attachments, exports, and local history, but it does not expand the daemon's project permissions.
 - **`/editor`** opens `$VISUAL` or `$EDITOR` for the current draft. A non-zero editor exit keeps the original draft.
 
-![Elowen terminal chat](../screenshots/cli/16-gpt-limits.png)
-
 ### Queue and interrupt
 
 Only one turn runs in a conversation at a time. A message sent while the agent is working is queued and survives a daemon restart.
@@ -58,8 +56,6 @@ See [CLI Keybinds](cli-keybinds) for configurable shortcuts and their defaults.
 A delegated sub-agent has its own conversation and scoped tools. Press **`Ctrl+O`** by default to cycle between the parent conversation and its child sessions. While viewing a child, plain text steers that child; slash commands act on the parent.
 
 Workflow mode runs a directed acyclic graph (DAG) of fresh sub-agents. Independent nodes run in parallel, and dependent nodes wait for their prerequisites. A workflow cannot exceed the permissions of the account that started it.
-
-![A delegated sub-agent in the CLI](../screenshots/cli/11-subagent.png)
 
 ## Modes and permissions
 
@@ -134,7 +130,7 @@ elowen restart <daemon|web|all>
 elowen update
 ```
 
-`status` reports daemon and Web UI state. `restart` safely hands the selected managed service restart to the supervisor without waiting inside the daemon. `down` waits for active turns and delegated work unless `--force` is supplied. `update` checks for a newer npm release and restarts the local installation in place.
+`status` reports daemon and Web UI state. `restart` queues the selected systemd-managed service restart with `systemctl --no-block` and returns before the daemon stops; use `daemon`, `web`, or `all`. `down` waits for active turns and delegated work unless `--force` is supplied. `update` checks for a newer npm release and restarts the local installation in place.
 
 ## Local files and environment
 

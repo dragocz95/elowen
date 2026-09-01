@@ -6,23 +6,25 @@ This document describes the current Elowen daemon for contributors and operators
 
 Elowen is a self-hosted TypeScript service with four cooperating parts:
 
-- **Daemon** — the Hono HTTP API, the embedded brain, platform adapters, plugin services, persistence, recovery, and maintenance loops.
-- **Web application** — the Next.js UI. Browser requests use the same-origin `/api` proxy; the daemon token is not exposed to browser JavaScript.
+- **Daemon** — the authoritative runtime: Hono HTTP API, brain/session execution, SQLite access, plugin registry generation, platform orchestration, recovery, maintenance, and outbound transports.
+- **Web application** — the Next.js presentation layer. It renders host and plugin pages and exposes a same-origin `/api` BFF to the browser; daemon credentials are not exposed to browser JavaScript. It does not own conversations, plugin state, identity, or authorization.
 - **CLI/TUI** — `elowen chat`, `elowen run`, and `elowen api` talk to the daemon. `elowen setup`, `install`, `up`, `down`, `status`, and `update` manage the installation.
-- **Optional delegated runner processes** — forked Node processes used for delegated turns when `runtime.subagentRunnerEnabled` is enabled. They reuse the same brain construction path but do not start the daemon, HTTP server, platform gateways, migrations, or scheduler.
+- **Optional delegated runner processes** — forked Node processes used for delegated turns when `runtime.subagentRunnerEnabled` is enabled. They reuse the same brain construction path and plugin registry, but do not start the daemon HTTP server, ordinary platform gateways, migrations, scheduler, or maintenance loops.
 
-The daemon listens on `127.0.0.1:4400` by default. The web server normally listens on `:4500`. Runtime state is outside the package, under `~/.config/elowen` by default; `ELOWEN_DB` and `ELOWEN_LOG_DIR` can override the database and log locations.
+The daemon listens on `127.0.0.1:4400` by default. The web server normally listens on `:4500`. Runtime state is outside the package, under `~/.config/elowen` by default; `ELOWEN_DB` and `ELOWEN_LOG_DIR` can override the database and log locations. The package contains infrastructure plugins, not product-domain ownership: optional domain and integration verticals are installed from the curated plugin registry and remain owned by those plugins.
 
 ## Process construction
 
-`src/daemon/brainCore.ts` exports `buildBrainCore()`, the single construction path for the brain and its stores. It creates and wires:
+`src/daemon/brainCore.ts` exports `buildBrainCore()`, the single construction path for the brain, host stores, and plugin registry. It is shared by the daemon and delegated runner so both execute the same prompt, tool, model, and policy composition. It creates and wires:
 
-- `ConfigStore`, `UserStore`, project and per-account stores;
-- the SQLite-backed `BrainStore`, event store, memory stores, usage attribution, and plugin secret vault;
+- host stores such as `ConfigStore`, `UserStore`, `ProjectStore`, `UserProjectStore`, user settings, prompts, push subscriptions, and per-account plugin configuration;
+- the SQLite-backed `BrainStore` facade and its focused stores for events, usage, delegation, memory, categories, dashboard digests, embeddings, and encrypted plugin secrets;
 - model credentials and the `ModelRuntime`;
 - prompt services, memory recall/curation, Git readers, and path policy;
-- the plugin registry and its live host controls;
+- the live `PluginRegistryProvider`, including plugin contributions, routes, services, hooks, and typed controls;
 - the `BrainService`, which owns session lifecycle, turns, channels, goals, processes, queueing, and delegation.
+
+These are host capabilities, not hidden domain implementations. A plugin may use a declared, narrow store or control seam; core must not recreate a plugin's tables, routes, tools, or vertical workflow.
 
 `src/daemon/bootstrap.ts` calls that factory, then adds daemon-only layers:
 
@@ -42,10 +44,11 @@ For an authenticated owner-chat request, the main path is:
 2. Authentication, account ownership, project tenancy, and request shape are checked at the API boundary.
 3. `ConversationLifecycle` resolves or creates the conversation and serializes admission for that session.
 4. `LiveSessionSpawner` composes the model, system prompt, account instructions, skills, tools, project working directory, memory hooks, and provider settings.
-5. `composeSessionTools()` applies session-kind composition, per-account tool authority, plan-mode restrictions, and execute-time permission gates.
-6. The PI `AgentSession` runs the provider/tool loop. Tool calls and provider events are streamed to clients through `/brain/stream`.
-7. `src/brain/persistence.ts` projects user input and generated messages into SQLite. SQLite is authoritative; the PI session is an in-memory execution object that can be rehydrated.
-8. Usage, activity, memory curation, cards, delegated results, and notifications are settled after the turn.
+5. The identity resolver mints the turn's `TurnIdentity` from the authenticated account or verified platform sender. For shared rooms this is resolved again for each turn; the room's durable account anchor is never treated as the current writer.
+6. `composeSessionTools()` applies session-kind composition, per-account tool authority, plan-mode restrictions, and execute-time permission gates.
+7. The PI `AgentSession` runs the provider/tool loop. Tool calls and provider events are streamed to clients through `/brain/stream`.
+8. `src/brain/persistence.ts` projects user input and generated messages into SQLite. SQLite is authoritative; the PI session is an in-memory execution object that can be rehydrated.
+9. Usage, activity, memory curation, cards, delegated results, and notifications are settled after the turn.
 
 The API route families are registered in `src/api/routes/index.ts`. Important core families are authentication, users, projects, activity, brain, configuration, usage, memory, plugins, hooks, and plugin UI/API dispatch.
 
@@ -88,7 +91,7 @@ Authentication is bearer-token based at the daemon boundary:
 Authorization: Bearer <token>
 ```
 
-The public exceptions include `/health`, `/setup`, login and SSO bootstrap routes, public theme assets, signed avatar requests, terminal tickets, and `/hooks/*`. Webhooks are intentionally public to the daemon middleware; the receiving plugin authenticates its provider-specific webhook token or assertion.
+The public exceptions include `/health`, `/setup`, login and SSO bootstrap routes, public theme assets, signed avatar requests, and `/hooks/*`. Webhooks are intentionally public to the daemon middleware; the receiving plugin authenticates its provider-specific webhook token or assertion.
 
 Before the first account exists, the daemon is in setup mode and requests are open so onboarding can create the first administrator. Once an account exists, ordinary requests require authentication. Query-string bearer tokens are not accepted.
 
@@ -153,7 +156,7 @@ sandbox  statusline  subagent  terminal  web
 
 The curated external registry supplies optional plugins such as codebase indexing, scheduling, skills, GitHub, platform adapters, LSP, editor, and other integrations. Retired domain plugins are not restored by core configuration.
 
-A plugin owns its vertical slice: its data, routes, tools, browser pages, prompts, and lifecycle. Core reaches plugin-owned domains through declared controls and narrow host contracts. Consumers resolve controls at call time; retaining a control instance across a plugin reload is invalid.
+A plugin owns its vertical slice: its data, routes, tools, browser pages, prompts, services, migrations, and lifecycle. There are no core-owned product-domain plugins hidden behind daemon routes or stores; core owns only shared runtime and host infrastructure. Core reaches plugin-owned domains through declared, typed controls and narrow host contracts. A control is a live capability published by the current registry generation: consumers resolve it at call time, and retaining a control instance across a plugin reload is invalid. A missing owner or unmet control dependency resolves as unavailable rather than exposing a half-working seam.
 
 Plugin browser pages mount under `/p/<plugin>/...`. Authenticated plugin APIs normally mount under `/plugins/<name>/api/*`; an explicitly declared root mount is a fallback and is registered after core routes. Core routes win on conflicts.
 
@@ -199,7 +202,7 @@ Persistent state includes:
 - memories, categories, embeddings, and usage events;
 - activity events, usage-origin rollups, push subscriptions, and navigation settings.
 
-`src/daemon/maintenance.ts` starts recurring cleanup and recovery work. It handles token, event, origin, session, attachment, terminal, idle-session, embedding, and memory-retention sweeps. Plugin services own their domain-specific reconciles and intervals. The boot recovery coordinator claims interrupted delegations and parked conversations before platform traffic can act on stale state.
+`src/daemon/maintenance.ts` starts recurring cleanup and recovery work. It handles token, event, origin, session, attachment, idle-session, embedding, and memory-retention sweeps. Plugin services own their domain-specific reconciles and intervals. The boot recovery coordinator claims interrupted delegations and parked conversations before platform traffic can act on stale state.
 
 ## Where to start
 

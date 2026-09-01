@@ -74,7 +74,7 @@ Bindings use a compact specification:
 - **Leader sequence:** `leader` followed by a key, such as `leader t`.
 - **Unbound:** `none`.
 
-Supported modifiers are `ctrl`, `shift`, `alt`, and `super`. Direct bindings must use a safe modifier or a non-typing key; this prevents a shortcut from consuming ordinary text input. A leader sequence waits up to two seconds for its second key.
+Supported modifiers are `ctrl`, `shift`, `alt`, and `super`. Direct bindings must use `ctrl`, `alt`, or `super`, or a non-typing key such as an `F` key, `PageUp`, `PageDown`, or `Insert`; the one structural exception is `Shift+Tab`. This prevents a shortcut from consuming ordinary text input. A leader sequence waits up to two seconds for its second key.
 
 A chord can resolve to only one action. If overrides collide, the earlier action in the action list wins and the CLI displays a warning. Fix the collision in `/keybinds`, or unbind one action.
 

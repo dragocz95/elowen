@@ -38,7 +38,7 @@ chat-images/          uploaded or generated chat images
 tool-results/         large tool results spilled to disk
 ```
 
-If `ELOWEN_DB` points to another database, `plugin-secrets.key` is stored beside that database. Keep the database and this key together. A database alone cannot decrypt encrypted plugin secrets.
+If `ELOWEN_DB` points to another database, `plugin-secrets.key` is stored beside that database; other state directories still follow the data directory above. Keep the database and this key together. A database alone cannot decrypt encrypted plugin secrets.
 
 ## Startup environment
 
@@ -56,16 +56,16 @@ Set these variables before starting the relevant process. The defaults keep a lo
 | `ELOWEN_DAEMON_URL` | `http://localhost:4400` | Daemon URL used by the web process and launcher. |
 | `ELOWEN_URL` | `http://localhost:4400` | Default URL used by the CLI. |
 | `ELOWEN_AUTOSTART` | `1` | Set to `0` to disable CLI auto-start. |
-| `ELOWEN_BOOTSTRAP_USER` | unset | Optional initial administrator username during setup. |
-| `ELOWEN_BOOTSTRAP_PASS` | unset | Optional initial administrator password during setup. |
+| `ELOWEN_BOOTSTRAP_USER` | unset | Optional initial administrator username; used only when the password is also set. |
+| `ELOWEN_BOOTSTRAP_PASS` | unset | Optional initial administrator password; used only when the username is also set. |
 
-The packaged launcher uses `ELOWEN_WEB_PORT` with a default of `4500`. The Next.js web server itself reads the standard `PORT` and `HOSTNAME` variables. Starting the daemon does not start the web UI; they are separate processes.
+The packaged launcher uses `ELOWEN_WEB_PORT` with a default of `4500`. The Next.js web server itself reads the standard `PORT` and `HOSTNAME` variables. Starting the daemon does not start the web UI; they are separate processes. The former browser terminal and its direct WebSocket port are no longer part of the product.
 
 `elowen setup` is the preferred way to configure a local installation. Use `elowen doctor` to inspect daemon, provider, memory, and plugin readiness.
 
 ## Settings sections
 
-Open **Settings** as an administrator. Changes normally save automatically; controls show the effective value when the daemon clamps an out-of-range value.
+Open **Settings** as an administrator. Changes normally save automatically; controls show the effective value when the daemon clamps an out-of-range value. Revision-backed forms send the version they loaded with each write. If another tab or API client saved first, the stale write receives HTTP `409`; Elowen adopts the canonical current revision while preserving the editable draft, so a deliberate retry does not repeat the same conflict. Plugin schema forms also offer explicit reload or merge choices.
 
 | Section | What it controls |
 | --- | --- |
@@ -90,9 +90,10 @@ Add an API-key provider with:
 - API key;
 - optional model list;
 - optional OpenAI wire API selection: automatic, Responses, or Chat Completions;
-- optional temperature from `0` to `2`.
+- optional Chat Completions compatibility overrides (developer role, long cache retention, streaming usage, strict mode, store, reasoning effort, and the token-limit field);
+- optional temperature from `0` to `2` (leave it unset to omit the field from requests).
 
-For an OpenAI-compatible endpoint, Elowen probes `/models` when possible. If the endpoint does not expose a usable catalog, enter model IDs manually. An empty model list for a successfully discovered OpenAI-compatible endpoint means that Elowen can use the discovered catalog.
+For an OpenAI-compatible endpoint, Elowen probes `/models` when possible. If the endpoint does not expose a usable catalog, enter model IDs manually. An empty model list for a successfully discovered OpenAI-compatible endpoint means that Elowen can use the discovered catalog. Automatic wire selection uses Responses for `api.openai.com` and Chat Completions for other compatible endpoints; explicit selection wins. Compatibility defaults are conservative, so enable an extension only when the endpoint documents it.
 
 API keys are write-only from the browser: the UI reports whether a key is stored, but never sends the secret back to the client.
 
@@ -150,8 +151,11 @@ The default values are:
 | Compaction failure limit | `3` | Consecutive automatic compaction failures before the circuit breaker stops retrying. |
 | Elicitation timeout | `6 hours` | How long a turn may wait for an answer to a question. |
 | Memory recall count | `10` | Memories recalled at the start of a turn. |
-| Memory recall budget | approximately `5,000` tokens | Shared character budget for those memories. |
+| Memory recall budget | approximately `5,000` tokens | Shared `20,000`-character budget for those memories. |
 | Live recall passes | `10` | Maximum additional searches while work is in progress. Set to `0` to disable them. |
+| Live recall batch | `2` results / `20,000` bytes | Maximum results and context injected by one live-recall pass. Set the count to `0` to disable live recall batches. |
+| Goal turn budget | `50` | Default turn budget for an autonomous goal. |
+| Goal turn ceiling | `50` | Maximum turns for one autonomous goal. |
 | Delegated context budget | `40,000` characters | Default maximum context passed to a delegated child. |
 | Channel session cap | `32` | Concurrent live sessions held by one channel. |
 
@@ -168,11 +172,13 @@ The Runtime editor includes:
 - origin-IP retention, default **30 days**;
 - stream silence watchdogs, default **75 seconds** and **45 seconds** for revival checks;
 - toast duration, default **4.5 seconds**;
-- deferred tool loading, enabled by default with a threshold of **10** unresolved MCP tools;
-- the forked sub-agent runner, enabled by default with an automatically sized pool;
-- provider-side remote compaction, enabled by default for eligible OpenAI Codex sessions.
+- deferred tool loading, enabled by default with a threshold of **10** tools; per-source and per-tool overrides are available;
+- the forked sub-agent runner, enabled by default with an automatically sized pool; set a non-negative pool maximum only to override automatic sizing;
+- provider-side remote compaction, enabled by default for eligible OpenAI Codex sessions;
+- provider request capture, enabled by default for admin diagnostics; disabling it stops new captures but keeps existing records;
+- memory retention, enabled by default with a **14-day** grace period and importance-based half-lives.
 
-The sub-agent runner can be disabled as an operational rollback. Changes apply to new delegated work; they do not require a separate model or provider configuration.
+The sub-agent runner and remote-compaction switches are operational rollbacks. Runtime changes are persisted automatically and take effect through the relevant runtime path. Plugin reloads may be applied immediately or deferred until active work drains.
 
 ## Memory configuration
 
@@ -210,14 +216,21 @@ From a plugin entry you can:
 
 - enable or disable it;
 - inspect its capabilities and health;
+- edit its manifest-defined instance settings;
 - update a marketplace plugin;
 - uninstall a marketplace plugin;
 - restore a removed bundled plugin;
 - install a plugin from the curated marketplace.
 
-Some changes are applied immediately. If running work prevents a safe live reload, Elowen reports that the change is pending and applies it after the current work drains. Plugins may also provide their own pages and settings in the main navigation.
+Plugin settings are validated against the manifest and stored in the plugin's namespaced config slice. Reads return a masked configuration, the names of secrets that are set, and a revision. Writes send that revision as `expectedRevision`; a stale write returns HTTP `409` with the current masked snapshot. Secret plaintext never enters autosave or a read response: setting the first value or replacing one requires the explicit **Save** action, while empty, omitted, or `null` secret input keeps the stored value.
 
-Plugin access and tool access are separate concerns. An administrator can grant or restrict a plugin for an account, while the account's tool permissions can narrow the tools that account may execute.
+Persistence is the commit point. After a successful write, Elowen requests a live registry reload. If running work prevents a safe swap, or activation raises after the durable commit, the route returns HTTP `202` with `pending: true` and the UI shows **Saved; activation pending**. This is not a failed save, but the running generation may still use the previous values until work drains and the registry converges.
+
+Plugins with `userConfigSchema` also appear as personal sections under **Account** for eligible users. Those values carry their own revisions and are read live through the current account, so they do not reload the instance plugin registry.
+
+A newer plugin may declare a config field type this daemon does not know. Elowen drops only that field from the settings form, logs a warning, preserves its stored value, and continues loading the plugin. Other manifest errors still reject the plugin. A reload replaces the whole registry generation, so plugin code must not retain old registry objects or controls across a reload; the next generation receives the current configuration.
+
+Plugin grants and tool permissions are separate concerns. An administrator can grant a user-grantable plugin's gated tools, API routes, UI, and contributed skills to an account, while the account's tool permissions can narrow the tools that account may execute. Prompt fragments, platform prompts, slash commands, and hooks are not gated by the plugin grant.
 
 ## System, updates, and data
 

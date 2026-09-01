@@ -36,6 +36,14 @@ You can manage pending messages without interrupting the active turn:
 
 The **Web** and **CLI** surfaces can select a conversation, rename it, and start a fresh one. The `/new` command starts a fresh conversation. `/clear` clears the current Web or CLI conversation while keeping its conversation identity.
 
+A CLI launch reports its working directory. Elowen resumes the most recent unattached conversation for that directory; it does not take over a conversation another client is actively using. The Web UI follows the account's active conversation. An explicit session selection, such as `/resume`, is deliberate and updates that conversation's activity timestamp.
+
+### Session lifecycle and restart recovery
+
+A conversation keeps its durable id, transcript, model/provider selection, and validated working-directory binding even when its in-memory provider session is replaced. Elowen may replace that live session when you switch models, change settings that affect the prompt, reconnect after a detach, or when an idle conversation rolls over. An idle rollover creates a fresh conversation for the next message rather than sending an expired context back to the provider; active work is not cut off.
+
+The daemon persists turn boundaries and recovery state. During boot it first claims recoverable work, then resumes it after the platform services are ready through the normal chat path. Recovery covers interrupted delegations, workflow nodes, pending delegated results, parked owner conversations, and parked platform-channel turns. It is bounded and fail-closed: when the stored recovery record, plugin, scope, or runtime is unavailable, the work may be parked, released, or terminalized with its completed portion preserved; it is not blindly replayed. A live stream may need to reconnect and refetch the authoritative transcript.
+
 ## Chat commands
 
 The command menu is generated from the daemon's command catalog, so the available commands depend on the surface and your permissions. The main conversation controls are:
@@ -82,7 +90,9 @@ Run `/compact` when you want to free context immediately. In Web and CLI chat, y
 /compact Keep the deployment decisions and the files changed so far.
 ```
 
-A conversation that has nothing to compact returns a harmless no-op. After a real compaction, the transcript shows a `context compacted` divider. The compaction summary is persisted with the conversation, and long-term memory is stored separately, so compaction does not delete your memories.
+A conversation that has nothing to compact returns a harmless no-op. After a real compaction, the transcript shows a `context compacted` divider. The compaction summary is persisted with the conversation, and long-term memory is stored separately, so compaction does not delete your memories. If compaction fails, Elowen does not pretend the context was shortened; the turn reports the failure. Repeated automatic failures trip a per-conversation circuit breaker and stop further automatic attempts; manual `/compact` remains available as a recovery lever.
+
+Compaction is separate from restart recovery. A restart rehydrates the durable transcript and resumes only work that has a valid recovery record or park marker; it does not reconstruct arbitrary in-memory provider state. If resumed work cannot be replayed safely, Elowen preserves the diagnostic state and may park or terminalize it rather than silently rerunning it.
 
 ## Models, reasoning, and images
 
@@ -108,6 +118,8 @@ Reasoning controls are model-specific. Elowen only shows levels the active model
 Set an optional **Vision model** in **Account → Elowen AI**. When a message contains an image and the current model is not known to support images, Elowen temporarily switches to the configured vision model. It switches back to the normal model on a later text-only turn.
 
 A model already known to support images is not replaced by the fallback. If no vision model is configured, Elowen keeps using the current model and the provider determines whether the image can be processed.
+
+When the `Read` tool opens an image file, the same image shown to the model also appears inline in the conversation. Elowen deduplicates it if the agent later shares that exact stored image. Clicking any chat image—an upload, generated image, shared image, or read preview—opens the common in-app image dialog, with a separate action to open the file in a new browser tab.
 
 ### Subscription usage
 

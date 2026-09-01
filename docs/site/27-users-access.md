@@ -30,9 +30,7 @@ The following entry points are public or have their own authentication mechanism
 - `GET /health` and the first-run `GET /setup` check.
 - `POST /auth/login` and the Microsoft SSO discovery/start/callback routes.
 - Theme assets, the Web Push public key, and signed avatar URLs.
-- Plugin webhook mounts under `/hooks/`.
-- The terminal WebSocket upgrade, which requires a short-lived single-use ticket
-  minted by an authenticated session.
+- Plugin webhook mounts under `/hooks/`, which authenticate their own provider-specific request.
 
 Public does not mean unrestricted: each route still validates its own input or
 credential. Before the first user exists, setup mode is open so onboarding can create
@@ -42,7 +40,7 @@ exists.
 ### Token lifetime and CLI credentials
 
 Login tokens expire after **30 days by default**. An administrator can change the
-minimum-one-day setting under **Settings → Security** (`security.tokenTtlDays`).
+minimum-one-day setting under **Settings → System** (`security.tokenTtlDays`).
 
 The CLI stores its token in `~/.config/elowen/cli.json`. Use these environment
 variables when needed:
@@ -61,15 +59,21 @@ be at least **8 characters**, and changing a password requires the current passw
 For unattended first-boot setup, provide `ELOWEN_BOOTSTRAP_USER` and
 `ELOWEN_BOOTSTRAP_PASS` before starting the daemon.
 
-## Roles
+## Roles and instance authority
 
 Elowen has two account roles:
 
-- **Admin** — can manage users and access settings, and can access all projects.
+- **Admin** — can manage users, projects, configuration, and account grants, and has access to all projects.
 - **Member** — can work only in projects explicitly assigned to that account.
 
-The Users page is administrator-only. A member who opens it directly receives an
-access-denied view, and the API returns `403`.
+The runtime also exposes an **instance operator** (called `owner` in turn identity). It is the earliest-created
+administrator and is used as the fallback anchor for some platform conversations. It is not a third account role:
+every account with `users.is_admin = true` is treated as an instance operator for owner-gated capabilities.
+An administrator therefore does not need a separate owner grant. A platform room role or an `admin`-like channel
+policy is not sufficient; instance authority comes from the linked Elowen account.
+
+The Users page is administrator-only. A member who opens it directly receives an access-denied view, and the API
+returns `403`.
 
 ## Create and manage accounts
 
@@ -83,7 +87,7 @@ Select a user to open the detail pane. Administrators can:
 - assign projects;
 - restrict available models;
 - grant user-grantable plugins;
-- enable or disable individual toggleable tools;
+- manage the account's plugin-tool allow-list and explicit disabled-tool deny-list;
 - impersonate the account for support or debugging.
 
 The live tool list distinguishes inherited built-in tools, enabled tools, explicitly
@@ -111,8 +115,17 @@ An unassigned member sees no project data. Project-scoped routes and views are f
 to the member's assigned project set; one member cannot use assignment to inspect
 another member's projects.
 
-Administrators do not need individual project assignments. Assignments are removed
-when the account is deleted.
+Administrators do not need individual project assignments. Assignments are removed when the account is deleted.
+
+## Direct platform chats
+
+A direct 1:1 platform chat is treated as personal only when the platform sender has a verified external identity
+linked to an Elowen account. Groups and channels are shared conversations, even when a sender has an administrator
+role in that platform room. Shared conversations resolve account-scoped state for the verified sender on that turn;
+they do not inherit the account that originally opened the room.
+
+A private chat first created before its sender was linked may initially be anchored to the instance operator. Once the
+sender is verified, Elowen can adopt that direct chat for the sender without moving its transcript, usage, or files.
 
 ## Models, plugins, and tools
 
@@ -135,19 +148,21 @@ Some plugins are marked as user-grantable. A user-grantable plugin is unavailabl
 member until an administrator grants it in the user's **Granted plugins** section.
 Administrators are not restricted by those per-user plugin grants.
 
-Granting a plugin makes its tools eligible for the account; it does not bypass project,
-filesystem, or tool-permission checks.
+Granting a plugin makes its gated tools, API routes, UI, and contributed skills eligible for the account; it does not bypass project, filesystem, or tool-permission checks. Prompt fragments, platform prompts, slash commands, and hooks are not gated by the plugin grant.
 
 ### Individual tools
 
-The user's **Tools** section controls individual toggleable plugin tools. Built-in
-inherited tools are shown for visibility but cannot be switched off there. A tool shown
+The user's **Tools** section controls the positive allow-list for individual toggleable plugin tools. For a
+non-administrator, an empty allow-list grants no plugin tools; a wildcard or family entry such as `mcp__*` can
+cover matching tools. The separate **disabled tools** list is an explicit deny-list and still applies to
+administrators. Built-in inherited tools are shown for visibility but cannot be switched off there. A tool shown
 as unavailable must be enabled through its plugin grant first.
 
-A terminal grant is not the same as unrestricted host access. For non-administrators,
-Sandbox still confines filesystem operations to accessible project roots and the
-account's home directory; if the required confinement cannot be established, access
-fails closed.
+Tool grants are not clamped to the currently loaded catalogue, so a grant can survive a disabled plugin or an
+offline personal MCP server; it simply matches nothing until the tool exists again. Unknown tool names likewise
+have no effect.
+
+A terminal grant is not automatically unrestricted host access. Fresh configuration bubblewrap-confines non-operator commands to accessible Projects and account HOME, failing closed when confinement is required but unavailable. An operator can deliberately set `sandbox.confineNonOperators` to `false`; then granted non-operators run terminal commands directly on the host. File tools and workspace-scoped execution keep their own path/workspace boundaries.
 
 ## Permission rules
 
@@ -196,6 +211,17 @@ to an `ask` rule there:
 
 Strict unattended denial is independent of YOLO and is not overridden by it.
 
+## Activity and audit limits
+
+The **Activity** feed is an operational overview, not a complete audit log. It currently records turn activity,
+SSO login/link/provision/denial events, and plugin events that explicitly publish them. Turn activity is aggregated
+into short windows, and the feed is retained only for the configured event-retention period (30 days by default).
+
+The team feed intentionally exposes only actor, surface, counts, and limited tool summaries; it does not provide
+message text, commands, paths, or a full per-request record. Activity and usage data can also be incomplete for
+legacy, unattributed, failed, or otherwise unrecorded work. Account memory changes have a separate, user-scoped
+memory audit trail; they are not a replacement for an instance-wide administrative audit log.
+
 ## Delegated sub-agents
 
 A delegated sub-agent receives a captured access scope from its parent, including the
@@ -240,12 +266,19 @@ a second permission model.
 
 ## External identities and SSO
 
-External identities are uniquely bound by provider, tenant, and subject. One external
-identity can belong to only one Elowen account.
+External identities are uniquely bound by provider, tenant, and subject. One external identity can belong to only
+one Elowen account, and one account cannot hold two subjects for the same provider and tenant. The immutable
+external subject is the authentication key; an email address is only a controlled linking aid.
 
-Microsoft SSO is tenant-scoped. When configured, linking by matching email is enabled
-by default, while automatic account provisioning remains disabled unless tenant
-provisioning is explicitly enabled. External provisioning cannot create the first
-administrator; create that account through first-run setup first.
+Microsoft SSO is tenant-scoped. When configured, linking by matching a unique email address is enabled by default.
+Ambiguous legacy email matches are refused, and an existing subject binding wins over a conflicting email match.
+Automatic account provisioning remains disabled unless `ssoProvision` is explicitly set to the configured tenant.
+Provisioned accounts are passwordless local accounts with a random discarded password and start as non-admins with
+no positive plugin-tool grant.
+
+Provisioning also requires the Microsoft Graph directory check to identify an enabled member; guests, disabled or
+non-member accounts, and unavailable directory checks are refused. External provisioning cannot create the first
+administrator, and it does not silently replace an existing link. Create the first administrator through first-run
+setup, then use explicit administrative linking or tenant provisioning.
 
 [Next: Troubleshooting](troubleshooting)

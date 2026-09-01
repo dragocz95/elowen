@@ -134,3 +134,5 @@ Before handing off a change, verify the affected boundary rather than only the h
 - browser keyboard, focus, responsive, loading, and error states where applicable.
 
 Use [`DEVELOPMENT.md`](DEVELOPMENT.md) for repository commands, [`SECURITY.md`](SECURITY.md) for the security model, [`TESTING.md`](TESTING.md) for the verification matrix, and [`WEB.md`](WEB.md)/[`CLI.md`](CLI.md) for client-specific contracts.
+
+For operator-facing procedures, see the topical manual pages for [sub-agents and workflows](site/13-tasks-missions.md), [providers and models](site/14-agents-providers.md), [autonomy and safety](site/15-autonomy-safety.md), [Projects, Sandbox, and GitHub](site/16-projects-workflow.md), [scheduling](site/17-scheduling.md), [plugins](site/23-plugins.md), [skills](site/24-skills.md), [MCP](site/25-mcp.md), and [troubleshooting](site/28-troubleshooting.md).

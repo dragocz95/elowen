@@ -10,7 +10,25 @@ group: Automation
 
 Elowen delegates focused work to fresh child conversations called **sub-agents**. For work with dependencies, it can run those children as a directed acyclic graph (DAG): independent steps run in parallel and dependent steps wait for the results they need.
 
-This replaces the retired Tasks, Missions, Autopilot, and coding-agent session features. A sub-agent is not a separate account, worker, or Project. It runs inside the same Elowen instance with a narrower copy of the caller's authority.
+The delegation layer is provided by the bundled `subagent` plugin. Core supplies the host and authority boundaries, but it no longer owns the legacy task and mission domains. The session task list is provided by the optional `todo` plugin, while the current typed sub-agent catalog is provided by `subagent`; either plugin can be absent or disabled. The catalog's historical `/plugins/agents/list` and `/plugins/agents/:name` API routes are owned by `subagent`, not by a separate agents plugin. A sub-agent is not a separate account, worker, or Project. It runs inside the same Elowen instance with a narrower copy of the caller's authority.
+
+## Plugin availability and recovery
+
+Optional domain plugins must be installed and enabled before their tools, pages, and API mounts exist. Manage them in **Settings → Plugins → Available**:
+
+1. Select **Install** to copy the plugin from the curated registry. The standard web action then enables it as part of the same operation.
+2. Review the plugin's capabilities and configure any required fields. If the plugin requests mutation grants, confirm them; cancelling leaves the newly installed plugin disabled.
+3. For an installed but disabled plugin, use its toggle in **Installed**.
+
+The live registry reloads after an enable or install, usually without a daemon restart. If work is currently running, the change may be reported as pending and will apply when that work settles. On startup, the reconciler attempts to restore previously enabled registry plugins when the registry is reachable; an unavailable registry leaves them missing rather than enabling anything new.
+
+For **root-mounted** plugin routes, the HTTP result distinguishes these states:
+
+- **404** means the route is not declared by a known plugin (for example, the plugin was removed, or the registry has no cached route information).
+- **503** with `plugin is disabled` means the plugin is discovered but switched off; enable it in Settings.
+- **503** with `plugin is enabled but not installed` means configuration still enables the plugin, but its code is missing locally; restore or install it from the curated registry.
+
+Namespaced `/plugins/<name>/api/...` routes return **404** when no live handler is registered; they do not expose the root-route 503 distinction.
 
 ## Delegate one focused task
 

@@ -8,7 +8,7 @@ group: Channels
 
 # WhatsApp
 
-The WhatsApp plugin uses Baileys WhatsApp Web multi-device. Pair a WhatsApp account, then map senders or groups to Elowen access.
+The WhatsApp plugin uses Baileys WhatsApp Web multi-device. Pair one WhatsApp account, then map senders or groups to Elowen access.
 
 For shared identity and conversation rules, see [Channels](channels).
 
@@ -18,34 +18,36 @@ For shared identity and conversation rules, see [Channels](channels).
 2. Open **Pairing** and choose **Pair device**.
 3. Pair using one of these methods:
    - **QR code:** open WhatsApp → **Linked devices → Link a device** and scan the displayed code.
-   - **Phone pairing code:** set `phoneNumber` to the bot's international number without `+`, spaces, or dashes (for example, `420777123456`). Enter the displayed 8-character code in WhatsApp → **Linked devices → Link with phone number**.
+   - **Phone pairing code:** set `phoneNumber` to the bot's international number (digits are sufficient; `+`, spaces, and dashes are ignored). Enter the displayed 8-character code in WhatsApp → **Linked devices → Link with phone number**.
 4. Configure at least one sender policy.
 
-Pairing state is kept by the plugin. To disconnect the account, use the pairing UI's **Unpair device** action.
+The pairing screen exposes the current QR code or pairing code and whether the account is connected. Credentials persist across reconnects. **Unpair device** logs the linked device out, removes local credentials, and requires pairing again.
 
-## Sender policies
+## Sender policies and JIDs
 
-Configure policies in **Settings → Plugins → WhatsApp → Sender policies**. The first matching policy wins; an unmatched sender is ignored.
+Configure policies in **Settings → Plugins → WhatsApp → Sender policies**. The first matching policy wins; an unmatched sender is ignored. Policy matching compares identifiers by their digits, so a bare number, a formatted number, and its personal JID are equivalent.
 
 A policy ID can be:
 
 - a phone number, such as `420777123456`;
 - a personal JID ending in `@s.whatsapp.net`;
-- a group JID ending in `@g.us`, which admits everyone in that group; or
-- `*` as a final catch-all policy.
+- a group JID ending in `@g.us`, which admits every sender in that group; or
+- `*` as a final catch-all policy. Put it after named policies.
 
-Set `admin` to allow shared-chat controls and WhatsApp group tools. Project access, tool permissions, and personal memory come from the sender's linked Elowen account.
+WhatsApp can address personal chats with an internal `@lid` JID. When Baileys supplies the corresponding phone-number JID in its alternate field, the plugin prefers that stable phone identity; otherwise the LID remains a separate inbound identifier and must not be treated as a phone-number account link.
 
-## Groups and scope
+Set `admin` to allow shared-chat controls. WhatsApp tools are separately governed by the sender's linked Elowen tool grants and by the paired account's WhatsApp rights, such as being an administrator of a group. Project access and personal memory also come from the linked Elowen account.
 
-- Direct chats always respond for an admitted sender.
+## Direct chats and groups
+
+- A direct chat is identified by its personal chat JID (`@s.whatsapp.net` or `@lid`) and is marked as a one-person conversation. An admitted sender can use it without a mention.
+- A group chat is identified by its `@g.us` JID. The sender is matched by their personal identifier, and the group JID is also available for a group-wide policy.
 - `respondWithoutMention` is `true` by default. In groups, the bot answers every message from an admitted sender. Set it to `false` to require an @mention or a reply to the bot.
-- `groupIds` optionally restricts responses to a comma-separated list of group JIDs. Empty means every group where an admitted sender writes.
-- `notifyChat` optionally selects a phone number or JID for proactive cron, tick, escalation, and restart messages. Empty disables proactive pushes.
+- `groupIds` optionally restricts responses to a list of group JIDs. Empty means every group where an admitted sender writes. Direct chats remain allowed for admitted senders.
 
-## Commands
+## Commands and asks
 
-WhatsApp does not rely on native buttons or lists. Model, reasoning, and context pickers are numbered text menus; reply with the requested number.
+WhatsApp does not rely on native buttons or lists. Model, reasoning, context, and agent questions use numbered text prompts; reply with the requested number.
 
 | Command | Purpose |
 |---------|---------|
@@ -60,11 +62,17 @@ WhatsApp does not rely on native buttons or lists. Model, reasoning, and context
 | `/restart` | Restart the daemon; admin only. |
 | `/help` | Show the commands available to the current sender. |
 
-The controls that change shared chat state require an admin policy. WhatsApp has no `/display` or `/voice` command.
+Model, reasoning, and context pickers require an admin policy. Session controls follow their command gates, and `/fast` requires a linked account. WhatsApp has no `/display` or `/voice` command.
 
-## Streaming and media
+An `AskUserQuestion` is posted as a numbered prompt with up to four questions and up to 25 options per question. For a single question, reply with one option number; multi-select accepts comma-separated numbers. Unless `custom` is disabled, free text is also accepted. Multi-question prompts can be submitted with `submit`; numbered option selection is supported only for single-question prompts, while free text is collected for the first question when allowed. The default timeout is 6 minutes, configurable with `askTimeoutMs` from 30 seconds to 30 minutes; the same timeout applies to numbered menus. Expired or cancelled prompts are closed and can no longer consume a later number reply.
 
-`streaming` defaults to `true`. With it enabled, the plugin edits one progress message while the agent works; the final answer is sent as one message. Set it to `false` to send only the final answer. `deleteToolActivityAfterTurn` can replace the progress message with the final answer.
+## Live messages and notifications
+
+`streaming` defaults to `true`. The plugin edits one progress message while the agent works; the trace can include tool calls and results, diffs, sub-agent summaries, and retry notices. The final answer is sent as one separate message. Set `streaming` to `false` to send only the final answer. With `deleteToolActivityAfterTurn`, the progress message is replaced in place by the final answer; it is not deleted.
+
+Processing reactions (`👀`, `✅`, `❌`) are enabled by default. `reactions: false` disables them.
+
+`notifyChat` selects the default destination for proactive cron/tick results, escalations, and restart notices. It accepts a bare phone number, a personal JID, or a group JID; bare numbers are converted to `@s.whatsapp.net`. An explicit destination supplied by the host takes precedence over `notifyChat`. An empty destination disables the push. Notification messages are not sender-policy-gated, but the WhatsApp connection must be paired.
 
 WhatsApp has no speech-to-text, text-to-speech, or `/voice` support. A voice message arrives as an untranscribed audio attachment.
 

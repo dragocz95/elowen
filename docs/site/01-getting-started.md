@@ -53,7 +53,8 @@ elowen doctor
 - Node.js 22 or newer.
 - npm.
 - Git for Git Projects and Sandbox workspaces.
-- `tmux` for interactive terminal sessions and integrations that launch external command-line tools. The embedded chat can still be configured before `tmux` is installed; `elowen setup` prints an installation hint when it is missing.
+- `tmux` for delegated agents and integrations that launch external command-line tools. The CLI chat itself does not require `tmux`; `elowen setup` prints an installation hint when it is missing.
+- `ripgrep` is required for bounded file-content search. `elowen install` installs it on Debian/Ubuntu; install it separately for a manual setup.
 - On Linux, `bubblewrap` is used by the Sandbox for confined non-operator commands. `elowen install` can install it on Debian/Ubuntu.
 
 ## Make your first request

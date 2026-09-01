@@ -26,17 +26,18 @@ The bootstrap scripts support:
 
 - Node.js 22 or newer.
 - npm.
-- `tmux` for interactive terminal sessions and integrations that launch external command-line tools. Local `setup` warns when it is missing; server `install` can install it.
+- `ripgrep` for bounded file-content search. Server `install` can install it on Debian/Ubuntu.
+- `tmux` for delegated agents and integrations that launch external command-line tools. The CLI chat itself does not require `tmux`; local `setup` warns when it is missing and server `install` can install it.
 - Git for Git Projects and Sandbox workspaces.
 - On Linux, `bubblewrap` for the Sandbox's confined non-operator execution. Server installation can install it.
-- A C compiler and Python 3 are useful when the optional `node-pty` dependency must compile locally. If live PTY streaming cannot be installed, Elowen keeps the terminal snapshot fallback.
 
 ## Bootstrap installation
 
 On Debian/Ubuntu or macOS, the bootstrap installs Node.js when necessary, installs the global npm package, and then hands off to `elowen install`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dragocz95/elowen/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dragocz95/elowen/main/install.sh -o install.sh
+bash install.sh
 ```
 
 The script is network code executed by your shell. Inspect it first if required by your operational policy. You can pass installer flags directly, or use `ELOWEN_INSTALL_ARGS`:
@@ -46,10 +47,10 @@ ELOWEN_INSTALL_ARGS='--unattended --localhost --admin-user admin --admin-pass CH
 bash install.sh
 ```
 
-To pin a package version:
+To pin a package version, set `ELOWEN_VERSION` to a version available on npm:
 
 ```bash
-ELOWEN_VERSION=0.28.13 bash install.sh
+ELOWEN_VERSION=VERSION bash install.sh
 ```
 
 On Windows, run PowerShell as Administrator:
@@ -208,6 +209,6 @@ Override the database with `ELOWEN_DB` and logs with `ELOWEN_LOG_DIR`. Back up t
 
 Before the first user exists, the daemon allows the setup flow to create an administrator. You can also seed the first administrator with `ELOWEN_BOOTSTRAP_USER` and `ELOWEN_BOOTSTRAP_PASS` when starting the daemon.
 
-Once a user exists, normal requests require authentication. `ELOWEN_ALLOW_OPEN=1` is not a supported runtime switch for disabling authentication; do not use it as a security control.
+Once a user exists, normal requests require authentication. There is no supported general-purpose switch for disabling authentication.
 
 [Next: Docker](docker)

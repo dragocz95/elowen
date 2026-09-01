@@ -58,7 +58,9 @@ A live session may have no usage data yet. In that case the relevant fields show
 
 Models shows one row per model and runtime, with tokens, cache volume, measured speed, and cost. Rows are ordered by token usage and include totals.
 
-The data comes from persisted brain-session records for the authenticated account. It is **not** a universal ledger of every executor or every activity performed by the daemon. A model total also does not identify a person from an IP address or prove which project caused the usage.
+The data comes from persisted brain-session usage records for the authenticated account. Usage from delegated descendants is rolled into the appropriate persisted usage buckets, including usage retained when older child context is compacted. It is still **not** a universal ledger of every executor or every activity performed by the daemon. A model total also does not identify a person from an IP address or prove which project caused the usage.
+
+Rows are attributed to the provider/model that actually produced them, not to the conversation's current selection. Switching a conversation's model therefore does not rewrite its historical usage. Undated legacy rows are excluded from the model view and from date-filtered totals.
 
 Cost is included only when the provider reports it. Elowen does not calculate a replacement price from a local price list for this view. A provider without a reported cost appears as unavailable.
 
@@ -137,7 +139,7 @@ The hourly cleanup replaces expired IP addresses with `redacted` while preservin
 
 ## Reset usage
 
-If you are an administrator and use the usage reset control, Elowen clears your own message-derived usage and origin rows. It does **not** delete conversations, transcripts, or messages. Resetting also cannot restore token or cost fields that have already been removed from stored messages.
+If you are an administrator and use the usage reset control, Elowen starts a new accounting epoch for your account and clears your independent origin rows. It does **not** delete conversations, transcripts, messages, historical provider requests, or old usage fields. Current totals include only rows from the new epoch, so later compaction or transcript recovery cannot make pre-reset usage reappear. The API's `chatCleared` value reports whether the logical reset transaction ran; it is not a count of historical message rows.
 
 ## Reduce usage
 

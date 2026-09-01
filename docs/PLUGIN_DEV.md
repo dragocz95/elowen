@@ -13,7 +13,7 @@ The daemon scans two plugin roots, in this order:
 
 Bundled folders win when both roots contain the same plugin name. Only names in the enabled-plugin configuration are loaded. Folders are scanned and loaded in deterministic name order. Each plugin is registered into an isolated staging registry and merged only after `register(ctx)` completes; a malformed or failing plugin is skipped without leaving partial tools or routes behind.
 
-The source checkout currently bundles `askuser`, `elowen-docs`, `files`, `mcp`, `runtime-context`, `sandbox`, `statusline`, `subagent`, `terminal`, and `web`. Optional integrations and extracted domain plugins are installed from the curated plugin registry. Marketplace installation is limited to that registry; it does not accept arbitrary URLs or local folders. An installed marketplace plugin is placed disabled first, then enabled separately with any required capability acknowledgement.
+The source checkout currently bundles `askuser`, `elowen-docs`, `files`, `mcp`, `runtime-context`, `sandbox`, `statusline`, `subagent`, `terminal`, and `web`. Optional integrations and extracted domain plugins are owned by the curated plugin registry at `https://github.com/dragocz95/elowen-plugins` and are installed from that registry. Marketplace installation is allowlisted by its `registry.json`; it does not accept arbitrary URLs or local folders. The daemon shallow-clones the registry, caches the last good checkout, and copies `plugins/<name>/` atomically into the instance plugin directory. An installed marketplace plugin is enabled separately and may require explicit capability acknowledgement. If an enabled plugin was moved out of the bundled package, boot reconciliation can restore it from the registry without changing the enabled set.
 
 A plugin reload replaces the whole registry generation. Do not retain a plugin control, configuration object, or other live registry value across reloads. Resolve live controls when they are used.
 
@@ -55,8 +55,11 @@ The file must be named `elowen-plugin.json`:
   "entry": "index.mjs",
   "provides": {
     "tools": ["MyTool"],
-    "apiRoutes": ["status"]
+    "apiRoutes": ["status"],
+    "controls": ["my-domain"]
   },
+  "requiresControls": ["shared-domain"],
+  "workspaceSafe": true,
   "icons": {
     "MyTool": "🔧"
   },
@@ -93,11 +96,12 @@ Declare the public surfaces the plugin contributes:
   "destinations": ["my-platform"],
   "httpRoutes": ["callback"],
   "apiRoutes": ["status", "/legacy/items/:id"],
-  "mcpTools": ["my_tool"]
+  "mcpTools": ["my_tool"],
+  "controls": ["my-domain"]
 }
 ```
 
-`registerHttpRoute`, `registerApiRoute`, `registerNotificationDestinationProvider`, and `registerMcpTool` are deny-by-default: their paths or names must be declared in the corresponding manifest list. Tools and platforms should also be declared so the manifest remains an accurate audit surface.
+`registerHttpRoute`, `registerApiRoute`, `registerNotificationDestinationProvider`, and `registerMcpTool` are deny-by-default: their paths or names must be declared in the corresponding manifest list. A published control key must be declared in `provides.controls`; `requiresControls` names control contracts this plugin cannot operate without. Tools, skills and platforms should also be declared so the manifest remains an accurate audit surface.
 
 There is no `provides.hooks` field. Hooks are registered with `registerHook`; their mutations are governed by `capabilities.mutates`.
 
@@ -120,20 +124,28 @@ Supported field types are:
 ```text
 string, secret, boolean, number, textarea, rolePolicies, model, provider,
 section, enum, multiSelect, code, prompt, json, embeddingModel, mcpServers,
-destination, projects, plugins, tools, models
+destination, projects, plugins, tools, models, timezone, tokenList
 ```
 
 Common field properties include `key`, `label`, `type`, `hint`, `help`, `required`, `default`, `min`, `max`, `step`, `placeholder`, `options`, `language`, `risk`, `advanced`, `fullWidth`, and `visibleWhen`.
 
 Keep English text in the manifest as the fallback. Add translations under `i18n/<lang>.json`; manifest fields use `description` and `fields`, while browser UI metadata uses `web`.
 
-Use `userConfigSchema` for ordinary account settings such as a selected option or external identifier. Read the current account's values with `ctx.userConfig()`. It returns `null` when the turn is not acting as an account; never fall back to instance configuration in that case. The host routes per-account configuration through `GET /plugins/user-config` and `PATCH /plugins/:name/user-config` and never returns secret values.
+Use `userConfigSchema` for ordinary account settings such as a selected option or external identifier. Read the current account's values with `ctx.userConfig()`. It returns `null` when the turn is not acting as an account; never fall back to instance configuration in that case. The host renders eligible forms as personal sections in **Account**, routes them through `GET /plugins/user-config` and `PATCH /plugins/:name/user-config`, and never returns secret values.
+
+Both instance and per-account config reads include a `revision`. Send it back as `expectedRevision` with the next `values` patch. Host schema forms normally send a full snapshot, but the HTTP object has patch semantics: omitted keys remain unchanged and `null` clears an optional non-secret field. A stale revision returns HTTP `409` with the canonical masked `current` snapshot; do not retry the old snapshot blindly. Instance config success returns `{ ok, config, secretsSet, revision }`, and may use HTTP `202` with `pending: true` after the durable commit when a live registry swap is deferred or fails. Per-account config is read live by `ctx.userConfig()` and does not reload the plugin registry.
+
+A secret field is write-only. Omitted, empty, or `null` input means “keep the stored value”; it is not a deletion signal. Host schema forms exclude secret plaintext from debounced autosave and require an explicit commit for the first value or a replacement.
 
 ### Per-account access
 
 Set `userGrantable: true` only when the plugin must be granted separately to each non-admin account. Such a plugin is deny-by-default for non-admins until an administrator grants it through the account's plugin access settings. The grant filters its routes, tools, skills, and browser UI.
 
 A grant does not currently filter prompt fragments, slash commands, or hooks. Do not put account-sensitive behavior in those surfaces of a grantable plugin.
+
+### Cross-plugin skills
+
+Skills are merged into one live registry, and the host records the owning plugin for each contribution. A plugin that manages skills must use the live `skillCatalog` control when it needs to enumerate or resolve skills: `visibleSkills()` already applies the current account, plugin grants and per-account ownership, while `canonicalBaseDir(skill)` returns the host-approved base directory. Do not rescan only the plugin's own directory or maintain a second catalog. A skill registered with `ownerUserId` is visible and expandable only in that account's own sessions; an unowned skill is instance-wide.
 
 ### Capabilities
 
@@ -147,9 +159,9 @@ Capabilities are deny-by-default:
 }
 ```
 
-`mutates` values currently include `prompt`, `turnContext`, `tools`, `memory`, `events`, `workflow-dag`, and `users`. The host requires explicit acknowledgement when enabling a plugin that declares `tools`, `memory`, `events`, `workflow-dag`, or `users` mutation authority.
+`mutates` values currently include `prompt`, `turnContext`, `tools`, `memory`, `events`, `workflow-dag`, and `users`. The host requires explicit, all-or-nothing acknowledgement when enabling or re-enabling a plugin that declares `tools`, `memory`, `events`, `workflow-dag`, or `users` mutation authority. A warning badge is not consent; turning a plugin off needs no acknowledgement.
 
-`reads` gates host capabilities such as `db`, `controls`, `embeddings`, `providers`, `prompts`, `stores`, `git`, and `project-files`. Declare only the scopes the implementation needs. `network` records network intent; it is not a replacement for validating remote data.
+`reads` gates host capabilities such as `db`, `controls`, `embeddings`, `providers`, `prompts`, `stores`, `git`, and `project-files`. Declare only the scopes the implementation needs. `network` records network intent; it is not a replacement for validating remote data. `workspaceSafe: true` is a positive declaration that every registered tool is safe inside an exact delegated workspace; omit it for mixed or unsafe plugins, or mark individual tools with `workspaceSafe: true`.
 
 ## Entry point and tools
 
@@ -410,7 +422,14 @@ A hook may also be a pure observer. Hook failures do not grant permission or blo
 
 ## Controls and plugin dependencies
 
-A control is a live domain interface, not a plugin-name lookup. Declare the control shape in `KnownControls` when core needs to call it, then register it under a domain key:
+A control is a live domain interface, not a plugin-name lookup. Use a domain key and declare published keys in `provides.controls`. Declare the control shape in `KnownControls` when core needs to call it; plugin-only controls may remain behind the generic `PluginControl` shape:
+
+```json
+{
+  "provides": { "controls": ["my-domain"] },
+  "requiresControls": ["shared-domain"]
+}
+```
 
 ```javascript
 ctx.registerControl('my-domain', {
@@ -441,7 +460,7 @@ A plugin browser bundle is declared in the manifest:
 "web": {
   "entry": "web/index.js",
   "css": "web/index.css",
-  "requiresApiVersion": 1,
+  "requiresApiVersion": 12,
   "label": "My plugin",
   "account": [
     { "id": "connection", "label": "Connection", "icon": "Settings" }
@@ -469,7 +488,7 @@ Register the bundle through the browser runtime:
 
 ```javascript
 window.__elowenRegisterPluginUi?.('my-plugin', {
-  requiresApiVersion: 1,
+  requiresApiVersion: 12,
   pages: { '': RootPage },
   account: { connection: ConnectionPanel },
   project: { overview: ProjectPanel },
@@ -477,7 +496,17 @@ window.__elowenRegisterPluginUi?.('my-plugin', {
 });
 ```
 
-Use the host-provided `window.ElowenUiRuntime` for React, components, hooks, utilities, authenticated API calls, and navigation. Build with `elowen-plugin-ui-kit`. Never import from the host `web/` application; dependency-cruiser enforces this boundary so the bundle cannot ship a second React or query client.
+Use the host-provided `window.ElowenUiRuntime` for React, components, hooks, utilities, authenticated API calls, and navigation. The current host runtime contract is API 12. Compatibility is a ceiling: a bundle loads when `requiresApiVersion <= 12`, so the host runtime may add names but must not remove or rename published components, hooks, or utilities. Build with `elowen-plugin-ui-kit` against the same contract. Never import from the host `web/` application; dependency-cruiser enforces this boundary so the bundle cannot ship a second React or query client.
+
+API 12's public autosave contract is:
+
+- `SaveStatus`: `idle | saving | saved | pending | error`;
+- `components.AutoSaveStatus({ status, onRetry? })` for the shared indicator;
+- `hooks.useAutoSaveStatus(deps, save, { ready?, savable?, delay? })`, returning `status`, async `retry()`, and async `flush()`;
+- `hooks.usePluginConfigDraft(name, detail, { save? })`, returning the canonical draft values, `setValue`, explicit async `commitValue`, status, `errorKind`, retry/flush, and readiness;
+- `PluginPageProps.onSaveState(status, retry?)`, which reports the section into the host page or deck indicator.
+
+The host consumes the initial seed without writing it, serializes saves, collapses edits made during an in-flight write into one trailing pass, and flushes pending valid edits on teardown. `usePluginConfigDraft` sends `detail.revision` as `expectedRevision`, adopts canonical successful responses, never autosaves schema-declared secrets, and returns `{ pending: true }` from `commitValue` when persistence succeeded before activation. A plugin-owned page frame must render its own save indicator; other settings sections should report through `onSaveState`.
 
 The host serves the bundle and stylesheet at content-hashed same-origin URLs and lists available plugin UI through `GET /plugins/ui`. Browser pages mount under `/p/<plugin>/...`. A plugin with `web.adminOnly` has both navigation and assets hidden from non-admin accounts.
 
@@ -502,7 +531,7 @@ ctx.registerPlatform({
 
 The adapter owns transport authentication, inbound message normalization, outbound formatting, and platform-specific state. `PlatformAdapter` supports `connect`, `disconnect`, `listen`, `send`, optional proactive `notify`, and optional channel `control` wiring.
 
-For Discord, Telegram, Teams, WhatsApp, and similar adapters, reuse the published `elowen-plugin-shared` package instead of copying transport-neutral behavior. Its modules include `stateStore`, `display`, `format`, `images`, `messages`, `help`, `chatCommands`, `liveTrace`, `liveMessage`, `turnRunner`, and `access`. Declare the exact `requiresSharedApi` integer in the manifest when importing it.
+For Discord, Telegram, Teams, WhatsApp, and similar adapters, reuse the published `elowen-plugin-shared` package instead of copying transport-neutral behavior. The daemon currently ships shared API contract 3. Its modules include `stateStore`, `display`, `format`, `images`, `messages`, `help`, `chatCommands`, `liveTrace`, `liveMessage`, `turnRunner`, `turnResult`, `voice`, `httpClient`, `lifecycle`, `atomicJson`, and `access`. Declare `"requiresSharedApi": 3` in the manifest when importing it. This is an exact contract match, not a minimum: the host refuses a plugin declaring another number before importing its entry module.
 
 The shared command catalog is authoritative. Use `ctx.chatCommands(surface)` and the helpers from `elowen-plugin-shared/chatCommands`; do not accept commands merely because a local name list contains them. Keep only transport-specific chunk sizes, markup, reply shapes, and SDK integration in the adapter.
 
@@ -526,6 +555,17 @@ ctx.registerMcpTool({
 ```
 
 The request function is bound to the calling MCP client's token. A plugin MCP tool cannot act with broader rights than that client. The live `/mcp` tool list changes with plugin reloads.
+
+## Release versioning
+
+Keep these version axes separate:
+
+- The daemon version is the root `package.json` version (`0.28.24` in this upcoming checkout; it is not published yet) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
+- A plugin's manifest `version` is that plugin's own release version. Bump it whenever its installed bytes change, so reload cache-busting and marketplace update detection see the new build. It does not need to match the daemon version.
+- `apiVersion` is the plugin API breaking-change axis and is currently `"1"`; `requiresCore` is a minimum daemon version for additive host APIs. `requiresSharedApi` is the exact shared-helper contract, currently `3`.
+- `web.requiresApiVersion` is the host browser-runtime compatibility ceiling, currently `12`; it must not be used to signal removals.
+
+A release build copies bundled plugins into `dist/plugins/` and emits browser bundles from `web-src/`. Registry-owned plugins release in `elowen-plugins` and are not published as part of the main npm package. Keep registry catalog metadata and the plugin manifest aligned, but treat the manifest as authoritative for installed version and capabilities. Do not describe a release as published or pushed unless the corresponding remote operation actually completed.
 
 ## Testing and build checks
 

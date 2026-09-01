@@ -2,7 +2,7 @@
 
 Domain: context/token budgeting, compaction, tool-result aging, cache-prefix stability, and user-facing reporting.
 Source read: `/tmp/claude-code` at commit `6f6f12b37f529488b10e53928dd5508bb93535c7` (2026-05-07).
-Compared against: `/var/www/elowen` `main` @ 0.27.80, built on `@earendil-works/pi-coding-agent` (PI).
+Compared against: this checkout, release `0.28.24` (public GitHub/npm remain on `0.28.17`), built on `@earendil-works/pi-coding-agent` (PI).
 
 Scope note: PI owns the base agent loop, tool execution, and session persistence; Elowen owns a layer of `transformContext`/extension hooks on top of it (`src/brain/session/*`, `src/brain/continuity/*`). Findings below compare Claude Code's in-process mechanisms against what that combination already provides.
 
@@ -26,13 +26,11 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 
 **Claude Code**: `autoCompactIfNeeded()` tracks `consecutiveFailures` on an `AutoCompactTrackingState` threaded through the query loop, and stops attempting compaction after `MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES=3` (`services/compact/autoCompact.ts:60,67-70,260-265,341-349`). The comment cites a real incident: 1,279 sessions with 50+ consecutive failures, up to 3,272 in one session, ~250K wasted API calls/day fleet-wide.
 
-**Elowen/PI today**: no equivalent guard found (`grep -rn "consecutiveFailures|circuit breaker" src` — no hits). PI's native overflow path reports `reason: "overflow"` / `willRetry` to `session_before_compact` handlers, but nothing in Elowen counts consecutive failures and stops retrying.
+**Elowen/PI today**: Elowen now wraps PI with `createCompactionCircuitBreaker` (`src/brain/session/compactionCircuitBreaker.ts`). It counts failed automatic compactions per session, cancels further automatic attempts after the live `compactionFailureLimit` (default 3), leaves manual `/compact` available, and reports the terminal condition to the conversation. It also stops threshold compaction when the measured post-compaction floor cannot get below the trigger; this is a separate reachability guard.
 
-**Gain from adopting**: protects against the exact failure mode CC hit — a session whose context is irrecoverably over the limit (e.g. one tool result larger than the whole window) retrying compaction every turn forever, burning API cost with each doomed attempt. Directly relevant to the user's cost sensitivity.
+**Why it matters**: this protects against the exact failure mode CC hit — an irrecoverably oversized context retrying compaction every turn and burning API cost. The implementation keeps the counter per session, resets it after a successful compaction, and surfaces the terminal condition instead of silently doing nothing.
 
-**Cost/risk**: small. Needs a per-session failure counter (reset on success) surviving across `transformContext`/`prepareNextTurnWithContext` calls — the same closure-scoped state pattern `toolResultClearing.ts`'s `latched` map already uses. Failure mode on hitting the breaker needs a decision: surface an error to the user rather than silently doing nothing.
-
-**Verdict: ADOPT, priority medium.** Cheap, directly prevents a known cost-bleeding failure mode, no interaction with the prompt-cache-stability constraint.
+**Verdict: ADOPTED in 0.28.24.** The guard is per-session, operator-tunable, preserves manual recovery, and reports when automatic compaction is stopped.
 
 ---
 
@@ -110,13 +108,11 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 
 **Claude Code**: `enforceToolResultBudget()` (`utils/toolResultStorage.ts:769-909`) is a *second*, independent layer from single-result persistence (F9): it looks at the **sum** of all tool-result content in one wire-level user message (parallel tool calls collapse into one API message) and, if the sum exceeds `MAX_TOOL_RESULTS_PER_MESSAGE_CHARS=200_000` chars (`constants/toolLimits.ts:49`), persists the *largest* fresh results in that message to disk until back under budget — even if no single result individually crossed the per-tool threshold. State is tracked per `tool_use_id` (`seenIds`/`replacements`) and frozen forever once a result's fate (replaced or not) is decided, guaranteeing the same choice is replayed byte-identically on every subsequent turn for prompt-cache stability (`toolResultStorage.ts:372-393,641-667`).
 
-**Elowen today**: `toolResultClearing.ts` only evaluates individual results — `selectClearableToolResults` and `selectOversizedToolResults` both check one tool result's byte size against a threshold (`CLEAR_MIN_BYTES`/`spillMaxResultBytes()`), never the sum across a batch of parallel tool calls in the same turn. A turn with, say, 8 parallel `Grep` calls each returning 30 KB (well under `SPILL_MAX_RESULT_BYTES=50_000`) would add 240 KB to context uncontested.
+**Elowen today**: `toolResultClearing.ts` evaluates individual results and the aggregate size of each current-run, consecutive `toolResult` group. `selectBudgetedToolResults` spills the largest members above `TOOL_RESULT_GROUP_BUDGET_BYTES` (default 200,000 bytes), while latching both spilled and kept decisions for prompt-cache stability. The per-result threshold remains 50,000 bytes.
 
-**Gain from adopting**: closes a real gap — Elowen's agents do issue parallel tool calls (the harness instructions explicitly encourage batching independent reads/searches), so this exact "many medium results, no single one over threshold" pattern is expected to occur regularly, not hypothetically.
+**Why it matters**: parallel tool calls make the many-medium-results case practical, even when every individual result is below the per-result threshold. The implementation reuses the existing transform-context spill path, groups consecutive current-run results as one provider message, spills largest-first, and latches both kept and spilled decisions.
 
-**Cost/risk**: low-medium. The mechanism composes cleanly onto the existing `transformContext` pattern `toolResultClearing.ts` already uses — same latch-by-id, same spill-to-disk-with-preview approach, just triggered by a per-message sum instead of a per-result size. Needs to correctly group Elowen's message shape into "one wire-level turn's worth of parallel tool results", analogous to CC's `collectCandidatesByMessage` grouping (`toolResultStorage.ts:600-639`).
-
-**Verdict: ADOPT, priority medium.** Real, currently-uncovered gap with a clear, low-risk implementation path that reuses machinery Elowen already has.
+**Verdict: ADOPTED in 0.28.24.** The aggregate budget and durable latch are implemented in the existing transform-context spill path; the limit is operator-tunable and applies live.
 
 ---
 
@@ -172,13 +168,11 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 
 **Claude Code**: the `/context` command / `get_context_usage` control request (`commands/context/context-noninteractive.ts:34-325`) produces a full breakdown: total tokens vs. window with percentage, a per-category table (system prompt, tools, memory, messages, free space, autocompact buffer), a per-MCP-tool token table, a per-custom-agent table, a per-memory-file table, a per-skill table, and a message-breakdown table splitting tokens by tool-call vs. tool-result vs. attachment vs. assistant-text vs. user-text, with a "top tools by token cost" and "top attachments by token cost" ranking.
 
-**Elowen today**: `statsOverlay.ts` (`src/cli/chat/statsOverlay.ts:1-152`) shows: model, context percentage with a bar, tokens-used/window, total tokens, input/output split, cache-hit %, cost, tok/s — and a separate per-model tab. This answers "how full is context and what did it cost" but not "what specifically is filling it" — there's no category breakdown (system prompt vs. tools vs. memory vs. message history), no per-tool or per-attachment cost ranking.
+**Elowen today**: `src/brain/contextBreakdown.ts` implements the read-only breakdown behind `GET /brain/context-usage` and CLI `/context`. It reports estimated resident tokens and free space, categories for system prompt, active tool schemas, user messages, assistant messages, tool results and other history, plus the eight heaviest tools split into schema, call and result cost. It uses provider-reported resident usage where reliable and the same structured local estimate used by compaction for Anthropic hosted-tool sessions.
 
-**Gain from adopting**: given the user's explicit cost sensitivity, a "why is this session's context so big" self-service breakdown is high-value — it turns "context feels bloated" from a vague impression into an actionable answer (e.g. "62% is one skill's content", "top tool by result-tokens is X"). This is also the natural place to surface F1's warning tiers and F2's circuit-breaker state if adopted.
+**Remaining gap vs CC**: Elowen does not split memory files, skills, custom agents and attachments into separate rankings, and its category taxonomy is intentionally shaped around Elowen's own request model rather than Claude Code's.
 
-**Cost/risk**: moderate, all in reporting/analysis code — walking the current message set and categorizing token counts by source. No runtime behavior risk since it's read-only; the main cost is deciding which categories map cleanly onto Elowen's architecture (Elowen doesn't have CC's exact system-prompt-section/skill-frontmatter/MCP-tool taxonomy, so the categories need to be redesigned around what Elowen actually tracks: memory blocks, tool schemas, message history, live-recall injections).
-
-**Verdict: ADOPT, priority high.** Directly serves the user's stated cost-sensitivity, low technical risk (pure reporting), and there is an obvious gap versus what Elowen currently shows.
+**Verdict: ADAPTED in 0.28.24.** The actionable self-service category/free-space and top-tool breakdown is implemented; the remaining finer-grained tables are optional extensions, not a missing core diagnostic.
 
 ---
 
@@ -186,9 +180,9 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 
 | # | Finding | Verdict | Priority | Reasoning |
 |---|---------|---------|----------|-----------|
-| F13 | User-facing context/token breakdown (`/context`-equivalent) | ADOPT | high | Directly serves cost-sensitivity; pure reporting, low risk; clear current gap |
-| F2 | Circuit breaker on repeated compaction failure | ADOPT | medium | Cheap; prevents a known cost-bleeding retry-storm failure mode |
-| F8 | Aggregate per-message tool-result budget | ADOPT | medium | Closes a real, expected-to-occur gap (parallel tool calls); reuses existing spill machinery |
+| F13 | User-facing context/token breakdown (`/context`-equivalent) | **ADAPTED in 0.28.24** | — | Category/free-space and top-tool breakdown is available through the API and CLI |
+| F2 | Circuit breaker on repeated compaction failure | **ADOPTED in 0.28.24** | — | Per-session automatic-compaction breaker with manual recovery retained |
+| F8 | Aggregate per-message tool-result budget | **ADOPTED in 0.28.24** | — | 200,000-byte current-run group budget reuses the existing spill/latch machinery |
 | F4 | Detailed anti-drift compaction summary prompt | ADAPT | medium | Cheap via existing `session_before_compact` hook; targets a real summary-quality failure mode |
 | F10 | File-read deduplication | ADAPT | medium | Measured ~18%/2.64% savings in CC, but cost depends on unverified PI extension-hook feasibility — spike first |
 | F7 | Cache-editing microcompact (warm-cache clearing) | ADOPT if API-available / SKIP otherwise | medium | High potential value for long warm sessions, but entirely gated on unverified Anthropic beta availability |
@@ -202,6 +196,6 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 
 ---
 
-*Findings by verdict: ADOPT 3 (F2, F8, F13), ADAPT 4 (F1, F4, F7, F10), SKIP 6 (F3, F5, F6, F9, F11, F12).*
+*Findings newly implemented in 0.28.24 are F2, F8 and F13. F12 was already implemented; remaining proposals are labelled ADAPT/ADOPT, and existing or intentionally skipped mechanisms are labelled SKIP.*
 
-*Note: the Elowen-side claims in this document were produced by a research agent reading the source; they have not been independently re-verified line by line. Treat `path:line` references as starting points, not as established fact.*
+*Status note: the Elowen-side claims above were reconciled against this checkout at `0.28.24`; cited paths and line numbers are illustrative and may move. Findings labelled ADOPT/ADAPT remain proposals unless explicitly marked implemented.*

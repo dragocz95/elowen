@@ -13,7 +13,9 @@ belong to your Elowen account unless noted otherwise. Most changes save
 automatically; the page shows the save state for the active section.
 
 The Account page can also contain sections contributed by installed and granted
-plugins. Those sections are managed by their owning plugin.
+plugins. A plugin may provide a custom account panel, a manifest-defined personal
+configuration form, or both. Those values belong to the signed-in account and are
+managed by the owning plugin.
 
 ## Account
 
@@ -57,6 +59,12 @@ account's access and settings are used for that conversation. A platform
 identity can belong to only one Elowen account. These fields autosave after you
 edit them.
 
+## Personal plugin configuration
+
+An enabled plugin with a `userConfigSchema` appears as its own Account section when it is available to you. These forms store only your account's values, such as a personal external identifier, preferred region, or credential. They do not change the instance-wide plugin configuration in **Settings → Plugins**.
+
+Non-secret fields autosave with revision protection. If another tab or device saved a newer revision, Elowen keeps your draft and offers to reload the server version or keep your changes on top of it. Secret values are never read back or debounced: setting or replacing one requires the explicit **Save** button. A plugin that is disabled or no longer granted disappears from Account and cannot be updated by URL.
+
 ## Elowen AI
 
 The **Elowen AI** section controls the embedded assistant used by Web chat and
@@ -65,10 +73,20 @@ name if an administrator has changed it.
 
 ### Default model
 
-**Default Elowen AI model** selects the model used by Web chat and `elowen chat`.
-Choose **Server default** to follow the instance-wide default. Changing this
-preference affects new and running assistant work according to the daemon's
-normal model-switch behavior.
+**Default Elowen AI model** selects the fallback model used by Web chat and
+`elowen chat`. Choose **Server default** to follow the instance-wide default.
+A conversation that already has its own model selection keeps that selection
+across reconnects and routine respawns. A project-specific model preference can
+take precedence when a new conversation starts in that project and remains
+higher priority than the account fallback when that preference is reapplied.
+Use the conversation model picker or `/model` for an explicit switch.
+
+Saving the account model restarts the active owner session through the daemon's
+normal respawn path. For sessions without a project-specific preference, the
+new account model is applied; a project-specific preference remains higher
+priority. If a saved model is unavailable or no longer allowed, Elowen falls
+through to the project, account, or server default rather than silently matching
+the same model ID under another provider.
 
 ### Reasoning effort
 
@@ -86,6 +104,16 @@ usage.
 selected chat model cannot process images. Leave it empty to use no separate
 fallback.
 
+### Fast mode
+
+**Fast mode** stores one durable account preference for priority processing
+where the selected provider route supports it. The setting is available when
+at least one configured model supports Fast; the current model may still show
+that Fast is unsupported. In that case the preference remains saved, but no
+Fast field is sent for that request. Saving Fast does not respawn live
+sessions; they read the account value on their next provider request. `/fast`
+changes or reports the same account preference in supported chat surfaces.
+
 ### Automatic compaction
 
 When a conversation approaches its context limit, Elowen can summarize older
@@ -98,7 +126,8 @@ context to make room for the next turn.
   Models without an override use the global threshold.
 - **Compaction model** chooses the model that writes summaries, including for
   the manual `/compact` command. Leave it empty to let the conversation's own
-  model summarize.
+  model summarize; ChatGPT OAuth may instead use its configured default model
+  when the selected model is a different catalog entry.
 
 See [Brain & Chat](brain-chat) for the user-facing effects of compaction.
 
@@ -167,8 +196,9 @@ the [Memory](memory) page.
 
 ## Terminal
 
-**Account → Terminal** controls the appearance and behavior of the Web terminal
-and the terminal chat. Changes autosave and the section includes a live preview.
+**Account → Terminal** controls the appearance and behavior of `elowen chat` in
+the terminal. The Web UI shows a live preview of those CLI settings; the former
+browser terminal is no longer part of Elowen. Changes autosave.
 
 - **Colors**: follow the application theme with **Auto**, or choose **Custom**
   and edit the 21-color palette. Presets include **Elowen Dark**, **Elowen
@@ -203,8 +233,11 @@ characters**.
 ## Saving and account scope
 
 Profile fields, connected identities, AI settings, personality, memory toggles,
-and terminal settings autosave. Password changes require the explicit **Change
-password** action, and enabling device notifications requires browser consent.
+terminal settings, and non-secret personal plugin fields autosave. A visible
+**Saved; activation pending** state means the value is durable but a live session or
+plugin generation has not adopted it yet. Password changes and plugin secret values
+require an explicit save action, and enabling device notifications requires browser
+consent.
 
 Account settings do not change other users' preferences. Instance-wide options,
 user administration, enabled models, and plugin management are available to

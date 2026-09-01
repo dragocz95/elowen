@@ -8,7 +8,7 @@ group: Start here
 
 # Production & Updates
 
-Use `elowen install` for an always-on machine. It provisions the service processes, persistent runtime directories, and—on Linux—a systemd-managed deployment. Put HTTPS and any public hostname in front of the web UI; keep the daemon private unless you deliberately choose direct IP mode.
+Use `elowen install` for the standard always-on machine. It provisions the service processes, persistent runtime directories, and—on Linux—a systemd-managed deployment. A custom source deployment can use the same native two-service shape with a stable built checkout and separately managed persistent data. Put HTTPS and any public hostname in front of the web UI; keep the daemon private unless you deliberately choose direct IP mode.
 
 ## Provision a server
 
@@ -25,7 +25,7 @@ The interactive installer lets you choose:
 - nginx or Apache when a domain is used; and
 - whether to request a Let’s Encrypt certificate.
 
-It installs missing `tmux`, Linux Sandbox support, and optional terminal streaming support where possible. It then writes and starts the daemon and web services, waits for the daemon health endpoint, configures the selected proxy, and runs onboarding for the first administrator.
+It installs missing `ripgrep`, `tmux`, and Linux Sandbox support. It then writes and starts the daemon and web services, waits for the daemon health endpoint, configures the selected proxy, and runs onboarding for the first administrator.
 
 For a non-interactive localhost deployment:
 
@@ -45,6 +45,12 @@ elowen install
 ```
 
 macOS uses per-user launchd agents and remains localhost-only. Native Windows is not supported; use the WSL2 bootstrap described in [Install](install#bootstrap-installation).
+
+## Custom source-managed hosts
+
+For a source deployment, build both `dist/` and `web-dist/` before changing the running host. A practical native layout keeps a complete built checkout at a stable application path, keeps SQLite, logs, plugin data, and Project directories on persistent local storage, and runs the two Node entrypoints as systemd services behind nginx. On a constrained VM, build elsewhere and transfer the complete artifact tree so production CPU is not consumed by `next build`.
+
+Custom unit files and deploy scripts are not owned by `elowen install`. Preserve absolute Project paths and the data directory across updates, back them up together with `plugin-secrets.key`, restart through systemd, and verify both the daemon health endpoint and the web root. Keep the daemon and web listeners on loopback when nginx is the public edge.
 
 ## Services and lifecycle
 
@@ -79,8 +85,7 @@ launchctl kickstart -k gui/$(id -u)/io.elowen.daemon
 
 For a domain deployment, the installer configures nginx or Apache. If you maintain the proxy yourself, route these paths:
 
-- `/` to the web UI on `127.0.0.1:4500`;
-- `/ws/` to the daemon on `127.0.0.1:4400`, with WebSocket upgrade support; and
+- `/` to the web UI on `127.0.0.1:4500`; and
 - `/hooks/` to the daemon on `127.0.0.1:4400`.
 
 For nginx, the important shape is:
@@ -90,16 +95,6 @@ server {
     listen 80;
     listen [::]:80;
     server_name elowen.example.com;
-
-    location /ws/ {
-        proxy_pass http://127.0.0.1:4400;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 3600s;
-    }
 
     location /hooks/ {
         proxy_pass http://127.0.0.1:4400;
@@ -130,7 +125,7 @@ server {
 }
 ```
 
-`X-Real-IP` must be overwritten by the trusted proxy, not copied from an incoming client header. Elowen uses it for rate limiting and request-origin handling. Keep `/ws/` and `/hooks/` ahead of the catch-all location.
+`X-Real-IP` must be overwritten by the trusted proxy, not copied from an incoming client header. Elowen uses it for rate limiting and request-origin handling. Keep `/hooks/` ahead of the catch-all location.
 
 The installer can obtain HTTPS with Certbot for a domain. An IP deployment is HTTP-only and binds the web and daemon to `0.0.0.0`; open the required ports in the firewall and understand that this exposes the daemon's listener as well as the web UI.
 
@@ -155,7 +150,7 @@ The daemon defaults are:
 
 The standalone web server uses `PORT` and `HOSTNAME`, not `ELOWEN_WEB_PORT`. The installer and launcher use `ELOWEN_WEB_PORT` when choosing the web port and write the resulting `PORT` into the generated web service.
 
-Do not use `ELOWEN_ALLOW_OPEN=1` as an authentication control. It is not a supported runtime switch. The daemon is open only while no user exists, so the first-run flow can create the first administrator; after that, normal requests require authentication.
+There is no supported general-purpose no-auth switch. The daemon is open only while no user exists, so the first-run flow can create the first administrator; after that, normal requests require authentication.
 
 ## Logs and health checks
 
@@ -214,6 +209,7 @@ SQLite uses WAL mode and migrations run automatically when the daemon boots. The
 Back up the complete configuration directory when possible. At minimum, retain the database and its matching encryption key together:
 
 ```bash
+mkdir -p "$HOME/backup"
 sqlite3 "$HOME/.config/elowen/elowen.db" \
   ".backup $HOME/backup/elowen-$(date +%Y%m%d).db"
 cp "$HOME/.config/elowen/plugin-secrets.key" "$HOME/backup/"

@@ -2,7 +2,7 @@
 
 Domain: the main turn loop, streaming/tool-call interplay, mid-turn steering, sub-agent orchestration, model routing, retry/fallback, and autonomy mechanisms. Explicitly out of scope: context-compaction internals, tool permission/definition mechanics, and session persistence-on-disk (other investigators cover these; they're mentioned only where they touch the loop).
 
-Clone state: `/tmp/claude-code` at commit `6f6f12b` (2026-05-07), read-only, TypeScript/Bun source. Elowen reference: `/var/www/elowen` main @ 0.27.80, built on PI (`@earendil-works/pi-coding-agent`, vendored in `node_modules`) as the actual turn-loop runtime; Elowen's own `src/brain/` is an orchestration layer on top of PI, not a from-scratch agent loop.
+Clone state: `/tmp/claude-code` at commit `6f6f12b` (2026-05-07), read-only, TypeScript/Bun source. Elowen reference: this checkout, release `0.28.24` (public GitHub/npm remain on `0.28.17`), built on PI (`@earendil-works/pi-coding-agent`) as the actual turn-loop runtime; Elowen's own `src/brain/` is an orchestration layer on top of PI, not a from-scratch agent loop.
 
 ---
 
@@ -148,4 +148,4 @@ Searched `query.ts` and `stopHooks.ts` for any built-in enforcement tied to inco
 
 ---
 
-*Note: the Elowen-side claims in this document were produced by a research agent reading the source; they have not been independently re-verified line by line. Treat `path:line` references as starting points, not as established fact.*
+*Status note: the Elowen-side claims above were reconciled against this checkout at `0.28.24`; cited paths and line numbers are illustrative and may move.*

@@ -4,26 +4,22 @@ Elowen is a self-hosted AI agent with one daemon, durable SQLite state, a Web UI
 
 ## Choose a documentation set
 
-- [`docs/site/`](site/) is the public operator manual. It covers installation, first use, the Web UI, CLI commands, chat, memory, Projects, plugins, scheduling, channels, configuration, and troubleshooting.
+- [`site/`](site/) is the public operator manual. It covers installation, first use, the Web UI, CLI commands, chat, memory, Projects, plugins, scheduling, channels, configuration, and troubleshooting.
 - The documents in this directory are for contributors and operators who need implementation boundaries, API contracts, deployment details, and verification commands.
 
 ## Public operator manual
 
-| Start here | Covers |
+| Topic | Page |
 | --- | --- |
-| [Getting started](site/01-getting-started.md) | First account, Project, provider, and conversation. |
-| [Install](site/02-install.md) | Local and shared-server installation paths. |
-| [Web UI](site/05-web-ui.md) | Core pages, plugin pages, account access, and browser operation. |
-| [CLI](site/06-cli.md) | Interactive chat, headless runs, slash commands, and local state. |
-| [Brain and chat](site/09-brain-chat.md) | Conversations, modes, approvals, goals, and long-running turns. |
-| [Memory](site/10-memory.md) | Account memory, retrieval, categories, and retention. |
-| [Projects](site/16-projects-workflow.md) | Project roots, access, Git context, and development workspaces. |
-| [Plugins](site/23-plugins.md) | Installation, enablement, grants, and plugin-owned features. |
-| [Configuration](site/26-configuration.md) | Environment, provider, runtime, memory, and account settings. |
-| [Access and security](site/27-users-access.md) | Accounts, Project assignments, tools, and permission policy. |
-| [Troubleshooting](site/28-troubleshooting.md) | Readiness checks, logs, paths, and recovery steps. |
-
-The public site may also link directly to the channel, scheduling, skills, MCP, and glossary pages under `docs/site/`.
+| Getting started | [First account, Project, provider, and conversation](site/01-getting-started.md) |
+| Installation | [Install](site/02-install.md) · [Docker](site/03-docker.md) · [Production updates](site/04-production-updates.md) |
+| Web and CLI | [Web UI](site/05-web-ui.md) · [CLI](site/06-cli.md) · [Slash commands](site/07-slash-commands.md) · [CLI keybinds](site/08-cli-keybinds.md) |
+| Conversations | [Brain and chat](site/09-brain-chat.md) · [Memory](site/10-memory.md) · [Usage and costs](site/11-usage-costs.md) · [Account preferences](site/12-account-preferences.md) |
+| Workflows and models | [Sub-agents and workflows](site/13-tasks-missions.md) · [Providers and models](site/14-agents-providers.md) · [Autonomy and safety](site/15-autonomy-safety.md) |
+| Projects and integrations | [Projects, Sandbox, and GitHub](site/16-projects-workflow.md) · [Scheduling](site/17-scheduling.md) · [Channels](site/18-channels.md) · [Plugins](site/23-plugins.md) |
+| Channels | [Discord](site/19-channels-discord.md) · [Telegram](site/20-channels-telegram.md) · [Microsoft Teams](site/21-channels-teams.md) · [WhatsApp](site/22-channels-whatsapp.md) |
+| Extensions and administration | [Skills](site/24-skills.md) · [MCP](site/25-mcp.md) · [Configuration](site/26-configuration.md) · [Users and access](site/27-users-access.md) |
+| Reference | [Troubleshooting](site/28-troubleshooting.md) · [Glossary](site/29-glossary.md) |
 
 ## Developer and operator references
 
@@ -39,7 +35,7 @@ The public site may also link directly to the channel, scheduling, skills, MCP, 
 | [Plugin Development](PLUGIN_DEV.md) | Plugin manifests, registry API, capabilities, browser UI, secrets, and testing. |
 | [Security](SECURITY.md) | Authentication, authorization, path policy, secrets, and operational safeguards. |
 | [Testing](TESTING.md) | Daemon, web, contract, integration, and end-to-end verification. |
-| [Web UI](WEB.md) | Next.js routes, BFF authentication, data flow, plugin pages, terminal transport, and UI boundaries. |
+| [Web UI](WEB.md) | Next.js routes, BFF authentication, data flow, plugin pages, and UI boundaries. |
 
 ## System in one view
 

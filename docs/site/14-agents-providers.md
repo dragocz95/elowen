@@ -61,6 +61,8 @@ Connect an account from its **Connect** button and finish the provider's browser
 
 After connecting, use **Pick models** on the account row to choose which catalog entries Elowen offers. An empty selection means the whole catalog. Disconnecting removes the usable credential; the saved model selection can be used again if the account is reconnected.
 
+The Claude OAuth catalog includes the verified **Claude Fable 5.1** entry with the exact model ID `claude-fable-5-1`. This is an OAuth catalog extension; it does not rename or add a model to an administrator-defined Anthropic API-key provider.
+
 ## Choose a model
 
 A model is identified by its provider entry and model ID. The canonical runtime form is:
@@ -69,13 +71,13 @@ A model is identified by its provider entry and model ID. The canonical runtime 
 <provider>/<model>
 ```
 
-The provider and model are stored with the conversation, so a restart does not silently move it to another provider with a matching model name.
+While the selected provider/model remains configured and allowed, it is stored with the conversation and restored across restarts. If it becomes unavailable, normal fallback order applies; Elowen does not match the bare model ID to a different provider.
 
 ### Administrator model catalog
 
 **Settings → Models** controls the instance-wide model catalog and context-window overrides. For a provider with an explicit model list, that list is the source of the models offered. For an OpenAI-compatible provider with no manual list, Elowen uses the endpoint's `/models` response. Connected OAuth accounts use their built-in catalog, narrowed only when the administrator selects a model list for that account.
 
-The first configured provider is the server default. If no model is selected, Elowen uses that provider's first configured model; a bare OAuth account uses its current preferred catalog default when available. An empty custom OpenAI-compatible entry can populate the picker from `/models`, but it does not provide a runnable default until you select a concrete model. A provider named by an existing conversation must still exist—Elowen fails rather than silently switching the conversation to another provider.
+The first configured provider is the server default. If no model is selected, Elowen uses that provider's first configured model; a bare OAuth account uses its current preferred catalog default when available. An empty custom OpenAI-compatible entry can populate the picker from `/models`, but it does not provide a runnable default until you select a concrete model. A stored provider/model pin is preferred but is validated on each spawn. If it is no longer configured or allowed, Elowen falls through to the project, account, or server default rather than silently matching the same model ID under another provider.
 
 For automatically discovered OpenRouter models, zero-cost IDs ending in `:free` are filtered out. A model that an administrator lists manually is retained, including a `:free` ID.
 
@@ -135,9 +137,22 @@ The account rows in **Settings → Elowen AI** show the usage windows returned b
 
 ## Models in delegated work
 
-`Delegate` creates a fresh child conversation for one focused task. It uses the caller's model by default, or another enabled model when the caller is allowed to use it. A child receives the caller's execution boundary and can only narrow it; selecting a stronger model does not grant more Projects, tools, or permissions.
+`Delegate` creates a fresh child conversation for one focused task. It uses the caller's effective provider/model pair by default, or another enabled pair when the caller is allowed to use it. The `model` argument and `DelegateModels` use the canonical `provider/model` form. Elowen splits an override at the first slash, so model IDs may themselves contain slashes. The effective model is retained with the child and shown in delegated progress; it is not inferred from a bare model name later.
 
-A workflow is a directed graph of delegated children. Each node can select its own enabled model, so a graph can use a cheaper model for routine steps and a different model for steps that need deeper reasoning. Independent nodes may run in parallel; dependent nodes wait for their prerequisites. Built-in `explore` and `plan` sub-agent types are read-only. See [Autonomy & Safety](autonomy-safety) for permission and recovery rules.
+A child receives the caller's execution boundary and can only narrow it; selecting a stronger model does not grant more Projects, tools, or permissions. A child may delegate further, but each nested child is derived from the current child's already-narrowed authority.
+
+A workflow is a directed graph of delegated children. Each node can select its own enabled model, so a graph can use a cheaper model for routine steps and a different model for steps that need deeper reasoning. Independent nodes may run in parallel; dependent nodes wait for their prerequisites and receive their completed results as context. Built-in `explore` and `plan` sub-agent types are read-only. See [Autonomy & Safety](autonomy-safety) for permission and recovery rules.
+
+### Forked runner pool
+
+Fresh configuration enables the forked sub-agent runner. The pool sizes itself from available CPU and memory, leaving capacity for the daemon; it grows only under sustained pressure and queues work fairly when all runner slots are occupied. This is placement, not a refusal limit: queued delegated turns run when a slot is available.
+
+Configure the runner in **Settings → Elowen AI → Runtime**:
+
+- **Sub-agent runner** turns forked execution on or off. When off, delegated work runs in the daemon process.
+- **Pool maximum** is **Auto** by default, `0` disables forked runners, and a positive value is a hard upper cap. `ELOWEN_SUBAGENT_POOL_MAX` overrides the saved cap for the daemon process.
+
+If a runner cannot be started, Elowen falls back to in-process execution rather than losing the delegation. A source-only checkout without the compiled runner also uses that fallback. A runner keeps a delegated session on one process for its lifetime, so continuations and nested delegation are routed back to the same runner.
 
 ## Troubleshooting provider setup
 

@@ -38,7 +38,7 @@ Plan mode is a guardrail, not a filesystem sandbox. Its shell rules block common
 
 ## Persistent goals
 
-In `elowen chat`, set a goal with `/goal <outcome>`:
+In `elowen chat` or Web chat, set a goal with `/goal <outcome>`:
 
 ```text
 /goal draft Prepare a release checklist       # create a draft contract only
@@ -61,14 +61,14 @@ A goal belongs to the conversation that created it and runs its kickoff and cont
 
 ### Goal limits and resuming
 
-The instance owner can adjust **Settings → Brain → Limits**:
+The instance owner can adjust **Settings → Elowen AI → Limits**:
 
 - **Goal turn budget** — the default number of autonomous turns before a supervised goal pauses;
 - **Goal safety ceiling** — the absolute maximum number of autonomous goal turns, including YOLO.
 
 Both default to **50**. Outside YOLO, `/goal resume` is required after the turn budget is reached; resuming an exhausted goal starts a fresh budget window. YOLO may continue past the per-window budget, but never past the safety ceiling.
 
-A goal also needs a live driver: the active conversation or an attached CLI session. Switching away, losing the driver, or restarting the daemon pauses the goal. Goals never silently resume after a restart; use `/goal resume` when you are ready.
+A goal also needs a live driver: the active conversation or an attached client session. Switching away, losing the driver, or restarting the daemon pauses the goal. Goals never silently resume after a restart; use `/goal resume` when you are ready.
 
 ## Tool permissions and approvals
 
@@ -111,15 +111,17 @@ A tool permission cannot grant a tool that the account does not otherwise have. 
 
 ## Workflow DAGs
 
-`WorkflowStart` runs a directed graph of delegated children. Independent nodes can run in parallel; a node with dependencies waits for their results. `WorkflowResume` continues an interrupted workflow. A node added dynamically inherits the creating node's current scope and cannot widen the workflow's original authority.
+`WorkflowStart` runs a directed graph of delegated children. Independent nodes can run in parallel; a node with dependencies waits for their results and receives those results as context. `WorkflowResume` continues only unfinished work. A node added dynamically inherits the creating node's current scope and cannot widen the workflow's original authority.
 
-Delegations and workflows have durable state. After a daemon restart, Elowen attempts recovery using the stored scope and workflow journal. If safe recovery cannot be established, the work is refused, parked for recovery, or terminalized with the completed portion preserved; it is not blindly replayed under a wider account scope.
+A running node may use `WorkflowAddNodes` to extend its own workflow when that workflow engine is local to the process. A node executing in a forked runner reaches the owning engine through the host RPC bridge; if that capability is unavailable, the node is not given `WorkflowAddNodes` rather than being given a tool that cannot work. Nested workflows remain local to the runner that owns them and do not jump to the parent's engine.
+
+Delegations and workflows have durable state. After a daemon restart, Elowen attempts recovery using the stored scope and workflow journal. If safe recovery cannot be established, the work is refused, parked for recovery, or terminalized with the completed portion preserved; it is not blindly replayed under a wider account scope. A continuation re-checks the caller's current Projects, account contribution, workspace, model-session boundary, tool policy, and non-interactive permission rules before delivering work.
 
 ## Account, Project, and Sandbox isolation
 
 In a shared room, authority is resolved from the current verified writer, not from whoever opened the room. Personal tools, plugin configuration, encrypted plugin secrets, Project scope, and scheduled work follow that contribution account. An unlinked sender does not get a guessed account.
 
-For non-operator accounts, terminal and file access is confined to accessible Project roots and the account's Sandbox workspace. Granting terminal access is not blanket access to arbitrary absolute paths. If the path boundary cannot be established, the operation fails closed.
+File tools remain path-confined to accessible Project roots. Fresh configuration also bubblewrap-confines non-operator terminal commands, but an operator can deliberately set `sandbox.confineNonOperators` to `false`, allowing granted non-operators to run commands directly on the host. Workspace-scoped execution remains confined and fails closed when its boundary cannot be established.
 
 Revoking Project access removes that Project from the account's path policy. Removing a tool grant or disabling its owning plugin does not create a fallback with broader access.
 

@@ -1,5 +1,7 @@
 # Claude Code vs Elowen: Session State, Configuration, and the Project/Repository Layer
 
+> Snapshot: Elowen `0.28.24` in this checkout. Public GitHub/npm remain on `0.28.17`; this is an implementation comparison, not a publication claim.
+
 This document studies one domain of Claude Code (`/tmp/claude-code`, a TypeScript/Bun CLI, read-only clone):
 how a session's state is persisted, resumed and forked; how the working directory and accessible paths are
 chosen; how configuration is layered across scopes; how project context files are discovered and merged; how
@@ -304,14 +306,14 @@ files a build needs (`utils/worktree.ts:229-504`). A periodic sweep removes stal
 than a cutoff, matched against a strict slug-pattern allowlist and fail-closed on any dirty/unpushed state
 (`utils/worktree.ts:1030-1136`, `cleanupStaleAgentWorktrees`).
 
-**Elowen.** Already has the analogous mechanism for the one use case it actually needs: PR-native autonomous
-missions get an isolated worktree checkout, tracked in `mission_pr.worktree` (`src/store/schema.sql:50-54`)
-and resolved through `checkoutPathFor` (`src/api/context.ts:275-278`) — while it's live the mission's work
-lands in the worktree, otherwise it falls back to the shared project checkout.
+**Elowen.** Sandbox workspaces provide isolated Git worktrees for delegated work and user conversations:
+`SandboxCreateWorkspace` creates a branch/worktree, `SandboxUseWorkspace` binds it to the conversation, and
+`resolveDelegatedWorkspace` plus workspace-aware tool composition keep delegated execution on the selected
+workspace. Workspace ownership, leases, commits, and cleanup are durable plugin state; there is no core PR-native mission worktree path.
 
-**Verdict: SKIP.** Elowen already covers the case that matters at its scale. Claude Code's finer-grained "a
-worktree per interactive session, per sub-agent, per throwaway experiment" doesn't map onto a chat-based
-daemon where users don't run parallel local terminals against the same repo the way a CLI user does.
+**Verdict: SKIP as a direct port.** Elowen now covers isolation where it is needed, but through explicit
+conversation/account-bound Sandbox workspaces rather than an automatic worktree per every session or tool.
+The remaining choice is a product/workflow distinction, not a missing Claude Code primitive.
 
 ---
 
@@ -353,6 +355,6 @@ system with exactly one writer.
 
 ---
 
-*Note: the Elowen-side claims in this document were produced by a research agent reading the source; they
-have not been independently re-verified line by line. Treat `path:line` references as starting points, not
-as established fact.*
+*Status note: the Elowen-side claims above were reconciled against this checkout at `0.28.24`; cited paths and
+line numbers are illustrative and may move. Findings labelled ADOPT/ADAPT remain proposals unless explicitly
+marked implemented.*

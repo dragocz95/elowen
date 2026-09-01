@@ -10,18 +10,22 @@ group: Extending
 
 A skill is a reusable Markdown procedure that Elowen can apply in later conversations. Use one for repeatable know-how: a deployment checklist, a report format, or project-specific conventions. Use [Memory](memory) for durable facts, and the conversation task list for steps in the request you are handling now.
 
-Skills are progressive-disclosure instructions. Elowen normally sees only each skill's name and description. When a task matches, it loads the complete skill body and follows it.
+Skills use progressive disclosure. Elowen normally sees only each available skill's name and description. When a task matches, it can load the complete body.
 
 ## Before you start
 
-The **Skills** plugin must be enabled. For a non-admin account, an administrator must also grant the account access to the plugin:
+The **Skills** plugin must be enabled. `SkillLoad` is its canonical loader: it also controls which skills are advertised and expanded, including skills contributed by other enabled plugins.
+
+For a non-admin account, an administrator must grant access to the Skills plugin:
 
 1. Open **Users**.
 2. Select the account.
 3. Open **Granted plugins → Manage**.
 4. Select **Skills** and save.
 
-If the plugin is unavailable, `CreateSkill`, `ListSkills`, `SkillLoad`, and `DeleteSkill` are not available to that account. See [Plugins](plugins) for plugin access and reload behavior.
+A skill contributed by a grantable sibling plugin also requires that plugin's grant. For example, an account needs both the **Skills** grant and the contributing plugin's grant to use that plugin's skill. Administrators bypass per-plugin grants. Account tool policy can still deny `SkillLoad`.
+
+If the Skills plugin or its `SkillLoad` tool is unavailable, skill discovery and loading are unavailable to that turn. See [Plugins](plugins) for plugin access and live reload behavior.
 
 ## Use a skill
 
@@ -33,7 +37,9 @@ Write a precise description of when the skill applies. On a matching task, Elowe
 Use when preparing the weekly customer-support report.
 ```
 
-The complete body is not placed in every prompt, which keeps unrelated conversations smaller.
+Only skills currently visible to the turn are advertised. Manual-only skills are omitted from automatic discovery, but remain available through explicit invocation.
+
+The catalog is live rather than a permanent session snapshot. Changes to grants, plugin availability, ownership, or tool policy take effect on a subsequent turn after the plugin reload has completed.
 
 ### Explicit use
 
@@ -43,14 +49,14 @@ Load a skill into the current conversation with:
 /skill:<name>
 ```
 
-Replace `<name>` with the exact skill name, such as `/skill:deploy-checklist`. This works in the Web UI and CLI. The command expands the skill's complete instructions into the conversation; it does not change the skill file.
+Replace `<name>` with the exact skill name, such as `/skill:deploy-checklist`. This works in the Web UI and CLI. The daemon resolves the command against the live catalog on every invocation, then reads the current skill body; it does not rely on a stale session catalog. If the skill is unknown, revoked, denied, missing, unreadable, or outside its registered path boundary, the invocation fails closed and the agent is told that the skill is unavailable.
 
 To browse loaded skills, use `/skills` in chat. In the CLI and Web UI, this opens the skills picker, where you can filter skills and load one into the current conversation. A skill marked **manual only** cannot be selected automatically, but remains available through `/skill:<name>`.
 
 The agent tools provide the same operations:
 
 - `ListSkills` lists the skills visible to the current account, their scope, descriptions, and whether they are manual only.
-- `SkillLoad` loads the complete body of one available skill by exact name.
+- `SkillLoad` loads the complete body of one skill by exact name from the live catalog.
 - `DeleteSkill` permanently removes a custom skill you are allowed to manage.
 
 ## Create a skill
@@ -72,8 +78,10 @@ Fields:
 - **`description`** — one line describing when to use the skill. This is the trigger Elowen reads before loading the body.
 - **`content`** — the Markdown procedure, rules, examples, and supporting instructions.
 - **`scope`** — `personal` or `instance`:
-  - `personal` makes the skill available to turns attributed to your account. It is not shared with other accounts.
-  - `instance` makes the skill available across the instance. Writing this scope is restricted to the instance owner, not merely an administrator.
+  - `personal` makes the skill available only to the owning account's own, direct, and delegated sessions. It is not shared with other accounts.
+  - `instance` makes the skill available across the instance, subject to the contributing plugin's grant policy. Writing this scope requires instance-operator authority; all administrators have that authority.
+
+For a user, a personal definition takes precedence over an instance-wide definition with the same name. Shared or accountless work sees only eligible instance-wide skills; personal skills are not exposed there.
 
 Creating a personal skill with an existing name updates that skill. A skill cannot shadow a bundled skill or another skill in a conflicting scope; choose a different name when Elowen reports a name collision.
 
@@ -89,7 +97,7 @@ Open the Skills workspace at `/p/skills/`, or open **Settings → Plugins → Sk
 - delete custom skills after confirmation;
 - view bundled, instance-wide, and personal skills separately.
 
-Bundled skills are read-only. Administrators can manage instance-wide skills and, where appropriate, other accounts' custom skills; ordinary accounts can manage their own personal skills.
+Bundled skills are read-only. Administrators can manage instance-wide skills and, where appropriate, other accounts' custom skills; ordinary accounts can manage their own personal skills. These UI controls do not override the live plugin grants or tool policy used by the loader.
 
 Turning **Use automatically** off adds the `disable-model-invocation: true` flag. The skill remains available for explicit `/skill:<name>` use, but its name and description are omitted from automatic skill discovery.
 
@@ -122,7 +130,7 @@ description: Use before deploying a new service version.
 2. Verify the health endpoint.
 ```
 
-The `description` is required for a file to be loaded. You may add:
+The `description` is required for automatic discovery. A skill without one can still be loaded by exact name, but it cannot give the model a useful trigger and Elowen logs a warning. You may add:
 
 ```yaml
 disable-model-invocation: true
@@ -130,32 +138,21 @@ disable-model-invocation: true
 
 to make the skill manual only. Relative paths in a skill's instructions resolve from the skill directory: the directory containing the flat file, or the directory containing `SKILL.md` for the directory form.
 
-## Where files live
+## Ownership and path safety
 
-For the default Elowen data directory:
+Skills can come from the Skills plugin or from another enabled plugin. A sibling plugin registers its skills into the same host catalog, so `SkillLoad`, automatic discovery, and `/skill:<name>` use the same grant- and ownership-filtered definition.
 
-- **Instance-wide custom skills:** `~/.config/elowen/plugins-data/skills/`
-- **Personal skills:** `~/.config/elowen/plugins-data/skills/users/<account-id>/`
-- **Bundled skills:** shipped with the Skills plugin and read-only
-
-If the daemon uses a custom database location, its `plugins-data/` directory is beside that database. Prefer the Web UI or the skill tools so ownership and reload rules are enforced correctly.
-
-## Good skill boundaries
-
-Create a skill when a procedure is:
-
-- repeated across conversations;
-- important enough to follow consistently;
-- specific to a project, team, or operating environment.
+The host records the canonical base directory when a skill is registered. Before loading, it resolves the skill file and verifies that the resolved path remains inside that pinned directory. Missing files, unreadable files, and symlink or `..` paths that escape the registered boundary are rejected. A skill cannot use a later symlink change to redirect loading to an arbitrary host path.
 
 Do not put secrets in a skill. Do not use a skill as a substitute for access control: a skill can describe a safe procedure, but the account's existing project, tool, and plugin permissions still apply.
 
 ## Troubleshooting
 
 - **No Skills tools or picker:** enable the Skills plugin and check the account's plugin grant.
+- **A sibling-plugin skill is missing:** confirm that plugin is enabled, its grant is present when it is grantable, and the skill is registered by that plugin.
 - **The model never selects a skill:** improve its one-line description, or check that **Use automatically** is enabled.
-- **`/skill:<name>` does not work:** use `ListSkills` or `/skills` to confirm the exact name and that the skill is available to the current account.
-- **A file is ignored:** verify the YAML frontmatter, a non-empty `description`, and the flat or directory layout above.
+- **`/skill:<name>` does not work:** use `ListSkills` or `/skills` to confirm the exact name and that the skill is available to the current account and current turn.
+- **A skill is not advertised automatically:** verify the YAML frontmatter, a non-empty `description`, and the flat or directory layout above. An empty description prevents automatic discovery but does not prevent exact-name loading.
 - **A new or edited skill is not visible yet:** send the next message after the plugin reload completes; current turns are not rewritten retroactively.
 
 [Next: MCP Integration](mcp)

@@ -41,7 +41,7 @@ Set **Searches per turn** to `0` to disable live recall. A new steering message 
 
 ## Managing memories
 
-The web interface is at `/memory`. It provides a searchable list, status filters, category filters, sorting, a brain map, a retrieval inspector, and memory details.
+The web interface is at `/memory`. It provides a searchable list, status filters, category filters, sorting, a scalable brain map, memory details, and owner-scoped maintenance controls.
 
 From the workspace you can create, edit, categorize, merge, restore, or delete memories. The deleted-memory view also supports permanent purge and emptying the trash; those operations cannot be undone.
 
@@ -85,11 +85,13 @@ New memories are categorized asynchronously in the background. If a memory is un
 
 When a memory is added during work in a project:
 
-- the classifier can place it in any category available to that project;
+- the classifier chooses among the user's existing categories;
 - if classification produces no category, Elowen uses the project's own category as a fallback;
 - the project category is created automatically on first use when needed.
 
-A project-bound category is recalled only in that project. Global categories (without a project binding) are also available there. Categories bound to other projects are excluded. Outside a project, only global categories are eligible.
+For recall, Elowen resolves the current working directory to the most specific matching registered project. A project-bound category is recalled only in that project. Global categories (without a project binding) are also available there. Categories bound to other projects are excluded. Outside a project, only global categories are eligible. The same scope gates semantic, keyword, and recency retrieval; an uncategorized memory is never recalled.
+
+`POST /memory/retrieve` remains an API inspection surface for diagnosing ranking. It can inspect the caller's categorized memories without changing the stricter Project scope used by real chat turns; the current Web workspace does not expose a separate retrieval tab.
 
 To bind or edit a category, open `/memory`, open the category manager, and set **Project scope**. The `MemoryCategoryCreate` tool creates a global category; project binding is available in the web interface.
 
@@ -120,6 +122,17 @@ Automatic retention is enabled by default. A daily maintenance sweep soft-delete
 | Importance 5 | Never decays or evicts | Read-only |
 
 Set a half-life to `0` for **never**. Configure these values in **Settings → Elowen AI → Memory retention**. Soft-deleted memories remain in the trash and can be restored from `/memory`; permanent purge removes them irreversibly.
+
+## Self-service maintenance
+
+The Memory workspace can run two owner-scoped background jobs:
+
+- **Reindex memories** rebuilds the search vector for every active memory in your account. Configure embeddings first.
+- **Recategorize memories** can process only uncategorized memories or review all active memories. Configure a categorization model first.
+
+Jobs continue in the background, report progress and aggregate failure counts, and are private to the signed-in account. Individual failed items are recorded in daemon logs. Starting the same operation while it is already running returns the existing job instead of creating a duplicate. Recategorization rechecks each row before writing, so a manual category change made while the job runs is not blindly overwritten.
+
+The older `POST /memory/reindex` and `POST /memory/reclassify` routes remain available for bounded synchronous/API compatibility. The Web UI uses `/memory/maintenance/*` for complete background work.
 
 ## Embedding configuration
 
@@ -177,8 +190,11 @@ The main API surfaces are:
 - `POST /memory/merge` — merge memories;
 - `GET /memory/categories` and `POST /memory/categories` — list or create categories;
 - `PATCH/DELETE /memory/categories/:cid` — edit or delete a category;
-- `POST /memory/retrieve` — inspect retrieval for a query;
+- `POST /memory/retrieve` — inspect retrieval for a query through the API;
 - `POST /memory/reindex` — synchronously re-embed up to 100 pending memories;
+- `GET /memory/maintenance` — read your background maintenance jobs;
+- `POST /memory/maintenance/reindex` — start a full active-memory reindex;
+- `POST /memory/maintenance/recategorize` — start uncategorized-only or full recategorization;
 - `GET/PUT /memory/embedding` and `POST /memory/embedding/test` — inspect, configure, or test embeddings;
 - `GET/PUT /memory/categorization` and `POST /memory/reclassify` — inspect, configure, or run categorization.
 

@@ -37,6 +37,16 @@ The CLI sends `Authorization: Bearer <token>` directly to the daemon. The Web UI
 
 Lifecycle commands manage services themselves and do not auto-start a second daemon. API-backed commands may auto-start a local unmanaged daemon unless `ELOWEN_AUTOSTART=0` is set.
 
+On a systemd-managed installation, restart only the service you need or both services together:
+
+```bash
+elowen restart daemon   # daemon only
+elowen restart web      # Web UI only
+elowen restart all      # daemon and Web UI
+```
+
+The command maps to `systemctl restart --no-block` and returns after systemd has queued the job, before the selected service stops. Do not replace it with a blocking `systemctl restart` from inside the daemon: that can terminate the process issuing the request. `/restart` is the administrator-only in-chat equivalent for restarting the daemon itself; it drains active work and lets the supervisor bring it back.
+
 ## Interactive chat
 
 Start a fresh conversation or deliberately resume an existing one:
@@ -49,7 +59,9 @@ elowen chat --session <session-id>
 
 `elowen chat` starts a new conversation by default. `-c`/`--continue` continues the conversation associated with the current working directory. `--session` selects a specific conversation. The conversation remains stored in SQLite and can also be opened by the Web UI.
 
-The TUI streams assistant text, reasoning (when shown), tool calls and output, diffs, images, approval questions, queued messages, goals, delegated sub-agents, and workflow state. Type `/` to open the command menu. The command catalog comes from `src/brain/slashCommands.ts` and is filtered by surface, administrator status, and loaded plugins.
+The TUI streams assistant text, reasoning (when shown), tool calls and output, diffs, images, approval questions, queued messages, goals, delegated sub-agents, and workflow state. On terminals wide enough for it, the right-hand **telemetry rail** shows live context usage (tokens, percentage, and cost), active goals, provider limits, workflows, sub-agents, background processes, project path and branch, connected MCP servers, and LSP state. Use `Ctrl+P` to show or hide the rail; click or use the mouse wheel to fold sections, inspect running workflows, switch process views, or stop a background process. Its width fits the current content within a bounded range, and the rail is hidden automatically when the terminal is too narrow.
+
+Type `/` to open the command menu. The command catalog comes from `src/brain/slashCommands.ts` and is filtered by surface, administrator status, and loaded plugins. The former browser terminal route has been removed; use `elowen chat` for the terminal TUI, or `/chat` in the Web UI for browser-based chat.
 
 ### Input features
 
@@ -118,6 +130,18 @@ The current work mode is local to the interactive CLI process and is stamped ont
 Tool access is resolved for the acting account and then checked again at execution time. Account grants and disabled tools are separate from ordered `allow`/`ask`/`deny` rules. Interactive `ask` rules pause for approval. Channel, scheduled, and delegated turns have no approval UI and follow the account's unattended-ask policy. `/yolo` auto-approves an interactive ask but never overrides a deny rule or strict unattended denial.
 
 A delegated child inherits or narrows its parent's effective authority and cannot widen it. The same rule applies to every workflow node. `DelegateContinue` resumes the existing child transcript rather than creating an unrestricted copy.
+
+### Deferred tools and ToolSearch
+
+Large plugin and MCP tool sets may be deferred to keep the model prompt small. Deferred tools appear by name in the session's tool-awareness block, but their parameter schemas are withheld and they cannot be called until activated. The brain's `ToolSearch` tool can fetch them for the next turn:
+
+```text
+ToolSearch({"query":"select:DiscordCreateChannel,mcp__github__create_issue"})
+ToolSearch({"query":"discord channel"})
+ToolSearch({"query":"+github create"})
+```
+
+`select:<name>[,<name>...]` fetches exact names; a bare exact name also works. A keyword query searches tool names, descriptions, and parameter names, while `+term` makes a term required. `max_results` limits keyword results (up to the tool's hard cap). Already active tools should be called directly. ToolSearch activation is permission-filtered and does not grant access; normal account, plugin, and execution-time policy checks still apply.
 
 ## Non-interactive runs
 

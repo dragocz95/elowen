@@ -5,17 +5,106 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.24] - 2026-09-02
+
+### Added
+
+- Added a personalized dashboard recap with recent conversations, yesterday's activity, next-step suggestions,
+  and an agent-written greeting, standing question, and quick actions in the user's own language. Recaps are
+  server-prefetched, cached per account, and generated without creating chat sessions.
+- Added Dashboard settings for recap sections, digest model, manual regeneration, and 1–24 digest refreshes
+  per day. Background digest and memory categorization inference support the full brain provider stack,
+  including OAuth-backed accounts.
+- Added durable per-account Fast mode for supported OpenAI OAuth, OpenAI API, Azure OpenAI, and Anthropic
+  routes. Unsupported models retain the preference without sending an invalid provider option.
+- Added Claude Fable 5.1 to the Claude OAuth catalog under the exact model id `claude-fable-5-1`.
+- Added workspace-confined sub-agents and workflows. Workspace scope survives recovery and continuation,
+  file and terminal tools use workspace-relative paths without exposing host prefixes, and nested delegated
+  work is awaited before a parent reports completion.
+- Added owner-scoped background memory maintenance for full reindexing and either uncategorized-only or full
+  recategorization, with progress and aggregate failure counts; individual failures are logged server-side. The memory brain map now scales to larger
+  collections without hiding an arbitrary tail of nodes.
+- Added a privileged published-sites control for plugins, with validated per-site hostnames, HTTP-01
+  certificate issuance and renewal, transactional nginx updates, fail-closed teardown, and confined sockets.
+- Added a 30-day dashboard usage chart, generated conversation-title updates, visible workspace/sandbox
+  markers for delegated runs, inline previews for images read by the `Read` tool, and an in-app viewer for
+  every chat image.
+
+### Web and design system
+
+- Migrated the real application UI to shadcn-style wrappers backed by Radix primitives for dialogs, alert
+  dialogs, menus, selects, toasts, checkboxes, sliders, radio groups, avatars, and form controls. Keyboard
+  behavior, focus restoration, layering, and accessibility now come from the shared primitives.
+- Retired the legacy design system and now ship exactly two selectable Studio skins: `studio-light` as the
+  default and `studio-oled` as the dark variant.
+- Standardized built-in and plugin pages on shared workspace shells, page toolbars, filters, registers,
+  settings rows, drawers, data tables, pagination, searches, and responsive section navigation.
+- Rebuilt the dashboard around focused actions and improved responsive navigation, chat controls, scrolling,
+  touch targets, destructive confirmations, mobile tables, and narrow-screen overflow behavior.
+- Reworked web telemetry into a resizable full-height rail with a compact instrument mode and mobile drawer.
+  The CLI telemetry rail now auto-fits its content and preserves context cost at narrow widths.
+- Hardened autosave across configuration and account surfaces: writes are serialized, pending edits flush on
+  close, invalid drafts remain editable, stale responses cannot overwrite newer edits, and visible states
+  distinguish saving, saved, activation pending, validation failure, transport failure, and revision conflict.
+- Removed the browser terminal and its WebSocket/session infrastructure; terminal execution remains available
+  through controlled agent and CLI tooling.
+
+### Plugins and compatibility
+
+- Advanced Plugin UI API from 6 to 12 and `elowen-plugin-ui-kit` to `0.7.0`, publishing canonical workspace,
+  toolbar, filter, pager, search, linked-account, slider, directory-picker, takeover, async-safe confirmation,
+  and host-owned autosave components and hooks.
+- Advanced `elowen-plugin-shared` to `0.1.9` and shared-helper API 3. Plugins declaring `requiresSharedApi`
+  must match API 3; plugins using newly published browser components must request the corresponding UI API.
+- Added plugin configuration fields for IANA time zones, token lists, directory browsing, sliders, display
+  units and divisors, with server-side validation of ranges, steps, defaults, and submitted values.
+- Added structured global plugin page toolbars, plugin-owned page frames, linked-account placement and summary
+  chips, plugin health reporting, safer isolation of plugin styles from the host layout, and Account sections
+  for the signed-in user's manifest-defined personal plugin configuration.
+- Instance and per-account plugin configuration now return revisions and accept `expectedRevision`; stale
+  writes fail with HTTP 409 and the canonical current snapshot. Secret fields never enter debounced autosave:
+  first-time values and replacements use an explicit commit action.
+- Plugin configuration writes remain persisted when live activation must be deferred or reload raises after
+  the commit point, returning HTTP 202 with `pending: true` instead of a false save failure. Busy plugin
+  uninstall operations can likewise complete asynchronously.
+- File tool parameters now use the reference snake-case contract: `file_path`, `old_string`, `new_string`, and
+  `replace_all`. Content search requires ripgrep and reports explicit result and traversal limits.
+
+### Identity and operations
+
+- Unified Microsoft account provisioning across browser SSO and platform identities, applying the same
+  validated project, model, plugin, tool, and YOLO defaults without overwriting established accounts.
+- Personal scheduled jobs now carry a host-verified owner identity across channel, direct-platform, and
+  owner-chat delivery, allowing account-scoped plugin connections while rejecting identity mismatches.
+- `SkillLoad` and prompt skill listings now use one live, grant-filtered catalog covering built-in,
+  plugin-contributed, and inherited personal skills, including workspace-confined delegated agents.
+- Added `elowen restart daemon|web|all`, which queues safe non-blocking systemd restarts. Terminal tooling
+  refuses blocking local daemon restarts that could deadlock or replay indefinitely.
+
 ### Fixed
 
-- `SkillLoad` now resolves the same live, grant-filtered skill catalog advertised to the current turn,
-  including skills contributed by sibling plugins and personal skills inherited by delegated agents.
-  Workspace-confined children can use the loader without gaining arbitrary host-filesystem access.
-- Anthropic hosted-tool replay now preserves generic result-only continuations and redacted thinking while
-  refusing to replay incomplete built-in tool-search pairs that the next Messages request would reject.
-- Personal scheduled jobs now carry a host-verified identity for their owner across channel,
-  direct-platform and owner-chat delivery. Plugins can safely use the same account-scoped connections,
-  configuration and allowed tools as any other turn by that user, while mismatched origin/acting accounts
-  fail closed.
+- Active turns interrupted by a restart now retain and display their parked partial output, and pending CLI
+  plan decisions and generated conversation titles are restored after reconnect or restart.
+- Hardened Anthropic hosted-tool replay across multiple turns, preserving valid result-only continuations and
+  redacted thinking while refusing incomplete server-tool pairs.
+- Stabilized compaction and prompt caching by measuring the complete prefill baseline, compacting on growth
+  beyond the stable prefix, avoiding repeated ambient context and memories, and resetting cadence after respawn.
+- Hardened live memory recall against cross-turn and cross-account correlation errors, duplicate delivery,
+  stale context frames, and counting recalls the provider never received.
+- Usage reset now advances a per-account accounting epoch instead of rewriting historical message rows;
+  pre-reset usage stays excluded after compaction, reconnect, and later transcript processing.
+- Bash and process output budgets now cover the complete framed result in UTF-8 bytes, retain both the beginning
+  and end, report every dropped section accurately, and avoid corrupting multibyte output across boundaries.
+- Oversized externally supplied MCP tool descriptions and schemas are bounded before entering model context
+  while remaining callable and clearly reporting any reduction.
+- Fixed reconnect and compaction usage accounting, plugin toolbar sizing, provider and chart colors, dashboard
+  and telemetry scrollbars, mobile recap layout, touch switch geometry, and responsive Studio navigation.
+
+### Compatibility
+
+- `elowen@0.28.24` ships shared-helper API 3 through `elowen-plugin-shared@0.1.9`. The matching browser build
+  contract is Plugin UI API 12 through `elowen-plugin-ui-kit@0.7.0`. Registry plugin versions remain on their
+  independent release stream and are not implied by the core release.
 
 ## [0.28.17] - 2026-08-27
 

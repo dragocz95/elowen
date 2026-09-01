@@ -35,7 +35,6 @@ The following paths are public:
 - `GET /push/vapid-public-key`
 - `GET /public/theme`
 - `GET /public/theme/assets/:file`
-- `GET /ws/terminal` (WebSocket upgrade; the capability is a short-lived ticket)
 - `GET /users/:id/avatar` when a valid `exp` and `sig` are supplied
 - `/hooks/*` plugin webhook mounts
 
@@ -53,6 +52,16 @@ Delegated sub-agents do not receive an `agent` API token. Their captured project
 - Common status codes are `401` (missing or invalid token), `403` (authorization or project access), `404` (unknown resource), `409` (conflict or runtime state), `413` (payload too large), `415` (unsupported media type), `429` (rate limit), `500` (server error), and `503` (an optional subsystem is unavailable or disabled).
 - Error text is diagnostic, not a stable enum. Plugin routes may define additional response shapes and status codes.
 
+### Revisioned writes
+
+Configuration responses that expose a `revision` support optimistic concurrency. A client should send the revision it read as `expectedRevision` on the next write. Revisions are non-negative integers; omitting one preserves compatibility with older clients but gives up stale-write protection.
+
+- `GET /config` returns the core configuration plus its global `revision`. `PUT /config` accepts `expectedRevision`; a stale write returns HTTP `409` with `{ "error": "conflict", "current": <current config snapshot> }`.
+- `GET` responses for `/auth/me/cli-settings`, `/auth/me/terminal-settings`, `/auth/me/permissions`, and `/auth/me/nav-settings` include a revision for that account resource. Their `PATCH` routes accept `expectedRevision`. On conflict, terminal, permissions, and navigation return the full current resource; CLI settings return the stored current settings plus `revision`, so clients needing derived fields such as `serverDefault` or `availableLinks` should refetch.
+- `GET /plugins/:name` and every item from `GET /plugins/user-config` include a revision. Their config `PATCH` routes accept `{ "values": { ... }, "expectedRevision": n }`; conflicts return the current masked configuration, `secretsSet`, and revision.
+
+A successful plugin-config write returns the canonical masked configuration and new revision. HTTP `202` with `pending: true` means persistence succeeded but the live registry has not activated that generation yet. Secret values are write-only: omitted, empty, or `null` secret fields keep the stored value, and no read response contains plaintext.
+
 ## Health, setup, configuration, and events
 
 | Method | Path | Access | Purpose |
@@ -62,12 +71,12 @@ Delegated sub-agents do not receive an `agent` API token. Their captured project
 | `GET` | `/public/theme` | Public | Return the active public brand, colors, fonts, text, and asset URLs. |
 | `GET` | `/public/theme/assets/:file` | Public | Serve a whitelisted active-theme asset. |
 | `GET` | `/config` | Authenticated | Read the runtime configuration. |
-| `PUT` | `/config` | Admin or setup mode | Apply a validated configuration patch. |
+| `PUT` | `/config` | Admin or setup mode | Apply a validated configuration patch, optionally guarded by `expectedRevision`. |
 | `GET` | `/config/tool-deferral` | Admin or setup mode | Read effective tool-loading and deferral settings. |
 | `GET` | `/system` | Authenticated | Read running version, latest version, update availability, auto-update state, and diagnostics. |
 | `GET` | `/system/readiness` | Admin or setup mode | Check chat, optional memory, platforms, plugins, webhooks, and other registered subsystems. |
 | `POST` | `/system/update` | Admin or setup mode | Start the guarded in-place update. |
-| `POST` | `/system/restart` | Admin or setup mode | Restart the selected daemon service. |
+| `POST` | `/system/restart` | Admin or setup mode | Queue a non-blocking restart of `target: "daemon"` or `target: "web"`. |
 | `GET` | `/system/logs` | Admin | List available daemon and web log files. |
 | `GET` | `/system/logs/:name` | Admin | Read a bounded tail of one log file (`?lines=`). |
 | `DELETE` | `/system/logs/:name` | Admin | Delete one log file. |
@@ -176,6 +185,15 @@ The usage-by-model and usage-by-day responses support private ETags and return `
 | `GET` | `/activity/pulse` | — | Return the dashboard pulse: active people, running sub-agents, usage, surfaces, memory hits, cache ratios, and daily/monthly activity. |
 | `GET` | `/activity/heatmap` | `days` 1–90; default `14` | Return hourly activity counts. |
 
+### Dashboard recap
+
+| Method | Path | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/dash/recap` | Authenticated | Return the caller's continue list, yesterday's activity, and the optional cached/generated digest. The response reports `enabled: false` when recap is disabled; digest generation is lazy and may report `status: "generating"`. |
+| `POST` | `/dash/recap/regenerate` | Admin | Clear the caller's digest for today so the next recap request can generate it again. |
+
+The recap is strictly account-scoped. It does not create a conversation while generating a digest, and a digest refresh continues serving the previous ready result until replacement is available.
+
 ## Brain and advisor
 
 Brain routes operate on the authenticated user's own active conversation unless a route documents an explicit `session` parameter. A missing or disabled brain returns `503` where the route cannot provide a meaningful result.
@@ -267,13 +285,12 @@ The global `GET /events` stream is separate from the conversation stream. It rep
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| `POST` | `/brain/terminal` | Admin | Open or reattach an interactive `elowen chat` terminal for an owned conversation. |
 | `GET` | `/brain/processes` | Process owner | List the caller's background shell processes; use `?session=` to select a conversation. |
 | `GET` | `/brain/processes/:id/output` | Process owner | Read one process output buffer. |
 | `DELETE` | `/brain/processes/:id` | Process owner | Kill one background process. |
 | `POST` | `/brain/context` | Admin | Bind an owned conversation into a platform channel target. Body: `{ "channel": "…", "session": "…" }`. |
 
-The WebSocket endpoint is `GET /ws/terminal`. A client first obtains a single-use ticket from the terminal plugin's authenticated API route, then uses the ticket for the upgrade. The old core `/sessions/:name/ws-ticket` route is no longer a core endpoint.
+The browser terminal and its WebSocket endpoint are not part of the current web application. Interactive shell output is exposed through the terminal plugin's tools and the normal brain stream; there is no supported core terminal ticket or terminal WebSocket API.
 
 ### Providers and OAuth
 
@@ -316,7 +333,10 @@ Memory is private to the authenticated account. Core memory works without embedd
 | `POST` | `/memory/purge` | Own account | Permanently delete a batch of memory IDs. |
 | `POST` | `/memory/empty-trash` | Own account | Permanently delete all soft-deleted memories. |
 | `POST` | `/memory/retrieve` | Own account | Inspect retrieval ranking for a query. |
-| `POST` | `/memory/reindex` | Own account | Re-embed pending or stale memories; one request processes at most 100. |
+| `POST` | `/memory/reindex` | Own account | Legacy bounded re-embed of pending or stale memories; one request processes at most 100. |
+| `GET` | `/memory/maintenance` | Own account | Read the caller's background reindex and recategorization jobs. |
+| `POST` | `/memory/maintenance/reindex` | Own account | Start or return the caller's full active-memory reindex job; responds with HTTP `202`. |
+| `POST` | `/memory/maintenance/recategorize` | Own account | Start or return background categorization with `mode: "uncategorized"` or `"all"`; responds with HTTP `202`. |
 | `GET` | `/memory/categories` | Own account | List owned categories. |
 | `POST` | `/memory/categories` | Own account | Create a category, optionally linked to an accessible project. |
 | `PATCH` | `/memory/categories/:cid` | Own account | Update a category. |
@@ -350,14 +370,14 @@ The core plugin administration surface is under `/plugins` and is administrator-
 | `PATCH` | `/plugins/:name` | Enable or disable a plugin. Enabling may require the manifest's declared grant consent. |
 | `DELETE` | `/plugins/:name` | Uninstall a marketplace plugin or soft-remove a bundled plugin. |
 | `POST` | `/plugins/:name/restore` | Restore a soft-removed bundled plugin. |
-| `PATCH` | `/plugins/:name/config` | Update instance-wide plugin configuration. |
+| `PATCH` | `/plugins/:name/config` | Update revisioned instance-wide plugin configuration; may return `202` when activation is pending. |
 | `GET` | `/plugins/:name/contributions` | Read one plugin's live contribution report. |
 | `GET` | `/plugins/:name/logs` | Read one plugin's bounded log tail and health. |
 | `GET` | `/plugins/:name/hook-executions` | Read recent mutating-hook execution records. |
 | `POST` | `/plugins/:name/data/clear` | Permanently clear the plugin's own data directory. |
 | `GET` | `/plugins/:name/icon` | Serve a plugin icon; this route is not administrator-only. |
 | `GET` | `/plugins/user-config` | List per-account configuration forms available to the caller. |
-| `PATCH` | `/plugins/:name/user-config` | Save the caller's own per-plugin configuration. |
+| `PATCH` | `/plugins/:name/user-config` | Save the caller's own revisioned per-plugin configuration; no registry reload is required. |
 | `GET` | `/plugins/ui` | Return the authenticated plugin UI bundle listing. |
 | `GET` | `/plugins/:name/web/:file` | Serve a plugin's web asset. |
 
@@ -367,10 +387,30 @@ Plugin API handlers are resolved from the live registry on every request:
 - A plugin may declare a root mount in its manifest; root-mounted routes are resolved after core routes, so core routes win on conflicts.
 - Plugin routes declare their access level. The dispatcher enforces administrator access and, for `userGrantable` plugins, the caller's plugin grant.
 - Buffered plugin API request bodies are capped at 4 MiB. Plugin handlers may also return SSE responses.
+- Root-mounted plugin routes are live contributions and can change with the installed plugin set. Core routes take precedence when a root mount conflicts with a core path.
+
+The bundled subagent plugin currently contributes these administrator-only compatibility routes for the editable sub-agent catalog:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/plugins/agents/list` | List the available typed sub-agent definitions. |
+| `PUT` | `/plugins/agents/:name` | Create or replace one typed sub-agent definition; the body contains `description`, `tools`, and `body`. |
+| `DELETE` | `/plugins/agents/:name` | Remove one typed sub-agent definition. |
 
 ### Webhooks
 
 `/hooks/*` is public at the daemon authentication layer because external providers cannot send an Elowen bearer token. The matching plugin authenticates and validates each webhook request. Webhook bodies are capped at 1 MiB. Unknown mounts return `404`; handler failures return `{ "error": "hook handler failed" }` with HTTP `500`.
+
+### Platform delivery and channel sessions
+
+Platform adapters are plugin-owned. Discord, Microsoft Teams, Telegram, and WhatsApp do not have separate core REST send routes: an enabled adapter receives inbound messages, runs the associated channel session, and delivers the reply through its own platform API. The adapter may also expose channel controls such as stop, status, compact, or restart through the canonical command catalog.
+
+| Method | Path | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/plugins/destinations` | Admin | List live, opaque notification targets supplied by enabled platform plugins. The returned `value` is suitable for notification configuration; clients must not construct platform IDs themselves. |
+| `POST` | `/brain/context` | Admin | Bind one caller-owned conversation to a platform channel target such as `discord-123`. This moves the conversation into the channel session; it does not fork it. |
+
+`POST /brain/send` is for the authenticated caller's own interactive conversation. Platform channel and task sessions are not valid targets for that route. Platform-originated turns are attributed to the adapter's captured sender identity, while proactive notifications are delivered by the owning plugin/service rather than by a public core endpoint.
 
 ## Implementation notes
 

@@ -30,10 +30,10 @@ The **Sandbox** plugin provides a persistent account `HOME` and real Git worktre
 
 ### Open the Sandbox settings
 
-- **Account settings → Development environment** shows the account `HOME`, execution mode, confinement probe, active processes, and Git author name and email. It also provides **Reset HOME**; this removes account-scoped Git, npm, and tool configuration but preserves workspaces. Active processes block the reset.
+- **Users → select an account → Development environment** shows the account `HOME`, execution mode, confinement probe, active processes, and Git author name and email to administrators. It also provides **Reset HOME**; this removes account-scoped Git, npm, and tool configuration but preserves workspaces. Active processes block the reset.
 - **Project → Sandbox** lists workspaces for that Project. The account-wide Sandbox view can search and filter all accessible Projects.
 
-Non-operator commands run confined by default. The Sandbox mounts only the account's accessible Projects, its workspaces, and its account `HOME`; network access remains available for package installation, Git, and development servers. If the live bubblewrap probe fails, confined execution is refused instead of running unconfined.
+Fresh configuration confines non-operator commands by default. The Sandbox mounts only the account's accessible Projects, its workspaces, and its account `HOME`; network access remains available. If the live bubblewrap probe fails, required confinement is refused. An operator can deliberately disable `sandbox.confineNonOperators`, which lets granted non-operators run commands directly on the host; workspace-scoped execution remains confined.
 
 ### Create and activate a workspace
 
@@ -44,7 +44,7 @@ Non-operator commands run confined by default. The Sandbox mounts only the accou
 
 There is one active workspace per conversation and Project. Once active, relative file operations and `Bash` commands resolve to that worktree. Explicit paths are still checked against the account's Project access. The workspace detail shows its path, branch, changed and untracked files, ahead/behind counts, active processes, and working patch.
 
-A workspace can be created only from a Git Project. If the source Project is removed or the worktree path disappears, the workspace becomes **orphaned** and cannot be activated or committed.
+A workspace can be created only from a Git Project. Workspace ownership is account-scoped, and every activation, commit, execution, and delegated assignment is checked against the account's current Project access. If access to the source Project is revoked, the workspace remains owned but cannot be activated, committed, or used; if the Project is removed or the worktree path disappears, it becomes **orphaned** and cannot be activated or committed. A workspace reference identifies both its workspace and Project; it cannot be replaced with a sibling worktree or widened back to the whole Project.
 
 ### Commit and remove changes
 

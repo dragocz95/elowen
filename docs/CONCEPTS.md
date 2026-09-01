@@ -4,13 +4,15 @@ Elowen is easiest to operate when its durable objects and authority boundaries a
 
 ## Instance
 
-An **instance** is one Elowen installation and its daemon state. It has:
+An **instance** is one Elowen installation and its daemon state. The daemon is the authority for the runtime and owns:
 
-- one SQLite database;
-- one configuration and plugin set;
+- one SQLite database and its host stores;
+- one configuration and live plugin-registry generation;
 - one operator authority boundary;
 - one set of registered Projects;
 - optional platform adapters and external integrations.
+
+The Next.js web process is a client-facing presentation/BFF layer, not a second owner of brain state or permissions. Product-domain capabilities are plugin-owned; core supplies shared runtime, tenancy, identity, persistence, and host seams rather than embedding domain plugins.
 
 The default state directory is `~/.config/elowen`. The database is `~/.config/elowen/elowen.db`, logs are under `~/.config/elowen/logs`, and `ELOWEN_DB` / `ELOWEN_LOG_DIR` override those locations.
 
@@ -44,6 +46,12 @@ This distinction matters operationally:
 
 File and terminal integrations must use this shared resolution instead of accepting arbitrary paths. A read-only shell clamp is a tool-policy guard; Sandbox confinement is the runtime isolation layer.
 
+## Stores and authority
+
+SQLite is the durable source of truth. Core host stores cover accounts, Projects, settings, prompts, external identities, plugin configuration and secrets, while focused stores cover brain transcripts, events, usage, delegation, memory, embeddings, and dashboard data. `BrainStore` is the brain-facing facade over those focused stores. Plugin-owned state uses the plugin database capability and remains behind that plugin's API; core does not read plugin tables directly.
+
+The live PI session and plugin registry are in-memory execution objects. The daemon's `PluginRegistryProvider` can replace the registry generation during a reload, while durable state remains in SQLite. A second process, such as a delegated runner, reconstructs the same core against the same database but receives only the daemon layers and host controls appropriate to that process.
+
 ## Conversations and turns
 
 A **conversation** is a durable `brain_sessions` row plus its `brain_messages` transcript. It has a model/provider pin, title, working directory, account anchor, and—when relevant—platform, direct-chat, fork, delegation, or recovery metadata.
@@ -51,6 +59,8 @@ A **conversation** is a durable `brain_sessions` row plus its `brain_messages` t
 A **turn** is one request through the embedded PI session. The live session holds ephemeral model context, tool state, approval state, and provider connections. SQLite remains authoritative and is updated before and during execution so the conversation can be rehydrated after eviction or restart.
 
 A conversation's `user_id` is not always the person who most recently wrote. Shared platform rooms have an instance anchor and record `last_writer_user_id` separately. This prevents a room from being mistaken for one person's private conversation.
+
+`TurnIdentity` is minted at the start of each turn by the identity resolver. Owner chat uses the authenticated account; a platform turn uses the adapter's verified sender and linked Elowen account; server automation carries an explicit acting account when one exists. In a shared room, personal tools, skills, memory, and account policy are resolved for the verified writer on every turn, never inherited from the room anchor. Unlinked writers receive no personal account namespace.
 
 Conversation lifecycle operations are deliberately different:
 
@@ -104,7 +114,7 @@ Plugins are not all equivalent:
 - optional domain and integration plugins come from the curated registry and are installed when needed;
 - a plugin marked `userGrantable` is deny-by-default for non-administrators until granted to an account.
 
-A plugin owns its vertical data and lifecycle. Core accesses it through declared controls and host contracts rather than importing plugin internals or branching on a domain name. Plugin controls are live objects: resolve them again after reload instead of retaining an old generation.
+A plugin owns its vertical data, routes, tools, pages, services, migrations, and lifecycle. Core has no hidden product-domain implementation for a plugin to bypass; it provides shared runtime and narrow host infrastructure only. Core and sibling plugins access a plugin-owned domain through its declared typed control or host contract, never by importing internals or querying its tables directly. Controls belong to the current registry generation: resolve them again after reload instead of retaining an old generation. Missing owners and unmet dependencies fail closed as unavailable.
 
 Instance configuration is declared by `configSchema`. Per-account configuration is declared by `userConfigSchema`, stored by `(user_id, plugin)`, and read by the plugin through `ctx.userConfig()`. Secret values are write-only at the API boundary and encrypted secrets use the instance or account secret namespace.
 
@@ -142,7 +152,7 @@ The child cannot widen that scope. Continuation re-checks the parent's current a
 
 A **workflow DAG** is a set of delegated nodes with explicit dependencies. Independent nodes can run in parallel; dependent nodes receive completed dependency results. Nodes inherit the effective boundary of their creating node. The workflow engine is plugin-owned, while the host owns the durable session and recovery seams.
 
-Delegated runs survive process boundaries through SQLite. Boot recovery claims interrupted rows before platform traffic starts, refuses unsafe replay after an unanswered tool call, and preserves completed results for bounded delivery.
+Delegated runs survive process boundaries through SQLite. The optional sub-agent runner is forked and supervised only by the daemon's runner pool; it builds the same brain core and plugin registry, owns its delegated session's store writes, and starts only the `subagent` platform needed for nested delegation. It has no HTTP server, ordinary platform gateways, scheduler, migrations, or maintenance loops. The daemon remains authoritative for dispatch, abort fencing, reverse workflow RPC, recovery, and delivery. Boot recovery claims interrupted rows before platform traffic starts, refuses unsafe replay after an unanswered tool call, and preserves completed results for bounded delivery.
 
 ## Providers and context management
 
