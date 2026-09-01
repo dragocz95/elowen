@@ -32,7 +32,6 @@ import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface'
 import { Slider } from '../../components/ui/Slider';
 import { normalizeTokenList, TokenList } from '../../components/ui/TokenList';
 import { DirectoryPicker } from '../../components/ui/DirectoryPicker';
-import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 
 
 // A settings-group icon for an author-declared config section, inferred from its key/label. Falls back to

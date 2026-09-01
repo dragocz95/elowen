@@ -93,7 +93,7 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
           ))}
         {images.length >= MAX_SHOWN && <p className="text-xs text-muted-foreground">{t.projects.iconMore}</p>}
       </ModalBody>
-      <ModalFooter status={<AutoSaveStatus status={saveStatus} onRetry={() => lastAction && apply(lastAction.icon, lastAction.removed)} />}>
+      <ModalFooter status={<AutoSaveStatus status={saveStatus} onRetry={() => { if (lastAction) apply(lastAction.icon, lastAction.removed); }} />}>
         {project.icon ? <Button variant="danger" onClick={() => apply('', true)} disabled={setIcon.isPending}>{t.projects.iconRemove}</Button> : null}
         <div className="flex-1" />
         <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
