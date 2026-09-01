@@ -1,6 +1,6 @@
 import type { MemoryCategoryStore, MemoryCategoryRow } from '../store/memoryCategoryStore.js';
-import { ICON_ALLOWLIST, DEFAULT_ICON } from '../store/memoryCategoryStore.js';
-import type { MemoryStore } from '../store/memoryStore.js';
+import { ICON_ALLOWLIST, DEFAULT_ICON, memoryCategoryFingerprint } from '../store/memoryCategoryStore.js';
+import { hashBody, type MemoryStore } from '../store/memoryStore.js';
 import type { InferenceClient } from '../inference/types.js';
 import type { Logger } from '../shared/logger.js';
 import { containsWholeToken } from '../shared/text.js';
@@ -11,6 +11,12 @@ const MAX_RECLASSIFY = 200;
 /** How much of each memory body the classify prompt sees — a category decision never needs the full
  *  body, and this bounds the relay round-trip. */
 const MAX_BODY_CHARS = 2000;
+
+export interface MemoryCategoryDecision {
+  categoryId: number | null;
+  categoryFingerprint: string | null;
+  model: string | null;
+}
 
 /** Assigns a user's RAW memories to ONE of their own categories using a cheap model. Best-effort by
  *  design: every per-memory failure is swallowed + logged so it can ride fire-and-forget from the
@@ -43,16 +49,37 @@ export class MemoryCategorizer {
     return this.inference() !== null;
   }
 
-  /** Pure decision: pick ONE existing category id for `body`, or null. NEVER invents a category. Returns
-   *  null when there are no categories, no model wired, or the model reply matches nothing / says "none".
-   *  May throw on a relay error — callers (classifyMemory / reclassify) wrap it. */
-  async classify(userId: number, body: string): Promise<number | null> {
+  /** Whether this owner has at least one valid target category. Maintenance refuses a no-op run before
+   * snapshotting hundreds of memories; the UI uses the same category query to disable the action. */
+  hasCategories(userId: number): boolean {
+    return this.categories.list(userId).length > 0;
+  }
+
+  /** Model currently backing categorization. Captured before each maintenance item so its audit names the
+   * decision source even if workspace settings change while inference is in flight. */
+  currentModel(): string | null {
+    return this.inference()?.model ?? null;
+  }
+
+  /** Pure decision bound to the exact category snapshot and inference model that produced it. The semantic
+   * fingerprint prevents a deleted category whose numeric id is later reused from validating stale output. */
+  async classifyDecision(userId: number, body: string): Promise<MemoryCategoryDecision> {
     const cats = this.categories.list(userId);
-    if (cats.length === 0) return null;
     const inf = this.inference();
-    if (!inf) return null;
+    if (cats.length === 0 || !inf) return { categoryId: null, categoryFingerprint: null, model: inf?.model ?? null };
     const { text } = await inf.decide(buildClassifyPrompt(body.slice(0, MAX_BODY_CHARS), cats));
-    return coerceCategory(text, cats);
+    const categoryId = coerceCategory(text, cats);
+    const category = categoryId === null ? null : cats.find((candidate) => candidate.id === categoryId) ?? null;
+    return {
+      categoryId,
+      categoryFingerprint: category ? memoryCategoryFingerprint(category) : null,
+      model: inf.model,
+    };
+  }
+
+  /** Compatibility convenience for callers that only need the selected category id. */
+  async classify(userId: number, body: string): Promise<number | null> {
+    return (await this.classifyDecision(userId, body)).categoryId;
   }
 
   /** Load one memory, classify it, and persist via memories.setCategory ONLY if the category id changed.
@@ -62,18 +89,22 @@ export class MemoryCategorizer {
     try {
       const mem = this.memories.get(userId, memoryId);
       if (!mem || mem.status !== 'active') return;
-      // Captured BEFORE the round-trip so the audit names the model that actually decided, even if the
-      // workspace switches categorization models while this call is in flight.
-      const model = this.inference()?.model ?? null;
-      const catId = await this.classify(userId, mem.body);
-      // A model round-trip is long enough for the owner to have filed this memory by hand in the meantime.
-      // Re-read and write only if nothing moved under us: an automatic guess must never quietly replace a
-      // category a person chose.
-      const fresh = this.memories.get(userId, memoryId);
-      if (!fresh || fresh.status !== 'active' || fresh.category_id !== mem.category_id) return;
-      if (catId !== fresh.category_id) {
-        this.memories.setCategory(userId, memoryId, catId, actor, 'categorizer: auto-classified', model);
-      }
+      const revision = this.memories.revision(userId, memoryId);
+      const decision = await this.classifyDecision(userId, mem.body);
+      this.memories.setCategoryIfUnchanged(
+        userId,
+        memoryId,
+        {
+          bodyHash: hashBody(mem.body),
+          categoryId: mem.category_id,
+          revision,
+          targetCategoryFingerprint: decision.categoryFingerprint,
+        },
+        decision.categoryId,
+        actor,
+        'categorizer: auto-classified',
+        decision.model,
+      );
     } catch (err) {
       this.logger?.warn('memory categorizer failed', { userId, memoryId, error: String(err) });
     }
@@ -103,11 +134,23 @@ export class MemoryCategorizer {
     let classified = 0;
     for (const m of rows) {
       try {
-        const catId = await this.classify(userId, m.body);
-        if (catId !== m.category_id) {
-          this.memories.setCategory(userId, m.id, catId, `user:${userId}`, 'categorizer: reclassified', inf.model);
-        }
-        if (catId !== null) classified += 1;
+        const revision = this.memories.revision(userId, m.id);
+        const decision = await this.classifyDecision(userId, m.body);
+        const written = this.memories.setCategoryIfUnchanged(
+          userId,
+          m.id,
+          {
+            bodyHash: hashBody(m.body),
+            categoryId: m.category_id,
+            revision,
+            targetCategoryFingerprint: decision.categoryFingerprint,
+          },
+          decision.categoryId,
+          `user:${userId}`,
+          'categorizer: reclassified',
+          decision.model,
+        );
+        if (written && decision.categoryId !== null) classified += 1;
       } catch (err) {
         this.logger?.warn('memory reclassify op failed', { userId, memoryId: m.id, error: String(err) });
       }

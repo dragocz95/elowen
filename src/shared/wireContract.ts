@@ -302,6 +302,31 @@ export interface MemoryRow {
   category_id: number | null;
 }
 
+export type MemoryMaintenanceOperation = 'reindex' | 'recategorize';
+export type MemoryRecategorizeMode = 'uncategorized' | 'all';
+export type MemoryMaintenanceStatus = 'idle' | 'running' | 'done' | 'error';
+
+/** One owner-scoped background maintenance job. Idle entries carry no id or timestamps; terminal entries
+ * remain readable until the same user starts that operation again. */
+export interface MemoryMaintenanceJob {
+  operation: MemoryMaintenanceOperation;
+  status: MemoryMaintenanceStatus;
+  id: string | null;
+  mode: MemoryRecategorizeMode | null;
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  error: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface MemoryMaintenanceState {
+  reindex: MemoryMaintenanceJob;
+  recategorize: MemoryMaintenanceJob;
+}
+
 /** A user-scoped memory category (`GET /memory/categories`). `is_builtin` is 0/1; `icon` is a lucide
  *  name from the shared allowlist the daemon clamps to (src/store/memoryCategoryStore.ts), which the UI
  *  badge renders. */

@@ -1,19 +1,18 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Boxes, FlaskConical, Hash, PenLine, RefreshCw, Server, Tags } from 'lucide-react';
+import { Boxes, FlaskConical, Hash, PenLine, Server, Tags } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { ModelCatalogField } from '../../components/ui/ModelCatalogField';
-import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 import { useConfig, useEmbeddingSettings, useCategorizationSettings, useBrainModels } from '../../lib/queries';
-import { useSaveEmbeddingSettings, useReindexMemories, useSaveCategorizationSettings, useReclassifyMemories } from '../../lib/mutations';
+import { useSaveEmbeddingSettings, useSaveCategorizationSettings } from '../../lib/mutations';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { elowenClient, ElowenApiError } from '../../lib/elowenClient';
 import type { BrainModelOption } from '../../lib/types';
@@ -41,9 +40,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
   const { data: categorization, isError: categorizationIsError, refetch: refetchCategorization } = useCategorizationSettings();
   const { data: brainModels } = useBrainModels();
   const saveEmbedding = useSaveEmbeddingSettings();
-  const reindex = useReindexMemories();
   const saveCategorization = useSaveCategorizationSettings();
-  const reclassify = useReclassifyMemories();
   const { toast } = useToast();
 
   // Embedding form state
@@ -51,7 +48,6 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
   const [embModel, setEmbModel] = useState('');
   const [dimensions, setDimensions] = useState('');
   const [testing, setTesting] = useState(false);
-  const [reindexOpen, setReindexOpen] = useState(false);
 
   // Categorization form state
   const [catProvider, setCatProvider] = useState('');
@@ -133,21 +129,6 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       .finally(() => setTesting(false));
   };
 
-  const onReindex = () => {
-    setReindexOpen(false);
-    reindex.mutate(undefined, {
-      onSuccess: (r) => toast(t.memory.reindexDone.replace('{n}', String(r.embedded))),
-      onError: () => toast(t.memory.reindexError, 'error'),
-    });
-  };
-
-  const onReclassify = () => {
-    reclassify.mutate(undefined, {
-      onSuccess: (r) => toast(t.categorization.reclassifyDone.replace('{scanned}', String(r.scanned)).replace('{classified}', String(r.classified))),
-      onError: () => toast(t.categorization.saveError, 'error'),
-    });
-  };
-
   // One merged orbit: badges are pod statuses, the test action joins the provider pod.
   const embBadge = embedding.configured ? <Badge tone="accent">{t.memory.embeddingConfigured}</Badge> : <Badge>{t.memory.embeddingUnconfigured}</Badge>;
   const catBadge = categorization.configured ? <Badge tone="accent">{t.categorization.configured}</Badge> : <Badge>{t.categorization.notConfigured}</Badge>;
@@ -205,26 +186,6 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       )}
     />
   );
-  const rowReindex = (
-    <SettingsRow
-      label={t.memory.reindex}
-      description={embedding.configured ? t.memory.reindexConfirmBody : t.memory.reindexUnconfigured}
-      icon={RefreshCw}
-      // The whole record is one action, so it belongs in the actions slot rather than posing as the
-      // record's control.
-      actions={(
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={RefreshCw}
-          disabled={!embedding.configured || reindex.isPending}
-          onClick={() => setReindexOpen(true)}
-        >
-          {t.memory.reindex}
-        </Button>
-      )}
-    />
-  );
   const rowCatProvider = (
     <SettingsRow
       label={t.categorization.providerLabel}
@@ -245,40 +206,12 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
       control={<ModelCatalogField value={catModel ?? ''} onChange={(v) => setCatModel(v || null)} catalog={catCatalog} title={t.categorization.modelLabel} subtitle={t.help.categorizationIntro} />}
     />
   );
-  const rowReclassify = (
-    <SettingsRow
-      label={t.categorization.reclassify}
-      description={t.categorization.reclassifyHint}
-      icon={RefreshCw}
-      actions={(
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={RefreshCw}
-          disabled={!categorization.configured || reclassify.isPending}
-          onClick={onReclassify}
-        >
-          {t.categorization.reclassify}
-        </Button>
-      )}
-    />
-  );
-
   return (
     <div className="@container flex flex-col gap-4">
       <SettingsGroup columns={2}>
-        {rowEmbProvider}{rowEmbModel}{rowEmbCustom}{rowDimensions}{rowReindex}
-        {rowCatProvider}{rowCatModel}{rowReclassify}
+        {rowEmbProvider}{rowEmbModel}{rowEmbCustom}{rowDimensions}
+        {rowCatProvider}{rowCatModel}
       </SettingsGroup>
-
-      <ConfirmDialog
-        open={reindexOpen}
-        title={t.memory.reindexConfirmTitle}
-        description={t.memory.reindexConfirmBody}
-        confirmLabel={t.memory.reindexConfirm}
-        onConfirm={onReindex}
-        onClose={() => setReindexOpen(false)}
-      />
     </div>
   );
 }

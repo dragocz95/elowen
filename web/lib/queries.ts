@@ -18,6 +18,7 @@ export const QUERY_KEYS = {
   embeddingSettings: ['embedding-settings'] as const,
   memoryCategories: ['memory-categories'] as const,
   categorizationSettings: ['categorization-settings'] as const,
+  memoryMaintenance: ['memory-maintenance'] as const,
   brainCommands: ['brain-commands'] as const,
   brainRateLimits: ['brain-rate-limits'] as const,
   brainContextUsage: ['brain-context-usage'] as const,
@@ -466,4 +467,15 @@ export const useMemoryCategories = () =>
 /** Workspace categorization provider settings (Memory → categorization section). Mutations invalidate this key. */
 export const useCategorizationSettings = () =>
   useQuery({ queryKey: QUERY_KEYS.categorizationSettings, queryFn: elowenClient.categorizationSettings });
+
+/** The caller's two background memory-maintenance slots. Poll only while work is actually running. */
+export const useMemoryMaintenance = () =>
+  useQuery({
+    queryKey: QUERY_KEYS.memoryMaintenance,
+    queryFn: elowenClient.memoryMaintenance,
+    refetchInterval: (query) => {
+      const state = query.state.data;
+      return state?.reindex?.status === 'running' || state?.recategorize?.status === 'running' ? 1000 : false;
+    },
+  });
 

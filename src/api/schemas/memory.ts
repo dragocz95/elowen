@@ -96,3 +96,12 @@ export const memoryReclassifySchema = z.object({
   limit: z.number().int().positive('limit must be positive').max(200, 'limit too large').optional(),
   includeCategorized: z.boolean().optional(),
 });
+
+/** Background maintenance never accepts identity from the request body. */
+export const memoryMaintenanceStartSchema = z.object({}).strict();
+
+/** New background maintenance recategorization accepts only the requested scope. Identity always comes
+ * from the authenticated session; unknown body fields are rejected instead of silently accepting userId. */
+export const memoryMaintenanceRecategorizeSchema = z.object({
+  mode: z.enum(['uncategorized', 'all']),
+}).strict();

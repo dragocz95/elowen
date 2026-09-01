@@ -45,6 +45,15 @@ function toCategory(row: MemoryCategoryDbRow): MemoryCategoryRow {
   };
 }
 
+/** Stable semantic identity for one category generation. A delete/recreate that happens to reuse SQLite's
+ * numeric id must not validate a model decision made against the deleted category. */
+export function memoryCategoryFingerprint(row: MemoryCategoryRow): string {
+  return JSON.stringify([
+    row.id, row.user_id, row.name, row.description, row.color, row.icon,
+    row.is_builtin, row.projectId, row.created_at,
+  ]);
+}
+
 /** Persistence for per-user memory categories. Every read/write is filtered by user_id. A null projectId
  *  is global; a non-null value is a stable project binding. Category CRUD is UNaudited (per spec); a
  *  memory's category change is audited by MemoryStore.setCategory. */

@@ -33,30 +33,21 @@ import { CategoryIcon } from '../../lib/categoryIcons';
 import { MemoryDetail } from './MemoryDetail';
 import { MemoryBrainMap } from './MemoryBrainMap';
 import { CategoryManager, CategoryModal } from './CategoryManager';
-import { RetrievalDebugPanel } from './RetrievalDebugPanel';
+import { MemoryMaintenanceControl } from './MemoryMaintenanceControl';
 import { RankSlider, CategorySelect } from './MemoryFields';
-import { memoryStatusTone, memoryStatusLabel, distinctKinds, categoriesById, categorySwatch, vitalityPct, vitalityTone } from './memoryMeta';
+import { memoryStatusTone, memoryStatusLabel, distinctKinds, categoriesById, categorySwatch, memoryExcerpt, vitalityPct, vitalityTone } from './memoryMeta';
 import type { Tone } from '../../components/ui/tone';
 
-type Tab = 'list' | 'brain' | 'retrieval';
+type Tab = 'list' | 'brain';
 type StatusFilter = 'active' | 'archived' | 'deleted' | 'all';
 type Layout = 'flat' | 'grouped';
 type SortKey = 'updated' | 'used' | 'importance' | 'vitality';
-const TABS: readonly Tab[] = ['list', 'brain', 'retrieval'];
+const TABS: readonly Tab[] = ['list', 'brain'];
 const STATUS_VALUES: readonly StatusFilter[] = ['active', 'archived', 'deleted', 'all'];
 const LAYOUT_VALUES: readonly Layout[] = ['flat', 'grouped'];
 const SORT_KEYS: readonly SortKey[] = ['updated', 'used', 'importance', 'vitality'];
 const SORT_DIRECTIONS: readonly ('asc' | 'desc')[] = ['asc', 'desc'];
 const PAGE_SIZE = 20;
-/** How much of a memory body may stand in for it inside a control's accessible name. A memory has no
- *  title, so the body is the only thing that identifies a row — but the whole body is not a name: the
- *  longest one measured here ran past 3000 characters, all of it read out before the user learned that
- *  the control opens a record. */
-const ROW_LABEL_MAX = 60;
-function memoryExcerpt(body: string): string {
-  const flat = body.replace(/\s+/g, ' ').trim();
-  return flat.length > ROW_LABEL_MAX ? `${flat.slice(0, ROW_LABEL_MAX).trimEnd()}…` : flat;
-}
 
 /** States one NARROWING toolbar filter as the discriminated union `PageFilters` requires, so a field
  *  that is removing rows always carries both its chip wording and its undo. Written once here because
@@ -71,8 +62,8 @@ function filterField(
   return active ? { ...base, active: true, activeLabel, onReset } : { ...base, active: false };
 }
 
-/** Memory module: a searchable master/detail list of the caller's private memories, a retrieval
- *  inspector, and (for admins) the workspace embedding settings. All data via React Query. */
+/** Memory module: a searchable master/detail list, a complete visual map and owner-scoped maintenance.
+ * All data flows through React Query; workspace model configuration remains in admin Settings. */
 export function MemoryView() {
   const { t } = useTranslation();
 
@@ -115,7 +106,7 @@ export function MemoryView() {
   const purge = usePurgeMemories();
   const emptyTrash = useEmptyTrash();
 
-  const memories = useMemories(status === 'all' ? undefined : { status });
+  const memories = useMemories({ status });
   const allMemories = useMemories();
   const categories = useMemoryCategories();
   const categoryById = useMemo(() => categoriesById(categories.data ?? []), [categories.data]);
@@ -249,13 +240,12 @@ export function MemoryView() {
   }, [filtered]);
 
   // Leaving the list tab clears the merge selection so its floating toolbar never hovers over the brain
-  // map or retrieval inspector, where those rows aren't selectable.
+  // map, where those rows are not selectable.
   useEffect(() => { if (tab !== 'list') clearSelection(); }, [tab]);
 
   const TAB_OPTIONS = [
     { id: 'list', label: t.memory.viewList, icon: ListChecks },
     { id: 'brain', label: t.memory.viewBrain, icon: Brain },
-    { id: 'retrieval', label: t.memory.viewRetrieval, icon: Sparkles },
   ];
   const STATUS_OPTIONS: SelectMenuOption<StatusFilter>[] = STATUS_VALUES.map((s) => ({
     value: s,
@@ -375,6 +365,7 @@ export function MemoryView() {
           mascot: allMemories.isLoading ? 'saving' : allMemories.isError ? 'error' : 'idle',
           status: !allMemories.isLoading && !allMemories.isError ? <span className="workspace-status">{t.memory.synchronized}</span> : undefined,
           action: <>
+            <MemoryMaintenanceControl />
             <Button variant="ghost" icon={Tags} onClick={() => setCreatingCategory(true)}>{t.memory.categoryNew}</Button>
             <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>
           </>,
@@ -386,9 +377,8 @@ export function MemoryView() {
           </>,
         }}
         navigation={{ sections: TAB_OPTIONS, value: tab, onChange: (value) => setTab(value as Tab), ariaLabel: t.page.memory }}
-        // The toolbar narrows the LIST. The brain map and the retrieval inspector read none of these
-        // controls, so they get the empty row the stylesheet collapses rather than filters that would
-        // silently do nothing on the section the reader is looking at.
+        // The toolbar narrows the list only. The brain map receives the full active collection, so it gets
+        // the empty row the stylesheet collapses rather than controls that would silently do nothing.
         toolbar={tab === 'list' ? {
           search: (
             <RegisterSearch
@@ -408,11 +398,10 @@ export function MemoryView() {
         } : undefined}
       >
         <ControlSurfaceDocument>
-        {tab === 'retrieval' ? <RetrievalDebugPanel />
-          : tab === 'brain' ? (
-            memories.isLoading ? <ControlSurfaceState><LoadingState variant="cards" /></ControlSurfaceState>
-            : memories.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} /></ControlSurfaceState>
-            : <MemoryBrainMap memories={memories.data ?? []} categories={categories.data ?? []} onSelectMemory={setSelectedId} />
+        {tab === 'brain' ? (
+            allMemories.isLoading ? <ControlSurfaceState><LoadingState variant="cards" /></ControlSurfaceState>
+            : allMemories.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.common.daemonUnreachable} onRetry={() => allMemories.refetch()} /></ControlSurfaceState>
+            : <MemoryBrainMap memories={allMemories.data ?? []} categories={categories.data ?? []} onSelectMemory={setSelectedId} />
           )
           : memories.isLoading ? <ControlSurfaceState><LoadingState variant="cards" /></ControlSurfaceState>
           : memories.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} /></ControlSurfaceState>

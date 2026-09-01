@@ -12,7 +12,7 @@ export function registerMemoryRoutes(app: Hono): void {
   // The web sends `status`/`kind`/`q`/`categoryId` and paginates in the browser, so filtering here only
   // has to be faithful enough that a filtered view is not silently the unfiltered one.
   app.get('/memory', (c) => {
-    const status = c.req.query('status');
+    const status = c.req.query('status') ?? 'active';
     const kind = c.req.query('kind');
     const q = c.req.query('q')?.trim().toLowerCase();
     let rows = memories;
@@ -37,4 +37,8 @@ export function registerMemoryRoutes(app: Hono): void {
   // Admin-only workspace settings the module reads before it can paint its settings tab.
   app.get('/memory/embedding', (c) => c.json({ providerId: '', model: '', baseUrl: '', configured: false }));
   app.get('/memory/categorization', (c) => c.json({ providerId: '', model: '', baseUrl: '', configured: false }));
+  app.get('/memory/maintenance', (c) => c.json({
+    reindex: { operation: 'reindex', status: 'idle', id: null, mode: null, total: 0, processed: 0, succeeded: 0, failed: 0, error: null, startedAt: null, finishedAt: null },
+    recategorize: { operation: 'recategorize', status: 'idle', id: null, mode: null, total: 0, processed: 0, succeeded: 0, failed: 0, error: null, startedAt: null, finishedAt: null },
+  }));
 }

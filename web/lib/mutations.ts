@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { clearToken } from './token';
 import { QUERY_KEYS } from './queries';
-import type { ConfigPatch, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail, PluginSkill, SessionTask } from './types';
+import type { ConfigPatch, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask } from './types';
 
 /** Admin: clear the caller's brain usage and origin rollup. */
 export function useResetUsage() {
@@ -482,12 +482,27 @@ export function useMergeMemories() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }); qc.invalidateQueries({ queryKey: ['memory-events'] }); },
   });
 }
-/** Re-embed the caller's pending memories. Refreshes the list (embedding status) and settings (counts). */
-export function useReindexMemories() {
+/** Start owner-scoped background reindexing and refresh its progress slot. */
+export function useStartMemoryReindex() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => elowenClient.reindexMemories(),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }); qc.invalidateQueries({ queryKey: QUERY_KEYS.embeddingSettings }); },
+    mutationFn: () => elowenClient.startMemoryReindex(),
+    onSuccess: (job) => {
+      qc.setQueryData(QUERY_KEYS.memoryMaintenance, (current: MemoryMaintenanceState | undefined) => current ? { ...current, reindex: job } : current);
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.memoryMaintenance });
+    },
+  });
+}
+
+/** Start owner-scoped background recategorization and refresh its progress slot. */
+export function useStartMemoryRecategorize() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (mode: MemoryRecategorizeMode) => elowenClient.startMemoryRecategorize(mode),
+    onSuccess: (job) => {
+      qc.setQueryData(QUERY_KEYS.memoryMaintenance, (current: MemoryMaintenanceState | undefined) => current ? { ...current, recategorize: job } : current);
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.memoryMaintenance });
+    },
   });
 }
 /** Save the workspace embedding provider settings (admin). Refreshes the settings query. */
@@ -528,13 +543,5 @@ export function useSaveCategorizationSettings() {
   return useMutation({
     mutationFn: (patch: CategorizationSettingsPatch) => elowenClient.saveCategorizationSettings(patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.categorizationSettings }),
-  });
-}
-/** Re-run categorization over the caller's memories. Refreshes the memory list (new category assignments). */
-export function useReclassifyMemories() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body?: { limit?: number; includeCategorized?: boolean }) => elowenClient.reclassifyMemories(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }),
   });
 }

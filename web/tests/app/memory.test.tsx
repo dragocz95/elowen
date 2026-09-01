@@ -11,12 +11,19 @@ import { createWrapper } from '../test-utils';
 const MEMORY = {
   id: 1, user_id: 1, body: 'Filip prefers pnpm over npm', kind: 'preference', importance: 0.8,
   confidence: 0.9, source: 'user', status: 'active', created_at: '2026-01-01 00:00:00',
-  updated_at: '2026-01-01 00:00:00', last_used_at: null, use_count: 3,
+  updated_at: '2026-01-01 00:00:00', last_used_at: null, use_count: 3, vitality: 50, category_id: null,
 };
+const CATEGORY = { id: 7, user_id: 1, name: 'Preferences', description: '', color: '#6366f1', icon: 'Folder', is_builtin: 0, created_at: '' };
 
 const server = setupServer(
   http.get('*/api/memory', () => HttpResponse.json([MEMORY])),
   http.get('*/api/memory/categories', () => HttpResponse.json([])),
+  http.get('*/api/memory/embedding', () => HttpResponse.json({ providerId: 'openai', model: 'embed', baseUrl: '', dimensions: 3, configured: true })),
+  http.get('*/api/memory/categorization', () => HttpResponse.json({ providerId: 'openai', model: 'small', baseUrl: '', configured: true })),
+  http.get('*/api/memory/maintenance', () => HttpResponse.json({
+    reindex: { operation: 'reindex', status: 'idle', id: null, mode: null, total: 0, processed: 0, succeeded: 0, failed: 0, error: null, startedAt: null, finishedAt: null },
+    recategorize: { operation: 'recategorize', status: 'idle', id: null, mode: null, total: 0, processed: 0, succeeded: 0, failed: 0, error: null, startedAt: null, finishedAt: null },
+  })),
   http.get('*/api/projects', () => HttpResponse.json([{ id: 9, slug: 'kolin', path: '/work/kolin', notes: '', icon: '' }])),
   http.get('*/api/memory/1', () => HttpResponse.json(MEMORY)),
   http.get('*/api/memory/events', () => HttpResponse.json([])),
@@ -133,14 +140,14 @@ describe('MemoryPage', () => {
     expect(screen.getByRole('option', { name: 'preference' }).querySelector('svg')).toBeTruthy();
   });
 
-  it('uses the same padded heading and body contract for retrieval search', async () => {
+  it('removes retrieval navigation and falls a stale stored retrieval tab back to the list', async () => {
+    localStorage.setItem('elowen.memory.tab', 'retrieval');
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
-    fireEvent.click(screen.getByRole('radio', { name: 'Retrieval' }));
+    await screen.findByTestId('memory-row');
 
-    const heading = screen.getByRole('heading', { name: 'Retrieval debug' });
-    expect(heading.closest('.control-surface-toolbar')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Try a query the assistant might face…').closest('.control-surface-register')).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Retrieval' })).toBeNull();
+    expect(screen.getByRole('radio', { name: 'List' })).toHaveAttribute('aria-checked', 'true');
   });
 
   it('prunes the merge selection when a filter hides the selected row', async () => {
@@ -208,5 +215,77 @@ describe('MemoryPage', () => {
     // Each group renders a heading: the category name and the uncategorized bucket.
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Preferences' })).toBeInTheDocument());
     expect(screen.getByRole('heading', { name: 'Uncategorized' })).toBeInTheDocument();
+  });
+
+  it('shows running maintenance progress', async () => {
+    server.use(http.get('*/api/memory/maintenance', () => HttpResponse.json({
+      reindex: { operation: 'reindex', status: 'running', id: 'r1', mode: null, total: 3, processed: 1, succeeded: 1, failed: 0, error: null, startedAt: '', finishedAt: null },
+      recategorize: { operation: 'recategorize', status: 'idle', id: null, mode: null, total: 0, processed: 0, succeeded: 0, failed: 0, error: null, startedAt: null, finishedAt: null },
+    })));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
+    await screen.findByTestId('memory-row');
+    fireEvent.click(screen.getByRole('button', { name: 'Memory maintenance' }));
+    const progress = await screen.findByRole('progressbar');
+    expect(progress).toHaveAttribute('aria-valuenow', '1');
+    expect(progress).toHaveAttribute('aria-valuemax', '3');
+  });
+
+  it('confirms recategorizing all and sends only the mode', async () => {
+    let body: unknown;
+    server.use(
+      http.get('*/api/memory/categories', () => HttpResponse.json([CATEGORY])),
+      http.post('*/api/memory/maintenance/recategorize', async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ operation: 'recategorize', status: 'running', id: 'c1', mode: 'all', total: 1, processed: 0, succeeded: 0, failed: 0, error: null, startedAt: '', finishedAt: null }, { status: 202 });
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
+    await screen.findByTestId('memory-row');
+    fireEvent.click(screen.getByRole('button', { name: 'Memory maintenance' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Recategorize all' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Recategorize all' }));
+    await waitFor(() => expect(body).toEqual({ mode: 'all' }));
+    expect(await screen.findByText('Memory maintenance started.')).toBeInTheDocument();
+  });
+
+  it('toasts completion and invalidates memories and categories after recategorization', async () => {
+    let started = false;
+    let statusReads = 0;
+    let memoryReads = 0;
+    let categoryReads = 0;
+    const idle = { operation: 'reindex', status: 'idle', id: null, mode: null, total: 0, processed: 0, succeeded: 0, failed: 0, error: null, startedAt: null, finishedAt: null };
+    server.use(
+      http.get('*/api/memory', () => { memoryReads += 1; return HttpResponse.json([MEMORY]); }),
+      http.get('*/api/memory/categories', () => { categoryReads += 1; return HttpResponse.json([CATEGORY]); }),
+      http.post('*/api/memory/maintenance/recategorize', () => {
+        started = true;
+        return HttpResponse.json({ operation: 'recategorize', status: 'running', id: 'c2', mode: 'uncategorized', total: 1, processed: 0, succeeded: 0, failed: 0, error: null, startedAt: '', finishedAt: null }, { status: 202 });
+      }),
+      http.get('*/api/memory/maintenance', () => {
+        if (!started) return HttpResponse.json({ reindex: idle, recategorize: { ...idle, operation: 'recategorize' } });
+        statusReads += 1;
+        const done = statusReads > 1;
+        return HttpResponse.json({
+          reindex: idle,
+          recategorize: { operation: 'recategorize', status: done ? 'done' : 'running', id: 'c2', mode: 'uncategorized', total: 1, processed: done ? 1 : 0, succeeded: done ? 1 : 0, failed: 0, error: null, startedAt: '', finishedAt: done ? '' : null },
+        });
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
+    await screen.findByTestId('memory-row');
+    const initialMemoryReads = memoryReads;
+    const initialCategoryReads = categoryReads;
+    fireEvent.click(screen.getByRole('button', { name: 'Memory maintenance' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Organize uncategorized' }));
+    expect(await screen.findByText('Memory maintenance started.')).toBeInTheDocument();
+    expect(await screen.findByText('Memory maintenance finished. Succeeded: 1; failed: 0.', {}, { timeout: 3000 })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(memoryReads).toBeGreaterThan(initialMemoryReads);
+      expect(categoryReads).toBeGreaterThan(initialCategoryReads);
+    });
   });
 });

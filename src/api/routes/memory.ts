@@ -8,7 +8,9 @@ import {
   memoryCreateSchema, memoryPatchSchema, memoryMergeSchema, memoryRetrieveSchema, embeddingUpdateSchema,
   memoryPurgeSchema, memoryCategoryCreateSchema, memoryCategoryPatchSchema, memoryCategorySetSchema,
   memoryCategorySuggestIconSchema, categorizationUpdateSchema, memoryReclassifySchema,
+  memoryMaintenanceStartSchema, memoryMaintenanceRecategorizeSchema,
 } from '../schemas/memory.js';
+import { MemoryMaintenanceUnavailableError } from '../../brain/memoryMaintenanceService.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { MemoryRow } from '../../shared/wireContract.js';
 
@@ -35,6 +37,10 @@ const REINDEX_MAX = 100;
 function isUniqueViolation(err: unknown): boolean {
   return !!err && typeof err === 'object' && 'code' in err
     && (err as { code?: unknown }).code === 'SQLITE_CONSTRAINT_UNIQUE';
+}
+
+function maintenanceError(error: unknown): string | null {
+  return error instanceof MemoryMaintenanceUnavailableError ? error.message : null;
 }
 
 /** Per-user private RAW memory: durable facts a user (or the brain on their behalf) stores, with a
@@ -128,6 +134,37 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     }));
   });
 
+  // Owner-scoped background maintenance. The body carries no identity; a duplicate start returns the
+  // existing running job, and GET reports only the caller's own two operation slots.
+  app.get('/memory/maintenance', (c) => {
+    if (!ctx.memoryMaintenance) return c.json({ error: 'memory unavailable' }, 400);
+    return c.json(ctx.memoryMaintenance.status(c.get('user').id));
+  });
+
+  app.post('/memory/maintenance/reindex', async (c) => {
+    if (!ctx.memoryMaintenance) return c.json({ error: 'memory unavailable' }, 400);
+    await parseBody(c, memoryMaintenanceStartSchema);
+    try {
+      return c.json(ctx.memoryMaintenance.startReindex(c.get('user').id), 202);
+    } catch (error) {
+      const message = maintenanceError(error);
+      if (message) return c.json({ error: message }, 400);
+      throw error;
+    }
+  });
+
+  app.post('/memory/maintenance/recategorize', async (c) => {
+    if (!ctx.memoryMaintenance) return c.json({ error: 'memory unavailable' }, 400);
+    const { mode } = await parseBody(c, memoryMaintenanceRecategorizeSchema);
+    try {
+      return c.json(ctx.memoryMaintenance.startRecategorize(c.get('user').id, mode), 202);
+    } catch (error) {
+      const message = maintenanceError(error);
+      if (message) return c.json({ error: message }, 400);
+      throw error;
+    }
+  });
+
   // Self-service re-embed of the caller's pending (missing/stale) memories. Bounded per request and
   // best-effort per memory (a throwing embed is logged and skipped, not fatal). Embeddings unconfigured
   // → 400.
@@ -141,11 +178,11 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     for (const row of pending.slice(0, REINDEX_MAX)) {
       try {
         const vec = await d.embeddings.embed(cfg, row.body);
-        store.setEmbedding(userId, row.id, {
+        const written = store.setEmbedding(userId, row.id, {
           provider: cfg.providerId ?? '', model: cfg.model, dimensions: vec.length,
           vector: vec, contentHash: hashBody(row.body),
         });
-        embedded += 1;
+        if (written) embedded += 1;
       } catch (err) {
         ctx.log.warn('reindex embed failed', { userId, memoryId: row.id, error: String(err) });
       }

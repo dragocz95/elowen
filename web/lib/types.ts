@@ -103,6 +103,7 @@ import type {
   ToolOutputView, BrainSubagentView, BrainWorkflowView, BrainMessageView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainStreamControl,
   BrainWorkMode, BrainPendingPlan,
   User, BrainLimits, BrainProviderCompatibility, RuntimeConfig as WireRuntimeConfig, RuntimeLimits, ToolDeferralOverrides, BrainUsage, MemoryRow, MemoryCategoryRow, MemoryEventRow, BrainGoalState,
+  MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode,
   MemoryVitalityHistory,
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
@@ -111,7 +112,7 @@ import type {
 } from '../../src/shared/wireContract.js';
 export type { PlatformLinkKey, PlatformSurface };
 // `BrainStreamControl` is only referenced by the snapshot frame below, so it is imported but not re-exported.
-export type { ToolOutputView, BrainSubagentView, BrainWorkflowView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, BrainProviderCompatibility, RuntimeLimits, BrainUsage, CommitFileChange, CommitLogEntry };
+export type { ToolOutputView, BrainSubagentView, BrainWorkflowView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, BrainProviderCompatibility, RuntimeLimits, BrainUsage, MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode, CommitFileChange, CommitLogEntry };
 export type {
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
@@ -861,33 +862,6 @@ export interface EmbeddingSettingsPatch {
   model?: string;
   baseUrl?: string;
   dimensions?: number | null;
-}
-
-/** One scored retrieval candidate in the debug breakdown. `picked` marks the memories actually returned. */
-export interface RetrievalScore {
-  id: number;
-  score: number;
-  semantic: number;
-  importanceWeight: number;
-  recencyWeight: number;
-  usageWeight: number;
-  picked: boolean;
-}
-
-/** POST /memory/retrieve result — the picked memories plus the scoring trace. `fallback` is true whenever
- *  the keyword path answered instead of the vector one — either embeddings are unconfigured (then `provider`
- *  is null) or they ran but nothing cleared the relevance floor (then `provider` is set). The UI keys the
- *  "unconfigured" warning off `provider`, not off `fallback` alone. */
-export interface RetrievalResult {
-  memories: Memory[];
-  debug: {
-    query: string;
-    fallback: boolean;
-    provider: string | null;
-    model: string | null;
-    candidates: number;
-    scores: RetrievalScore[];
-  };
 }
 
 /** Where a cost figure came from, so the UI never presents an estimate as billed truth. */
