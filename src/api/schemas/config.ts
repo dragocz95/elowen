@@ -158,6 +158,7 @@ export const configPatchSchema = z.object({
     greetingEnabled: z.boolean().optional(),
     pillsEnabled: z.boolean().optional(),
     continueEnabled: z.boolean().optional(),
+    digestPerDay: z.number().int().min(1).max(24).optional(),
     digest: z.object({
       providerId: z.string().optional(),
       model: z.string().optional(),

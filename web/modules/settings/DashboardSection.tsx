@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Boxes, LayoutDashboard, MessageSquareQuote, RefreshCw, Server, Sparkles, SquareStack, Undo2 } from 'lucide-react';
+import { Boxes, LayoutDashboard, MessageSquareQuote, RefreshCw, Repeat, Server, Sparkles, SquareStack, Undo2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -14,6 +14,10 @@ import { useConfig, useBrainModels, useDashRecap } from '../../lib/queries';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { elowenClient } from '../../lib/elowenClient';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
+
+/** Refresh rates offered for the digest. Presets rather than a free number: what matters is the shape
+ *  of the day (once, twice, every few hours), and the daemon clamps anything outside 1–24 anyway. */
+const DIGEST_PER_DAY_CHOICES = [1, 2, 3, 4, 6, 8, 12, 24] as const;
 
 /** Settings → Dashboard: the personalized dashboard controls. What renders (recap strip, agent-written
  *  greeting and quick-action pills, continue pills), whether the daily digest generates at all, and
@@ -32,6 +36,7 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
   const [greetingEnabled, setGreetingEnabled] = useState(false);
   const [pillsEnabled, setPillsEnabled] = useState(false);
   const [continueEnabled, setContinueEnabled] = useState(true);
+  const [perDay, setPerDay] = useState(1);
   const [providerId, setProviderId] = useState('');
   const [model, setModel] = useState('');
   const [seeded, setSeeded] = useState(false);
@@ -46,6 +51,7 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
       setGreetingEnabled(block.greetingEnabled);
       setPillsEnabled(block.pillsEnabled);
       setContinueEnabled(block.continueEnabled);
+      setPerDay(block.digestPerDay ?? 1);
       setProviderId(block.digest.providerId);
       setModel(block.digest.model);
       setSeeded(true);
@@ -61,6 +67,7 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
     await elowenClient.updateConfig({
       dashboard: {
         recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled,
+        digestPerDay: perDay,
         digest: { providerId: providerId.trim(), model: model.trim() },
       },
     });
@@ -69,7 +76,7 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
     void queryClient.invalidateQueries({ queryKey: ['config'] });
   };
   const { status, retry } = useAutoSaveStatus(
-    [recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled, providerId, model],
+    [recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled, perDay, providerId, model],
     save,
     { ready: seeded },
   );
@@ -124,6 +131,23 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
           </Button>
         }
         control={<Toggle checked={digestEnabled} onChange={setDigestEnabled} label={t.settings.dashboardSection.digest} disabled={!recapEnabled} />}
+      />
+      <SettingsRow
+        label={t.settings.dashboardSection.perDay}
+        description={t.settings.dashboardSection.perDayDesc}
+        icon={Repeat}
+        control={
+          <ChoiceField
+            title={t.settings.dashboardSection.perDay}
+            options={DIGEST_PER_DAY_CHOICES.map((n) => ({
+              value: String(n),
+              label: t.settings.dashboardSection.perDayOption.replace('{n}', String(n)),
+            }))}
+            value={String(perDay)}
+            onChange={(next) => setPerDay(Number(next))}
+            picker="always"
+          />
+        }
       />
       <SettingsRow
         label={t.settings.dashboardSection.greeting}

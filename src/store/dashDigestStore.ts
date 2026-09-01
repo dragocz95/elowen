@@ -87,22 +87,37 @@ export class DashDigestStore {
   }
 
   /** Claim today's generation slot. Returns true when THIS caller should run the generator: no row
-   *  yet, a failed row eligible for retry, or a 'generating' row stale enough to be a crashed run
-   *  (daemon restarted mid-generation — without the retake that day would stay wedged). */
-  beginGeneration(userId: number, day: string, opts: { retryAfterMs: number; staleAfterMs: number; maxAttempts: number }, now = Date.now()): boolean {
+   *  yet, a failed row eligible for retry, a 'generating' row stale enough to be a crashed run
+   *  (daemon restarted mid-generation — without the retake that day would stay wedged), or a ready row
+   *  whose refresh window has elapsed.
+   *
+   *  `refreshAfterMs` is the day divided by the admin's runs-per-day setting, and it is the ONLY thing
+   *  that lets a ready digest regenerate within the same day — which makes it the ceiling on what the
+   *  feature can spend. Omitted (or zero) keeps the original contract: one digest per user per day.
+   *  A refresh resets `attempts`, because the retry budget belongs to the run being started, not to the
+   *  calendar day; without the reset the third failure would wedge every later window too. */
+  beginGeneration(userId: number, day: string, opts: { retryAfterMs: number; staleAfterMs: number; maxAttempts: number; refreshAfterMs?: number }, now = Date.now()): boolean {
     const existing = this.get(userId, day);
+    let refreshing = false;
     if (existing) {
-      if (existing.status === 'ready') return false;
-      if (existing.attempts >= opts.maxAttempts) return false;
       const age = now - existing.updatedAt;
-      if (existing.status === 'generating' && age < opts.staleAfterMs) return false;
-      if (existing.status === 'failed' && age < opts.retryAfterMs) return false;
+      if (existing.status === 'ready') {
+        if (!opts.refreshAfterMs || age < opts.refreshAfterMs) return false;
+        refreshing = true;
+      } else {
+        if (existing.attempts >= opts.maxAttempts) return false;
+        if (existing.status === 'generating' && age < opts.staleAfterMs) return false;
+        if (existing.status === 'failed' && age < opts.retryAfterMs) return false;
+      }
     }
     this.db.prepare(`
       INSERT INTO dash_digests (user_id, day, status, payload, attempts, updated_at)
       VALUES (?, ?, 'generating', '{}', 1, ?)
-      ON CONFLICT(user_id, day) DO UPDATE SET status = 'generating', attempts = attempts + 1, updated_at = excluded.updated_at
-    `).run(userId, day, now);
+      ON CONFLICT(user_id, day) DO UPDATE SET
+        status = 'generating',
+        attempts = CASE WHEN ? THEN 1 ELSE attempts + 1 END,
+        updated_at = excluded.updated_at
+    `).run(userId, day, now, refreshing ? 1 : 0);
     this.prune(now);
     return true;
   }

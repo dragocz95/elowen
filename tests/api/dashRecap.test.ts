@@ -111,6 +111,35 @@ describe('GET /dash/recap', () => {
     expect(calls()).toBe(1);
   });
 
+  it('refreshes within the day only once the configured window elapsed, still serving the old digest', async () => {
+    const { app, config, dashDigests, adminTok, adminId, calls } = setup();
+    const today = new Date().toISOString().slice(0, 10);
+    await getRecap(app, adminTok);
+    await settle();
+    expect(calls()).toBe(1);
+
+    // Age the stored digest by seven hours by rewriting its completion time.
+    const age = (hoursAgo: number) => {
+      const row = dashDigests.get(adminId, today)!;
+      dashDigests.complete(adminId, today, row.payload, Date.now() - hoursAgo * 3_600_000);
+    };
+
+    // Default is one run a day: a seven-hour-old digest is still this day's digest.
+    age(7);
+    await getRecap(app, adminTok);
+    await settle();
+    expect(calls()).toBe(1);
+
+    // Four runs a day puts the window at six hours, so the same row is now due.
+    config.update({ dashboard: { digestPerDay: 4 } });
+    age(7);
+    const during = await getRecap(app, adminTok);
+    expect(during.digest?.status).toBe('ready');
+    expect(during.digest?.summary).toBe('Včera jste ladil **dashboard**.');
+    await settle();
+    expect(calls()).toBe(2);
+  });
+
   it('never spends a token on a user with no yesterday', async () => {
     const { app, bobTok, calls } = setup();
     const r = await getRecap(app, bobTok);

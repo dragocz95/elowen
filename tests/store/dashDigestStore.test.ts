@@ -50,6 +50,28 @@ describe('DashDigestStore generation latch', () => {
     expect(s.get(1, DAY)?.payload.summary).toBe('done');
   });
 
+  it('regenerates a ready day once its refresh window has elapsed, never inside it', () => {
+    const s = store();
+    const perDay4 = { ...OPTS, refreshAfterMs: 86_400_000 / 4 };
+    s.beginGeneration(1, DAY, perDay4, 1000);
+    s.complete(1, DAY, sanitizePayload({ summary: 'first' }), 2000);
+    expect(s.beginGeneration(1, DAY, perDay4, 2000 + perDay4.refreshAfterMs - 1)).toBe(false);
+    expect(s.beginGeneration(1, DAY, perDay4, 2000 + perDay4.refreshAfterMs + 1)).toBe(true);
+    // The superseded digest stays readable until the new one completes, so the dashboard never blanks.
+    expect(s.get(1, DAY)?.payload.summary).toBe('first');
+  });
+
+  it('gives a refresh its own retry budget instead of the exhausted one from earlier in the day', () => {
+    const s = store();
+    const perDay4 = { ...OPTS, refreshAfterMs: 86_400_000 / 4 };
+    s.beginGeneration(1, DAY, perDay4, 1000);
+    s.fail(1, DAY, 2000);
+    s.beginGeneration(1, DAY, perDay4, 2000 + OPTS.retryAfterMs + 1);   // attempt 2
+    s.complete(1, DAY, sanitizePayload({ summary: 'recovered' }), 3000 + OPTS.retryAfterMs);
+    expect(s.beginGeneration(1, DAY, perDay4, 3000 + OPTS.retryAfterMs + perDay4.refreshAfterMs)).toBe(true);
+    expect(s.get(1, DAY)?.attempts).toBe(1);
+  });
+
   it('retries a failed day only after the cooldown, and only up to the attempt cap', () => {
     const s = store();
     s.beginGeneration(1, DAY, OPTS, 1000);

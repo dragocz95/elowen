@@ -76,22 +76,22 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
         }
       : null;
 
-    // The digest: cached per (user, UTC day), generated lazily on the first visit of the day. A user
-    // with no yesterday at all never spends a token — there is nothing to summarize.
+    // The digest: cached per (user, UTC day), generated lazily. A user with no yesterday at all never
+    // spends a token — there is nothing to summarize. `digestPerDay` splits the day into equal refresh
+    // windows; at 1 a stored digest can never go stale within its day, which is the original contract.
     let digest: Record<string, unknown> = { status: 'unavailable' as const };
     if (cfg.digestEnabled && d.dashDigests && yesterdayOut) {
       const row = d.dashDigests.get(userId, today);
-      if (row?.status === 'ready') {
-        digest = {
-          status: 'ready',
-          ...(cfg.greetingEnabled && row.payload.greeting ? { greeting: row.payload.greeting } : {}),
-          ...(cfg.pillsEnabled && row.payload.pills.length ? { pills: row.payload.pills } : {}),
-          ...(row.payload.summary ? { summary: row.payload.summary } : {}),
-          ...(row.payload.suggestions.length ? { suggestions: row.payload.suggestions } : {}),
-        };
-      } else if (d.dashDigestInference?.() ?? null) {
+      const refreshAfterMs = 86_400_000 / Math.max(1, cfg.digestPerDay);
+      const content = row && (row.payload.greeting || row.payload.summary
+        || row.payload.pills.length || row.payload.suggestions.length) ? row.payload : null;
+      // Resolving the inference client touches the provider registry, so ask only when a run is
+      // actually possible: a ready digest inside its window costs nothing but the read above.
+      const stale = !row || row.status !== 'ready' || now - row.updatedAt >= refreshAfterMs;
+      let pending = row?.status === 'generating';
+      if (stale && (d.dashDigestInference?.() ?? null)) {
         const claimed = d.dashDigests.beginGeneration(userId, today, {
-          retryAfterMs: RETRY_AFTER_MS, staleAfterMs: STALE_GENERATING_MS, maxAttempts: MAX_ATTEMPTS,
+          retryAfterMs: RETRY_AFTER_MS, staleAfterMs: STALE_GENERATING_MS, maxAttempts: MAX_ATTEMPTS, refreshAfterMs,
         }, now);
         if (claimed) {
           const generator = new DashDigestGenerator({
@@ -102,9 +102,19 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
           void generator.run(userId, today, digestInput(userId, yesterday, today));
         }
         // Freshly claimed or already being generated elsewhere — either way the client should poll.
-        const pending = claimed || d.dashDigests.get(userId, today)?.status === 'generating';
-        digest = { status: pending ? 'generating' : 'unavailable' };
+        pending = claimed || d.dashDigests.get(userId, today)?.status === 'generating';
       }
+      // A refresh keeps serving the digest it is replacing: the window has elapsed, but yesterday's
+      // recap is still true, and blanking the hero mid-day would be a worse answer than a stale one.
+      digest = content
+        ? {
+            status: 'ready',
+            ...(cfg.greetingEnabled && content.greeting ? { greeting: content.greeting } : {}),
+            ...(cfg.pillsEnabled && content.pills.length ? { pills: content.pills } : {}),
+            ...(content.summary ? { summary: content.summary } : {}),
+            ...(content.suggestions.length ? { suggestions: content.suggestions } : {}),
+          }
+        : { status: pending ? 'generating' : 'unavailable' };
     }
 
     return c.json({ enabled: true, continue: cont, yesterday: yesterdayOut, digest });

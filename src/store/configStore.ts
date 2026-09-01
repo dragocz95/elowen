@@ -58,8 +58,18 @@ export interface DashboardBlock {
   greetingEnabled: boolean;
   pillsEnabled: boolean;
   continueEnabled: boolean;
+  /** How many times a day the digest may be generated PER USER. The day is divided by this number into
+   *  equal windows and a stored digest is only re-generated once its window has elapsed, so this is the
+   *  ceiling on what the feature can spend: 1 keeps the original once-a-day behaviour, 4 refreshes it
+   *  roughly every six hours for someone whose work changes through the day. Generation stays lazy —
+   *  the window only makes a refresh POSSIBLE, opening the dashboard is what triggers it. */
+  digestPerDay: number;
   digest: { providerId: string; model: string };
 }
+
+/** Bounds for {@link DashboardBlock.digestPerDay}. Twenty-four is one an hour, which is already far more
+ *  than yesterday's material can justify; below one the digest would never generate at all. */
+export const DIGEST_PER_DAY_BOUNDS = { min: 1, max: 24 } as const;
 
 /** Shape-check a stored/patched dashboard block field-by-field: for read() the fallback is the
  *  default block, for update() it is the current block — which makes the same helper both the
@@ -67,10 +77,16 @@ export interface DashboardBlock {
 function sanitizeDashboard(input: unknown, fallback: DashboardBlock): DashboardBlock {
   const p = (typeof input === 'object' && input !== null && !Array.isArray(input) ? input : {}) as {
     recapEnabled?: unknown; digestEnabled?: unknown; greetingEnabled?: unknown; pillsEnabled?: unknown;
-    continueEnabled?: unknown; digest?: { providerId?: unknown; model?: unknown };
+    continueEnabled?: unknown; digestPerDay?: unknown; digest?: { providerId?: unknown; model?: unknown };
   };
   const bool = (v: unknown, fb: boolean): boolean => (typeof v === 'boolean' ? v : fb);
+  // Clamped rather than rejected: a stored value from an older/hand-edited config must still yield a
+  // usable window instead of a division by zero in the refresh interval.
+  const perDay = typeof p.digestPerDay === 'number' && Number.isFinite(p.digestPerDay)
+    ? Math.min(DIGEST_PER_DAY_BOUNDS.max, Math.max(DIGEST_PER_DAY_BOUNDS.min, Math.round(p.digestPerDay)))
+    : fallback.digestPerDay;
   return {
+    digestPerDay: perDay,
     recapEnabled: bool(p.recapEnabled, fallback.recapEnabled),
     digestEnabled: bool(p.digestEnabled, fallback.digestEnabled),
     greetingEnabled: bool(p.greetingEnabled, fallback.greetingEnabled),
@@ -786,7 +802,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   categorization: { providerId: '', model: '', baseUrl: '' },
   // Greeting/pills are opt-in: they replace a core surface (the hero) for every account on the
   // instance, so an upgrade must not flip anyone's landing page by itself.
-  dashboard: { recapEnabled: true, digestEnabled: true, greetingEnabled: false, pillsEnabled: false, continueEnabled: true, digest: { providerId: '', model: '' } },
+  dashboard: { recapEnabled: true, digestEnabled: true, greetingEnabled: false, pillsEnabled: false, continueEnabled: true, digestPerDay: 1, digest: { providerId: '', model: '' } },
 };
 
 interface Stored {
@@ -909,7 +925,7 @@ export interface ConfigPatch {
   /** Categorization config merged per-field (like embedding). */
   categorization?: { providerId?: string; model?: string; baseUrl?: string };
   /** Dashboard block merged per-field (like categorization). */
-  dashboard?: { recapEnabled?: boolean; digestEnabled?: boolean; greetingEnabled?: boolean; pillsEnabled?: boolean; continueEnabled?: boolean; digest?: { providerId?: string; model?: string } };
+  dashboard?: { recapEnabled?: boolean; digestEnabled?: boolean; greetingEnabled?: boolean; pillsEnabled?: boolean; continueEnabled?: boolean; digestPerDay?: number; digest?: { providerId?: string; model?: string } };
 }
 
 /** The agent display name feeds the same sinks a theme's brand name does — terminals (control chars =
