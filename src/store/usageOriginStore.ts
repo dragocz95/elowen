@@ -325,11 +325,12 @@ export class UsageOriginStore {
   /** Drop one user's origin accounting, for `POST /usage/reset`. Without it the origin view would keep
    *  reporting spend the rest of Stats has just forgotten. */
   clearForUser(userId: number): number {
-    return this.db.transaction(() => {
+    const clear = (): number => {
       const removed = this.db.prepare('DELETE FROM usage_by_origin WHERE user_id = ?').run(userId).changes;
       this.db.prepare('DELETE FROM brain_session_origins WHERE user_id = ?').run(userId);
       return removed;
-    })();
+    };
+    return this.db.inTransaction ? clear() : this.db.transaction(clear)();
   }
 }
 

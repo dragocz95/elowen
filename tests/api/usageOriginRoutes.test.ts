@@ -114,10 +114,24 @@ describe('POST /usage/reset', () => {
     usageOrigins.addTurn(bobId, ip('198.51.100.44'), usage(400), AT);
 
     const body = await (await app.request('/usage/reset', post(adminTok))).json();
-    expect(body).toMatchObject({ ok: true, originsCleared: 1 });
+    expect(body).toEqual({ ok: true, chatCleared: 1, originsCleared: 1 });
     // Leaving this behind is what made the drawer keep reporting spend the rest of Stats had forgotten.
     const rows = db.prepare('SELECT user_id FROM usage_by_origin').all();
     expect(rows).toEqual([{ user_id: bobId }]);
     expect(db.prepare('SELECT COUNT(*) c FROM brain_session_origins').get()).toEqual({ c: 0 });
+    expect(db.prepare('SELECT usage_epoch FROM brain_usage_reset_state WHERE user_id = ?').get(adminId))
+      .toEqual({ usage_epoch: 1 });
+  });
+
+  it('forbids a non-admin and leaves every counter unchanged', async () => {
+    const { app, db, usageOrigins, bobId, bobTok } = setup();
+    usageOrigins.addTurn(bobId, ip('198.51.100.44'), usage(400), AT);
+
+    const res = await app.request('/usage/reset', post(bobTok));
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'forbidden' });
+    expect(db.prepare('SELECT total FROM usage_by_origin WHERE user_id = ?').get(bobId)).toEqual({ total: 400 });
+    expect(db.prepare('SELECT 1 FROM brain_usage_reset_state WHERE user_id = ?').get(bobId)).toBeUndefined();
   });
 });

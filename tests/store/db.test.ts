@@ -17,7 +17,13 @@ describe('openDb', () => {
   it('applies schema (tables exist) on a fresh :memory: db', () => {
     const db = openDb(':memory:');
     const names = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r: any) => r.name);
-    expect(names).toEqual(expect.arrayContaining(['projects', 'users', 'events', 'brain_subagent_runs']));
+    expect(names).toEqual(expect.arrayContaining([
+      'projects', 'users', 'events', 'brain_subagent_runs', 'brain_usage_reset_state',
+    ]));
+    for (const table of ['brain_messages', 'brain_provider_requests', 'brain_usage_rows']) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((row: any) => row.name);
+      expect(columns).toContain('usage_epoch');
+    }
     // The agents-plugin and work-plugin tables are NOT core schema: a fresh install with the plugin
     // disabled must not create them (their DDL lives in plugins/<name>/src/store/migrations.ts).
     for (const t of ['missions', 'agents', 'notes', 'tasks', 'task_deps', 'task_usage']) {

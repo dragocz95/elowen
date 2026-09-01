@@ -46,10 +46,12 @@ describe('brain usage write-time projection', () => {
 
     installBrainUsageRollup(db);
 
-    expect((db.prepare('PRAGMA table_info(brain_usage_rows)').all() as { name: string }[])
-      .some((column) => column.name === 'calls')).toBe(true);
-    expect(db.prepare("SELECT total, calls FROM brain_usage_rows WHERE source_message_id = 'historical'").get())
-      .toEqual({ total: 99, calls: 0 });
+    const upgraded = new Set((db.prepare('PRAGMA table_info(brain_usage_rows)').all() as { name: string }[])
+      .map((column) => column.name));
+    expect(upgraded.has('calls')).toBe(true);
+    expect(upgraded.has('usage_epoch')).toBe(true);
+    expect(db.prepare("SELECT total, calls, usage_epoch FROM brain_usage_rows WHERE source_message_id = 'historical'").get())
+      .toEqual({ total: 99, calls: 0, usage_epoch: 0 });
   });
 
   it('backfills legacy provider attribution once and removes brain_messages from usage reads', () => {

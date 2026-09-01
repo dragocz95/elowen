@@ -438,6 +438,7 @@ export class UserStore {
       // it in the SAME transaction, not on the next retention sweep.
       this.db.prepare('DELETE FROM usage_by_origin WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_session_origins WHERE user_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_usage_reset_state WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM user_external_identities WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();

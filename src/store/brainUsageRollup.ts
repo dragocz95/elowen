@@ -12,11 +12,11 @@ const markedProvider = (src: string, path: string): string => `NULLIF(CASE WHEN 
     ELSE json_extract(${src}, '${path}') END
 END, '')`;
 
-const columns = `source_message_id, bucket_index, session_id, user_id, provider, model, ts,
+const columns = `source_message_id, bucket_index, session_id, user_id, usage_epoch, provider, model, ts,
   input, output, cache_read, cache_write, total, reasoning, calls, duration_ms, measured_output, cost`;
 
 const liveSelect = (message: string, recoverProvider = 'NULL'): string => `
-SELECT ${message}.id, -1, ${message}.session_id, s.user_id,
+SELECT ${message}.id, -1, ${message}.session_id, s.user_id, ${message}.usage_epoch,
        COALESCE(${markedProvider(`${message}.content`, '$.provider')}, ${recoverProvider},
          CASE WHEN NULLIF(json_extract(${message}.content, '$.model'), '') IS NULL THEN NULLIF(s.provider, '') END),
        COALESCE(NULLIF(json_extract(${message}.content, '$.model'), ''), s.model),
@@ -40,6 +40,8 @@ SELECT ${message}.id, -1, ${message}.session_id, s.user_id,
 
 const rollupSelect = (message: string, recoverProvider = 'NULL'): string => `
 SELECT ${message}.id, CAST(je.key AS INTEGER), ${message}.session_id, s.user_id,
+       CASE WHEN json_type(je.value, '$.usageEpoch') = 'integer'
+            THEN json_extract(je.value, '$.usageEpoch') ELSE ${message}.usage_epoch END,
        COALESCE(${markedProvider('je.value', '$.provider')}, ${recoverProvider}),
        COALESCE(NULLIF(json_extract(je.value, '$.model'), ''), s.model),
        ${numeric('je.value', '$.at', 'NULL')},
@@ -77,6 +79,7 @@ export function installBrainUsageRollup(db: Db): void {
       bucket_index INTEGER NOT NULL,
       session_id TEXT NOT NULL,
       user_id INTEGER NOT NULL,
+      usage_epoch INTEGER NOT NULL DEFAULT 0,
       provider TEXT,
       model TEXT NOT NULL,
       ts INTEGER NOT NULL,
@@ -102,6 +105,10 @@ export function installBrainUsageRollup(db: Db): void {
     // generation count. Existing rows therefore stay honestly unknown (0); only new writes are exact.
     db.exec('ALTER TABLE brain_usage_rows ADD COLUMN calls INTEGER NOT NULL DEFAULT 0');
   }
+  if (!columns.some((column) => column.name === 'usage_epoch')) {
+    // Constant-default metadata only: no historical projection rebuild and no large index creation at boot.
+    db.exec('ALTER TABLE brain_usage_rows ADD COLUMN usage_epoch INTEGER NOT NULL DEFAULT 0');
+  }
   // Trigger SQL is versioned with the projection shape. Recreate it on every boot so an additive column is
   // populated immediately without rewriting the historical projection or scanning brain_messages.
   db.exec(`
@@ -115,7 +122,7 @@ export function installBrainUsageRollup(db: Db): void {
       DELETE FROM brain_usage_rows WHERE source_message_id = OLD.id;
       UPDATE brain_usage_rollup_state SET generation = generation + 1 WHERE id = 1;
     END;
-    CREATE TRIGGER brain_usage_rows_update AFTER UPDATE OF content, role, session_id ON brain_messages BEGIN
+    CREATE TRIGGER brain_usage_rows_update AFTER UPDATE OF content, role, session_id, usage_epoch ON brain_messages BEGIN
       DELETE FROM brain_usage_rows WHERE source_message_id = OLD.id;
       ${insertTriggerBody('NEW')}
     END;
@@ -131,23 +138,25 @@ export function rebuildBrainUsageRollup(db: Db): { rows: number; generation: num
   return db.transaction(() => {
     db.prepare('DELETE FROM brain_usage_rows').run();
     const sameModel = `sm AS MATERIALIZED (
-      SELECT a.session_id,
+      SELECT a.session_id, a.usage_epoch,
              NULLIF(json_extract(a.content, '$.model'), '') AS model,
              MIN(${markedProvider('a.content', '$.provider')}) AS provider
         FROM brain_messages a
        WHERE a.role = 'assistant' AND json_valid(a.content) AND json_type(a.content) = 'object'
          AND NULLIF(json_extract(a.content, '$.model'), '') IS NOT NULL
          AND ${markedProvider('a.content', '$.provider')} IS NOT NULL
-       GROUP BY a.session_id, NULLIF(json_extract(a.content, '$.model'), '')
+       GROUP BY a.session_id, a.usage_epoch, NULLIF(json_extract(a.content, '$.model'), '')
       HAVING COUNT(DISTINCT ${markedProvider('a.content', '$.provider')}) = 1)`;
     const liveBackfill = liveSelect(
       'm',
-      `(SELECT sm.provider FROM sm WHERE sm.session_id = m.session_id
+      `(SELECT sm.provider FROM sm WHERE sm.session_id = m.session_id AND sm.usage_epoch = m.usage_epoch
           AND sm.model = NULLIF(json_extract(m.content, '$.model'), ''))`,
     ).replace('  FROM brain_sessions s\n', '  FROM brain_messages m JOIN brain_sessions s ON s.id = m.session_id\n');
     const rollupBackfill = rollupSelect(
       'm',
       `(SELECT sm.provider FROM sm WHERE sm.session_id = m.session_id
+          AND sm.usage_epoch = CASE WHEN json_type(je.value, '$.usageEpoch') = 'integer'
+                                    THEN json_extract(je.value, '$.usageEpoch') ELSE m.usage_epoch END
           AND sm.model = NULLIF(json_extract(je.value, '$.model'), ''))`,
     ).replace(
       '  FROM brain_sessions s,\n',

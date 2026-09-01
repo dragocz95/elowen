@@ -225,7 +225,8 @@ describe('ProviderRequestStore', () => {
     expect(requests.rows('fork')).toEqual([]);
 
     brain.clearUsage(7);
-    expect(requests.row(first.requestId)).toMatchObject({ total_tokens: null, cost_usd: null });
+    expect(requests.row(first.requestId)).toMatchObject({ total_tokens: 24, cost_usd: 0.12, usage_epoch: 0 });
+    expect(requests.debugRequest('archived', first.requestId)).toMatchObject({ totalTokens: null, costUsd: null });
     expect(db.prepare("SELECT request_count, total_tokens, cost_usd, costed_request_count FROM brain_request_session_summary WHERE session_id = 'archived'").get())
       .toEqual({ request_count: 1, total_tokens: 0, cost_usd: 0, costed_request_count: 0 });
     expect(requests.reconstruct(first.requestId)).toEqual(body());
