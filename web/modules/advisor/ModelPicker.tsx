@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '../../components/ui/shadcn/dropdown-menu';
 import { useBrainChat } from './BrainChatProvider';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { ModelOptionList } from './ModelOptionList';
 
 /** The shared model picker: a trigger button (current model + chevron) opening a grouped popover of every
@@ -20,7 +21,7 @@ import { ModelOptionList } from './ModelOptionList';
  *  never drift into showing the same catalog two different ways. */
 export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact' }) {
   const { t } = useTranslation();
-  const { models, currentModel, provider, modelsLoading, loadModels } = useBrainChat();
+  const { models, currentModel, provider, modelsLoading, loadModels, modelStatus, retryModel } = useBrainChat();
   const [open, setOpen] = useState(false);
   const firstOpenHandled = useRef(false);
 
@@ -60,6 +61,7 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
           <ModelOptionList presentation="menu" />
         </DropdownMenuContent>
       </DropdownMenu>
+      <AutoSaveStatus status={modelStatus} onRetry={retryModel} />
     </div>
   );
 }

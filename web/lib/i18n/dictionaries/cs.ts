@@ -1001,6 +1001,8 @@ export const cs = {
     clearSelection: 'Zrušit výběr',
     selectedCount: 'Vybráno: {n}',
     bulkDelete: 'Smazat vybrané',
+    bulkDeleteConfirmTitle: 'Smazat vybrané vzpomínky?',
+    bulkDeleteConfirmBody: 'Přesunout {n} vybraných vzpomínek do koše? Později je můžeš obnovit.',
     bulkRestore: 'Obnovit vybrané',
     bulkDeleteDone: 'Smazáno vzpomínek: {n}',
     bulkRestoreDone: 'Obnoveno vzpomínek: {n}',

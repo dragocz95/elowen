@@ -17,6 +17,7 @@ import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { AskQuestionCard } from './AskQuestionCard';
 import { AgentsTable } from './AgentsTable';
@@ -771,25 +772,36 @@ function BarOverflowMenu({ workMode, onOpenTasks }: {
 
 /** The `/rename` dialog: the conversation's title prefilled, committed with Enter or the save button. The
  *  web twin of the CLI's rename prompt — the history rail renames inline, this renames the OPEN chat. */
-function RenameDialog({ current, onClose, onSubmit }: { current: string; onClose: () => void; onSubmit: (title: string) => void }) {
+function RenameDialog({ current, onClose, onSubmit }: { current: string; onClose: () => void; onSubmit: (title: string) => Promise<void> }) {
   const { t } = useTranslation();
   const [title, setTitle] = useState(current);
-  const commit = () => { if (title.trim()) onSubmit(title); };
+  const [status, setStatus] = useState<import('../../lib/useAutoSaveStatus').SaveStatus>('idle');
+  const submit = async () => {
+    const next = title.trim();
+    if (!next || status === 'saving') return;
+    setStatus('saving');
+    try {
+      await onSubmit(next);
+      setStatus('saved');
+    } catch {
+      setStatus('error');
+    }
+  };
   return (
-    <Modal title={t.brainChat.renameTitle} onClose={onClose} size="sm" icon={Pencil}>
+    <Modal title={t.brainChat.renameTitle} onClose={onClose} closeDisabled={status === 'saving'} size="sm" icon={Pencil}>
       <ModalBody>
         <Input
           autoFocus
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void submit(); } }}
           aria-label={t.chat.renamePlaceholder}
           placeholder={t.chat.renamePlaceholder}
         />
       </ModalBody>
-      <ModalFooter>
-        <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
-        <Button variant="accent" disabled={!title.trim()} onClick={commit}>{t.common.save}</Button>
+      <ModalFooter status={<AutoSaveStatus status={status} onRetry={() => void submit()} />}>
+        <Button variant="ghost" onClick={onClose} disabled={status === 'saving'}>{t.common.cancel}</Button>
+        <Button variant="accent" disabled={!title.trim() || status === 'saving'} onClick={() => void submit()}>{t.common.save}</Button>
       </ModalFooter>
     </Modal>
   );
@@ -1713,7 +1725,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         <RenameDialog
           current={active?.title ?? ''}
           onClose={closeRename}
-          onSubmit={(title) => void renameSession(title)}
+          onSubmit={renameSession}
         />
       ) : null}
     </div>

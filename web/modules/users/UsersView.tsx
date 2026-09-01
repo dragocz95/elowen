@@ -258,7 +258,7 @@ export function UsersView() {
                   </DataTable>
                 )}
               </div>
-              {selected ? <WorkspaceDetailRail label={t.users.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}><UserDetailPane user={selected} projects={projects.data ?? []} globalExecs={globalExecs} customModels={customModels} /></WorkspaceDetailRail> : null}
+              {selected ? <WorkspaceDetailRail label={t.users.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}><UserDetailPane key={selected.id} user={selected} projects={projects.data ?? []} globalExecs={globalExecs} customModels={customModels} /></WorkspaceDetailRail> : null}
             </div>
             </ControlSurfaceRegister>
           )}

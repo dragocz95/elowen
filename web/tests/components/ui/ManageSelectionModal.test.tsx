@@ -115,16 +115,22 @@ describe('ManageSelectionModal', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('blocks header close, Escape and Cancel while an async save is pending', async () => {
+  it('blocks header, Escape, backdrop and Cancel dismissal while saving', async () => {
     let resolve!: () => void;
-    const onSave = vi.fn(() => new Promise<void>((done) => { resolve = done; }));
+    const onSave = vi.fn(() => new Promise<void>((r) => { resolve = r; }));
     const { onClose } = mount({ onSave });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    fireEvent.keyDown(document, { key: 'Escape' });
+
+    const dialog = screen.getByRole('dialog', { name: 'Pick models' });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    const backdrop = dialog.parentElement!;
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onClose).not.toHaveBeenCalled();
+
     resolve();
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });

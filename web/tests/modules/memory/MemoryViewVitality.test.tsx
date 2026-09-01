@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import type { Memory, MemoryCategory } from '../../../lib/types';
@@ -8,6 +8,7 @@ import type { Memory, MemoryCategory } from '../../../lib/types';
  *  serves (rows carrying the server-computed `vitality`), so the test exercises the real render/sort. */
 const memories = vi.fn();
 const categories = vi.fn();
+const bulkDeleteAsync = vi.fn();
 
 vi.mock('../../../lib/queries', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -20,7 +21,7 @@ vi.mock('../../../lib/mutations', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useCreateMemory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   useMergeMemories: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
-  useDeleteMemory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+  useDeleteMemory: () => ({ mutate: vi.fn(), mutateAsync: bulkDeleteAsync }),
   useRestoreMemory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
   usePurgeMemories: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
   useEmptyTrash: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
@@ -41,6 +42,8 @@ const cats = (list: MemoryCategory[] = []) => ({ data: list, isError: false, isL
 beforeEach(() => {
   memories.mockReset();
   categories.mockReset();
+  bulkDeleteAsync.mockReset();
+  bulkDeleteAsync.mockResolvedValue(undefined);
   // Both fetches resolve to the same active set (the all-status variant is only summed into metrics).
   memories.mockImplementation(() => rows(MEMORY_SET));
   categories.mockReturnValue(cats());
@@ -82,6 +85,17 @@ describe('MemoryView vitality column', () => {
       expect(bodies[0]).toContain('stale low value');
       expect(bodies[2]).toContain('frequently used');
     });
+  });
+
+  it('requires confirmation before bulk soft-delete', async () => {
+    renderView();
+    await waitFor(() => expect(screen.getByText('frequently used')).toBeInTheDocument());
+    fireEvent.click(screen.getAllByRole('button', { name: 'Merge' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
+    expect(screen.getByRole('alertdialog', { name: 'Delete selected memories?' })).toBeInTheDocument();
+    expect(bulkDeleteAsync).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Delete selected memories?' })).getByRole('button', { name: 'Delete selected' }));
+    await waitFor(() => expect(bulkDeleteAsync).toHaveBeenCalledOnce());
   });
 
   it('keeps the brain visible behind a selected memory and uses the softer inspection scrim', async () => {

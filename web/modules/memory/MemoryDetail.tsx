@@ -14,7 +14,7 @@ import { IconButton } from '../../components/ui/IconButton';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { EmptyState, LoadingLine, LoadingState } from '../../components/ui/states';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
-import { useAutoSaveStatus } from '../../lib/useAutoSaveStatus';
+import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useTranslation } from '../../lib/i18n';
 import { formatTaskTime } from '../../lib/format';
 import { useNow } from '../../lib/useNow';
@@ -36,17 +36,17 @@ import { RankSlider, CategorySelect } from './MemoryFields';
 
 /** Persistent memory detail: full editable body, metadata, lifecycle actions and audit trail. Resolves
  *  the memory by id (any status) so a soft-deleted row stays reachable for restore. */
-export function MemoryDetail({ memoryId }: { memoryId: number }) {
+export function MemoryDetail({ memoryId, onSaveState }: { memoryId: number; onSaveState?: (status: SaveStatus, retry: () => void) => void }) {
   const { t, locale } = useTranslation();
   const query = useMemory(memoryId);
   const memory = query.data;
 
   if (query.isError) return <EmptyState title={t.common.daemonUnreachable} icon={Brain} />;
   if (!memory) return <LoadingLine />;
-  return <MemoryDetailBody key={memory.id} memory={memory} t={t} locale={locale} />;
+  return <MemoryDetailBody key={memory.id} memory={memory} t={t} locale={locale} onSaveState={onSaveState} />;
 }
 
-function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType<typeof useTranslation>['t']; locale: string }) {
+function MemoryDetailBody({ memory, t, locale, onSaveState }: { memory: Memory; t: ReturnType<typeof useTranslation>['t']; locale: string; onSaveState?: (status: SaveStatus, retry: () => void) => void }) {
   const { toast } = useToast();
   const update = useUpdateMemory();
   const setCategory = useSetMemoryCategory();
@@ -88,6 +88,7 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
     if (categoryId !== memory.category_id) await setCategory.mutateAsync({ id: memory.id, categoryId });
   };
   const autosave = useAutoSaveStatus([body, kind, importance, categoryId], saveEdits, { ready: true, savable: !!body.trim() });
+  useEffect(() => { onSaveState?.(autosave.status, autosave.retry); }, [autosave.retry, autosave.status, onSaveState]);
   // Leave edit mode — flush any pending save first so the last keystroke is never dropped.
   const done = async () => { const finalStatus = await autosave.flush(); if (finalStatus !== 'error') setEditing(false); };
   const doDelete = () => {
@@ -119,7 +120,7 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
             <>
               {/* Changes auto-save; the status shows saving/saved/error, and Done just leaves edit mode. */}
               <AutoSaveStatus status={autosave.status} onRetry={autosave.retry} />
-              <Button variant="ghost" icon={Check} onClick={done} disabled={autosave.status === 'saving'}>{t.memory.done}</Button>
+              <Button variant="ghost" icon={Check} onClick={done} disabled={autosave.status === 'saving' || autosave.status === 'error'}>{t.memory.done}</Button>
             </>
           ) : (
             <>

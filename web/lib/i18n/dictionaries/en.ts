@@ -1022,6 +1022,8 @@ export const en = {
     clearSelection: 'Clear selection',
     selectedCount: '{n} selected',
     bulkDelete: 'Delete selected',
+    bulkDeleteConfirmTitle: 'Delete selected memories?',
+    bulkDeleteConfirmBody: 'Move {n} selected memories to the trash. You can restore them later.',
     bulkRestore: 'Restore selected',
     bulkDeleteDone: '{n} memories deleted',
     bulkRestoreDone: '{n} memories restored',

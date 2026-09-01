@@ -11,7 +11,9 @@ import { useToast } from '../../components/ui/Toast';
 import { ReasoningScale } from '../../components/ui/ReasoningScale';
 import { Toggle } from '../../components/ui/Toggle';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
-import { Modal, ModalBody } from '../../components/ui/Modal';
+import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
+import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 
 /** The web dock's `/reasoning` picker — the counterpart of the CLI TUI's reasoning overlay, and it
  *  carries the same two things that command does: the effort levels the CURRENT model offers (applied
@@ -32,23 +34,28 @@ export function ReasoningModal({ onClose }: { onClose: () => void }) {
   // The applied level wins over the fetched one until the next read: the write is authoritative and the
   // query is not refetched on every click.
   const [applied, setApplied] = useState<string | null>(null);
+  const [statusState, setStatusState] = useState<SaveStatus>('idle');
+  const [retryLevel, setRetryLevel] = useState<string | null>(null);
   const current = applied ?? status?.thinkingLevel ?? '';
 
   const apply = (level: string): void => {
-    if (!level || level === current) return;
+    if (!level || level === current || statusState === 'saving') return;
     const previous = current;
+    setRetryLevel(level);
     setApplied(level);
+    setStatusState('saving');
     void elowenClient.brainThink(level, activeSessionId ?? undefined)
       .then((r) => {
         setApplied(r.thinkingLevel);
+        setStatusState('saved');
         void queryClient.invalidateQueries({ queryKey: ['my-cli-settings'] });
       })
-      .catch((e: Error) => { setApplied(previous || null); toast(e.message, 'error'); });
+      .catch((e: Error) => { setApplied(previous || null); setStatusState('error'); toast(e.message, 'error'); });
   };
 
   // `inspect`: two controls, applied live and closed — a phone shows it as a bottom sheet.
   return (
-    <Modal title={t.reasoning.modalTitle} onClose={onClose} size="md" icon={Brain} intent="inspect">
+    <Modal title={t.reasoning.modalTitle} onClose={onClose} closeDisabled={statusState === 'saving'} size="md" icon={Brain} intent="inspect">
       <ModalBody gap={4}>
         {statusQuery.isLoading ? (
           <LoadingState variant="list" />
@@ -73,6 +80,7 @@ export function ReasoningModal({ onClose }: { onClose: () => void }) {
           <Toggle checked={showThoughts} onChange={setShowThoughts} label={t.reasoning.thoughtRows} />
         </div>
       </ModalBody>
+      <ModalFooter status={<AutoSaveStatus status={statusState} onRetry={() => { if (retryLevel) apply(retryLevel); }} />} />
     </Modal>
   );
 }

@@ -94,9 +94,10 @@ export function WorkspaceDetailRail({ label, description, closeLabel, onClose, c
   description?: string;
   closeLabel: string;
   onClose: () => void;
-  closeDisabled?: boolean;
   /** Keep more of the source visualization visible behind an inspection drawer. */
   scrim?: 'default' | 'soft';
+  /** Prevent dismissal while an editor inside the rail has an in-flight save. */
+  closeDisabled?: boolean;
   children: ReactNode;
 }) {
   return (

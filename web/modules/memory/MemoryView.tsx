@@ -1,5 +1,5 @@
 'use client';
-import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags, Trash2, RotateCcw, Layers, Clock, Activity, CheckCircle2, Archive } from 'lucide-react';
 import type { Memory, MemoryCategory } from '../../lib/types';
 import { useMemories, useMemoryCategories } from '../../lib/queries';
@@ -27,6 +27,7 @@ import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { useToast } from '../../components/ui/Toast';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
+import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { formatTaskTime, compactElapsed, parseTs } from '../../lib/format';
 import { useNow } from '../../lib/useNow';
 import { CategoryIcon } from '../../lib/categoryIcons';
@@ -82,10 +83,12 @@ export function MemoryView() {
   );
   const [showCategories, setShowCategories] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [detailSave, setDetailSave] = useState<{ id: number; status: SaveStatus; retry: () => void } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [creating, setCreating] = useState(false);
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [confirmPurge, setConfirmPurge] = useState(false);
   const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
   // Flat (paginated) vs grouped-by-category display of the list; persisted like the tab/status filters.
@@ -187,17 +190,23 @@ export function MemoryView() {
     return next;
   });
 
+  const onDetailSaveState = useCallback((status: SaveStatus, retry: () => void) => {
+    setDetailSave(selectedId == null ? null : { id: selectedId, status, retry });
+  }, [selectedId]);
+  const detailCloseDisabled = detailSave?.id === selectedId && (detailSave.status === 'saving' || detailSave.status === 'error');
   const selectedIds = () => filtered.filter((m) => selected.has(m.id)).map((m) => m.id);
 
   // Soft-delete / restore have no bulk endpoint, so fan out per id and report once. Purge/empty-trash
-  // are single bulk calls. Every handler clears the selection and toasts on completion.
+  // are single bulk calls. Soft-delete is still a destructive lifecycle change, so it stays behind the same
+  // explicit confirmation boundary as permanent deletion; the dialog remains open when one request fails.
   const bulkDelete = async () => {
     const ids = selectedIds();
     try {
       await Promise.all(ids.map((id) => del.mutateAsync(id)));
+      setConfirmBulkDelete(false);
       toast(t.memory.bulkDeleteDone.replace('{n}', String(ids.length)));
       clearSelection();
-    } catch (e) { toast(apiErrorMessage(e), 'error'); }
+    } catch (e) { toast(apiErrorMessage(e), 'error'); throw e; }
   };
   const bulkRestore = async () => {
     const ids = selectedIds();
@@ -489,16 +498,16 @@ export function MemoryView() {
             </ControlSurfaceRegister>
             </div>
             {selectedId != null ? (
-              <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}>
-                <MemoryDetail memoryId={selectedId} />
+              <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} closeDisabled={detailCloseDisabled} onClose={() => setSelectedId(null)}>
+                <MemoryDetail memoryId={selectedId} onSaveState={onDetailSaveState} />
               </WorkspaceDetailRail>
             ) : null}
           </div>
           )}
         </ControlSurfaceDocument>
         {tab === 'brain' && selectedId != null ? (
-          <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)} scrim="soft">
-            <MemoryDetail memoryId={selectedId} />
+          <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} closeDisabled={detailCloseDisabled} onClose={() => setSelectedId(null)} scrim="soft">
+            <MemoryDetail memoryId={selectedId} onSaveState={onDetailSaveState} />
           </WorkspaceDetailRail>
         ) : null}
       </WorkspaceShell>
@@ -513,7 +522,7 @@ export function MemoryView() {
           {status === 'deleted' ? (
             <Button variant="default" icon={RotateCcw} onClick={bulkRestore}>{t.memory.bulkRestore}</Button>
           ) : (
-            <Button variant="default" icon={Trash2} onClick={bulkDelete}>{t.memory.bulkDelete}</Button>
+            <Button variant="default" icon={Trash2} onClick={() => setConfirmBulkDelete(true)}>{t.memory.bulkDelete}</Button>
           )}
           <Button variant="danger" icon={Trash2} onClick={() => setConfirmPurge(true)}>{t.memory.purge}</Button>
           <button type="button" aria-label={t.memory.clearSelection} onClick={clearSelection} className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"><X size={15} /></button>
@@ -530,6 +539,14 @@ export function MemoryView() {
         />
       ) : null}
 
+      <ConfirmDialog
+        open={confirmBulkDelete}
+        title={t.memory.bulkDeleteConfirmTitle}
+        description={t.memory.bulkDeleteConfirmBody.replace('{n}', String(selected.size))}
+        confirmLabel={t.memory.bulkDelete}
+        onClose={() => setConfirmBulkDelete(false)}
+        onConfirm={bulkDelete}
+      />
       <ConfirmDialog
         open={confirmPurge}
         title={t.memory.purgeConfirmTitle}

@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
+import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useToast } from '../../components/ui/Toast';
 import { useBrainSessions, useBrainCommands, useConfig } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
@@ -202,6 +203,9 @@ export interface BrainChatValue {
   loadModels: () => void;
   modelsLoading: boolean;
   modelsError: boolean;
+  /** Status for the current model switch; kept in the provider so it survives picker dismissal. */
+  modelStatus: SaveStatus;
+  retryModel: () => void;
   /** Whether the transcript renders the model's reasoning segments. A CLIENT-SIDE display switch only:
    *  the daemon keeps streaming `reasoning` either way, so hidden thoughts stay in the transcript and
    *  reappear the moment it is switched back on. Persisted per browser. */
@@ -367,7 +371,11 @@ function useBrainChatController(): BrainChatValue {
   const [modelsError, setModelsError] = useState(false);
   const [currentModel, setCurrentModel] = useState('');
   const [provider, setProvider] = useState('');
+  const [modelStatus, setModelStatus] = useState<SaveStatus>('idle');
+  const latestModelRef = useRef<BrainModelOption | null>(null);
+  const modelQueueRef = useRef(Promise.resolve());
   const [focusNonce, setFocusNonce] = useState(0);
+  useEffect(() => { setModelStatus('idle'); latestModelRef.current = null; }, [activeSessionId]);
   // Work mode + the `/rename` dialog: plain in-memory state. This is what the composer STAMPS on its own
   // sends, so persisting it would make a reloaded tab claim a mode the user never re-chose.
   const [workMode, setWorkMode] = useState<BrainWorkMode>('build');
@@ -899,15 +907,29 @@ function useBrainChatController(): BrainChatValue {
   // have unsent text typed — only the slash entry clears the input (when it opens the overlay).
   // Closing the `/model` overlay lives here rather than only in its own row handler, so a switch started
   // from any other entry point still leaves no stale picker standing over the conversation.
-  const runModel = async (m: BrainModelOption): Promise<void> => {
+  const runModel = (m: BrainModelOption): void => {
     setModelOpen(false);
-    try {
-      const { model } = await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
-      setCurrentModel(model);
-      setProvider(m.provider);
-      toast(`${t.brainChat.modelSwitched} ${brainModelQualifiedLabel({ provider: m.provider, model })}`, 'ok');
-    } catch (e) { toast((e as Error).message ?? 'error', 'error'); }
+    latestModelRef.current = m;
+    setModelStatus('saving');
+    // Keep switches ordered: the daemon applies each request in arrival order, so serializing here avoids a
+    // slower first click arriving after a newer choice and reverting the conversation on the server.
+    modelQueueRef.current = modelQueueRef.current.catch(() => undefined).then(async () => {
+      try {
+        const { model } = await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
+        if (latestModelRef.current !== m) return;
+        setCurrentModel(model);
+        setProvider(m.provider);
+        setModelStatus('saved');
+        toast(`${t.brainChat.modelSwitched} ${brainModelQualifiedLabel({ provider: m.provider, model })}`, 'ok');
+      } catch (e) {
+        if (latestModelRef.current === m) {
+          setModelStatus('error');
+          toast((e as Error).message ?? 'error', 'error');
+        }
+      }
+    });
   };
+  const retryModel = (): void => { if (latestModelRef.current) runModel(latestModelRef.current); };
   // Switch the mode every following send is stamped with (the CLI's /plan|/build|/workflow, whose mode is
   // likewise client state). Nothing is sent here — the mode takes effect on the NEXT turn.
   const runMode = (mode: BrainWorkMode): void => {
@@ -960,14 +982,17 @@ function useBrainChatController(): BrainChatValue {
       .finally(() => { planInFlightRef.current = false; setPlanSubmitting(false); });
   };
   const renameSession = async (title: string): Promise<void> => {
-    setRenameOpen(false);
     const next = title.trim();
     const id = boundSessionRef.current ?? activeSessionId;
     if (!next || !id) return;
     try {
       await elowenClient.brainRenameSession(id, next);
       await qc.invalidateQueries({ queryKey: ['brain-sessions'] });
-    } catch { toast(t.chat.renameError, 'error'); }
+      setRenameOpen(false);
+    } catch (error) {
+      toast(t.chat.renameError, 'error');
+      throw error;
+    }
   };
   // The CLI's skills picker submits `/skill:name` through the ordinary send path, and so does this: the
   // daemon recognizes the prefix and hands the slash to PI RAW, which expands it to the skill's full
@@ -1143,7 +1168,7 @@ function useBrainChatController(): BrainChatValue {
     queued: visibleQueue, readOnly, activeSessionId,
     usage, telemetry, goal, subagents, workflows, lineCfg, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
-    models, currentModel, provider, setModel: (m) => void runModel(m), loadModels: () => void loadModels(), modelsLoading, modelsError,
+    models, currentModel, provider, setModel: (m) => runModel(m), loadModels: () => void loadModels(), modelsLoading, modelsError, modelStatus, retryModel,
     showThoughts: thoughts === 'show',
     setShowThoughts: (v) => setThoughts(v ? 'show' : 'hide'),
     workMode, setWorkMode: runMode, planDecision, implementPlan, dismissPlan, planSubmitting,

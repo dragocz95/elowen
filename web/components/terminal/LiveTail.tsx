@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Maximize2 } from 'lucide-react';
 import { useSessionPane } from '../../lib/useSessionPane';
 import { parseAnsi } from '../../lib/ansi';
+import { useQueryClient } from '@tanstack/react-query';
+import { Button } from '../ui/Button';
 import { useTranslation } from '../../lib/i18n';
 
 /** Live, ANSI-coloured tail of a tmux session's pane — the single source of truth for the
@@ -18,7 +20,8 @@ export function LiveTail({ name, lines = 20, heightClass = 'max-h-80', onExpand 
   onExpand?: () => void;
 }) {
   const { t } = useTranslation();
-  const { tail, isLoading } = useSessionPane(name, lines);
+  const queryClient = useQueryClient();
+  const { tail, isLoading, isError } = useSessionPane(name, lines);
 
   // Full-screen TUIs (opencode) draw a wide, box-drawn layout that mangles if it wraps. Keep the
   // pane unwrapped and shrink the whole thing to fit the panel width so the entire UI stays visible.
@@ -51,7 +54,12 @@ export function LiveTail({ name, lines = 20, heightClass = 'max-h-80', onExpand 
           style={{ transform: fit.scale < 1 ? `scale(${fit.scale})` : undefined, transformOrigin: 'top left' }}
           className="w-max whitespace-pre font-mono text-xs leading-relaxed text-muted-foreground"
         >
-          {isLoading ? t.common.loading : tail
+          {isError ? (
+            <span className="flex flex-col items-start gap-2 whitespace-normal" role="alert">
+              <span>{t.common.daemonUnreachable}</span>
+              <Button variant="ghost" onClick={() => { void queryClient.invalidateQueries({ queryKey: ['session-pane', name, 'ansi'] }); }}>{t.common.retry}</Button>
+            </span>
+          ) : isLoading ? t.common.loading : tail
             ? parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>)
             : t.sessions.noOutput}
         </pre>
