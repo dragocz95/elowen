@@ -11,6 +11,7 @@ import {
 describe('Anthropic hosted tool search — supported OAuth models', () => {
   it.each([
     ['claude-fable-5', true],
+    ['claude-fable-5-1', true],
     ['claude-mythos-5', true],
     ['claude-opus-5', true],
     ['claude-opus-4-8', true],
@@ -30,7 +31,7 @@ describe('Anthropic hosted tool search — supported OAuth models', () => {
 
   it('gates on the built-in Anthropic OAuth provider/API, not compatible or custom providers', () => {
     expect(supportsAnthropicHostedToolSearch({
-      id: 'claude-opus-5', provider: 'anthropic', api: 'anthropic-messages',
+      id: 'claude-fable-5-1', provider: 'anthropic', api: 'anthropic-messages',
     }, 'oauth-anthropic')).toBe(true);
     expect(supportsAnthropicHostedToolSearch({
       id: 'claude-opus-4-1', provider: 'anthropic', api: 'anthropic-messages',

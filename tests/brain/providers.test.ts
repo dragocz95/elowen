@@ -244,6 +244,53 @@ describe('brain providers', () => {
     });
   });
 
+  it('adds Fable 5.1 only to Claude OAuth by inheriting the Fable 5 descriptor', () => {
+    const fable51 = 'claude-fable-5-1';
+    const providers: BrainRuntimeConfig = {
+      providers: [
+        { id: 'claude', label: 'Claude', type: 'oauth-anthropic', baseUrl: '', models: [fable51], apiKey: null },
+        { id: 'api', label: 'Anthropic API', type: 'anthropic', baseUrl: 'https://api.anthropic.com', models: [fable51], apiKey: 'k' },
+      ],
+      // Applying any OAuth pin re-registers the whole built-in provider, so the Fable-specific request
+      // header must survive that copy-forward path too.
+      contextWindows: { 'claude/claude-opus-5': 900_000 },
+    };
+    const registry = buildBrainRegistry(providers, runtime);
+    const inherited = registry.find('anthropic', 'claude-fable-5');
+    const added = registry.find('anthropic', fable51);
+    expect(inherited).toBeDefined();
+    expect(added).toBeDefined();
+    expect(added).toMatchObject({
+      api: inherited!.api,
+      provider: inherited!.provider,
+      baseUrl: inherited!.baseUrl,
+      reasoning: inherited!.reasoning,
+      thinkingLevelMap: inherited!.thinkingLevelMap,
+      input: inherited!.input,
+      cost: inherited!.cost,
+      contextWindow: inherited!.contextWindow,
+      maxTokens: inherited!.maxTokens,
+      samplingParams: inherited!.samplingParams,
+      compat: inherited!.compat,
+    });
+    expect(modelCapabilities(added!).levels).toEqual(modelCapabilities(inherited!).levels);
+    expect(added!.input).toEqual(['text', 'image']);
+    const registered = registry.getRegisteredProviderConfig('anthropic')?.models?.find((model) => model.id === fable51);
+    expect(registered?.headers).toEqual({ 'user-agent': 'claude-cli/2.1.251' });
+
+    const oauthRoute = resolveBrainModelRoute(registry, providers, { provider: 'claude', model: fable51 });
+    expect(oauthRoute.providerId).toBe('claude');
+    expect(oauthRoute.model).toMatchObject({ id: fable51, provider: 'anthropic', api: 'anthropic-messages' });
+
+    // The overlay is the verified Claude-account catalog only. A manually configured API model keeps its
+    // own provider namespace and receives none of the OAuth client-identity workaround.
+    const apiRoute = resolveBrainModelRoute(registry, providers, { provider: 'api', model: fable51 });
+    expect(apiRoute.model.provider).toBe('elowen-api');
+    expect(apiRoute.model.headers).toBeUndefined();
+    expect(registry.find('github-copilot', fable51)).toBeUndefined();
+    expect(registry.find('openai-codex', fable51)).toBeUndefined();
+  });
+
   it('declares known OpenAI reasoning levels centrally and labels xhigh as ultra', () => {
     const known: BrainRuntimeConfig = {
       providers: [{ id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.4'], apiKey: 'k' }],

@@ -28,9 +28,9 @@ describe('resolveHostedToolSearchRoute', () => {
     )).toEqual({ provider: 'openai', source: 'oauth', modelId: 'gpt-5.6-luna' });
     expect(resolveHostedToolSearchRoute(
       entry({ id: 'anthropic', type: 'oauth-anthropic' }) as never,
-      model({ id: 'claude-opus-5', provider: 'anthropic', api: 'anthropic-messages' }) as never,
+      model({ id: 'claude-fable-5-1', provider: 'anthropic', api: 'anthropic-messages' }) as never,
       runtime(),
-    )).toEqual({ provider: 'anthropic', source: 'oauth', modelId: 'claude-opus-5' });
+    )).toEqual({ provider: 'anthropic', source: 'oauth', modelId: 'claude-fable-5-1' });
   });
 
   it('enables only exact official API-key endpoints', () => {

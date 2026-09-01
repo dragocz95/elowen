@@ -55,7 +55,7 @@ export const OAUTH_BUILTIN: Record<string, string> = {
  *  provider's model list rather than merging into it (pi-coding-agent's provider composer builds the new
  *  list from the definitions alone), so every built-in has to be copied forward field by field or it
  *  disappears from the account's catalog together with the metadata PI maintains for it. */
-function catalogDefinition(model: Model<Api>) {
+function catalogDefinition(model: Model<Api>, configured?: Pick<Model<Api>, 'samplingParams' | 'headers'>) {
   return {
     id: model.id,
     name: model.name,
@@ -67,6 +67,11 @@ function catalogDefinition(model: Model<Api>) {
     cost: model.cost,
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
+    // Provider composition keeps configured model headers outside the public descriptor and resolves them
+    // only at request time. A later copy-forward (notably pinned OAuth windows) must therefore carry the
+    // previous registration input explicitly or it silently drops per-model request identity.
+    samplingParams: configured?.samplingParams ?? model.samplingParams,
+    headers: configured?.headers ?? model.headers,
     compat: model.compat,
   };
 }
@@ -82,7 +87,7 @@ function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
   const template = builtins.find((model) => model.id === 'gpt-5.5') ?? builtins[0];
   if (!template) return; // PI dropped the provider — nothing to extend.
   const existing = new Set(builtins.map((model) => model.id));
-  const models = builtins.map(catalogDefinition);
+  const models = builtins.map((model) => catalogDefinition(model));
   for (const id of OPENAI_CODEX_OAUTH_MODELS) {
     if (existing.has(id)) continue;
     const capabilities = descriptorCapabilities(provider, id);
@@ -97,6 +102,8 @@ function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
       cost: template.cost,
       contextWindow: template.contextWindow,
       maxTokens: template.maxTokens,
+      samplingParams: template.samplingParams,
+      headers: template.headers,
       compat: template.compat,
     });
   }
@@ -111,30 +118,44 @@ function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
   });
 }
 
-/** A Claude model the Anthropic account already serves that the pinned PI release does not list yet. Opus 5
- *  is the same descriptor as Opus 4.8 in every field that matters — 1M context, 128k answer, $5/$25 rates,
- *  no temperature knob, the same thinking ladder — so it is CLONED from that entry rather than hand-written:
- *  the compat flags and effort levels stay whatever PI maintains for the tier instead of a second copy of
- *  them drifting here. */
-const ANTHROPIC_OAUTH_MODEL = { id: 'claude-opus-5', name: 'Claude Opus 5', clonedFrom: 'claude-opus-4-8' } as const;
+/** Claude-account models verified live but absent from the pinned PI catalog. Metadata is inherited from
+ *  the immediate same-tier predecessor so context, output limit, pricing, vision, reasoning and compatibility
+ *  remain one tested descriptor rather than a second hand-maintained copy. PI's native entry wins once it
+ *  ships the id. */
+const ANTHROPIC_OAUTH_MODELS = [
+  { id: 'claude-opus-5', name: 'Claude Opus 5', clonedFrom: 'claude-opus-4-8', headers: undefined },
+  // A 2026-09-01 OAuth probe accepted this exact id, but rejected PI's claude-cli/2.1.75 identity with an
+  // authoritative minimum of 2.1.251. The adapter merges model headers after its default, so the override is
+  // scoped to this account model rather than changing Anthropic API-key providers or unrelated Claude tiers.
+  {
+    id: 'claude-fable-5-1', name: 'Claude Fable 5.1', clonedFrom: 'claude-fable-5',
+    headers: { 'user-agent': 'claude-cli/2.1.251' },
+  },
+] as const;
 
 function extendAnthropicCatalog(registry: ModelRegistry): void {
   const provider = 'anthropic';
   const builtins = registry.getAll().filter((model) => model.provider === provider);
-  // Already listed — either PI ships it now and its own descriptor wins, or this runtime was extended by an
-  // earlier build. Both want the same thing: leave the catalog alone.
-  if (builtins.some((model) => model.id === ANTHROPIC_OAUTH_MODEL.id)) return;
-  const template = builtins.find((model) => model.id === ANTHROPIC_OAUTH_MODEL.clonedFrom);
-  if (!template) return; // Nothing to clone from; no entry beats one guessed from scratch.
-  // Sorted so the catalog stays alphabetical, which is what PREFERRED_DEFAULT's fallback assumes. `name`,
-  // `api` and `baseUrl` are omitted on purpose: the composition falls back to the built-in's own for each,
-  // and to its native OAuth for the credential — restating them here would only be a copy that can drift.
-  registry.registerProvider(provider, {
-    models: [
-      ...builtins.map(catalogDefinition),
-      { ...catalogDefinition(template), id: ANTHROPIC_OAUTH_MODEL.id, name: ANTHROPIC_OAUTH_MODEL.name },
-    ].sort((a, b) => a.id.localeCompare(b.id)),
-  });
+  const existing = new Set(builtins.map((model) => model.id));
+  const models = builtins.map((model) => catalogDefinition(model));
+  for (const addition of ANTHROPIC_OAUTH_MODELS) {
+    // Already listed — either PI ships it now and its own descriptor wins, or this runtime was extended by an
+    // earlier build. Both want the same thing: leave that model alone.
+    if (existing.has(addition.id)) continue;
+    const template = builtins.find((model) => model.id === addition.clonedFrom);
+    if (!template) continue; // Nothing to clone from; no entry beats one guessed from scratch.
+    models.push({
+      ...catalogDefinition(template),
+      id: addition.id,
+      name: addition.name,
+      ...(addition.headers ? { headers: { ...template.headers, ...addition.headers } } : {}),
+    });
+    existing.add(addition.id);
+  }
+  if (models.length === builtins.length) return;
+  // Sorted so the catalog stays alphabetical, which is what PREFERRED_DEFAULT's fallback assumes. Provider
+  // name/API/baseUrl/OAuth are omitted: composition falls back to the built-in for each instead of copying.
+  registry.registerProvider(provider, { models: models.sort((a, b) => a.id.localeCompare(b.id)) });
 }
 
 /** pi-ai's openai-completions client appends `/chat/completions` to the model's baseUrl, so the base
@@ -285,7 +306,12 @@ function applyPinnedWindows(registry: ModelRegistry, cfg: BrainRuntimeConfig): v
     if (!(p.type in OAUTH_BUILTIN)) continue;
     const providerName = registryProviderName(p);
     const models = registry.getAll().filter((m) => m.provider === providerName);
-    const pinned = models.map((m) => ({ def: catalogDefinition(m), window: windowFor(cfg, p.id, m.id) }));
+    const configured = new Map(
+      registry.getRegisteredProviderConfig(providerName)?.models?.map((definition) => [definition.id, definition]) ?? [],
+    );
+    const pinned = models.map((m) => ({
+      def: catalogDefinition(m, configured.get(m.id)), window: windowFor(cfg, p.id, m.id),
+    }));
     if (!pinned.some((m) => m.window && m.window > 0)) continue;
     registry.registerProvider(providerName, {
       models: pinned.map(({ def, window }) => (window && window > 0 ? { ...def, contextWindow: window } : def)),
