@@ -9,6 +9,7 @@ import { EffectsProvider } from '../../../lib/useEffects';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import { formatCost, formatTokens } from '../../../lib/format';
 import { consumePendingBrainComposer } from '../../../lib/brainDock';
+import type { DashRecap } from '../../../lib/types';
 
 let activityCalls = 0;
 let modelUsageCalls = 0;
@@ -75,9 +76,9 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-function mount() {
+function mount(recapSeed: DashRecap | null = null) {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
+  return render(<Wrapper><EffectsProvider><ToastProvider><DashboardView recapSeed={recapSeed} /></ToastProvider></EffectsProvider></Wrapper>);
 }
 
 describe('DashboardView — first paint', () => {
@@ -185,6 +186,15 @@ describe('DashboardView — agent-written hero', () => {
     // The recap strip below the composer carries the summary and the suggestion.
     expect(screen.getByText('dashboard')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Finish tests/ })).toBeInTheDocument();
+  });
+
+  it('renders the seeded greeting on the FIRST frame, never the time-of-day fallback', () => {
+    // The /dash route prefetches the recap on the server and hands it in as the seed. Asserted
+    // synchronously — no findBy, no waitFor, no flush — because any frame that still reads the
+    // fallback fails here, and that flash on reload is the whole reason the seed exists.
+    dashRecap = ready;
+    mount(ready as DashRecap);
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Hey Filip, ready to ship.');
   });
 
   it('keeps the static hero when setup is incomplete, whatever the digest says', async () => {

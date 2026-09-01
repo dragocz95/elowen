@@ -15,6 +15,7 @@ import { useDashRecap, useMe, usePulse, useSystemReadiness } from '../../lib/que
 import { RecapStrip } from './RecapStrip';
 import { formatCost, formatTokens } from '../../lib/format';
 import { usePresence } from './usePresence';
+import type { DashRecap } from '../../lib/types';
 
 /** The workspace home in its Fable shape: a thin strip of today's figures under the top bar, then a
  *  centred conversational hero — a personalised greeting over the ask line, quick-action pills that seed
@@ -30,7 +31,7 @@ type PanelId = 'feed' | 'pulse' | 'metrics';
 
 const PANELS: PanelId[] = ['feed', 'pulse', 'metrics'];
 
-export function DashboardView() {
+export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | null } = {}) {
   const nowMs = useNow(30_000);
   const { t, locale } = useTranslation();
   const { appName } = useBrand();
@@ -78,7 +79,7 @@ export function DashboardView() {
   // The personalized layer (admin-toggled, per-caller): the agent-written greeting replaces the
   // static time-of-day line and the agent-written pills replace the static quick actions — each with
   // the static content as its fallback, so a missing/erroring recap leaves today's page untouched.
-  const recap = useDashRecap().data;
+  const recap = useDashRecap(recapSeed).data;
   const digest = recap?.digest?.status === 'ready' ? recap.digest : undefined;
   const agentGreeting = digest?.greeting?.trim() || null;
   // An unreachable daemon is the one fact nothing else on this page can report, because everything else

@@ -2,7 +2,7 @@ import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { elowenClient } from './elowenClient';
 import { useTranslation } from './i18n';
-import type { MemoryFilters, SlashCommandDef, ProcessInfo, UsageOriginGroup } from './types';
+import type { DashRecap, MemoryFilters, SlashCommandDef, ProcessInfo, UsageOriginGroup } from './types';
 
 export const QUERY_KEYS = {
   health: ['health'] as const,
@@ -117,8 +117,13 @@ const DASH_RECAP_POLL_MS = 5_000;
 const DASH_RECAP_POLL_LIMIT = 12;
 
 /** The personalized dashboard recap. Polls only while the daily digest is being generated (bounded),
- *  then holds still — the strip upgrades in place when the digest lands. */
-export const useDashRecap = () => {
+ *  then holds still — the strip upgrades in place when the digest lands.
+ *
+ *  `seed` is the /dash route's server prefetch. With it the hero renders the agent-written greeting on
+ *  its FIRST frame; without it the query starts empty, the fallback greeting paints, and the real one
+ *  replaces it a round-trip later. It counts as fresh from now (the server just fetched it), so the
+ *  60s staleTime keeps the client from immediately re-asking for what the document already carries. */
+export const useDashRecap = (seed?: DashRecap | null) => {
   const polls = useRef(0);
   return useQuery({
     queryKey: ['dash-recap'],
@@ -127,6 +132,7 @@ export const useDashRecap = () => {
       if (data.digest?.status !== 'generating') polls.current = 0;
       return data;
     },
+    ...(seed ? { initialData: seed } : {}),
     staleTime: 60_000,
     refetchInterval: (query) => {
       if (query.state.data?.digest?.status !== 'generating') return false;

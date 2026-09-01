@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import DashPage from '../../app/dash/page';
+import { DashPageBody } from '../../app/dash/DashPageBody';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 import { EffectsProvider } from '../../lib/useEffects';
@@ -18,10 +18,10 @@ beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-describe('DashPage', () => {
+describe('DashPage — the /dash route body', () => {
   it('opens on the hero with the metric strip and no mounted panel', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><EffectsProvider><ToastProvider><DashPage /></ToastProvider></EffectsProvider></Wrapper>);
+    render(<Wrapper><EffectsProvider><ToastProvider><DashPageBody recapSeed={null} /></ToastProvider></EffectsProvider></Wrapper>);
     const heading = await screen.findByRole('heading', { level: 1 });
     const strip = screen.getByRole('list', { name: en.dashboard.stripLabel });
     expect(heading).toBeInTheDocument();
@@ -48,7 +48,7 @@ describe('DashPage', () => {
       })),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><EffectsProvider><ToastProvider><DashPage /></ToastProvider></EffectsProvider></Wrapper>);
+    render(<Wrapper><EffectsProvider><ToastProvider><DashPageBody recapSeed={null} /></ToastProvider></EffectsProvider></Wrapper>);
 
     expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
     // The strip falls back to placeholders rather than crashing on the absent rollup.

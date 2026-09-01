@@ -5,7 +5,7 @@ import { daemonUrl, readCookieHeader, sessionCookieName } from './proxy';
 import { dictionaries, type Locale } from './i18n/dictionaries';
 import { DEFAULT_LOCALE } from './i18n';
 import { isSkinName, type SkinName } from './skins';
-import type { PluginUiListing, User } from './types';
+import type { DashRecap, PluginUiListing, User } from './types';
 
 /** After a failed fetch, requests skip the daemon for this long. Same reasoning as the theme payload
  *  in brandServer.ts: a HANGING daemon would otherwise put the full abort timeout into every
@@ -104,6 +104,20 @@ export const fetchPluginUiListing = cache((locale: string): Promise<PluginUiList
   fetchForCaller(
     `/plugins/ui?lang=${encodeURIComponent(locale)}`,
     (body): body is PluginUiListing[] => Array.isArray(body),
+  ));
+
+/** Prefetch the caller's dashboard recap, so the hero arrives already carrying the agent-written
+ *  greeting instead of painting the time-of-day fallback and rewriting it a round-trip later — the same
+ *  flash the two seeds around it exist to remove, on the largest piece of text the app renders.
+ *
+ *  Called from the /dash route ALONE, never from the root layout: this endpoint lazily starts the day's
+ *  digest generation, so seeding it layout-wide would kick off inference from every settings or chat
+ *  document. Deduped per request via React cache. */
+export const fetchDashRecap = cache((): Promise<DashRecap | null> =>
+  fetchForCaller(
+    '/dash/recap',
+    // `enabled` is the one field the route always answers with, in both of its shapes.
+    (body): body is DashRecap => typeof (body as { enabled?: unknown } | null)?.enabled === 'boolean',
   ));
 
 /** Prefetch the caller's /auth/me for the same reason, and it is the OTHER half of the same flash: the
