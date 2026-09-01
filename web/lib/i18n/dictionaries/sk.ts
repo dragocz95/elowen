@@ -131,6 +131,7 @@ export const sk = {
     live: 'Naživo',
     saving: 'Ukladá sa…',
     saved: 'Uložené',
+    activationPending: 'Uložené; aktivácia čaká',
     saveFailed: 'Nepodarilo sa uložiť',
     done: 'Hotovo',
     goTo: 'Prejsť na',

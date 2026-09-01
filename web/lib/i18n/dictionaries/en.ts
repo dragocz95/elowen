@@ -134,6 +134,7 @@ export const en = {
     live: 'Live',
     saving: 'Saving…',
     saved: 'Saved',
+    activationPending: 'Saved; activation pending',
     saveFailed: 'Couldn\'t save',
     done: 'Done',
     goTo: 'Go to',

@@ -87,9 +87,9 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
     }
     if (categoryId !== memory.category_id) await setCategory.mutateAsync({ id: memory.id, categoryId });
   };
-  const autosave = useAutoSaveStatus([body, kind, importance, categoryId], saveEdits, { ready: !!body.trim() });
+  const autosave = useAutoSaveStatus([body, kind, importance, categoryId], saveEdits, { ready: true, savable: !!body.trim() });
   // Leave edit mode — flush any pending save first so the last keystroke is never dropped.
-  const done = () => { autosave.flush(); setEditing(false); };
+  const done = async () => { const finalStatus = await autosave.flush(); if (finalStatus !== 'error') setEditing(false); };
   const doDelete = () => {
     del.mutate(memory.id, {
       onSuccess: () => toast(t.memory.deleted),
@@ -119,7 +119,7 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
             <>
               {/* Changes auto-save; the status shows saving/saved/error, and Done just leaves edit mode. */}
               <AutoSaveStatus status={autosave.status} onRetry={autosave.retry} />
-              <Button variant="ghost" icon={Check} onClick={done}>{t.memory.done}</Button>
+              <Button variant="ghost" icon={Check} onClick={done} disabled={autosave.status === 'saving'}>{t.memory.done}</Button>
             </>
           ) : (
             <>

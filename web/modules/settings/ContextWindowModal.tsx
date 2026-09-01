@@ -27,10 +27,10 @@ export function ContextWindowModal({ model, initial, effective, onClose, onSave 
   const n = Number(value);
   const valid = value.trim() === '' || (Number.isFinite(n) && n >= 1);
   // Auto-save on edit; the guard keeps an invalid value from persisting (validation preserved).
-  const { status, retry, flush } = useAutoSaveStatus([value], () => { if (valid) return onSave(value.trim() ? Math.floor(n) : null); });
-  const close = () => { flush(); onClose(); };
+  const { status, retry, flush } = useAutoSaveStatus([value], () => onSave(value.trim() ? Math.floor(n) : null), { savable: valid });
+  const close = async () => { const finalStatus = await flush(); if (finalStatus !== 'error') onClose(); };
   return (
-    <Modal title={t.brain.contextWindow} description={model} onClose={close} size="sm" icon={Gauge}>
+    <Modal title={t.brain.contextWindow} description={model} onClose={close} closeDisabled={status === 'saving'} size="sm" icon={Gauge}>
       <ModalBody>
         <Field label={t.brain.contextWindow} hint={t.help.elowenContextWindow}>
           <Input
@@ -49,7 +49,7 @@ export function ContextWindowModal({ model, initial, effective, onClose, onSave 
         {/* "Use default" is a deliberate clear (an action), so it stays an explicit control — it just
             drives the same auto-save by emptying the field. */}
         <Button variant="ghost" disabled={!value.trim()} onClick={() => setValue('')}>{t.brain.contextWindowUseDefault}</Button>
-        <Button variant="accent" onClick={close}>{t.common.done}</Button>
+        <Button variant="accent" onClick={close} disabled={status === 'saving'}>{t.common.done}</Button>
       </ModalFooter>
     </Modal>
   );

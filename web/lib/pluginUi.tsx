@@ -23,7 +23,7 @@ import type { LucideIcon } from 'lucide-react';
 // the SAME package plugin authors build against — so the two sides cannot drift. Types ONLY: a value
 // import would need Turbopack to resolve the symlinked package outside its root, while `import type`
 // is erased before bundling. Re-exported below for the app's own consumers.
-import type { PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginUiRegistration } from 'elowen-plugin-ui-kit';
+import type { ElowenUiRuntime, PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginUiRegistration } from 'elowen-plugin-ui-kit';
 import { BASE, apiErrorMessage, elowenClient, ElowenApiError } from './elowenClient';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -334,7 +334,7 @@ export function ensurePluginUiRuntime(): void {
       // a surface that mounts its own shell (or none) can still draw the canonical row rather than the
       // hand-rolled band each register used to carry.
       PageToolbar, PageFilters,
-    } as Record<string, ComponentType<never>>,
+    } as ElowenUiRuntime['components'],
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a
     // plugin pages and core surfaces share one cache and one invalidation path.

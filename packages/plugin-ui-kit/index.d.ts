@@ -29,6 +29,47 @@ export interface DirectoryPickerProps {
   onClose: () => void;
 }
 
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'pending' | 'error';
+
+export interface AutoSaveStatusProps {
+  status: SaveStatus;
+  onRetry?: () => void | Promise<void>;
+}
+
+export interface UseAutoSaveStatusOptions {
+  ready?: boolean;
+  savable?: boolean;
+  delay?: number;
+}
+
+export interface UseAutoSaveStatusResult {
+  status: SaveStatus;
+  retry: () => Promise<void>;
+  flush: () => Promise<SaveStatus>;
+}
+
+export type UseAutoSaveStatus = (
+  deps: readonly unknown[],
+  save: () => unknown | Promise<unknown>,
+  options?: UseAutoSaveStatusOptions,
+) => UseAutoSaveStatusResult;
+
+export interface PluginConfigDraft {
+  values: Record<string, unknown>;
+  setValue: (key: string, value: unknown) => void;
+  commitValue: (key: string, value: unknown) => Promise<{ pending: boolean }>;
+  status: SaveStatus;
+  retry: () => Promise<void>;
+  flush: () => Promise<SaveStatus>;
+  ready: boolean;
+}
+
+export type UsePluginConfigDraft = (
+  name: string,
+  detail: { config: Record<string, unknown>; configSchema: readonly unknown[] },
+  options?: { save?: (value: { name: string; values: Record<string, unknown> }) => Promise<unknown> },
+) => PluginConfigDraft;
+
 export type ConfirmDialogButtonVariant = 'default' | 'accent' | 'ghost' | 'danger' | 'ghost-danger' | 'outline' | 'outline-danger';
 
 /** Public props of the API 11 async-safe `ElowenUiRuntime.components.ConfirmDialog`. */
@@ -97,7 +138,7 @@ export interface PluginPageProps {
    *  inside a group header can ignore it; a section declaring `layout: 'orbital'` cannot — the orbital
    *  group is a field of pods with no header to hold one, so this channel is the only place its user
    *  ever learns that a save failed. */
-  onSaveState?: (status: 'idle' | 'saving' | 'saved' | 'error', retry?: () => void) => void;
+  onSaveState?: (status: SaveStatus, retry?: () => void | Promise<void>) => void;
 }
 
 /** Props for a contextual Project panel. It is never a standalone route: the selected Project and panel
@@ -157,11 +198,16 @@ export interface ElowenUiRuntime {
   react: typeof React;
   reactDom: typeof ReactDom;
   jsxRuntime: typeof JsxRuntime;
-  components: Record<string, ComponentType<never>>;
+  components: Record<string, ComponentType<never>> & {
+    AutoSaveStatus: ComponentType<AutoSaveStatusProps>;
+  };
   /** Curated React hooks (i18n, toasts, the app's react-query data hooks). Safe across the boundary:
    *  the bundle runs on the HOST's React instance, so the rules of hooks hold. A bundle narrows each
    *  entry to the signature it expects; an absent name means the host predates the bundle. */
-  hooks: Record<string, unknown>;
+  hooks: Record<string, unknown> & {
+    useAutoSaveStatus: UseAutoSaveStatus;
+    usePluginConfigDraft: UsePluginConfigDraft;
+  };
   /** Curated pure helpers (formatting, session/task mapping, error shaping) shared with bundles. */
   utils: Record<string, unknown>;
   api: (path: string, init?: RequestInit) => Promise<unknown>;

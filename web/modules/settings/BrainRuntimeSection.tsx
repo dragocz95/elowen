@@ -11,6 +11,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useUpdateConfig } from '../../lib/mutations';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
+import { combineSaveFeedback } from '../../lib/saveFeedback';
 import type { BrainLimits, ElowenConfig, RuntimeConfig, RuntimeLimits, MemoryRetentionConfig } from '../../lib/types';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 
@@ -140,20 +141,15 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
     catch (error) { toast(t.brain.saveError, 'error'); throw error; }
   }, { ready: runtimeSeeded && !!runtime });
 
-  const saveStatus: SaveStatus = [nameStatus, stepsStatus, limitsStatus, runtimeStatus].includes('error')
-    ? 'error'
-    : [nameStatus, stepsStatus, limitsStatus, runtimeStatus].includes('saving')
-      ? 'saving'
-      : [nameStatus, stepsStatus, limitsStatus, runtimeStatus].includes('saved') ? 'saved' : 'idle';
+  const feedback = combineSaveFeedback(
+    { status: nameStatus, retry: retryName },
+    { status: stepsStatus, retry: retrySteps },
+    { status: limitsStatus, retry: retryLimits },
+    { status: runtimeStatus, retry: retryRuntime },
+  );
   useEffect(() => {
-    const retry = saveStatus === 'error' ? () => {
-      if (nameStatus === 'error') retryName();
-      if (stepsStatus === 'error') retrySteps();
-      if (limitsStatus === 'error') retryLimits();
-      if (runtimeStatus === 'error') retryRuntime();
-    } : undefined;
-    onSaveState?.('brain', saveStatus, retry);
-  }, [limitsStatus, nameStatus, onSaveState, retryLimits, retryName, retryRuntime, retrySteps, runtimeStatus, saveStatus, stepsStatus]);
+    onSaveState?.('brain', feedback.status, feedback.retry);
+  }, [feedback.retry, feedback.status, onSaveState]);
 
   if (!config) return null;
   return (

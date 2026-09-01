@@ -55,6 +55,20 @@ describe('usePluginConfigDraft', () => {
     expect(mutateAsync).toHaveBeenCalledWith({ name: 'test-plugin', values: { mode: 'b' } });
   });
 
+  it('never autosaves a secret replacement and only sends it through explicit commitValue', async () => {
+    mutateAsync.mockResolvedValue({ ok: true });
+    const detail = pluginDetail([{ key: 'token', label: 'Token', type: 'secret' }], {}, ['token']);
+    const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
+
+    act(() => result.current.setValue('token', 'typed-secret'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    expect(mutateAsync).not.toHaveBeenCalled();
+
+    await act(async () => { await result.current.commitValue('token', 'typed-secret'); });
+    expect(mutateAsync).toHaveBeenCalledWith({ name: 'test-plugin', values: { token: 'typed-secret' } });
+    expect(result.current.values).not.toHaveProperty('token');
+  });
+
   it('publishes an immediate confirmed value only after the server accepts it', async () => {
     mutateAsync.mockRejectedValueOnce(new Error('save failed'));
     const detail = pluginDetail([{ key: 'roles', label: 'Roles', type: 'rolePolicies' }], { roles: [{ roleId: 'support' }] });

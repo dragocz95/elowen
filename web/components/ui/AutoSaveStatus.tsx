@@ -4,15 +4,25 @@ import { useTranslation } from '../../lib/i18n';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { Spinner } from '../ui/states';
 
+export interface AutoSaveStatusProps {
+  status: SaveStatus;
+  onRetry?: () => void | Promise<void>;
+}
+
 /** Subtle, unobtrusive auto-save indicator for a modal footer. Idle renders nothing; error offers a
- *  retry. Uses role="status" (aria-live polite) so a screen reader hears "Saving…/Saved" without
- *  stealing focus; the error is role="alert". */
-export function AutoSaveStatus({ status, onRetry }: { status: SaveStatus; onRetry?: () => void }) {
+ * retry. A successful write whose live activation is delayed remains visibly pending instead of being
+ * presented as fully active. */
+export function AutoSaveStatus({ status, onRetry }: AutoSaveStatusProps) {
   const { t } = useTranslation();
   if (status === 'idle') return <span className="text-xs text-muted-foreground" role="status" aria-live="polite" />;
   if (status === 'saving') return (
     <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-live="polite">
       <Spinner size="sm" tone="" />{t.common.saving}
+    </span>
+  );
+  if (status === 'pending') return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-warning" role="status" aria-live="polite">
+      <Spinner size="sm" tone="" />{t.common.activationPending}
     </span>
   );
   if (status === 'saved') return (

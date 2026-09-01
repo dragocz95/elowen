@@ -31,6 +31,7 @@ import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface'
 import { Slider } from '../../components/ui/Slider';
 import { normalizeTokenList, TokenList } from '../../components/ui/TokenList';
 import { DirectoryPicker } from '../../components/ui/DirectoryPicker';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 
 
 // A settings-group icon for an author-declared config section, inferred from its key/label. Falls back to
@@ -577,7 +578,7 @@ const sliderCanonicalValue = (field: PluginConfigField, displayed: number): numb
 /** The record a {@link MODAL_FIELD_TYPES} field wears: a summary trigger in the control cell, and the
  *  real editor in a modal raised from it. The trigger is named after the FIELD, not after what is stored,
  *  so a card full of them still reads as a list of settings to a screen reader. */
-function ModalFieldRow({ label, description, hint, status, summary, fillsModal, trailingLayout, className, children }: {
+function ModalFieldRow({ label, description, hint, status, summary, fillsModal, trailingLayout, className, saveState, children }: {
   label: string;
   description?: string;
   hint?: string;
@@ -585,12 +586,15 @@ function ModalFieldRow({ label, description, hint, status, summary, fillsModal, 
   summary: string;
   trailingLayout?: 'inline' | 'stack';
   className?: string;
+  /** Parent-owned persistence keeps status and Retry visible after this editor closes. */
+  saveState?: Pick<PluginConfigDraft, 'status' | 'retry' | 'flush'>;
   /** A Monaco surface takes the modal's whole height; a textarea or an entry list scrolls in the body. */
   fillsModal?: boolean;
   children: ReactNode;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const close = () => { void saveState?.flush(); setOpen(false); };
   return (
     <>
       <SettingsRow
@@ -618,10 +622,10 @@ function ModalFieldRow({ label, description, hint, status, summary, fillsModal, 
         }
       />
       {open ? (
-        <Modal title={label} description={description} size="lg" onClose={() => setOpen(false)}>
+        <Modal title={label} description={description} size="lg" closeDisabled={saveState?.status === 'saving'} onClose={close}>
           {fillsModal ? <div className="min-h-0 flex-1 overflow-hidden">{children}</div> : <ModalBody>{children}</ModalBody>}
-          <ModalFooter>
-            <Button variant="accent" onClick={() => setOpen(false)}>{t.common.done}</Button>
+          <ModalFooter status={saveState && saveState.status !== 'idle' ? <AutoSaveStatus status={saveState.status} onRetry={saveState.retry} /> : undefined}>
+            <Button variant="accent" onClick={close} disabled={saveState?.status === 'saving'}>{t.common.done}</Button>
           </ModalFooter>
         </Modal>
       ) : null}
@@ -654,6 +658,24 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const { data: brainModels } = useBrainModels();
   const { values, setValue: set } = draft;
   const [replacingSecrets, setReplacingSecrets] = useState<Set<string>>(new Set());
+  const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
+  const [secretSaving, setSecretSaving] = useState<Set<string>>(new Set());
+  const [secretErrors, setSecretErrors] = useState<Record<string, string>>({});
+  const commitSecret = async (key: string) => {
+    const value = secretDrafts[key] ?? '';
+    if (!value.trim() || secretSaving.has(key)) return;
+    setSecretErrors((current) => { const next = { ...current }; delete next[key]; return next; });
+    setSecretSaving((current) => new Set(current).add(key));
+    try {
+      await draft.commitValue(key, value);
+      setReplacingSecrets((current) => { const next = new Set(current); next.delete(key); return next; });
+      setSecretDrafts((current) => { const next = { ...current }; delete next[key]; return next; });
+    } catch {
+      setSecretErrors((current) => ({ ...current, [key]: t.common.saveFailed }));
+    } finally {
+      setSecretSaving((current) => { const next = new Set(current); next.delete(key); return next; });
+    }
+  };
 
   /** The one compact control a record carries. Modal-backed types are not here — their record is built
    *  by {@link renderRow} instead. */
@@ -859,6 +881,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           trailingLayout={risk ? 'stack' : undefined}
           className={risk ? 'plugin-config-risk-row' : undefined}
           summary={editorSummary(f)}
+          saveState={draft}
           fillsModal={f.type === 'code' || f.type === 'prompt'}
         >
           {renderEditor(f)}
@@ -878,7 +901,11 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           trailingLayout="stack"
           className={risk ? 'plugin-config-risk-row' : undefined}
           actions={
-            <Button type="button" variant="ghost" className="h-8" onClick={() => setReplacingSecrets((current) => new Set(current).add(f.key))}>
+            <Button type="button" variant="ghost" className="h-8" onClick={() => {
+              setSecretErrors((current) => { const next = { ...current }; delete next[f.key]; return next; });
+              setSecretDrafts((current) => ({ ...current, [f.key]: '' }));
+              setReplacingSecrets((current) => new Set(current).add(f.key));
+            }}>
               {t.pluginCfg.secretReplace}
             </Button>
           }
@@ -886,18 +913,34 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
       );
     }
     if (f.type === 'secret' && replacingSecrets.has(f.key)) {
+      const error = secretErrors[f.key];
+      const saving = secretSaving.has(f.key);
       return (
-        <SettingsRow key={f.key} label={label} description={description} hint={help} status={risk ?? undefined} trailingLayout={risk ? 'stack' : undefined} className={risk ? 'plugin-config-risk-row' : undefined}>
-          <Input
-            type="password"
-            aria-label={label}
-            value={String(values[f.key] ?? '')}
-            onChange={(e) => set(f.key, e.target.value)}
-            placeholder={t.pluginCfg.secretReplacementPlaceholder}
-            autoComplete="off"
-            autoFocus
-          />
-        </SettingsRow>
+        <SettingsRow
+          key={f.key}
+          label={label}
+          description={description}
+          hint={help}
+          status={<span className="flex flex-wrap items-center gap-2">{risk}{error ? <span role="alert" className="text-destructive">{error}</span> : null}</span>}
+          trailingLayout="stack"
+          className={risk ? 'plugin-config-risk-row' : undefined}
+          control={(
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+              <Input
+                type="password"
+                aria-label={label}
+                value={secretDrafts[f.key] ?? ''}
+                onChange={(e) => setSecretDrafts((current) => ({ ...current, [f.key]: e.target.value }))}
+                placeholder={t.pluginCfg.secretReplacementPlaceholder}
+                autoComplete="off"
+                autoFocus
+              />
+              <Button type="button" variant="accent" className="h-8" disabled={saving || !(secretDrafts[f.key] ?? '').trim()} onClick={() => void commitSecret(f.key)}>
+                {saving ? t.common.saving : t.common.save}
+              </Button>
+            </div>
+          )}
+        />
       );
     }
 

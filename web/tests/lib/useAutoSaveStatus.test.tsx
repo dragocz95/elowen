@@ -29,6 +29,25 @@ describe('useAutoSaveStatus', () => {
     expect(attempts).toBe(2);
   });
 
+  it('does not retry after the current value becomes invalid', async () => {
+    let attempts = 0;
+    let valid = true;
+    const { result, rerender } = renderHook(({ v }) => useAutoSaveStatus([v], async () => { attempts++; throw new Error('boom'); }, { delay: 5, savable: valid }), { initialProps: { v: 'a' } });
+    rerender({ v: 'b' });
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    valid = false;
+    rerender({ v: '' });
+    await result.current.retry();
+    expect(attempts).toBe(1);
+    expect(result.current.status).toBe('error');
+  });
+
+  it('represents delayed activation instead of reporting a fully active save', async () => {
+    const { result, rerender } = renderHook(({ v }) => useAutoSaveStatus([v], async () => ({ pending: true }), { delay: 5 }), { initialProps: { v: 'a' } });
+    rerender({ v: 'b' });
+    await waitFor(() => expect(result.current.status).toBe('pending'));
+  });
+
   it('flushes a pending debounced save on unmount (never drops the last edit)', async () => {
     let saves = 0;
     const { rerender, unmount } = renderHook(({ v }) => useAutoSaveStatus([v], () => { saves++; }, { delay: 1000 }), { initialProps: { v: 'a' } });

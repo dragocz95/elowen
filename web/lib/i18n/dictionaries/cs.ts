@@ -131,6 +131,7 @@ export const cs = {
     live: 'Živě',
     saving: 'Ukládání…',
     saved: 'Uloženo',
+    activationPending: 'Uloženo; aktivace čeká',
     saveFailed: 'Nepodařilo se uložit',
     done: 'Hotovo',
     goTo: 'Přejít na',
