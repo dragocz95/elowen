@@ -32,8 +32,8 @@ export interface PluginConfigCommitResult {
   pending: boolean;
 }
 
-export type PluginConfigErrorKind = 'validation' | 'conflict' | 'transport';
-export interface PluginConfigConflict {
+type PluginConfigErrorKind = 'validation' | 'conflict' | 'transport';
+interface PluginConfigConflict {
   config: Record<string, unknown>;
   secretsSet: string[];
   revision: number;
