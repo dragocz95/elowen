@@ -455,7 +455,7 @@ export const sk = {
       digest: 'AI prehľad',
       digestDesc: 'Raz denne model napíše krátke zhrnutie včerajška a navrhne ďalšie kroky.',
       greeting: 'Pozdrav písaný asistentom',
-      greetingDesc: 'Asistent napíše titulok dashboardu namiesto pozdravu podľa dennej doby.',
+      greetingDesc: 'Asistent napíše titulok dashboardu aj otázku pod ním, v jazyku používateľa.',
       pills: 'Rýchle akcie písané asistentom',
       pillsDesc: 'Asistent napíše pilulky rýchlych akcií podľa skutočnej aktivity používateľa.',
       continue: 'Pokračovanie konverzácií',

@@ -82,6 +82,9 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
   const recap = useDashRecap(recapSeed).data;
   const digest = recap?.digest?.status === 'ready' ? recap.digest : undefined;
   const agentGreeting = digest?.greeting?.trim() || null;
+  // Written by the agent so it lands in the user's own language and register — the dictionary's line is
+  // the fallback, and it follows the INTERFACE locale, which is not necessarily what the user writes in.
+  const agentAsk = digest?.ask?.trim() || null;
   // An unreachable daemon is the one fact nothing else on this page can report, because everything else
   // on this page comes FROM it.
   const statusLine = presence.state === 'offline' ? t.dashboard.presence.offline : undefined;
@@ -150,7 +153,7 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
             {agentGreeting ?? <>{greeting}{firstName ? `, ${firstName}` : ''}</>}<span aria-hidden className="text-primary">.</span>
           </h1>
           <p className="mt-3 text-[clamp(1.2rem,2.4vw,2.1rem)] font-normal leading-tight tracking-[-0.014em] text-muted-foreground">
-            {t.dashboard.heroAsk}
+            {agentAsk ?? t.dashboard.heroAsk}
           </p>
           {statusLine ? <p className="mt-3 text-sm text-muted-foreground">{statusLine}</p> : null}
         </MotionReveal>

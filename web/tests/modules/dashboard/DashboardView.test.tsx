@@ -167,6 +167,9 @@ describe('DashboardView — agent-written hero', () => {
     digest: {
       status: 'ready',
       greeting: 'Hey Filip, ready to ship',
+      // Deliberately Czech while the dictionary under test is English: the agent writes in the language
+      // the USER writes in, which is not the interface locale.
+      ask: 'Na čem dneska začneme?',
       pills: [{ label: 'Deploy recap', prompt: 'Deploy the recap strip to production' }],
       summary: 'You mostly worked on the **dashboard**.',
       suggestions: [{ label: 'Finish tests', prompt: 'Finish the regression tests' }],
@@ -178,6 +181,9 @@ describe('DashboardView — agent-written hero', () => {
     mount();
     const heading = await screen.findByRole('heading', { level: 1 });
     await waitFor(() => expect(heading.textContent).toBe('Hey Filip, ready to ship.'));
+    // The standing question is the agent's too, so the dictionary's stock line is gone.
+    expect(screen.getByText('Na čem dneska začneme?')).toBeInTheDocument();
+    expect(screen.queryByText(en.dashboard.heroAsk)).toBeNull();
     // Generated pills take the row over; the static set is gone.
     expect(await screen.findByRole('button', { name: 'Deploy recap' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: en.dashboard.pillSummary })).toBeNull();

@@ -9,6 +9,9 @@ export interface DigestAction { label: string; prompt: string }
 export interface DigestPayload {
   /** Hero headline greeting, no trailing punctuation (the UI appends the ember period). */
   greeting: string;
+  /** The standing question under the greeting ("What can I help you with?"). Written by the agent so it
+   *  lands in the user's OWN language and voice rather than the interface locale's stock phrasing. */
+  ask: string;
   /** Quick-action pills above the composer (≤ 6). */
   pills: DigestAction[];
   /** ≤ 2 sentences about yesterday; may carry `**…**` emphasis markers. */
@@ -30,7 +33,7 @@ export interface DigestRow {
 
 /** Caps enforced on every write AND every read, so a hand-edited or pre-cap row can never push an
  *  oversized string to the web. Kept here (not in the generator) because the store is the boundary. */
-const CAPS = { greeting: 48, label: 40, prompt: 500, summary: 400, pills: 6, suggestions: 3 } as const;
+const CAPS = { greeting: 48, ask: 64, label: 40, prompt: 500, summary: 400, pills: 6, suggestions: 3 } as const;
 
 const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
@@ -55,6 +58,8 @@ export function sanitizePayload(raw: unknown): DigestPayload {
   return {
     // Trailing punctuation is stripped so the UI-drawn ember period never doubles up.
     greeting: str(doc.greeting, CAPS.greeting).replace(/[.。!?…]+$/u, '').trim(),
+    // The ask KEEPS its punctuation: it is a question, and the ember period belongs to the greeting alone.
+    ask: str(doc.ask, CAPS.ask),
     pills: actions(doc.pills, CAPS.pills),
     summary: str(doc.summary, CAPS.summary),
     suggestions: actions(doc.suggestions, CAPS.suggestions),

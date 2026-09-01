@@ -29,8 +29,8 @@ describe('sanitizePayload', () => {
   });
 
   it('reads garbage as an empty payload, never a throw', () => {
-    expect(sanitizePayload(null)).toEqual({ greeting: '', pills: [], summary: '', suggestions: [] });
-    expect(sanitizePayload('nonsense')).toEqual({ greeting: '', pills: [], summary: '', suggestions: [] });
+    expect(sanitizePayload(null)).toEqual({ greeting: '', ask: '', pills: [], summary: '', suggestions: [] });
+    expect(sanitizePayload('nonsense')).toEqual({ greeting: '', ask: '', pills: [], summary: '', suggestions: [] });
   });
 });
 

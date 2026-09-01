@@ -41,6 +41,8 @@ export interface DashRecap {
   digest?: {
     status: 'unavailable' | 'generating' | 'ready';
     greeting?: string;
+    /** The agent-written standing question under the greeting; absent → the interface's own phrasing. */
+    ask?: string;
     pills?: DashAction[];
     summary?: string;
     suggestions?: DashAction[];

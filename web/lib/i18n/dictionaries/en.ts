@@ -471,7 +471,7 @@ export const en = {
       digest: 'AI digest',
       digestDesc: 'Once a day, a model writes a short summary of yesterday and suggests next steps.',
       greeting: 'Agent-written greeting',
-      greetingDesc: 'The assistant writes the dashboard headline instead of the time-of-day greeting.',
+      greetingDesc: 'The assistant writes the dashboard headline and the question below it, in the user\'s language.',
       pills: 'Agent-written quick actions',
       pillsDesc: 'The assistant writes the quick-action pills from each user\u2019s real activity.',
       continue: 'Continue pills',

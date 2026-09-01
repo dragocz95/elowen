@@ -109,7 +109,9 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
       digest = content
         ? {
             status: 'ready',
+            // The ask rides with the greeting: both are the agent-written hero, one toggle owns them.
             ...(cfg.greetingEnabled && content.greeting ? { greeting: content.greeting } : {}),
+            ...(cfg.greetingEnabled && content.ask ? { ask: content.ask } : {}),
             ...(cfg.pillsEnabled && content.pills.length ? { pills: content.pills } : {}),
             ...(content.summary ? { summary: content.summary } : {}),
             ...(content.suggestions.length ? { suggestions: content.suggestions } : {}),

@@ -17,6 +17,10 @@ describe('buildDigestPrompt', () => {
   it('grounds the model in the user\'s own words, titles and memory, with the JSON contract stated', () => {
     const p = buildDigestPrompt(INPUT);
     expect(p).toContain('"greeting"');
+    // The standing question is the agent's too, and it must follow the language of the user's own
+    // messages rather than the interface locale or the language these instructions are written in.
+    expect(p).toContain('"ask"');
+    expect(p).toMatch(/language the USER writes in/);
     expect(p).toContain('Vzhled dashboardu');
     expect(p).toContain('mockup');
     expect(p).toContain('shadcn');
@@ -42,11 +46,15 @@ describe('shapeDigestPayload', () => {
   it('keeps **emphasis** only in the summary and flattens it everywhere else', () => {
     const p = shapeDigestPayload({
       greeting: '**Čau** Filipe',
+      ask: 'Na čem **dneska** začneme?',
       pills: [{ label: '**Deploy**', prompt: 'Nasaď to' }],
       summary: 'Ladil jste **dashboard**.',
       suggestions: [{ label: '**Test** cen', prompt: 'Dokonči test' }],
     });
     expect(p.greeting).toBe('Čau Filipe');
+    // The ask keeps its question mark — only the greeting has its punctuation stripped, because only
+    // the greeting gets the ember period drawn after it.
+    expect(p.ask).toBe('Na čem dneska začneme?');
     expect(p.pills[0]!.label).toBe('Deploy');
     expect(p.suggestions[0]!.label).toBe('Test cen');
     expect(p.summary).toBe('Ladil jste **dashboard**.');

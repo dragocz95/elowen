@@ -17,6 +17,7 @@ const ts = (offsetDays: number, time: string) =>
 
 const REPLY = JSON.stringify({
   greeting: 'Čau Filipe',
+  ask: 'Na čem dneska začneme?',
   pills: [{ label: 'Deploy', prompt: 'Nasaď recap pás' }],
   summary: 'Včera jste ladil **dashboard**.',
   suggestions: [{ label: 'Dokončit test', prompt: 'Dokonči regresní test' }],
@@ -66,7 +67,7 @@ type Recap = {
   enabled: boolean;
   continue?: { id: string; title: string }[];
   yesterday?: { turns: number; tokens: number; sessions: string[] } | null;
-  digest?: { status: string; greeting?: string; pills?: unknown[]; summary?: string; suggestions?: unknown[] };
+  digest?: { status: string; greeting?: string; ask?: string; pills?: unknown[]; summary?: string; suggestions?: unknown[] };
 };
 const getRecap = async (app: ReturnType<typeof setup>['app'], tok: string): Promise<Recap> =>
   (await (await app.request('/dash/recap', auth(tok))).json()) as Recap;
@@ -100,6 +101,8 @@ describe('GET /dash/recap', () => {
     expect(second.digest?.suggestions?.length).toBe(1);
     // Greeting and pills default OFF: generated and cached, but filtered out of the response.
     expect(second.digest?.greeting).toBeUndefined();
+    // The ask is part of the same agent-written hero, so the greeting toggle owns it too.
+    expect(second.digest?.ask).toBeUndefined();
     expect(second.digest?.pills).toBeUndefined();
     expect(calls()).toBe(1);
 
@@ -107,6 +110,7 @@ describe('GET /dash/recap', () => {
     config.update({ dashboard: { greetingEnabled: true, pillsEnabled: true } });
     const third = await getRecap(app, adminTok);
     expect(third.digest?.greeting).toBe('Čau Filipe');
+    expect(third.digest?.ask).toBe('Na čem dneska začneme?');
     expect(third.digest?.pills).toEqual([{ label: 'Deploy', prompt: 'Nasaď recap pás' }]);
     expect(calls()).toBe(1);
   });
