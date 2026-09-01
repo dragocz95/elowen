@@ -101,18 +101,32 @@ describe('MemoryCategorizer.suggestIcon', () => {
 });
 
 describe('MemoryCategorizer.classifyMemory', () => {
-  /** Fake memory store over a single row, recording every setCategory write. */
+  /** Fake memory store over a single row, recording guarded category writes and a monotonic audit revision. */
   function fakeMemories(categoryId: number | null) {
     const row = { id: 7, user_id: 1, body: 'daemon běží na portu 4400', status: 'active', category_id: categoryId };
     const writes: { categoryId: number | null; model: string | null }[] = [];
+    let revision = 1;
     const store = {
       get: () => ({ ...row }),
-      setCategory: (_u: number, _i: number, catId: number | null, _a: string, _r: string, model: string | null) => {
+      revision: () => revision,
+      setCategoryIfUnchanged: (
+        _u: number,
+        _i: number,
+        expected: { categoryId: number | null; revision?: number },
+        catId: number | null,
+        _a: string,
+        _r: string,
+        model: string | null,
+      ) => {
+        if (expected.categoryId !== row.category_id || expected.revision !== revision) return false;
         writes.push({ categoryId: catId, model });
         row.category_id = catId;
+        revision += 1;
+        return true;
       },
     } as unknown as MemoryStore;
-    return { store, writes, row };
+    const manualSet = (next: number | null) => { row.category_id = next; revision += 1; };
+    return { store, writes, row, manualSet };
   }
 
   it('files an uncategorized memory under the model\'s answer, auditing the model that decided', async () => {
@@ -133,7 +147,7 @@ describe('MemoryCategorizer.classifyMemory', () => {
     const inference: InferenceClient = {
       model: 'fake-model',
       decide: vi.fn(async () => {
-        mem.row.category_id = 20; // the user picked "Preference" while the model was thinking
+        mem.manualSet(20); // the user picked "Preference" while the model was thinking
         return { text: 'Infrastruktura' };
       }),
     };

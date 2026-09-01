@@ -11,6 +11,7 @@ import type { Context, Hono } from 'hono';
 import type { User, TokenScope } from '../store/userStore.js';
 import type { ServerDeps } from './deps.js';
 import { MicrosoftSsoService } from '../auth/msSso.js';
+import { MemoryMaintenanceService } from '../brain/memoryMaintenanceService.js';
 import { createLoginRateLimiter, type LoginRateLimiter } from './loginRateLimit.js';
 
 /** The per-request Hono variables the auth middleware sets — the single source for `c.get('user')` etc.
@@ -60,6 +61,9 @@ export interface RouteContext {
    *  only when the memory store AND the embedder are both wired (else /memory/retrieve degrades to 400).
    *  CRUD/audit routes talk to the user-scoped store directly and don't need this. */
   memoryService?: MemoryService;
+  /** Owner-scoped background reindexing and recategorization. One instance per HTTP server keeps locks and
+   * progress shared across every request without persisting stale running state across restarts. */
+  memoryMaintenance?: MemoryMaintenanceService;
 }
 
 /** Build the shared {@link RouteContext} from the daemon's injected {@link ServerDeps}. Core reasoning
@@ -148,10 +152,19 @@ export function createRouteContext(d: ServerDeps): RouteContext {
         retention: () => d.config.get().runtime.memoryRetention,
       })
     : undefined;
+  const memoryMaintenance = d.memoryStore
+    ? new MemoryMaintenanceService({
+        memories: d.memoryStore,
+        embeddings: d.embeddings,
+        embeddingConfig: () => toEmbeddingConfig(d.config.embeddingConfig()),
+        categorizer: d.memoryCategorizer,
+        logger: log,
+      })
+    : undefined;
 
   return {
     d, log, loginRateLimiter, microsoftSso,
     canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects,
-    memoryService,
+    memoryService, memoryMaintenance,
   };
 }

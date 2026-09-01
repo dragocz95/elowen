@@ -47,9 +47,11 @@ export function distinctKinds(memories: Memory[]): string[] {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-/** A 0..1 weight as an integer percent for compact display. */
-export function pct01(v: number): number {
-  return Math.round(Math.max(0, Math.min(1, v)) * 100);
+/** A memory has no separate title, but its full body can be tens of thousands of characters. Use one
+ * bounded identity everywhere a compact control or accessible name needs to identify the memory. */
+export function memoryExcerpt(body: string, max = 60): string {
+  const flat = body.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max).trimEnd()}…` : flat;
 }
 
 /** A 0..100 vitality score as an integer percent for compact display (clamped to the range). */

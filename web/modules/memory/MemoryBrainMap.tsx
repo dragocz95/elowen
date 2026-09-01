@@ -1,53 +1,56 @@
 'use client';
-import { useId, useMemo, useState } from 'react';
-import { Brain, Layers, Hash, Gauge } from 'lucide-react';
+
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Brain, Gauge, Hash, Layers } from 'lucide-react';
 import type { Memory, MemoryCategory } from '../../lib/types';
 import { EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
+import { memoryExcerpt } from './memoryMeta';
 import {
-  buildBrainGraph, neighborIds,
-  type BrainNode, type CategoryNode, type MemoryNode,
+  buildBrainGraph,
+  neighborIds,
+  type BrainNode,
+  type CategoryNode,
+  type MemoryNode,
 } from './brainLayout';
 
-/** Neutral synapse tint for uncategorized / color-less categories — the app accent (a calm blue). */
-const ACCENT_BLUE = 'var(--color-primary)';
-
-/** Curved Bézier between two points, bowed slightly perpendicular so edges read as soft synapses rather
- *  than a straight web. Coordinates are viewBox percent (preserveAspectRatio="none" maps them to the box). */
-function synapsePath(x1: number, y1: number, x2: number, y2: number): string {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len = Math.hypot(dx, dy) || 1;
-  const bow = Math.min(6, len * 0.14);
-  const mx = (x1 + x2) / 2 + (-dy / len) * bow;
-  const my = (y1 + y2) / 2 + (dx / len) * bow;
-  return `M ${x1.toFixed(2)} ${y1.toFixed(2)} Q ${mx.toFixed(2)} ${my.toFixed(2)} ${x2.toFixed(2)} ${y2.toFixed(2)}`;
-}
-
-/** The neural memory brain: a large dark "glass brain" panel where the core cortex radiates category hubs
- *  spread across the lobes, each holding its memory leaves. Selecting a node lights its neighbors and dims
- *  the rest; a side strip inspects it. Pure presentation — layout is `buildBrainGraph`, the backdrop is a
- *  grayscale brain PNG under a synapse SVG (mem0-style). */
 export function MemoryBrainMap({ memories, categories, onSelectMemory }: {
-  memories: Memory[]; categories: MemoryCategory[]; onSelectMemory?: (id: number) => void;
+  memories: Memory[];
+  categories: MemoryCategory[];
+  onSelectMemory?: (id: number) => void;
 }) {
   const { t } = useTranslation();
-  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const graph = useMemo(() => buildBrainGraph(memories, categories), [memories, categories]);
+  const viewport = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState('core');
 
-  const neighbors = useMemo(
-    () => (selected ? neighborIds(graph, selected) : null),
-    [graph, selected],
-  );
-  const isLit = (id: string) => !neighbors || neighbors.has(id);
-  const nodeById = useMemo(() => {
-    const map = new Map<string, BrainNode>();
-    map.set(graph.core.id, graph.core);
-    for (const h of graph.hubs) map.set(h.id, h);
-    for (const l of graph.leaves) map.set(l.id, l);
-    return map;
-  }, [graph]);
+  const nodes = useMemo<BrainNode[]>(() => [graph.core, ...graph.hubs, ...graph.leaves], [graph]);
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const neighbors = useMemo(() => selected ? neighborIds(graph, selected) : null, [graph, selected]);
+  const selectedNode = selected ? nodeById.get(selected) ?? null : null;
+  const hoveredNode = hovered ? nodeById.get(hovered) ?? null : null;
+  const selectedMemory = selectedNode?.kind === 'memory' ? selectedNode : null;
+  const hoveredMemory = hoveredNode?.kind === 'memory' ? hoveredNode : null;
+  const memoryLabels = hoveredMemory && hoveredMemory.id !== selectedMemory?.id
+    ? [selectedMemory, hoveredMemory].filter((node): node is MemoryNode => node !== null)
+    : selectedMemory ? [selectedMemory] : hoveredMemory ? [hoveredMemory] : [];
+
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    const frame = requestAnimationFrame(() => {
+      element.scrollLeft = Math.max(0, (graph.width - element.clientWidth) / 2);
+      element.scrollTop = Math.max(0, (graph.height - element.clientHeight) / 2);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [graph.height, graph.width]);
+
+  useEffect(() => {
+    if (selected && !nodeById.has(selected)) setSelected(null);
+    if (!nodeById.has(focusId)) setFocusId('core');
+  }, [focusId, nodeById, selected]);
 
   if (memories.length === 0) {
     return (
@@ -58,114 +61,160 @@ export function MemoryBrainMap({ memories, categories, onSelectMemory }: {
   }
 
   const select = (node: BrainNode) => {
-    setSelected((cur) => (cur === node.id ? null : node.id));
+    setSelected((current) => current === node.id ? null : node.id);
+    setFocusId(node.id);
     if (node.kind === 'memory') onSelectMemory?.(node.memory.id);
   };
 
-  const gid = (edgeId: string) => `${uid}-${edgeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-  const selectedNode = selected ? nodeById.get(selected) ?? null : null;
-
-  /** Each synapse is tinted with its category's own color: a hub's `category.color` drives both the
-   *  core→hub and hub→leaf fibers, falling back to accent-blue when the category has no color. Core→leaf
-   *  synapses (uncategorized memories) get a neutral accent-blue. Subtle, not neon. */
-  const edgeColor = (from: string, to: string): string => {
-    const hub = nodeById.get(to.startsWith('cat:') ? to : from);
-    if (hub && hub.kind === 'category') return (hub.category.color ?? '').trim() || ACCENT_BLUE;
-    return ACCENT_BLUE;
+  const focusNode = (id: string) => {
+    viewport.current?.querySelector<SVGElement>(`[data-brain-node="${id}"]`)?.focus();
+    setFocusId(id);
   };
+
+  const onNodeKeyDown = (event: KeyboardEvent<SVGElement>, node: BrainNode) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      select(node);
+      return;
+    }
+    const index = nodes.findIndex((candidate) => candidate.id === node.id);
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? nodes.length - 1
+        : event.key === 'ArrowRight' || event.key === 'ArrowDown' ? (index + 1) % nodes.length
+          : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? (index - 1 + nodes.length) % nodes.length
+            : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    focusNode(nodes[next]!.id);
+  };
+
+  const isLit = (id: string) => !neighbors || neighbors.has(id);
+  const activeMemory = hoveredMemory ?? selectedMemory;
+  const activeEdge = activeMemory
+    ? graph.edges.find((edge) => edge.to === activeMemory.id)
+    : null;
+  const activeParent = activeEdge ? nodeById.get(activeEdge.from) : null;
 
   return (
     <div className="brain-map @container">
       <BrainStyles />
-      <div className="flex flex-col gap-4 @3xl:flex-row @3xl:items-stretch">
-        {/* Glass-brain canvas. */}
+      <div className="flex flex-col gap-4">
         <div
-          className="brain-canvas relative aspect-[16/9] min-h-[24rem] w-full min-w-0 flex-1 overflow-hidden rounded-xl border border-border @2xl:min-h-[35rem]"
+          ref={viewport}
+          className="brain-viewport relative min-h-[26rem] w-full min-w-0 flex-1 overflow-auto rounded-xl border border-border @2xl:min-h-[38rem]"
           style={{ boxShadow: 'var(--shadow-card)' }}
-          onClick={() => setSelected(null)}
+          onClick={(event) => { if (event.target === event.currentTarget) setSelected(null); }}
         >
-          {/* Backdrop stack: faint grid → grayscale brain PNG → radial vignette. Every layer's colour is a
-              token derivation, so the canvas repaints with the skin instead of staying black under it. */}
-          <div aria-hidden className="brain-grid pointer-events-none absolute inset-0" />
           <div
-            aria-hidden
-            className="brain-figure pointer-events-none absolute inset-[1.5%] bg-contain bg-center bg-no-repeat grayscale"
-            style={{ backgroundImage: "url('/images/neural-brain-vercel.png')" }}
-          />
-          <div aria-hidden className="brain-vignette pointer-events-none absolute inset-0" />
+            className="brain-canvas relative shrink-0 overflow-hidden"
+            style={{ width: graph.width, height: graph.height }}
+            onClick={(event) => { if (event.target === event.currentTarget) setSelected(null); }}
+          >
+            <div aria-hidden className="brain-grid pointer-events-none absolute inset-0" />
+            <div aria-hidden className="brain-figure pointer-events-none absolute inset-[2%] bg-contain bg-center bg-no-repeat grayscale" style={{ backgroundImage: "url('/images/neural-brain-vercel.png')" }} />
+            <div aria-hidden className="brain-vignette pointer-events-none absolute inset-0" />
 
-          {/* Synapse edge layer — curved Bézier fibers with per-link gradient strokes + soft glow underlay. */}
-          <svg aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <defs>
-              {graph.edges.map((e) => {
-                const a = nodeById.get(e.from);
-                const b = nodeById.get(e.to);
-                if (!a || !b) return null;
-                const color = edgeColor(e.from, e.to);
+            <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${graph.width} ${graph.height}`} aria-label={t.memory.viewBrain}>
+              <g aria-hidden className="brain-hub-edges">
+                {graph.hubs.map((hub) => (
+                  <line key={hub.id} x1={graph.core.x} y1={graph.core.y} x2={hub.x} y2={hub.y} stroke={hub.color} strokeWidth="1" strokeOpacity={selected && !isLit(hub.id) ? 0.18 : 0.42} />
+                ))}
+                {activeMemory && activeParent ? (
+                  <line x1={activeParent.x} y1={activeParent.y} x2={activeMemory.x} y2={activeMemory.y} stroke={activeMemory.color} strokeWidth="1.5" strokeOpacity="0.85" />
+                ) : null}
+              </g>
+
+              {graph.leaves.map((leaf) => {
+                const active = selected === leaf.id;
+                const hover = hovered === leaf.id;
                 return (
-                  <linearGradient key={`g-${e.id}`} id={gid(e.id)} gradientUnits="userSpaceOnUse" x1={a.x} y1={a.y} x2={b.x} y2={b.y}>
-                    <stop offset="0%" stopColor={color} stopOpacity="0.9" />
-                    <stop offset="50%" stopColor={color} stopOpacity="0.5" />
-                    <stop offset="100%" stopColor={color} stopOpacity="0.9" />
-                  </linearGradient>
+                  <circle
+                    key={leaf.id}
+                    data-testid="memory-leaf-node"
+                    data-brain-node={leaf.id}
+                    role="button"
+                    aria-label={memoryExcerpt(leaf.memory.body)}
+                    aria-pressed={active}
+                    tabIndex={focusId === leaf.id ? 0 : -1}
+                    cx={leaf.x}
+                    cy={leaf.y}
+                    r={active ? 6 : hover ? 5 : 3.2}
+                    fill={leaf.color}
+                    fillOpacity={isLit(leaf.id) ? 0.9 : 0.42}
+                    stroke={active || hover ? leaf.color : 'transparent'}
+                    strokeWidth={active ? 4 : hover ? 2 : 0}
+                    className={active || hover ? 'brain-point brain-point--active' : 'brain-point'}
+                    onPointerEnter={() => setHovered(leaf.id)}
+                    onPointerLeave={() => setHovered((current) => current === leaf.id ? null : current)}
+                    onFocus={() => { setFocusId(leaf.id); setHovered(leaf.id); }}
+                    onBlur={() => setHovered((current) => current === leaf.id ? null : current)}
+                    onClick={(event) => { event.stopPropagation(); select(leaf); }}
+                    onKeyDown={(event) => onNodeKeyDown(event, leaf)}
+                  />
                 );
               })}
-            </defs>
-            {graph.edges.map((e, i) => {
-              const a = nodeById.get(e.from);
-              const b = nodeById.get(e.to);
-              if (!a || !b) return null;
-              const lit = isLit(e.from) && isLit(e.to);
-              const hub = e.from === graph.core.id && e.to.startsWith('cat:');
-              const d = synapsePath(a.x, a.y, b.x, b.y);
-              const stroke = `url(#${gid(e.id)})`;
-              return (
-                <g key={e.id} style={{ opacity: lit ? 1 : 0.12 }}>
-                  {/* Wide, dim glow underlay that pulses subtly. */}
-                  <path
-                    d={d}
-                    fill="none"
-                    stroke={stroke}
-                    strokeWidth={hub ? 1.3 : 0.9}
-                    strokeLinecap="round"
-                    className="brain-edge-glow"
-                    style={{ animationDelay: `-${(i % 7) * 0.5}s` }}
-                  />
-                  {/* Crisp fiber. */}
-                  <path
-                    d={d}
-                    fill="none"
-                    stroke={stroke}
-                    strokeWidth={hub ? 0.34 : 0.2}
-                    strokeOpacity={selected ? (lit ? 0.95 : 0.1) : 0.6}
-                    strokeLinecap="round"
-                  />
-                </g>
-              );
-            })}
-          </svg>
 
-          {/* Leaf nodes. */}
-          {graph.leaves.map((leaf) => (
-            <LeafNode key={leaf.id} node={leaf} lit={isLit(leaf.id)} active={selected === leaf.id} onSelect={select} />
-          ))}
-          {/* Category hubs. */}
-          {graph.hubs.map((hub) => (
-            <HubNode key={hub.id} node={hub} lit={isLit(hub.id)} active={selected === hub.id} count={t.memory.brainCategoryCount.replace('{n}', String(hub.count))} onSelect={select} />
-          ))}
-          {/* Core cortex. */}
-          <CoreNodeView label={t.memory.brainCore} x={graph.core.x} y={graph.core.y} lit={isLit(graph.core.id)} active={selected === graph.core.id} onSelect={() => select(graph.core)} />
+              {graph.hubs.map((hub) => {
+                const active = selected === hub.id;
+                const hover = hovered === hub.id;
+                return (
+                  <circle
+                    key={hub.id}
+                    data-brain-node={hub.id}
+                    role="button"
+                    aria-label={`${hub.label}, ${t.memory.brainCategoryCount.replace('{n}', String(hub.count))}`}
+                    aria-pressed={active}
+                    tabIndex={focusId === hub.id ? 0 : -1}
+                    cx={hub.x}
+                    cy={hub.y}
+                    r={hub.size / 2}
+                    fill={hub.color}
+                    fillOpacity={isLit(hub.id) ? 0.48 : 0.4}
+                    stroke={hub.color}
+                    strokeWidth={active ? 4 : hover ? 2 : 1}
+                    className={active || hover ? 'brain-hub brain-point--active' : 'brain-hub'}
+                    onPointerEnter={() => setHovered(hub.id)}
+                    onPointerLeave={() => setHovered((current) => current === hub.id ? null : current)}
+                    onFocus={() => { setFocusId(hub.id); setHovered(hub.id); }}
+                    onBlur={() => setHovered((current) => current === hub.id ? null : current)}
+                    onClick={(event) => { event.stopPropagation(); select(hub); }}
+                    onKeyDown={(event) => onNodeKeyDown(event, hub)}
+                  />
+                );
+              })}
 
-          {/* Hidden-leaf affordance. */}
-          {graph.truncated > 0 ? (
-            <span className="brain-chip absolute bottom-3 right-3 rounded-md px-2 py-1 font-mono text-[10px]">
-              {t.memory.brainMoreNodes.replace('{n}', String(graph.truncated))}
-            </span>
-          ) : null}
+              <circle
+                data-brain-node={graph.core.id}
+                role="button"
+                aria-label={t.memory.brainCore}
+                aria-pressed={selected === graph.core.id}
+                tabIndex={focusId === graph.core.id ? 0 : -1}
+                cx={graph.core.x}
+                cy={graph.core.y}
+                r={28}
+                fill="var(--color-primary)"
+                fillOpacity={isLit(graph.core.id) ? 0.42 : 0.4}
+                stroke="var(--color-primary)"
+                strokeWidth={selected === graph.core.id ? 5 : 2}
+                className={selected === graph.core.id || hovered === graph.core.id ? 'brain-core-node brain-point--active' : 'brain-core-node'}
+                onPointerEnter={() => setHovered(graph.core.id)}
+                onPointerLeave={() => setHovered((current) => current === graph.core.id ? null : current)}
+                onFocus={() => { setFocusId(graph.core.id); setHovered(graph.core.id); }}
+                onBlur={() => setHovered((current) => current === graph.core.id ? null : current)}
+                onClick={(event) => { event.stopPropagation(); select(graph.core); }}
+                onKeyDown={(event) => onNodeKeyDown(event, graph.core)}
+              />
+            </svg>
+
+            <NodeLabel x={graph.core.x} y={graph.core.y + 38} active={selected === graph.core.id}>{t.memory.brainCore}</NodeLabel>
+            {graph.hubs.map((hub) => (
+              <NodeLabel key={hub.id} x={hub.x} y={hub.y + hub.size / 2 + 10} active={selected === hub.id}>{hub.label}</NodeLabel>
+            ))}
+            {memoryLabels.map((memory) => <NodeLabel key={memory.id} x={memory.x} y={memory.y + 13} active={memory.id === selectedMemory?.id} memory>{memory.memory.body}</NodeLabel>)}
+          </div>
         </div>
 
-        {/* Detail strip. */}
-        <aside className="w-full shrink-0 @3xl:w-72">
+        <aside className="w-full shrink-0">
           <DetailStrip node={selectedNode} onSelectMemory={onSelectMemory} />
         </aside>
       </div>
@@ -173,93 +222,26 @@ export function MemoryBrainMap({ memories, categories, onSelectMemory }: {
   );
 }
 
-/** The pulsing central cortex node. */
-function CoreNodeView({ label, x, y, lit, active, onSelect }: { label: string; x: number; y: number; lit: boolean; active: boolean; onSelect: () => void }) {
+function NodeLabel({ x, y, active = false, memory = false, children }: {
+  x: number;
+  y: number;
+  active?: boolean;
+  memory?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onSelect(); }}
-      title={label}
-      className="group absolute z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5 transition-opacity"
-      style={{ left: `${x}%`, top: `${y}%`, opacity: lit ? 1 : 0.22 }}
+    <span
+      className={`brain-chip pointer-events-none absolute z-20 -translate-x-1/2 rounded-md px-2 py-0.5 text-[10px] font-medium ${memory ? 'max-w-56 truncate' : 'max-w-36 truncate'} ${active ? 'ring-1 ring-primary/50' : ''}`}
+      style={{ left: x, top: y }}
+      data-testid={memory ? 'memory-node-label' : undefined}
     >
-      <span className="brain-disc relative flex h-16 w-16 items-center justify-center rounded-full border border-primary/50">
-        <span aria-hidden className="brain-core-pulse absolute inset-0 rounded-full" />
-        <span aria-hidden className="absolute -inset-2 rounded-full" style={{ boxShadow: `0 0 34px 8px color-mix(in srgb, var(--color-primary) ${active ? 60 : 38}%, transparent)` }} />
-      </span>
-      <span className={`brain-chip rounded-md px-2 py-0.5 text-[11px] font-semibold tracking-wide transition-opacity ${active ? 'opacity-100' : 'opacity-85'}`}>
-        {label}
-      </span>
-    </button>
+      {children}
+    </span>
   );
 }
 
-/** A category hub — a colored disc sized by memory count, with a blurred glow halo and a hover/active label. */
-function HubNode({ node, lit, active, count, onSelect }: { node: CategoryNode; lit: boolean; active: boolean; count: string; onSelect: (n: BrainNode) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onSelect(node); }}
-      title={`${node.label} · ${count}`}
-      className="group absolute z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 transition-opacity"
-      style={{ left: `${node.x}%`, top: `${node.y}%`, opacity: lit ? 1 : 0.18 }}
-    >
-      <span aria-hidden className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full blur-md transition-opacity" style={{ width: node.size * 1.9, height: node.size * 1.9, backgroundColor: node.color, opacity: active ? 0.4 : 0.24 }} />
-      <span
-        className="brain-disc relative flex items-center justify-center rounded-full border transition-transform group-hover:scale-105"
-        style={{
-          width: node.size, height: node.size,
-          borderColor: `color-mix(in srgb, ${node.color} 60%, transparent)`,
-          boxShadow: `0 0 ${active ? 24 : 15}px ${active ? 5 : 3}px color-mix(in srgb, ${node.color} ${active ? 55 : 34}%, transparent)`,
-        }}
-      >
-        <span aria-hidden className="rounded-full" style={{ width: '38%', height: '38%', backgroundColor: node.color, opacity: 0.92 }} />
-      </span>
-      <span
-        className="brain-chip brain-node-label max-w-[7rem] truncate rounded-md px-1.5 py-0.5 text-[10px] font-medium"
-        data-active={active}
-      >
-        {node.label}
-      </span>
-    </button>
-  );
-}
-
-/** A memory leaf — a small glowing dot; its body preview surfaces on hover/selection. */
-function LeafNode({ node, lit, active, onSelect }: { node: MemoryNode; lit: boolean; active: boolean; onSelect: (n: BrainNode) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onSelect(node); }}
-      title={node.memory.body}
-      data-testid="memory-leaf-node"
-      className="group absolute z-10 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center transition-opacity"
-      style={{ left: `${node.x}%`, top: `${node.y}%`, opacity: lit ? 1 : 0.14 }}
-    >
-      <span aria-hidden className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full blur-md transition-opacity" style={{ backgroundColor: node.color, opacity: active ? 0.55 : 0.3 }} />
-      <span
-        className="relative h-2 w-2 rounded-full border transition-transform group-hover:scale-125"
-        style={{
-          backgroundColor: `color-mix(in srgb, ${node.color} 80%, transparent)`,
-          borderColor: node.color,
-          boxShadow: `0 0 ${active ? 12 : 6}px ${active ? 3 : 1}px color-mix(in srgb, ${node.color} ${active ? 70 : 45}%, transparent)`,
-        }}
-      />
-      <span
-        className="brain-chip brain-node-label pointer-events-none absolute top-7 left-1/2 max-w-[10rem] -translate-x-1/2 truncate rounded-md px-1.5 py-0.5 text-[10px] shadow-[var(--shadow-card)]"
-        data-active={active}
-      >
-        {node.memory.body}
-      </span>
-    </button>
-  );
-}
-
-/** The side inspector: renders the selected node (category → name/count/description, memory → body/kind,
- *  core → cortex summary) or a select hint when nothing is picked. */
 function DetailStrip({ node, onSelectMemory }: { node: BrainNode | null; onSelectMemory?: (id: number) => void }) {
   const { t } = useTranslation();
-
   if (!node) {
     return (
       <div className="flex h-full flex-col justify-center gap-2 rounded-xl border border-dashed border-border p-5 text-center">
@@ -268,52 +250,42 @@ function DetailStrip({ node, onSelectMemory }: { node: BrainNode | null; onSelec
       </div>
     );
   }
-
   if (node.kind === 'core') {
     return (
       <DetailCard accent="var(--color-primary)" label={t.memory.brainCore} icon={Brain}>
         <p className="text-sm leading-relaxed text-muted-foreground">{t.memory.brainCoreDesc}</p>
-        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Layers size={13} aria-hidden />
-          {t.memory.brainCategoryCount.replace('{n}', String(node.total))}
-        </div>
+        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><Layers size={13} aria-hidden />{t.memory.brainCategoryCount.replace('{n}', String(node.total))}</div>
       </DetailCard>
     );
   }
-
   if (node.kind === 'category') {
-    return (
-      <DetailCard accent={node.color} label={t.memory.brainDetailCategory} icon={Layers}>
-        <p className="text-sm font-semibold text-foreground">{node.label}</p>
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Hash size={12} aria-hidden />
-          {t.memory.brainCategoryCount.replace('{n}', String(node.count))}
-        </div>
-        {node.category.description ? (
-          <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{node.category.description}</p>
-        ) : null}
-      </DetailCard>
-    );
+    return <CategoryDetail node={node} />;
   }
+  return <MemoryDetail node={node} onSelectMemory={onSelectMemory} />;
+}
 
-  // Memory leaf.
-  const m = node.memory;
+function CategoryDetail({ node }: { node: CategoryNode }) {
+  const { t } = useTranslation();
+  return (
+    <DetailCard accent={node.color} label={t.memory.brainDetailCategory} icon={Layers}>
+      <p className="text-sm font-semibold text-foreground">{node.label}</p>
+      <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><Hash size={12} aria-hidden />{t.memory.brainCategoryCount.replace('{n}', String(node.count))}</div>
+      {node.category.description ? <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{node.category.description}</p> : null}
+    </DetailCard>
+  );
+}
+
+function MemoryDetail({ node, onSelectMemory }: { node: MemoryNode; onSelectMemory?: (id: number) => void }) {
+  const { t } = useTranslation();
+  const memory = node.memory;
   return (
     <DetailCard accent={node.color} label={t.memory.brainDetailMemory} icon={Brain}>
-      <p className="text-sm leading-relaxed text-foreground">{m.body}</p>
+      <p className="text-sm leading-relaxed text-foreground">{memory.body}</p>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-        {m.kind ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted px-2 py-0.5"><Hash size={10} aria-hidden />{m.kind}</span> : null}
-        <span className="inline-flex items-center gap-1 font-mono"><Gauge size={11} aria-hidden />{m.importance}/5</span>
+        {memory.kind ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted px-2 py-0.5"><Hash size={10} aria-hidden />{memory.kind}</span> : null}
+        <span className="inline-flex items-center gap-1 font-mono"><Gauge size={11} aria-hidden />{memory.importance}/5</span>
       </div>
-      {onSelectMemory ? (
-        <button
-          type="button"
-          onClick={() => onSelectMemory(m.id)}
-          className="mt-3 text-xs font-medium text-primary underline-offset-2 hover:underline"
-        >
-          {t.memory.edit}
-        </button>
-      ) : null}
+      {onSelectMemory ? <button type="button" onClick={() => onSelectMemory(memory.id)} className="mt-3 text-xs font-medium text-primary underline-offset-2 hover:underline">{t.memory.edit}</button> : null}
     </DetailCard>
   );
 }
@@ -322,9 +294,7 @@ function DetailCard({ accent, label, icon: Icon, children }: { accent: string; l
   return (
     <div className="h-full rounded-xl border border-border bg-card p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
       <div className="mb-3 flex items-center gap-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ backgroundColor: `color-mix(in srgb, ${accent} 18%, transparent)`, color: accent }}>
-          <Icon size={13} aria-hidden />
-        </span>
+        <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ backgroundColor: `color-mix(in srgb, ${accent} 18%, transparent)`, color: accent }}><Icon size={13} aria-hidden /></span>
         <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</span>
       </div>
       {children}
@@ -332,60 +302,19 @@ function DetailCard({ accent, label, icon: Icon, children }: { accent: string; l
   );
 }
 
-/** Scoped keyframes/backdrop for the brain — kept local so no shared CSS file is touched. Every colour
- *  here is derived from a token: the canvas is the page's own deepest surface rather than a frozen black,
- *  and the figure blends with `difference` rather than `screen` so the artwork stays legible whether the
- *  active skin paints that surface dark or light. Honors reduced-motion by freezing the pulses. */
 function BrainStyles() {
   return (
     <style>{`
+      .brain-viewport { background: var(--color-background); overscroll-behavior: contain; touch-action: pan-x pan-y; }
       .brain-canvas { background: var(--color-background); }
-      .brain-figure { opacity: 0.92; mix-blend-mode: difference; }
-      .brain-vignette {
-        background: radial-gradient(circle at 50% 50%,
-          color-mix(in srgb, var(--color-background) 0%, transparent) 0%,
-          color-mix(in srgb, var(--color-background) 5%, transparent) 58%,
-          color-mix(in srgb, var(--color-background) 72%, transparent) 96%);
-      }
-      .brain-grid {
-        background-image:
-          linear-gradient(to right, color-mix(in srgb, var(--color-foreground) 1.4%, transparent) 1px, transparent 1px),
-          linear-gradient(to bottom, color-mix(in srgb, var(--color-foreground) 1.2%, transparent) 1px, transparent 1px);
-        background-size: 32px 32px;
-      }
-      /* Node discs and label chips: a wash of the canvas colour, so they read as glass over it. */
-      .brain-map .brain-disc { background: color-mix(in srgb, var(--color-background) 40%, transparent); backdrop-filter: blur(1px); }
-      .brain-map .brain-chip {
-        border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
-        background: color-mix(in srgb, var(--color-background) 62%, transparent);
-        color: var(--color-foreground);
-        backdrop-filter: blur(4px);
-      }
-      /* A node's label is quiet until the node is hovered, focused or selected. A coarse pointer has no
-         hover to reveal it with, so there every label is simply on — hidden-until-hover meant the labels
-         did not exist at all on a touch screen. */
-      .brain-map .brain-node-label { opacity: 0; transition: opacity var(--motion-fast) var(--ease-out); }
-      .brain-map .brain-node-label[data-active='true'] { opacity: 1; }
-      .brain-map .group:hover > .brain-node-label,
-      .brain-map .group:focus-visible > .brain-node-label { opacity: 1; }
-      @media (pointer: coarse) {
-        .brain-map .brain-node-label { opacity: 1; }
-      }
-      @keyframes brain-core { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.16); opacity: 0.12; } }
-      .brain-core-pulse {
-        background: radial-gradient(circle, color-mix(in srgb, var(--color-primary) 45%, transparent) 0%, transparent 70%);
-        animation: brain-core 3.4s ease-in-out infinite;
-      }
-      @keyframes brain-fiber { 0%, 100% { opacity: 0.06; } 50% { opacity: 0.16; } }
-      .brain-edge-glow { opacity: 0.1; animation: brain-fiber 4.2s ease-in-out infinite; }
-      html:is([data-effects='reduced'], [data-effects='off']) .brain-core-pulse,
-      html:is([data-effects='reduced'], [data-effects='off']) .brain-edge-glow {
-        animation: none;
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .brain-core-pulse { animation: none; }
-        .brain-edge-glow { animation: none; }
-      }
+      .brain-figure { opacity: 0.74; mix-blend-mode: difference; }
+      .brain-vignette { background: radial-gradient(circle at 50% 50%, transparent 0%, color-mix(in srgb, var(--color-background) 8%, transparent) 58%, color-mix(in srgb, var(--color-background) 76%, transparent) 100%); }
+      .brain-grid { background-image: linear-gradient(to right, color-mix(in srgb, var(--color-foreground) 1.4%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--color-foreground) 1.2%, transparent) 1px, transparent 1px); background-size: 32px 32px; }
+      .brain-point, .brain-hub, .brain-core-node { cursor: pointer; outline: none; transition: r var(--motion-fast) var(--ease-out), fill-opacity var(--motion-fast) var(--ease-out), stroke-width var(--motion-fast) var(--ease-out); }
+      .brain-point--active { filter: drop-shadow(0 0 7px currentColor); }
+      .brain-map [role='button']:focus-visible { stroke: var(--color-foreground); stroke-width: 3px; }
+      .brain-map .brain-chip { border: 1px solid color-mix(in srgb, var(--color-border) 88%, transparent); background: color-mix(in srgb, var(--color-background) 82%, transparent); color: var(--color-foreground); backdrop-filter: blur(5px); box-shadow: var(--shadow-card); }
+      @media (prefers-reduced-motion: reduce) { .brain-point, .brain-hub, .brain-core-node { transition: none; } }
     `}</style>
   );
 }

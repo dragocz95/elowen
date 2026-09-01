@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Db } from './db.js';
-import type { MemoryRow, MemoryEventRow } from '../shared/wireContract.js';
+import type { MemoryRow, MemoryEventRow, MemoryCategoryRow } from '../shared/wireContract.js';
+import { memoryCategoryFingerprint } from './memoryCategoryStore.js';
 
 // The memory row shapes are the daemon↔web wire contract (served over /memory) — defined once in
 // src/shared and re-exported here, so a field added on the daemon can never be missing on the web.
@@ -368,6 +369,15 @@ export class MemoryStore {
       .run().changes;
   }
 
+  /** Monotonic owner-scoped mutation token. Every supported memory mutation appends an audit event, so
+   * this catches ABA changes that return body/category/status to their original values during inference. */
+  revision(userId: number, memoryId: number): number {
+    const row = this.db.prepare(
+      'SELECT COALESCE(MAX(id), 0) AS revision FROM memory_events WHERE user_id = ? AND memory_id = ?',
+    ).get(userId, memoryId) as { revision: number };
+    return row.revision;
+  }
+
   /** Assign (or clear with null) a memory's category. Owner-scoped; a non-null categoryId must be one
    *  of this user's own categories (else no-op → false). Bumps updated_at, audits 'categorize'. */
   setCategory(userId: number, id: number, categoryId: number | null, actor: string, reason: string, model?: string | null): boolean {
@@ -378,6 +388,47 @@ export class MemoryStore {
         const owned = this.db.prepare('SELECT 1 FROM memory_categories WHERE id = ? AND user_id = ?').get(categoryId, userId);
         if (!owned) return false; // foreign/unknown category → reject, never write a dangling id
       }
+      this.db.prepare("UPDATE memories SET category_id = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
+        .run(categoryId, id, userId);
+      const after = this.get(userId, id)!;
+      this.audit(userId, id, 'categorize', before, after, actor, reason, model);
+      return true;
+    })();
+  }
+
+  /** Assign a category only while the memory still matches the snapshot that was classified. This is the
+   * background-maintenance CAS: a body edit, status transition or manual category choice made during the
+   * model round-trip wins. A non-null target category must still belong to the same owner. */
+  setCategoryIfUnchanged(
+    userId: number,
+    id: number,
+    expected: {
+      bodyHash: string;
+      categoryId: number | null;
+      revision?: number;
+      targetCategoryFingerprint?: string | null;
+    },
+    categoryId: number | null,
+    actor: string,
+    reason: string,
+    model?: string | null,
+  ): boolean {
+    return this.db.transaction(() => {
+      const before = this.get(userId, id);
+      if (!before || before.status !== 'active') return false;
+      if (hashBody(before.body) !== expected.bodyHash || before.category_id !== expected.categoryId) return false;
+      if (expected.revision !== undefined && this.revision(userId, id) !== expected.revision) return false;
+      if (categoryId !== null) {
+        const owned = this.db.prepare(
+          `SELECT id, user_id, name, description, color, icon, is_builtin,
+                  project_id AS projectId, created_at
+             FROM memory_categories WHERE id = ? AND user_id = ?`,
+        ).get(categoryId, userId) as MemoryCategoryRow | undefined;
+        if (!owned) return false;
+        if (expected.targetCategoryFingerprint !== undefined
+          && memoryCategoryFingerprint(owned) !== expected.targetCategoryFingerprint) return false;
+      }
+      if (categoryId === before.category_id) return true;
       this.db.prepare("UPDATE memories SET category_id = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
         .run(categoryId, id, userId);
       const after = this.get(userId, id)!;
@@ -417,19 +468,21 @@ export class MemoryStore {
       }));
   }
 
-  /** Upsert a memory's embedding. Packs a Float32Array into a raw BLOB (a Buffer is stored as-is).
-   *  Compare-and-set on TWO invariants, so a background embed can't persist a wrong vector:
+  /** Upsert an ACTIVE memory's embedding. Packs a Float32Array into a raw BLOB (a Buffer is stored as-is).
+   *  Returns whether the compare-and-set wrote the vector.
+   *  Compare-and-set on THREE invariants, so a background embed can't persist a wrong or obsolete vector:
    *   - ownership: no-op if the memory isn't owned by this user (a foreign embedding must never be written);
+   *   - lifecycle: no-op if the memory was archived/deleted while provider inference was in flight;
    *   - freshness: no-op if the current body no longer hashes to `input.contentHash`. The queue embeds a
    *     snapshot body, awaits the provider, then writes back — if the body was edited during that await,
    *     the snapshot vector is stale and writing it would clobber the current body's (or a fresher) vector.
    *  The read+write is atomic (better-sqlite3 is synchronous — no await between them). */
-  setEmbedding(userId: number, memoryId: number, input: SetEmbeddingInput): void {
-    const owned = this.db.prepare('SELECT body FROM memories WHERE id = ? AND user_id = ?')
-      .get(memoryId, userId) as { body: string } | undefined;
-    if (!owned) return;
-    // Compare-and-set: only persist the vector if it was computed from the body still in the DB.
-    if (hashBody(owned.body) !== input.contentHash) return;
+  setEmbedding(userId: number, memoryId: number, input: SetEmbeddingInput): boolean {
+    const owned = this.db.prepare('SELECT body, status FROM memories WHERE id = ? AND user_id = ?')
+      .get(memoryId, userId) as { body: string; status: string } | undefined;
+    if (!owned || owned.status !== 'active') return false;
+    // Compare-and-set: only persist the vector if it was computed from the active body still in the DB.
+    if (hashBody(owned.body) !== input.contentHash) return false;
     this.db.prepare(
       `INSERT INTO memory_embeddings (memory_id, provider, model, dimensions, vector, content_hash)
        VALUES (@memory_id, @provider, @model, @dimensions, @vector, @content_hash)
@@ -444,6 +497,7 @@ export class MemoryStore {
       vector: packVector(input.vector),
       content_hash: input.contentHash,
     });
+    return true;
   }
 
   /** Active memories with no embedding, or whose stored vector is stale: the body changed (content_hash

@@ -1,82 +1,15 @@
 import type { Memory, MemoryCategory } from '../../lib/types';
 
-/** Neural memory-brain layout: pure, deterministic geometry that turns memories + categories into a
- *  core → category-hub → memory-leaf node/edge graph. All coordinates are container percentages (0..100)
- *  so the view scales fluidly and aligns 1:1 with the SVG viewBox (preserveAspectRatio="none").
- *
- *  Placement follows the mem0 "glass brain" technique: hubs anchor to distinct lobes, their memory leaves
- *  cluster nearby, and every point is pulled back inside the brain silhouette (a union of ellipses) so the
- *  map reads as a filled organic brain even with very few nodes. The component only renders. */
-
-/** Hard cap on rendered leaf nodes — keeps the brain a graph, not a hairball. Hubs are never capped
- *  (categories are few) and always report their FULL memory count regardless of how many leaves show. */
-export const MAX_LEAVES = 40;
-
 const CORE_ID = 'core';
-/** Muted fallback swatch for a category whose stored color is blank (mirrors memoryMeta). */
 const FALLBACK_COLOR = 'var(--color-muted-foreground)';
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const MIN_NODE_SPACING = 14;
+export const MIN_NODE_GAP = 6;
+const MIN_CANVAS_WIDTH = 960;
+const CANVAS_ASPECT = 1.6;
+const HUB_MIN_PX = 26;
+const HUB_MAX_PX = 48;
 
-/** The core cortex sits just above dead-center, matching the brain PNG's mass. */
-const CORE_X = 50;
-const CORE_Y = 49;
-
-/** Lobe anchors spread across the silhouette (frontal, temporal, top, stem, lateral). Hubs claim these in
- *  order so the first few categories fan out into different lobes instead of bunching in the middle. */
-const LOBE_ANCHORS: ReadonlyArray<{ x: number; y: number }> = [
-  { x: 35, y: 35 }, // frontal-left
-  { x: 65, y: 36 }, // frontal-right
-  { x: 40, y: 58 }, // temporal-left
-  { x: 62, y: 57 }, // temporal-right
-  { x: 50, y: 28 }, // prefrontal top
-  { x: 51, y: 70 }, // occipital / stem
-  { x: 28, y: 47 }, // far-left
-  { x: 72, y: 47 }, // far-right
-];
-
-// Leaf clusters: memories orbit their hub on a small ellipse; uncategorized memories orbit the core wider.
-const LEAF_RX = 7;
-const LEAF_RY = 8;
-const UNCAT_RX = 12;
-const UNCAT_RY = 13;
-// Hub diameter (px) scales between these bounds by how many memories the category holds.
-const HUB_MIN_PX = 30;
-const HUB_MAX_PX = 54;
-
-type BrainNodeKind = 'core' | 'category' | 'memory';
-
-interface NodeBase { id: string; kind: BrainNodeKind; x: number; y: number; color: string }
-interface CoreNode extends NodeBase { kind: 'core'; total: number }
-export interface CategoryNode extends NodeBase {
-  kind: 'category';
-  category: MemoryCategory;
-  label: string;
-  count: number;
-  /** Rendered diameter in px, scaled by `count`. */
-  size: number;
-}
-export interface MemoryNode extends NodeBase {
-  kind: 'memory';
-  memory: Memory;
-  /** Hub this leaf hangs off (`'core'` for uncategorized). */
-  parentId: string;
-}
-export type BrainNode = CoreNode | CategoryNode | MemoryNode;
-
-interface BrainEdge { id: string; from: string; to: string; color: string }
-
-export interface BrainGraph {
-  core: CoreNode;
-  hubs: CategoryNode[];
-  leaves: MemoryNode[];
-  edges: BrainEdge[];
-  /** Memories present but not drawn as leaves (over the cap) — surfaced as a subtle "+N". */
-  truncated: number;
-  totalMemories: number;
-}
-
-/** Brain silhouette as a union of ellipses in the 0..100 viewBox — tuned to the neural-brain-vercel.png
- *  mass when the image is `bg-contain` centred in a 16/9 panel. A point counts as "inside" if it falls in
- *  any lobe ellipse. */
 const BRAIN_FIELDS: ReadonlyArray<{ cx: number; cy: number; rx: number; ry: number }> = [
   { cx: 33, cy: 37, rx: 15, ry: 17 },
   { cx: 48, cy: 33, rx: 19, ry: 18 },
@@ -86,158 +19,251 @@ const BRAIN_FIELDS: ReadonlyArray<{ cx: number; cy: number; rx: number; ry: numb
   { cx: 53, cy: 74, rx: 10, ry: 9 },
 ];
 
-/** True when `(x, y)` lies within the brain silhouette. */
-export function isInsideBrain(x: number, y: number): boolean {
+type BrainNodeKind = 'core' | 'category' | 'memory';
+interface NodeBase { id: string; kind: BrainNodeKind; x: number; y: number; color: string }
+interface CoreNode extends NodeBase { kind: 'core'; total: number }
+export interface CategoryNode extends NodeBase {
+  kind: 'category';
+  category: MemoryCategory;
+  label: string;
+  count: number;
+  size: number;
+}
+export interface MemoryNode extends NodeBase {
+  kind: 'memory';
+  memory: Memory;
+  parentId: string;
+}
+export type BrainNode = CoreNode | CategoryNode | MemoryNode;
+interface BrainEdge { id: string; from: string; to: string; color: string }
+export interface BrainGraph {
+  width: number;
+  height: number;
+  core: CoreNode;
+  hubs: CategoryNode[];
+  leaves: MemoryNode[];
+  edges: BrainEdge[];
+  totalMemories: number;
+}
+
+function canvasSize(memoryCount: number, categoryCount: number): { width: number; height: number } {
+  const minimumArea = MIN_CANVAS_WIDTH * (MIN_CANVAS_WIDTH / CANVAS_ASPECT);
+  // Hubs and their always-visible labels consume substantially more room than a leaf point. Charging each
+  // category as several leaves prevents a category-heavy graph from staying on the minimum canvas.
+  const weightedNodes = Math.max(1, memoryCount + categoryCount * 9 + 1);
+  const nodeArea = weightedNodes * MIN_NODE_SPACING * MIN_NODE_SPACING * 10;
+  const width = Math.ceil(Math.sqrt(Math.max(minimumArea, nodeArea) * CANVAS_ASPECT) / 16) * 16;
+  return { width, height: Math.ceil((width / CANVAS_ASPECT) / 16) * 16 };
+}
+
+/** The silhouette is defined in normalized coordinates but evaluated in virtual-canvas pixels, so growing
+ * the canvas adds room without stretching or flattening the brain on narrow viewports. */
+export function isInsideBrain(x: number, y: number, width: number, height: number): boolean {
+  const nx = (x / width) * 100;
+  const ny = (y / height) * 100;
   return BRAIN_FIELDS.some(({ cx, cy, rx, ry }) => {
-    const dx = (x - cx) / rx;
-    const dy = (y - cy) / ry;
+    const dx = (nx - cx) / rx;
+    const dy = (ny - cy) / ry;
     return dx * dx + dy * dy <= 1;
   });
 }
 
-/** Pull an out-of-silhouette point back inside by easing it toward an attractor (its hub, or the core)
- *  until it lands in a lobe. Deterministic and bounded. Points already inside are returned untouched. */
-function clampToBrainShape(x: number, y: number, ax: number, ay: number): { x: number; y: number } {
-  if (isInsideBrain(x, y)) return { x, y };
+function clampToBrainShape(
+  x: number,
+  y: number,
+  attractorX: number,
+  attractorY: number,
+  width: number,
+  height: number,
+): { x: number; y: number } {
+  if (isInsideBrain(x, y, width, height)) return { x, y };
   let nx = x;
   let ny = y;
-  for (let i = 0; i < 48; i += 1) {
-    nx = ax + (nx - ax) * 0.9;
-    ny = ay + (ny - ay) * 0.9;
-    if (isInsideBrain(nx, ny)) break;
+  for (let i = 0; i < 72; i += 1) {
+    nx = attractorX + (nx - attractorX) * 0.92;
+    ny = attractorY + (ny - attractorY) * 0.92;
+    if (isInsideBrain(nx, ny, width, height)) return { x: nx, y: ny };
   }
-  return { x: nx, y: ny };
-}
-
-/** Anchor for the i-th hub: a lobe from the list, with a deterministic golden-angle nudge once the list
- *  wraps so overflow categories separate instead of stacking. Always clamped inside the silhouette. */
-function hubAnchor(i: number): { x: number; y: number } {
-  const base = LOBE_ANCHORS[i % LOBE_ANCHORS.length];
-  const wrap = Math.floor(i / LOBE_ANCHORS.length);
-  if (wrap === 0) return base;
-  const angle = i * 137.5 * (Math.PI / 180);
-  const r = 3 + wrap * 2.5;
-  return clampToBrainShape(base.x + Math.cos(angle) * r, base.y + Math.sin(angle) * r, base.x, base.y);
-}
-
-/** Point on an ellipse orbit around `(cx, cy)`, in container percent. `startDeg` puts the first item up. */
-function orbitPosition(
-  i: number, n: number, cx: number, cy: number, rx: number, ry: number, startDeg = -90,
-): { x: number; y: number } {
-  const angle = (startDeg + (i * 360) / Math.max(1, n)) * (Math.PI / 180);
-  return { x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) };
-}
-
-/** Hub diameter from its memory count, normalized against the busiest hub so the biggest reads largest. */
-function hubSize(count: number, maxCount: number): number {
-  if (maxCount <= 0) return HUB_MIN_PX;
-  const t = Math.min(1, count / maxCount);
-  return Math.round(HUB_MIN_PX + t * (HUB_MAX_PX - HUB_MIN_PX));
+  return { x: attractorX, y: attractorY };
 }
 
 function swatch(color: string | null | undefined): string {
-  const c = (color ?? '').trim();
-  return c || FALLBACK_COLOR;
+  return color?.trim() || FALLBACK_COLOR;
 }
 
-/** Largest-remainder proportional allocation of a leaf `budget` across group `sizes`. Deterministic and
- *  exact: returns each group's slice, summing to `min(budget, Σsizes)`, so every group keeps a fair share
- *  instead of the first few eating the whole cap. */
-export function allocateLeaves(sizes: number[], budget: number): number[] {
-  const total = sizes.reduce((a, b) => a + b, 0);
-  if (total <= budget) return sizes.slice();
-  const raw = sizes.map((s) => (s / total) * budget);
-  const alloc = raw.map((r) => Math.floor(r));
-  let used = alloc.reduce((a, b) => a + b, 0);
-  const byFraction = raw
-    .map((r, i) => ({ i, f: r - Math.floor(r) }))
-    .sort((a, b) => b.f - a.f || a.i - b.i);
-  for (let k = 0; used < budget && k < byFraction.length; k += 1) {
-    const idx = byFraction[k].i;
-    if (alloc[idx] < sizes[idx]) { alloc[idx] += 1; used += 1; }
+function hubSize(count: number, maxCount: number): number {
+  const t = maxCount > 0 ? Math.sqrt(count / maxCount) : 0;
+  return Math.round(HUB_MIN_PX + t * (HUB_MAX_PX - HUB_MIN_PX));
+}
+
+interface PlacedCircle { x: number; y: number; radius: number }
+
+function farEnough(point: PlacedCircle, placed: ReadonlyArray<PlacedCircle>): boolean {
+  return placed.every((other) => {
+    const dx = point.x - other.x;
+    const dy = point.y - other.y;
+    const minimum = point.radius + other.radius + MIN_NODE_GAP;
+    return dx * dx + dy * dy >= minimum * minimum;
+  });
+}
+
+function hubPosition(
+  index: number,
+  size: number,
+  width: number,
+  height: number,
+  placed: ReadonlyArray<PlacedCircle>,
+): { x: number; y: number } {
+  const core = { x: width * 0.5, y: height * 0.49 };
+  const nodeRadius = size / 2;
+  for (let attempt = 0; attempt < 720; attempt += 1) {
+    const sequence = index + attempt * 0.37;
+    const angle = -Math.PI / 2 + sequence * GOLDEN_ANGLE;
+    const radius = Math.min(height * 0.31, height * 0.15 + Math.sqrt(sequence + 1) * (nodeRadius + 10));
+    const candidate = clampToBrainShape(
+      core.x + Math.cos(angle) * radius * 1.25,
+      core.y + Math.sin(angle) * radius,
+      core.x,
+      core.y,
+      width,
+      height,
+    );
+    if (farEnough({ ...candidate, radius: nodeRadius }, placed)) return candidate;
   }
-  return alloc;
+  return core;
 }
 
-/** Build the full brain graph from a memory list + category list. Deterministic: categories sort by id,
- *  memories by importance desc then id, so the same data always lays out identically. Uncategorized
- *  memories route straight to the core; every categorized memory hangs off its category hub. */
+/** Deterministic local phyllotaxis with collision expansion. Large categories gain more rings around their
+ * hub; when clusters meet, the golden-angle search moves only the later point and never perturbs old ones. */
+function leafPosition(
+  localIndex: number,
+  globalIndex: number,
+  groupIndex: number,
+  attractor: { x: number; y: number },
+  placed: ReadonlyArray<PlacedCircle>,
+  width: number,
+  height: number,
+): { x: number; y: number } {
+  const phase = groupIndex * 0.83;
+  const baseRadius = 34 + MIN_NODE_SPACING * 1.18 * Math.sqrt(localIndex + 1);
+  for (let attempt = 0; attempt < 720; attempt += 1) {
+    const angle = phase + (localIndex + attempt * 0.41) * GOLDEN_ANGLE;
+    const radius = baseRadius + MIN_NODE_SPACING * 0.48 * Math.sqrt(attempt);
+    const candidate = clampToBrainShape(
+      attractor.x + Math.cos(angle) * radius * 1.08,
+      attractor.y + Math.sin(angle) * radius,
+      attractor.x,
+      attractor.y,
+      width,
+      height,
+    );
+    if (farEnough({ ...candidate, radius: 4 }, placed)) return candidate;
+  }
+
+  // Extremely dense fallback: a global sunflower sequence over the full silhouette. It remains stable and
+  // bounded; the dynamically-sized canvas makes reaching this branch unusual even for thousands of rows.
+  const core = { x: width * 0.5, y: height * 0.49 };
+  for (let attempt = 0; attempt < 1440; attempt += 1) {
+    const index = globalIndex + attempt;
+    const angle = index * GOLDEN_ANGLE;
+    const radius = MIN_NODE_SPACING * 0.88 * Math.sqrt(index + 1);
+    const candidate = clampToBrainShape(
+      core.x + Math.cos(angle) * radius * 1.2,
+      core.y + Math.sin(angle) * radius,
+      core.x,
+      core.y,
+      width,
+      height,
+    );
+    if (farEnough({ ...candidate, radius: 4 }, placed)) return candidate;
+  }
+  return attractor;
+}
+
+/** Build every active memory into one stable virtual-pixel information map. Categories and memories sort by
+ * durable ids (importance only breaks the display order inside a category), so refetches do not reshuffle
+ * unchanged data. There is deliberately no leaf budget or truncation field. */
 export function buildBrainGraph(memories: Memory[], categories: MemoryCategory[]): BrainGraph {
+  const { width, height } = canvasSize(memories.length, categories.length);
+  const core: CoreNode = {
+    id: CORE_ID,
+    kind: 'core',
+    x: width * 0.5,
+    y: height * 0.49,
+    color: 'var(--color-primary)',
+    total: memories.length,
+  };
   const cats = [...categories].sort((a, b) => a.id - b.id);
   const byCat = new Map<number, Memory[]>();
   const uncategorized: Memory[] = [];
-  for (const m of memories) {
-    if (m.category_id == null) { uncategorized.push(m); continue; }
-    const bucket = byCat.get(m.category_id);
-    if (bucket) bucket.push(m); else byCat.set(m.category_id, [m]);
+  for (const memory of memories) {
+    if (memory.category_id == null || !cats.some((category) => category.id === memory.category_id)) {
+      uncategorized.push(memory);
+    } else {
+      const bucket = byCat.get(memory.category_id);
+      if (bucket) bucket.push(memory);
+      else byCat.set(memory.category_id, [memory]);
+    }
   }
   const importanceSort = (a: Memory, b: Memory) => b.importance - a.importance || a.id - b.id;
-
-  // Groups in a stable order: each category (even empty), then uncategorized as the final group.
-  const catCounts = cats.map((c) => (byCat.get(c.id)?.length ?? 0));
-  const maxCount = Math.max(0, ...catCounts, uncategorized.length);
-
-  const core: CoreNode = { id: CORE_ID, kind: 'core', x: CORE_X, y: CORE_Y, color: 'var(--color-primary)', total: memories.length };
-
-  const hubs: CategoryNode[] = cats.map((c, i) => {
-    const pos = hubAnchor(i);
-    const count = catCounts[i];
+  const counts = cats.map((category) => byCat.get(category.id)?.length ?? 0);
+  const maxCount = Math.max(0, uncategorized.length, ...counts);
+  const occupied: PlacedCircle[] = [{ x: core.x, y: core.y, radius: 34 }];
+  const hubs: CategoryNode[] = cats.map((category, index) => {
+    const count = counts[index] ?? 0;
+    const size = hubSize(count, maxCount);
+    const position = hubPosition(index, size, width, height, occupied);
+    occupied.push({ ...position, radius: size / 2 });
     return {
-      id: `cat:${c.id}`, kind: 'category', x: pos.x, y: pos.y, color: swatch(c.color),
-      category: c, label: c.name, count, size: hubSize(count, maxCount),
+      id: `cat:${category.id}`,
+      kind: 'category',
+      x: position.x,
+      y: position.y,
+      color: swatch(category.color),
+      category,
+      label: category.name,
+      count,
+      size,
     };
   });
 
-  // Distribute the leaf budget across every non-empty group (categories + uncategorized).
-  const groupSizes = [...catCounts, uncategorized.length];
-  const allocation = allocateLeaves(groupSizes, MAX_LEAVES);
-
   const leaves: MemoryNode[] = [];
-  const edges: BrainEdge[] = [];
-
-  cats.forEach((c, i) => {
-    const hub = hubs[i];
-    edges.push({ id: `e:${core.id}-${hub.id}`, from: core.id, to: hub.id, color: hub.color });
-    const pool = (byCat.get(c.id) ?? []).slice().sort(importanceSort).slice(0, allocation[i]);
-    pool.forEach((m, j) => {
-      const orbit = orbitPosition(j, pool.length, hub.x, hub.y, LEAF_RX, LEAF_RY, -90);
-      const pos = clampToBrainShape(orbit.x, orbit.y, hub.x, hub.y);
-      const id = `mem:${m.id}`;
-      leaves.push({ id, kind: 'memory', x: pos.x, y: pos.y, color: hub.color, memory: m, parentId: hub.id });
-      edges.push({ id: `e:${hub.id}-${id}`, from: hub.id, to: id, color: hub.color });
+  const edges: BrainEdge[] = hubs.map((hub) => ({
+    id: `e:${core.id}-${hub.id}`,
+    from: core.id,
+    to: hub.id,
+    color: hub.color,
+  }));
+  const addGroup = (pool: Memory[], parent: CoreNode | CategoryNode, groupIndex: number, color: string) => {
+    pool.slice().sort(importanceSort).forEach((memory, localIndex) => {
+      const position = leafPosition(localIndex, leaves.length, groupIndex, parent, occupied, width, height);
+      occupied.push({ ...position, radius: 4 });
+      const id = `mem:${memory.id}`;
+      leaves.push({ id, kind: 'memory', x: position.x, y: position.y, color, memory, parentId: parent.id });
+      edges.push({ id: `e:${parent.id}-${id}`, from: parent.id, to: id, color });
     });
-  });
+  };
 
-  // Uncategorized leaves orbit the core directly on a wider inner ring, clamped to the silhouette.
-  const uncatPool = uncategorized.slice().sort(importanceSort).slice(0, allocation[allocation.length - 1]);
-  uncatPool.forEach((m, j) => {
-    const orbit = orbitPosition(j, uncatPool.length, CORE_X, CORE_Y, UNCAT_RX, UNCAT_RY, -90);
-    const pos = clampToBrainShape(orbit.x, orbit.y, CORE_X, CORE_Y);
-    const id = `mem:${m.id}`;
-    leaves.push({ id, kind: 'memory', x: pos.x, y: pos.y, color: FALLBACK_COLOR, memory: m, parentId: core.id });
-    edges.push({ id: `e:${core.id}-${id}`, from: core.id, to: id, color: 'var(--color-border-strong)' });
-  });
+  cats.forEach((category, index) => addGroup(byCat.get(category.id) ?? [], hubs[index]!, index, hubs[index]!.color));
+  addGroup(uncategorized, core, cats.length, FALLBACK_COLOR);
 
-  return { core, hubs, leaves, edges, truncated: memories.length - leaves.length, totalMemories: memories.length };
+  return { width, height, core, hubs, leaves, edges, totalMemories: memories.length };
 }
 
-/** The neighbor set of a node id (itself included) — drives selection highlighting. Core neighbors every
- *  hub and every uncategorized leaf; a hub neighbors the core and its own leaves; a leaf neighbors its
- *  parent (hub or core). Everything outside the set is dimmed by the view. */
 export function neighborIds(graph: BrainGraph, selected: string): Set<string> {
   const set = new Set<string>([selected]);
   if (selected === graph.core.id) {
-    for (const h of graph.hubs) set.add(h.id);
-    for (const l of graph.leaves) if (l.parentId === graph.core.id) set.add(l.id);
+    for (const hub of graph.hubs) set.add(hub.id);
+    for (const leaf of graph.leaves) if (leaf.parentId === graph.core.id) set.add(leaf.id);
     return set;
   }
-  const hub = graph.hubs.find((h) => h.id === selected);
+  const hub = graph.hubs.find((node) => node.id === selected);
   if (hub) {
     set.add(graph.core.id);
-    for (const l of graph.leaves) if (l.parentId === hub.id) set.add(l.id);
+    for (const leaf of graph.leaves) if (leaf.parentId === hub.id) set.add(leaf.id);
     return set;
   }
-  const leaf = graph.leaves.find((l) => l.id === selected);
+  const leaf = graph.leaves.find((node) => node.id === selected);
   if (leaf) set.add(leaf.parentId);
   return set;
 }

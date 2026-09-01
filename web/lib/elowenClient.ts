@@ -1,4 +1,4 @@
-import type { ElowenConfig, ConfigPatch, DashRecap, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, BrainGoal, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, Project, ProjectSummary, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
+import type { ElowenConfig, ConfigPatch, DashRecap, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, BrainGoal, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, Project, ProjectSummary, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
 import { clearToken } from './token';
 import type { BrainBinding } from './brainSession';
 
@@ -422,11 +422,10 @@ export const elowenClient = {
   /** One memory's vitality over time: the reconstructed past, the forecast, and when retention would
    *  bin it. */
   memoryVitalityHistory: (id: number) => req<MemoryVitalityHistory>(`/memory/${id}/vitality-history`),
-  /** Run retrieval for a query and get the picked memories plus the scoring trace. POST for the body,
-   *  not for a mutation — inspection leaves usage counters untouched. */
-  retrievalDebug: (query: string) => req<RetrievalResult>('/memory/retrieve', json({ query })),
-  /** Re-embed the caller's memories that still need an embedding (bounded, best-effort). */
-  reindexMemories: () => req<{ embedded: number }>('/memory/reindex', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+  /** The caller's owner-scoped background maintenance state. */
+  memoryMaintenance: () => req<MemoryMaintenanceState>('/memory/maintenance'),
+  startMemoryReindex: () => req<MemoryMaintenanceJob>('/memory/maintenance/reindex', json({})),
+  startMemoryRecategorize: (mode: MemoryRecategorizeMode) => req<MemoryMaintenanceJob>('/memory/maintenance/recategorize', json({ mode })),
   /** The caller's own memory categories (built-in + user-defined). */
   memoryCategories: () => req<MemoryCategory[]>('/memory/categories'),
   createMemoryCategory: (body: MemoryCategoryCreate) => req<MemoryCategory>('/memory/categories', json(body)),
@@ -437,8 +436,6 @@ export const elowenClient = {
   /** Workspace-level categorization provider settings. */
   categorizationSettings: () => req<CategorizationSettings>('/memory/categorization'),
   saveCategorizationSettings: (patch: CategorizationSettingsPatch) => req<CategorizationSettings>('/memory/categorization', json(patch, 'PUT')),
-  /** Re-run categorization over the caller's memories (owner-scoped, bounded). */
-  reclassifyMemories: (body?: { limit?: number; includeCategorized?: boolean }) => req<{ scanned: number; classified: number }>('/memory/reclassify', json(body ?? {})),
   embeddingSettings: () => req<EmbeddingSettings>('/memory/embedding'),
   saveEmbeddingSettings: (patch: EmbeddingSettingsPatch) => req<EmbeddingSettings>('/memory/embedding', json(patch, 'PUT')),
   /** Admin: probe the embedding provider with a tiny sample. An embed failure resolves 200 `{ ok:false }`

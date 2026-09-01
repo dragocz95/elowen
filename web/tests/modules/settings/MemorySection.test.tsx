@@ -9,9 +9,7 @@ const saveCategorization = vi.fn();
 const saveEmbedding = vi.fn();
 vi.mock('../../../lib/mutations', () => ({
   useSaveEmbeddingSettings: () => ({ mutate: saveEmbedding, mutateAsync: saveEmbedding }),
-  useReindexMemories: () => ({ mutate: vi.fn(), isPending: false }),
   useSaveCategorizationSettings: () => ({ mutate: saveCategorization, mutateAsync: saveCategorization }),
-  useReclassifyMemories: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 const EMBEDDING: EmbeddingSettings = { providerId: 'openai', model: 'text-embedding-3-small', baseUrl: '', dimensions: 1536, configured: true };
@@ -69,7 +67,9 @@ describe('MemorySection — categorization model picker', () => {
     const { container } = renderSection();
 
     expect(container.querySelectorAll('[data-settings-group]')).toHaveLength(1);
-    expect(container.querySelectorAll('.settings-row')).toHaveLength(8);
+    expect(container.querySelectorAll('.settings-row')).toHaveLength(6);
+    expect(screen.queryByRole('button', { name: 'Reindex' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reclassify memories' })).toBeNull();
     expect(container.querySelector('.spatial-group')).toBeNull();
   });
 

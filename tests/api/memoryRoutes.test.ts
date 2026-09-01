@@ -232,6 +232,37 @@ describe('memory routes', () => {
     expect(await res.json()).toEqual({ error: 'embeddings not configured' });
   });
 
+  it('background maintenance is available to a non-admin and snapshots only that caller', async () => {
+    const { app, memoryStore, amyId, bobId, amyTok, bobTok } = setup();
+    const amy = await (await app.request('/memory', post(amyTok, { body: 'amy private' }))).json();
+    const bob = await (await app.request('/memory', post(bobTok, { body: 'bob private' }))).json();
+
+    const start = await app.request('/memory/maintenance/reindex', post(bobTok, {}));
+    expect(start.status).toBe(202);
+    await vi.waitFor(async () => {
+      const state = await (await app.request('/memory/maintenance', auth(bobTok))).json();
+      expect(state.reindex.status).toBe('done');
+    });
+
+    expect(memoryStore.getEmbedding(bobId, bob.id)).toBeDefined();
+    expect(memoryStore.getEmbedding(amyId, amy.id)).toBeUndefined();
+    expect((await app.request('/memory/maintenance', auth(amyTok))).status).toBe(200);
+  });
+
+  it('returns the existing job for duplicate starts and rejects identity in the body', async () => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    const { app, bobTok } = setup({ fetchImpl: (async () => pending) as unknown as typeof fetch });
+    await app.request('/memory', post(bobTok, { body: 'slow' }));
+
+    const first = await (await app.request('/memory/maintenance/reindex', post(bobTok, {}))).json();
+    const duplicate = await (await app.request('/memory/maintenance/reindex', post(bobTok, {}))).json();
+    expect(duplicate.id).toBe(first.id);
+    expect((await app.request('/memory/maintenance/reindex', post(bobTok, { userId: 1 }))).status).toBe(400);
+
+    release(new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+  });
+
   it('embedding block read exposes configured flag', async () => {
     const { app, amyTok } = setup();
     const block = await (await app.request('/memory/embedding', auth(amyTok))).json();
