@@ -140,8 +140,13 @@ export function resolveSearchProvider(config = {}) {
   return { id, provider: SEARCH_PROVIDERS[id], apiKey: keyOf(SEARCH_PROVIDERS[id].keyField) };
 }
 
+export function normalizeMaxResults(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.min(Math.max(Math.floor(n), 1), 10) : 5;
+}
+
 export function register(ctx) {
-  const maxResults = Number(ctx.config.maxResults) >= 1 ? Math.min(Number(ctx.config.maxResults), 10) : 5;
+  const maxResults = normalizeMaxResults(ctx.config.maxResults);
 
   ctx.registerTool(defineTool({
     name: 'WebSearch', label: 'Web search',

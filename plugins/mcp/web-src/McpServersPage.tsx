@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Blocks, PlugZap, Plus, RefreshCw, Search, Server, Trash2, TriangleAlert, Wrench } from 'lucide-react';
 import {
   apiJson, runtime, DATA_TABLE_ICON_SIZE,
@@ -11,6 +11,7 @@ const PAGE_SIZE = 20;
 type ScopeFilter = 'all' | McpScope;
 
 interface ServerDraft {
+  revision?: number;
   scope: McpScope;
   name: string;
   transport: McpTransport;
@@ -27,12 +28,15 @@ const emptyDraft = (scope: McpScope): ServerDraft => ({
 
 export function serverDraft(server: McpServer): ServerDraft {
   return {
+    revision: server.revision,
     scope: server.scope,
     name: server.name,
     transport: server.transport,
     command: server.command ?? '',
     args: (server.args ?? []).join('\n'),
-    env: Object.entries(server.env ?? {}).map(([key, value]) => `${key}=${value}`).join('\n'),
+    // Secret values are write-only. Existing keys are shown below, while an empty draft keeps them
+    // unchanged on update instead of round-tripping them through the browser.
+    env: '',
     url: server.url ?? '',
     enabled: server.enabled,
   };
@@ -49,9 +53,15 @@ export function serverPayload(draft: ServerDraft) {
   return draft.transport === 'stdio'
     ? {
       scope: draft.scope, name: draft.name.trim(), transport: draft.transport, command: draft.command.trim(),
-      args: draft.args.split('\n').map((line) => line.trim()).filter(Boolean), env: parseEnvironment(draft.env), enabled: draft.enabled,
+      ...(draft.revision !== undefined ? { expectedRevision: draft.revision } : {}),
+      args: draft.args.split('\n').map((line) => line.trim()).filter(Boolean),
+      ...(draft.env.trim() ? { env: parseEnvironment(draft.env) } : {}),
+      enabled: draft.enabled,
     }
-    : { scope: draft.scope, name: draft.name.trim(), transport: draft.transport, url: draft.url.trim(), enabled: draft.enabled };
+    : {
+      scope: draft.scope, name: draft.name.trim(), transport: draft.transport, url: draft.url.trim(), enabled: draft.enabled,
+      ...(draft.revision !== undefined ? { expectedRevision: draft.revision } : {}),
+    };
 }
 
 /** Both ownership scopes as ONE register, personal first. The API already returns an empty `instance`
@@ -248,8 +258,14 @@ function ServerEditor({ server, draft, saving, busy, reconnecting, error, canMan
             <C.Field label={s.arguments}>
               <textarea className="min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground" value={draft.args} disabled={busy} onChange={(event) => onChange({ ...draft, args: event.target.value })} />
             </C.Field>
-            <C.Field label={s.environment}>
-              <textarea className="min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground" value={draft.env} disabled={busy} onChange={(event) => onChange({ ...draft, env: event.target.value })} />
+            <C.Field label={s.environment} hint={server?.envKeys?.length ? `${s.environmentSet}: ${server.envKeys.join(', ')}` : undefined}>
+              <textarea
+                className="min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground"
+                value={draft.env}
+                placeholder={server?.envKeys?.length ? s.environmentPlaceholder : undefined}
+                disabled={busy}
+                onChange={(event) => onChange({ ...draft, env: event.target.value })}
+              />
             </C.Field>
           </>
         ) : (
@@ -330,6 +346,9 @@ export function McpServersPage() {
   const [removing, setRemoving] = useState<McpServer>();
   const [removeError, setRemoveError] = useState<string>();
   const [showTools, setShowTools] = useState(false);
+  /** React state disables controls on the next render; this synchronous lock also rejects a second click
+   * in the same event turn, before that render can happen. */
+  const busyRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true); setLoadError(false);
@@ -357,10 +376,20 @@ export function McpServersPage() {
   // The editor's saved copy is looked up in the CURRENT data on every render, so a reload (after a save
   // or a reconnect) refreshes the connection state and the tool list under the open drawer.
   const selected = editor?.key != null ? rows.find((server) => serverKey(server) === editor.key) : undefined;
-  const closeEditor = () => { setEditor(undefined); setActionError(undefined); setShowTools(false); };
+  const closeEditor = () => {
+    if (busyRef.current) return;
+    setEditor(undefined); setActionError(undefined); setShowTools(false);
+  };
 
   const save = async () => {
-    if (!editor) return;
+    if (!editor || busyRef.current) return;
+    // A stored editor may only PATCH the exact row it opened. Falling back to POST after a refresh
+    // removed or moved that row could create a second server from a stale draft.
+    if (editor.key !== null && !selected) {
+      setActionError(s.serverChanged);
+      return;
+    }
+    busyRef.current = true;
     setSaving(true); setBusy(true); setActionError(undefined);
     try {
       // Changing the scope is a MOVE, not a field edit: PATCH resolves the server in the scope it is
@@ -372,8 +401,10 @@ export function McpServersPage() {
         await apiJson('/plugins/mcp/api/transfer', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ fromScope: selected.scope, name: selected.name, toScope: editor.draft.scope }),
+          body: JSON.stringify({ fromScope: selected.scope, name: selected.name, toScope: editor.draft.scope, expectedRevision: editor.draft.revision ?? 0 }),
         });
+        // If the later PATCH fails, Retry must address the row in the scope where the completed move left it.
+        setEditor((current) => current ? { ...current, key: serverKey({ scope: editor.draft.scope, name: selected.name }) } : current);
       }
       const path = selected ? `/plugins/mcp/api/servers/${encodeURIComponent(selected.name)}` : '/plugins/mcp/api/servers';
       await apiJson(path, {
@@ -391,11 +422,12 @@ export function McpServersPage() {
       // instead of leaving the page asserting a scope the server no longer has.
       await load();
     }
-    finally { setSaving(false); setBusy(false); }
+    finally { busyRef.current = false; setSaving(false); setBusy(false); }
   };
 
   const reconnect = async () => {
-    if (!selected || busy || !canReconnect(selected, canManageInstance)) return;
+    if (!selected || busyRef.current || !canReconnect(selected, canManageInstance)) return;
+    busyRef.current = true;
     const target = selected;
     const key = serverKey(target);
     setReconnectingKey(key); setBusy(true); setActionError(undefined);
@@ -416,7 +448,7 @@ export function McpServersPage() {
         setActionError(message);
         toast(message, 'error');
       } else toast(s.reconnectSuccess.replace('{name}', target.name));
-    } finally { setReconnectingKey(undefined); setBusy(false); }
+    } finally { busyRef.current = false; setReconnectingKey(undefined); setBusy(false); }
   };
 
   const reconnectAll = async () => {
@@ -424,7 +456,8 @@ export function McpServersPage() {
     // refreshes while a server is reconnecting. Running it sequentially bounds concurrent connection
     // attempts while preserving the CLI's per-server POST contract.
     const targets = reconnectableFailures;
-    if (busy || targets.length === 0) return;
+    if (busyRef.current || targets.length === 0) return;
+    busyRef.current = true;
     setReconnectingAll(true); setBusy(true); setActionError(undefined);
     let succeeded = 0;
     let failed = 0;
@@ -444,12 +477,13 @@ export function McpServersPage() {
       await load();
       if (failed === 0) toast(s.reconnectAllSuccess.replace('{n}', String(succeeded)));
       else toast(s.reconnectAllPartial.replace('{succeeded}', String(succeeded)).replace('{failed}', String(failed)), 'error');
-    } finally { setReconnectingAll(false); setBusy(false); }
+    } finally { busyRef.current = false; setReconnectingAll(false); setBusy(false); }
   };
 
   const removeServer = async () => {
     const target = removing;
-    if (!target) return;
+    if (!target || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true); setActionError(undefined); setRemoveError(undefined);
     try {
       await apiJson(`/plugins/mcp/api/servers/${encodeURIComponent(target.name)}`, {
@@ -465,15 +499,15 @@ export function McpServersPage() {
       setActionError(message);
       setRemoveError(message);
       throw error;
-    } finally { setBusy(false); }
+    } finally { busyRef.current = false; setBusy(false); }
   };
 
   const openServer = (server: McpServer) => {
-    if (busy) return;
+    if (busyRef.current) return;
     setActionError(undefined); setEditor({ key: serverKey(server), draft: serverDraft(server) });
   };
   const addServer = () => {
-    if (busy) return;
+    if (busyRef.current) return;
     setActionError(undefined); setEditor({ key: null, draft: emptyDraft('personal') });
   };
   const addButton = <C.Button variant="accent" icon={Plus} onClick={addServer} disabled={busy}>{s.addServer}</C.Button>;
@@ -603,7 +637,7 @@ export function McpServersPage() {
             onChange={(draft) => setEditor((current) => (current ? { ...current, draft } : current))}
             onSave={() => void save()}
             onReconnect={() => void reconnect()}
-            onRemove={() => { if (selected) { setRemoveError(undefined); setRemoving(selected); } }}
+            onRemove={() => { if (selected && !busyRef.current) { setRemoveError(undefined); setRemoving(selected); } }}
             onShowTools={() => setShowTools(true)}
           />
         </C.WorkspaceDetailRail>
@@ -635,7 +669,7 @@ export function McpServersPage() {
         confirmLabel={s.removeServer}
         pendingLabel={s.removingServer}
         error={removeError}
-        onClose={() => { setRemoving(undefined); setRemoveError(undefined); }}
+        onClose={() => { if (!busyRef.current) { setRemoving(undefined); setRemoveError(undefined); } }}
         onConfirm={removeServer}
       />
     </C.WorkspaceShell>

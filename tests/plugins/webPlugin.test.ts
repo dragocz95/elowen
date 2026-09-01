@@ -61,6 +61,12 @@ describe('web plugin WebSearch backends', () => {
     expect(text).toMatch(/^Answer: Tavily answer\n\n- T\n {2}https:\/\/t\.example\n {2}Tavily snippet$/);
   });
 
+  it('normalizes configured result limits to a bounded integer', async () => {
+    const { search, calls } = await mount({ serperApiKey: 'serper-key', maxResults: '12.8' }, SERPER_BODY);
+    await search.execute('t', { query: 'q' });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ q: 'q', num: 10 });
+  });
+
   it('picks Serper automatically when it is the only key configured', async () => {
     const { search, calls } = await mount({ serperApiKey: 'serper-key' }, SERPER_BODY);
     await search.execute('t', { query: 'q' });

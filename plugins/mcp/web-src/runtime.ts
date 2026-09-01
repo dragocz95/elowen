@@ -10,6 +10,8 @@ interface McpToolInfo {
 }
 
 export interface McpServer {
+  /** Conditional-write token returned by the management API. */
+  revision?: number;
   name: string;
   scope: McpScope;
   transport: McpTransport;
@@ -21,7 +23,9 @@ export interface McpServer {
   reconnecting: boolean;
   command?: string;
   args?: string[];
+  /** Environment values are write-only; the API exposes names only. */
   env?: Record<string, string>;
+  envKeys?: string[];
   url?: string;
 }
 

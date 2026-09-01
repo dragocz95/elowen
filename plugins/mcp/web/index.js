@@ -234,12 +234,15 @@ var emptyDraft = (scope) => ({
 });
 function serverDraft(server) {
   return {
+    revision: server.revision,
     scope: server.scope,
     name: server.name,
     transport: server.transport,
     command: server.command ?? "",
     args: (server.args ?? []).join("\n"),
-    env: Object.entries(server.env ?? {}).map(([key, value]) => `${key}=${value}`).join("\n"),
+    // Secret values are write-only. Existing keys are shown below, while an empty draft keeps them
+    // unchanged on update instead of round-tripping them through the browser.
+    env: "",
     url: server.url ?? "",
     enabled: server.enabled
   };
@@ -256,10 +259,18 @@ function serverPayload(draft) {
     name: draft.name.trim(),
     transport: draft.transport,
     command: draft.command.trim(),
+    ...draft.revision !== void 0 ? { expectedRevision: draft.revision } : {},
     args: draft.args.split("\n").map((line) => line.trim()).filter(Boolean),
-    env: parseEnvironment(draft.env),
+    ...draft.env.trim() ? { env: parseEnvironment(draft.env) } : {},
     enabled: draft.enabled
-  } : { scope: draft.scope, name: draft.name.trim(), transport: draft.transport, url: draft.url.trim(), enabled: draft.enabled };
+  } : {
+    scope: draft.scope,
+    name: draft.name.trim(),
+    transport: draft.transport,
+    url: draft.url.trim(),
+    enabled: draft.enabled,
+    ...draft.revision !== void 0 ? { expectedRevision: draft.revision } : {}
+  };
 }
 function allServers(data) {
   return [...data.personal, ...data.instance];
@@ -381,7 +392,16 @@ function ServerEditor({ server, draft, saving, busy, reconnecting, error, canMan
       draft.transport === "stdio" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.command, hint: s.commandHelp, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { value: draft.command, disabled: busy, onChange: (event) => onChange({ ...draft, command: event.target.value }) }) }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.arguments, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground", value: draft.args, disabled: busy, onChange: (event) => onChange({ ...draft, args: event.target.value }) }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.environment, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground", value: draft.env, disabled: busy, onChange: (event) => onChange({ ...draft, env: event.target.value }) }) })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.environment, hint: server?.envKeys?.length ? `${s.environmentSet}: ${server.envKeys.join(", ")}` : void 0, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "textarea",
+          {
+            className: "min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground",
+            value: draft.env,
+            placeholder: server?.envKeys?.length ? s.environmentPlaceholder : void 0,
+            disabled: busy,
+            onChange: (event) => onChange({ ...draft, env: event.target.value })
+          }
+        ) })
       ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.url, htmlFor: "mcp-url", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-url", value: draft.url, disabled: busy, onChange: (event) => onChange({ ...draft, url: event.target.value }) }) }) })
     ] }),
     server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DetailBlock, { icon: Wrench, title: s.tools, hint: s.toolsHint, children: server.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-muted-foreground", children: s.noTools }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -431,6 +451,7 @@ function McpServersPage() {
   const [removing, setRemoving] = (0, import_react3.useState)();
   const [removeError, setRemoveError] = (0, import_react3.useState)();
   const [showTools, setShowTools] = (0, import_react3.useState)(false);
+  const busyRef = (0, import_react3.useRef)(false);
   const load = (0, import_react3.useCallback)(async () => {
     setLoading(true);
     setLoadError(false);
@@ -460,12 +481,18 @@ function McpServersPage() {
   const bridged = rows.reduce((total, server) => total + server.toolCount, 0);
   const selected = editor?.key != null ? rows.find((server) => serverKey(server) === editor.key) : void 0;
   const closeEditor = () => {
+    if (busyRef.current) return;
     setEditor(void 0);
     setActionError(void 0);
     setShowTools(false);
   };
   const save = async () => {
-    if (!editor) return;
+    if (!editor || busyRef.current) return;
+    if (editor.key !== null && !selected) {
+      setActionError(s.serverChanged);
+      return;
+    }
+    busyRef.current = true;
     setSaving(true);
     setBusy(true);
     setActionError(void 0);
@@ -474,8 +501,9 @@ function McpServersPage() {
         await apiJson("/plugins/mcp/api/transfer", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ fromScope: selected.scope, name: selected.name, toScope: editor.draft.scope })
+          body: JSON.stringify({ fromScope: selected.scope, name: selected.name, toScope: editor.draft.scope, expectedRevision: editor.draft.revision ?? 0 })
         });
+        setEditor((current) => current ? { ...current, key: serverKey({ scope: editor.draft.scope, name: selected.name }) } : current);
       }
       const path = selected ? `/plugins/mcp/api/servers/${encodeURIComponent(selected.name)}` : "/plugins/mcp/api/servers";
       await apiJson(path, {
@@ -489,12 +517,14 @@ function McpServersPage() {
       setActionError(utils.apiErrorMessage(error) || s.saveError);
       await load();
     } finally {
+      busyRef.current = false;
       setSaving(false);
       setBusy(false);
     }
   };
   const reconnect = async () => {
-    if (!selected || busy || !canReconnect(selected, canManageInstance)) return;
+    if (!selected || busyRef.current || !canReconnect(selected, canManageInstance)) return;
+    busyRef.current = true;
     const target = selected;
     const key = serverKey(target);
     setReconnectingKey(key);
@@ -518,13 +548,15 @@ function McpServersPage() {
         toast(message, "error");
       } else toast(s.reconnectSuccess.replace("{name}", target.name));
     } finally {
+      busyRef.current = false;
       setReconnectingKey(void 0);
       setBusy(false);
     }
   };
   const reconnectAll = async () => {
     const targets = reconnectableFailures;
-    if (busy || targets.length === 0) return;
+    if (busyRef.current || targets.length === 0) return;
+    busyRef.current = true;
     setReconnectingAll(true);
     setBusy(true);
     setActionError(void 0);
@@ -547,13 +579,15 @@ function McpServersPage() {
       if (failed === 0) toast(s.reconnectAllSuccess.replace("{n}", String(succeeded)));
       else toast(s.reconnectAllPartial.replace("{succeeded}", String(succeeded)).replace("{failed}", String(failed)), "error");
     } finally {
+      busyRef.current = false;
       setReconnectingAll(false);
       setBusy(false);
     }
   };
   const removeServer = async () => {
     const target = removing;
-    if (!target) return;
+    if (!target || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setActionError(void 0);
     setRemoveError(void 0);
@@ -572,16 +606,17 @@ function McpServersPage() {
       setRemoveError(message);
       throw error;
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
   const openServer = (server) => {
-    if (busy) return;
+    if (busyRef.current) return;
     setActionError(void 0);
     setEditor({ key: serverKey(server), draft: serverDraft(server) });
   };
   const addServer = () => {
-    if (busy) return;
+    if (busyRef.current) return;
     setActionError(void 0);
     setEditor({ key: null, draft: emptyDraft("personal") });
   };
@@ -689,7 +724,7 @@ function McpServersPage() {
             onSave: () => void save(),
             onReconnect: () => void reconnect(),
             onRemove: () => {
-              if (selected) {
+              if (selected && !busyRef.current) {
                 setRemoveError(void 0);
                 setRemoving(selected);
               }
@@ -724,8 +759,10 @@ function McpServersPage() {
             pendingLabel: s.removingServer,
             error: removeError,
             onClose: () => {
-              setRemoving(void 0);
-              setRemoveError(void 0);
+              if (!busyRef.current) {
+                setRemoving(void 0);
+                setRemoveError(void 0);
+              }
             },
             onConfirm: removeServer
           }
