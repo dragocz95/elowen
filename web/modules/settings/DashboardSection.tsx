@@ -11,8 +11,9 @@ import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useConfig, useBrainModels, useDashRecap } from '../../lib/queries';
-import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
+import { useUpdateConfig } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
+import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 
 /** Refresh rates offered for the digest. Presets rather than a free number: what matters is the shape
@@ -28,6 +29,7 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
   const { data: config } = useConfig();
   const { data: brainModels } = useBrainModels();
   const recap = useDashRecap();
+  const updateConfig = useUpdateConfig();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -64,7 +66,7 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
   }, [brainModels, providerId]);
 
   const save = async () => {
-    await elowenClient.updateConfig({
+    await updateConfig.mutateAsync({
       dashboard: {
         recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled,
         digestPerDay: perDay,

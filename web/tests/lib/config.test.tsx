@@ -9,8 +9,8 @@ import { useUpdateConfig } from '../../lib/mutations';
 
 let body: unknown = null;
 const server = setupServer(
-  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], security: { tokenTtlDays: 30 } })),
-  http.put('*/api/config', async ({ request }) => { body = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], security: { tokenTtlDays: 45 } }); }),
+  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], security: { tokenTtlDays: 30 }, revision: 7 })),
+  http.put('*/api/config', async ({ request }) => { body = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], security: { tokenTtlDays: 45 }, revision: 8 }); }),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
 
@@ -26,5 +26,16 @@ describe('config hooks', () => {
     result.current.mutate({ security: { tokenTtlDays: 45 } });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(body).toMatchObject({ security: { tokenTtlDays: 45 } });
+  });
+
+  it('sends the cached revision and stores the canonical response', async () => {
+    const client = new QueryClient();
+    client.setQueryData(['config'], { revision: 7, security: { tokenTtlDays: 30 } });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    const { result } = renderHook(() => useUpdateConfig(), { wrapper });
+    result.current.mutate({ security: { tokenTtlDays: 45 } });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(body).toMatchObject({ security: { tokenTtlDays: 45 }, expectedRevision: 7 });
+    expect(client.getQueryData(['config'])).toMatchObject({ revision: 8, security: { tokenTtlDays: 45 } });
   });
 });

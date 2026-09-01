@@ -18,6 +18,8 @@ export interface ElowenConfig {
   dashboard?: DashboardConfig;
 }
 
+export interface ConfigSnapshot extends ElowenConfig { revision: number }
+
 /** Mirror of the daemon's dashboard config block. */
 interface DashboardConfig {
   recapEnabled: boolean;
@@ -477,10 +479,20 @@ interface PluginCapabilities {
 }
 
 /** GET /plugins/:name — the detail behind each plugin's own settings section. */
+export interface PluginConfigSaveResponse {
+  ok: true;
+  pending?: boolean;
+  revision?: number;
+  config?: Record<string, unknown>;
+  secretsSet?: string[];
+}
+
 export interface PluginDetail extends PluginInfo {
   configSchema: PluginConfigField[];
   config: Record<string, unknown>;
   secretsSet: string[];
+  /** Revision of the shared config snapshot used by conditional plugin writes. */
+  revision?: number;
   /** Summary of the plugin's persistent data directory (`pluginDataRoot/<name>`). `path` is `''` and
    *  `exists:false` when the data root is unset or the name is unsafe; `files`/`bytes` are recursive totals. */
   data: { path: string; exists: boolean; files: number; bytes: number };

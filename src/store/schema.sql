@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '');
-CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0);
 -- `id` is AUTOINCREMENT, not a bare rowid: durable account-owned rows reference it, and a plain rowid
 -- is reused after the highest-numbered user is deleted. AUTOINCREMENT keeps the counter monotonic in
 -- sqlite_sequence so an id is never handed out twice. See db.ts v7.

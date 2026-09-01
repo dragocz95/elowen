@@ -1,4 +1,4 @@
-import type { ElowenConfig, ConfigPatch, DashRecap, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, BrainGoal, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, Project, ProjectSummary, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
+import type { ConfigSnapshot, ConfigPatch, DashRecap, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginConfigSaveResponse, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, BrainGoal, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, Project, ProjectSummary, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
 import { clearToken } from './token';
 import type { BrainBinding } from './brainSession';
 
@@ -102,8 +102,8 @@ export const elowenClient = {
   sessionPane: (name: string, ansi = false) => req<{ pane: string }>(`/sessions/${encodeURIComponent(name)}/pane${ansi ? '?ansi=1' : ''}`),
   // Enabled plugins with a browser UI (menu metadata + bundle URL). `lang` localizes menu labels.
   pluginUi: (lang?: string) => req<PluginUiListing[]>(`/plugins/ui${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`),
-  getConfig: () => req<ElowenConfig>('/config'),
-  updateConfig: (patch: ConfigPatch) => req<ElowenConfig>('/config', json(patch, 'PUT')),
+  getConfig: () => req<ConfigSnapshot>('/config'),
+  updateConfig: (patch: ConfigPatch, expectedRevision?: number) => req<ConfigSnapshot>('/config', json({ ...patch, ...(expectedRevision === undefined ? {} : { expectedRevision }) }, 'PUT')),
   system: () => req<SystemInfo>('/system'),
   systemReadiness: () => req<SystemReadiness>('/system/readiness'),
   systemUpdate: () => req<{ started: boolean }>('/system/update', json({})),
@@ -132,7 +132,10 @@ export const elowenClient = {
     req<PluginInfo & { pending?: boolean }>(`/plugins/${encodeURIComponent(name)}`, json({ enabled, ...(acknowledgeGrants ? { acknowledgeGrants } : {}) }, 'PATCH')),
   pluginDetail: (name: string) => req<PluginDetail>(`/plugins/${encodeURIComponent(name)}`),
   /** A 202 with `pending` means persistence succeeded and only live activation is delayed. */
-  savePluginConfig: (name: string, values: Record<string, unknown>) => req<{ ok: true; pending?: boolean }>(`/plugins/${encodeURIComponent(name)}/config`, json({ values }, 'PATCH')),
+  savePluginConfig: (name: string, values: Record<string, unknown>, expectedRevision?: number) => req<PluginConfigSaveResponse>(
+    `/plugins/${encodeURIComponent(name)}/config`,
+    json({ values, ...(expectedRevision === undefined ? {} : { expectedRevision }) }, 'PATCH'),
+  ),
   /** Runtime contributions (tools/skills/platforms/hooks/…) owned by one plugin — powers Tools + Hooks detail. */
   pluginContributions: (name: string) => req<PluginContributions>(`/plugins/${encodeURIComponent(name)}/contributions`),
   /** Tail of one plugin's log ring buffer plus derived health. */

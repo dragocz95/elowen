@@ -342,7 +342,7 @@ describe('plugin routes', () => {
     const res = await app.request('/plugins/discord/config', patch(adminTok, { values: { guildId: 'g-live' } }));
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toMatchObject({ ok: true, revision: 1, config: { guildId: 'g-live' }, secretsSet: [] });
     expect(config.pluginConfig('discord').guildId).toBe('g-live');
     expect(reloadPlugins).toHaveBeenCalledTimes(1);
   });
@@ -354,7 +354,7 @@ describe('plugin routes', () => {
     const res = await app.request('/plugins/discord/config', patch(adminTok, { values: { botToken: 'tok-9' } }));
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ ok: true, pending: true });
+    expect(await res.json()).toMatchObject({ ok: true, pending: true, revision: 1, secretsSet: ['botToken'] });
     expect(config.pluginConfig('discord').botToken).toBe('tok-9');
   });
 
@@ -365,8 +365,38 @@ describe('plugin routes', () => {
     const res = await app.request('/plugins/discord/config', patch(adminTok, { values: { guildId: 'g-persisted' } }));
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ ok: true, pending: true });
+    expect(await res.json()).toMatchObject({ ok: true, pending: true, revision: 1, config: { guildId: 'g-persisted' } });
     expect(config.pluginConfig('discord').guildId).toBe('g-persisted');
+  });
+
+  it('rejects a stale full plugin snapshot with the current canonical masked data', async () => {
+    const { app, config, reloadPlugins, adminTok } = setup();
+    const initial = await (await app.request('/plugins/discord', auth(adminTok))).json() as { revision: number; config: Record<string, unknown> };
+
+    const first = await app.request('/plugins/discord/config', patch(adminTok, {
+      values: { ...initial.config, guildId: 'newer' }, expectedRevision: initial.revision,
+    }));
+    expect(first.status).toBe(200);
+    const saved = await first.json() as { revision: number };
+
+    const stale = await app.request('/plugins/discord/config', patch(adminTok, {
+      values: { ...initial.config, guildId: 'stale' }, expectedRevision: initial.revision,
+    }));
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: 'conflict', current: { revision: saved.revision, config: { guildId: 'newer' } } });
+    expect(config.pluginConfig('discord').guildId).toBe('newer');
+    expect(reloadPlugins).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows only one of two concurrent writes from the same revision', async () => {
+    const { app, config, adminTok } = setup();
+    const revision = (await (await app.request('/plugins/discord', auth(adminTok))).json() as { revision: number }).revision;
+    const [a, b] = await Promise.all([
+      app.request('/plugins/discord/config', patch(adminTok, { values: { guildId: 'a' }, expectedRevision: revision })),
+      app.request('/plugins/discord/config', patch(adminTok, { values: { guildId: 'b' }, expectedRevision: revision })),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect(config.pluginConfig('discord').guildId).toMatch(/^[ab]$/);
   });
 
   it('keeps a pre-persistence failure as a real error and never starts reload', async () => {

@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { clearToken } from './token';
 import { QUERY_KEYS } from './queries';
-import type { ConfigPatch, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask } from './types';
+import type { ConfigPatch, ConfigSnapshot, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask } from './types';
 
 /** Admin: clear the caller's brain usage and origin rollup. */
 export function useResetUsage() {
@@ -20,7 +20,13 @@ export function useResetUsage() {
 
 export function useUpdateConfig() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (patch: ConfigPatch) => elowenClient.updateConfig(patch), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.config }) });
+  return useMutation({
+    mutationFn: (patch: ConfigPatch) => {
+      const current = qc.getQueryData<ConfigSnapshot>(QUERY_KEYS.config);
+      return elowenClient.updateConfig(patch, current?.revision);
+    },
+    onSuccess: (snapshot) => { qc.setQueryData(QUERY_KEYS.config, snapshot); },
+  });
 }
 /** Trigger a manual in-place update. The daemon restarts mid-flight, so the System panel just re-polls
  *  /system afterwards to pick up the new version. */
@@ -283,8 +289,16 @@ export function useDeletePluginSubagent() {
 export function useSavePluginConfig() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { name: string; values: Record<string, unknown> }) => elowenClient.savePluginConfig(v.name, v.values),
-    onSuccess: (_r, v) => { void qc.invalidateQueries({ queryKey: ['plugin', v.name] }); void qc.invalidateQueries({ queryKey: ['plugins'] }); void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands }); },
+    mutationFn: (v: { name: string; values: Record<string, unknown>; expectedRevision?: number }) => elowenClient.savePluginConfig(v.name, v.values, v.expectedRevision),
+    onSuccess: (response, v) => {
+      if (response.config && response.secretsSet && response.revision !== undefined) {
+        qc.setQueryData<PluginDetail>(['plugin', v.name], (current) => current ? {
+          ...current, config: response.config!, secretsSet: response.secretsSet!, revision: response.revision,
+        } : current);
+      }
+      void qc.invalidateQueries({ queryKey: ['plugins'] });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
+    },
   });
 }
 /** Destructive — wipe the contents of a plugin's data directory. Refreshes that plugin's detail (data summary). */
@@ -299,8 +313,11 @@ export function useClearPluginData() {
 export function useSaveBrainProviders() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (providers: NonNullable<NonNullable<ConfigPatch['brain']>['providers']>) => elowenClient.updateConfig({ brain: { providers } }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: QUERY_KEYS.config }); void qc.invalidateQueries({ queryKey: ['brain-models'] }); },
+    mutationFn: (providers: NonNullable<NonNullable<ConfigPatch['brain']>['providers']>) => {
+      const current = qc.getQueryData<ConfigSnapshot>(QUERY_KEYS.config);
+      return elowenClient.updateConfig({ brain: { providers } }, current?.revision);
+    },
+    onSuccess: (snapshot) => { qc.setQueryData(QUERY_KEYS.config, snapshot); void qc.invalidateQueries({ queryKey: ['brain-models'] }); },
   });
 }
 export function useBrainOauthDisconnect() {

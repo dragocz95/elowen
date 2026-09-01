@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useSavePluginConfig } from './mutations';
+import { ElowenApiError } from './elowenClient';
 import { useAutoSaveStatus } from './useAutoSaveStatus';
-import type { PluginConfigField, PluginDetail } from './types';
+import type { PluginConfigField, PluginConfigSaveResponse, PluginDetail } from './types';
 
 /** Invalid JSON remains editable but makes the save fail visibly; claiming "Saved" while dropping
  * that field would lose the user's draft on navigation. */
@@ -29,12 +30,15 @@ export interface PluginConfigCommitResult {
   pending: boolean;
 }
 
+export type PluginConfigErrorKind = 'validation' | 'conflict' | 'transport';
+
 export interface PluginConfigDraft {
   values: Record<string, unknown>;
   setValue: (key: string, value: unknown) => void;
   /** Persist one replacement immediately and publish it to the draft only after the save succeeds. */
   commitValue: (key: string, value: unknown) => Promise<PluginConfigCommitResult>;
   status: ReturnType<typeof useAutoSaveStatus>['status'];
+  errorKind: PluginConfigErrorKind | null;
   retry: () => Promise<void>;
   flush: () => Promise<ReturnType<typeof useAutoSaveStatus>['status']>;
   ready: boolean;
@@ -48,12 +52,14 @@ export interface PluginConfigDraft {
  * after acceptance. Everything else keeps the debounced full-snapshot behavior. */
 export function usePluginConfigDraft(
   name: string,
-  detail: Pick<PluginDetail, 'config' | 'configSchema'>,
-  options: { save?: (v: { name: string; values: Record<string, unknown> }) => Promise<unknown> } = {},
+  detail: Pick<PluginDetail, 'config' | 'configSchema' | 'revision'>,
+  options: { save?: (v: { name: string; values: Record<string, unknown>; expectedRevision?: number }) => Promise<unknown> } = {},
 ): PluginConfigDraft {
   const instanceSave = useSavePluginConfig();
-  const save = options.save ?? ((v: { name: string; values: Record<string, unknown> }) => instanceSave.mutateAsync(v));
+  const save = options.save ?? ((v: { name: string; values: Record<string, unknown>; expectedRevision?: number }) => instanceSave.mutateAsync(v));
   const [values, setValues] = useState<Record<string, unknown>>(() => detail.config);
+  const [errorKind, setErrorKind] = useState<PluginConfigErrorKind | null>(null);
+  const revision = useRef<number | undefined>(detail.revision);
   const [seededName, setSeededName] = useState<string>(() => name);
   // Config PATCHes are full snapshots. Serialize them so a slow older response can never land after a
   // newer one and roll the server back while the UI reports the latest generation as saved.
@@ -63,14 +69,30 @@ export function usePluginConfigDraft(
   useEffect(() => {
     if (seededName === name) return;
     setValues(detail.config);
+    revision.current = detail.revision;
     lastPersisted.current = sanitizeConfig(detail.config, detail.configSchema, new Set(), false);
     setSeededName(name);
-  }, [detail.config, detail.configSchema, name, seededName]);
+  }, [detail.config, detail.configSchema, detail.revision, name, seededName]);
 
   const ready = seededName === name;
   const secretKeys = new Set(detail.configSchema.filter((field) => field.type === 'secret').map((field) => field.key));
+  const classifyError = (error: unknown): PluginConfigErrorKind =>
+    error instanceof ElowenApiError ? (error.status === 409 ? 'conflict' : 'transport') : 'validation';
+  const applyCanonical = (snapshot: Record<string, unknown>, response: unknown): void => {
+    if (!response || typeof response !== 'object') return;
+    const result = response as Partial<PluginConfigSaveResponse>;
+    if (typeof result.revision === 'number') revision.current = result.revision;
+    if (!result.config || typeof result.config !== 'object' || Array.isArray(result.config)) return;
+    const canonical = result.config as Record<string, unknown>;
+    lastPersisted.current = sanitizeConfig(canonical, detail.configSchema, new Set(), false);
+    setValues((current) => current === snapshot ? canonical : current);
+  };
   const queueSave = (snapshot: Record<string, unknown>): Promise<unknown> => {
-    const operation = saveChain.current.then(() => save({ name, values: snapshot }));
+    const operation = saveChain.current.then(() => save({
+      name,
+      values: snapshot,
+      ...(revision.current === undefined ? {} : { expectedRevision: revision.current }),
+    }));
     // Keep serialization alive after a rejected write without manufacturing an unhandled sibling promise.
     saveChain.current = operation.then(() => undefined, () => undefined);
     return operation;
@@ -78,13 +100,20 @@ export function usePluginConfigDraft(
   const autosave = useAutoSaveStatus(
     [values],
     async () => {
-      const snapshot = sanitizeConfig(values, detail.configSchema);
-      // Secret-only edits (including an accidental direct caller) do not create a no-op request or a false
-      // "Saved" state. The editor keeps replacement text outside this draft until commitValue is called.
+      let snapshot: Record<string, unknown>;
+      try { snapshot = sanitizeConfig(values, detail.configSchema); }
+      catch (error) { setErrorKind(classifyError(error)); throw error; }
       if (sameSnapshot(snapshot, lastPersisted.current)) return;
-      const response = await queueSave(snapshot);
-      lastPersisted.current = snapshot;
-      return response;
+      setErrorKind(null);
+      try {
+        const response = await queueSave(snapshot);
+        lastPersisted.current = snapshot;
+        applyCanonical(values, response);
+        return response;
+      } catch (error) {
+        setErrorKind(classifyError(error));
+        throw error;
+      }
     },
     { ready, delay: 900 },
   );
@@ -96,16 +125,29 @@ export function usePluginConfigDraft(
     await autosave.flush();
     const isSecret = secretKeys.has(key);
     const next = { ...base, [key]: value };
-    const snapshot = sanitizeConfig(next, detail.configSchema, isSecret ? new Set([key]) : new Set());
-    const response = await queueSave(snapshot);
-    lastPersisted.current = sanitizeConfig(next, detail.configSchema);
+    setErrorKind(null);
+    let response: unknown;
+    try {
+      response = await queueSave(sanitizeConfig(next, detail.configSchema, isSecret ? new Set([key]) : new Set()));
+    } catch (error) {
+      setErrorKind(classifyError(error));
+      throw error;
+    }
+    const canonical = response && typeof response === 'object' && 'config' in response
+      && response.config && typeof response.config === 'object' && !Array.isArray(response.config)
+      ? response.config as Record<string, unknown> : next;
+    if (response && typeof response === 'object' && 'revision' in response && typeof response.revision === 'number') revision.current = response.revision;
+    lastPersisted.current = sanitizeConfig(canonical, detail.configSchema, new Set(), false);
     setValues((current) => {
       if (isSecret) {
-        const sanitized = { ...current };
-        delete sanitized[key];
-        return sanitized;
+        if (current === base) {
+          const sanitized = { ...current };
+          delete sanitized[key];
+          return sanitized;
+        }
+        return current;
       }
-      if (current === base) return next;
+      if (current === base) return canonical;
       // Overlay isolation normally makes this impossible, but preserving a concurrent edit is safer than
       // replacing the whole draft. Its autosave will persist the merged snapshot next.
       return { ...current, [key]: value };
@@ -121,6 +163,7 @@ export function usePluginConfigDraft(
     setValue: (key, value) => { if (!secretKeys.has(key)) setValues((current) => ({ ...current, [key]: value })); },
     commitValue,
     status: autosave.status,
+    errorKind,
     retry: autosave.retry,
     flush: autosave.flush,
     ready,

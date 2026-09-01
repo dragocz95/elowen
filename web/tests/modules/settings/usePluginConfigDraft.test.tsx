@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ElowenApiError } from '../../../lib/elowenClient';
 import type { PluginConfigField, PluginDetail } from '../../../lib/types';
 
 const mutateAsync = vi.hoisted(() => vi.fn());
@@ -7,10 +8,11 @@ vi.mock('../../../lib/mutations', () => ({ useSavePluginConfig: () => ({ mutateA
 
 import { usePluginConfigDraft } from '../../../lib/usePluginConfigDraft';
 
-function pluginDetail(configSchema: PluginConfigField[], config: Record<string, unknown>, secretsSet: string[] = []): PluginDetail {
+function pluginDetail(configSchema: PluginConfigField[], config: Record<string, unknown>, secretsSet: string[] = [], revision?: number): PluginDetail {
   return {
     name: 'test-plugin', version: '1.0.0', description: 'test', source: 'user', enabled: true,
     configurable: true, provides: {}, configSchema, config, secretsSet,
+    ...(revision === undefined ? {} : { revision }),
     data: { path: '', exists: false, files: 0, bytes: 0 },
   };
 }
@@ -67,6 +69,32 @@ describe('usePluginConfigDraft', () => {
     await act(async () => { await result.current.commitValue('token', 'typed-secret'); });
     expect(mutateAsync).toHaveBeenCalledWith({ name: 'test-plugin', values: { token: 'typed-secret' } });
     expect(result.current.values).not.toHaveProperty('token');
+  });
+
+  it('sends the expected revision and adopts the canonical response', async () => {
+    mutateAsync.mockResolvedValue({ ok: true, revision: 8, config: { mode: 'b' }, secretsSet: [] });
+    const detail = pluginDetail([{ key: 'mode', label: 'Mode', type: 'string' }], { mode: 'a' }, [], 7);
+    const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
+
+    act(() => result.current.setValue('mode', 'b'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+
+    expect(mutateAsync).toHaveBeenCalledWith({ name: 'test-plugin', values: { mode: 'b' }, expectedRevision: 7 });
+    expect(result.current.values).toEqual({ mode: 'b' });
+    expect(result.current.errorKind).toBeNull();
+  });
+
+  it('classifies a revision conflict without dropping the local draft', async () => {
+    mutateAsync.mockRejectedValue(new ElowenApiError('conflict', 409, 'conflict', { current: { revision: 8 } }));
+    const detail = pluginDetail([{ key: 'mode', label: 'Mode', type: 'string' }], { mode: 'a' }, [], 7);
+    const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
+
+    act(() => result.current.setValue('mode', 'b'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+
+    expect(result.current.values).toEqual({ mode: 'b' });
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorKind).toBe('conflict');
   });
 
   it('publishes an immediate confirmed value only after the server accepts it', async () => {

@@ -14,6 +14,7 @@ import { registerBrainOAuthRoutes } from './oauth.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../../brain/tools/index.js';
 import { makeToolIconResolver } from '../../../brain/toolIcons.js';
 import { logger } from '../../../shared/logger.js';
+import { ConfigRevisionConflict } from '../../../store/configStore.js';
 
 class PluginConfigValueError extends Error {}
 
@@ -127,13 +128,13 @@ function applied(c: Context, body: Record<string, unknown>, swapped: boolean | u
  *  exception is therefore an activation delay, never a failed save: log the operational fault and return
  *  the same pending contract as an intentional deferral. Persistence exceptions still escape before this
  *  helper is called and remain real request failures. */
-async function appliedConfig(c: Context, name: string, reload: (() => Promise<boolean>) | undefined) {
-  if (!reload) return applied(c, { ok: true }, undefined);
+async function appliedConfig(c: Context, name: string, reload: (() => Promise<boolean>) | undefined, body: Record<string, unknown> = { ok: true }) {
+  if (!reload) return applied(c, body, undefined);
   try {
-    return applied(c, { ok: true }, await reload());
+    return applied(c, body, await reload());
   } catch (error) {
     log.warn(`plugin config persisted but live activation failed for ${name}; activation remains pending`, error);
-    return c.json({ ok: true, pending: true }, 202);
+    return c.json({ ...body, pending: true }, 202);
   }
 }
 
@@ -427,6 +428,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       ...item,
       configSchema: schema,
       ...maskedConfigView(schema, d.config.pluginConfig(name)),
+      revision: d.config.snapshot().revision,
       // Declared capabilities (deny-by-default `{}` when the manifest omits them) so the UI can render the
       // plugin's permission/risk section — what it may mutate, read, and whether it reaches the network.
       capabilities: manifest.capabilities ?? {},
@@ -504,8 +506,11 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const name = c.req.param('name');
     const manifest = manifestOf(name);
     if (!manifest) return c.json({ error: 'unknown plugin' }, 404);
-    const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown> } | null;
+    const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown>; expectedRevision?: unknown } | null;
     if (!b || typeof b.values !== 'object' || b.values === null) return c.json({ error: 'values must be an object' }, 400);
+    if (b.expectedRevision !== undefined && (!Number.isInteger(b.expectedRevision) || (b.expectedRevision as number) < 0)) {
+      return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
+    }
     let stored: Record<string, unknown>;
     try { stored = applyConfigPatch(manifest.configSchema ?? [], d.config.pluginConfig(name), b.values); }
     catch (error) {
@@ -513,8 +518,18 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       throw error;
     }
     // Persistence is the commit point. Any failure here remains a request failure and no reload starts.
-    d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } });
-    return await appliedConfig(c, name, d.brain ? () => d.brain!.reloadPlugins() : undefined);
+    try {
+      d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } }, b.expectedRevision as number | undefined);
+    } catch (error) {
+      if (error instanceof ConfigRevisionConflict) {
+        const current = error.current;
+        return c.json({ error: 'conflict', current: { ...maskedConfigView(manifest.configSchema ?? [], d.config.pluginConfig(name)), revision: current.revision } }, 409);
+      }
+      throw error;
+    }
+    const current = d.config.snapshot();
+    const canonical = { ok: true as const, ...maskedConfigView(manifest.configSchema ?? [], d.config.pluginConfig(name)), revision: current.revision };
+    return await appliedConfig(c, name, d.brain ? () => d.brain!.reloadPlugins() : undefined, canonical);
   });
 
   app.patch('/plugins/:name', async (c) => {
