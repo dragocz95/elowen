@@ -31,7 +31,7 @@ interface DashboardConfig {
 }
 
 /** One agent-written clickable action (a quick-action pill or a recap suggestion). */
-export interface DashAction { label: string; prompt: string }
+interface DashAction { label: string; prompt: string }
 
 /** GET /dash/recap — the personalized dashboard surface, strictly per-caller. */
 export interface DashRecap {
