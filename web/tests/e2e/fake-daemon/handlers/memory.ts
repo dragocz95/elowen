@@ -7,6 +7,7 @@
 // exercise a memory WRITE should model that write deliberately rather than lean on a fixture list.
 import type { Hono } from 'hono';
 import { memories, memoryCategories } from '../../seed/fixtures.ts';
+import { getResponse } from '../overrides.ts';
 
 export function registerMemoryRoutes(app: Hono): void {
   // The web sends `status`/`kind`/`q`/`categoryId` and paginates in the browser, so filtering here only
@@ -15,19 +16,19 @@ export function registerMemoryRoutes(app: Hono): void {
     const status = c.req.query('status') ?? 'active';
     const kind = c.req.query('kind');
     const q = c.req.query('q')?.trim().toLowerCase();
-    let rows = memories;
+    let rows = getResponse('memory', memories);
     if (status && status !== 'all' && status !== '') rows = rows.filter((m) => m.status === status);
     if (kind) rows = rows.filter((m) => m.kind === kind);
     if (q) rows = rows.filter((m) => m.body.toLowerCase().includes(q));
     return c.json(rows);
   });
 
-  app.get('/memory/categories', (c) => c.json(memoryCategories));
+  app.get('/memory/categories', (c) => c.json(getResponse('memory/categories', memoryCategories)));
   app.get('/memory/events', (c) => c.json([]));
   // The detail rail. Without these the rail opens and then throws on an undefined record, which reads in
   // a test run as "the rail does not open" rather than as the missing fixture it is.
   app.get('/memory/:id{[0-9]+}', (c) => {
-    const row = memories.find((m) => m.id === Number(c.req.param('id')));
+    const row = getResponse('memory', memories).find((m) => m.id === Number(c.req.param('id')));
     return row ? c.json(row) : c.json({ error: 'not found' }, 404);
   });
   app.get('/memory/:id{[0-9]+}/events', (c) => c.json([]));

@@ -38,7 +38,7 @@ test('the brain renders every memory on a scrollable, readable canvas', async ({
   await seed.response('memory/categories', categories);
   await app.setViewportSize({ width: 1440, height: 900 });
   await app.goto('/memory');
-  await app.getByRole('button', { name: 'Brain' }).click();
+  await app.getByRole('radio', { name: 'Brain' }).click();
 
   const leaves = app.locator('[data-testid="memory-leaf-node"]');
   await expect(leaves).toHaveCount(450);
