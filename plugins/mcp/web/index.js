@@ -28,20 +28,18 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/plugin-ui-kit/shims/react.cjs
+// node_modules/elowen-plugin-ui-kit/shims/react.cjs
 var require_react = __commonJS({
-  "packages/plugin-ui-kit/shims/react.cjs"(exports, module) {
-    "use strict";
+  "node_modules/elowen-plugin-ui-kit/shims/react.cjs"(exports, module) {
     var runtime2 = typeof window !== "undefined" ? window.ElowenUiRuntime : void 0;
     if (!runtime2) throw new Error("elowen-plugin-ui-kit: window.ElowenUiRuntime is missing \u2014 plugin bundles only run inside the Elowen web app");
     module.exports = runtime2.react;
   }
 });
 
-// packages/plugin-ui-kit/shims/jsx-runtime.cjs
+// node_modules/elowen-plugin-ui-kit/shims/jsx-runtime.cjs
 var require_jsx_runtime = __commonJS({
-  "packages/plugin-ui-kit/shims/jsx-runtime.cjs"(exports, module) {
-    "use strict";
+  "node_modules/elowen-plugin-ui-kit/shims/jsx-runtime.cjs"(exports, module) {
     var runtime2 = typeof window !== "undefined" ? window.ElowenUiRuntime : void 0;
     if (!runtime2) throw new Error("elowen-plugin-ui-kit: window.ElowenUiRuntime is missing \u2014 plugin bundles only run inside the Elowen web app");
     module.exports = runtime2.jsxRuntime;
@@ -65,19 +63,19 @@ function registerMcpUi(registration) {
 // plugins/mcp/web-src/McpServersPage.tsx
 var import_react3 = __toESM(require_react(), 1);
 
-// web/node_modules/lucide-react/dist/esm/createLucideIcon.js
+// node_modules/lucide-react/dist/esm/createLucideIcon.js
 var import_react2 = __toESM(require_react());
 
-// web/node_modules/lucide-react/dist/esm/shared/src/utils.js
+// node_modules/lucide-react/dist/esm/shared/src/utils.js
 var toKebabCase = (string) => string.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 var mergeClasses = (...classes) => classes.filter((className, index, array) => {
   return Boolean(className) && className.trim() !== "" && array.indexOf(className) === index;
 }).join(" ").trim();
 
-// web/node_modules/lucide-react/dist/esm/Icon.js
+// node_modules/lucide-react/dist/esm/Icon.js
 var import_react = __toESM(require_react());
 
-// web/node_modules/lucide-react/dist/esm/defaultAttributes.js
+// node_modules/lucide-react/dist/esm/defaultAttributes.js
 var defaultAttributes = {
   xmlns: "http://www.w3.org/2000/svg",
   width: 24,
@@ -90,7 +88,7 @@ var defaultAttributes = {
   strokeLinejoin: "round"
 };
 
-// web/node_modules/lucide-react/dist/esm/Icon.js
+// node_modules/lucide-react/dist/esm/Icon.js
 var Icon = (0, import_react.forwardRef)(
   ({
     color = "currentColor",
@@ -122,7 +120,7 @@ var Icon = (0, import_react.forwardRef)(
   }
 );
 
-// web/node_modules/lucide-react/dist/esm/createLucideIcon.js
+// node_modules/lucide-react/dist/esm/createLucideIcon.js
 var createLucideIcon = (iconName, iconNode) => {
   const Component = (0, import_react2.forwardRef)(
     ({ className, ...props }, ref) => (0, import_react2.createElement)(Icon, {
@@ -136,7 +134,7 @@ var createLucideIcon = (iconName, iconNode) => {
   return Component;
 };
 
-// web/node_modules/lucide-react/dist/esm/icons/blocks.js
+// node_modules/lucide-react/dist/esm/icons/blocks.js
 var Blocks = createLucideIcon("Blocks", [
   ["rect", { width: "7", height: "7", x: "14", y: "3", rx: "1", key: "6d4xhi" }],
   [
@@ -148,7 +146,7 @@ var Blocks = createLucideIcon("Blocks", [
   ]
 ]);
 
-// web/node_modules/lucide-react/dist/esm/icons/plug-zap.js
+// node_modules/lucide-react/dist/esm/icons/plug-zap.js
 var PlugZap = createLucideIcon("PlugZap", [
   [
     "path",
@@ -160,13 +158,13 @@ var PlugZap = createLucideIcon("PlugZap", [
   ["path", { d: "m18 3-4 4h6l-4 4", key: "16psg9" }]
 ]);
 
-// web/node_modules/lucide-react/dist/esm/icons/plus.js
+// node_modules/lucide-react/dist/esm/icons/plus.js
 var Plus = createLucideIcon("Plus", [
   ["path", { d: "M5 12h14", key: "1ays0h" }],
   ["path", { d: "M12 5v14", key: "s699le" }]
 ]);
 
-// web/node_modules/lucide-react/dist/esm/icons/refresh-cw.js
+// node_modules/lucide-react/dist/esm/icons/refresh-cw.js
 var RefreshCw = createLucideIcon("RefreshCw", [
   ["path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", key: "v9h5vc" }],
   ["path", { d: "M21 3v5h-5", key: "1q7to0" }],
@@ -174,13 +172,13 @@ var RefreshCw = createLucideIcon("RefreshCw", [
   ["path", { d: "M8 16H3v5", key: "1cv678" }]
 ]);
 
-// web/node_modules/lucide-react/dist/esm/icons/search.js
+// node_modules/lucide-react/dist/esm/icons/search.js
 var Search = createLucideIcon("Search", [
   ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }],
   ["path", { d: "m21 21-4.3-4.3", key: "1qie3q" }]
 ]);
 
-// web/node_modules/lucide-react/dist/esm/icons/server.js
+// node_modules/lucide-react/dist/esm/icons/server.js
 var Server = createLucideIcon("Server", [
   ["rect", { width: "20", height: "8", x: "2", y: "2", rx: "2", ry: "2", key: "ngkwjq" }],
   ["rect", { width: "20", height: "8", x: "2", y: "14", rx: "2", ry: "2", key: "iecqi9" }],
@@ -188,7 +186,7 @@ var Server = createLucideIcon("Server", [
   ["line", { x1: "6", x2: "6.01", y1: "18", y2: "18", key: "nzw8ys" }]
 ]);
 
-// web/node_modules/lucide-react/dist/esm/icons/trash-2.js
+// node_modules/lucide-react/dist/esm/icons/trash-2.js
 var Trash2 = createLucideIcon("Trash2", [
   ["path", { d: "M3 6h18", key: "d0wm0j" }],
   ["path", { d: "M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6", key: "4alrt4" }],
@@ -197,7 +195,7 @@ var Trash2 = createLucideIcon("Trash2", [
   ["line", { x1: "14", x2: "14", y1: "11", y2: "17", key: "xtxkd" }]
 ]);
 
-// web/node_modules/lucide-react/dist/esm/icons/triangle-alert.js
+// node_modules/lucide-react/dist/esm/icons/triangle-alert.js
 var TriangleAlert = createLucideIcon("TriangleAlert", [
   [
     "path",
@@ -210,7 +208,7 @@ var TriangleAlert = createLucideIcon("TriangleAlert", [
   ["path", { d: "M12 17h.01", key: "p32p05" }]
 ]);
 
-// web/node_modules/lucide-react/dist/esm/icons/wrench.js
+// node_modules/lucide-react/dist/esm/icons/wrench.js
 var Wrench = createLucideIcon("Wrench", [
   [
     "path",
@@ -291,6 +289,12 @@ function statusDot(server) {
 function scopeLabel(scope, strings) {
   return scope === "instance" ? strings.scopeInstance : strings.scopePersonal;
 }
+function canReconnect(server, canManageInstance) {
+  return server.enabled && (server.transport !== "stdio" || canManageInstance);
+}
+function reconnectTargets(servers, canManageInstance) {
+  return servers.filter((server) => canReconnect(server, canManageInstance) && (server.status === "disconnected" || server.status === "error"));
+}
 function McpServerRow({ server, showScope, selected, onOpen }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings("mcp");
@@ -300,8 +304,7 @@ function McpServerRow({ server, showScope, selected, onOpen }) {
     {
       selected,
       "aria-selected": selected,
-      onOpen,
-      openLabel: s.openServer.replace("{name}", server.name),
+      ...onOpen ? { onOpen, openLabel: s.openServer.replace("{name}", server.name) } : {},
       children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.DataTableCell, { lines: "auto", title: label, className: "flex items-center justify-center", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-2 w-2 rounded-full ${statusDot(server)}`, "aria-hidden": true }),
@@ -326,10 +329,22 @@ function McpServerRow({ server, showScope, selected, onOpen }) {
     }
   );
 }
-function ServerEditor({ server, draft, saving, busy, error, canManageInstance, onChange, onSave, onReconnect, onRemove, onShowTools }) {
+function ServerEditor({ server, draft, saving, busy, reconnecting, error, canManageInstance, onChange, onSave, onReconnect, onRemove, onShowTools }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings("mcp");
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.enabled, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex h-9 items-center gap-2 text-sm text-muted-foreground", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        C.Toggle,
+        {
+          checked: draft.enabled,
+          onChange: (enabled) => onChange({ ...draft, enabled }),
+          label: `${draft.name || s.addServer}: ${s.enabled}`,
+          disabled: busy
+        }
+      ),
+      draft.enabled ? s.stateEnabled : s.stateDisabled
+    ] }) }),
     server ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-2", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center gap-2", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { children: server.transport.toUpperCase() }),
@@ -339,13 +354,14 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
       server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-destructive", children: server.lastError }) : null
     ] }) : null,
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "grid grid-cols-1 gap-3 sm:grid-cols-2", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.name, htmlFor: "mcp-name", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-name", value: draft.name, disabled: Boolean(server), onChange: (event) => onChange({ ...draft, name: event.target.value }) }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.name, htmlFor: "mcp-name", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-name", value: draft.name, disabled: busy || Boolean(server), onChange: (event) => onChange({ ...draft, name: event.target.value }) }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.scope, hint: s.scopeHelp, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         C.SelectMenu,
         {
           label: s.scope,
           value: draft.scope,
           onChange: (scope) => onChange({ ...draft, scope }),
+          disabled: busy,
           options: [
             { value: "personal", label: s.scopePersonal },
             ...canManageInstance ? [{ value: "instance", label: s.scopeInstance }] : []
@@ -358,15 +374,15 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
           label: s.transport,
           value: draft.transport,
           onChange: (transport) => onChange({ ...draft, transport }),
+          disabled: busy,
           options: [{ value: "stdio", label: "stdio" }, { value: "http", label: "HTTP" }, { value: "sse", label: "SSE" }]
         }
       ) }) }),
       draft.transport === "stdio" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.command, hint: s.commandHelp, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { value: draft.command, onChange: (event) => onChange({ ...draft, command: event.target.value }) }) }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.arguments, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground", value: draft.args, onChange: (event) => onChange({ ...draft, args: event.target.value }) }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.environment, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground", value: draft.env, onChange: (event) => onChange({ ...draft, env: event.target.value }) }) })
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.url, htmlFor: "mcp-url", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-url", value: draft.url, onChange: (event) => onChange({ ...draft, url: event.target.value }) }) }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Toggle, { checked: draft.enabled, onChange: (enabled) => onChange({ ...draft, enabled }), label: s.enabled }) })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.command, hint: s.commandHelp, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { value: draft.command, disabled: busy, onChange: (event) => onChange({ ...draft, command: event.target.value }) }) }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.arguments, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground", value: draft.args, disabled: busy, onChange: (event) => onChange({ ...draft, args: event.target.value }) }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.environment, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs text-foreground", value: draft.env, disabled: busy, onChange: (event) => onChange({ ...draft, env: event.target.value }) }) })
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.url, htmlFor: "mcp-url", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-url", value: draft.url, disabled: busy, onChange: (event) => onChange({ ...draft, url: event.target.value }) }) }) })
     ] }),
     server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DetailBlock, { icon: Wrench, title: s.tools, hint: s.toolsHint, children: server.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-muted-foreground", children: s.noTools }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
       C.SelectionSummary,
@@ -389,7 +405,7 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3", children: [
       server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost-danger", icon: Trash2, onClick: onRemove, disabled: busy, children: s.removeServer }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {}),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center gap-2", children: [
-        server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost", icon: RefreshCw, onClick: onReconnect, disabled: busy, children: s.reconnectServer }) : null,
+        server && canReconnect(server, canManageInstance) ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost", icon: RefreshCw, onClick: onReconnect, disabled: busy, children: reconnecting ? s.reconnectingServer : s.reconnectServer }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "accent", onClick: onSave, disabled: busy, children: saving ? s.saving : s.save })
       ] })
     ] })
@@ -399,6 +415,7 @@ function McpServersPage() {
   const { components: C, hooks, utils } = runtime();
   const s = hooks.usePluginStrings("mcp");
   const { t } = hooks.useTranslation();
+  const { toast } = hooks.useToast();
   const [data, setData] = (0, import_react3.useState)();
   const [loading, setLoading] = (0, import_react3.useState)(true);
   const [loadError, setLoadError] = (0, import_react3.useState)(false);
@@ -407,6 +424,8 @@ function McpServersPage() {
   const [page, setPage] = (0, import_react3.useState)(0);
   const [editor, setEditor] = (0, import_react3.useState)();
   const [saving, setSaving] = (0, import_react3.useState)(false);
+  const [reconnectingKey, setReconnectingKey] = (0, import_react3.useState)();
+  const [reconnectingAll, setReconnectingAll] = (0, import_react3.useState)(false);
   const [busy, setBusy] = (0, import_react3.useState)(false);
   const [actionError, setActionError] = (0, import_react3.useState)();
   const [removing, setRemoving] = (0, import_react3.useState)();
@@ -428,6 +447,7 @@ function McpServersPage() {
   }, [load]);
   const canManageInstance = data?.canManageInstance === true;
   const rows = (0, import_react3.useMemo)(() => data ? allServers(data) : [], [data]);
+  const reconnectableFailures = (0, import_react3.useMemo)(() => reconnectTargets(rows, canManageInstance), [rows, canManageInstance]);
   const filtered = (0, import_react3.useMemo)(() => filterServers(rows, query, scope), [rows, query, scope]);
   (0, import_react3.useEffect)(() => {
     setPage(0);
@@ -474,19 +494,60 @@ function McpServersPage() {
     }
   };
   const reconnect = async () => {
-    if (!selected) return;
+    if (!selected || busy || !canReconnect(selected, canManageInstance)) return;
+    const target = selected;
+    const key = serverKey(target);
+    setReconnectingKey(key);
     setBusy(true);
     setActionError(void 0);
     try {
-      await apiJson("/plugins/mcp/api/reconnect", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scope: selected.scope, name: selected.name })
-      });
+      let refusal;
+      try {
+        await apiJson("/plugins/mcp/api/reconnect", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ scope: target.scope, name: target.name })
+        });
+      } catch (error) {
+        refusal = error;
+      }
       await load();
-    } catch {
-      setActionError(s.actionError);
+      if (refusal) {
+        const message = utils.apiErrorMessage(refusal) || s.actionError;
+        setActionError(message);
+        toast(message, "error");
+      } else toast(s.reconnectSuccess.replace("{name}", target.name));
     } finally {
+      setReconnectingKey(void 0);
+      setBusy(false);
+    }
+  };
+  const reconnectAll = async () => {
+    const targets = reconnectableFailures;
+    if (busy || targets.length === 0) return;
+    setReconnectingAll(true);
+    setBusy(true);
+    setActionError(void 0);
+    let succeeded = 0;
+    let failed = 0;
+    try {
+      for (const target of targets) {
+        try {
+          await apiJson("/plugins/mcp/api/reconnect", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ scope: target.scope, name: target.name })
+          });
+          succeeded += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      await load();
+      if (failed === 0) toast(s.reconnectAllSuccess.replace("{n}", String(succeeded)));
+      else toast(s.reconnectAllPartial.replace("{succeeded}", String(succeeded)).replace("{failed}", String(failed)), "error");
+    } finally {
+      setReconnectingAll(false);
       setBusy(false);
     }
   };
@@ -515,14 +576,21 @@ function McpServersPage() {
     }
   };
   const openServer = (server) => {
+    if (busy) return;
     setActionError(void 0);
     setEditor({ key: serverKey(server), draft: serverDraft(server) });
   };
   const addServer = () => {
+    if (busy) return;
     setActionError(void 0);
     setEditor({ key: null, draft: emptyDraft("personal") });
   };
-  const addButton = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "accent", icon: Plus, onClick: addServer, children: s.addServer });
+  const addButton = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "accent", icon: Plus, onClick: addServer, disabled: busy, children: s.addServer });
+  const reconnectAllButton = reconnectableFailures.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost", icon: RefreshCw, onClick: () => void reconnectAll(), disabled: busy, children: reconnectingAll ? s.reconnectingAll : s.reconnectAll }) : null;
+  const pageActions = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center gap-2", children: [
+    reconnectAllButton,
+    addButton
+  ] });
   const ready = !loading && !loadError && data !== void 0;
   const searchField = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
     C.RegisterSearch,
@@ -576,7 +644,7 @@ function McpServersPage() {
               server,
               showScope: canManageInstance,
               selected: editor?.key === serverKey(server),
-              onOpen: () => openServer(server)
+              onOpen: busy ? void 0 : () => openServer(server)
             },
             serverKey(server)
           ))
@@ -597,7 +665,7 @@ function McpServersPage() {
         icon: Blocks,
         mascot: loadError ? "error" : loading ? "saving" : "idle",
         status: !loading && !loadError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "workspace-status", children: s.workspaceReady }) : void 0,
-        action: addButton,
+        action: pageActions,
         metrics: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.WorkspaceMetric, { label: s.statusConnected, value: connected, icon: PlugZap }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.WorkspaceMetric, { label: s.statusError, value: failing, icon: TriangleAlert }),
@@ -614,6 +682,7 @@ function McpServersPage() {
             draft: editor.draft,
             saving,
             busy,
+            reconnecting: reconnectingKey === editor.key,
             error: actionError,
             canManageInstance,
             onChange: (draft) => setEditor((current) => current ? { ...current, draft } : current),

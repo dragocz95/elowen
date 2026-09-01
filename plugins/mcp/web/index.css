@@ -28,6 +28,9 @@
   .h-2 {
     height: calc(var(--spacing, 0.25rem) * 2);
   }
+  .h-9 {
+    height: calc(var(--spacing, 0.25rem) * 9);
+  }
   .min-h-24 {
     min-height: calc(var(--spacing, 0.25rem) * 24);
   }

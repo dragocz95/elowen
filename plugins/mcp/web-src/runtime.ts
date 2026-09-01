@@ -3,7 +3,7 @@ import type { ComponentType, ReactNode } from 'react';
 export type McpScope = 'personal' | 'instance';
 export type McpTransport = 'stdio' | 'http' | 'sse';
 
-export interface McpToolInfo {
+interface McpToolInfo {
   name: string;
   title?: string;
   description?: string;
@@ -88,6 +88,7 @@ interface McpRuntime {
   hooks: {
     usePluginStrings(plugin: string): Record<string, string>;
     useTranslation(): { t: { common: { close: string }; pluginUi: { eyebrow: string } } };
+    useToast(): { toast(message: string, tone?: 'ok' | 'error'): void };
   };
   utils: {
     /** The daemon's own refusal text when it sent one, rather than a bare status line. */

@@ -1,20 +1,44 @@
 {
   "name": "mcp",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "apiVersion": "1",
+  "requiresCore": "0.28.24",
   "description": "Connect external MCP servers to the assistant’s tools.",
   "entry": "index.mjs",
-  "icons": { "mcp__*": "🧩", "*McpServer*": "🧩", "ListMcpResources": "🧩", "ReadMcpResource": "🧩" },
+  "icons": {
+    "mcp__*": "🧩",
+    "*McpServer*": "🧩",
+    "ListMcpResources": "🧩",
+    "ReadMcpResource": "🧩"
+  },
   "provides": {
-    "tools": ["AddMcpServer", "ListMcpServers", "RemoveMcpServer", "ReconnectMcpServer", "ListMcpResources", "ReadMcpResource", "mcp__*"],
-    "apiRoutes": ["servers", "reconnect", "transfer"]
+    "tools": [
+      "AddMcpServer",
+      "ListMcpServers",
+      "RemoveMcpServer",
+      "ReconnectMcpServer",
+      "ListMcpResources",
+      "ReadMcpResource",
+      "mcp__*"
+    ],
+    "apiRoutes": [
+      "servers",
+      "reconnect",
+      "transfer"
+    ]
   },
   "web": {
     "entry": "web/index.js",
     "css": "web/index.css",
     "requiresApiVersion": 11,
     "navKind": "infrastructure",
-    "nav": [{ "label": "MCP", "icon": "Blocks", "route": "" }],
+    "nav": [
+      {
+        "label": "MCP",
+        "icon": "Blocks",
+        "route": ""
+      }
+    ],
     "strings": {
       "title": "MCP",
       "description": "Connect external MCP servers and control who can use their tools.",
@@ -22,6 +46,12 @@
       "addServer": "Add server",
       "removeServer": "Remove server",
       "reconnectServer": "Reconnect",
+      "reconnectingServer": "Reconnecting…",
+      "reconnectSuccess": "MCP server “{name}” reconnected.",
+      "reconnectAll": "Reconnect all",
+      "reconnectingAll": "Reconnecting all…",
+      "reconnectAllSuccess": "Reconnected {n} MCP servers.",
+      "reconnectAllPartial": "Reconnect finished: {succeeded} reconnected, {failed} failed.",
       "name": "Name",
       "scope": "Ownership",
       "scopePersonal": "Personal",
@@ -34,6 +64,8 @@
       "environment": "Environment variables",
       "url": "URL",
       "enabled": "Enabled",
+      "stateEnabled": "Enabled",
+      "stateDisabled": "Disabled",
       "statusConnected": "Connected",
       "statusDisconnected": "Disconnected",
       "statusError": "Error",
@@ -61,8 +93,16 @@
       "saving": "Saving…"
     }
   },
-  "deferLoading": ["ListMcpResources", "ReadMcpResource"],
-  "capabilities": { "reads": ["db"] },
+  "deferLoading": [
+    "ListMcpResources",
+    "ReadMcpResource"
+  ],
+  "capabilities": {
+    "reads": [
+      "db"
+    ],
+    "network": true
+  },
   "configSchema": [
     {
       "key": "sec_timeouts",
