@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { UserStore } from '../../src/store/userStore.js';
-import { UserPluginConfigStore } from '../../src/store/userPluginConfigStore.js';
+import { UserPluginConfigRevisionConflict, UserPluginConfigStore } from '../../src/store/userPluginConfigStore.js';
 
 function setup() {
   const db = openDb(':memory:');
@@ -30,11 +30,15 @@ describe('UserPluginConfigStore', () => {
     expect(store.get(amy.id, 'crm')).toEqual({});
   });
 
-  it('drops the row when the last value is cleared, so "empty" is one state and not two', () => {
+  it('retains an empty tombstone so clearing preserves the CAS generation', () => {
     const { db, store, amy } = setup();
-    store.set(amy.id, 'crm', { key: 'amy' });
-    store.set(amy.id, 'crm', {});
-    expect((db.prepare('SELECT COUNT(*) c FROM user_plugin_config').get() as { c: number }).c).toBe(0);
+    const firstRevision = store.set(amy.id, 'crm', { key: 'amy' }, 0);
+    const clearedRevision = store.set(amy.id, 'crm', {}, firstRevision);
+
+    expect((db.prepare('SELECT COUNT(*) c FROM user_plugin_config').get() as { c: number }).c).toBe(1);
+    expect(store.snapshot(amy.id, 'crm')).toEqual({ config: {}, revision: clearedRevision });
+    expect(() => store.set(amy.id, 'crm', { key: 'stale' }, firstRevision))
+      .toThrow(UserPluginConfigRevisionConflict);
   });
 
   it('goes with the account when it is deleted', () => {
