@@ -1,0 +1,61 @@
+# Scope
+
+Audit of the registry plugin `image-gen` at `/var/www/elowen-plugins/plugins/image-gen`, including its manifest-driven Settings → Plugins workspace, lifecycle actions, generated-image persistence, and the host APIs that read/write plugin configuration. The plugin has no custom `web` bundle, `userConfigSchema`, or plugin-owned API route; its browser surface is entirely the host's generic plugin workspace.
+
+Authoritative plugin sources:
+
+- `/var/www/elowen-plugins/plugins/image-gen/elowen-plugin.json:1-38`
+- `/var/www/elowen-plugins/plugins/image-gen/index.mjs:1-83`
+
+# Surface inventory
+
+| surface | files/lines | current persistence pattern | verdict |
+|---|---|---|---|
+| Settings → Plugins installed catalog row | `/var/www/elowen/web/modules/settings/PluginsSection.tsx:194-317,348-416`; `/var/www/elowen/web/lib/mutations.ts:130-187`; `/var/www/elowen/web/lib/elowenClient.ts:126-166`; `/var/www/elowen/src/api/routes/plugins/index.ts:520-579` | Enable/disable is an immediate explicit `PATCH /plugins/:name`; update, install, restore, and uninstall/remove are explicit lifecycle actions. Destructive removal is confirmed. | N/A |
+| Plugin detail Setup tab — required OpenAI provider selector | Plugin manifest `/var/www/elowen-plugins/plugins/image-gen/elowen-plugin.json:17-25`; host workspace `/var/www/elowen/web/modules/settings/PluginDetail.tsx:59-65,114-135`; field renderer `/var/www/elowen/web/modules/settings/PluginConfigEditor.tsx:718-720`; persistence `/var/www/elowen/web/lib/usePluginConfigDraft.ts:43-112` | Shared `provider` picker is filtered to configured, keyed `openai` providers (`PluginConfigEditor.tsx:530-540`). Changes enter the shared draft and save after a 900 ms debounce (`usePluginConfigDraft.ts:72-80`). Saving is serialized, flushed on teardown, and exposes saving/saved/error+retry through the workspace toolbar (`PluginDetail.tsx:102-111`; `/var/www/elowen/web/components/ui/AutoSaveStatus.tsx:10-27`). | Partial — persistence is compliant, but deferred runtime activation is not distinguished from ordinary Saved, and the API does not validate provider ids. |
+| Plugin detail Behavior tab — model picker | Manifest `/var/www/elowen-plugins/plugins/image-gen/elowen-plugin.json:27-31`; workspace classification `/var/www/elowen/web/modules/settings/PluginDetail.tsx:58-65,138-140`; picker `/var/www/elowen/web/modules/settings/PluginConfigEditor.tsx:713-715`; `/var/www/elowen/web/components/ui/BrainModelField.tsx:14-61` | Shared searchable model catalog auto-saves through the same full-snapshot draft. A stale stored model remains selectable/pinned (`BrainModelField.tsx:28-32,48-58`), preventing silent loss. | Partial — UI constrains normal selection, but `PATCH /plugins/:name/config` has no model-specific validation, so direct/legacy arbitrary values can be persisted and passed through `resolveModel` (`index.mjs:14-20`). Deferred activation is also reported only as Saved. |
+| Plugin detail Behavior tab — output size input | Manifest `/var/www/elowen-plugins/plugins/image-gen/elowen-plugin.json:33-37`; renderer `/var/www/elowen/web/modules/settings/PluginConfigEditor.tsx:696-708`; draft `/var/www/elowen/web/lib/usePluginConfigDraft.ts:66-80`; route validation `/var/www/elowen/src/api/routes/plugins/index.ts:20-41,67-86,500-518` | Plain `string` input is auto-saved with the same 900 ms debounce, serialized full snapshots, unmount flush, and visible status. The route validates numbers/timezones/token lists only; strings receive no field-specific validation. | Partial — invalid values such as `bogus` can be saved and shown as Saved, while runtime silently falls back to `1024x1024` (`index.mjs:33-37`). |
+| Capabilities tab — tools, hooks, permissions | `/var/www/elowen/web/modules/settings/PluginDetail.tsx:141-146`; `/var/www/elowen/web/modules/settings/PluginPermissionsPanel.tsx:16-103`; `/var/www/elowen/web/modules/settings/PluginToolsPanel.tsx`; `/var/www/elowen/web/modules/settings/PluginHooksPanel.tsx` | Read-only introspection; no editable values or persistence operation. Data comes from `/plugins/:name/contributions`, logs/audit queries, and the manifest capability projection (`src/api/routes/plugins/index.ts:425-434,451-482`). | N/A |
+| Activity tab — plugin logs/health | `/var/www/elowen/web/modules/settings/PluginDetail.tsx:148`; `/var/www/elowen/web/lib/queries.ts:262-266`; `/var/www/elowen/web/modules/settings/PluginLogsPanel.tsx` | Read-only polling every 3 seconds while the detail is open. No save control. | N/A |
+| Advanced tab — plugin data summary and “clear data” drawer/dialog | `/var/www/elowen/web/modules/settings/PluginDetail.tsx:149-153`; `/var/www/elowen/web/modules/settings/PluginDataPanel.tsx:24-67`; `/var/www/elowen/web/lib/elowenClient.ts:142-143`; `/var/www/elowen/src/api/routes/plugins/index.ts:281-297,485-497` | Read-only recursive file/byte summary. Clearing the `pluginDataRoot/image-gen` contents is an immediate destructive `POST` only after confirmation; the directory remains. | Explicit-save justified — destructive artifact deletion must not be triggered by editing or navigation. |
+| Generated image output shown in chat | Plugin `/var/www/elowen-plugins/plugins/image-gen/index.mjs:61-77`; host image route `/var/www/elowen/src/api/routes/brain.ts:238-250` | Each successful tool call writes one PNG synchronously to the plugin data directory and returns a markdown URL. The host serves only lowercase alphanumeric `.png` names from `image-gen` or `image-edit` directories. This is artifact creation, not an editable settings draft. | N/A |
+| Custom plugin web/drawer surface or per-account settings | Manifest `/var/www/elowen-plugins/plugins/image-gen/elowen-plugin.json:1-38`; host manifest contract `/var/www/elowen/src/plugins/manifest.ts:154-164` | No `web` declaration, no `userConfigSchema`, and no plugin API route declaration. There is therefore no second image-gen settings drawer or per-user persistence API to audit. | N/A |
+
+# Missing or inconsistent auto-save
+
+- **Deferred activation is hidden by the generic save status.** The config route persists before reload and returns HTTP 202 with `{ pending: true }` when live activation is delayed (`/var/www/elowen/src/api/routes/plugins/index.ts:116-137,500-517`). `useSavePluginConfig` invalidates queries but discards the response (`/var/www/elowen/web/lib/mutations.ts:283-288`), and the draft's autosave callback ignores the returned response (`/var/www/elowen/web/lib/usePluginConfigDraft.ts:72-80`). The workspace consequently says only “Saved” (`/var/www/elowen/web/modules/settings/PluginDetail.tsx:102-111`; `/var/www/elowen/web/components/ui/AutoSaveStatus.tsx:18-21`). This matters for all three image-gen fields: the value is durable, but a running brain may still use the previous registry generation briefly.
+- **`size` is not validated as the manifest describes.** It is declared as `type: "string"` with a hint listing three valid values (`elowen-plugin.json:33-37`), but the host route has no string/enum validation (`src/api/routes/plugins/index.ts:20-86`). The plugin accepts only the three values for runtime use and otherwise silently substitutes the configured default (`index.mjs:10,33-37`), so an invalid value can be auto-saved successfully while having no effect. This is a persistence/effective-state mismatch, not merely a cosmetic issue.
+- **`model` has no API-side catalog validation.** The UI uses the shared catalog and preserves stale values, which is good for draft safety, but the route accepts any value because generic config persistence validates only number/timezone/token-list types (`src/api/routes/plugins/index.ts:20-86`). The runtime strips the value to the final slash segment and sends it upstream (`index.mjs:14-20,61-69`). A direct or stale arbitrary model value can therefore appear saved without a provider/model compatibility check.
+- **The plugin has no focused web regression test.** Existing generic tests prove autosave behavior for synthetic plugin schemas (`/var/www/elowen/web/tests/modules/settings/PluginDetail.test.tsx:199-245,268-369`; `/var/www/elowen/web/tests/modules/settings/usePluginConfigDraft.test.tsx:31-105`), while the only image-gen-specific test reference is a tool-registration fixture (`/var/www/elowen-plugins/tests/toolNaming.test.ts:25-34`). No test asserts image-gen's provider/model/size schema, invalid-size behavior, or pending activation feedback.
+
+# Legitimate exceptions
+
+- Enable/disable, install/update/uninstall/remove, restore, and clear-data are explicit actions rather than ordinary field edits. Immediate mutation and confirmation for destructive operations are appropriate.
+- Generated PNG creation is a tool result and durable artifact, not a user-editable draft. It should not be converted into settings autosave.
+- The provider field intentionally reuses the central Brain provider key and secret. Image-gen has no second API-key form; the plugin reads the resolved provider and its key (`index.mjs:29-37`).
+- No per-account settings exist: the manifest declares only instance-wide `configSchema`, so `/plugins/:name/user-config` is not an applicable persistence surface.
+
+# Reusable existing pattern
+
+The correct host pattern is already in place:
+
+- `usePluginConfigDraft` seeds from server state without re-seeding on ordinary refetch, debounces at 900 ms, serializes full-snapshot writes, validates JSON fields, flushes on unmount, and exposes retry (`/var/www/elowen/web/lib/usePluginConfigDraft.ts:37-112`).
+- `useAutoSaveStatus` provides bounded debounce behavior, stale-write protection, saving/saved/error states, retry, and teardown flush (`/var/www/elowen/web/lib/useAutoSaveStatus.ts:6-105`).
+- `PluginDetail` renders one shared status indicator for the active plugin workspace (`/var/www/elowen/web/modules/settings/PluginDetail.tsx:102-111`).
+- The config API keeps secrets daemon-side, applies schema patches atomically, persists before reload, and has an explicit pending activation contract (`/var/www/elowen/src/api/routes/plugins/index.ts:62-106,116-137,500-517`).
+
+# Tests and gaps
+
+- Generic UI coverage confirms direct field edits and modal-backed edits auto-save, numeric canonicalization, picker behavior, and error handling (`/var/www/elowen/web/tests/modules/settings/PluginDetail.test.tsx:174-245,268-394`; `PluginConfigEditor.test.tsx:94-122`).
+- Generic draft coverage confirms invalid JSON does not claim persistence, untouched secrets are not overwritten, immediate commits remain controlled on failure, and serialized snapshots prevent stale rollback (`/var/www/elowen/web/tests/modules/settings/usePluginConfigDraft.test.tsx:31-105`).
+- Generic API coverage confirms masked secrets, defaults, atomic validation, persistence-before-reload, 202 pending responses, and reload-failure semantics (`/var/www/elowen/tests/api/pluginRoutes.test.ts:103-177,243-279,339-380`).
+- Gap: no fixture or test targets the actual image-gen manifest in the web editor.
+- Gap: no API contract test rejects unsupported image sizes or invalid model/provider references for image-gen.
+- Gap: no UI test verifies that a 202 config response communicates “saved; activation pending” rather than only “Saved”.
+- Gap: generated-image file serving and shared-image extraction are tested generically, but there is no image-gen-specific test that a generated file appears in the plugin data summary and is removed by the confirmed clear action.
+
+# Recommended migration notes
+
+- Make `size` a schema-level enum with the three supported values and an explicit `default: "1024x1024"`, or add equivalent image-gen-specific route validation. Do not retain the current silent-success fallback as the only feedback for an invalid persisted value.
+- Preserve the existing shared autosave hook and add pending-activation feedback to its save result/status path, reusing the route's existing `{ pending: true }` contract instead of inventing a second reload mechanism.
+- Add focused image-gen manifest/UI tests for provider filtering, model and size persistence, unsupported-size rejection or normalization, and pending activation display. Keep generated output and confirmed data clearing as separate non-autosave flows.
