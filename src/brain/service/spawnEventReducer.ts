@@ -85,6 +85,9 @@ export interface SpawnEventReducerDeps {
   queuedSteer: QueuedMsg[];
   queuedFollowUp: QueuedMsg[];
   maxSteps?: () => number;
+  /** Where a previewed tool image is stored, so the live `image` event can name a file the reload path
+   *  writes too. Absent on an in-memory store; the preview is then skipped rather than faked. */
+  chatImagesDir?: string;
 }
 
 /** The spawner's stateful event reducer, extracted verbatim from `LiveSessionSpawner.spawn`'s
@@ -106,6 +109,12 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
   let turnStartedAt: number | undefined;
   let settledDurationMs: number | undefined;
   let settledCompletedAt: string | undefined;
+  // One picture, one appearance. `ShareImage` with `latest: true` re-shares the very file a Read preview
+  // has already put on screen, and without this the conversation would show the same image twice. Keyed on
+  // the ref, whose file name IS the bytes' own sha256 — never on a file name the model chose, which two
+  // different pictures may share. `messageView` applies the same first-occurrence-wins rule when it
+  // rebuilds the transcript, so a reload shows what the live stream showed.
+  const shownImages = new Set<string>();
   return (e: AgentSessionEvent): void => {
     const live = getLive();
     const raw = (e as { type?: string }).type;
@@ -253,8 +262,12 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       const message = (e as unknown as { message: Parameters<typeof extractText>[0] }).message;
       deliverQueuedUserEcho(store, live, extractText(message));
     }
-    const be = toBrainEvent(e);
+    const be = toBrainEvent(e, Date.now(), deps.chatImagesDir);
     if (!be) return;
+    if (be.type === 'image') {
+      if (shownImages.has(be.ref)) return;
+      shownImages.add(be.ref);
+    }
     if (be.type === 'queue') {
       // Image-carrying mirrors are the display source (PI's queue_update text is post-expansion); prepend
       // any message waiting under a manual /compact so a PI queue_update in that window can't hide its chip.

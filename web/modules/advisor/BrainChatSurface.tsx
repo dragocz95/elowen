@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
@@ -429,7 +429,7 @@ function SessionEvents({ events, tk }: { events: SessionEventItem[]; tk?: string
 /** A user turn's surviving attachments. The daemon kept the files next to its database, so these render
  *  identically from the live stream and from reloaded history — the whole point of storing them. The
  *  `<img>` hits the same-origin proxy, which turns the session cookie into the daemon bearer, so no
- *  signed link is involved. Clicking opens the full-size file in a new tab. */
+ *  signed link is involved. Clicking opens the picture in the app's own dialog. */
 function Attachments({ images, full }: { images: BrainMessageImage[]; full?: boolean }) {
   return (
     <div className={`flex flex-wrap gap-2 ${full ? 'my-1.5' : 'mt-1.5'}`}>
@@ -447,6 +447,7 @@ function Attachments({ images, full }: { images: BrainMessageImage[]; full?: boo
 function AttachmentThumb({ image }: { image: BrainMessageImage }) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState(false);
 
   if (failed) {
     return (
@@ -457,20 +458,65 @@ function AttachmentThumb({ image }: { image: BrainMessageImage }) {
     );
   }
   return (
-    <a
-      href={`/api${image.url}`}
-      target="_blank"
-      rel="noreferrer"
-      title={t.brainChat.attachmentOpen}
-      className="block overflow-hidden rounded-lg border border-border transition-colors hover:border-primary"
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={t.brainChat.attachmentOpen}
+        aria-label={t.brainChat.attachmentOpen}
+        className="block overflow-hidden rounded-lg border border-border transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      >
+        <img
+          src={`/api${image.url}`}
+          alt={t.brainChat.attachmentAlt}
+          onError={() => setFailed(true)}
+          className="max-h-48 max-w-[min(16rem,100%)] object-contain"
+        />
+      </button>
+      {open ? <ImageLightbox image={image} onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
+
+/** The full-size view of any picture in the conversation — a user's attachment, one the agent shared, one
+ *  it generated, one it read. It is the shared {@link Modal}, so the focus trap, Escape, the overlay stack
+ *  and the return of focus to the thumbnail all come from the one implementation the rest of the app uses,
+ *  and the page behind it never scrolls.
+ *
+ *  The picture itself is `object-contain` inside the dialog's own frame, so a panorama and a tall
+ *  screenshot both fit whole on a phone and on a desktop without the dialog growing past the viewport.
+ *  Opening the raw file stays available as a named action in the header rather than as the click on the
+ *  image: that request is the same authenticated proxy fetch it always was, and it leaves the app. */
+function ImageLightbox({ image, onClose }: { image: BrainMessageImage; onClose: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <Modal
+      title={t.brainChat.imageViewerTitle}
+      onClose={onClose}
+      size="lg"
+      presentation="center"
+      intent="inspect"
+      headerActions={(
+        <a
+          href={`/api${image.url}`}
+          target="_blank"
+          rel="noreferrer"
+          className={buttonClassName('outline', 'sm')}
+        >
+          <ExternalLink size={14} aria-hidden />
+          {t.brainChat.imageOpenInTab}
+        </a>
+      )}
     >
-      <img
-        src={`/api${image.url}`}
-        alt={t.brainChat.attachmentAlt}
-        onError={() => setFailed(true)}
-        className="max-h-48 max-w-[min(16rem,100%)] object-contain"
-      />
-    </a>
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4">
+        <img
+          src={`/api${image.url}`}
+          alt={t.brainChat.attachmentAlt}
+          data-testid="image-lightbox"
+          className="max-h-full max-w-full object-contain"
+        />
+      </div>
+    </Modal>
   );
 }
 

@@ -11,7 +11,7 @@ import type { ToolOutputView, BrainSubagentView, BrainWorkflowView, BrainSegment
 import { parseDbTs } from '../shared/time.js';
 import { EXIT_PLAN_MODE_TOOL } from '../shared/planTool.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
-import { parseStoredChatImages, stripAttachmentMarker, toMessageImages } from './chatImages.js';
+import { IMAGE_PREVIEW_TOOL, parseStoredChatImages, persistedToolResultImages, stripAttachmentMarker, toMessageImages } from './chatImages.js';
 import { collectChatFiles, toMessageFile } from './chatFiles.js';
 import { collapseWhitespace } from '../shared/text.js';
 // Only these two have daemon consumers that import them from here; BrainSubagentView/BrainWorkflowView/
@@ -512,6 +512,11 @@ export function shapeBrainMessages(
       results.set(m.toolCallId, { result: m, isError: m.isError });
     } catch { /* malformed row → no diff */ }
   }
+  // One picture, one appearance — the reload twin of the same rule in `spawnEventReducer`. A `Read`
+  // preview and a later `ShareImage(latest: true)` are the SAME stored file (the name is the bytes' own
+  // sha256), so without this a reload would show one image twice where the live stream showed it once.
+  // First occurrence wins, because that is the only rule a streaming client can also apply.
+  const shownImages = new Set<string>();
   // Stamp each produced view with its source row's time so display-only session-event markers can be
   // interleaved into the (time-ordered) transcript at their real position.
   const stamped: { at: string; view: BrainMessageView }[] = [];
@@ -571,7 +576,11 @@ export function shapeBrainMessages(
         // A successful share becomes the payload itself — a ShareImage/ShareFile pill beside it adds
         // nothing. A FAILED share falls through to the normal tool row so its refusal remains readable.
         const shared = sharedFileOf(res?.result) ?? sharedImageOf(res?.result);
-        if (shared && res?.isError !== true) { segments.push(shared); continue; }
+        if (shared && res?.isError !== true && !(shared.kind === 'image' && shownImages.has(shared.image.url))) {
+          if (shared.kind === 'image') shownImages.add(shared.image.url);
+          segments.push(shared);
+          continue;
+        }
         const output = res ? toolOutputView(p.name, p.arguments, res.result, res.isError) : undefined;
         const display = toolDisplay(p.name, p.arguments);
         const diff = p.id ? diffs.get(p.id) : undefined;
@@ -591,6 +600,16 @@ export function shapeBrainMessages(
           // and withWorkflowAnchors (same name gate) would suppress the real anchor's synthesis over it.
           ...(p.id && p.name === 'WorkflowStart' && workflows.has(p.id) ? { wf: workflows.get(p.id) } : {}),
         });
+        // …and, right under that row, the picture the read actually produced. The bytes moved to disk
+        // when the turn was persisted, so the row carries a reference the client can load exactly like
+        // any other conversation image. A failed read has no image, only its refusal.
+        if (p.name === IMAGE_PREVIEW_TOOL && res?.isError !== true) {
+          for (const image of persistedToolResultImages(res?.result)) {
+            if (shownImages.has(image.url)) continue;
+            shownImages.add(image.url);
+            segments.push({ kind: 'image', image });
+          }
+        }
       }
     }
     if (typeof msg.content === 'string') {

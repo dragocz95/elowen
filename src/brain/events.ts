@@ -7,6 +7,7 @@ import type { ProcessInfo } from './processRegistry.js';
 import { extractReason } from './toolReason.js';
 import { collapseWhitespace } from '../shared/text.js';
 import { residentContextUsageOf } from './contextBreakdown.js';
+import { IMAGE_PREVIEW_TOOL, storeToolResultImage } from './chatImages.js';
 
 // The usage and goal shapes are the daemon↔web wire contract (idle/status events + the snapshot
 // frame's `goal`) — defined once in src/shared and re-exported here, so the two can never drift.
@@ -409,8 +410,10 @@ function progressTail(partial: unknown): string {
 }
 
 /** Translate a PI session event into the stable BrainEvent contract. Defensive: unknown event types
- *  are dropped. `now` is injectable so the `tool_progress` throttle is deterministic in tests. */
-export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): BrainEvent | null {
+ *  are dropped. `now` is injectable so the `tool_progress` throttle is deterministic in tests.
+ *  `imagesDir` is where a previewed tool image is stored; without it (an in-memory store, most tests) the
+ *  preview is simply skipped, exactly as `ShareImage` refuses rather than pretending. */
+export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now(), imagesDir?: string): BrainEvent | null {
   if (e.type === 'agent_end') {
     const timed = e as AgentSessionEvent & { turnDurationMs?: number; turnCompletedAt?: string };
     return {
@@ -547,6 +550,15 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
         type: 'image', ref: `/api/brain/chat-images/${shared.file}`, id: anyE.toolCallId,
         ...(typeof shared.caption === 'string' && shared.caption ? { caption: shared.caption } : {}),
       };
+    }
+    // A `Read` that actually loaded an IMAGE handed the picture to the model and the words
+    // "Read image file" to the reader. Put the same bytes in front of them as an ordinary conversation
+    // image: content-addressed into the store the persistence path uses, so the live event and the row
+    // written moments later at `message_end` name one file, and a reload rebuilds the identical picture.
+    // A failed read has no image to show, only its refusal, which the normal output row already carries.
+    if (anyE.toolName === IMAGE_PREVIEW_TOOL && imagesDir && anyE.isError !== true) {
+      const previewed = storeToolResultImage(anyE.result, imagesDir);
+      if (previewed) return { type: 'image', ref: `/api/brain/chat-images/${previewed.file}`, id: anyE.toolCallId };
     }
     // Image tools return a markdown link to the stored file; surface it as a first-class event so
     // channel adapters can attach the real file (models often omit the link from their final text). Skip

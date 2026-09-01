@@ -1508,6 +1508,8 @@ export const cs = {
     attachmentAlt: 'Přiložený obrázek',
     attachmentOpen: 'Otevřít v plné velikosti',
     attachmentGone: 'Obrázek už není k dispozici',
+    imageViewerTitle: 'Náhled obrázku',
+    imageOpenInTab: 'Otevřít na nové kartě',
     fileDownload: 'Stáhnout',
     attachFailed: 'Soubor se nepodařilo nahrát a nebyl přiložen.',
     attachedFile: 'přiložený soubor',

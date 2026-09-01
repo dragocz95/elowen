@@ -127,10 +127,14 @@ describe('an image the agent shares', () => {
     expect(captions).toEqual(['před nasazením', 'po nasazení']);
   });
 
-  it('opens the full-size file when the thumbnail is clicked', async () => {
+  it('is clickable through the shared lightbox trigger rather than a link out of the app', async () => {
+    // The full-size view now opens in the app's own dialog (BrainChatImageLightbox.test.tsx pins that
+    // behaviour); what matters here is that the shared image reaches the same control as every other one.
     const es = await renderSurface();
     es.emit('image', { type: 'image', ref: REF });
-    expect((await shared()).closest('a')?.getAttribute('href')).toBe(SRC);
+    const image = await shared();
+    expect(image.closest('a')).toBeNull();
+    expect(image.closest('button')).not.toBeNull();
   });
 
   it('still renders an image tool result served from the older path', async () => {

@@ -1529,6 +1529,8 @@ export const en = {
     attachmentAlt: 'Attached image',
     attachmentOpen: 'Open full size',
     attachmentGone: 'Image no longer available',
+    imageViewerTitle: 'Image preview',
+    imageOpenInTab: 'Open in a new tab',
     fileDownload: 'Download',
     attachFailed: 'The file could not be uploaded and was not attached.',
     attachedFile: 'attached file',

@@ -1503,6 +1503,8 @@ export const sk = {
     attachmentAlt: 'Priložený obrázok',
     attachmentOpen: 'Otvoriť v plnej veľkosti',
     attachmentGone: 'Obrázok už nie je k dispozícii',
+    imageViewerTitle: 'Náhľad obrázka',
+    imageOpenInTab: 'Otvoriť na novej karte',
     fileDownload: 'Stiahnuť',
     attachFailed: 'Súbor sa nepodarilo nahrať a nebol priložený.',
     attachedFile: 'priložený súbor',

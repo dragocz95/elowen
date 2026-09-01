@@ -617,6 +617,7 @@ export class LiveSessionSpawner {
       queuedSteer,
       queuedFollowUp,
       maxSteps: this.d.maxSteps,
+      chatImagesDir: this.d.chatImagesDir,
     }));
 
     // Ephemeral per-turn context (date/time, …) is injected into each user message — see send() — so it

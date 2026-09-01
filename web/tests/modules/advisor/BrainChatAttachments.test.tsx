@@ -84,10 +84,14 @@ describe('a user turn with attachments', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 
-  it('lets the thumbnail open the full-size file', async () => {
+  it('lets the thumbnail open the full-size view, in the app rather than a new page', async () => {
+    // The dialog itself is pinned in BrainChatImageLightbox.test.tsx; here the point is only that a user's
+    // own attachment reaches the same shared control every other picture in the chat uses.
     const es = await renderSurface('full');
     act(() => es.emit({ type: 'user', text: 'mrkni na tohle', durableId: 'm1', images: [IMAGE] }));
-    expect((await attachment()).closest('a')?.getAttribute('href')).toBe(`/api/brain/chat-images/${FILE}`);
+    const img = await attachment();
+    expect(img.closest('a')).toBeNull();
+    expect(img.closest('button')?.getAttribute('aria-label')).toBeTruthy();
   });
 
   it('keeps the message text beside it', async () => {

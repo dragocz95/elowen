@@ -113,6 +113,42 @@ export function externalizeImageBlocks<T>(message: T, dir: string): T {
   return changed ? { ...(message as object), content: rewritten } as T : message;
 }
 
+/** The one tool whose image result is put in front of the user on its own. Reading an image FILE is a
+ *  deliberate, bounded act of looking at one thing, and until now the reader saw only the words
+ *  "Read image file" while the model got the picture. Every other image-producing tool stays behind the
+ *  explicit `ShareImage` for the reason that tool's own description gives: debugging a page means a
+ *  screenshot every few seconds, and forwarding each one buries the conversation. */
+export const IMAGE_PREVIEW_TOOL = 'Read';
+
+/** Move the image a tool result handed the MODEL into the chat-image store, and return its reference.
+ *  Reads the LIVE block (`{type:'image', data, mimeType}`) — the shape a tool returns, before the turn is
+ *  persisted. Content-addressed, so this names the exact same file `externalizeImageBlocks` writes for the
+ *  same result a moment later at `message_end`: the live event and the reloaded transcript point at one
+ *  file rather than two copies of one picture. Only the first image is taken; a result carrying several is
+ *  not something the preview tool produces. */
+export function storeToolResultImage(result: unknown, dir: string): StoredChatImage | null {
+  const content = (result as { content?: unknown } | null | undefined)?.content;
+  for (const part of Array.isArray(content) ? content : []) {
+    const block = part as { type?: unknown; data?: unknown; mimeType?: unknown };
+    if (block?.type !== 'image' || typeof block.data !== 'string' || typeof block.mimeType !== 'string') continue;
+    const stored = storeImageByContent(dir, block.data, block.mimeType);
+    if (stored) return stored;
+  }
+  return null;
+}
+
+/** The same pictures, rebuilt from a STORED tool result — the bytes have long since moved to disk, so the
+ *  row carries `{type:'image', ref}` instead. The reload twin of {@link storeToolResultImage}; the strict
+ *  block validator is what keeps a hand-edited row from naming an arbitrary path. */
+export function persistedToolResultImages(result: unknown): BrainMessageImage[] {
+  const content = (result as { content?: unknown } | null | undefined)?.content;
+  const refs: StoredChatImage[] = [];
+  for (const part of Array.isArray(content) ? content : []) {
+    if (isPersistedImageBlock(part)) refs.push(part.ref);
+  }
+  return toMessageImages(refs);
+}
+
 /** Every stored image file a persisted row references, whatever kind of row it is: a user attachment
  *  (`images`), a tool result whose bytes were externalized (`content[].ref`), or an image the agent shared
  *  (`details.sharedImage`). Ownership and the sweep both read through here, so a new way to reference an
