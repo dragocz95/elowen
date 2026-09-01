@@ -941,7 +941,8 @@ export interface DayUsage {
   cost: number | null;
 }
 
-/** Result of a usage reset: how many rows each of the three independent counters lost. */
+/** Result of a usage reset. `chatCleared` is 1 when the logical epoch reset ran (0 when unavailable),
+ * not a count of historical message rows; `originsCleared` remains the number of origin-rollup rows removed. */
 export interface ResetUsageResult {
   ok: boolean;
   chatCleared?: number;

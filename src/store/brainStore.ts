@@ -80,6 +80,7 @@ const pendingPlatformDeliveryOf = (row: PendingPlatformDeliveryRow): PendingPlat
 
 export interface BrainMessageRow {
   id: string; session_id: string; parent_id: string | null; role: string; content: string; created_at: string;
+  usage_epoch: number;
   /** 1 while this is the provisional message_end crash-recovery mirror; 0 once it is display history. */
   pending: number;
   /** Display-only whole-turn wall time, present on the settled run's last assistant row. */
@@ -163,6 +164,16 @@ export class BrainStore {
     this.providerRequests = new ProviderRequestStore(db);
   }
 
+  private currentUsageEpochForSession(sessionId: string): number {
+    const row = this.db.prepare(
+      `SELECT COALESCE(r.usage_epoch, 0) AS usage_epoch
+         FROM brain_sessions s LEFT JOIN brain_usage_reset_state r ON r.user_id = s.user_id
+        WHERE s.id = ?`,
+    ).get(sessionId) as { usage_epoch: number } | undefined;
+    if (!row) throw new Error(`brain session not found: ${sessionId}`);
+    return row.usage_epoch;
+  }
+
   /** Create a top-level or delegated session. A supplied parent must already exist and belong to the
    *  same owner: the relation is later traversed for billing, so accepting a foreign/missing parent
    *  would either leak another user's spend or silently lose the child's. Nested parents are valid. */
@@ -241,8 +252,8 @@ export class BrainStore {
         spill_ns: mintSpillNamespace(newId),
       });
       this.db.prepare(
-        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms)
-         SELECT lower(hex(randomblob(16))), @new_id, NULL, role, content, created_at, pending, turn_duration_ms
+        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms, usage_epoch)
+         SELECT lower(hex(randomblob(16))), @new_id, NULL, role, content, created_at, pending, turn_duration_ms, usage_epoch
            FROM brain_messages WHERE session_id = @source_id ORDER BY rowid ASC`
       ).run({ new_id: newId, source_id: sourceId });
     })();
@@ -436,15 +447,42 @@ export class BrainStore {
     ).all() as (BrainSessionRow & { owner_name: string; owner_username: string; writer_name: string; writer_username: string })[];
   }
 
+  private tokenTotalRows(userId?: number): { id: string; tokens: number }[] {
+    const scoped = userId === undefined ? '' : 'AND owner.user_id = ?';
+    const outer = userId === undefined ? '' : 'WHERE s.user_id = ?';
+    const params = userId === undefined ? [] : [userId, userId, userId];
+    return this.db.prepare(
+      `WITH usage_rows AS (
+         SELECT m.session_id AS id, ${numeric('m.content', '$.usage.totalTokens')} AS tokens
+           FROM brain_sessions owner
+           JOIN brain_messages m ON m.session_id = owner.id
+           LEFT JOIN brain_usage_reset_state reset ON reset.user_id = owner.user_id
+          WHERE m.role = 'assistant' AND m.usage_epoch = COALESCE(reset.usage_epoch, 0)
+            AND json_valid(m.content) AND json_type(m.content) = 'object' ${scoped}
+         UNION ALL
+         SELECT m.session_id AS id, ${numeric('je.value', '$.totalTokens')} AS tokens
+           FROM brain_sessions owner
+           JOIN brain_messages m ON m.session_id = owner.id
+           LEFT JOIN brain_usage_reset_state reset ON reset.user_id = owner.user_id,
+                json_each(CASE WHEN json_valid(m.content)
+                               THEN CASE WHEN json_type(m.content, '$.usageRollup') = 'array'
+                                         THEN json_extract(m.content, '$.usageRollup') END END) je
+          WHERE m.role = 'compaction' AND je.type = 'object'
+            AND CASE WHEN json_type(je.value, '$.usageEpoch') = 'integer'
+                     THEN json_extract(je.value, '$.usageEpoch') ELSE m.usage_epoch END = COALESCE(reset.usage_epoch, 0)
+            ${scoped}
+       )
+       SELECT s.id AS id, COALESCE(SUM(usage_rows.tokens), 0) AS tokens
+         FROM brain_sessions s LEFT JOIN usage_rows ON usage_rows.id = s.id
+         ${outer}
+        GROUP BY s.id`
+    ).all(...params) as { id: string; tokens: number }[];
+  }
+
   /** Token totals across every account — the cross-account counterpart of {@link tokenTotals}. */
   tokenTotalsAll(): Record<string, number> {
-    const rows = this.db.prepare(
-      `SELECT s.id AS id, COALESCE(SUM(CASE WHEN json_valid(m.content) THEN ${numeric('m.content', '$.usage.totalTokens')} ELSE 0 END), 0) AS tokens
-         FROM brain_sessions s LEFT JOIN brain_messages m ON m.session_id = s.id
-        GROUP BY s.id`
-    ).all() as { id: string; tokens: number }[];
     const out: Record<string, number> = {};
-    for (const r of rows) out[r.id] = r.tokens ?? 0;
+    for (const row of this.tokenTotalRows()) out[row.id] = row.tokens ?? 0;
     return out;
   }
 
@@ -540,34 +578,29 @@ export class BrainStore {
     return this.usage.usageByModel(userId, window);
   }
 
-  /** Irreversibly clear this user's recorded chat spend — see {@link BrainUsageStore.clearUsage}. */
-  clearUsage(userId: number): number {
+  /** Atomically advance chat usage, zero the small provider summaries and clear the independent origin
+   * counters. Historical messages, projection rows and provider request payloads are never rewritten. */
+  resetUsage(userId: number, clearOrigins: () => number = () => 0): { chatCleared: number; originsCleared: number } {
     return this.db.transaction(() => {
-      const changed = this.usage.clearUsage(userId);
-      this.providerRequests.clearUsageForUser(userId);
-      return changed;
+      const chatCleared = this.usage.advanceUsageEpoch(userId);
+      this.providerRequests.resetUsageSummariesForUser(userId);
+      const originsCleared = clearOrigins();
+      return { chatCleared, originsCleared };
     })();
   }
 
-  /** Cumulative token total per session (summed from each stored assistant message's usage) for the
-   *  session-management panel. One grouped query — no N+1. Sessions with no usage-bearing messages
-   *  come back 0. Persisted messages only, so a mid-turn session reads slightly stale (acceptable).
-   *  The `json_valid` guard is load-bearing: `json_extract` THROWS on a malformed `content` row (one
-   *  corrupt message would otherwise fail this query for the WHOLE user), so a bad row is isolated —
-   *  contributes 0 — instead of crashing every session's total. NULL (no message, via the LEFT JOIN)
-   *  also fails `json_valid` and falls to the same 0 branch, so the join's "session with no messages"
-   *  case is unaffected. The field itself goes through the shared {@link numeric} read, so a
-   *  numeric-looking STRING (which SUM() would silently coerce) counts here exactly as it counts in the
-   *  usage views and in `rollupDroppedUsage` — otherwise this panel and the Stats page disagree about
-   *  the same session, and compacting it would change this total. */
+  /** Backwards-compatible store facade: one successful logical reset, not a count of historical rows. */
+  clearUsage(userId: number): number {
+    return this.resetUsage(userId).chatCleared;
+  }
+
+  /** Cumulative token total per session for the current usage epoch. Live assistant usage and compaction
+   * rollup buckets share the same normalized rules, so compacting current history cannot make this panel
+   * lose spend and pre-reset buckets cannot leak back into it. Persisted rows only, so a mid-turn session
+   * reads slightly stale (acceptable). */
   tokenTotals(userId: number): Record<string, number> {
-    const rows = this.db.prepare(
-      `SELECT s.id AS id, COALESCE(SUM(CASE WHEN json_valid(m.content) THEN ${numeric('m.content', '$.usage.totalTokens')} ELSE 0 END), 0) AS tokens
-         FROM brain_sessions s LEFT JOIN brain_messages m ON m.session_id = s.id
-        WHERE s.user_id = ? GROUP BY s.id`
-    ).all(userId) as { id: string; tokens: number }[];
     const out: Record<string, number> = {};
-    for (const r of rows) out[r.id] = r.tokens ?? 0;
+    for (const row of this.tokenTotalRows(userId)) out[row.id] = row.tokens ?? 0;
     return out;
   }
 
@@ -579,8 +612,10 @@ export class BrainStore {
 
   appendMessage(input: { id: string; sessionId: string; parentId: string | null; role: string; content: unknown; turnDurationMs?: number }): BrainMessageRow {
     this.db.prepare(
-      `INSERT INTO brain_messages (id, session_id, parent_id, role, content, turn_duration_ms)
-       VALUES (@id, @session_id, @parent_id, @role, @content, @turn_duration_ms)`
+      `INSERT INTO brain_messages (id, session_id, parent_id, role, content, turn_duration_ms, usage_epoch)
+       VALUES (@id, @session_id, @parent_id, @role, @content, @turn_duration_ms,
+               (SELECT COALESCE(r.usage_epoch, 0) FROM brain_sessions s
+                 LEFT JOIN brain_usage_reset_state r ON r.user_id = s.user_id WHERE s.id = @session_id))`
     ).run({
       id: input.id, session_id: input.sessionId, parent_id: input.parentId,
       role: input.role, content: JSON.stringify(input.content), turn_duration_ms: input.turnDurationMs ?? null,
@@ -671,8 +706,10 @@ export class BrainStore {
         if (!validId || !validRole || !validContent) throw new TypeError('invalid seeded platform message');
       }
       const insert = this.db.prepare(
-        `INSERT INTO brain_messages (id, session_id, parent_id, role, content)
-         VALUES (@id, @session_id, NULL, @role, @content)`,
+        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, usage_epoch)
+         VALUES (@id, @session_id, NULL, @role, @content,
+                 (SELECT COALESCE(r.usage_epoch, 0) FROM brain_sessions s
+                   LEFT JOIN brain_usage_reset_state r ON r.user_id = s.user_id WHERE s.id = @session_id))`,
       );
       for (const message of messages) {
         insert.run({ id: message.id, session_id: sessionId, role: message.role, content: JSON.stringify(message.content) });
@@ -714,8 +751,10 @@ export class BrainStore {
    *  message but no entry id of its own. */
   appendPendingMessage(input: { id: string; sessionId: string; role: string; content: unknown }): void {
     this.db.prepare(
-      `INSERT INTO brain_messages (id, session_id, parent_id, role, content, pending)
-       VALUES (@id, @session_id, NULL, @role, @content, 1)
+      `INSERT INTO brain_messages (id, session_id, parent_id, role, content, pending, usage_epoch)
+       VALUES (@id, @session_id, NULL, @role, @content, 1,
+               (SELECT COALESCE(r.usage_epoch, 0) FROM brain_sessions s
+                 LEFT JOIN brain_usage_reset_state r ON r.user_id = s.user_id WHERE s.id = @session_id))
        ON CONFLICT(id) DO NOTHING`
     ).run({ id: input.id, session_id: input.sessionId, role: input.role, content: JSON.stringify(input.content) });
   }
@@ -799,11 +838,12 @@ export class BrainStore {
    */
   persistAgentRun(sessionId: string, messages: BrainRunMessage[]): boolean {
     return this.db.transaction(() => {
+      const usageEpoch = this.currentUsageEpochForSession(sessionId);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ? AND pending = 1').run(sessionId);
       const userCount = messages.filter((message) => message.reusePreprojectedUser).length;
       if (userCount === 0) return false;
       const rows = this.db.prepare(
-        'SELECT id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC'
+        'SELECT id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms, usage_epoch FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC'
       ).all(sessionId) as BrainMessageRow[];
       // The pre-projected users must still be the transcript's trailing user rows — the same turn
       // boundary `newestTurnStart` (../brain/messageView.js) cuts on, seen from the tail. Anything that
@@ -833,14 +873,15 @@ export class BrainStore {
           created_at: now,
           pending: 0,
           turn_duration_ms: message.turnDurationMs ?? null,
+          usage_epoch: usageEpoch,
         });
       }
       if (nextUser !== users.length) return false;
 
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(sessionId);
       const insert = this.db.prepare(
-        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms)
-         VALUES (@id, @session_id, @parent_id, @role, @content, @created_at, @pending, @turn_duration_ms)`
+        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms, usage_epoch)
+         VALUES (@id, @session_id, @parent_id, @role, @content, @created_at, @pending, @turn_duration_ms, @usage_epoch)`
       );
       for (const row of ordered) insert.run(row);
       return true;
@@ -1479,8 +1520,9 @@ export class BrainStore {
    *  `keepLastN <= 0` keeps just the summary. */
   compactSessionMessages(sessionId: string, summary: { id: string; role: string; content: unknown }, keepLastN: number): void {
     this.db.transaction(() => {
+      const usageEpoch = this.currentUsageEpochForSession(sessionId);
       const rows = this.db.prepare(
-        'SELECT id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC'
+        'SELECT id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms, usage_epoch FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC'
       ).all(sessionId) as BrainMessageRow[];
       const keep = keepLastN <= 0 ? [] : rows.slice(Math.max(0, rows.length - keepLastN));
       // Fold the token/cost usage of the rows about to be deleted onto the divider (under `$.usageRollup`)
@@ -1509,15 +1551,15 @@ export class BrainStore {
         : summary.content;
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(sessionId);
       const insert = this.db.prepare(
-        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms)
-         VALUES (@id, @session_id, @parent_id, @role, @content, @created_at, @pending, @turn_duration_ms)`
+        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms, usage_epoch)
+         VALUES (@id, @session_id, @parent_id, @role, @content, @created_at, @pending, @turn_duration_ms, @usage_epoch)`
       );
       // Summary first → it gets the lowest rowid of the fresh batch. Pin its display/accounting timestamp
       // to the oldest kept row while rowid remains the authoritative transcript order.
       const summaryTs = keep[0]?.created_at ?? new Date().toISOString().replace('T', ' ').slice(0, 19);
-      insert.run({ id: summary.id, session_id: sessionId, parent_id: null, role: summary.role, content: JSON.stringify(summaryContent), created_at: summaryTs, pending: 0, turn_duration_ms: null });
+      insert.run({ id: summary.id, session_id: sessionId, parent_id: null, role: summary.role, content: JSON.stringify(summaryContent), created_at: summaryTs, pending: 0, turn_duration_ms: null, usage_epoch: usageEpoch });
       for (const r of keep) {
-        insert.run({ id: r.id, session_id: sessionId, parent_id: r.parent_id, role: r.role, content: r.content, created_at: r.created_at, pending: r.pending, turn_duration_ms: r.turn_duration_ms ?? null });
+        insert.run({ id: r.id, session_id: sessionId, parent_id: r.parent_id, role: r.role, content: r.content, created_at: r.created_at, pending: r.pending, turn_duration_ms: r.turn_duration_ms ?? null, usage_epoch: r.usage_epoch });
       }
       // Markers annotate turns, so they die with the turns they annotate. Both tables stamp `datetime('now')`,
       // so this compares chronologically; `<` keeps any marker sharing the oldest kept row's second. Without
@@ -1554,6 +1596,7 @@ export class BrainStore {
       this.db.prepare('DELETE FROM brain_request_segments WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_sessions WHERE user_id = ?').run(userId);
+      this.db.prepare('DELETE FROM brain_usage_reset_state WHERE user_id = ?').run(userId);
     })();
     for (const id of planned) this.removePlanFile(id);
   }

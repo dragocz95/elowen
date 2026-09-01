@@ -124,7 +124,6 @@ export function withWriteLock<T>(db: Db, apply: () => T): T {
 
 function applyAdditiveMigrations(db: Db): void {
   db.exec(readFileSync(join(here, 'schema.sql'), 'utf-8'));
-  installBrainUsageRollup(db);
   // Additive migrations for DBs created before a column existed. Idempotent: a column that already
   // exists is skipped via PRAGMA table_info, so we never rely on swallowing arbitrary ALTER errors
   // (a real failure — disk full, lock — now surfaces instead of being silently caught).
@@ -285,9 +284,17 @@ function applyAdditiveMigrations(db: Db): void {
   // Mid-turn (provisional) message rows — see brain_messages in schema.sql. Every existing row was written
   // by a settled agent_end, so the 0 default correctly reads the whole back catalogue as durable history.
   addColumn(db, 'brain_messages', 'pending', 'INTEGER NOT NULL DEFAULT 0');
+  // Constant-default metadata columns are O(1) in modern SQLite: existing transcript/provider payload rows
+  // remain physically untouched and read as epoch zero until the user's first logical reset.
+  addColumn(db, 'brain_messages', 'usage_epoch', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'brain_provider_requests', 'usage_epoch', 'INTEGER NOT NULL DEFAULT 0');
   // Display-only whole-turn timing lives outside message JSON: rehydration reads `content` only, so this
   // additive column cannot alter a provider payload or invalidate the cached transcript prefix.
   addColumn(db, 'brain_messages', 'turn_duration_ms', 'INTEGER');
+  // Projection triggers may reference both message and projection epoch columns, so install them only after
+  // the additive message column exists. The installer adds only metadata to an existing projection; it does
+  // not backfill or scan historical messages.
+  installBrainUsageRollup(db);
   // Provider request rows are opened before the network call and terminally accounted exactly once. Any
   // pending row surviving process startup belongs to a request whose in-memory correlator died; mark it
   // interrupted before sessions can respawn, and never fold it into the summary a second time.
@@ -305,7 +312,12 @@ function applyAdditiveMigrations(db: Db): void {
         SET status = 'interrupted', finished_at = COALESCE(finished_at, unixepoch('now') * 1000),
             duration_ms = COALESCE(duration_ms, MAX(0, unixepoch('now') * 1000 - started_at)),
             error_code = COALESCE(error_code, 'daemon_restart'),
-            error_message = COALESCE(error_message, 'Provider request interrupted by daemon restart')
+            error_message = COALESCE(error_message, 'Provider request interrupted by daemon restart'),
+            usage_epoch = COALESCE((
+              SELECT reset.usage_epoch FROM brain_sessions s
+              LEFT JOIN brain_usage_reset_state reset ON reset.user_id = s.user_id
+              WHERE s.id = brain_provider_requests.session_id
+            ), 0)
       WHERE status = 'pending'`
   );
   // A linked platform id is an identity key — enforce one-owner-per-id with a partial UNIQUE index so a
@@ -488,6 +500,7 @@ const USER_REFERENCE_COLUMNS: readonly (readonly [table: string, column: string]
   ['user_plugin_config', 'user_id'], ['plugin_secrets', 'owner_id'],
   ['user_external_identities', 'user_id'],
   ['usage_by_origin', 'user_id'], ['brain_session_origins', 'user_id'],
+  ['brain_usage_reset_state', 'user_id'],
 ];
 
 /** AUTOINCREMENT alone does NOT make an id safe to hand out: SQLite seeds `sqlite_sequence` from the

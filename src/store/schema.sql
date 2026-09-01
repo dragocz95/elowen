@@ -272,6 +272,12 @@ CREATE TABLE IF NOT EXISTS brain_platform_turn_deliveries (
 -- are provisional — the authoritative `agent_end` write discards them and re-persists the run in PI's
 -- real execution order (a mid-turn steer can reorder it). They only become history when a session is
 -- respawned while some are still pending, which means the turn that wrote them never finished.
+CREATE TABLE IF NOT EXISTS brain_usage_reset_state (
+  user_id INTEGER PRIMARY KEY,
+  usage_epoch INTEGER NOT NULL DEFAULT 0,
+  reset_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS brain_messages (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
@@ -280,6 +286,9 @@ CREATE TABLE IF NOT EXISTS brain_messages (
   content TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   pending INTEGER NOT NULL DEFAULT 0,
+  -- Usage belongs to the owner's current epoch at persistence time. Reset advances the tiny per-user
+  -- state row instead of rewriting historical transcript JSON.
+  usage_epoch INTEGER NOT NULL DEFAULT 0,
   -- Whole visible agent run, stamped only on the run's last assistant row. Kept outside `content` so
   -- display metadata can never change the message bytes replayed to a provider (prompt-cache invariant).
   turn_duration_ms INTEGER
@@ -320,6 +329,8 @@ CREATE TABLE IF NOT EXISTS brain_provider_requests (
   total_tokens INTEGER,
   cost_usd REAL,
   duration_ms INTEGER,
+  -- Assigned only when the attempt reaches a terminal state, from the session owner's then-current epoch.
+  usage_epoch INTEGER NOT NULL DEFAULT 0,
   UNIQUE (session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_brain_provider_requests_session_seq ON brain_provider_requests(session_id, seq);

@@ -38,14 +38,14 @@ const markedProvider = (src: string, path: string): string => `NULLIF(CASE WHEN 
 // SQLite builds it TWICE and the live query went from 1.2 s to 3.8 s; computed once it costs ~0.9 s total.
 // That matters more than it looks — better-sqlite3 is synchronous, so this runs ON the daemon's event
 // loop, and the dashboard polls it every 30 s.
-const SAME_MODEL_CTE = `sm AS MATERIALIZED (SELECT a.session_id AS session_id,
+const SAME_MODEL_CTE = `sm AS MATERIALIZED (SELECT a.session_id AS session_id, a.usage_epoch AS usage_epoch,
          NULLIF(json_extract(a.content, '$.model'), '') AS model,
          MIN(${markedProvider('a.content', '$.provider')}) AS provider
     FROM brain_messages a
    WHERE a.role = 'assistant' AND json_valid(a.content) AND json_type(a.content) = 'object'
      AND NULLIF(json_extract(a.content, '$.model'), '') IS NOT NULL
      AND ${markedProvider('a.content', '$.provider')} IS NOT NULL
-   GROUP BY a.session_id, NULLIF(json_extract(a.content, '$.model'), '')
+   GROUP BY a.session_id, a.usage_epoch, NULLIF(json_extract(a.content, '$.model'), '')
   HAVING COUNT(DISTINCT ${markedProvider('a.content', '$.provider')}) = 1)`;
 
 const producingProvider = (src: string, path: string, modelPath: string, fallback: string): string => `COALESCE(
@@ -85,7 +85,7 @@ const producingProvider = (src: string, path: string, modelPath: string, fallbac
 // keeps a bucket element that is a scalar — including a DOUBLE-SERIALIZED bucket, a JSON string whose
 // text happens to be an object — out of the fan-out. Every numeric field goes through {@link numeric}.
 const USAGE_ROWS = `
-  SELECT s.user_id AS user_id, s.id AS session_id,
+  SELECT s.user_id AS user_id, s.id AS session_id, m.usage_epoch AS usage_epoch,
          ${producingProvider('m.content', '$.provider', '$.model', 's.provider')} AS provider,
          COALESCE(NULLIF(json_extract(m.content, '$.model'), ''), s.model) AS model,
          ${numeric('m.content', '$.timestamp', 'NULL')} AS ts,
@@ -101,11 +101,13 @@ const USAGE_ROWS = `
               THEN ${numeric('m.content', '$.usage.output')} ELSE 0 END AS measured_output,
          ${numeric('m.content', '$.usage.cost.total', 'NULL')} AS cost
     FROM brain_messages m JOIN brain_sessions s ON s.id = m.session_id
-         LEFT JOIN sm ON sm.session_id = m.session_id
+         LEFT JOIN sm ON sm.session_id = m.session_id AND sm.usage_epoch = m.usage_epoch
                      AND sm.model = NULLIF(json_extract(m.content, '$.model'), '')
    WHERE m.role = 'assistant' AND json_valid(m.content) AND json_type(m.content) = 'object'
   UNION ALL
   SELECT s.user_id AS user_id, s.id AS session_id,
+         CASE WHEN json_type(je.value, '$.usageEpoch') = 'integer'
+              THEN json_extract(je.value, '$.usageEpoch') ELSE m.usage_epoch END AS usage_epoch,
          ${producingProvider('je.value', '$.provider', '$.model', 's.provider')} AS provider,
          COALESCE(NULLIF(json_extract(je.value, '$.model'), ''), s.model) AS model,
          ${numeric('je.value', '$.at', 'NULL')} AS ts,
@@ -124,6 +126,8 @@ const USAGE_ROWS = `
                                    THEN json_extract(m.content, '$.usageRollup') END)
                    END) je
          LEFT JOIN sm ON sm.session_id = m.session_id
+                     AND sm.usage_epoch = CASE WHEN json_type(je.value, '$.usageEpoch') = 'integer'
+                                               THEN json_extract(je.value, '$.usageEpoch') ELSE m.usage_epoch END
                      AND sm.model = NULLIF(json_extract(je.value, '$.model'), '')
    WHERE m.role = 'compaction' AND je.type = 'object'`;
 
@@ -144,9 +148,10 @@ const usageSentinelSql = (hasUsageRollup: boolean) => `SELECT
   (SELECT MAX(rowid) FROM brain_messages) AS m,
   (SELECT MAX(rowid) FROM brain_sessions) AS s,
   (SELECT MAX(updated_at) FROM brain_sessions) AS su,
-  ${hasUsageRollup ? '(SELECT generation FROM brain_usage_rollup_state WHERE id = 1)' : 'NULL'} AS ur`;
+  ${hasUsageRollup ? '(SELECT generation FROM brain_usage_rollup_state WHERE id = 1)' : 'NULL'} AS ur,
+  COALESCE((SELECT usage_epoch FROM brain_usage_reset_state WHERE user_id = ?), 0) AS ue`;
 
-interface UsageSentinel { m: number | null; s: number | null; su: string | null; ur: number | null }
+interface UsageSentinel { m: number | null; s: number | null; su: string | null; ur: number | null; ue: number }
 interface ViewCacheEntry { at: number; sentinel: UsageSentinel; value: unknown }
 
 /** Bound on distinct (user × window) keys held at once; a flood of distinct windows clears and starts
@@ -183,6 +188,7 @@ export interface DayUsage {
  *  neither, and a bucket written before `measuredOutput` existed reads as unmeasured rather than having a
  *  speed invented for it. */
 export interface UsageRollupBucket {
+  usageEpoch: number;
   provider?: string;
   providerIdentity?: 'config';
   model: string;
@@ -200,18 +206,18 @@ export interface UsageRollupBucket {
  *  breakdown. Each bucket's `at` is the ms-epoch of the newest dropped row of THAT model, so rolled-up
  *  spend keeps its ORIGINAL date instead of jumping to the compaction moment. Returns null when nothing
  *  dropped carried usage (keeps the divider clean). */
-export function rollupDroppedUsage(dropped: readonly { content: string }[]): UsageRollupBucket[] | null {
+export function rollupDroppedUsage(dropped: readonly { content: string; usage_epoch?: number }[]): UsageRollupBucket[] | null {
   const byIdentityAndDay = new Map<string, UsageRollupBucket>();
   const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  const bucketFor = (provider: string, model: string, providerIdentity: boolean, at: number): UsageRollupBucket => {
+  const bucketFor = (usageEpoch: number, provider: string, model: string, providerIdentity: boolean, at: number): UsageRollupBucket => {
     // UTC matches usageByDay's SQLite date(ts/1000, 'unixepoch') grouping exactly. Undated history stays
     // in one explicit undated bucket and remains invisible to date-filtered views, as it was before.
     const day = at > 0 ? Math.floor(at / 86_400_000) : null;
-    const key = JSON.stringify([provider, model, providerIdentity, day]);
+    const key = JSON.stringify([usageEpoch, provider, model, providerIdentity, day]);
     let b = byIdentityAndDay.get(key);
     if (!b) {
       b = {
-        ...(provider ? { provider } : {}), ...(providerIdentity ? { providerIdentity: 'config' as const } : {}), model,
+        usageEpoch, ...(provider ? { provider } : {}), ...(providerIdentity ? { providerIdentity: 'config' as const } : {}), model,
         input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, reasoning: 0,
         at: 0, calls: 0, durationMs: 0, measuredOutput: 0,
       };
@@ -250,6 +256,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string }[]): Usa
         const pb = raw as Record<string, unknown>;
         const at = num(pb.at);
         fold(bucketFor(
+          Number.isInteger(pb.usageEpoch) ? Number(pb.usageEpoch) : row.usage_epoch ?? 0,
           typeof pb.provider === 'string' ? pb.provider : '',
           typeof pb.model === 'string' ? pb.model : '',
           pb.providerIdentity === 'config', at,
@@ -260,6 +267,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string }[]): Usa
       // session only by the SQL reader, which still has that session row; the persisted rollup never guesses.
       const at = typeof c.timestamp === 'number' ? c.timestamp : 0;
       fold(bucketFor(
+        row.usage_epoch ?? 0,
         typeof c.provider === 'string' ? c.provider : '',
         typeof c.model === 'string' ? c.model : '',
         c.providerIdentity === 'config', at,
@@ -268,7 +276,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string }[]): Usa
   }
   const buckets = [...byIdentityAndDay.values()]
     .filter((b) => b.totalTokens !== 0 || b.cost != null)
-    .sort((a, b) => (a.at ?? 0) - (b.at ?? 0)
+    .sort((a, b) => a.usageEpoch - b.usageEpoch || (a.at ?? 0) - (b.at ?? 0)
       || (a.provider ?? '').localeCompare(b.provider ?? '') || a.model.localeCompare(b.model));
   if (buckets.length === 0) return null;
   // A legacy row with no numeric `$.timestamp` is already invisible to the day/model views (`ts IS NOT
@@ -303,53 +311,34 @@ export class BrainUsageStore {
     return row?.ready === 1;
   }
 
-  /** Strip this user's recorded spend from the rows the Stats charts are derived from. Chat spend has no
-   *  separate snapshot to delete — it is read back out of the conversation itself — so clearing it means
-   *  rewriting those rows. Only the accounting is removed; message text, model and timestamp stay, so
-   *  conversations stay readable and compaction summaries keep their content. NOT reversible: the
-   *  per-message token counts and costs are gone afterwards.
-   *
-   *  Both halves of {@link USAGE_ROWS} have to be cleared — live assistant `$.usage` AND the
-   *  `$.usageRollup` array a compaction carries — or a compacted session keeps reporting the spend it
-   *  rolled up and the charts only look half-reset.
-   *
-   *  The cache clear is load-bearing: every sentinel is a MAX(rowid)/MAX(updated_at), and rewriting a
-   *  column in place moves none of them, so a cached view would serve the old totals until the TTL
-   *  lapsed — the reset would appear to do nothing, which is the complaint it exists to answer. */
-  clearUsage(userId: number): number {
-    const scope = `session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)`;
-    const live = this.db.prepare(
-      `UPDATE brain_messages SET content = json_remove(content, '$.usage')
-        WHERE ${scope} AND role = 'assistant' AND json_valid(content)
-          AND json_type(content) = 'object' AND json_type(content, '$.usage') IS NOT NULL`
-    ).run(userId);
-    const rollups = this.db.prepare(
-      `UPDATE brain_messages SET content = json_remove(content, '$.usageRollup')
-        WHERE ${scope} AND role = 'compaction' AND json_valid(content)
-          AND json_type(content, '$.usageRollup') = 'array'`
-    ).run(userId);
+  /** Advance the user's logical accounting generation. Historical transcript/projection rows remain
+   *  byte-for-byte intact and simply stop matching the current epoch. This statement touches one metadata
+   *  row regardless of history size; the enclosing BrainStore transaction owns the other reset counters. */
+  advanceUsageEpoch(userId: number): number {
+    this.db.prepare(
+      `INSERT INTO brain_usage_reset_state (user_id, usage_epoch, reset_at) VALUES (?, 1, ?)
+       ON CONFLICT(user_id) DO UPDATE SET usage_epoch = usage_epoch + 1, reset_at = excluded.reset_at`,
+    ).run(userId, this.now());
     this.viewCache.clear();
-    return live.changes + rollups.changes;
+    return 1;
   }
 
   /** Serve a usage view from the TTL cache when the sentinel proves nothing changed, else compute and
-   *  remember it. No single-flight coalescing on top: better-sqlite3 is synchronous, so concurrent HTTP
-   *  requests serialize on the event loop anyway and there is no parallel computation to deduplicate —
-   *  the cache itself is the whole win. No stale-on-error either: unlike the upstream-fetch cache this
-   *  pattern is borrowed from, a local SQL read has no transient failure mode worth riding out, and a
-   *  genuinely broken database should surface errors, not hide behind last-known numbers. */
-  private cachedView<T>(key: string, compute: () => T): T {
-    const sentinel = this.db.prepare(usageSentinelSql(this.hasUsageRollupTable())).get() as UsageSentinel;
-    const hit = this.viewCache.get(key);
+   * remember it. The concrete per-user epoch is part of both the sentinel and cache key, so a reset cannot
+   * reuse an old view even if no message/session rowid changed. */
+  private cachedView<T>(userId: number, key: string, compute: (usageEpoch: number) => T): T {
+    const sentinel = this.db.prepare(usageSentinelSql(this.hasUsageRollupTable())).get(userId) as UsageSentinel;
+    const epochKey = `${key}:epoch:${sentinel.ue}`;
+    const hit = this.viewCache.get(epochKey);
     if (hit && this.now() - hit.at < USAGE_VIEW_TTL_MS
         && hit.sentinel.m === sentinel.m && hit.sentinel.s === sentinel.s
-        && hit.sentinel.su === sentinel.su
-        && hit.sentinel.ur === sentinel.ur) {
+        && hit.sentinel.su === sentinel.su && hit.sentinel.ur === sentinel.ur
+        && hit.sentinel.ue === sentinel.ue) {
       return hit.value as T;
     }
-    const value = compute();
-    if (this.viewCache.size >= VIEW_CACHE_LIMIT && !this.viewCache.has(key)) this.viewCache.clear();
-    this.viewCache.set(key, { at: this.now(), sentinel, value });
+    const value = compute(sentinel.ue);
+    if (this.viewCache.size >= VIEW_CACHE_LIMIT && !this.viewCache.has(epochKey)) this.viewCache.clear();
+    this.viewCache.set(epochKey, { at: this.now(), sentinel, value });
     return value;
   }
 
@@ -358,7 +347,7 @@ export class BrainUsageStore {
    *  day's composition, not just its size. */
   usageByDay(userId: number, days = 7): DayUsage[] {
     const daysArg = `-${Math.max(0, Math.floor(days) - 1)} days`;
-    return this.cachedView(`byDay${userId}${daysArg}`, () => {
+    return this.cachedView(userId, `byDay${userId}${daysArg}`, (usageEpoch) => {
       const source = this.hasUsageRollup()
         ? 'brain_usage_rows'
         : `usage_rows`;
@@ -373,11 +362,11 @@ export class BrainUsageStore {
                 COALESCE(SUM(cache_write), 0) AS cacheWrite,
                 CASE WHEN COUNT(cost) = 0 THEN NULL ELSE SUM(cost) END AS cost
            FROM ${source}
-          WHERE user_id = ?
+          WHERE user_id = ? AND usage_epoch = ?
             AND ts IS NOT NULL
             AND ts >= unixepoch(date('now', ?)) * 1000
           GROUP BY day ORDER BY day`
-      ).all(userId, daysArg) as DayUsage[];
+      ).all(userId, usageEpoch, daysArg) as DayUsage[];
     });
   }
 
@@ -395,14 +384,14 @@ export class BrainUsageStore {
    *  view (`ts IS NOT NULL`) so windowed totals always sum to the unwindowed total. A bucket comes back
    *  if it has any tokens OR any cost (a provider that reports cost with zero tokens still counts). */
   usageByModel(userId: number, window?: { fromIso?: string; toIso?: string }): ModelUsage[] {
-    const clauses = [`user_id = ?`, `ts IS NOT NULL`, `model != ''`];
-    const params: (string | number)[] = [userId];
     const fromMs = window?.fromIso ? Date.parse(window.fromIso) : NaN;
     const toMs = window?.toIso ? Date.parse(window.toIso) : NaN;
-    if (Number.isFinite(fromMs)) { clauses.push(`ts >= ?`); params.push(fromMs); }
-    if (Number.isFinite(toMs)) { clauses.push(`ts <= ?`); params.push(toMs); }
     // Key on the PARSED bounds so two ISO spellings of the same instant share one entry.
-    return this.cachedView(`byModel${userId}${fromMs}${toMs}`, () => {
+    return this.cachedView(userId, `byModel${userId}${fromMs}${toMs}`, (usageEpoch) => {
+      const clauses = [`user_id = ?`, `usage_epoch = ?`, `ts IS NOT NULL`, `model != ''`];
+      const params: (string | number)[] = [userId, usageEpoch];
+      if (Number.isFinite(fromMs)) { clauses.push(`ts >= ?`); params.push(fromMs); }
+      if (Number.isFinite(toMs)) { clauses.push(`ts <= ?`); params.push(toMs); }
       interface Row { provider: string | null; model: string; input: number; output: number; cache_read: number; cache_write: number; total: number; reasoning: number; measured_output: number; duration_ms: number; cost: number | null }
       const source = this.hasUsageRollup() ? 'brain_usage_rows' : 'usage_rows';
       const prefix = this.hasUsageRollup() ? '' : `WITH ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})`;
@@ -464,13 +453,16 @@ export class BrainUsageStore {
     ).get(sessionId) as { present: number } | undefined;
     if (!hasChild) return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, reasoning: 0, cost: 0 };
     const row = this.db.prepare(
-      `WITH RECURSIVE descendants(id, user_id) AS (
-         SELECT child.id, child.user_id
-           FROM brain_sessions child
-           JOIN brain_sessions root ON root.id = ?
-          WHERE child.parent_session_id = root.id AND child.user_id = root.user_id
+      `WITH RECURSIVE root(id, user_id, usage_epoch) AS (
+         SELECT s.id, s.user_id, COALESCE(r.usage_epoch, 0)
+           FROM brain_sessions s LEFT JOIN brain_usage_reset_state r ON r.user_id = s.user_id
+          WHERE s.id = ?
+       ), descendants(id, user_id, usage_epoch) AS (
+         SELECT child.id, child.user_id, root.usage_epoch
+           FROM brain_sessions child JOIN root ON child.parent_session_id = root.id
+          WHERE child.user_id = root.user_id
          UNION
-         SELECT child.id, child.user_id
+         SELECT child.id, child.user_id, parent.usage_epoch
            FROM brain_sessions child JOIN descendants parent ON child.parent_session_id = parent.id
           WHERE child.user_id = parent.user_id
        ), usage_rows AS (
@@ -482,7 +474,7 @@ export class BrainUsageStore {
                 ${numeric('m.content', '$.usage.reasoning')} AS reasoning,
                 ${numeric('m.content', '$.usage.cost.total')} AS cost
            FROM descendants d CROSS JOIN brain_messages m
-          WHERE m.session_id = d.id AND m.role = 'assistant'
+          WHERE m.session_id = d.id AND m.usage_epoch = d.usage_epoch AND m.role = 'assistant'
             AND json_valid(m.content) AND json_type(m.content) = 'object'
          UNION ALL
          SELECT ${numeric('je.value', '$.input')}, ${numeric('je.value', '$.output')},
@@ -494,6 +486,8 @@ export class BrainUsageStore {
                                THEN CASE WHEN json_type(m.content, '$.usageRollup') = 'array'
                                          THEN json_extract(m.content, '$.usageRollup') END END) je
           WHERE m.session_id = d.id AND m.role = 'compaction' AND je.type = 'object'
+            AND CASE WHEN json_type(je.value, '$.usageEpoch') = 'integer'
+                     THEN json_extract(je.value, '$.usageEpoch') ELSE m.usage_epoch END = d.usage_epoch
        )
        SELECT COALESCE(SUM(input), 0) AS input,
               COALESCE(SUM(output), 0) AS output,

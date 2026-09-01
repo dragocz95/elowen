@@ -77,12 +77,14 @@ export function registerUsageRoutes(app: ElowenApp, ctx: RouteContext): void {
       trackingSince: d.usageOrigins.trackingSince(),
     });
   });
-  // Reset the caller's message-derived usage and independent origin rollup. Messages remain readable.
+  // One logical generation reset. `chatCleared` is 1 when the metadata transaction ran, never a count of
+  // historical message rows (obtaining that count would itself require the blocking scan this route avoids).
   app.post('/usage/reset', c => {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const userId = c.get('user')?.id;
-    const chat = userId != null ? d.brainStore?.clearUsage(userId) ?? 0 : 0;
-    const origins = userId != null ? d.usageOrigins?.clearForUser(userId) ?? 0 : 0;
-    return c.json({ ok: true, chatCleared: chat, originsCleared: origins });
+    const reset = userId != null && d.brainStore
+      ? d.brainStore.resetUsage(userId, () => d.usageOrigins?.clearForUser(userId) ?? 0)
+      : { chatCleared: 0, originsCleared: 0 };
+    return c.json({ ok: true, ...reset });
   });
 }

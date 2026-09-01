@@ -315,8 +315,13 @@ export class ProviderRequestStore {
   finish(input: ProviderRequestTerminalInput): boolean {
     return this.db.transaction(() => {
       const row = this.db.prepare(
-        'SELECT request_id, session_id, seq, status, started_at FROM brain_provider_requests WHERE request_id = ?'
-      ).get(input.requestId) as RequestRow | undefined;
+        `SELECT r.request_id, r.session_id, r.seq, r.status, r.started_at,
+                COALESCE(reset.usage_epoch, 0) AS usage_epoch
+           FROM brain_provider_requests r
+           JOIN brain_sessions s ON s.id = r.session_id
+           LEFT JOIN brain_usage_reset_state reset ON reset.user_id = s.user_id
+          WHERE r.request_id = ?`
+      ).get(input.requestId) as (RequestRow & { usage_epoch: number }) | undefined;
       if (!row) throw new Error(`provider request correlation invariant: unknown attempt ${input.requestId}`);
       if (row.status !== 'pending') return false;
       const finishedAt = input.finishedAt ?? Date.now();
@@ -338,7 +343,8 @@ export class ProviderRequestStore {
            assistant_message_id = COALESCE(@assistant_message_id, assistant_message_id),
            input_tokens = @input_tokens, output_tokens = @output_tokens, reasoning_tokens = @reasoning_tokens,
            cache_read_tokens = @cache_read_tokens, cache_write_tokens = @cache_write_tokens,
-           total_tokens = @total_tokens, cost_usd = @cost_usd, duration_ms = @duration_ms
+           total_tokens = @total_tokens, cost_usd = @cost_usd, duration_ms = @duration_ms,
+           usage_epoch = @usage_epoch
          WHERE request_id = @request_id AND status = 'pending'`
       ).run({
         request_id: input.requestId, finished_at: finishedAt, status: input.status,
@@ -347,6 +353,7 @@ export class ProviderRequestStore {
         input_tokens: inputTokens, output_tokens: outputTokens, reasoning_tokens: reasoningTokens,
         cache_read_tokens: cacheReadTokens, cache_write_tokens: cacheWriteTokens,
         total_tokens: totalTokens, cost_usd: cost, duration_ms: Math.max(0, finishedAt - row.started_at),
+        usage_epoch: row.usage_epoch,
       }).changes;
       if (changed !== 1) throw new Error(`provider request correlation invariant: terminal update lost attempt ${input.requestId}`);
       this.db.prepare(
@@ -516,6 +523,8 @@ export class ProviderRequestStore {
   }
 
   private requestItem(row: Record<string, unknown>): BrainDebugRequestItem {
+    const visibleUsage = Number(row.usage_epoch ?? 0) === Number(row.current_usage_epoch ?? 0);
+    const usage = (value: unknown): number | null => visibleUsage && value !== null ? Number(value) : null;
     return {
       requestId: String(row.request_id), sessionId: String(row.session_id), seq: Number(row.seq), turnId: String(row.turn_id),
       retryOf: row.retry_of === null ? null : String(row.retry_of), kind: row.kind as ProviderRequestKind,
@@ -523,10 +532,10 @@ export class ProviderRequestStore {
       startedAt: Number(row.started_at), responseAt: row.response_at === null ? null : Number(row.response_at),
       finishedAt: row.finished_at === null ? null : Number(row.finished_at), status: row.status as BrainDebugRequestStatus,
       httpStatus: row.http_status === null ? null : Number(row.http_status), errorCode: row.error_code === null ? null : String(row.error_code),
-      errorMessage: row.error_message === null ? null : String(row.error_message), inputTokens: row.input_tokens === null ? null : Number(row.input_tokens),
-      outputTokens: row.output_tokens === null ? null : Number(row.output_tokens), reasoningTokens: row.reasoning_tokens === null ? null : Number(row.reasoning_tokens),
-      cacheReadTokens: row.cache_read_tokens === null ? null : Number(row.cache_read_tokens), cacheWriteTokens: row.cache_write_tokens === null ? null : Number(row.cache_write_tokens),
-      totalTokens: row.total_tokens === null ? null : Number(row.total_tokens), costUsd: row.cost_usd === null ? null : Number(row.cost_usd),
+      errorMessage: row.error_message === null ? null : String(row.error_message), inputTokens: usage(row.input_tokens),
+      outputTokens: usage(row.output_tokens), reasoningTokens: usage(row.reasoning_tokens),
+      cacheReadTokens: usage(row.cache_read_tokens), cacheWriteTokens: usage(row.cache_write_tokens),
+      totalTokens: usage(row.total_tokens), costUsd: usage(row.cost_usd),
       durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
     };
   }
@@ -534,28 +543,32 @@ export class ProviderRequestStore {
   debugRequests(sessionId: string, filters: ProviderRequestDebugRequestFilters = {}): BrainDebugPage<BrainDebugRequestItem> | undefined {
     if (!this.db.prepare('SELECT 1 FROM brain_sessions WHERE id = ?').get(sessionId)) return undefined;
     const limit = boundedLimit(filters.limit, 50, 100);
-    const where = ['session_id = ?'];
+    const where = ['r.session_id = ?'];
     const params: unknown[] = [sessionId];
     const cursor = decodeCursor<{ seq: number }>(filters.cursor);
     if (cursor) {
       if (!Number.isInteger(cursor.seq) || cursor.seq < 0) throw new Error('invalid debug cursor');
-      where.push('seq > ?'); params.push(cursor.seq);
+      where.push('r.seq > ?'); params.push(cursor.seq);
     }
-    if (filters.status) { where.push('status = ?'); params.push(filters.status); }
-    if (filters.kind) { where.push('kind = ?'); params.push(filters.kind); }
-    if (filters.provider) { where.push('(configured_provider = ? OR wire_provider = ?)'); params.push(filters.provider, filters.provider); }
-    if (filters.model) { where.push('model = ?'); params.push(filters.model); }
+    if (filters.status) { where.push('r.status = ?'); params.push(filters.status); }
+    if (filters.kind) { where.push('r.kind = ?'); params.push(filters.kind); }
+    if (filters.provider) { where.push('(r.configured_provider = ? OR r.wire_provider = ?)'); params.push(filters.provider, filters.provider); }
+    if (filters.model) { where.push('r.model = ?'); params.push(filters.model); }
     const search = filters.search?.trim().toLowerCase();
     if (search) {
-      where.push(`(lower(request_id) LIKE ? OR lower(turn_id) LIKE ? OR lower(COALESCE(error_code, '')) LIKE ? OR lower(COALESCE(error_message, '')) LIKE ?)`);
+      where.push(`(lower(r.request_id) LIKE ? OR lower(r.turn_id) LIKE ? OR lower(COALESCE(r.error_code, '')) LIKE ? OR lower(COALESCE(r.error_message, '')) LIKE ?)`);
       const pattern = `%${search}%`; params.push(pattern, pattern, pattern, pattern);
     }
     const rows = this.db.prepare(
-      `SELECT request_id, session_id, seq, turn_id, retry_of, kind, configured_provider, wire_provider,
-              api, model, started_at, response_at, finished_at, status, http_status, error_code,
-              error_message, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
-              cache_write_tokens, total_tokens, cost_usd, duration_ms
-         FROM brain_provider_requests WHERE ${where.join(' AND ')} ORDER BY seq ASC LIMIT ?`
+      `SELECT r.request_id, r.session_id, r.seq, r.turn_id, r.retry_of, r.kind, r.configured_provider, r.wire_provider,
+              r.api, r.model, r.started_at, r.response_at, r.finished_at, r.status, r.http_status, r.error_code,
+              r.error_message, r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cache_read_tokens,
+              r.cache_write_tokens, r.total_tokens, r.cost_usd, r.duration_ms, r.usage_epoch,
+              COALESCE(reset.usage_epoch, 0) AS current_usage_epoch
+         FROM brain_provider_requests r
+         JOIN brain_sessions s ON s.id = r.session_id
+         LEFT JOIN brain_usage_reset_state reset ON reset.user_id = s.user_id
+        WHERE ${where.join(' AND ')} ORDER BY r.seq ASC LIMIT ?`
     ).all(...params, limit + 1) as Record<string, unknown>[];
     const hasMore = rows.length > limit;
     const items = rows.slice(0, limit).map((row) => this.requestItem(row));
@@ -599,8 +612,13 @@ export class ProviderRequestStore {
   }
 
   debugRequest(sessionId: string, requestId: string): BrainDebugRequestDetail | undefined {
-    const row = this.db.prepare('SELECT * FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
-      .get(sessionId, requestId) as Record<string, unknown> | undefined;
+    const row = this.db.prepare(
+      `SELECT r.*, COALESCE(reset.usage_epoch, 0) AS current_usage_epoch
+         FROM brain_provider_requests r
+         JOIN brain_sessions s ON s.id = r.session_id
+         LEFT JOIN brain_usage_reset_state reset ON reset.user_id = s.user_id
+        WHERE r.session_id = ? AND r.request_id = ?`,
+    ).get(sessionId, requestId) as Record<string, unknown> | undefined;
     if (!row) return undefined;
     const refs = this.segmentRefs({ manifest: String(row.manifest), response_segment: row.response_segment as string | null });
     const entries = this.segmentEntries(sessionId, refs);
@@ -700,13 +718,8 @@ export class ProviderRequestStore {
     this.db.prepare('UPDATE brain_request_segments SET session_id = ? WHERE session_id = ?').run(newId, oldId);
   }
 
-  clearUsageForUser(userId: number): void {
+  resetUsageSummariesForUser(userId: number): void {
     const scope = 'session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)';
-    this.db.prepare(
-      `UPDATE brain_provider_requests SET input_tokens = NULL, output_tokens = NULL, reasoning_tokens = NULL,
-         cache_read_tokens = NULL, cache_write_tokens = NULL, total_tokens = NULL, cost_usd = NULL
-       WHERE ${scope}`
-    ).run(userId);
     this.db.prepare(
       `UPDATE brain_request_session_summary SET input_tokens = 0, output_tokens = 0, reasoning_tokens = 0,
          cache_read_tokens = 0, cache_write_tokens = 0, total_tokens = 0, cost_usd = 0,
