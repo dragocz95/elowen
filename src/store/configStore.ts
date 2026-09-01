@@ -1,4 +1,4 @@
-import type { Db } from './db.js';
+import { withWriteLock, type Db } from './db.js';
 import { stripControlChars } from '../shared/text.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, execRefSpec, isAllowedExec, parseExecRef } from '../shared/execs.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
@@ -149,6 +149,15 @@ export interface ElowenConfig {
   categorization: CategorizationBlock;
   /** Dashboard personalization: daily digest + agent-written hero (no secret → public verbatim). */
   dashboard: DashboardBlock;
+}
+
+export interface ConfigSnapshot extends ElowenConfig { revision: number }
+
+export class ConfigRevisionConflict extends Error {
+  constructor(public readonly current: ConfigSnapshot) {
+    super('config changed since the supplied revision');
+    this.name = 'ConfigRevisionConflict';
+  }
 }
 
 /** How a brain provider authenticates/talks upstream. `openai` = any OpenAI-compatible endpoint;
@@ -1018,9 +1027,15 @@ export class ConfigStore {
     } catch { return defaultStored(); } // corrupt row → defaults, never throw
   }
 
-  private write(s: Stored): void {
-    this.db.prepare('INSERT INTO settings (id, data) VALUES (1, @data) ON CONFLICT(id) DO UPDATE SET data = @data')
-      .run({ data: JSON.stringify(s) });
+  private revision(): number {
+    const row = this.db.prepare('SELECT revision FROM settings WHERE id = 1').get() as { revision?: number } | undefined;
+    return typeof row?.revision === 'number' && Number.isInteger(row.revision) && row.revision >= 0 ? row.revision : 0;
+  }
+
+  private write(s: Stored, revision = this.revision() + 1): void {
+    this.db.prepare(`INSERT INTO settings (id, data, revision) VALUES (1, @data, @revision)
+      ON CONFLICT(id) DO UPDATE SET data = @data, revision = @revision`)
+      .run({ data: JSON.stringify(s), revision });
   }
 
   get(): ElowenConfig {
@@ -1052,21 +1067,29 @@ export class ConfigStore {
     };
   }
 
+  snapshot(): ConfigSnapshot {
+    return this.db.transaction(() => ({ ...this.get(), revision: this.revision() }))();
+  }
+
   /** The full VAPID keypair (private included) for the daemon-side push sender — never serialized to
    *  any API response. Null until generated on first boot. */
   webPushKeys(): { publicKey: string; privateKey: string } | null { return this.read().webPush; }
 
   /** Persist a freshly generated VAPID keypair. */
   setWebPushKeys(keys: { publicKey: string; privateKey: string }): void {
-    this.write({ ...this.read(), webPush: { publicKey: keys.publicKey, privateKey: keys.privateKey } });
+    withWriteLock(this.db, () => {
+      this.write({ ...this.read(), webPush: { publicKey: keys.publicKey, privateKey: keys.privateKey } });
+    });
   }
 
   /** Persist one server-verified hosted-search capability. Generic config PATCH cannot forge this map. */
   setHostedToolSearchCapability(providerId: string, modelId: string, capability: HostedToolSearchCapability): void {
-    const current = this.read();
-    const hostedToolSearch = structuredClone(current.runtime.hostedToolSearch);
-    hostedToolSearch[providerId] = { ...(hostedToolSearch[providerId] ?? {}), [modelId]: capability };
-    this.write({ ...current, runtime: { ...current.runtime, hostedToolSearch } });
+    withWriteLock(this.db, () => {
+      const current = this.read();
+      const hostedToolSearch = structuredClone(current.runtime.hostedToolSearch);
+      hostedToolSearch[providerId] = { ...(hostedToolSearch[providerId] ?? {}), [modelId]: capability };
+      this.write({ ...current, runtime: { ...current.runtime, hostedToolSearch } });
+    });
   }
 
   /** Whether a settings row has been persisted (i.e. config has been saved at least once). */
@@ -1108,7 +1131,7 @@ export class ConfigStore {
         }
       }
     }
-    if (changed) this.db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(root));
+    if (changed) this.db.prepare('UPDATE settings SET data = ?, revision = revision + 1 WHERE id = 1').run(JSON.stringify(root));
   }
 
   /** One-shot upgrade for the LSP extraction: enable the `lsp` plugin for EXISTING installs and COPY
@@ -1175,8 +1198,15 @@ export class ConfigStore {
     });
   }
 
-  update(patch: ConfigPatch): ElowenConfig {
-    const cur = this.read();
+  /** Merge and persist one config patch under SQLite's write lock. When supplied, expectedRevision makes
+   *  whole-snapshot callers fail closed instead of overwriting a newer browser/device snapshot. */
+  update(patch: ConfigPatch, expectedRevision?: number): ElowenConfig {
+    return withWriteLock(this.db, () => {
+      const cur = this.read();
+      const currentRevision = this.revision();
+      if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
+        throw new ConfigRevisionConflict(this.snapshot());
+      }
     // The default exec must resolve to a real program — mirror the API's allowedExecs guard so an admin
     // cannot persist a bare bogus spec that resolveExecutor would turn into a non-existent CLI model.
     // Element-level sanitised regardless of source: a stored value is already clean (idempotent), while a
@@ -1275,8 +1305,9 @@ export class ConfigStore {
       },
       // The same field-by-field helper read() uses; with `cur` as the fallback it IS the merge.
       dashboard: sanitizeDashboard(patch.dashboard, cur.dashboard),
+    }, currentRevision + 1);
+      return this.get();
     });
-    return this.get();
   }
 
   /** The persisted embedding block (daemon-side). Empty `providerId`/`model` → embeddings disabled.
@@ -1300,6 +1331,13 @@ export class ConfigStore {
   /** A plugin's own config slice (secrets included). Daemon-side only — never routed to any client. */
   pluginConfig(name: string): Record<string, unknown> {
     return this.read().plugins.config[name] ?? {};
+  }
+
+  /** Read one plugin slice and the shared config revision from the same SQLite snapshot. A separate
+   * `pluginConfig()` followed by `snapshot()` can pair old values with a newer revision, letting a stale
+   * browser snapshot pass conditional-write validation and overwrite the intervening change. */
+  pluginConfigSnapshot(name: string): { config: Record<string, unknown>; revision: number } {
+    return this.db.transaction(() => ({ config: this.pluginConfig(name), revision: this.revision() }))();
   }
 
   /** Resolve an exec field on update: keep the current value when the patch omits it; accept a

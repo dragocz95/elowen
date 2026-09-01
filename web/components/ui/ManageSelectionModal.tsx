@@ -1,8 +1,10 @@
 'use client';
 import { useMemo, useState, type ReactNode } from 'react';
+import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { Search } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { Button } from './Button';
+import { AutoSaveStatus } from './AutoSaveStatus';
 import { Checkbox } from './Checkbox';
 import { useTranslation } from '../../lib/i18n';
 
@@ -150,7 +152,12 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
   const readOnly = props.readOnly === true;
   const editable = props.readOnly === true ? undefined : props;
   const { saving = false, emptySelectionHint, single = false } = editable ?? {};
+  const [internalSaving, setInternalSaving] = useState(false);
+  const isSaving = saving || internalSaving;
   const { t } = useTranslation();
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const busy = isSaving;
+  const visibleSaveStatus: SaveStatus = busy ? 'saving' : saveStatus;
   const [local, setLocal] = useState<Set<string>>(() => new Set(editable?.selected));
   const [query, setQuery] = useState('');
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
@@ -187,20 +194,26 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
   const countText = countLabel ?? ((n: number) => t.managePicker.selectedCount.replace('{n}', String(n)));
 
   const save = async () => {
-    if (!editable) return;
+    if (!editable || busy) return;
+    setInternalSaving(true);
+    setSaveStatus('saving');
     try {
       const result = editable.onSave(new Set(local));
       // Synchronous pickers should close in the same interaction frame. Async persistence still
       // keeps the modal open until it resolves so failures remain retryable.
       if (result) await result;
+      setSaveStatus('saved');
       onClose();
     } catch {
-      // The caller surfaces the failure (toast); keep the modal open so the user can retry.
+      setSaveStatus('error');
+      // The caller may surface additional detail; keep the modal open so this status can retry.
+    } finally {
+      setInternalSaving(false);
     }
   };
 
   return (
-    <Modal title={title} description={subtitle} onClose={onClose} size="xl">
+    <Modal title={title} description={subtitle} onClose={onClose} closeDisabled={busy} size="xl">
       <ModalBody gap={4}>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -279,24 +292,27 @@ function ManageSelectionModalBody(props: ManageSelectionModalProps) {
       </ModalBody>
       <ModalFooter
         status={
-          <span className="text-xs text-muted-foreground">
-            {readOnly
-              ? countText(items.length)
-              : single
-                ? chosenLabel
-                : local.size === 0 && emptySelectionHint
-                  ? emptySelectionHint
-                  : countText(local.size)}
-          </span>
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            {!readOnly ? <AutoSaveStatus status={visibleSaveStatus} onRetry={() => void save()} /> : null}
+            <span className="text-xs text-muted-foreground">
+              {readOnly
+                ? countText(items.length)
+                : single
+                  ? chosenLabel
+                  : local.size === 0 && emptySelectionHint
+                    ? emptySelectionHint
+                    : countText(local.size)}
+            </span>
+          </div>
         }
       >
         {readOnly
           ? <Button type="button" onClick={onClose}>{t.common.close}</Button>
           : (
             <>
-              <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>{t.common.cancel}</Button>
-              <Button type="button" variant="accent" onClick={save} disabled={saving}>
-                {saving ? t.common.saving : t.managePicker.saveChanges}
+              <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>{t.common.cancel}</Button>
+              <Button type="button" variant="accent" onClick={() => void save()} disabled={busy}>
+                {busy ? t.common.saving : t.managePicker.saveChanges}
               </Button>
             </>
           )}

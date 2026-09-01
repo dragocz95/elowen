@@ -15,6 +15,8 @@ import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useBrainOauthStatus, useBrainRateLimitsAll } from '../../lib/queries';
+import { useAutoSaveStatus } from '../../lib/useAutoSaveStatus';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { OAuthUsageRail } from './OAuthUsageRail';
 import { useUpdateConfig, useSaveBrainProviders, useBrainOauthDisconnect } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
@@ -411,8 +413,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
     return () => { cancelled = true; };
   }, [config?.brain?.providers]);
 
-  if (!config) return null;
-  const providers = config.brain?.providers ?? [];
+  const providers = config?.brain?.providers ?? [];
   // OAuth entries exist in config only as carriers of the account's model selection — the account
   // cards above manage them, so the add/edit grid below shows API-key providers only.
   const apiProviders = providers.filter((p) => !p.type.startsWith('oauth-'));
@@ -420,20 +421,30 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
   // A display filter only: hidden OAuth types drop from the accounts list so a provider the operator
   // never uses stops offering "Connect". It never touches credentials, so only disconnected accounts can
   // be hidden — a hidden type that is somehow connected still shows, to never bury a working account.
-  const hiddenOauth = config.brain?.hiddenOauth ?? [];
+  const [hiddenOauth, setHiddenOauth] = useState<string[]>(config?.brain?.hiddenOauth ?? []);
+  const [hiddenOauthSeeded, setHiddenOauthSeeded] = useState(false);
+  useEffect(() => {
+    if (config && !hiddenOauthSeeded) {
+      setHiddenOauth(config.brain?.hiddenOauth ?? []);
+      setHiddenOauthSeeded(true);
+    }
+  }, [config, hiddenOauthSeeded]);
   // The supported OAuth account types come straight from the daemon (keys of the status map), so a
   // provider added there shows up here without a frontend change.
   const oauthTypes = Object.keys(oauth.data ?? {});
   const typeLabel = (type: string): string => t.brain.types[type as keyof typeof t.brain.types] ?? type;
   const isConnected = (type: string) => oauth.data?.[type] ?? false;
-  const setHiddenOauth = (next: string[]) => {
-    void (async () => {
-      try { await updateConfig.mutateAsync({ brain: { hiddenOauth: next } }); }
-      catch { toast(t.brain.saveError, 'error'); }
-    })();
-  };
-  const hideOauth = (type: string) => setHiddenOauth([...hiddenOauth.filter((t) => t !== type), type]);
-  const showOauth = (type: string) => setHiddenOauth(hiddenOauth.filter((t) => t !== type));
+  const hiddenOauthSave = useAutoSaveStatus([hiddenOauth], async () => {
+    try {
+      const saved = await updateConfig.mutateAsync({ brain: { hiddenOauth } });
+      const canonical = saved.brain?.hiddenOauth ?? [];
+      if (canonical.join('\\u0000') !== hiddenOauth.join('\\u0000')) setHiddenOauth(canonical);
+    } catch (error) { toast(t.brain.saveError, 'error'); throw error; }
+  }, { ready: hiddenOauthSeeded, delay: 0 });
+  const setHiddenOauthDraft = (next: string[]) => setHiddenOauth(next);
+  if (!config) return null;
+  const hideOauth = (type: string) => setHiddenOauthDraft([...hiddenOauth.filter((t) => t !== type), type]);
+  const showOauth = (type: string) => setHiddenOauthDraft(hiddenOauth.filter((t) => t !== type));
   const restorableOauth = oauthTypes.filter((type) => hiddenOauth.includes(type) && !isConnected(type));
 
   // A connected account's model selection lives on its explicit provider entry (id = the builtin
@@ -538,9 +549,10 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
               // record's trailing side.
               trailingLayout="stack"
               status={(
-                <span className="flex items-center gap-2">
+                <span className="flex flex-wrap items-center gap-2">
                   <ModelIcon name={icon} size={15} />
                   {connected ? <Badge tone="accent">{t.brain.connected}</Badge> : <span>{t.brain.notConnected}</span>}
+                  <AutoSaveStatus status={hiddenOauthSave.status} onRetry={hiddenOauthSave.retry} />
                 </span>
               )}
               actions={connected ? (

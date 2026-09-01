@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '');
-CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0);
 -- `id` is AUTOINCREMENT, not a bare rowid: durable account-owned rows reference it, and a plain rowid
 -- is reused after the highest-numbered user is deleted. AUTOINCREMENT keeps the counter monotonic in
 -- sqlite_sequence so an id is never handed out twice. See db.ts v7.
@@ -68,6 +68,14 @@ CREATE TABLE IF NOT EXISTS user_settings (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, key)
+);
+-- One revision per logical personal-settings resource. The resource snapshot is assembled from one or more
+-- user_settings keys, so a whole-form PATCH can reject a stale tab without coupling unrelated resources.
+CREATE TABLE IF NOT EXISTS user_setting_revisions (
+  user_id INTEGER NOT NULL,
+  resource TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, resource)
 );
 -- Per-user, per-plugin non-secret settings. Stored as one JSON blob per (user, plugin), so a write is
 -- atomic against the whole form and a plugin's schema can change without a migration. Legacy secret

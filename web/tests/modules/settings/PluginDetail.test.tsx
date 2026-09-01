@@ -428,7 +428,7 @@ describe('PluginDetail document-shaped fields', () => {
 });
 
 describe('PluginDetail secret field', () => {
-  it('reports a stored secret as a compact status and requires an explicit replace action', () => {
+  it('reports a stored secret as a compact status and requires an explicit replace action', async () => {
     usePluginDetail.mockReturnValue({ data: detail(
       [{ key: 'token', label: 'Token', type: 'secret' }],
       {},
@@ -445,7 +445,32 @@ describe('PluginDetail secret field', () => {
     expect(screen.queryByText(en.pluginCfg.secretKeepHint)).toBeNull();
 
     fireEvent.click(within(row).getByRole('button', { name: en.pluginCfg.secretReplace }));
-    expect(container.querySelector('input[type="password"]')).toHaveAttribute('placeholder', en.pluginCfg.secretReplacementPlaceholder);
+    const replacement = container.querySelector('input[type="password"]') as HTMLInputElement;
+    expect(replacement).toHaveAttribute('placeholder', en.pluginCfg.secretReplacementPlaceholder);
+    fireEvent.change(replacement, { target: { value: 'replacement-secret' } });
+    await new Promise((resolve) => setTimeout(resolve, 950));
+    expect(savePluginConfig).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: en.common.save }));
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith(expect.objectContaining({ values: { token: 'replacement-secret' } })));
+    await waitFor(() => expect(container.querySelector('input[type="password"]')).toBeNull());
+  });
+
+  it('accepts an unset required secret only through the explicit commit button', async () => {
+    usePluginDetail.mockReturnValue({ data: detail(
+      [{ key: 'token', label: 'Token', type: 'secret', required: true }],
+      {},
+    ), isLoading: false });
+    const { container } = renderDetail();
+
+    const input = container.querySelector('input[type="password"]') as HTMLInputElement;
+    expect(input).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'first-secret' } });
+    await new Promise((resolve) => setTimeout(resolve, 950));
+    expect(savePluginConfig).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: en.common.save }));
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith(expect.objectContaining({ values: { token: 'first-secret' } })));
   });
 });
 

@@ -1,9 +1,10 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Palette } from 'lucide-react';
 import { useConfig } from '../../lib/queries';
 import { useUpdateConfig } from '../../lib/mutations';
-import { useToast } from '../../components/ui/Toast';
+import { useAutoSaveStatus } from '../../lib/useAutoSaveStatus';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { useTranslation } from '../../lib/i18n';
 import { SettingsRow } from '../../components/ui/SettingsSurface';
 import { Button } from '../../components/ui/Button';
@@ -14,17 +15,28 @@ import { SKINS, skinDisplayName, type SkinName } from '../../lib/skins';
 /** Which designs accounts may switch between, chosen from the two skins THIS build compiled. */
 export function SkinsRow() {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const config = useConfig();
   const update = useUpdateConfig();
   const [open, setOpen] = useState(false);
+  const [allowedNames, setAllowedNames] = useState<string[]>([]);
+  const [seeded, setSeeded] = useState(false);
 
-  const allowed = useMemo(() => {
+  const seed = useMemo(() => {
     const stored = config.data?.allowedSkins ?? [];
     // Intersect with what this build actually has: a name left behind by a deployment that used to ship a
     // skin must not be presented as a live selection.
-    return new Set(stored.filter((name) => (SKINS as readonly string[]).includes(name)));
+    return stored.filter((name) => (SKINS as readonly string[]).includes(name));
   }, [config.data?.allowedSkins]);
+  useEffect(() => {
+    if (config.data && !seeded) { setAllowedNames(seed); setSeeded(true); }
+  }, [config.data, seed, seeded]);
+  const allowed = useMemo(() => new Set(allowedNames), [allowedNames]);
+  const skinSave = useAutoSaveStatus([allowedNames], async () => {
+    const ordered = SKINS.filter((name) => allowed.has(name));
+    const saved = await update.mutateAsync({ allowedSkins: [...ordered] });
+    const canonical = (saved.allowedSkins ?? []).filter((name) => (SKINS as readonly string[]).includes(name));
+    if (canonical.join('\u0000') !== ordered.join('\u0000')) setAllowedNames(canonical);
+  }, { ready: seeded });
 
   const label = (name: SkinName): string => skinDisplayName(t, name);
 
@@ -35,17 +47,10 @@ export function SkinsRow() {
     groupLabel: t.settings.skins.label,
   }));
 
-  const save = async (next: Set<string>): Promise<void> => {
-    // Send them in the catalog's own order rather than Set insertion order: this list is also the order
-    // the switcher cycles through, and it should not depend on which checkbox the admin happened to tick
-    // first.
-    const ordered = SKINS.filter((name) => next.has(name));
-    try {
-      await update.mutateAsync({ allowedSkins: [...ordered] });
-      setOpen(false);
-    } catch {
-      toast(t.settings.skins.saveError, 'error');
-    }
+  const save = (next: Set<string>): void => {
+    // The picker commits only its local selection. The ordinary allowlist edit then follows the shared
+    // autosave lifecycle, so failure remains visible and retryable on the row.
+    setAllowedNames(SKINS.filter((name) => next.has(name)));
   };
 
   const chosen = SKINS.filter((name) => allowed.has(name));
@@ -61,6 +66,7 @@ export function SkinsRow() {
         label={t.settings.skins.label}
         description={t.settings.skins.hint}
         icon={Palette}
+        status={<AutoSaveStatus status={skinSave.status} onRetry={skinSave.retry} />}
         control={(
           <Button
             type="button"
@@ -92,7 +98,7 @@ export function SkinsRow() {
         items={items}
         selected={allowed}
         onSave={save}
-        saving={update.isPending}
+        saving={skinSave.status === 'saving'}
         countLabel={(n) => t.managePicker.selectedCount.replace('{n}', String(n))}
         emptySelectionHint={t.settings.skins.emptyHint}
       />

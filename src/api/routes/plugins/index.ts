@@ -14,6 +14,8 @@ import { registerBrainOAuthRoutes } from './oauth.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../../brain/tools/index.js';
 import { makeToolIconResolver } from '../../../brain/toolIcons.js';
 import { logger } from '../../../shared/logger.js';
+import { ConfigRevisionConflict } from '../../../store/configStore.js';
+import { UserPluginConfigRevisionConflict } from '../../../store/userPluginConfigStore.js';
 
 class PluginConfigValueError extends Error {}
 
@@ -59,6 +61,61 @@ function validateTokenListValue(field: PluginConfigField, value: unknown): void 
   if (issue) throw new PluginConfigValueError(`invalid value for "${field.key}": ${issue}`);
 }
 
+function invalidField(field: PluginConfigField, message: string): never {
+  throw new PluginConfigValueError(`invalid value for "${field.key}": ${message}`);
+}
+
+function validateConfigValue(field: PluginConfigField, value: unknown): void {
+  if (value === null || value === undefined) {
+    if (field.required) invalidField(field, 'value is required');
+    return;
+  }
+  if (field.type === 'number') validateNumberValue(field, value);
+  validateTimezoneValue(field, value);
+  validateTokenListValue(field, value);
+  switch (field.type) {
+    case 'boolean': if (typeof value !== 'boolean') invalidField(field, 'expected a boolean'); break;
+    case 'number': break;
+    case 'string': case 'secret': case 'textarea': case 'code': case 'prompt': case 'json': case 'timezone': case 'model': case 'provider': case 'embeddingModel': case 'destination':
+      if (typeof value !== 'string') invalidField(field, 'expected a string');
+      if (field.required && !value.trim()) invalidField(field, 'value is required');
+      if (field.type === 'json' && value.trim()) { try { JSON.parse(value); } catch { invalidField(field, 'expected valid JSON'); } }
+      if (field.type === 'destination' && value.trim() && !/^[-\w:/.#]+$/.test(value.trim())) invalidField(field, 'expected a valid destination');
+      break;
+    case 'enum':
+      if (typeof value !== 'string' || !field.options?.some((option) => option.value === value)) invalidField(field, 'expected one of the declared options');
+      break;
+    case 'multiSelect':
+      if (!Array.isArray(value) || value.some((item) => typeof item !== 'string') || new Set(value).size !== value.length || value.some((item) => !field.options?.some((option) => option.value === item))) invalidField(field, 'expected unique declared options');
+      break;
+    case 'projects': case 'plugins': case 'tools': case 'models':
+      if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim()) || new Set(value).size !== value.length) invalidField(field, 'expected a unique string list');
+      break;
+    case 'rolePolicies':
+      if (!Array.isArray(value) || value.some((item) => !item || typeof item !== 'object' || Array.isArray(item)
+        || typeof (item as { roleId?: unknown }).roleId !== 'string'
+        || typeof (item as { name?: unknown }).name !== 'string'
+        || typeof (item as { prompt?: unknown }).prompt !== 'string'
+        || ((item as { admin?: unknown }).admin !== undefined && typeof (item as { admin?: unknown }).admin !== 'boolean'))) invalidField(field, 'expected role policy objects');
+      break;
+    case 'mcpServers':
+      if (!Array.isArray(value) || value.some((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return true;
+        const row = item as Record<string, unknown>;
+        return typeof row.name !== 'string' || !row.name.trim() || typeof row.command !== 'string' || !row.command.trim()
+          || !Array.isArray(row.args) || row.args.some((arg) => typeof arg !== 'string')
+          || !row.env || typeof row.env !== 'object' || Array.isArray(row.env) || Object.values(row.env as Record<string, unknown>).some((env) => typeof env !== 'string')
+          || typeof row.enabled !== 'boolean'
+          || (row.transport !== undefined && !['stdio', 'http', 'sse'].includes(String(row.transport)))
+          || ((row.transport === 'http' || row.transport === 'sse') && (typeof row.url !== 'string' || !row.url.trim() || !/^https?:\/\//.test(row.url)))
+          || (row.url !== undefined && typeof row.url !== 'string');
+      })) invalidField(field, 'expected MCP server objects');
+      break;
+    case 'tokenList': case 'section': break;
+    default: invalidField(field, 'unsupported field type');
+  }
+}
+
 /** Apply a config patch to the stored values, by the ONE rule both config forms follow: a key the caller
  *  did not send is left alone, an explicit `null` clears a non-secret back to its default, and a secret
  *  arriving empty keeps whatever is stored (the forms round-trip secrets write-only, so "empty" means
@@ -74,13 +131,9 @@ function applyConfigPatch(
     const v = values[f.key];
     if (v === undefined) continue;
     if (f.type === 'secret' && (v === '' || v === null)) continue;
-    if (v === null) { delete next[f.key]; continue; }
+    if (v === null) { if (f.required) invalidField(f, 'value is required'); delete next[f.key]; continue; }
     const effectiveCurrent = stored[f.key] !== undefined ? stored[f.key] : f.default;
-    if (!Object.is(v, effectiveCurrent)) {
-      validateNumberValue(f, v);
-      validateTimezoneValue(f, v);
-      validateTokenListValue(f, v);
-    }
+    if (!Object.is(v, effectiveCurrent) || f.required) validateConfigValue(f, v);
     next[f.key] = v;
   }
   return next;
@@ -127,13 +180,13 @@ function applied(c: Context, body: Record<string, unknown>, swapped: boolean | u
  *  exception is therefore an activation delay, never a failed save: log the operational fault and return
  *  the same pending contract as an intentional deferral. Persistence exceptions still escape before this
  *  helper is called and remain real request failures. */
-async function appliedConfig(c: Context, name: string, reload: (() => Promise<boolean>) | undefined) {
-  if (!reload) return applied(c, { ok: true }, undefined);
+async function appliedConfig(c: Context, name: string, reload: (() => Promise<boolean>) | undefined, body: Record<string, unknown> = { ok: true }) {
+  if (!reload) return applied(c, body, undefined);
   try {
-    return applied(c, { ok: true }, await reload());
+    return applied(c, body, await reload());
   } catch (error) {
     log.warn(`plugin config persisted but live activation failed for ${name}; activation remains pending`, error);
-    return c.json({ ok: true, pending: true }, 202);
+    return c.json({ ...body, pending: true }, 202);
   }
 }
 
@@ -356,10 +409,11 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   /** The caller's own values for one plugin, shaped like the instance-wide detail. */
-  const userConfigView = (name: string, schema: PluginConfigField[], stored: Record<string, unknown>) => ({
+  const userConfigView = (name: string, schema: PluginConfigField[], stored: Record<string, unknown>, revision: number) => ({
     name,
     userConfigSchema: schema,
     ...maskedConfigView(schema, stored),
+    revision,
   });
 
   /** The plugins whose per-account fields THIS caller may fill in: enabled, declaring a `userConfigSchema`,
@@ -383,7 +437,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     // error: the section simply has nothing to show yet.
     if (!user || !store) return c.json([]);
     return c.json(userConfigurablePlugins(user).map((p) => ({
-      ...userConfigView(p.manifest.name, p.manifest.userConfigSchema ?? [], store.get(user.id, p.manifest.name)),
+      ...(() => { const snapshot = store.snapshot(user.id, p.manifest.name); return userConfigView(p.manifest.name, p.manifest.userConfigSchema ?? [], snapshot.config, snapshot.revision); })(),
       description: p.manifest.description,
       i18n: p.i18n,
     })));
@@ -401,17 +455,27 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     // per-account fields, or was never granted to this account cannot be written to by URL.
     const plugin = userConfigurablePlugins(user).find((p) => p.manifest.name === name);
     if (!plugin) return c.json({ error: 'unknown plugin' }, 404);
-    const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown> } | null;
-    if (!b || typeof b.values !== 'object' || b.values === null) return c.json({ error: 'values must be an object' }, 400);
+    const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown>; expectedRevision?: unknown } | null;
+    if (!b || typeof b.values !== 'object' || b.values === null || Array.isArray(b.values)) return c.json({ error: 'values must be an object' }, 400);
+    if (b.expectedRevision !== undefined && (!Number.isInteger(b.expectedRevision) || (b.expectedRevision as number) < 0)) return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
     const schema = plugin.manifest.userConfigSchema ?? [];
+    const baseline = store.snapshot(user.id, name);
     let next: Record<string, unknown>;
-    try { next = applyConfigPatch(schema, store.get(user.id, name), b.values); }
+    try { next = applyConfigPatch(schema, baseline.config, b.values); }
     catch (error) {
       if (error instanceof PluginConfigValueError) return c.json({ error: error.message }, 400);
       throw error;
     }
-    store.set(user.id, name, next);
-    return c.json(userConfigView(name, schema, store.get(user.id, name)));
+    try { store.set(user.id, name, next, b.expectedRevision as number | undefined); }
+    catch (error) {
+      if (error instanceof UserPluginConfigRevisionConflict) {
+        const current = store.snapshot(user.id, name);
+        return c.json({ error: 'conflict', current: userConfigView(name, schema, current.config, current.revision) }, 409);
+      }
+      throw error;
+    }
+    const saved = store.snapshot(user.id, name);
+    return c.json(userConfigView(name, schema, saved.config, saved.revision));
   });
 
   // Detail for the per-plugin settings section: the declared config fields + current values. Secret
@@ -423,10 +487,12 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!manifest) return c.json({ error: 'unknown plugin' }, 404);
     const item = listing().find((p) => p.name === name);
     const schema = manifest.configSchema ?? [];
+    const snapshot = d.config.pluginConfigSnapshot(name);
     return c.json({
       ...item,
       configSchema: schema,
-      ...maskedConfigView(schema, d.config.pluginConfig(name)),
+      ...maskedConfigView(schema, snapshot.config),
+      revision: snapshot.revision,
       // Declared capabilities (deny-by-default `{}` when the manifest omits them) so the UI can render the
       // plugin's permission/risk section — what it may mutate, read, and whether it reaches the network.
       capabilities: manifest.capabilities ?? {},
@@ -504,17 +570,42 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const name = c.req.param('name');
     const manifest = manifestOf(name);
     if (!manifest) return c.json({ error: 'unknown plugin' }, 404);
-    const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown> } | null;
-    if (!b || typeof b.values !== 'object' || b.values === null) return c.json({ error: 'values must be an object' }, 400);
-    let stored: Record<string, unknown>;
-    try { stored = applyConfigPatch(manifest.configSchema ?? [], d.config.pluginConfig(name), b.values); }
-    catch (error) {
-      if (error instanceof PluginConfigValueError) return c.json({ error: error.message }, 400);
-      throw error;
+    const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown>; expectedRevision?: unknown } | null;
+    if (!b || typeof b.values !== 'object' || b.values === null || Array.isArray(b.values)) return c.json({ error: 'values must be an object' }, 400);
+    if (b.expectedRevision !== undefined && (!Number.isInteger(b.expectedRevision) || (b.expectedRevision as number) < 0)) {
+      return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
     }
-    // Persistence is the commit point. Any failure here remains a request failure and no reload starts.
-    d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } });
-    return await appliedConfig(c, name, d.brain ? () => d.brain!.reloadPlugins() : undefined);
+    const schema = manifest.configSchema ?? [];
+    const suppliedRevision = b.expectedRevision as number | undefined;
+    // Older clients do not send a revision. Keep them compatible without restoring the old race: read the
+    // plugin slice + revision atomically, write conditionally, and retry only when another writer won first.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const baseline = d.config.pluginConfigSnapshot(name);
+      if (suppliedRevision !== undefined && suppliedRevision !== baseline.revision) {
+        return c.json({ error: 'conflict', current: { ...maskedConfigView(schema, baseline.config), revision: baseline.revision } }, 409);
+      }
+      let stored: Record<string, unknown>;
+      try { stored = applyConfigPatch(schema, baseline.config, b.values); }
+      catch (error) {
+        if (error instanceof PluginConfigValueError) return c.json({ error: error.message }, 400);
+        throw error;
+      }
+      // Persistence is the commit point. Any failure here remains a request failure and no reload starts.
+      try {
+        d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } }, baseline.revision);
+      } catch (error) {
+        if (error instanceof ConfigRevisionConflict) {
+          if (suppliedRevision === undefined) continue;
+          const current = d.config.pluginConfigSnapshot(name);
+          return c.json({ error: 'conflict', current: { ...maskedConfigView(schema, current.config), revision: current.revision } }, 409);
+        }
+        throw error;
+      }
+      const current = d.config.pluginConfigSnapshot(name);
+      const canonical = { ok: true as const, ...maskedConfigView(schema, current.config), revision: current.revision };
+      return await appliedConfig(c, name, d.brain ? () => d.brain!.reloadPlugins() : undefined, canonical);
+    }
+    return c.json({ error: 'config changed too frequently; retry' }, 409);
   });
 
   app.patch('/plugins/:name', async (c) => {

@@ -11,6 +11,7 @@ import { useToast } from '../../components/ui/Toast';
 import { ElowenApiError } from '../../lib/elowenClient';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -265,27 +266,39 @@ function IdentityHeader({ user }: { user: ElowenUser }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(user.name);
   const [username, setUsername] = useState(user.username);
+  const [lastPatch, setLastPatch] = useState<{ name: string; username: string } | null>(null);
 
   function startEditing() {
     // Seed from the user currently shown, not from whatever a previous edit left behind.
     setName(user.name);
     setUsername(user.username);
+    update.reset();
+    setLastPatch(null);
     setEditing(true);
+  }
+
+  function submit(patch: { name: string; username: string }) {
+    setLastPatch(patch);
+    update.mutate({ id: user.id, patch }, {
+      onSuccess: () => { setEditing(false); toast(t.users.identityUpdated); },
+      onError: (e) => toast(e instanceof ElowenApiError && e.status === 409 ? t.users.usernameTaken : String(e) || t.users.updateError, 'error'),
+    });
   }
 
   function save() {
     const nextUsername = username.trim();
     if (!nextUsername) return; // an empty login name is refused by the daemon too; don't even ask
-    update.mutate({ id: user.id, patch: { name: name.trim(), username: nextUsername } }, {
-      onSuccess: () => { setEditing(false); toast(t.users.identityUpdated); },
-      onError: (e) => toast(e instanceof ElowenApiError && e.status === 409 ? t.users.usernameTaken : String(e) || t.users.updateError, 'error'),
-    });
+    submit({ name: name.trim(), username: nextUsername });
   }
 
   if (editing) return (
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
       <Input aria-label={t.users.fieldName} value={name} onChange={(e) => setName(e.target.value)} placeholder={t.users.fieldName} className="max-w-56" autoFocus />
       <Input aria-label={t.users.fieldUsername} value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t.users.fieldUsername} className="max-w-56" />
+      <AutoSaveStatus
+        status={update.isPending ? 'saving' : update.isError ? 'error' : update.isSuccess ? 'saved' : 'idle'}
+        onRetry={() => { if (lastPatch) submit(lastPatch); }}
+      />
       <Button onClick={save} disabled={update.isPending || !username.trim()}>{t.common.save}</Button>
       <Button variant="ghost" onClick={() => setEditing(false)} disabled={update.isPending}>{t.common.cancel}</Button>
     </div>

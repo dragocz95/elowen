@@ -14,6 +14,7 @@ import { useBrand } from '../../lib/brand';
 import { useConfig, useEmbeddingSettings, useCategorizationSettings, useBrainModels } from '../../lib/queries';
 import { useSaveEmbeddingSettings, useSaveCategorizationSettings } from '../../lib/mutations';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
+import { combineSaveFeedback } from '../../lib/saveFeedback';
 import { elowenClient, ElowenApiError } from '../../lib/elowenClient';
 import type { BrainModelOption } from '../../lib/types';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
@@ -89,18 +90,13 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
   // Auto-persist like the rest of Settings (silent on success, toast on error) — no Save buttons.
   const { status: embeddingStatus, retry: retryEmbedding } = useAutoSaveStatus([embProvider, embModel, dimensions], onSaveEmbedding, { ready: seeded });
   const { status: categorizationStatus, retry: retryCategorization } = useAutoSaveStatus([catProvider, catModel], onSaveCategorization, { ready: seeded });
-  const saveStatus: SaveStatus = embeddingStatus === 'error' || categorizationStatus === 'error'
-    ? 'error'
-    : embeddingStatus === 'saving' || categorizationStatus === 'saving'
-      ? 'saving'
-      : embeddingStatus === 'saved' || categorizationStatus === 'saved' ? 'saved' : 'idle';
+  const feedback = combineSaveFeedback(
+    { status: embeddingStatus, retry: retryEmbedding },
+    { status: categorizationStatus, retry: retryCategorization },
+  );
   useEffect(() => {
-    const retry = saveStatus === 'error' ? () => {
-      if (embeddingStatus === 'error') retryEmbedding();
-      if (categorizationStatus === 'error') retryCategorization();
-    } : undefined;
-    onSaveState?.('memory', saveStatus, retry);
-  }, [categorizationStatus, embeddingStatus, onSaveState, retryCategorization, retryEmbedding, saveStatus]);
+    onSaveState?.('memory', feedback.status, feedback.retry);
+  }, [feedback.retry, feedback.status, onSaveState]);
 
   if (embeddingIsError || categorizationIsError) {
     return (

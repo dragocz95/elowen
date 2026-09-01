@@ -183,6 +183,21 @@ describe('ChatHistoryRail', () => {
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['brain-sessions'] }));
   });
 
+  it('keeps a failed rename open and retries from the inline status', async () => {
+    client.brainRenameSession.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ id: 's1', title: 'Retried' });
+    renderRail('rail');
+    openRowMenu(0);
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i }));
+    const input = screen.getByRole('textbox', { name: /Conversation title|Název konverzace/i });
+    fireEvent.change(input, { target: { value: 'Retry me' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(client.brainRenameSession).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('textbox', { name: /Conversation title|Název konverzace/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Retry|Zkusit znovu/i }));
+    await waitFor(() => expect(client.brainRenameSession).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: /Conversation title|Název konverzace/i })).toBeNull());
+  });
+
   it('cancels a rename on Escape without committing', () => {
     renderRail('rail');
     openRowMenu(0);

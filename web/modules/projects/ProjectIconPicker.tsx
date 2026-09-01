@@ -7,6 +7,7 @@ import { useSetProjectIcon } from '../../lib/mutations';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { Input } from '../../components/ui/Input';
 import { LoadingState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
@@ -25,6 +26,7 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
   const setIcon = useSetProjectIcon();
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(project.icon || null);
+  const [lastAction, setLastAction] = useState<{ icon: string; removed: boolean } | null>(null);
 
   const images = useMemo(() => {
     const all = (files.data ?? []).filter((f) => f.type === 'file' && IMAGE_RE.test(f.path));
@@ -44,14 +46,18 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
   }, [images]);
 
   function apply(icon: string, removed = false) {
+    if (setIcon.isPending) return;
+    setLastAction({ icon, removed });
     setIcon.mutate({ id: project.id, icon }, {
       onSuccess: () => { toast(removed ? t.projects.iconRemoved : t.projects.iconSet); onClose(); },
       onError: (e) => toast(String(e), 'error'),
     });
   }
 
+  const saveStatus = setIcon.isPending ? 'saving' : setIcon.isError ? 'error' : setIcon.isSuccess ? 'saved' : 'idle';
+
   return (
-    <Modal title={t.projects.chooseIcon} description={project.slug} onClose={onClose} size="xl" icon={ImageIcon}>
+    <Modal title={t.projects.chooseIcon} description={project.slug} onClose={onClose} closeDisabled={setIcon.isPending} size="xl" icon={ImageIcon}>
       <div className="border-b border-border px-5 py-3">
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.projects.iconSearch} autoFocus />
       </div>
@@ -87,10 +93,10 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
           ))}
         {images.length >= MAX_SHOWN && <p className="text-xs text-muted-foreground">{t.projects.iconMore}</p>}
       </ModalBody>
-      <ModalFooter>
+      <ModalFooter status={<AutoSaveStatus status={saveStatus} onRetry={() => { if (lastAction) apply(lastAction.icon, lastAction.removed); }} />}>
         {project.icon ? <Button variant="danger" onClick={() => apply('', true)} disabled={setIcon.isPending}>{t.projects.iconRemove}</Button> : null}
         <div className="flex-1" />
-        <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
+        <Button variant="ghost" onClick={onClose} disabled={setIcon.isPending}>{t.common.cancel}</Button>
         <Button variant="accent" onClick={() => selected && apply(selected)} disabled={setIcon.isPending || !selected}>{t.projects.iconSelect}</Button>
       </ModalFooter>
     </Modal>

@@ -12,10 +12,13 @@ const toggleMutate = vi.hoisted(() => vi.fn());
 const installMutate = vi.hoisted(() => vi.fn());
 const updateMutate = vi.hoisted(() => vi.fn());
 const uninstallMutate = vi.hoisted(() => vi.fn());
+const asAsync = vi.hoisted(() => (mutate: any) => (value: unknown) => new Promise((resolve, reject) => {
+  mutate(value, { onSuccess: resolve, onError: reject });
+}));
 vi.mock('../../../lib/queries', () => ({ usePlugins, useMarketplace }));
 vi.mock('../../../lib/mutations', () => ({
-  useTogglePlugin: () => ({ mutate: toggleMutate, isPending: false, variables: undefined }),
-  useInstallPlugin: () => ({ mutate: installMutate, isPending: false, variables: undefined }),
+  useTogglePlugin: () => ({ mutate: toggleMutate, mutateAsync: asAsync(toggleMutate), isPending: false, variables: undefined }),
+  useInstallPlugin: () => ({ mutate: installMutate, mutateAsync: asAsync(installMutate), isPending: false, variables: undefined }),
   useUpdatePlugin: () => ({ mutate: updateMutate, isPending: false }),
   useUninstallPlugin: () => ({ mutate: uninstallMutate, isPending: false }),
   useRestorePlugin: () => ({ mutate: vi.fn(), isPending: false }),
@@ -204,6 +207,16 @@ describe('PluginsSection grant consent', () => {
     renderSection();
     fireEvent.click(screen.getByLabelText(`risky: ${en.plugins.enable}`));
     expect(await screen.findByText(/telepathy/)).toBeInTheDocument();
+  });
+
+  it('locks the consent action against duplicate submissions', async () => {
+    refuseOnce(['tools']);
+    renderSection();
+    fireEvent.click(screen.getByLabelText(`risky: ${en.plugins.enable}`));
+    const confirm = await screen.findByRole('button', { name: en.plugins.grantsConfirm });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(toggleMutate).toHaveBeenCalledTimes(2));
   });
 
   it('leaves the plugin off when the operator declines', async () => {

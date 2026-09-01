@@ -13,6 +13,15 @@ import { PLATFORM_IDENTITIES, platformIdentity, type PlatformIdentityDescriptor,
  *  setting field, its validation and its account-view input from one declaration. */
 export interface CliSettings extends Record<PlatformLinkKey, string> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; fastMode: boolean }
 export interface ProjectModelPreference { provider: string; model: string }
+export type UserSettingsResource = 'cli' | 'terminal' | 'permissions' | 'nav';
+
+export class UserSettingsRevisionConflict extends Error {
+  constructor(public readonly resource: UserSettingsResource, public readonly currentRevision: number) {
+    super(`${resource} settings changed since the supplied revision`);
+    this.name = 'UserSettingsRevisionConflict';
+  }
+}
+
 // autoRecall/autoLiveRecall default to true so upgrading users keep the prior always-on memory behaviour.
 // autoCompact is on because the alternative is a conversation that dies at the context limit instead of
 // summarizing itself — the first wall a new user hits. autoSave is off because an automatic curator
@@ -116,6 +125,29 @@ export class UserSettingStore {
   /** Drop all of a user's settings — called on user delete so no orphan rows linger. */
   removeForUser(userId: number): void {
     this.db.prepare('DELETE FROM user_settings WHERE user_id = ?').run(userId);
+    this.db.prepare('DELETE FROM user_setting_revisions WHERE user_id = ?').run(userId);
+  }
+
+  revision(userId: number, resource: UserSettingsResource): number {
+    const row = this.db.prepare('SELECT revision FROM user_setting_revisions WHERE user_id = ? AND resource = ?')
+      .get(userId, resource) as { revision?: number } | undefined;
+    return Number.isInteger(row?.revision) && (row?.revision ?? 0) >= 0 ? row!.revision! : 0;
+  }
+
+  private checkRevision(userId: number, resource: UserSettingsResource, expectedRevision?: number): void {
+    const currentRevision = this.revision(userId, resource);
+    if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
+      throw new UserSettingsRevisionConflict(resource, currentRevision);
+    }
+  }
+
+  private bumpRevision(userId: number, resource: UserSettingsResource): number {
+    const revision = this.revision(userId, resource) + 1;
+    this.db.prepare(
+      `INSERT INTO user_setting_revisions (user_id, resource, revision) VALUES (?, ?, ?)
+       ON CONFLICT(user_id, resource) DO UPDATE SET revision = excluded.revision`
+    ).run(userId, resource, revision);
+    return revision;
   }
 
   /** Durable Fast preference. Invalid/accountless identities fail closed. */
@@ -170,8 +202,9 @@ export class UserSettingStore {
    *  a rejected platform link (see below) rolls the whole patch back instead of leaving a partial write.
    *  Throws {@link PlatformLinkConflictError} when a requested platform identity is already linked to a
    *  DIFFERENT user — enforced atomically by the partial UNIQUE index, so there is no check-then-act race. */
-  setCliSettings(userId: number, patch: Partial<CliSettings>): void {
+  setCliSettings(userId: number, patch: Partial<CliSettings>, expectedRevision?: number): void {
     this.db.transaction(() => {
+      this.checkRevision(userId, 'cli', expectedRevision);
       if (patch.model !== undefined) this.set(userId, 'model', patch.model);
       if (patch.modelProvider !== undefined) this.set(userId, 'modelProvider', patch.modelProvider);
       if (patch.visionModel !== undefined) this.set(userId, 'visionModel', patch.visionModel);
@@ -203,6 +236,7 @@ export class UserSettingStore {
         const raw = patch[descriptor.linkSettingKey];
         if (raw !== undefined) this.writePlatformLink(userId, descriptor, raw, 'clear');
       }
+      this.bumpRevision(userId, 'cli');
     })();
   }
 
@@ -270,10 +304,12 @@ export class UserSettingStore {
 
   /** Apply a partial terminal-settings patch: read current, merge (palette key-by-key), re-validate, and
    *  persist the whole blob. Runs in a transaction so the read-modify-write can't interleave. */
-  setTerminalSettings(userId: number, patch: Partial<TerminalSettings>): TerminalSettings {
+  setTerminalSettings(userId: number, patch: Partial<TerminalSettings>, expectedRevision?: number): TerminalSettings {
     return this.db.transaction(() => {
+      this.checkRevision(userId, 'terminal', expectedRevision);
       const next = mergeTerminalSettings(this.terminalSettings(userId), patch);
       this.set(userId, 'terminal', JSON.stringify(next));
+      this.bumpRevision(userId, 'terminal');
       return next;
     })();
   }
@@ -293,10 +329,12 @@ export class UserSettingStore {
 
   /** Apply a partial permissions patch (each present field replaces wholesale — rule-map key order is
    *  meaningful), re-validate, persist the whole blob. Transactional read-modify-write. */
-  setPermissionSettings(userId: number, patch: unknown): PermissionSettings {
+  setPermissionSettings(userId: number, patch: unknown, expectedRevision?: number): PermissionSettings {
     return this.db.transaction(() => {
+      this.checkRevision(userId, 'permissions', expectedRevision);
       const next = mergePermissionSettings(this.permissionSettings(userId), patch);
       this.set(userId, 'permissions', JSON.stringify(next));
+      this.bumpRevision(userId, 'permissions');
       return next;
     })();
   }
@@ -312,6 +350,7 @@ export class UserSettingStore {
       map[pattern] = 'allow';
       const next: PermissionSettings = { ...cur, [scope]: map };
       this.set(userId, 'permissions', JSON.stringify(next));
+      this.bumpRevision(userId, 'permissions');
       return next;
     })();
   }
@@ -330,10 +369,12 @@ export class UserSettingStore {
 
   /** Apply a navigation-layout patch (each present list replaces the stored one wholesale — position is
    *  the meaning), re-validate, persist the whole blob. Transactional read-modify-write. */
-  setNavSettings(userId: number, patch: unknown): NavSettings {
+  setNavSettings(userId: number, patch: unknown, expectedRevision?: number): NavSettings {
     return this.db.transaction(() => {
+      this.checkRevision(userId, 'nav', expectedRevision);
       const next = mergeNavSettings(this.navSettings(userId), patch);
       this.set(userId, 'nav', JSON.stringify(next));
+      this.bumpRevision(userId, 'nav');
       return next;
     })();
   }

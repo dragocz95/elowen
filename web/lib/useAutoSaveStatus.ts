@@ -1,106 +1,173 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'pending' | 'error';
+export interface AutoSaveStatusOptions {
+  ready?: boolean;
+  savable?: boolean;
+  delay?: number;
+}
+export interface AutoSaveStatusResult {
+  status: SaveStatus;
+  retry: () => Promise<void>;
+  flush: () => Promise<SaveStatus>;
+  reset: () => void;
+}
+
+type SaveResult = unknown;
+
+function activationIsPending(result: SaveResult): boolean {
+  return typeof result === 'object' && result !== null && 'pending' in result && result.pending === true;
+}
+
+function sameDeps(a: readonly unknown[] | null, b: readonly unknown[]): boolean {
+  return a !== null && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
+}
 
 /**
  * Debounced auto-persist with a visible status, stale-response protection, and a flush hook — the
- * Shared race-safe auto-save controller. Runs `save` shortly after any of `deps` change, but never
+ * shared race-safe auto-save controller. Runs `save` shortly after any of `deps` change, but never
  * for the seed value; `ready` gates it until the form has been seeded from the server.
  *
- * - `status`: 'idle' | 'saving' | 'saved' | 'error' — render it in the modal footer.
- * - serialized writes: when another edit lands during an in-flight request, exactly one follow-up
- *   write with the latest form state runs after it. This prevents an older request from finishing
- *   last and overwriting a newer value on the server.
- * - `flush()`: run any pending debounced save immediately (call it before closing the modal). It also
- *   runs automatically on unmount, so a change made moments before close is never silently dropped.
- * - `retry()`: re-run the save after a failure.
- *
- * `savable` is the form's VALIDITY, and it is a separate knob from `ready` on purpose: `ready` says the
- * form has been seeded (so the seed value itself is never written back), while `savable` says the current
- * value is worth writing. Folding validity into `ready` looks equivalent and is not — a form that is
- * seeded locally and only becomes valid once the user finishes typing would have its first valid edit
- * consumed as the "seed run" and never persisted. While the form is invalid the save is held (and any
- * pending one cancelled), so the status never claims a save that did not happen.
+ * `savable` is the form's current validity and is deliberately separate from `ready`. Invalid edits
+ * cancel pending work and cannot be persisted through either the debounce, flush, or retry paths.
  */
 export function useAutoSaveStatus(
   deps: readonly unknown[],
-  save: () => Promise<void> | void,
-  opts: { ready?: boolean; savable?: boolean; delay?: number } = {},
-): { status: SaveStatus; retry: () => void; flush: () => void } {
+  save: () => Promise<SaveResult> | SaveResult,
+  opts: AutoSaveStatusOptions = {},
+): AutoSaveStatusResult {
   const { ready = true, savable = true, delay = 800 } = opts;
   const seeded = useRef(false);
   const saveRef = useRef(save);
   saveRef.current = save;
+  const readyRef = useRef(ready);
+  const savableRef = useRef(savable);
+  readyRef.current = ready;
+  savableRef.current = savable;
+
   const [status, setStatus] = useState<SaveStatus>('idle');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef(false);
   const running = useRef(false);
   const queued = useRef(false);
+  const activeRun = useRef<Promise<SaveStatus> | null>(null);
   // The unmount flush deliberately leaves a save in flight after the component is gone, so its result
-  // lands on a hook nobody renders any more. Reporting into that void is not just wasted work: the write
-  // can outlive the whole page/test environment, and touching React's scheduler that late throws.
+  // lands on a hook nobody renders any more. Reporting into that void is not just wasted work.
   const mounted = useRef(true);
+  const statusRef = useRef<SaveStatus>('idle');
+  const observedDeps = useRef<readonly unknown[] | null>(null);
+  const observedSavable = useRef(savable);
+  const reportStatus = useCallback((next: SaveStatus) => {
+    statusRef.current = next;
+    if (mounted.current) setStatus(next);
+  }, []);
 
-  const run = useCallback(() => {
+  const run = useCallback((): Promise<SaveStatus> => {
+    // Retry and flush share this guard with the debounce path. A failed valid edit must not be able to
+    // write a later invalid value merely because its Retry button survived one render.
+    if (!readyRef.current || !savableRef.current) {
+      pending.current = false;
+      return Promise.resolve(statusRef.current);
+    }
+
     pending.current = false;
     queued.current = true;
-    if (mounted.current) setStatus('saving');
-    if (running.current) return;
+    reportStatus('saving');
+    if (running.current) return activeRun.current ?? Promise.resolve(statusRef.current);
 
     running.current = true;
-    void (async () => {
+    const operation = (async () => {
       let terminal: SaveStatus = 'saved';
       // A rapid burst never creates a request pile-up: changes made while saving collapse into one
       // queued pass, and that pass reads the latest callback/state through saveRef.
       while (queued.current) {
         queued.current = false;
         try {
-          await saveRef.current();
-          terminal = 'saved';
+          const result = await saveRef.current();
+          terminal = activationIsPending(result) ? 'pending' : 'saved';
         } catch {
           terminal = 'error';
         }
       }
       running.current = false;
-      if (mounted.current) setStatus(terminal);
+      // A newer debounced edit may already be waiting even though this request finished. Never flash
+      // "Saved" for the older snapshot; an invalid current value is not saved at all.
+      const reported = !savableRef.current ? 'idle' : pending.current ? 'saving' : terminal;
+      reportStatus(reported);
+      return reported;
     })();
-  }, []);
+    activeRun.current = operation;
+    void operation.finally(() => {
+      if (activeRun.current === operation) activeRun.current = null;
+    });
+    return operation;
+  }, [reportStatus]);
 
   useEffect(() => {
-    if (!ready) return;
-    if (!seeded.current) { seeded.current = true; return; } // consume the seed run
-    if (!savable) { // an invalid value is not a save waiting to happen — drop the pending one
-      if (timer.current) clearTimeout(timer.current);
+    if (!ready) {
+      seeded.current = false;
+      observedDeps.current = [...deps];
+      observedSavable.current = savable;
       pending.current = false;
+      queued.current = false;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      reportStatus('idle');
+      return;
+    }
+    if (!seeded.current) {
+      seeded.current = true;
+      observedDeps.current = [...deps];
+      observedSavable.current = savable;
+      return; // consume the server seed
+    }
+    // React Activity tears effects down and recreates them while preserving refs. Re-entering with the
+    // same values is lifecycle, not an edit, and must not replay the snapshot. A validity transition is
+    // still meaningful even when the dependency identity itself did not change.
+    const depsChanged = !sameDeps(observedDeps.current, deps);
+    const savableChanged = observedSavable.current !== savable;
+    observedDeps.current = [...deps];
+    observedSavable.current = savable;
+    if (!depsChanged && !savableChanged) return;
+    if (!savable) {
+      pending.current = false;
+      queued.current = false;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      reportStatus('idle');
       return;
     }
     pending.current = true;
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(run, delay);
+    timer.current = setTimeout(() => { timer.current = null; void run(); }, delay);
     return () => { if (timer.current) clearTimeout(timer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, savable, run, delay, ...deps]);
+  }, [ready, savable, run, reportStatus, delay, ...deps]);
 
-  const flush = useCallback(() => {
+  const flush = useCallback(async (): Promise<SaveStatus> => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    if (pending.current) run();
+    if (pending.current) return run();
+    if (activeRun.current) return activeRun.current;
+    return statusRef.current;
   }, [run]);
 
-  // Flush a pending save on teardown so closing the modal never drops the last edit. The flag is cleared in
+  // Flush a pending save on teardown so closing a modal never drops the last edit. The flag is cleared in
   // the same cleanup, immediately before the flush, so the write still happens while its now-invisible
-  // status updates are dropped — and no ordering between separate effect cleanups has to hold for that.
-  //
-  // It is RAISED in the setup, not just initialised with the ref, because a teardown is not always the end:
-  // `<Activity>` wraps every settings and account panel, and hiding one destroys its children's effects
-  // while keeping their refs. Leaving the flag down would make the hook go permanently deaf the first time
-  // the user switches category, and the footer would keep asserting whatever status it last managed to
-  // report — harmless for a save that succeeds, a lie for one that fails.
+  // status updates are dropped.
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; flush(); };
+    setStatus(statusRef.current);
+    return () => { mounted.current = false; void flush(); };
   }, [flush]);
 
-  const retry = useCallback(() => run(), [run]);
-  return { status, retry, flush };
+  const retry = useCallback(async () => { await run(); }, [run]);
+  const reset = useCallback(() => {
+    pending.current = false;
+    queued.current = false;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    reportStatus('idle');
+  }, [reportStatus]);
+  return { status, retry, flush, reset };
 }

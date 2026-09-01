@@ -177,6 +177,24 @@ describe('Modal', () => {
   // Radix listens for Escape on the DOCUMENT, which is where a real keypress arrives after bubbling out
   // of whatever had focus. `window` is one step further up and nothing propagates back down to it, so the
   // event has to be raised on an element the way the browser raises it.
+  it('blocks header, Escape, and backdrop dismissal while close is disabled', () => {
+    const onClose = vi.fn();
+    render(
+      <Modal title="Saving modal" onClose={onClose} closeDisabled>
+        <span>content</span>
+      </Modal>,
+      { wrapper: W },
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Saving modal' });
+    const close = screen.getByRole('button', { name: 'Close' });
+    expect(close).toBeDisabled();
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    const backdrop = dialog.parentElement!;
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('calls onClose when Escape is pressed', () => {
     const onClose = vi.fn();
     render(

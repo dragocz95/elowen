@@ -80,7 +80,7 @@ function setup(opts: { userGrantable?: boolean } = {}) {
 
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-type View = { name: string; config: Record<string, unknown>; secretsSet: string[] };
+type View = { name: string; config: Record<string, unknown>; secretsSet: string[]; revision: number };
 
 describe('per-user plugin config', () => {
   it('keeps two accounts on their own values, and neither can read the other through the API', async () => {
@@ -98,6 +98,15 @@ describe('per-user plugin config', () => {
     expect(JSON.stringify(amyList)).not.toContain('ben-key');
     // "Who has it configured" is fine to know — the value is not.
     expect(amyList[0]!.secretsSet).toEqual(['apiKey']);
+  });
+
+  it('rejects a stale user-config snapshot and preserves the newer value', async () => {
+    const { app, amyTok } = setup();
+    expect((await (await app.request('/plugins/user-config', auth(amyTok))).json() as View[])[0]!.revision).toBe(0);
+    expect((await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { region: 'cz' }, expectedRevision: 0 }))).status).toBe(200);
+    const stale = await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { region: 'sk' }, expectedRevision: 0 }));
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: 'conflict', current: { config: { region: 'cz' }, revision: 1 } });
   });
 
   it('shows an admin their OWN values, never another account\'s', async () => {

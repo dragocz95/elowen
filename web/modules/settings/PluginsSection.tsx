@@ -206,7 +206,7 @@ export function PluginsSection() {
     // claiming it already took effect.
     onSuccess: (res) => toast(res.pending ? t.plugins.pendingToast : res.enabled ? t.plugins.enabledToast : t.plugins.disabledToast),
     onError: () => toast(t.plugins.toggleError, 'error'),
-    onInstalled: () => { toast(t.plugins.installedToast); setView('installed'); },
+    onInstalled: (res) => { toast(res.pending ? t.plugins.pendingToast : t.plugins.installedToast); setView('installed'); },
     onInstallError: () => toast(t.plugins.installError, 'error'),
     onSettled: () => setPending(null),
   });

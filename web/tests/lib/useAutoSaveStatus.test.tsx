@@ -29,6 +29,25 @@ describe('useAutoSaveStatus', () => {
     expect(attempts).toBe(2);
   });
 
+  it('does not retry after the current value becomes invalid', async () => {
+    let attempts = 0;
+    let valid = true;
+    const { result, rerender } = renderHook(({ v }) => useAutoSaveStatus([v], async () => { attempts++; throw new Error('boom'); }, { delay: 5, savable: valid }), { initialProps: { v: 'a' } });
+    rerender({ v: 'b' });
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    valid = false;
+    rerender({ v: '' });
+    await result.current.retry();
+    expect(attempts).toBe(1);
+    expect(result.current.status).toBe('idle');
+  });
+
+  it('represents delayed activation instead of reporting a fully active save', async () => {
+    const { result, rerender } = renderHook(({ v }) => useAutoSaveStatus([v], async () => ({ pending: true }), { delay: 5 }), { initialProps: { v: 'a' } });
+    rerender({ v: 'b' });
+    await waitFor(() => expect(result.current.status).toBe('pending'));
+  });
+
   it('flushes a pending debounced save on unmount (never drops the last edit)', async () => {
     let saves = 0;
     const { rerender, unmount } = renderHook(({ v }) => useAutoSaveStatus([v], () => { saves++; }, { delay: 1000 }), { initialProps: { v: 'a' } });
@@ -78,6 +97,40 @@ describe('useAutoSaveStatus', () => {
     rerender(harness(false, 'a')); // and back: effects are set up again on the SAME hook instance
     failing = true;
     rerender(harness(false, 'b')); // a real edit, whose save rejects
+    await waitFor(() => expect(seen).toBe('error'));
+  });
+
+  it('does not replay an unchanged seed when an Activity panel becomes visible again', async () => {
+    let saves = 0;
+    function Probe() {
+      useAutoSaveStatus(['same'], () => { saves++; }, { delay: 5 });
+      return null;
+    }
+    const harness = (hidden: boolean) => <Activity mode={hidden ? 'hidden' : 'visible'}><Probe /></Activity>;
+
+    const { rerender } = render(harness(false));
+    rerender(harness(true));
+    rerender(harness(false));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(saves).toBe(0);
+  });
+
+  it('restores a close-time failure when an Activity panel becomes visible again', async () => {
+    let seen: SaveStatus = 'idle';
+    function Probe({ value }: { value: string }) {
+      const { status } = useAutoSaveStatus([value], async () => { throw new Error('rejected'); }, { delay: 1_000 });
+      seen = status;
+      return null;
+    }
+    const harness = (hidden: boolean, value: string) => (
+      <Activity mode={hidden ? 'hidden' : 'visible'}><Probe value={value} /></Activity>
+    );
+
+    const { rerender } = render(harness(false, 'a'));
+    rerender(harness(false, 'b'));
+    rerender(harness(true, 'b')); // teardown flushes the pending edit while the status owner is hidden
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    rerender(harness(false, 'b'));
     await waitFor(() => expect(seen).toBe('error'));
   });
 

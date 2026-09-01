@@ -5,6 +5,8 @@ import { useTranslation } from '../../lib/i18n';
 import { useProjects } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
 import { useToast } from '../../components/ui/Toast';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
+import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import {
   DropdownMenu,
@@ -53,6 +55,8 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const projects = useProjects();
   const [open, setOpen] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [moveStatus, setMoveStatus] = useState<SaveStatus>('idle');
+  const [retryProject, setRetryProject] = useState<ProjectLike | null>(null);
   // The directory the daemon confirmed in its reply to our own move, held only until the status poll
   // catches up. It exists because that poll is driven by a session event, and a session event is
   // SUPPRESSED for a conversation with no messages yet (`sessionEvents.ts` returns early when
@@ -64,7 +68,7 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const reported = telemetry.project?.cwd ?? null;
   // A different conversation, or a poll that has caught up, both retire the held value — after which the
   // label is the daemon's status again and cannot drift.
-  useEffect(() => { setConfirmed(null); }, [activeSessionId, reported]);
+  useEffect(() => { setConfirmed(null); setMoveStatus('idle'); setRetryProject(null); }, [activeSessionId, reported]);
 
   const items = projects.data ?? [];
   const cwd = confirmed ?? reported;
@@ -84,13 +88,17 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const move = async (project: ProjectLike): Promise<void> => {
     setOpen(false);
     if (project.id === current?.id) return;
+    setRetryProject(project);
+    setMoveStatus('saving');
     setMoving(true);
     try {
       const { workDir } = await elowenClient.brainSetCwd(project.path, activeSessionId ?? undefined);
       setConfirmed(workDir);
+      setMoveStatus('saved');
     } catch (e) {
       // The daemon refuses a directory the caller cannot reach. Surfacing its own words beats a generic
       // failure, because that refusal names a cause the user can act on.
+      setMoveStatus('error');
       toast((e as Error).message || t.brainChat.projectPickerFailed, 'error');
     } finally {
       setMoving(false);
@@ -145,6 +153,7 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+      <AutoSaveStatus status={moveStatus} onRetry={() => { if (retryProject && !moving) void move(retryProject); }} />
     </div>
   );
 }

@@ -1761,6 +1761,11 @@ export class BrainService {
     return target;
   }
 
+  /** Whether the caller currently has a live conversation that a settings re-apply must wait for. */
+  hasActiveSession(userId: number): boolean {
+    return this.lifecycle.activeLive(userId) !== undefined;
+  }
+
   /** Restart a user's live session so changed settings apply — see ConversationLifecycle.restart. */
   async restart(userId: number, opts: { reapplyModelPreference?: boolean } = {}): Promise<void> {
     return this.lifecycle.restart(userId, opts);

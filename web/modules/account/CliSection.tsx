@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { Bolt, Eye, Gauge, MoonStar, Shrink, SlidersHorizontal, Zap } from 'lucide-react';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { CompactThresholdsDrawer } from './CompactThresholdsDrawer';
@@ -11,6 +11,7 @@ import { LoadingState, ErrorState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
+import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useMyCliSettings, useMyPermissions, useBrainModels } from '../../lib/queries';
 import { useSaveMyCliSettings, useSaveMyPermissions } from '../../lib/mutations';
 import { PermissionRulesCard } from './PermissionRulesCard';
@@ -32,6 +33,10 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
   const [visionSelection, setVisionSelection] = useState('');
   const [compactSelection, setCompactSelection] = useState('');
   const [thinkingLevel, setThinkingLevel] = useState('');
+  const [rulesFeedback, setRulesFeedback] = useState<SaveFeedback>({ status: 'idle' });
+  const reportRulesState = useCallback((status: SaveStatus, retry?: () => void | Promise<void>) => {
+    setRulesFeedback({ status, retry });
+  }, []);
   const [autoCompact, setAutoCompact] = useState(false);
   const [autoCompactAt, setAutoCompactAt] = useState(80);
   const [fastMode, setFastMode] = useState(false);
@@ -139,22 +144,16 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
     }
   }, { ready: seeded, delay: 0 });
 
-  const status = settingsStatus === 'error' || fastStatus === 'error' || yoloStatus === 'error' || unattendedStatus === 'error'
-    ? 'error'
-    : settingsStatus === 'saving' || fastStatus === 'saving' || yoloStatus === 'saving' || unattendedStatus === 'saving'
-      ? 'saving'
-      : settingsStatus === 'saved' || fastStatus === 'saved' || yoloStatus === 'saved' || unattendedStatus === 'saved' ? 'saved' : 'idle';
+  const feedback = combineSaveFeedback(
+    { status: settingsStatus, retry: retrySettings },
+    { status: fastStatus, retry: retryFast },
+    { status: yoloStatus, retry: retryYolo },
+    { status: unattendedStatus, retry: retryUnattended },
+    rulesFeedback,
+  );
   useEffect(() => {
-    const retry = status === 'error'
-      ? () => {
-        if (settingsStatus === 'error') retrySettings();
-        if (fastStatus === 'error') retryFast();
-        if (yoloStatus === 'error') retryYolo();
-        if (unattendedStatus === 'error') retryUnattended();
-      }
-      : undefined;
-    onSaveState?.('cli', status, retry);
-  }, [fastStatus, onSaveState, retryFast, retrySettings, retryUnattended, retryYolo, settingsStatus, status, unattendedStatus, yoloStatus]);
+    onSaveState?.('cli', feedback.status, feedback.retry);
+  }, [feedback.retry, feedback.status, onSaveState]);
 
   if (isError) return <ErrorState message={t.common.daemonUnreachable} onRetry={() => refetch()} />;
   if (isLoading || !data) return <LoadingState />;
@@ -267,7 +266,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         )}
       />
       {/* Permission rules are one more record of this card; the rule editor itself opens in a drawer. */}
-      <PermissionRulesCard />
+      <PermissionRulesCard onSaveState={reportRulesState} />
       </SpatialGroup>
       <ConfirmDialog
         open={confirmYolo}

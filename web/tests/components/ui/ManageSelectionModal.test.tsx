@@ -115,6 +115,26 @@ describe('ManageSelectionModal', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('blocks header, Escape, backdrop and Cancel dismissal while saving', async () => {
+    let resolve!: () => void;
+    const onSave = vi.fn(() => new Promise<void>((r) => { resolve = r; }));
+    const { onClose } = mount({ onSave });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+
+    const dialog = screen.getByRole('dialog', { name: 'Pick models' });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    const backdrop = dialog.parentElement!;
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).not.toHaveBeenCalled();
+
+    resolve();
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
   it('shows the empty-selection hint in the footer when nothing is selected', () => {
     mount({ selected: new Set<string>(), emptySelectionHint: 'empty = everything allowed' });
     expect(screen.getByText('empty = everything allowed')).toBeInTheDocument();

@@ -7,7 +7,7 @@
 // request still warns, so a genuinely missing handler is never masked. A test that actually
 // asserts on this data stubs it explicitly (its handler matches first), so silencing the fallback
 // changes nothing it relies on.
-const AMBIENT = ['/config', '/projects', '/auth/me', '/setup', '/plugins/ui'];
+const AMBIENT = ['/config', '/projects', '/auth/me', '/setup', '/plugins/ui', '/plugins/user-config'];
 
 export function onUnhandledRequest(request: Request, print: { warning: () => void; error: () => void }): void {
   const { pathname } = new URL(request.url);

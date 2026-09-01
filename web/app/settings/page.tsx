@@ -30,6 +30,7 @@ import { SETTINGS_CATEGORY_VALUES, SETTINGS_SECTIONS, type SettingsCategory } fr
 import { isPluginSettingsSectionId, parsePluginSettingsSectionId } from '../../modules/settings/pluginSections';
 import { pluginSectionHref } from '../../lib/pluginNav';
 import { useToast } from '../../components/ui/Toast';
+import { apiErrorMessage } from '../../lib/elowenClient';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -44,7 +45,7 @@ import { SettingsDocument, SettingsGroup, SettingsRow, SettingsState } from '../
 import { SkinsRow } from '../../modules/settings/SkinsRow';
 import { DaysPolicyEditor } from '../../modules/settings/DaysPolicyEditor';
 import { MotionReveal } from '../../components/ui/Motion';
-import { Modal, ModalBody } from '../../components/ui/Modal';
+import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -205,8 +206,9 @@ export default function SettingsPage() {
   // days. Off by default; it never touches running/active/channel sessions. The row stays compact while
   // the shared days editor lives in a drawer and persists independently of the token-TTL autosave.
   const retention = config.data?.sessionRetention ?? { enabled: false, days: 90 };
+  const [retentionEnabled, setRetentionEnabledState] = useState(false);
   const [retentionDays, setRetentionDays] = useState(90);
-  const [retentionDaysSaving, setRetentionDaysSaving] = useState(false);
+  const retentionDirty = useRef<Partial<{ enabled: boolean; days: number }>>({});
   const [retentionOpen, setRetentionOpen] = useState(false);
 
   // Add / edit model modal state
@@ -233,42 +235,43 @@ export default function SettingsPage() {
       setDefTokenTtl(config.data.security?.tokenTtlDays ?? 30);
       setAutoUpdate(config.data.autoUpdate ?? false);
       setPushContact(config.data.webPushContact ?? '');
+      setRetentionEnabledState(config.data.sessionRetention?.enabled ?? false);
+      setRetentionDays(config.data.sessionRetention?.days ?? 90);
     }
   }, [config.data]);
-
-  // Track server-side retention changes while keeping a just-selected preset visible during its save.
-  useEffect(() => { setRetentionDays(retention.days); }, [retention.days]);
 
   // The run defaults (executor/autonomy/max sessions) moved to the agents plugin's settings deck;
   // only the token TTL stays with the core System section. autoUpdate is NOT bundled here — the
   // System toggle is its single writer (it persists inline).
   const saveDefaults = async () => {
     try { await update.mutateAsync({ security: { tokenTtlDays: defTokenTtl } }); }
-    catch (error) { toast(String(error), 'error'); throw error; }
+    catch (error) { toast(apiErrorMessage(error), 'error'); throw error; }
   };
 
-  // Retention saves on its own (not bundled with the defaults autosave): the toggle and canonical day
-  // value persist immediately once the shared editor commits a preset or valid custom whole number.
-  const saveRetention = async (next: { enabled?: boolean; days?: number }): Promise<boolean> => {
-    try {
-      await update.mutateAsync({ sessionRetention: next });
-      return true;
-    } catch {
-      toast(t.settings.retention.saveError, 'error');
-      return false;
-    }
+  // Retention is an ordinary scalar/toggle record: save it immediately through the shared status
+  // controller, while tracking changed keys so sibling values are never replayed from a stale draft.
+  const setRetentionEnabled = (next: boolean) => {
+    retentionDirty.current.enabled = next;
+    setRetentionEnabledState(next);
   };
   const setRetentionPolicyDays = (days: number) => {
-    if (retentionDaysSaving) return;
-    const previous = retentionDays;
+    retentionDirty.current.days = days;
     setRetentionDays(days);
-    setRetentionDaysSaving(true);
-    void saveRetention({ days }).then((saved) => {
-      if (!saved) setRetentionDays(previous);
-      setRetentionDaysSaving(false);
-    });
   };
-
+  const retentionSave = useAutoSaveStatus([retentionEnabled, retentionDays], async () => {
+    const patch = { ...retentionDirty.current };
+    if (Object.keys(patch).length === 0) return;
+    try {
+      await update.mutateAsync({ sessionRetention: patch });
+      // The request response is authoritative for the server cache, but this draft remains the user's
+      // current intent; applying a stale sibling snapshot here would overwrite a newer local edit.
+      if (patch.enabled !== undefined && retentionDirty.current.enabled === patch.enabled) delete retentionDirty.current.enabled;
+      if (patch.days !== undefined && retentionDirty.current.days === patch.days) delete retentionDirty.current.days;
+    } catch (error) {
+      toast(apiErrorMessage(error), 'error');
+      throw error;
+    }
+  }, { ready: seeded.current, delay: 0 });
   // Auto-persist: every settings form saves itself shortly after a change (no Save buttons anywhere).
   // The apiKey secret rides along only when freshly typed, exactly as with the old buttons.
   const ready = seeded.current;
@@ -276,20 +279,28 @@ export default function SettingsPage() {
   // Per-model context windows auto-persist like every other model setting (no Save button).
   const windowsSave = useAutoSaveStatus([modelWindows], async () => {
     try { await update.mutateAsync({ brain: { modelContextWindows: modelWindows } }); }
-    catch (error) { toast(String(error), 'error'); throw error; }
+    catch (error) { toast(apiErrorMessage(error), 'error'); throw error; }
   }, { ready });
   const modelsSave = useAutoSaveStatus([allowed, customModels, hiddenPresets, modelNotes], async () => {
     try { await update.mutateAsync({ allowedExecs: allowed, customModels, hiddenPresets, modelNotes }); }
-    catch (error) { toast(String(error), 'error'); throw error; }
+    catch (error) { toast(apiErrorMessage(error), 'error'); throw error; }
   }, { ready, delay: 0 });
   const autoUpdateSave = useAutoSaveStatus([autoUpdate], async () => {
     try { await update.mutateAsync({ autoUpdate }); }
-    catch (error) { toast(String(error), 'error'); throw error; }
+    catch (error) { toast(apiErrorMessage(error), 'error'); throw error; }
   }, { ready, delay: 0 });
   const pushContactSave = useAutoSaveStatus([pushContact], async () => {
     try { await update.mutateAsync({ webPushContact: pushContact }); }
-    catch (error) { toast(String(error), 'error'); throw error; }
+    catch (error) { toast(apiErrorMessage(error), 'error'); throw error; }
   }, { ready });
+  const closeTokenTtl = async () => {
+    const finalStatus = await defaultsSave.flush();
+    if (finalStatus !== 'error') setTokenTtlOpen(false);
+  };
+  const closeRetention = async () => {
+    const finalStatus = await retentionSave.flush();
+    if (finalStatus !== 'error') setRetentionOpen(false);
+  };
   // Set (or clear, with null) one model's context-window override; the autosave above persists it.
   const setWindow = (key: string, value: number | null) =>
     setModelWindows((cur) => {
@@ -370,7 +381,7 @@ export default function SettingsPage() {
   const feedbackByCategory: Partial<Record<string, SaveFeedback>> = {
     ...sectionFeedback,
     models: combineSaveFeedback(modelsSave, windowsSave),
-    system: combineSaveFeedback(autoUpdateSave, defaultsSave, pushContactSave),
+    system: combineSaveFeedback(autoUpdateSave, defaultsSave, pushContactSave, retentionSave),
   };
   const activeFeedback = feedbackByCategory[category] ?? { status: 'idle' as const };
   const sectionHints: Record<Category, string> = {
@@ -774,8 +785,8 @@ export default function SettingsPage() {
                   label={t.settings.retention.label}
                   description={t.settings.retention.hint}
                   icon={CalendarClock}
-                  control={<Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />}
-                  status={retention.enabled ? <span className="whitespace-nowrap font-mono tabular-nums">{interpolate(t.settings.daysPolicy.value, { n: String(retentionDays) })}</span> : undefined}
+                  control={<Toggle checked={retentionEnabled} onChange={setRetentionEnabled} label={t.settings.retention.label} />}
+                  status={<span className="flex items-center gap-2"><AutoSaveStatus status={retentionSave.status} onRetry={retentionSave.retry} />{retentionEnabled ? <span className="whitespace-nowrap font-mono tabular-nums">{interpolate(t.settings.daysPolicy.value, { n: String(retentionDays) })}</span> : null}</span>}
                   actions={(
                     <Button variant="ghost" size="sm" icon={CalendarClock} onClick={() => setRetentionOpen(true)}>
                       {t.settings.retention.edit}
@@ -792,7 +803,8 @@ export default function SettingsPage() {
                   intent="inspect"
                   size="sm"
                   drawerWidth="default"
-                  onClose={() => setTokenTtlOpen(false)}
+                  onClose={closeTokenTtl}
+                  closeDisabled={defaultsSave.status === 'saving' || defaultsSave.status === 'error'}
                 >
                   <ModalBody>
                     <DaysPolicyEditor
@@ -802,6 +814,9 @@ export default function SettingsPage() {
                       onCommit={setDefTokenTtl}
                     />
                   </ModalBody>
+                  <ModalFooter status={<AutoSaveStatus status={defaultsSave.status} onRetry={defaultsSave.retry} />}>
+                    <Button variant="accent" onClick={closeTokenTtl} disabled={defaultsSave.status === 'saving' || defaultsSave.status === 'error'}>{t.common.done}</Button>
+                  </ModalFooter>
                 </Modal>
               ) : null;
               const retentionDrawer = retentionOpen ? (
@@ -813,14 +828,15 @@ export default function SettingsPage() {
                   intent="inspect"
                   size="sm"
                   drawerWidth="default"
-                  onClose={() => setRetentionOpen(false)}
+                  onClose={closeRetention}
+                  closeDisabled={retentionSave.status === 'saving' || retentionSave.status === 'error'}
                 >
                   <ModalBody>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-sm text-foreground">{t.settings.retention.label}</span>
-                      <Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />
+                      <Toggle checked={retentionEnabled} onChange={setRetentionEnabled} label={t.settings.retention.label} />
                     </div>
-                    <fieldset disabled={retentionDaysSaving} className="contents">
+                    <fieldset disabled={retentionSave.status === 'saving' || update.isPending} className="contents">
                       <DaysPolicyEditor
                         value={retentionDays}
                         presets={SESSION_RETENTION_PRESETS}
@@ -829,6 +845,9 @@ export default function SettingsPage() {
                       />
                     </fieldset>
                   </ModalBody>
+                  <ModalFooter status={<AutoSaveStatus status={retentionSave.status} onRetry={retentionSave.retry} />}>
+                    <Button variant="accent" onClick={closeRetention} disabled={retentionSave.status === 'saving' || retentionSave.status === 'error'}>{t.common.done}</Button>
+                  </ModalFooter>
                 </Modal>
               ) : null;
               const diagnosticsGroup = (

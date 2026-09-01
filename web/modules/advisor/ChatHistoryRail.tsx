@@ -14,6 +14,7 @@ import { formatTaskTime } from '../../lib/format';
 import type { BrainSearchHit } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 
 /** A search snippet with the first occurrence of the query highlighted. */
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -110,6 +111,8 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   const [renameFor, setRenameFor] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; active: boolean } | null>(null);
   const [deletePending, setDeletePending] = useState(false);
+  const [renameStatus, setRenameStatus] = useState<import('../../lib/useAutoSaveStatus').SaveStatus>('idle');
+  const [renamePending, setRenamePending] = useState(false);
   const deleteTargetRef = useRef<typeof deleteTarget>(null);
   const deletePendingRef = useRef(false);
   const deleteOpRef = useRef(0);
@@ -143,20 +146,31 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   const renameDone = useRef(false);
   const beginRename = (id: string, title: string) => {
     renameDone.current = false;
+    setRenameStatus('idle');
+    setRenamePending(false);
     setRenameValue(title);
     setRenameFor(id);
   };
-  const cancelRename = () => { renameDone.current = true; setRenameFor(null); };
+  const cancelRename = () => { renameDone.current = true; setRenamePending(false); setRenameFor(null); };
   const commitRename = async (id: string) => {
-    if (renameDone.current) return;
+    if (renameDone.current || renamePending) return;
     renameDone.current = true;
     const title = renameValue.trim();
-    setRenameFor(null);
-    if (!title) return;
+    if (!title) { renameDone.current = false; return; }
+    setRenamePending(true);
+    setRenameStatus('saving');
     try {
       await elowenClient.brainRenameSession(id, title);
       await qc.invalidateQueries({ queryKey: ['brain-sessions'] });
-    } catch { toast(t.chat.renameError, 'error'); }
+      setRenamePending(false);
+      setRenameStatus('saved');
+      setRenameFor(null);
+    } catch {
+      setRenamePending(false);
+      renameDone.current = false;
+      setRenameStatus('error');
+      toast(t.chat.renameError, 'error');
+    }
   };
 
   // Branch a conversation and open the copy, so the user lands in the new thread and the original stays
@@ -311,19 +325,23 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
         ) : (sessions.data ?? []).map((s) => (
           <div key={s.id} className={`group relative flex items-center rounded-md transition-colors hover:bg-accent ${s.active ? 'bg-accent' : ''}`}>
             {renameFor === s.id ? (
-              <input
-                autoFocus
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); void commitRename(s.id); }
-                  if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
-                }}
-                onBlur={() => void commitRename(s.id)}
-                aria-label={t.chat.renamePlaceholder}
-                placeholder={t.chat.renamePlaceholder}
-                className="m-1 w-full rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground focus:border-primary focus:outline-none"
-              />
+              <div className="m-1 flex min-w-0 items-center gap-2">
+                <input
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); void commitRename(s.id); }
+                    if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                  }}
+                  onBlur={() => void commitRename(s.id)}
+                  disabled={renamePending}
+                  aria-label={t.chat.renamePlaceholder}
+                  placeholder={t.chat.renamePlaceholder}
+                  className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground focus:border-primary focus:outline-none disabled:opacity-60"
+                />
+                <AutoSaveStatus status={renameStatus} onRetry={() => void commitRename(s.id)} />
+              </div>
             ) : (
               <>
                 <button

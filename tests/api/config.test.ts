@@ -73,6 +73,31 @@ describe('PUT /config validates the patch at the trust boundary', () => {
     expect(res.status).toBe(400);
   });
 
+  it('returns a monotonic revision and rejects stale snapshots with canonical data', async () => {
+    const { app, token } = await makeTestApp({});
+    const initial = await (await app.request('/config', { headers: { authorization: `Bearer ${token}` } })).json() as { revision: number };
+    expect(initial.revision).toBe(0);
+
+    const first = await app.request('/config', put(token, { autoUpdate: true, expectedRevision: initial.revision }));
+    expect(first.status).toBe(200);
+    const saved = await first.json() as { revision: number; autoUpdate: boolean };
+    expect(saved).toMatchObject({ revision: 1, autoUpdate: true });
+
+    const stale = await app.request('/config', put(token, { autoUpdate: false, expectedRevision: initial.revision }));
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: 'conflict', current: { revision: saved.revision, autoUpdate: true } });
+  });
+
+  it('allows only one of two concurrent writes from the same revision', async () => {
+    const { app, token } = await makeTestApp({});
+    const revision = (await (await app.request('/config', { headers: { authorization: `Bearer ${token}` } })).json() as { revision: number }).revision;
+    const [a, b] = await Promise.all([
+      app.request('/config', put(token, { autoUpdate: true, expectedRevision: revision })),
+      app.request('/config', put(token, { autoUpdate: false, expectedRevision: revision })),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+  });
+
   it('still accepts a well-formed patch (no regression)', async () => {
     const { app, token } = await makeTestApp({});
     const res = await app.request('/config', put(token, {

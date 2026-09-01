@@ -13,6 +13,7 @@ import { listLogFiles, readLogFile, deleteLogFile, deleteAllLogFiles, DEFAULT_LO
 import { pushSubscribeSchema, pushUnsubscribeSchema, systemRestartSchema, configPatchSchema } from '../schemas/config.js';
 import type { ElowenEvent } from '../sse.js';
 import type { ElowenApp, RouteContext } from '../context.js';
+import { ConfigRevisionConflict } from '../../store/configStore.js';
 import { readSystemDiagnostics } from '../systemDiagnostics.js';
 import { webhookProxyStatus } from '../webhookProxy.js';
 import { BUILTIN_TOOL_DEFER_LOADING, BUILTIN_TOOL_PLAN_SAFE, builtinToolMetas } from '../../brain/tools/index.js';
@@ -267,7 +268,7 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       });
     } catch { return c.json({ error: 'not found' }, 404); }
   });
-  app.get('/config', (c) => c.json(d.config.get()));
+  app.get('/config', (c) => c.json(d.config.snapshot()));
   app.get('/config/tool-deferral', async (c) => {
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     const registry = await d.plugins?.get();
@@ -296,15 +297,22 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     // app can populate model pickers etc. During setup (no users yet) it's open so onboarding can
     // save providers/the API key before the first admin exists.
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
-    const patch = await parseBody(c, configPatchSchema);
+    const body = await parseBody(c, configPatchSchema);
+    const { expectedRevision, ...patch } = body;
     const before = d.config.get();
-    const updated = d.config.update(patch);
+    let updated: ReturnType<typeof d.config.update>;
+    try {
+      updated = d.config.update(patch, expectedRevision);
+    } catch (error) {
+      if (error instanceof ConfigRevisionConflict) return c.json({ error: 'conflict', current: error.current }, 409);
+      throw error;
+    }
     // A persona rename sits at the very top of every live system prompt. Respawn live sessions so the
     // chat does not keep speaking as the old name while the UI shows the new one. Fire-and-forget for
     // the same reason cli-settings does it: restart waits for in-flight turns, and the save response
     // must not hang on that. (A theme switch needs no sweep: ELOWEN_THEME only changes with a restart.)
     if (updated.brain.agentName !== before.brain.agentName) queueBrandChange();
-    return c.json(updated);
+    return c.json(d.config.snapshot());
   });
 
   // System panel: the running version, the latest published one, whether an update is available, and

@@ -107,7 +107,13 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
                 sub-pixel row height (routine once the shell zoom scales the layout) overflows by a fraction
                 and draws a stray vertical scrollbar beside the tabs at some widths. Same fix as PluginsSection. */}
             <div className="flex min-w-0"><Segmented variant="line" value={tab} onChange={changeTab} options={tabs} aria-label={t.pluginDetail.workspaceNav} /></div>
-            <AutoSaveStatus status={draft.status} onRetry={draft.retry} />
+            <AutoSaveStatus
+              status={draft.status}
+              errorKind={draft.errorKind ?? undefined}
+              onRetry={draft.errorKind === 'transport' ? draft.retry : undefined}
+              onReload={draft.errorKind === 'conflict' ? () => draft.resolveConflict('reload') : undefined}
+              onMerge={draft.errorKind === 'conflict' ? () => draft.resolveConflict('merge') : undefined}
+            />
           </div>
         </SettingsToolbar>
         <div className="p-5 sm:p-6">

@@ -40,6 +40,8 @@ interface ModalProps {
   /** Accessible name of the header's close control. Defaults to the app's own "Close"; passed only by
    *  callers that already hold a translated label of their own. */
   closeLabel?: string;
+  /** Blocks header, Escape, and backdrop dismissal while an owned async save is in flight. */
+  closeDisabled?: boolean;
   /** Widens a drawer for content that genuinely needs the room (log tables, diagnostics). Defaults to
    *  wide for `size="lg"`, so a dialog that already declared it needs a large frame keeps that room
    *  when it renders as a drawer instead. Ignored by the other presentations, which take `size`. */
@@ -64,7 +66,8 @@ interface ModalProps {
  *   - the backdrop press, which must stop at the backdrop it was aimed at so a nested dialog cannot also
  *     close its parent. Radix's own outside-press dismissal is turned off for that reason, rather than
  *     left running as a second way to close the same dialog. */
-export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', scrim = 'default', drawerWidth, closeLabel }: ModalProps) {
+export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', scrim = 'default', drawerWidth, closeLabel, closeDisabled = false }: ModalProps) {
+  const requestClose = () => { if (!closeDisabled) onClose(); };
   const wide = (drawerWidth ?? (size === 'lg' ? 'wide' : 'default')) === 'wide';
   const automatic = useOverlayPresentation(intent);
   const resolved = presentation === 'auto' ? automatic : presentation;
@@ -91,7 +94,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
 
   if (!mounted) return null;
   return createPortal(
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Dialog open onOpenChange={(open) => { if (!open) requestClose(); }}>
       <DialogOverlay
         ref={overlayRef}
         presentation={resolved}
@@ -112,7 +115,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
           // Portal events still bubble through their React tree. Stop at this backdrop so clicking a
           // nested modal's backdrop cannot also reach and close its parent modal.
           event.stopPropagation();
-          onClose();
+          requestClose();
         }}
       >
         <DialogContent
@@ -144,11 +147,12 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
             title={title}
             titleId={titleId}
             description={description}
-            descriptionId={descriptionId}
+            descriptionId={description ? descriptionId : undefined}
             icon={Icon}
             actions={headerActions}
             closeLabel={closeLabel ?? t.common.close}
-            onClose={onClose}
+            closeDisabled={closeDisabled}
+            onClose={requestClose}
           />
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <OverlayDepthProvider>{children}</OverlayDepthProvider>

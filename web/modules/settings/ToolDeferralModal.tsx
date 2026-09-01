@@ -169,7 +169,7 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
   const reasonLabel = (reason: string) => t.brain.toolLoading.reason[reason as keyof typeof t.brain.toolLoading.reason] ?? reason;
 
   return (
-    <Modal title={t.brain.toolLoading.title} description={t.brain.toolLoading.hint} icon={Boxes} size="xl" onClose={onClose} presentation={presentation}>
+    <Modal title={t.brain.toolLoading.title} description={t.brain.toolLoading.hint} icon={Boxes} size="xl" onClose={saving || saveError ? () => {} : onClose} closeDisabled={saving || saveError} presentation={presentation}>
       <ModalBody gap={4}>
         <SettingsGroup title={t.brain.toolLoading.globalTitle} description={t.brain.toolLoading.globalHint} icon={Boxes}>
           <SettingsRow label={t.brain.toolLoading.enabled} description={t.brain.toolLoading.enabledHint} icon={Boxes}>

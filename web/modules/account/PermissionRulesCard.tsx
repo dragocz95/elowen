@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react';
 import { Plus, Shield, Trash2 } from 'lucide-react';
 import { SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
@@ -7,8 +7,11 @@ import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { IconButton } from '../../components/ui/IconButton';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
+import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { apiErrorMessage } from '../../lib/elowenClient';
 import { useMyPermissions } from '../../lib/queries';
 import { useSaveMyPermissions } from '../../lib/mutations';
 import type { PermissionAction, PermissionSettings } from '../../lib/types';
@@ -67,9 +70,9 @@ function ActionSwitch({ value, onChange, label, labels }: {
  *  change persists immediately by replacing the scope's whole map — order is the payload.
  *  Renders as an orbital pod — sample rule chips on the page, the full editor in a side drawer
  *  opened via the pod's orb. */
-export function PermissionRulesCard() {
+export function PermissionRulesCard({ onSaveState }: { onSaveState?: (status: SaveStatus, retry?: () => void | Promise<void>) => void }) {
   const permissions = useMyPermissions();
-  const save = useSaveMyPermissions();
+  const { mutateAsync: savePermissions } = useSaveMyPermissions();
   const { toast } = useToast();
   const { t } = useTranslation();
 
@@ -79,33 +82,54 @@ export function PermissionRulesCard() {
   const [draftAction, setDraftAction] = useState<PermissionAction>('allow');
   const [pendingDelete, setPendingDelete] = useState<{ scope: Scope; index: number; pattern: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [seeded, setSeeded] = useState(false);
+  const [status, setStatus] = useState<SaveStatus>('idle');
+  const lastFailed = useRef<Partial<PermissionSettings> | null>(null);
+  const saveChain = useRef(Promise.resolve());
 
   useEffect(() => {
-    if (permissions.data) {
+    if (permissions.data && !seeded) {
       setBashRules(toRules(permissions.data.bash));
       setToolsRules(toRules(permissions.data.tools));
+      setSeeded(true);
     }
-  }, [permissions.data]);
-
-  if (!permissions.data) return null;
+  }, [permissions.data, seeded]);
 
   const actionLabels: Record<PermissionAction, string> = {
     allow: t.cli.permAllow, ask: t.cli.permAsk, deny: t.cli.permDeny,
   };
 
   const setRules = (scope: Scope, rules: Rule[]) => (scope === 'bash' ? setBashRules : setToolsRules)(rules);
+  const enqueue = useCallback((patch: Partial<PermissionSettings>): Promise<PermissionSettings> => {
+    lastFailed.current = patch;
+    setStatus('saving');
+    const operation = saveChain.current.catch(() => undefined).then(async () => {
+      try {
+        const response = await savePermissions(patch);
+        lastFailed.current = null;
+        setStatus('saved');
+        return response;
+      } catch (error) {
+        toast(apiErrorMessage(error), 'error');
+        setStatus('error');
+        throw error;
+      }
+    });
+    saveChain.current = operation.then(() => undefined, () => undefined);
+    void operation.catch(() => undefined);
+    return operation;
+  }, [savePermissions, toast]);
+  const retry = useCallback(() => {
+    const patch = lastFailed.current;
+    if (patch) void enqueue(patch);
+  }, [enqueue]);
+  useEffect(() => {
+    onSaveState?.(status, status === 'error' ? retry : undefined);
+  }, [onSaveState, retry, status]);
+  if (!permissions.data) return null;
   const persist = (scope: Scope, next: Rule[]) => {
     setRules(scope, next);
-    const patch: Partial<PermissionSettings> = { [scope]: toMap(next) };
-    // On error, revert the optimistic list to the server truth held in the query cache (never
-    // optimistically mutated) — otherwise a non-persisted rule lingers as a phantom until the next
-    // successful save.
-    save.mutate(patch, {
-      onError: () => {
-        toast(t.cli.saveError, 'error');
-        if (permissions.data) setRules(scope, toRules(permissions.data[scope]));
-      },
-    });
+    void enqueue({ [scope]: toMap(next) });
   };
 
   const addRule = (e: FormEvent) => {
@@ -140,6 +164,8 @@ export function PermissionRulesCard() {
 
   const editor = (
     <div className="flex flex-col gap-4">
+      <AutoSaveStatus status={status} onRetry={retry} />
+      <fieldset disabled={status === 'saving'} className="contents">
       {bashRules.length === 0 ? (
         <p className="text-xs text-muted-foreground">{t.cli.permEmpty}</p>
       ) : (
@@ -165,6 +191,7 @@ export function PermissionRulesCard() {
           <ul className="flex flex-col gap-2">{toolsRules.map((r, i) => ruleRow('tools', toolsRules, r, i))}</ul>
         </div>
       ) : null}
+      </fieldset>
     </div>
   );
 
@@ -176,9 +203,13 @@ export function PermissionRulesCard() {
       confirmLabel={t.cli.permDelete}
       onConfirm={() => {
         if (!pendingDelete) return;
-        const rules = pendingDelete.scope === 'bash' ? bashRules : toolsRules;
-        persist(pendingDelete.scope, rules.filter((_, index) => index !== pendingDelete.index));
-        setPendingDelete(null);
+        const target = pendingDelete;
+        const rules = target.scope === 'bash' ? bashRules : toolsRules;
+        const next = rules.filter((_, index) => index !== target.index);
+        return enqueue({ [target.scope]: toMap(next) }).then(() => {
+          setRules(target.scope, next);
+          setPendingDelete(null);
+        });
       }}
       onClose={() => setPendingDelete(null)}
     />
@@ -209,7 +240,7 @@ export function PermissionRulesCard() {
       {drawerOpen ? (
         /* The rail's header already names this surface and the row carries the explanation, so the body
            starts on the rules themselves. */
-        <WorkspaceDetailRail label={t.cli.permTitle} closeLabel={t.common.close} onClose={() => setDrawerOpen(false)}>
+        <WorkspaceDetailRail label={t.cli.permTitle} closeLabel={t.common.close} onClose={() => setDrawerOpen(false)} closeDisabled={status === 'saving' || status === 'error'}>
           {editor}
         </WorkspaceDetailRail>
       ) : null}
