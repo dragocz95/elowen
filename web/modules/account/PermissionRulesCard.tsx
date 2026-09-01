@@ -70,9 +70,9 @@ function ActionSwitch({ value, onChange, label, labels }: {
  *  change persists immediately by replacing the scope's whole map — order is the payload.
  *  Renders as an orbital pod — sample rule chips on the page, the full editor in a side drawer
  *  opened via the pod's orb. */
-export function PermissionRulesCard({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
+export function PermissionRulesCard({ onSaveState }: { onSaveState?: (status: SaveStatus, retry?: () => void | Promise<void>) => void }) {
   const permissions = useMyPermissions();
-  const save = useSaveMyPermissions();
+  const { mutateAsync: savePermissions } = useSaveMyPermissions();
   const { toast } = useToast();
   const { t } = useTranslation();
 
@@ -105,7 +105,7 @@ export function PermissionRulesCard({ onSaveState }: { onSaveState?: (section: s
     setStatus('saving');
     const operation = saveChain.current.catch(() => undefined).then(async () => {
       try {
-        const response = await save.mutateAsync(patch);
+        const response = await savePermissions(patch);
         lastFailed.current = null;
         setStatus('saved');
         return response;
@@ -118,14 +118,14 @@ export function PermissionRulesCard({ onSaveState }: { onSaveState?: (section: s
     saveChain.current = operation.then(() => undefined, () => undefined);
     void operation.catch(() => undefined);
     return operation;
-  }, [save, toast]);
+  }, [savePermissions, toast]);
+  const retry = useCallback(() => {
+    const patch = lastFailed.current;
+    if (patch) void enqueue(patch);
+  }, [enqueue]);
   useEffect(() => {
-    const retry = status === 'error' ? () => {
-      const patch = lastFailed.current;
-      if (patch) void enqueue(patch);
-    } : undefined;
-    onSaveState?.('cli', status, retry);
-  }, [enqueue, onSaveState, status]);
+    onSaveState?.(status, status === 'error' ? retry : undefined);
+  }, [onSaveState, retry, status]);
   if (!permissions.data) return null;
   const persist = (scope: Scope, next: Rule[]) => {
     setRules(scope, next);
@@ -164,10 +164,8 @@ export function PermissionRulesCard({ onSaveState }: { onSaveState?: (section: s
 
   const editor = (
     <div className="flex flex-col gap-4">
-      <AutoSaveStatus status={status} onRetry={() => {
-        const patch = lastFailed.current;
-        if (patch) void enqueue(patch);
-      }} />
+      <AutoSaveStatus status={status} onRetry={retry} />
+      <fieldset disabled={status === 'saving'} className="contents">
       {bashRules.length === 0 ? (
         <p className="text-xs text-muted-foreground">{t.cli.permEmpty}</p>
       ) : (
@@ -193,6 +191,7 @@ export function PermissionRulesCard({ onSaveState }: { onSaveState?: (section: s
           <ul className="flex flex-col gap-2">{toolsRules.map((r, i) => ruleRow('tools', toolsRules, r, i))}</ul>
         </div>
       ) : null}
+      </fieldset>
     </div>
   );
 

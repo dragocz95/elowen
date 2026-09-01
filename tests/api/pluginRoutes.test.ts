@@ -399,6 +399,25 @@ describe('plugin routes', () => {
     expect(config.pluginConfig('discord').guildId).toMatch(/^[ab]$/);
   });
 
+  it('retries a legacy revisionless plugin patch without losing an intervening config write', async () => {
+    const { app, config, adminTok } = setup();
+    const update = config.update.bind(config);
+    let injected = false;
+    vi.spyOn(config, 'update').mockImplementation((next, expectedRevision) => {
+      if (!injected) {
+        injected = true;
+        update({ autoUpdate: true });
+      }
+      return update(next, expectedRevision);
+    });
+
+    const res = await app.request('/plugins/discord/config', patch(adminTok, { values: { guildId: 'legacy' } }));
+
+    expect(res.status).toBe(200);
+    expect(config.get().autoUpdate).toBe(true);
+    expect(config.pluginConfig('discord').guildId).toBe('legacy');
+  });
+
   it('keeps a pre-persistence failure as a real error and never starts reload', async () => {
     const { app, config, reloadPlugins, adminTok } = setup();
     vi.spyOn(config, 'update').mockImplementationOnce(() => { throw new Error('database write failed'); });

@@ -455,6 +455,23 @@ describe('PluginDetail secret field', () => {
     await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith(expect.objectContaining({ values: { token: 'replacement-secret' } })));
     await waitFor(() => expect(container.querySelector('input[type="password"]')).toBeNull());
   });
+
+  it('accepts an unset required secret only through the explicit commit button', async () => {
+    usePluginDetail.mockReturnValue({ data: detail(
+      [{ key: 'token', label: 'Token', type: 'secret', required: true }],
+      {},
+    ), isLoading: false });
+    const { container } = renderDetail();
+
+    const input = container.querySelector('input[type="password"]') as HTMLInputElement;
+    expect(input).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'first-secret' } });
+    await new Promise((resolve) => setTimeout(resolve, 950));
+    expect(savePluginConfig).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: en.common.save }));
+    await waitFor(() => expect(savePluginConfig).toHaveBeenCalledWith(expect.objectContaining({ values: { token: 'first-secret' } })));
+  });
 });
 
 describe('PluginDetail multiSelect field', () => {

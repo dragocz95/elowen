@@ -139,4 +139,22 @@ describe('BrainLimitsModal', () => {
     // Opened below, 120px of body would end at 844 in a 768px viewport — so it opens upward instead.
     await waitFor(() => expect(tooltip).toHaveAttribute('data-side', 'top'));
   });
+
+  it('keeps the modal mounted until the close-time flush settles successfully', async () => {
+    let settle!: (status: 'saved') => void;
+    const flush = vi.fn(() => new Promise<'saved'>((resolve) => { settle = resolve; }));
+    const onClose = vi.fn();
+    render(
+      <LanguageProvider>
+        <BrainLimitsModal limits={BRAIN_LIMIT_DEFAULTS} onChange={() => {}} onClose={onClose} flush={flush} />
+      </LanguageProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(flush).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+
+    settle('saved');
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
 });

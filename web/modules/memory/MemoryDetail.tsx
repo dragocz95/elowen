@@ -36,7 +36,7 @@ import { RankSlider, CategorySelect } from './MemoryFields';
 
 /** Persistent memory detail: full editable body, metadata, lifecycle actions and audit trail. Resolves
  *  the memory by id (any status) so a soft-deleted row stays reachable for restore. */
-export function MemoryDetail({ memoryId, onSaveState }: { memoryId: number; onSaveState?: (status: SaveStatus, retry: () => void) => void }) {
+export function MemoryDetail({ memoryId, onSaveState }: { memoryId: number; onSaveState?: (status: SaveStatus, retry: () => Promise<void>, flush: () => Promise<SaveStatus>) => void }) {
   const { t, locale } = useTranslation();
   const query = useMemory(memoryId);
   const memory = query.data;
@@ -46,7 +46,7 @@ export function MemoryDetail({ memoryId, onSaveState }: { memoryId: number; onSa
   return <MemoryDetailBody key={memory.id} memory={memory} t={t} locale={locale} onSaveState={onSaveState} />;
 }
 
-function MemoryDetailBody({ memory, t, locale, onSaveState }: { memory: Memory; t: ReturnType<typeof useTranslation>['t']; locale: string; onSaveState?: (status: SaveStatus, retry: () => void) => void }) {
+function MemoryDetailBody({ memory, t, locale, onSaveState }: { memory: Memory; t: ReturnType<typeof useTranslation>['t']; locale: string; onSaveState?: (status: SaveStatus, retry: () => Promise<void>, flush: () => Promise<SaveStatus>) => void }) {
   const { toast } = useToast();
   const update = useUpdateMemory();
   const setCategory = useSetMemoryCategory();
@@ -88,7 +88,7 @@ function MemoryDetailBody({ memory, t, locale, onSaveState }: { memory: Memory; 
     if (categoryId !== memory.category_id) await setCategory.mutateAsync({ id: memory.id, categoryId });
   };
   const autosave = useAutoSaveStatus([body, kind, importance, categoryId], saveEdits, { ready: true, savable: !!body.trim() });
-  useEffect(() => { onSaveState?.(autosave.status, autosave.retry); }, [autosave.retry, autosave.status, onSaveState]);
+  useEffect(() => { onSaveState?.(autosave.status, autosave.retry, autosave.flush); }, [autosave.flush, autosave.retry, autosave.status, onSaveState]);
   // Leave edit mode — flush any pending save first so the last keystroke is never dropped.
   const done = async () => { const finalStatus = await autosave.flush(); if (finalStatus !== 'error') setEditing(false); };
   const doDelete = () => {

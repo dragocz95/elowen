@@ -424,11 +424,12 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!manifest) return c.json({ error: 'unknown plugin' }, 404);
     const item = listing().find((p) => p.name === name);
     const schema = manifest.configSchema ?? [];
+    const snapshot = d.config.pluginConfigSnapshot(name);
     return c.json({
       ...item,
       configSchema: schema,
-      ...maskedConfigView(schema, d.config.pluginConfig(name)),
-      revision: d.config.snapshot().revision,
+      ...maskedConfigView(schema, snapshot.config),
+      revision: snapshot.revision,
       // Declared capabilities (deny-by-default `{}` when the manifest omits them) so the UI can render the
       // plugin's permission/risk section — what it may mutate, read, and whether it reaches the network.
       capabilities: manifest.capabilities ?? {},
@@ -511,25 +512,37 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (b.expectedRevision !== undefined && (!Number.isInteger(b.expectedRevision) || (b.expectedRevision as number) < 0)) {
       return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
     }
-    let stored: Record<string, unknown>;
-    try { stored = applyConfigPatch(manifest.configSchema ?? [], d.config.pluginConfig(name), b.values); }
-    catch (error) {
-      if (error instanceof PluginConfigValueError) return c.json({ error: error.message }, 400);
-      throw error;
-    }
-    // Persistence is the commit point. Any failure here remains a request failure and no reload starts.
-    try {
-      d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } }, b.expectedRevision as number | undefined);
-    } catch (error) {
-      if (error instanceof ConfigRevisionConflict) {
-        const current = error.current;
-        return c.json({ error: 'conflict', current: { ...maskedConfigView(manifest.configSchema ?? [], d.config.pluginConfig(name)), revision: current.revision } }, 409);
+    const schema = manifest.configSchema ?? [];
+    const suppliedRevision = b.expectedRevision as number | undefined;
+    // Older clients do not send a revision. Keep them compatible without restoring the old race: read the
+    // plugin slice + revision atomically, write conditionally, and retry only when another writer won first.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const baseline = d.config.pluginConfigSnapshot(name);
+      if (suppliedRevision !== undefined && suppliedRevision !== baseline.revision) {
+        return c.json({ error: 'conflict', current: { ...maskedConfigView(schema, baseline.config), revision: baseline.revision } }, 409);
       }
-      throw error;
+      let stored: Record<string, unknown>;
+      try { stored = applyConfigPatch(schema, baseline.config, b.values); }
+      catch (error) {
+        if (error instanceof PluginConfigValueError) return c.json({ error: error.message }, 400);
+        throw error;
+      }
+      // Persistence is the commit point. Any failure here remains a request failure and no reload starts.
+      try {
+        d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } }, baseline.revision);
+      } catch (error) {
+        if (error instanceof ConfigRevisionConflict) {
+          if (suppliedRevision === undefined) continue;
+          const current = d.config.pluginConfigSnapshot(name);
+          return c.json({ error: 'conflict', current: { ...maskedConfigView(schema, current.config), revision: current.revision } }, 409);
+        }
+        throw error;
+      }
+      const current = d.config.pluginConfigSnapshot(name);
+      const canonical = { ok: true as const, ...maskedConfigView(schema, current.config), revision: current.revision };
+      return await appliedConfig(c, name, d.brain ? () => d.brain!.reloadPlugins() : undefined, canonical);
     }
-    const current = d.config.snapshot();
-    const canonical = { ok: true as const, ...maskedConfigView(manifest.configSchema ?? [], d.config.pluginConfig(name)), revision: current.revision };
-    return await appliedConfig(c, name, d.brain ? () => d.brain!.reloadPlugins() : undefined, canonical);
+    return c.json({ error: 'config changed too frequently; retry' }, 409);
   });
 
   app.patch('/plugins/:name', async (c) => {

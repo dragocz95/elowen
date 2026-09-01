@@ -893,30 +893,34 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
       );
     }
 
-    // A stored secret is never shown back: the record reports that one exists and offers to replace it.
-    if (f.type === 'secret' && detail.secretsSet.includes(f.key) && !replacingSecrets.has(f.key)) {
-      return (
-        <SettingsRow
-          key={f.key}
-          label={label}
-          description={description}
-          hint={[help, t.pluginCfg.secretKeepHint].filter(Boolean).join(' ')}
-          status={<span className="flex flex-wrap items-center gap-2">{risk}<Badge tone="success">{t.pluginCfg.secretSet}</Badge></span>}
-          trailingLayout="stack"
-          className={risk ? 'plugin-config-risk-row' : undefined}
-          actions={
-            <Button type="button" variant="ghost" className="h-8" onClick={() => {
-              setSecretErrors((current) => { const next = { ...current }; delete next[f.key]; return next; });
-              setSecretDrafts((current) => ({ ...current, [f.key]: '' }));
-              setReplacingSecrets((current) => new Set(current).add(f.key));
-            }}>
-              {t.pluginCfg.secretReplace}
-            </Button>
-          }
-        />
-      );
-    }
-    if (f.type === 'secret' && replacingSecrets.has(f.key)) {
+    if (f.type === 'secret') {
+      const stored = detail.secretsSet.includes(f.key);
+      // A stored secret is never shown back: the record reports that one exists and offers to replace it.
+      if (stored && !replacingSecrets.has(f.key)) {
+        return (
+          <SettingsRow
+            key={f.key}
+            label={label}
+            description={description}
+            hint={[help, t.pluginCfg.secretKeepHint].filter(Boolean).join(' ')}
+            status={<span className="flex flex-wrap items-center gap-2">{risk}<Badge tone="success">{t.pluginCfg.secretSet}</Badge></span>}
+            trailingLayout="stack"
+            className={risk ? 'plugin-config-risk-row' : undefined}
+            actions={
+              <Button type="button" variant="ghost" className="h-8" onClick={() => {
+                setSecretErrors((current) => { const next = { ...current }; delete next[f.key]; return next; });
+                setSecretDrafts((current) => ({ ...current, [f.key]: '' }));
+                setReplacingSecrets((current) => new Set(current).add(f.key));
+              }}>
+                {t.pluginCfg.secretReplace}
+              </Button>
+            }
+          />
+        );
+      }
+      // An unset secret uses the same explicit commit boundary as replacement. It must not fall through to
+      // the generic controlled field: draft.setValue intentionally ignores secrets, which made a fresh
+      // required credential appear editable while every keystroke was discarded.
       const error = secretErrors[f.key];
       const saving = secretSaving.has(f.key);
       return (
@@ -937,7 +941,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
                 onChange={(e) => setSecretDrafts((current) => ({ ...current, [f.key]: e.target.value }))}
                 placeholder={t.pluginCfg.secretReplacementPlaceholder}
                 autoComplete="off"
-                autoFocus
+                autoFocus={replacingSecrets.has(f.key)}
               />
               <Button type="button" variant="accent" className="h-8" disabled={saving || !(secretDrafts[f.key] ?? '').trim()} onClick={() => void commitSecret(f.key)}>
                 {saving ? t.common.saving : t.common.save}

@@ -19,6 +19,10 @@ function activationIsPending(result: SaveResult): boolean {
   return typeof result === 'object' && result !== null && 'pending' in result && result.pending === true;
 }
 
+function sameDeps(a: readonly unknown[] | null, b: readonly unknown[]): boolean {
+  return a !== null && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
+}
+
 /**
  * Debounced auto-persist with a visible status, stale-response protection, and a flush hook — the
  * shared race-safe auto-save controller. Runs `save` shortly after any of `deps` change, but never
@@ -51,6 +55,8 @@ export function useAutoSaveStatus(
   // lands on a hook nobody renders any more. Reporting into that void is not just wasted work.
   const mounted = useRef(true);
   const statusRef = useRef<SaveStatus>('idle');
+  const observedDeps = useRef<readonly unknown[] | null>(null);
+  const observedSavable = useRef(savable);
   const reportStatus = useCallback((next: SaveStatus) => {
     statusRef.current = next;
     if (mounted.current) setStatus(next);
@@ -84,8 +90,11 @@ export function useAutoSaveStatus(
         }
       }
       running.current = false;
-      reportStatus(terminal);
-      return terminal;
+      // A newer debounced edit may already be waiting even though this request finished. Never flash
+      // "Saved" for the older snapshot; an invalid current value is not saved at all.
+      const reported = !savableRef.current ? 'idle' : pending.current ? 'saving' : terminal;
+      reportStatus(reported);
+      return reported;
     })();
     activeRun.current = operation;
     void operation.finally(() => {
@@ -96,24 +105,44 @@ export function useAutoSaveStatus(
 
   useEffect(() => {
     if (!ready) {
+      seeded.current = false;
+      observedDeps.current = [...deps];
+      observedSavable.current = savable;
       pending.current = false;
       queued.current = false;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      reportStatus('idle');
       return;
     }
-    if (!seeded.current) { seeded.current = true; return; } // consume the seed run
+    if (!seeded.current) {
+      seeded.current = true;
+      observedDeps.current = [...deps];
+      observedSavable.current = savable;
+      return; // consume the server seed
+    }
+    // React Activity tears effects down and recreates them while preserving refs. Re-entering with the
+    // same values is lifecycle, not an edit, and must not replay the snapshot. A validity transition is
+    // still meaningful even when the dependency identity itself did not change.
+    const depsChanged = !sameDeps(observedDeps.current, deps);
+    const savableChanged = observedSavable.current !== savable;
+    observedDeps.current = [...deps];
+    observedSavable.current = savable;
+    if (!depsChanged && !savableChanged) return;
     if (!savable) {
       pending.current = false;
       queued.current = false;
       if (timer.current) clearTimeout(timer.current);
       timer.current = null;
+      reportStatus('idle');
       return;
     }
     pending.current = true;
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void run(); }, delay);
+    timer.current = setTimeout(() => { timer.current = null; void run(); }, delay);
     return () => { if (timer.current) clearTimeout(timer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, savable, run, delay, ...deps]);
+  }, [ready, savable, run, reportStatus, delay, ...deps]);
 
   const flush = useCallback(async (): Promise<SaveStatus> => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
@@ -127,6 +156,7 @@ export function useAutoSaveStatus(
   // status updates are dropped.
   useEffect(() => {
     mounted.current = true;
+    setStatus(statusRef.current);
     return () => { mounted.current = false; void flush(); };
   }, [flush]);
 

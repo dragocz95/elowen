@@ -54,11 +54,14 @@ export type UseAutoSaveStatus = (
   options?: UseAutoSaveStatusOptions,
 ) => UseAutoSaveStatusResult;
 
+export type PluginConfigErrorKind = 'validation' | 'conflict' | 'transport';
+
 export interface PluginConfigDraft {
   values: Record<string, unknown>;
   setValue: (key: string, value: unknown) => void;
   commitValue: (key: string, value: unknown) => Promise<{ pending: boolean }>;
   status: SaveStatus;
+  errorKind: PluginConfigErrorKind | null;
   retry: () => Promise<void>;
   flush: () => Promise<SaveStatus>;
   ready: boolean;
@@ -66,8 +69,8 @@ export interface PluginConfigDraft {
 
 export type UsePluginConfigDraft = (
   name: string,
-  detail: { config: Record<string, unknown>; configSchema: readonly unknown[] },
-  options?: { save?: (value: { name: string; values: Record<string, unknown> }) => Promise<unknown> },
+  detail: { config: Record<string, unknown>; configSchema: readonly unknown[]; revision?: number },
+  options?: { save?: (value: { name: string; values: Record<string, unknown>; expectedRevision?: number }) => Promise<unknown> },
 ) => PluginConfigDraft;
 
 export type ConfirmDialogButtonVariant = 'default' | 'accent' | 'ghost' | 'danger' | 'ghost-danger' | 'outline' | 'outline-danger';

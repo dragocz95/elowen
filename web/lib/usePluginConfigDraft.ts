@@ -78,6 +78,14 @@ export function usePluginConfigDraft(
   const secretKeys = new Set(detail.configSchema.filter((field) => field.type === 'secret').map((field) => field.key));
   const classifyError = (error: unknown): PluginConfigErrorKind =>
     error instanceof ElowenApiError ? (error.status === 409 ? 'conflict' : 'transport') : 'validation';
+  const adoptConflictRevision = (error: unknown): void => {
+    if (!(error instanceof ElowenApiError) || error.status !== 409) return;
+    const current = error.details?.current;
+    if (current && typeof current === 'object' && !Array.isArray(current)
+      && typeof (current as { revision?: unknown }).revision === 'number') {
+      revision.current = (current as { revision: number }).revision;
+    }
+  };
   const applyCanonical = (snapshot: Record<string, unknown>, response: unknown): void => {
     if (!response || typeof response !== 'object') return;
     const result = response as Partial<PluginConfigSaveResponse>;
@@ -111,6 +119,7 @@ export function usePluginConfigDraft(
         applyCanonical(values, response);
         return response;
       } catch (error) {
+        adoptConflictRevision(error);
         setErrorKind(classifyError(error));
         throw error;
       }
@@ -121,8 +130,10 @@ export function usePluginConfigDraft(
   const commitValue = async (key: string, value: unknown): Promise<PluginConfigCommitResult> => {
     const base = values;
     // Finish any older debounced snapshot first. Otherwise its timer could enqueue the old list after
-    // this confirmed deletion and resurrect the row on the server.
-    await autosave.flush();
+    // this confirmed deletion and resurrect the row on the server. A failed older snapshot is a hard
+    // boundary: committing another full snapshot on top of it could silently discard the failed edit.
+    const flushed = await autosave.flush();
+    if (flushed === 'error') throw new Error('Resolve the failed config save before committing another value');
     const isSecret = secretKeys.has(key);
     const next = { ...base, [key]: value };
     setErrorKind(null);
@@ -130,6 +141,7 @@ export function usePluginConfigDraft(
     try {
       response = await queueSave(sanitizeConfig(next, detail.configSchema, isSecret ? new Set([key]) : new Set()));
     } catch (error) {
+      adoptConflictRevision(error);
       setErrorKind(classifyError(error));
       throw error;
     }

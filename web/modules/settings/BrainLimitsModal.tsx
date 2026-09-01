@@ -77,13 +77,16 @@ export function BrainLimitsModal({ limits, applied, onChange, onClose, status = 
   onChange: (next: (cur: BrainLimits) => BrainLimits) => void;
   onClose: () => void;
   status?: SaveStatus;
-  retry?: () => void;
-  flush?: () => void;
+  retry?: () => void | Promise<void>;
+  flush?: () => Promise<SaveStatus>;
   presentation?: 'center' | 'drawer';
 }) {
   const { t } = useTranslation();
   const closeDisabled = status === 'saving' || status === 'error';
-  const close = () => { flush?.(); onClose(); };
+  const close = async () => {
+    const finalStatus = await flush?.();
+    if (finalStatus !== 'error') onClose();
+  };
   /** A canonical value in the row's own display unit. Token counts are a 4-chars-per-token estimate
    *  already, so the fractional tail of an odd character budget is rounded away. */
   const displayLabel = (field: BrainLimitField, canonical: number): string => {

@@ -57,7 +57,7 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
   const saveStatus = setIcon.isPending ? 'saving' : setIcon.isError ? 'error' : setIcon.isSuccess ? 'saved' : 'idle';
 
   return (
-    <Modal title={t.projects.chooseIcon} description={project.slug} onClose={onClose} size="xl" icon={ImageIcon}>
+    <Modal title={t.projects.chooseIcon} description={project.slug} onClose={onClose} closeDisabled={setIcon.isPending} size="xl" icon={ImageIcon}>
       <div className="border-b border-border px-5 py-3">
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.projects.iconSearch} autoFocus />
       </div>
@@ -96,7 +96,7 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
       <ModalFooter status={<AutoSaveStatus status={saveStatus} onRetry={() => { if (lastAction) apply(lastAction.icon, lastAction.removed); }} />}>
         {project.icon ? <Button variant="danger" onClick={() => apply('', true)} disabled={setIcon.isPending}>{t.projects.iconRemove}</Button> : null}
         <div className="flex-1" />
-        <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
+        <Button variant="ghost" onClick={onClose} disabled={setIcon.isPending}>{t.common.cancel}</Button>
         <Button variant="accent" onClick={() => selected && apply(selected)} disabled={setIcon.isPending || !selected}>{t.projects.iconSelect}</Button>
       </ModalFooter>
     </Modal>

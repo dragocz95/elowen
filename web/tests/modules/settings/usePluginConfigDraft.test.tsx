@@ -84,8 +84,10 @@ describe('usePluginConfigDraft', () => {
     expect(result.current.errorKind).toBeNull();
   });
 
-  it('classifies a revision conflict without dropping the local draft', async () => {
-    mutateAsync.mockRejectedValue(new ElowenApiError('conflict', 409, 'conflict', { current: { revision: 8 } }));
+  it('classifies a revision conflict, keeps the draft, and retries with the canonical revision', async () => {
+    mutateAsync
+      .mockRejectedValueOnce(new ElowenApiError('conflict', 409, 'conflict', { current: { revision: 8 } }))
+      .mockResolvedValueOnce({ ok: true, revision: 9, config: { mode: 'b' }, secretsSet: [] });
     const detail = pluginDetail([{ key: 'mode', label: 'Mode', type: 'string' }], { mode: 'a' }, [], 7);
     const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
 
@@ -95,6 +97,11 @@ describe('usePluginConfigDraft', () => {
     expect(result.current.values).toEqual({ mode: 'b' });
     expect(result.current.status).toBe('error');
     expect(result.current.errorKind).toBe('conflict');
+
+    await act(async () => { await result.current.retry(); });
+    expect(mutateAsync).toHaveBeenLastCalledWith({ name: 'test-plugin', values: { mode: 'b' }, expectedRevision: 8 });
+    expect(result.current.status).toBe('saved');
+    expect(result.current.errorKind).toBeNull();
   });
 
   it('publishes an immediate confirmed value only after the server accepts it', async () => {

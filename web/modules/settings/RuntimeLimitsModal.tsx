@@ -89,13 +89,16 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, status
   onChange: (next: (cur: RuntimeConfig) => RuntimeConfig) => void;
   onClose: () => void;
   status?: SaveStatus;
-  retry?: () => void;
-  flush?: () => void;
+  retry?: () => void | Promise<void>;
+  flush?: () => Promise<SaveStatus>;
   presentation?: 'center' | 'drawer';
 }) {
   const { t } = useTranslation();
   const closeDisabled = status === 'saving' || status === 'error';
-  const close = () => { flush?.(); onClose(); };
+  const close = async () => {
+    const finalStatus = await flush?.();
+    if (finalStatus !== 'error') onClose();
+  };
   /** A canonical value in the row's own display unit. */
   const displayLabel = (field: RuntimeLimitField, canonical: number): string => {
     const value = canonical / DISPLAY_DIVISORS[field.kind];

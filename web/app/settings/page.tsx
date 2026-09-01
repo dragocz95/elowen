@@ -272,7 +272,6 @@ export default function SettingsPage() {
       throw error;
     }
   }, { ready: seeded.current, delay: 0 });
-
   // Auto-persist: every settings form saves itself shortly after a change (no Save buttons anywhere).
   // The apiKey secret rides along only when freshly typed, exactly as with the old buttons.
   const ready = seeded.current;
@@ -294,6 +293,14 @@ export default function SettingsPage() {
     try { await update.mutateAsync({ webPushContact: pushContact }); }
     catch (error) { toast(apiErrorMessage(error), 'error'); throw error; }
   }, { ready });
+  const closeTokenTtl = async () => {
+    const finalStatus = await defaultsSave.flush();
+    if (finalStatus !== 'error') setTokenTtlOpen(false);
+  };
+  const closeRetention = async () => {
+    const finalStatus = await retentionSave.flush();
+    if (finalStatus !== 'error') setRetentionOpen(false);
+  };
   // Set (or clear, with null) one model's context-window override; the autosave above persists it.
   const setWindow = (key: string, value: number | null) =>
     setModelWindows((cur) => {
@@ -796,7 +803,7 @@ export default function SettingsPage() {
                   intent="inspect"
                   size="sm"
                   drawerWidth="default"
-                  onClose={() => { defaultsSave.flush(); setTokenTtlOpen(false); }}
+                  onClose={closeTokenTtl}
                   closeDisabled={defaultsSave.status === 'saving' || defaultsSave.status === 'error'}
                 >
                   <ModalBody>
@@ -808,7 +815,7 @@ export default function SettingsPage() {
                     />
                   </ModalBody>
                   <ModalFooter status={<AutoSaveStatus status={defaultsSave.status} onRetry={defaultsSave.retry} />}>
-                    <Button variant="accent" onClick={() => { defaultsSave.flush(); setTokenTtlOpen(false); }} disabled={defaultsSave.status === 'saving' || defaultsSave.status === 'error'}>{t.common.done}</Button>
+                    <Button variant="accent" onClick={closeTokenTtl} disabled={defaultsSave.status === 'saving' || defaultsSave.status === 'error'}>{t.common.done}</Button>
                   </ModalFooter>
                 </Modal>
               ) : null;
@@ -821,7 +828,7 @@ export default function SettingsPage() {
                   intent="inspect"
                   size="sm"
                   drawerWidth="default"
-                  onClose={() => { retentionSave.flush(); setRetentionOpen(false); }}
+                  onClose={closeRetention}
                   closeDisabled={retentionSave.status === 'saving' || retentionSave.status === 'error'}
                 >
                   <ModalBody>
@@ -839,7 +846,7 @@ export default function SettingsPage() {
                     </fieldset>
                   </ModalBody>
                   <ModalFooter status={<AutoSaveStatus status={retentionSave.status} onRetry={retentionSave.retry} />}>
-                    <Button variant="accent" onClick={() => { retentionSave.flush(); setRetentionOpen(false); }} disabled={retentionSave.status === 'saving' || retentionSave.status === 'error'}>{t.common.done}</Button>
+                    <Button variant="accent" onClick={closeRetention} disabled={retentionSave.status === 'saving' || retentionSave.status === 'error'}>{t.common.done}</Button>
                   </ModalFooter>
                 </Modal>
               ) : null;

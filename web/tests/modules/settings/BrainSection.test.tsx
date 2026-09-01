@@ -4,12 +4,13 @@ import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import { interpolate } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
+import type { ElowenConfig } from '../../../lib/types';
 
 const saveProviders = vi.fn();
 const disconnect = vi.fn();
 const updateConfig = vi.fn(() => Promise.resolve(CONFIG));
 const CONFIG = {
-  brain: { providers: [], agentName: 'Elowen', maxSteps: 20 },
+  brain: { providers: [], agentName: 'Elowen', maxSteps: 20, hiddenOauth: [] as string[] },
   runtime: {
     limits: {
       localShellTimeoutMs: 30000, memorySemanticFloorPerMille: 200, toolDeferThreshold: 10, eventRetentionDays: 30,
@@ -101,6 +102,7 @@ vi.mock('../../../lib/elowenClient', async (importOriginal) => {
 });
 
 import { BrainSection, modelPickerItems } from '../../../modules/settings/BrainSection';
+import { BrainProvidersSection } from '../../../modules/settings/BrainProvidersSection';
 
 const renderSection = () => render(<ToastProvider><BrainSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
 
@@ -114,10 +116,20 @@ beforeEach(() => {
   hostedMocks.status.mockReset(); hostedMocks.status.mockResolvedValue({ providers: [] });
   hostedMocks.probe.mockClear();
   (CONFIG.brain.providers as unknown[]).length = 0;
+  CONFIG.brain.hiddenOauth.length = 0;
 });
 afterEach(() => { vi.useRealTimers(); });
 
 describe('BrainSection — OAuth account model picker', () => {
+  it('waits for config before seeding hidden OAuth accounts', async () => {
+    const hiddenConfig = { ...CONFIG, brain: { ...CONFIG.brain, hiddenOauth: ['oauth-kimi'] } };
+    const { rerender } = render(<ToastProvider><BrainProvidersSection config={undefined} /></ToastProvider>, { wrapper: createWrapper().wrapper });
+
+    rerender(<ToastProvider><BrainProvidersSection config={hiddenConfig as unknown as ElowenConfig} /></ToastProvider>);
+    await waitFor(() => expect(screen.queryByText(en.brain.types['oauth-kimi'])).toBeNull());
+    expect(updateConfig).not.toHaveBeenCalled();
+  });
+
   it('provides shared settings groups for the page-owned settings document', () => {
     const { container } = renderSection();
 

@@ -1,6 +1,6 @@
 'use client';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { elowenClient } from './elowenClient';
+import { ElowenApiError, elowenClient } from './elowenClient';
 import { clearToken } from './token';
 import { QUERY_KEYS } from './queries';
 import type { ConfigPatch, ConfigSnapshot, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask } from './types';
@@ -26,6 +26,16 @@ export function useUpdateConfig() {
       return elowenClient.updateConfig(patch, current?.revision);
     },
     onSuccess: (snapshot) => { qc.setQueryData(QUERY_KEYS.config, snapshot); },
+    // A conflict is a successful read of newer canonical state. Keep the draft in its owner, but advance
+    // the shared cache so an explicit Retry uses the current revision instead of repeating the same 409.
+    onError: (error) => {
+      if (!(error instanceof ElowenApiError) || error.status !== 409) return;
+      const current = error.details?.current;
+      if (current && typeof current === 'object' && !Array.isArray(current)
+        && typeof (current as { revision?: unknown }).revision === 'number') {
+        qc.setQueryData(QUERY_KEYS.config, current as ConfigSnapshot);
+      }
+    },
   });
 }
 /** Trigger a manual in-place update. The daemon restarts mid-flight, so the System panel just re-polls

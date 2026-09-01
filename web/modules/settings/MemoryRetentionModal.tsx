@@ -45,13 +45,16 @@ export function MemoryRetentionModal({ runtime, applied, onChange, onClose, stat
   onChange: (next: (cur: RuntimeConfig) => RuntimeConfig) => void;
   onClose: () => void;
   status?: SaveStatus;
-  retry?: () => void;
-  flush?: () => void;
+  retry?: () => void | Promise<void>;
+  flush?: () => Promise<SaveStatus>;
   presentation?: 'center' | 'drawer';
 }) {
   const { t } = useTranslation();
   const closeDisabled = status === 'saving' || status === 'error';
-  const close = () => { flush?.(); onClose(); };
+  const close = async () => {
+    const finalStatus = await flush?.();
+    if (finalStatus !== 'error') onClose();
+  };
   const retention = runtime.memoryRetention ?? DEFAULT_MEMORY_RETENTION;
 
   const patch = (next: Partial<MemoryRetentionConfig>) =>

@@ -83,7 +83,12 @@ export function MemoryView() {
   );
   const [showCategories, setShowCategories] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [detailSave, setDetailSave] = useState<{ id: number; status: SaveStatus; retry: () => void } | null>(null);
+  const [detailSave, setDetailSave] = useState<{
+    id: number;
+    status: SaveStatus;
+    retry: () => Promise<void>;
+    flush: () => Promise<SaveStatus>;
+  } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [creating, setCreating] = useState(false);
   const [creatingCategory, setCreatingCategory] = useState(false);
@@ -190,10 +195,19 @@ export function MemoryView() {
     return next;
   });
 
-  const onDetailSaveState = useCallback((status: SaveStatus, retry: () => void) => {
-    setDetailSave(selectedId == null ? null : { id: selectedId, status, retry });
+  const onDetailSaveState = useCallback((status: SaveStatus, retry: () => Promise<void>, flush: () => Promise<SaveStatus>) => {
+    setDetailSave(selectedId == null ? null : { id: selectedId, status, retry, flush });
   }, [selectedId]);
   const detailCloseDisabled = detailSave?.id === selectedId && (detailSave.status === 'saving' || detailSave.status === 'error');
+  const closeDetail = async () => {
+    if (selectedId == null) return;
+    const owner = detailSave?.id === selectedId ? detailSave : null;
+    const finalStatus = await owner?.flush();
+    if (finalStatus !== 'error') {
+      setSelectedId(null);
+      setDetailSave(null);
+    }
+  };
   const selectedIds = () => filtered.filter((m) => selected.has(m.id)).map((m) => m.id);
 
   // Soft-delete / restore have no bulk endpoint, so fan out per id and report once. Purge/empty-trash
@@ -498,7 +512,7 @@ export function MemoryView() {
             </ControlSurfaceRegister>
             </div>
             {selectedId != null ? (
-              <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} closeDisabled={detailCloseDisabled} onClose={() => setSelectedId(null)}>
+              <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} closeDisabled={detailCloseDisabled} onClose={closeDetail}>
                 <MemoryDetail memoryId={selectedId} onSaveState={onDetailSaveState} />
               </WorkspaceDetailRail>
             ) : null}
@@ -506,7 +520,7 @@ export function MemoryView() {
           )}
         </ControlSurfaceDocument>
         {tab === 'brain' && selectedId != null ? (
-          <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} closeDisabled={detailCloseDisabled} onClose={() => setSelectedId(null)} scrim="soft">
+          <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} closeDisabled={detailCloseDisabled} onClose={closeDetail} scrim="soft">
             <MemoryDetail memoryId={selectedId} onSaveState={onDetailSaveState} />
           </WorkspaceDetailRail>
         ) : null}

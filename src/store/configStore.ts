@@ -1333,6 +1333,13 @@ export class ConfigStore {
     return this.read().plugins.config[name] ?? {};
   }
 
+  /** Read one plugin slice and the shared config revision from the same SQLite snapshot. A separate
+   * `pluginConfig()` followed by `snapshot()` can pair old values with a newer revision, letting a stale
+   * browser snapshot pass conditional-write validation and overwrite the intervening change. */
+  pluginConfigSnapshot(name: string): { config: Record<string, unknown>; revision: number } {
+    return this.db.transaction(() => ({ config: this.pluginConfig(name), revision: this.revision() }))();
+  }
+
   /** Resolve an exec field on update: keep the current value when the patch omits it; accept a
    *  patched value only if it's allow-listed/well-formed (isAllowedExec), otherwise fall back to
    *  `onInvalid` so an invalid spec is never persisted. */

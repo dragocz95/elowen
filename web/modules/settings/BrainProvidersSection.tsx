@@ -424,8 +424,11 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
   const [hiddenOauth, setHiddenOauth] = useState<string[]>(config?.brain?.hiddenOauth ?? []);
   const [hiddenOauthSeeded, setHiddenOauthSeeded] = useState(false);
   useEffect(() => {
-    if (!hiddenOauthSeeded) { setHiddenOauth(config?.brain?.hiddenOauth ?? []); setHiddenOauthSeeded(true); }
-  }, [config?.brain?.hiddenOauth, hiddenOauthSeeded]);
+    if (config && !hiddenOauthSeeded) {
+      setHiddenOauth(config.brain?.hiddenOauth ?? []);
+      setHiddenOauthSeeded(true);
+    }
+  }, [config, hiddenOauthSeeded]);
   // The supported OAuth account types come straight from the daemon (keys of the status map), so a
   // provider added there shows up here without a frontend change.
   const oauthTypes = Object.keys(oauth.data ?? {});
