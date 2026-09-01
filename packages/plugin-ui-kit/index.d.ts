@@ -29,6 +29,32 @@ export interface DirectoryPickerProps {
   onClose: () => void;
 }
 
+export interface PluginConfigField {
+  key: string;
+  label: string;
+  type:
+    | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
+    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers'
+    | 'destination' | 'projects' | 'plugins' | 'tools' | 'models' | 'timezone' | 'tokenList';
+  hint?: string;
+  required?: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  placeholder?: string;
+  display?: { control?: 'input' | 'slider'; unit?: string; divisor?: number };
+  browse?: 'directory';
+  default?: string | number | boolean | string[];
+  providerType?: string;
+  options?: { value: string; label: string }[];
+  language?: string;
+  help?: string;
+  risk?: 'low' | 'medium' | 'high';
+  advanced?: boolean;
+  fullWidth?: boolean;
+  visibleWhen?: { key: string; equals: string | number | boolean };
+}
+
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'pending' | 'error';
 
 export interface AutoSaveStatusProps {
@@ -69,7 +95,7 @@ export interface PluginConfigDraft {
 
 export type UsePluginConfigDraft = (
   name: string,
-  detail: { config: Record<string, unknown>; configSchema: readonly unknown[]; revision?: number },
+  detail: { config: Record<string, unknown>; configSchema: readonly PluginConfigField[]; revision?: number },
   options?: { save?: (value: { name: string; values: Record<string, unknown>; expectedRevision?: number }) => Promise<unknown> },
 ) => PluginConfigDraft;
 

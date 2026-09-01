@@ -3,13 +3,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useSavePluginConfig } from './mutations';
 import { ElowenApiError } from './elowenClient';
 import { useAutoSaveStatus } from './useAutoSaveStatus';
-import type { PluginConfigField, PluginConfigSaveResponse, PluginDetail } from './types';
+import type { PluginConfigField, PluginConfigSaveResponse } from './types';
 
 /** Invalid JSON remains editable but makes the save fail visibly; claiming "Saved" while dropping
  * that field would lose the user's draft on navigation. */
 class PluginConfigValidationError extends Error {}
 
-function sanitizeConfig(values: Record<string, unknown>, schema: PluginConfigField[], includeSecrets: ReadonlySet<string> = new Set(), validateJson = true): Record<string, unknown> {
+function sanitizeConfig(values: Record<string, unknown>, schema: readonly PluginConfigField[], includeSecrets: ReadonlySet<string> = new Set(), validateJson = true): Record<string, unknown> {
   const jsonKeys = new Set(schema.filter((field) => field.type === 'json').map((field) => field.key));
   const secretKeys = new Set(schema.filter((field) => field.type === 'secret').map((field) => field.key));
   const out: Record<string, unknown> = {};
@@ -61,7 +61,7 @@ export interface PluginConfigDraft {
  * after acceptance. Everything else keeps the debounced full-snapshot behavior. */
 export function usePluginConfigDraft(
   name: string,
-  detail: Pick<PluginDetail, 'config' | 'configSchema' | 'revision'>,
+  detail: { config: Record<string, unknown>; configSchema: readonly PluginConfigField[]; revision?: number },
   options: { save?: (v: { name: string; values: Record<string, unknown>; expectedRevision?: number }) => Promise<unknown> } = {},
 ): PluginConfigDraft {
   const instanceSave = useSavePluginConfig();
