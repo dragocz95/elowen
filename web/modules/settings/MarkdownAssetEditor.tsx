@@ -362,7 +362,8 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
           intent="inspect"
           size="md"
           drawerWidth="default"
-          onClose={closeForm}
+          onClose={saving ? () => {} : closeForm}
+          closeDisabled={saving}
         >
           <ModalBody gap={4}>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

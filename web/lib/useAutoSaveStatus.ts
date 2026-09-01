@@ -11,6 +11,7 @@ export interface AutoSaveStatusResult {
   status: SaveStatus;
   retry: () => Promise<void>;
   flush: () => Promise<SaveStatus>;
+  reset: () => void;
 }
 
 type SaveResult = unknown;
@@ -161,5 +162,12 @@ export function useAutoSaveStatus(
   }, [flush]);
 
   const retry = useCallback(async () => { await run(); }, [run]);
-  return { status, retry, flush };
+  const reset = useCallback(() => {
+    pending.current = false;
+    queued.current = false;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    reportStatus('idle');
+  }, [reportStatus]);
+  return { status, retry, flush, reset };
 }

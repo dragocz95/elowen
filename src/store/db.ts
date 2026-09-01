@@ -128,6 +128,7 @@ function applyAdditiveMigrations(db: Db): void {
   // exists is skipped via PRAGMA table_info, so we never rely on swallowing arbitrary ALTER errors
   // (a real failure — disk full, lock — now surfaces instead of being silently caught).
   addColumn(db, 'settings', 'revision', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'user_plugin_config', 'revision', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'projects', 'notes', "TEXT NOT NULL DEFAULT ''");
   // Project icon: a project-relative path to an image file already in the repo (e.g. assets/logo.png).
   // Empty = the default folder glyph. Never an uploaded copy — it references a file in the project.

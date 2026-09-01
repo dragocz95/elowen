@@ -1,6 +1,6 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, SquareTerminal } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, SquareTerminal, Settings2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ElowenApiError, apiErrorMessage } from '../../lib/elowenClient';
 import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
@@ -10,7 +10,7 @@ type PlatformLinks = Partial<Record<PlatformLinkKey, string>>;
 // Presentation and render order live with the card that owns them; this form keeps only the state and
 // the autosave, so the order it seeds and saves cannot drift from the order the user sees.
 import { PlatformLinksCard, PLATFORM_LINK_ORDER } from './PlatformLinksCard';
-import { useMe, useMyCliSettings, useBrainModels, usePluginUi } from '../../lib/queries';
+import { useMe, useMyCliSettings, useBrainModels, usePluginUi, useUserPluginConfigs } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
@@ -41,14 +41,15 @@ import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
 import { PluginAccountSection } from './PluginAccountSection';
-import { parsePluginAccountSectionId, pluginAccountSectionId } from './pluginSections';
+import { parsePluginAccountSectionId, parsePluginUserConfigSectionId, pluginAccountSectionId, pluginUserConfigSectionId } from './pluginSections';
+import { UserPluginConfigSection } from './UserPluginConfigSection';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 
 const CORE_ACCOUNT_SECTIONS = ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'] as const;
 type CoreAccountSection = typeof CORE_ACCOUNT_SECTIONS[number];
-type AccountSection = CoreAccountSection | `plugin-account:${string}`;
+type AccountSection = CoreAccountSection | `plugin-account:${string}` | `plugin-user-config:${string}`;
 const isAccountSection = (value: string): value is AccountSection =>
-  (CORE_ACCOUNT_SECTIONS as readonly string[]).includes(value) || parsePluginAccountSectionId(value) !== null;
+  (CORE_ACCOUNT_SECTIONS as readonly string[]).includes(value) || parsePluginAccountSectionId(value) !== null || parsePluginUserConfigSectionId(value) !== null;
 
 /** Mount a section only after its first visit, then let React Activity retain its local form state.
  *  This avoids eagerly starting every section's queries while making section switches lossless. */
@@ -81,6 +82,7 @@ export function AccountView() {
   const { toast } = useToast();
   const { t, locale } = useTranslation();
   const pluginUi = usePluginUi(locale);
+  const userPluginConfigs = useUserPluginConfigs();
   const { preference, setPreference } = useUiScale();
   const effects = useEffects();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -110,12 +112,23 @@ export function AccountView() {
   // host splits on the manifest field alone and never on which plugin sent it.
   const deckPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement !== 'linkedAccount'), [pluginAccountSections]);
   const connectorPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement === 'linkedAccount'), [pluginAccountSections]);
+  const userConfigSections = useMemo(() => (userPluginConfigs.data ?? []).map((detail) => ({
+    id: pluginUserConfigSectionId(detail.name),
+    detail,
+    icon: Settings2,
+    label: detail.description ?? detail.name,
+    description: t.account.personalPluginConfig,
+  })), [t.account.personalPluginConfig, userPluginConfigs.data]);
   useEffect(() => {
-    if (!pluginUi.data || !parsePluginAccountSectionId(section)) return;
-    // Also catches a section id left in localStorage by a plugin that has since MOVED into the drawer:
-    // it is no longer a rail section, so the remembered selection would land on nothing.
-    if (!deckPluginSections.some((item) => item.id === section)) setSection('profile');
-  }, [deckPluginSections, pluginUi.data, section, setSection]);
+    const accountId = parsePluginAccountSectionId(section);
+    if (accountId) {
+      // Also catches a section id left in localStorage by a plugin that has since MOVED into the drawer.
+      if (!deckPluginSections.some((item) => item.id === section)) setSection('profile');
+      return;
+    }
+    const userConfigId = parsePluginUserConfigSectionId(section);
+    if (userConfigId && !userConfigSections.some((item) => item.id === section)) setSection('profile');
+  }, [deckPluginSections, pluginUi.data, section, setSection, userConfigSections]);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -301,6 +314,7 @@ export function AccountView() {
   const spatialSections: { id: AccountSection; icon: LucideIcon; label: string; description: string }[] = [
     { id: 'profile', icon: UserCog, label: t.account.tabProfile, description: t.account.profileHint },
     ...deckPluginSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
+    ...userConfigSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
     { id: 'cli', icon: Cpu, label: t.account.tabCli, description: t.account.defaultElowenAiHint },
     { id: 'memory', icon: Brain, label: t.account.tabMemory, description: t.help.memoryRecall },
     { id: 'personality', icon: Sparkles, label: t.account.tabPersonality, description: t.personality.intro },
@@ -354,6 +368,11 @@ export function AccountView() {
       {deckPluginSections.map((item) => (
         <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
           <PluginAccountSection entry={item.plugin} sectionId={item.sectionId} onSaveState={reportSaveState} />
+        </AccountPanel>
+      ))}
+      {userConfigSections.map((item) => (
+        <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
+          <UserPluginConfigSection detail={item.detail} onSaveState={(status, retry) => reportSaveState(item.id, status, retry)} />
         </AccountPanel>
       ))}
       <AccountPanel id="memory" active={section} visited={visitedSections}>

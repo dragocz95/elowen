@@ -587,7 +587,7 @@ function ModalFieldRow({ label, description, hint, status, summary, fillsModal, 
   trailingLayout?: 'inline' | 'stack';
   className?: string;
   /** Parent-owned persistence keeps status and Retry visible after this editor closes. */
-  saveState?: Pick<PluginConfigDraft, 'status' | 'retry' | 'flush'>;
+  saveState?: Pick<PluginConfigDraft, 'status' | 'retry' | 'flush' | 'errorKind' | 'resolveConflict'>;
   /** A Monaco surface takes the modal's whole height; a textarea or an entry list scrolls in the body. */
   fillsModal?: boolean;
   children: ReactNode;
@@ -628,7 +628,15 @@ function ModalFieldRow({ label, description, hint, status, summary, fillsModal, 
       {open ? (
         <Modal title={label} description={description} size="lg" onClose={close} closeDisabled={closeDisabled}>
           {fillsModal ? <div className="min-h-0 flex-1 overflow-hidden">{children}</div> : <ModalBody>{children}</ModalBody>}
-          <ModalFooter status={saveState && saveState.status !== 'idle' ? <AutoSaveStatus status={saveState.status} onRetry={saveState.retry} /> : undefined}>
+          <ModalFooter status={saveState && saveState.status !== 'idle' ? (
+            <AutoSaveStatus
+              status={saveState.status}
+              errorKind={saveState.errorKind ?? undefined}
+              onRetry={saveState.errorKind === 'transport' ? saveState.retry : undefined}
+              onReload={saveState.errorKind === 'conflict' ? () => saveState.resolveConflict('reload') : undefined}
+              onMerge={saveState.errorKind === 'conflict' ? () => saveState.resolveConflict('merge') : undefined}
+            />
+          ) : undefined}>
             <Button variant="accent" onClick={close} disabled={closeDisabled}>{t.common.done}</Button>
           </ModalFooter>
         </Modal>

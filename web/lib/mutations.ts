@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, elowenClient } from './elowenClient';
 import { clearToken } from './token';
 import { QUERY_KEYS } from './queries';
-import type { ConfigPatch, ConfigSnapshot, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask } from './types';
+import type { ConfigPatch, ConfigSnapshot, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask, UserPluginConfigDetail } from './types';
 
 /** Admin: clear the caller's brain usage and origin rollup. */
 export function useResetUsage() {
@@ -95,17 +95,37 @@ export function useUploadAvatar() {
 export function useChangePassword() {
   return useMutation({ mutationFn: (v: { currentPassword: string; newPassword: string }) => elowenClient.changePassword(v.currentPassword, v.newPassword) });
 }
+export function useSaveUserPluginConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { name: string; values: Record<string, unknown>; expectedRevision?: number }) => elowenClient.saveUserPluginConfig(v.name, v.values, v.expectedRevision),
+    onSuccess: (detail) => qc.setQueryData<UserPluginConfigDetail[]>(QUERY_KEYS.userPluginConfigs, (current) => current?.map((item) => item.name === detail.name ? detail : item)),
+  });
+}
+
 export function useSaveMyCliSettings() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (patch: Partial<CliSettings>) => elowenClient.saveMyCliSettings(patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-cli-settings'] }) });
+  return useMutation({
+    mutationFn: (patch: Partial<CliSettings>) => elowenClient.saveMyCliSettings(patch, qc.getQueryData<CliSettings>(['my-cli-settings'])?.revision),
+    onSuccess: (saved) => qc.setQueryData(['my-cli-settings'], saved),
+    onError: (error) => { if (error instanceof ElowenApiError && error.status === 409) { const current = error.details?.current; if (current) qc.setQueryData(['my-cli-settings'], current); } },
+  });
 }
 export function useSaveMyTerminalSettings() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (patch: Partial<TerminalSettings>) => elowenClient.saveMyTerminalSettings(patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-terminal-settings'] }) });
+  return useMutation({
+    mutationFn: (patch: Partial<TerminalSettings>) => elowenClient.saveMyTerminalSettings(patch, qc.getQueryData<TerminalSettings>(['my-terminal-settings'])?.revision),
+    onSuccess: (saved) => qc.setQueryData(['my-terminal-settings'], saved),
+    onError: (error) => { if (error instanceof ElowenApiError && error.status === 409) { const current = error.details?.current; if (current) qc.setQueryData(['my-terminal-settings'], current); } },
+  });
 }
 export function useSaveMyPermissions() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (patch: Partial<PermissionSettings>) => elowenClient.saveMyPermissions(patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-permissions'] }) });
+  return useMutation({
+    mutationFn: (patch: Partial<PermissionSettings>) => elowenClient.saveMyPermissions(patch, qc.getQueryData<PermissionSettings>(['my-permissions'])?.revision),
+    onSuccess: (saved) => qc.setQueryData(['my-permissions'], saved),
+    onError: (error) => { if (error instanceof ElowenApiError && error.status === 409) { const current = error.details?.current; if (current) qc.setQueryData(['my-permissions'], current); } },
+  });
 }
 /** Save the navigation layout. The route answers with the whole sanitized layout, so the cache is written
  *  from the response instead of invalidated — the menu must not flicker back to its old arrangement while
@@ -113,11 +133,14 @@ export function useSaveMyPermissions() {
 export function useSaveMyNavSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (patch: Partial<NavLayout>) => elowenClient.saveMyNavSettings(patch),
+    mutationFn: (patch: Partial<NavLayout>) => elowenClient.saveMyNavSettings(patch, qc.getQueryData<NavLayout>(['my-nav-settings'])?.revision),
     onSuccess: (layout) => { qc.setQueryData(['my-nav-settings'], layout); },
     // The menu writes the new arrangement into the cache before the round trip, so a rejected save has
     // to be undone from the server rather than left showing an arrangement that was never stored.
-    onError: () => { void qc.invalidateQueries({ queryKey: ['my-nav-settings'] }); },
+    onError: (error) => {
+      if (error instanceof ElowenApiError && error.status === 409 && error.details?.current) qc.setQueryData(['my-nav-settings'], error.details.current);
+      else void qc.invalidateQueries({ queryKey: ['my-nav-settings'] });
+    },
   });
 }
 /** Delete one log file. Both the list and any cached read of that file are dropped — the viewer must not

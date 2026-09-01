@@ -1,4 +1,4 @@
-import type { ConfigSnapshot, ConfigPatch, DashRecap, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginConfigSaveResponse, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, BrainGoal, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, Project, ProjectSummary, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
+import type { ConfigSnapshot, ConfigPatch, DashRecap, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginConfigSaveResponse, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, BrainModelOption, BrainSessionInfo, BrainWorkMode, BrainGoal, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, Project, ProjectSummary, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing, UserPluginConfigDetail } from './types';
 import { clearToken } from './token';
 import type { BrainBinding } from './brainSession';
 
@@ -116,13 +116,13 @@ export const elowenClient = {
   uploadAvatar: (file: File) => { const fd = new FormData(); fd.append('avatar', file); return req<User>('/auth/me/avatar', { method: 'POST', body: fd }); },
   changePassword: (currentPassword: string, newPassword: string) => req<{ ok: boolean }>('/auth/me/password', json({ currentPassword, newPassword })),
   myCliSettings: () => req<CliSettings>('/auth/me/cli-settings'),
-  saveMyCliSettings: (patch: Partial<CliSettings>) => req<CliSettings>('/auth/me/cli-settings', json(patch, 'PATCH')),
+  saveMyCliSettings: (patch: Partial<CliSettings>, expectedRevision?: number) => req<CliSettings>('/auth/me/cli-settings', json({ ...patch, ...(expectedRevision === undefined ? {} : { expectedRevision }) }, 'PATCH')),
   myTerminalSettings: () => req<TerminalSettings>('/auth/me/terminal-settings'),
-  saveMyTerminalSettings: (patch: Partial<TerminalSettings>) => req<TerminalSettings>('/auth/me/terminal-settings', json(patch, 'PATCH')),
+  saveMyTerminalSettings: (patch: Partial<TerminalSettings>, expectedRevision?: number) => req<TerminalSettings>('/auth/me/terminal-settings', json({ ...patch, ...(expectedRevision === undefined ? {} : { expectedRevision }) }, 'PATCH')),
   myPermissions: () => req<PermissionSettings>('/auth/me/permissions'),
-  saveMyPermissions: (patch: Partial<PermissionSettings>) => req<PermissionSettings>('/auth/me/permissions', json(patch, 'PATCH')),
+  saveMyPermissions: (patch: Partial<PermissionSettings>, expectedRevision?: number) => req<PermissionSettings>('/auth/me/permissions', json({ ...patch, ...(expectedRevision === undefined ? {} : { expectedRevision }) }, 'PATCH')),
   myNavSettings: () => req<NavLayout>('/auth/me/nav-settings'),
-  saveMyNavSettings: (patch: Partial<NavLayout>) => req<NavLayout>('/auth/me/nav-settings', json(patch, 'PATCH')),
+  saveMyNavSettings: (patch: Partial<NavLayout>, expectedRevision?: number) => req<NavLayout>('/auth/me/nav-settings', json({ ...patch, ...(expectedRevision === undefined ? {} : { expectedRevision }) }, 'PATCH')),
   plugins: () => req<PluginInfo[]>('/plugins'),
   /** `pending` comes back (with HTTP 202) when the toggle is saved but the live registry swap had to wait
    *  for running work — the plugin set on disk already changed and the daemon applies it as work settles. */
@@ -131,6 +131,11 @@ export const elowenClient = {
   togglePlugin: (name: string, enabled: boolean, acknowledgeGrants?: string[]) =>
     req<PluginInfo & { pending?: boolean }>(`/plugins/${encodeURIComponent(name)}`, json({ enabled, ...(acknowledgeGrants ? { acknowledgeGrants } : {}) }, 'PATCH')),
   pluginDetail: (name: string) => req<PluginDetail>(`/plugins/${encodeURIComponent(name)}`),
+  userPluginConfigs: () => req<UserPluginConfigDetail[]>('/plugins/user-config'),
+  saveUserPluginConfig: (name: string, values: Record<string, unknown>, expectedRevision?: number) => req<UserPluginConfigDetail>(
+    `/plugins/${encodeURIComponent(name)}/user-config`,
+    json({ values, ...(expectedRevision === undefined ? {} : { expectedRevision }) }, 'PATCH'),
+  ),
   /** A 202 with `pending` means persistence succeeded and only live activation is delayed. */
   savePluginConfig: (name: string, values: Record<string, unknown>, expectedRevision?: number) => req<PluginConfigSaveResponse>(
     `/plugins/${encodeURIComponent(name)}/config`,

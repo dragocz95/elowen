@@ -7,6 +7,8 @@ import type { PluginConfigField, PluginConfigSaveResponse, PluginDetail } from '
 
 /** Invalid JSON remains editable but makes the save fail visibly; claiming "Saved" while dropping
  * that field would lose the user's draft on navigation. */
+class PluginConfigValidationError extends Error {}
+
 function sanitizeConfig(values: Record<string, unknown>, schema: PluginConfigField[], includeSecrets: ReadonlySet<string> = new Set(), validateJson = true): Record<string, unknown> {
   const jsonKeys = new Set(schema.filter((field) => field.type === 'json').map((field) => field.key));
   const secretKeys = new Set(schema.filter((field) => field.type === 'secret').map((field) => field.key));
@@ -14,7 +16,7 @@ function sanitizeConfig(values: Record<string, unknown>, schema: PluginConfigFie
   for (const [key, value] of Object.entries(values)) {
     if (secretKeys.has(key) && !includeSecrets.has(key)) continue;
     if (validateJson && jsonKeys.has(key) && typeof value === 'string' && value.trim() !== '') {
-      try { JSON.parse(value); } catch { throw new Error(`Invalid JSON in ${key}`); }
+      try { JSON.parse(value); } catch { throw new PluginConfigValidationError(`Invalid JSON in ${key}`); }
     }
     out[key] = value;
   }
@@ -31,6 +33,11 @@ export interface PluginConfigCommitResult {
 }
 
 export type PluginConfigErrorKind = 'validation' | 'conflict' | 'transport';
+export interface PluginConfigConflict {
+  config: Record<string, unknown>;
+  secretsSet: string[];
+  revision: number;
+}
 
 export interface PluginConfigDraft {
   values: Record<string, unknown>;
@@ -39,8 +46,10 @@ export interface PluginConfigDraft {
   commitValue: (key: string, value: unknown) => Promise<PluginConfigCommitResult>;
   status: ReturnType<typeof useAutoSaveStatus>['status'];
   errorKind: PluginConfigErrorKind | null;
+  conflict: PluginConfigConflict | null;
   retry: () => Promise<void>;
   flush: () => Promise<ReturnType<typeof useAutoSaveStatus>['status']>;
+  resolveConflict: (choice: 'reload' | 'merge') => void;
   ready: boolean;
 }
 
@@ -59,6 +68,7 @@ export function usePluginConfigDraft(
   const save = options.save ?? ((v: { name: string; values: Record<string, unknown>; expectedRevision?: number }) => instanceSave.mutateAsync(v));
   const [values, setValues] = useState<Record<string, unknown>>(() => detail.config);
   const [errorKind, setErrorKind] = useState<PluginConfigErrorKind | null>(null);
+  const [conflict, setConflict] = useState<PluginConfigConflict | null>(null);
   const revision = useRef<number | undefined>(detail.revision);
   const [seededName, setSeededName] = useState<string>(() => name);
   // Config PATCHes are full snapshots. Serialize them so a slow older response can never land after a
@@ -71,19 +81,28 @@ export function usePluginConfigDraft(
     setValues(detail.config);
     revision.current = detail.revision;
     lastPersisted.current = sanitizeConfig(detail.config, detail.configSchema, new Set(), false);
+    setConflict(null);
+    setErrorKind(null);
     setSeededName(name);
   }, [detail.config, detail.configSchema, detail.revision, name, seededName]);
 
   const ready = seededName === name;
   const secretKeys = new Set(detail.configSchema.filter((field) => field.type === 'secret').map((field) => field.key));
-  const classifyError = (error: unknown): PluginConfigErrorKind =>
-    error instanceof ElowenApiError ? (error.status === 409 ? 'conflict' : 'transport') : 'validation';
+  const classifyError = (error: unknown): PluginConfigErrorKind => {
+    if (error instanceof ElowenApiError) return error.status === 409 ? 'conflict' : 'transport';
+    return error instanceof PluginConfigValidationError ? 'validation' : 'transport';
+  };
   const adoptConflictRevision = (error: unknown): void => {
     if (!(error instanceof ElowenApiError) || error.status !== 409) return;
     const current = error.details?.current;
     if (current && typeof current === 'object' && !Array.isArray(current)
       && typeof (current as { revision?: unknown }).revision === 'number') {
       revision.current = (current as { revision: number }).revision;
+      const config = (current as { config?: unknown }).config;
+      const secretsSet = (current as { secretsSet?: unknown }).secretsSet;
+      if (config && typeof config === 'object' && !Array.isArray(config)) {
+        setConflict({ config: config as Record<string, unknown>, secretsSet: Array.isArray(secretsSet) ? secretsSet.filter((key): key is string => typeof key === 'string') : [], revision: revision.current });
+      }
     }
   };
   const applyCanonical = (snapshot: Record<string, unknown>, response: unknown): void => {
@@ -126,6 +145,17 @@ export function usePluginConfigDraft(
     },
     { ready, delay: 900 },
   );
+
+  const resolveConflict = (choice: 'reload' | 'merge'): void => {
+    if (!conflict) return;
+    const next = choice === 'reload' ? conflict.config : { ...conflict.config, ...values };
+    revision.current = conflict.revision;
+    lastPersisted.current = sanitizeConfig(conflict.config, detail.configSchema, new Set(), false);
+    setValues(next);
+    setConflict(null);
+    setErrorKind(null);
+    autosave.reset();
+  };
 
   const commitValue = async (key: string, value: unknown): Promise<PluginConfigCommitResult> => {
     const base = values;
@@ -176,8 +206,10 @@ export function usePluginConfigDraft(
     commitValue,
     status: autosave.status,
     errorKind,
+    conflict,
     retry: autosave.retry,
     flush: autosave.flush,
+    resolveConflict,
     ready,
   };
 }

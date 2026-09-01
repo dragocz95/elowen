@@ -69,6 +69,14 @@ CREATE TABLE IF NOT EXISTS user_settings (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, key)
 );
+-- One revision per logical personal-settings resource. The resource snapshot is assembled from one or more
+-- user_settings keys, so a whole-form PATCH can reject a stale tab without coupling unrelated resources.
+CREATE TABLE IF NOT EXISTS user_setting_revisions (
+  user_id INTEGER NOT NULL,
+  resource TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, resource)
+);
 -- Per-user, per-plugin non-secret settings. Stored as one JSON blob per (user, plugin), so a write is
 -- atomic against the whole form and a plugin's schema can change without a migration. Legacy secret
 -- fields are not moved automatically; new integrations use the encrypted plugin_secrets vault below.

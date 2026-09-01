@@ -26,6 +26,7 @@ export const QUERY_KEYS = {
   brainDebugRequests: ['brain-debug-requests'] as const,
   brainDebugRequest: ['brain-debug-request'] as const,
   pluginUi: ['plugin-ui'] as const,
+  userPluginConfigs: ['user-plugin-configs'] as const,
 };
 
 /** The published slash-command menu for the web surface — the single source of truth is the daemon's
@@ -246,6 +247,10 @@ export const useMyPermissions = () =>
  *  so it is cached like the rest of the chrome and refreshed only when the user edits the menu. */
 export const useMyNavSettings = () =>
   useQuery({ queryKey: ['my-nav-settings'], queryFn: elowenClient.myNavSettings, staleTime: 5 * 60 * 1000 });
+
+/** The caller's own per-plugin settings, with schema and masked values. */
+export const useUserPluginConfigs = () =>
+  useQuery({ queryKey: QUERY_KEYS.userPluginConfigs, queryFn: elowenClient.userPluginConfigs, staleTime: 60_000 });
 
 /** Installed daemon plugins (admin). Toggling invalidates ['plugins']. */
 export const usePlugins = () =>

@@ -86,7 +86,7 @@ describe('usePluginConfigDraft', () => {
 
   it('classifies a revision conflict, keeps the draft, and retries with the canonical revision', async () => {
     mutateAsync
-      .mockRejectedValueOnce(new ElowenApiError('conflict', 409, 'conflict', { current: { revision: 8 } }))
+      .mockRejectedValueOnce(new ElowenApiError('conflict', 409, 'conflict', { current: { config: { mode: 'server' }, secretsSet: [], revision: 8 } }))
       .mockResolvedValueOnce({ ok: true, revision: 9, config: { mode: 'b' }, secretsSet: [] });
     const detail = pluginDetail([{ key: 'mode', label: 'Mode', type: 'string' }], { mode: 'a' }, [], 7);
     const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
@@ -101,6 +101,19 @@ describe('usePluginConfigDraft', () => {
     await act(async () => { await result.current.retry(); });
     expect(mutateAsync).toHaveBeenLastCalledWith({ name: 'test-plugin', values: { mode: 'b' }, expectedRevision: 8 });
     expect(result.current.status).toBe('saved');
+    expect(result.current.errorKind).toBeNull();
+  });
+
+  it('offers reload and merge choices without blindly retrying a conflict', async () => {
+    mutateAsync.mockRejectedValueOnce(new ElowenApiError('conflict', 409, 'conflict', { current: { config: { mode: 'server', other: true }, secretsSet: [], revision: 4 } }));
+    const detail = pluginDetail([{ key: 'mode', label: 'Mode', type: 'string' }], { mode: 'old' }, [], 3);
+    const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
+    act(() => result.current.setValue('mode', 'local'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    expect(result.current.errorKind).toBe('conflict');
+    act(() => result.current.resolveConflict('merge'));
+    expect(result.current.values).toEqual({ mode: 'local', other: true });
+    expect(result.current.status).toBe('idle');
     expect(result.current.errorKind).toBeNull();
   });
 

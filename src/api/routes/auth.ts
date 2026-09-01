@@ -14,7 +14,7 @@ import { makeToolIconResolver } from '../../brain/toolIcons.js';
 import { toolPermitted } from '../../plugins/policyContext.js';
 import { ADVISOR_STYLES } from '../../brain/personality.js';
 import { rawTemplate } from '../../prompts/index.js';
-import { PlatformLinkConflictError, cliSettingsDefaults } from '../../store/userSettingStore.js';
+import { PlatformLinkConflictError, UserSettingsRevisionConflict, cliSettingsDefaults } from '../../store/userSettingStore.js';
 import { PLATFORM_IDENTITIES, type PlatformLinkKey } from '../../shared/platformIdentity.js';
 import { sanitizeTerminalSettings, type TerminalSettings } from '../../store/terminalSettings.js';
 import { sanitizePermissionSettings } from '../../brain/toolPermissions.js';
@@ -139,12 +139,13 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // rather than guessing — the same way the browser gates a plugin's affordances on a confirmed listing.
     const live = new Set(((await d.plugins?.get())?.platforms ?? []).map((platform) => platform.name));
     const availableLinks = PLATFORM_IDENTITIES.filter((desc) => live.has(desc.platform)).map((desc) => desc.linkSettingKey);
-    return c.json({ ...s, userInstructions: s.personalityBody, serverDefault: serverDefaultModel(), availableLinks });
+    return c.json({ ...s, userInstructions: s.personalityBody, serverDefault: serverDefaultModel(), availableLinks, revision: d.userSettings?.revision(u.id, 'cli') ?? 0 });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; msteamsUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown; fastMode?: unknown };
+    const b = (await c.req.json().catch(() => ({}))) as { expectedRevision?: unknown; model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; msteamsUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown; fastMode?: unknown };
+    if (b.expectedRevision !== undefined && (!Number.isInteger(b.expectedRevision) || (b.expectedRevision as number) < 0)) return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
     const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; msteamsUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean; fastMode?: boolean } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
@@ -196,8 +197,11 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       return c.json({ error: 'model not allowed' }, 400);
     }
     try {
-      d.userSettings.setCliSettings(u.id, { ...patch, ...links });
+      d.userSettings.setCliSettings(u.id, { ...patch, ...links }, b.expectedRevision as number | undefined);
     } catch (e) {
+      if (e instanceof UserSettingsRevisionConflict) {
+        return c.json({ error: 'conflict', current: { ...d.userSettings.cliSettings(u.id), revision: d.userSettings.revision(u.id, 'cli') } }, 409);
+      }
       // A platform identity may belong to only one Elowen account — reject a squatter cleanly instead of
       // redirecting the first owner's identity/memory namespace. The message rides on the descriptor.
       if (e instanceof PlatformLinkConflictError) {
@@ -235,22 +239,31 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       : patch.personalityBody !== undefined
         ? d.brain?.applyUserInstructionsChange(u.id)
         : d.brain?.restart(u.id, { reapplyModelPreference: modelChanged });
+    const activationPending = Boolean(reapply && typeof d.brain?.hasActiveSession === 'function' && d.brain.hasActiveSession(u.id));
     if (reapply) void Promise.resolve(reapply).catch((e) => console.warn(`cli-settings: live re-apply for user ${u.id} failed: ${e instanceof Error ? e.message : String(e)}`));
     const saved = d.userSettings.cliSettings(u.id);
-    return c.json({ ...saved, userInstructions: saved.personalityBody, serverDefault: serverDefaultModel() });
+    return c.json({ ...saved, userInstructions: saved.personalityBody, serverDefault: serverDefaultModel(), revision: d.userSettings.revision(u.id, 'cli'), ...(activationPending ? { pending: true } : {}) });
   });
   // Per-user web-terminal appearance (xterm palette/font/cursor) — self-service, kept separate from
   // cli-settings so it neither trips the model allow-list nor restarts the brain. The store validates
   // and clamps every field, so the route just forwards the (untrusted) body.
   app.get('/auth/me/terminal-settings', (c) => {
     const u = c.get('user');
-    return c.json(d.userSettings ? d.userSettings.terminalSettings(u.id) : sanitizeTerminalSettings({}));
+    return c.json({ ...(d.userSettings ? d.userSettings.terminalSettings(u.id) : sanitizeTerminalSettings({})), revision: d.userSettings?.revision(u.id, 'terminal') ?? 0 });
   });
   app.patch('/auth/me/terminal-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const body = (await c.req.json().catch(() => ({}))) as Partial<TerminalSettings>;
-    return c.json(d.userSettings.setTerminalSettings(u.id, body));
+    const body = (await c.req.json().catch(() => ({}))) as Partial<TerminalSettings> & { expectedRevision?: unknown };
+    if (body.expectedRevision !== undefined && (!Number.isInteger(body.expectedRevision) || (body.expectedRevision as number) < 0)) return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
+    const { expectedRevision, ...patch } = body;
+    try {
+      const saved = d.userSettings.setTerminalSettings(u.id, patch, expectedRevision as number | undefined);
+      return c.json({ ...saved, revision: d.userSettings.revision(u.id, 'terminal') });
+    } catch (e) {
+      if (e instanceof UserSettingsRevisionConflict) return c.json({ error: 'conflict', current: { ...d.userSettings.terminalSettings(u.id), revision: d.userSettings.revision(u.id, 'terminal') } }, 409);
+      throw e;
+    }
   });
   // Per-user granular tool permissions (allow/ask/deny rules + the persisted YOLO default) —
   // self-service, each caller edits only their own. The store sanitizes the untrusted body (unknown
@@ -259,13 +272,23 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   // applies immediately without a session restart.
   app.get('/auth/me/permissions', (c) => {
     const u = c.get('user');
-    return c.json(d.userSettings ? d.userSettings.permissionSettings(u.id) : sanitizePermissionSettings({}));
+    return c.json({ ...(d.userSettings ? d.userSettings.permissionSettings(u.id) : sanitizePermissionSettings({})), revision: d.userSettings?.revision(u.id, 'permissions') ?? 0 });
   });
   app.patch('/auth/me/permissions', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
     const body = (await c.req.json().catch(() => ({}))) as unknown;
-    return c.json(d.userSettings.setPermissionSettings(u.id, body));
+    const expectedRevision = body && typeof body === 'object' && !Array.isArray(body) ? (body as { expectedRevision?: unknown }).expectedRevision : undefined;
+    if (expectedRevision !== undefined && (!Number.isInteger(expectedRevision) || (expectedRevision as number) < 0)) return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
+    const patch = body && typeof body === 'object' && !Array.isArray(body) ? { ...(body as Record<string, unknown>) } : body;
+    if (patch && typeof patch === 'object' && !Array.isArray(patch)) delete (patch as Record<string, unknown>).expectedRevision;
+    try {
+      const saved = d.userSettings.setPermissionSettings(u.id, patch, expectedRevision as number | undefined);
+      return c.json({ ...saved, revision: d.userSettings.revision(u.id, 'permissions') });
+    } catch (e) {
+      if (e instanceof UserSettingsRevisionConflict) return c.json({ error: 'conflict', current: { ...d.userSettings.permissionSettings(u.id), revision: d.userSettings.revision(u.id, 'permissions') } }, 409);
+      throw e;
+    }
   });
   // Per-user layout of the primary navigation (hidden entries + preferred order) — self-service, each
   // caller edits only their own. Ids are opaque to the daemon: the store bounds and deduplicates them,
@@ -273,13 +296,23 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   // tweak neither touches the model allow-list nor restarts the brain.
   app.get('/auth/me/nav-settings', (c) => {
     const u = c.get('user');
-    return c.json(d.userSettings ? d.userSettings.navSettings(u.id) : sanitizeNavSettings({}));
+    return c.json({ ...(d.userSettings ? d.userSettings.navSettings(u.id) : sanitizeNavSettings({})), revision: d.userSettings?.revision(u.id, 'nav') ?? 0 });
   });
   app.patch('/auth/me/nav-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
     const body = (await c.req.json().catch(() => ({}))) as unknown;
-    return c.json(d.userSettings.setNavSettings(u.id, body));
+    const expectedRevision = body && typeof body === 'object' && !Array.isArray(body) ? (body as { expectedRevision?: unknown }).expectedRevision : undefined;
+    if (expectedRevision !== undefined && (!Number.isInteger(expectedRevision) || (expectedRevision as number) < 0)) return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
+    const patch = body && typeof body === 'object' && !Array.isArray(body) ? { ...(body as Record<string, unknown>) } : body;
+    if (patch && typeof patch === 'object' && !Array.isArray(patch)) delete (patch as Record<string, unknown>).expectedRevision;
+    try {
+      const saved = d.userSettings.setNavSettings(u.id, patch, expectedRevision as number | undefined);
+      return c.json({ ...saved, revision: d.userSettings.revision(u.id, 'nav') });
+    } catch (e) {
+      if (e instanceof UserSettingsRevisionConflict) return c.json({ error: 'conflict', current: { ...d.userSettings.navSettings(u.id), revision: d.userSettings.revision(u.id, 'nav') } }, 409);
+      throw e;
+    }
   });
   // Avatar upload (multipart). Validated by type + size; stored as <userId>.<ext> under avatarsDir.
   const AVATAR_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };

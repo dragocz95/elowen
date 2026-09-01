@@ -272,14 +272,23 @@ export interface ProfilePatch { name?: string; email?: string; default_exec?: st
  *  `availableLinks` is the daemon's answer to WHICH of those platforms is worth showing — the ones whose
  *  adapter is actually serving turns. An empty array means none are, which is different from the key
  *  being absent (a daemon too old to have an opinion), so the two must not be collapsed. */
-export interface CliSettings extends Partial<Record<PlatformLinkKey, string>> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; fastMode?: boolean; serverDefault?: string; availableLinks?: PlatformLinkKey[] }
+export interface CliSettings extends Partial<Record<PlatformLinkKey, string>> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; fastMode?: boolean; serverDefault?: string; availableLinks?: PlatformLinkKey[]; revision?: number; pending?: boolean }
+export interface UserPluginConfigDetail {
+  name: string;
+  description?: string;
+  userConfigSchema: PluginConfigField[];
+  config: Record<string, unknown>;
+  secretsSet: string[];
+  revision: number;
+  i18n?: Record<string, PluginI18n>;
+}
 
 /** Per-user granular tool permissions (mirror src/brain/toolPermissions.ts): allow/ask/deny rule maps
  *  (`tools` keyed by tool-name pattern, `bash` by command pattern — insertion order decides precedence,
  *  last match wins), the persisted YOLO default that auto-approves "ask" rules, and what an "ask" does
  *  on unattended runs (cron/channels/sub-agents): auto-allow (default) or block (strict). */
 export type PermissionAction = 'allow' | 'ask' | 'deny';
-export interface PermissionSettings { tools: Record<string, PermissionAction>; bash: Record<string, PermissionAction>; yolo: boolean; unattendedAsks: 'allow' | 'deny' }
+export interface PermissionSettings { tools: Record<string, PermissionAction>; bash: Record<string, PermissionAction>; yolo: boolean; unattendedAsks: 'allow' | 'deny'; revision?: number }
 
 /** Full xterm ANSI palette exposed for per-user customization (mirrors `@xterm/xterm`'s ITheme colour
  *  fields). Each value is an `#rrggbb` string; applied only when the terminal theme is `custom`. */
@@ -296,6 +305,7 @@ export interface NavLayout {
   hidden: string[];
   /** Preferred order, by id. Entries it does not mention keep their registry order, behind the rest. */
   order: string[];
+  revision?: number;
 }
 
 export type TerminalFontFamily = 'system' | 'menlo' | 'ibm' | 'courier';
@@ -319,6 +329,7 @@ export interface TerminalSettings {
   scrollback: number;
   theme: TerminalThemeMode;
   palette: TerminalPalette;
+  revision?: number;
 }
 
 /** One installed daemon plugin as listed by GET /plugins (admin). */
