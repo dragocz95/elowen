@@ -45,6 +45,7 @@ export const UNRENDERED_EVENT_KINDS = Object.freeze([
   'discard_user',   // undoes an owner echo this surface never drew
   'process',        // owner-only background-shell panel (a command line can carry a secret)
   'goal',           // `/goal` has no room surface
+  'title',          // conversation-list metadata; a room has no title chrome to refresh
   'error',          // the adapter reports a failed turn through fail()/msg.error(), not through the stream
 ]);
 

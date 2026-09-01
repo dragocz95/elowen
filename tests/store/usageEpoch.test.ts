@@ -83,6 +83,20 @@ describe('per-user usage epochs', () => {
       .toEqual([{ usage_epoch: 0 }, { usage_epoch: 1 }, { usage_epoch: 1 }]);
   });
 
+  it('assigns generated rows to the epoch current when the run settles', () => {
+    const { db, brain } = fixture();
+    brain.appendMessage({ id: 'user-before-reset', sessionId: 's1', parentId: null, role: 'user', content: { role: 'user', content: 'in flight' } });
+
+    brain.clearUsage(1);
+    expect(brain.persistAgentRun('s1', [
+      { role: 'user', reusePreprojectedUser: true },
+      { id: 'assistant-after-reset', role: 'assistant', content: { role: 'assistant', provider: 'p', model: 'm', timestamp: AT, usage: usage(20) } },
+    ])).toBe(true);
+
+    expect(db.prepare('SELECT id, usage_epoch FROM brain_messages WHERE session_id = ? ORDER BY rowid').all('s1'))
+      .toEqual([{ id: 'user-before-reset', usage_epoch: 0 }, { id: 'assistant-after-reset', usage_epoch: 1 }]);
+  });
+
   it('keeps pre/post reset buckets separate through compaction, legacy reads and projection rebuilds', () => {
     const { db, brain } = fixture();
     assistant(brain, 's1', 'old', 10);

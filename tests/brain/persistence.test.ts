@@ -40,6 +40,18 @@ describe('brain persistence', () => {
     expect(JSON.parse(msgs.at(-1)!.content)).toMatchObject({ content: 'hello' });
   });
 
+  it('drops persistence events whose durable session owner is already gone', () => {
+    const session = { messages: [{ role: 'compactionSummary', summary: 'late summary' }] } as unknown as AgentSession;
+    const project = createSessionPersistenceProjector(store, session, 's1', 200_000);
+    store.deleteSession('s1');
+
+    expect(() => project({ type: 'message_end', message: { role: 'assistant', content: 'late partial' } } as never)).not.toThrow();
+    expect(() => project({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'late answer' }] } as never)).not.toThrow();
+    expect(() => project({ type: 'compaction_end', result: { summary: 'late summary' }, aborted: false } as never)).not.toThrow();
+
+    expect(db.prepare("SELECT COUNT(*) AS count FROM brain_messages WHERE session_id = 's1'").get()).toEqual({ count: 0 });
+  });
+
   it('persists the configured provider identity without mutating PI registry messages', () => {
     store.touchSession('s1', 'm', 'my-oauth-account');
     const assistant = { role: 'assistant', content: 'hello', provider: 'anthropic', model: 'm' };
