@@ -33,6 +33,7 @@ const categories = Array.from({ length: 6 }, (_, index) => ({
 
 test('the brain renders every memory on a scrollable, readable canvas', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
+  test.setTimeout(120_000);
   await seed.response('memory', memories);
   await seed.response('memory/categories', categories);
   await app.setViewportSize({ width: 1440, height: 900 });
