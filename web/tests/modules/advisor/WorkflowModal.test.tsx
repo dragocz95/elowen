@@ -80,6 +80,15 @@ const NODES: TestNode[] = [
   { id: 'verify', task: 'ověřit testy', status: 'pending' as const, deps: ['write'] },
 ];
 
+/** The desktop rail arrives as the compact 52px instrument strip, so the workflow ROW a DAG opens from
+ *  does not exist until the reader expands it. Expanding through the rail's own control keeps this a test
+ *  of the real path rather than of the provider's initial state. */
+async function expandDesktopTelemetry(): Promise<void> {
+  await screen.findByTestId('telemetry-stub');
+  await act(async () => { fireEvent.click(screen.getByTestId('telemetry-collapse')); });
+  await screen.findByTestId('telemetry-head');
+}
+
 /** Mount the real chat page (rail + modal wiring) and hand back the stream so a test can push frames. */
 async function renderChat(mobile = false): Promise<FakeES> {
   setViewport(mobile);
@@ -87,6 +96,8 @@ async function renderChat(mobile = false): Promise<FakeES> {
   // The dock is a shell-level panel beside the page now, so the harness composes it the way Shell does.
   render(<Wrapper><ToastProvider><BrainChatProvider><TelemetryRailProvider><ChatPage /></TelemetryRailProvider></BrainChatProvider></ToastProvider></Wrapper>);
   await waitFor(() => expect(FakeES.instances.length).toBe(1));
+  // On a phone the rail is a drawer that each test opens itself; only the desktop dock needs expanding.
+  if (!mobile) await expandDesktopTelemetry();
   return FakeES.instances[0]!;
 }
 

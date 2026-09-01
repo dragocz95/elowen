@@ -121,26 +121,31 @@ describe('ChatView (/chat page)', () => {
     expect(modal).not.toBeInTheDocument();
   });
 
-  // The redesign replaced "hidden" with a real 52px stub. Collapsing must therefore take the TELEMETRY
-  // away without taking the rail away: the mascot and the context meter are what a reader keeps in the
-  // corner of their eye while a turn runs, and a rail that unmounted took the agent's state with it.
-  it('collapses the desktop telemetry rail to its stub and restores it from the header button', async () => {
+  // The redesign replaced "hidden" with a real 52px stub, and that compact strip is what a desktop visit
+  // ARRIVES at: the rail is an ambient instrument edge, not a dashboard claiming 340px unasked. The page's
+  // header toggle is the other end of that one state, so it has to drive the shell-owned panel BOTH ways —
+  // and collapsing must take the TELEMETRY away without taking the rail away, because the mascot is what a
+  // reader keeps in the corner of their eye while a turn runs.
+  it('arrives compact and expands the desktop telemetry rail from the header button', async () => {
     renderChat(<ChatPage />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
     expect(await screen.findByTestId('telemetry-column')).toBeInTheDocument();
-    expect(screen.getByTestId('telemetry-head')).toBeInTheDocument();
+    // Docked but compact: the stub, not the three-zone rail.
+    expect(await screen.findByTestId('telemetry-stub')).toBeInTheDocument();
+    expect(screen.getByTestId('telemetry-mascot')).toBeInTheDocument();
+    expect(screen.queryByTestId('telemetry-head')).toBeNull();
 
+    fireEvent.click(screen.getByRole('button', { name: /^(Show telemetry|Zobrazit telemetrii)$/i }));
+    await waitFor(() => expect(screen.getByTestId('telemetry-head')).toBeInTheDocument());
+    expect(screen.queryByTestId('telemetry-stub')).toBeNull();
+
+    // The same control puts it back — expansion must not be a one-way door either.
     fireEvent.click(screen.getByRole('button', { name: /^(Hide telemetry|Skrýt telemetrii)$/i }));
     await waitFor(() => expect(screen.getByTestId('telemetry-stub')).toBeInTheDocument());
     // Still docked, still reporting the agent — just not the metrics.
     expect(screen.getByTestId('telemetry-column')).toBeInTheDocument();
     expect(screen.getByTestId('telemetry-mascot')).toBeInTheDocument();
     expect(screen.queryByTestId('telemetry-head')).toBeNull();
-
-    // The same control brings it back — a collapsed rail must not be a one-way door.
-    fireEvent.click(screen.getByRole('button', { name: /^(Show telemetry|Zobrazit telemetrii)$/i }));
-    await waitFor(() => expect(screen.getByTestId('telemetry-head')).toBeInTheDocument());
-    expect(screen.queryByTestId('telemetry-stub')).toBeNull();
   });
 
   it('toggling the telemetry rail keeps ONE stream, preserves the draft, and never remounts the surface', async () => {
@@ -153,14 +158,15 @@ describe('ChatView (/chat page)', () => {
     const surface = container.querySelector('[data-variant="full"]');
     expect(surface).not.toBeNull();
 
-    // The rail is a sibling column, so collapsing it must not take the chat down with it: the surface
-    // element, the single EventSource and the composer draft all have to survive the layout change.
-    fireEvent.click(screen.getByRole('button', { name: /^(Hide telemetry|Skrýt telemetrii)$/i }));
+    // The rail is a sibling column, so resizing it must not take the chat down with it: the surface
+    // element, the single EventSource and the composer draft all have to survive the layout change. The
+    // rail starts compact, so the first move is the expansion and the second is back to the stub.
+    fireEvent.click(screen.getByRole('button', { name: /^(Show telemetry|Zobrazit telemetrii)$/i }));
     expect(container.querySelector('[data-variant="full"]')).toBe(surface);
     expect(FakeES.instances.length).toBe(1);
     expect(composer.value).toBe('draft survives');
 
-    fireEvent.click(screen.getByRole('button', { name: /^(Show telemetry|Zobrazit telemetrii)$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^(Hide telemetry|Skrýt telemetrii)$/i }));
     expect(container.querySelector('[data-variant="full"]')).toBe(surface);
     expect(FakeES.instances.length).toBe(1);
     expect(composer.value).toBe('draft survives');
