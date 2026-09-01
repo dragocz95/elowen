@@ -51,7 +51,7 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ### Plugins and compatibility
 
-- Advanced Plugin UI API from 6 to 12 and `elowen-plugin-ui-kit` to `0.7.0`, publishing canonical workspace,
+- Advanced Plugin UI API from 5 to 12 and `elowen-plugin-ui-kit` to `0.7.0`, publishing canonical workspace,
   toolbar, filter, pager, search, linked-account, slider, directory-picker, takeover, async-safe confirmation,
   and host-owned autosave components and hooks.
 - Advanced `elowen-plugin-shared` to `0.1.9` and shared-helper API 3. Plugins declaring `requiresSharedApi`
