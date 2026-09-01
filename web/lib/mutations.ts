@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, elowenClient } from './elowenClient';
 import { clearToken } from './token';
 import { QUERY_KEYS } from './queries';
-import type { ConfigPatch, ConfigSnapshot, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask, UserPluginConfigDetail } from './types';
+import type { ConfigPatch, ConfigSnapshot, UserPatch, ProfilePatch, CliSettings, TerminalSettings, TerminalSettingsSnapshot, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask, UserPluginConfigDetail } from './types';
 
 /** Admin: clear the caller's brain usage and origin rollup. */
 export function useResetUsage() {
@@ -114,7 +114,7 @@ export function useSaveMyCliSettings() {
 export function useSaveMyTerminalSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (patch: Partial<TerminalSettings>) => elowenClient.saveMyTerminalSettings(patch, qc.getQueryData<TerminalSettings>(['my-terminal-settings'])?.revision),
+    mutationFn: (patch: Partial<TerminalSettings>) => elowenClient.saveMyTerminalSettings(patch, qc.getQueryData<TerminalSettingsSnapshot>(['my-terminal-settings'])?.revision),
     onSuccess: (saved) => qc.setQueryData(['my-terminal-settings'], saved),
     onError: (error) => { if (error instanceof ElowenApiError && error.status === 409) { const current = error.details?.current; if (current) qc.setQueryData(['my-terminal-settings'], current); } },
   });

@@ -329,7 +329,11 @@ export interface TerminalSettings {
   scrollback: number;
   theme: TerminalThemeMode;
   palette: TerminalPalette;
-  revision?: number;
+}
+
+/** API snapshot of terminal settings with the CAS generation used for conditional writes. */
+export interface TerminalSettingsSnapshot extends TerminalSettings {
+  revision: number;
 }
 
 /** One installed daemon plugin as listed by GET /plugins (admin). */
