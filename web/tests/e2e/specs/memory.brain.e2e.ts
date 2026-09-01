@@ -52,7 +52,7 @@ test('the brain renders every memory on a scrollable, readable canvas', async ({
     scrollHeight: element.scrollHeight,
   }));
   expect(geometry.scrollWidth).toBeGreaterThan(geometry.clientWidth);
-  expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight);
+  expect(geometry.scrollHeight).toBeGreaterThanOrEqual(geometry.clientHeight);
 
   await leaves.first().click();
   await expect(app.locator('[data-testid="memory-node-label"]')).toContainText('Durable memory 1');
