@@ -156,7 +156,7 @@ describe('todo card — the checklist as a control surface', () => {
     // Three states, three glyphs, the same ones the read-only card and the CLI panel draw. No tick box:
     // a box invites a stray click, and every change here reaches the agent's plan.
     expect(within(card).queryAllByRole('checkbox')).toHaveLength(0);
-    expect(rowOf(card, 'Reviewing the card')).toHaveTextContent('◐');
+    expect(within(rowOf(card, 'Reviewing the card')).getByTestId('chat-card-running')).toBeInTheDocument();
     expect(rowOf(card, 'Draft the notes')).toHaveTextContent('○');
     expect(rowOf(card, 'Read the code')).toHaveTextContent('✔');
     // The row is the control, and its whole text is the target.
@@ -199,7 +199,7 @@ describe('todo card — the checklist as a control surface', () => {
 
     await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'In progress' })); });
     await waitFor(() => expect(patched).toEqual([{ taskId: '2', status: 'in_progress' }]));
-    await waitFor(() => expect(rowOf(screen.getByTestId('chat-card'), 'Ship the fix')).toHaveTextContent('◐'));
+    await waitFor(() => expect(within(rowOf(screen.getByTestId('chat-card'), 'Ship the fix')).getByTestId('chat-card-running')).toBeInTheDocument());
   });
 
   it('opens the row menu on a click only, never because the pointer crossed the row', async () => {

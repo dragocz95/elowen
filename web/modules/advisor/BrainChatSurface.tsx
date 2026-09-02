@@ -207,7 +207,7 @@ function CardHead({ title, done, total, collapsed, onToggle, trailing }: {
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
+        className="flex min-w-0 items-center gap-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
       >
         <ChevronRight size={11} aria-hidden className={`shrink-0 opacity-60 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
         <span className="truncate">{title}</span>
@@ -307,9 +307,19 @@ function TodoCardRow({ row, now, onStatus, onOpen }: {
         triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-accent"
         trigger={
           <>
-            <span aria-hidden className={`shrink-0 ${row.status === 'completed' ? 'text-success' : row.status === 'in_progress' ? 'text-primary' : 'text-muted-foreground'}`}>
-              {row.status === 'completed' ? '✔' : row.status === 'in_progress' ? '◐' : '○'}
-            </span>
+            {row.status === 'in_progress' ? (
+              // A half-filled dot drawn from the text colour rather than the `◐` glyph, which fonts render
+              // anywhere between a hollow ring and a solid disc.
+              <span
+                aria-hidden
+                data-testid="chat-card-running"
+                className="inline-block size-[0.75em] shrink-0 rounded-full border border-current bg-[linear-gradient(90deg,currentColor_50%,transparent_50%)] text-primary"
+              />
+            ) : (
+              <span aria-hidden className={`shrink-0 ${row.status === 'completed' ? 'text-success' : 'text-muted-foreground'}`}>
+                {row.status === 'completed' ? '✔' : '○'}
+              </span>
+            )}
             <span className={`min-w-0 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}>
               {row.label}
             </span>
@@ -360,8 +370,10 @@ function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTa
     // `self-start`: the card is as wide as its longest row, not the column, so the head's meter and the
     // rows' targets sit next to the text instead of at the far edge of a wide screen.
     <div data-testid="chat-card" className="flex max-w-[min(100%,28rem)] flex-col self-start leading-tight">
+      {/* The plugin titles the card in English; the reader gets the same word the rail's Tasks section
+          uses in their own language. */}
       <CardHead
-        title={card.title ?? t.brainChat.cardFallback}
+        title={t.telemetry.tasks}
         done={done}
         total={rows.length}
         collapsed={collapsed}
