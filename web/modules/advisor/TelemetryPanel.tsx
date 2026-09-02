@@ -1,7 +1,7 @@
 'use client';
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Ban, Braces, ChevronDown, Clock3, Gauge, GitBranch, ListChecks, PanelRightClose, PanelRightOpen, Server, Target, TerminalSquare, Users, Workflow, X, type LucideIcon } from 'lucide-react';
+import { Braces, ChevronDown, Clock3, Gauge, GitBranch, ListChecks, PanelRightClose, PanelRightOpen, Server, Target, TerminalSquare, Users, Workflow, X, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
 import { interpolate } from '../../lib/i18n/interpolate';
@@ -19,7 +19,6 @@ import { Progress } from '../../components/ui/shadcn/progress';
 import { ScrollArea } from '../../components/ui/shadcn/scroll-area';
 import { Separator } from '../../components/ui/shadcn/separator';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
-import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { MorePill } from '../../components/ui/MorePill';
 import { useToast } from '../../components/ui/Toast';
@@ -28,6 +27,7 @@ import { useNow } from '../../lib/useNow';
 import { TODO_PREVIEW_ITEMS } from '../../lib/chatPresentation';
 import { cardTasks, cardTasksAddressable, orderTasks, sessionTaskRows, type RailTask } from '../../lib/railTasks';
 import { workflowLabel, workflowProgress } from '../../lib/workflowDag';
+import { BlockedTip } from './BlockedTip';
 import { useBrainChat } from './BrainChatProvider';
 import { useTelemetryRail } from './telemetryRailState';
 import { ProcessOutputModal } from './ProcessPanel';
@@ -168,40 +168,6 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }
   );
 }
 
-/** Why a pending row cannot start yet.
- *
- *  The app's Tooltip is a CONTROLLED popover (see components/ui/shadcn/tooltip.tsx), so it needs open
- *  state of its own — which is why the ordinary rail row uses a native `title` instead. A blocked task is
- *  the exception that earns one: the blocker ids are information the reader has to be able to reach on a
- *  touch screen, where there is no hover for a `title` to answer. Only a blocked row mounts one. */
-function BlockedTip({ ids }: { ids: readonly string[] }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const tipId = useId();
-  const text = interpolate(t.telemetry.taskBlocked, { ids: ids.map((id) => `#${id}`).join(', ') });
-  return (
-    <Tooltip open={open} onOpenChange={setOpen}>
-      <TooltipAnchor asChild>
-        <button
-          type="button"
-          data-testid="telemetry-task-blocked"
-          aria-label={text}
-          aria-describedby={open ? tipId : undefined}
-          onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
-          onClick={() => setOpen((value) => !value)}
-          className="shrink-0 text-subtle-foreground transition-colors hover:text-foreground"
-        >
-          <Ban size={11} aria-hidden />
-        </button>
-      </TooltipAnchor>
-      <TooltipContent id={tipId} align="end" className="w-auto max-w-56">{text}</TooltipContent>
-    </Tooltip>
-  );
-}
-
 /** The conversation's task list, as the rail reports it: a done/total meter, the work that matters now,
  *  and one tick box per row.
  *
@@ -262,7 +228,7 @@ function TasksSection({ tasks, disabled, onToggle, onOpen }: {
             {task.owner ? (
               <span className="shrink-0 truncate text-xs text-subtle-foreground" title={task.owner}>{task.owner}</span>
             ) : null}
-            {blocked ? <BlockedTip ids={task.blockedBy} /> : null}
+            {blocked ? <BlockedTip ids={task.blockedBy} testId="telemetry-task-blocked" /> : null}
           </li>
         );
       })}
