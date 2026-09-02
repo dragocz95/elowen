@@ -833,7 +833,7 @@ function ToolAuthoringHint({ turn, locale }: {
   );
 }
 
-export function Message({ turn, artifacts, full, showRole, showThoughts, tk }: { turn: ChatTurn; artifacts: BrainInlineArtifact[]; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
+export function Message({ turn, artifacts, narration, full, showRole, showThoughts, tk }: { turn: ChatTurn; artifacts: BrainInlineArtifact[]; narration?: string; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
   const { t, locale } = useTranslation();
   const { agentName } = useBrand();
   if (turn.role === 'divider') return <ContextDivider full={full} />;
@@ -859,7 +859,7 @@ export function Message({ turn, artifacts, full, showRole, showThoughts, tk }: {
             <ToolPills tools={seg.items} full={full} live={turn.streaming && i === turn.segments.length - 1} />
             {artifacts
               .filter((artifact) => seg.items.some((tool) => tool.id === artifact.toolCallId))
-              .map((artifact) => <InlineArtifact key={`${artifact.plugin}:${artifact.id}`} artifact={artifact} />)}
+              .map((artifact) => <InlineArtifact key={`${artifact.plugin}:${artifact.id}`} artifact={artifact} narration={narration} />)}
           </Fragment>))}
         {turn.composing ? <ToolAuthoringHint turn={turn} locale={locale as ComposeLocale} /> : null}
       </>;
@@ -1042,7 +1042,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const { toast } = useToast();
   const c = useBrainChat();
   const {
-    turns, busy, ready, notice, ask, cards, artifacts, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
+    turns, busy, ready, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
     usage, goal, lineCfg, currentModel, provider, providerLabel, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, commands, runSlash, slash, sessions, activeSessionId, focusNonce,
@@ -1624,6 +1624,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               tk={key}
               turn={turn}
               artifacts={artifacts}
+              narration={narration}
               full={variant === 'full'}
               showRole={i === 0 || turns[i - 1].role !== turn.role}
               showThoughts={showThoughts}

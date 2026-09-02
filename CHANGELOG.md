@@ -5,6 +5,13 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Plugin UI API 14: an inline chat artifact now receives `narration`, the assistant prose the transcript is
+  rendering right now, so an artifact that expands over the dock can still show what is being said. It is a
+  projection of the host's own visible text — newest assistant turn, latest text segment, whitespace-collapsed
+  and capped at 240 characters — and carries no tool payloads, hidden reasoning, system content or history.
+
 ## [0.28.25] - 2026-09-02
 
 ### Added

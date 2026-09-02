@@ -10,7 +10,7 @@ import type { ComponentType } from 'react';
 /** See index.js — bump on incompatible changes to `ElowenUiRuntime`. Deliberately a LITERAL type:
  *  the web app re-declares the value and annotates it with `typeof PLUGIN_UI_API_VERSION`, so a kit
  *  bump that forgets the host fails the web typecheck instead of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 13;
+export declare const PLUGIN_UI_API_VERSION: 14;
 
 /** Public props of `ElowenUiRuntime.components.Slider`. */
 export interface SliderProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'type'> {
@@ -216,6 +216,18 @@ export interface PluginChatArtifact {
 export interface PluginChatArtifactProps {
   plugin: string;
   artifact: PluginChatArtifact;
+  /** API 14. The assistant prose the transcript is rendering RIGHT NOW, for an artifact that draws a
+   *  surface over the dock and therefore hides the conversation it belongs to.
+   *
+   *  It is the host's own visible text, projected — the newest assistant turn's latest text segment,
+   *  whitespace-collapsed and capped at 240 characters — and deliberately nothing else: no tool payloads,
+   *  no hidden reasoning, no system content, no history, and empty (`''`) as soon as the newest turn is
+   *  the user's or carries no prose. A bundle renders it as PLAIN TEXT; the transcript owns markdown, and
+   *  a second composition of it would be a second source of truth for what the user was told.
+   *
+   *  It updates as the reply streams, so treat it as a live value: bound how much of it you draw, and do
+   *  not accumulate it. Hosts older than API 14 pass nothing, so read it as optional. */
+  narration?: string;
 }
 
 /** What a bundle hands to window.__elowenRegisterPluginUi. Routes are `/`-joined segment patterns

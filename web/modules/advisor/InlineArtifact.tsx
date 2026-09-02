@@ -9,8 +9,12 @@ import { PluginErrorBoundary, PluginPlaceholder } from '../../components/plugin/
 
 /** Lazily resolve and render one plugin-owned artifact inside the transcript. The artifact fallback is the
  * complete degradation path: missing/unavailable bundles, unknown views and render crashes all stay local to
- * this slot and never affect the surrounding chat. */
-export function InlineArtifact({ artifact }: { artifact: BrainInlineArtifact }) {
+ * this slot and never affect the surrounding chat.
+ *
+ * `narration` is the assistant prose the transcript is showing right now (see `liveNarration`). An artifact
+ * that expands over the dock hides the conversation it belongs to, so the contract hands it that one
+ * bounded string — never the transcript, never a tool payload, never hidden reasoning. */
+export function InlineArtifact({ artifact, narration }: { artifact: BrainInlineArtifact; narration?: string }) {
   const { locale } = useTranslation();
   const listing = usePluginUi(locale);
   const entry = listing.data?.find((candidate: PluginUiListing) => candidate.name === artifact.plugin);
@@ -37,7 +41,7 @@ export function InlineArtifact({ artifact }: { artifact: BrainInlineArtifact }) 
   return (
     <div data-testid="chat-inline-artifact" data-plugin={artifact.plugin} data-artifact-id={artifact.id}>
       <PluginErrorBoundary notice={artifact.fallback}>
-        <Component plugin={artifact.plugin} artifact={artifact} />
+        <Component plugin={artifact.plugin} artifact={artifact} narration={narration ?? ''} />
       </PluginErrorBoundary>
     </div>
   );

@@ -10,7 +10,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useBrainSessions, useBrainCommands, useConfig } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
 import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainInlineArtifact, BrainInlineArtifactEvent, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainStreamSnapshotFrame, BrainUsage, BrainWorkMode, McpServerStatus, SessionTask, SlashCommandDef, StatuslineConfig } from '../../lib/types';
-import { collectSubagents, collectWorkflows, emptyView, fromSnapshot, reduce, submittedPlan, upsertCard, type ChatTurn, type ChatView, type SubagentState, type TranscriptEvent, type WorkflowState } from '../../lib/transcript';
+import { collectSubagents, collectWorkflows, emptyView, fromSnapshot, liveNarration, reduce, submittedPlan, upsertCard, type ChatTurn, type ChatView, type SubagentState, type TranscriptEvent, type WorkflowState } from '../../lib/transcript';
 import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/brainSession';
 import { subscribeRevive } from '../../lib/useRevive';
 import { resolveStreamSilence } from '../../lib/streamWatchdog';
@@ -149,6 +149,10 @@ export interface BrainChatValue {
   ask: Ask | null;
   cards: BrainCard[];
   artifacts: BrainInlineArtifact[];
+  /** The assistant prose a reader can see right now (see `liveNarration`), handed to inline plugin
+   *  artifacts so a surface drawn OVER the transcript can still show what is being said. Empty when the
+   *  newest turn is not the assistant speaking. */
+  narration: string;
   agentsOpen: boolean;
   setAgentsOpen: (v: boolean) => void;
   statsOpen: boolean;
@@ -940,6 +944,10 @@ function useBrainChatController(): BrainChatValue {
   // carries the same `sub`/`wf` attachments the live events wrote.
   const subagents = useMemo(() => collectSubagents(turns), [turns]);
   const workflows = useMemo(() => collectWorkflows(turns), [turns]);
+  // The same fold, for a plugin surface that covers the transcript. Memoized here rather than in each
+  // surface so a streaming reply recomputes ONE bounded string per view change, however many chat
+  // surfaces (dock + /chat on a phone) are mounted on this one provider.
+  const narration = useMemo(() => liveNarration(turns), [turns]);
 
   // --- Slash menu (mirrors the CLI palette; single source of truth = GET /brain/commands). ---
   const slashQuery = input.startsWith('/') && !/\s/.test(input) ? input.slice(1).toLowerCase() : null;
@@ -1221,7 +1229,7 @@ function useBrainChatController(): BrainChatValue {
   useEffect(() => () => stream.stop(), []);
 
   return {
-    turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, artifacts, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
+    turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks, helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
     queued: visibleQueue, readOnly, activeSessionId,
     usage, telemetry, goal, subagents, workflows, lineCfg, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,

@@ -1,6 +1,6 @@
 {
   "name": "elowen-plugin-ui-kit",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Contract types and esbuild toolchain for building Elowen plugin browser-UI bundles.",
   "license": "MIT",
   "type": "module",

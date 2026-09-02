@@ -30,9 +30,11 @@ describe('plugin UI runtime', () => {
     // canonical Radix-backed Slider and DirectoryPicker. 11 adds the async-safe ConfirmDialog contract,
     // including pending/error ownership across the plugin ABI. 12 lets retained plugin panels contribute
     // the same structured search/filter/action contract through ControlSurfaceToolbar. 13 adds inline chat
-    // artifact component registration while reusing the existing host runtime and modal primitives.
-    expect(PLUGIN_UI_API_VERSION).toBe(13);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(13);
+    // artifact component registration while reusing the existing host runtime and modal primitives. 14 adds
+    // `narration` to a chat artifact's props: the assistant prose the transcript is showing right now, for
+    // an artifact whose own surface covers the transcript — no new runtime primitive, one bounded string.
+    expect(PLUGIN_UI_API_VERSION).toBe(14);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(14);
     expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({
       WorkspaceShell: expect.any(Function),
       WorkspaceHero: expect.any(Function),
@@ -65,9 +67,12 @@ describe('plugin UI runtime', () => {
   });
 
   it('types chat artifact views as a first-class plugin registration surface', () => {
-    const ArtifactView = ({ plugin, artifact }: PluginChatArtifactProps) => `${plugin}:${artifact.view}`;
+    // `narration` is optional on purpose: a bundle compiled against API 13 destructures the two props it
+    // knows and still typechecks, and one written for 14 reads the third without a host-version guard.
+    const ArtifactView = ({ plugin, artifact, narration }: PluginChatArtifactProps) =>
+      `${plugin}:${artifact.view}:${narration ?? ''}`;
     const registration: PluginUiRegistration = {
-      requiresApiVersion: 13,
+      requiresApiVersion: 14,
       chatArtifacts: { preview: ArtifactView },
     };
 

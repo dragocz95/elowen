@@ -12,7 +12,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../../lib/queries', () => ({ usePluginUi: () => mocks.listing }));
 vi.mock('../../../lib/pluginUi', () => ({
-  PLUGIN_UI_API_VERSION: 13,
+  // The host is on 14; the fixtures below stay on 13 so the older-bundle path (`requiresApiVersion <=
+  // host`) keeps being exercised by the same suite.
+  PLUGIN_UI_API_VERSION: 14,
   loadPluginUi: mocks.loadPluginUi,
 }));
 
@@ -39,9 +41,9 @@ const entry: PluginUiListing = {
   settings: [],
 };
 
-function draw(value: BrainInlineArtifact = artifact) {
+function draw(value: BrainInlineArtifact = artifact, narration?: string) {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><InlineArtifact artifact={value} /></Wrapper>);
+  return render(<Wrapper><InlineArtifact artifact={value} narration={narration} /></Wrapper>);
 }
 
 beforeEach(() => {
@@ -65,6 +67,34 @@ describe('InlineArtifact', () => {
 
     await act(async () => resolve({ requiresApiVersion: 13, chatArtifacts: { preview: View } }));
     expect(await screen.findByTestId('artifact-view')).toHaveTextContent('browser:artifact-1:Elowen');
+  });
+
+  it('hands the artifact the current assistant narration, and nothing else about the chat', async () => {
+    const seen: PluginChatArtifactProps[] = [];
+    const View = (props: PluginChatArtifactProps) => {
+      seen.push(props);
+      return <div data-testid="artifact-view">{props.narration}</div>;
+    };
+    mocks.loadPluginUi.mockResolvedValue({ requiresApiVersion: 14, chatArtifacts: { preview: View } });
+
+    const { wrapper: Wrapper } = createWrapper();
+    const show = (narration?: string) => <Wrapper><InlineArtifact artifact={artifact} narration={narration} /></Wrapper>;
+    const view = render(show('Opening the portal'));
+    expect(await screen.findByTestId('artifact-view')).toHaveTextContent('Opening the portal');
+    // The whole chat contract is three props: the plugin name, its own artifact, and the visible prose.
+    // No transcript, no turns, no tool payloads — a bundle cannot reach past its own slot.
+    expect(Object.keys(seen[0]!).sort()).toEqual(['artifact', 'narration', 'plugin']);
+
+    // Streaming updates it in place…
+    view.rerender(show('Opening the portal and signing in.'));
+    expect(screen.getByTestId('artifact-view')).toHaveTextContent('Opening the portal and signing in.');
+
+    // …and it clears rather than leaving the previous turn's text on a covering surface. A host older
+    // than API 14 passes nothing at all, which must reach the bundle as the same empty value.
+    view.rerender(show(''));
+    expect(screen.getByTestId('artifact-view')).toBeEmptyDOMElement();
+    view.rerender(show(undefined));
+    expect(seen.at(-1)!.narration).toBe('');
   });
 
   it('renders the artifact fallback when the bundle is unavailable', async () => {

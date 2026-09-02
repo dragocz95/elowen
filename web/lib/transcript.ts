@@ -543,6 +543,40 @@ export function submittedPlan(turns: ChatTurn[]): BrainPendingPlan | null {
   return found;
 }
 
+/** How much of the assistant's current prose {@link liveNarration} hands to a plugin surface. A narration
+ *  is a glance, not a transcript: three lines of it is what an overlay can show, and the cap is what keeps
+ *  a long reply from growing the string (and the re-render it causes) without bound as it streams. */
+export const NARRATION_MAX_CHARS = 240;
+
+/** The assistant prose a user can read RIGHT NOW, for a surface that covers the transcript (a plugin
+ *  artifact expanded over the dock). It is a projection of what the dock already renders — the same
+ *  segment strings, never a second composition — reduced to the one thing such a surface can carry.
+ *
+ *  Only `text` segments, and only from the newest assistant turn: reasoning is hidden content the reader
+ *  has not asked to see, a tool row is not prose, and a turn that has scrolled past is not what is being
+ *  said now. A newer `you` turn answers empty rather than the previous reply, so a covering surface can
+ *  never show text from a question the user has already moved on from; session switches clear the turns
+ *  themselves, so nothing survives one. Trailing event/divider turns are skipped exactly as
+ *  {@link submittedPlan} skips them — a model switch mid-reply is not the conversation moving on.
+ *
+ *  The LAST text segment wins: prose, a tool call, then more prose is the model talking again, and the
+ *  newest sentence is the one that describes what is happening. Whitespace is collapsed so the cap counts
+ *  what a reader sees, and an over-long narration keeps its TAIL (from the next word boundary) because
+ *  the end of a streaming sentence is the live part. */
+export function liveNarration(turns: ChatTurn[]): string {
+  const last = turns.findLast((turn) => turn.role !== 'event' && turn.role !== 'divider');
+  if (last?.role !== 'elowen') return '';
+  const spoken = last.segments.findLast((segment) => segment.kind === 'text' && segment.text.trim() !== '');
+  if (!spoken || spoken.kind !== 'text') return '';
+  const text = spoken.text.replace(/\s+/g, ' ').trim();
+  if (text.length <= NARRATION_MAX_CHARS) return text;
+  const tail = text.slice(text.length - NARRATION_MAX_CHARS);
+  const space = tail.indexOf(' ');
+  // One unbroken token longer than the cap (a URL, a base64 blob) has no boundary to cut at: keep it whole
+  // rather than returning nothing.
+  return space < 0 ? tail : tail.slice(space + 1).trim();
+}
+
 /** Fold a live `card` event into the card list: replace by id, append when new, drop when it came back
  *  empty (a cleared panel). Mirrors the daemon `isEmptyCard`: a card with neither items nor body removes. */
 export function upsertCard(cards: BrainCard[], card: BrainCard): BrainCard[] {
