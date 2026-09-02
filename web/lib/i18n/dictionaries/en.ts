@@ -151,6 +151,12 @@ export const en = {
     searchCommands: 'Search commands…',
     searchSite: 'Search…',
     searchNoResults: 'No results',
+    /** Heading of the palette's second-pass group: rows nothing matched literally, found by meaning
+     *  (embedding similarity) or picked by the assistant. Separate from the lexical groups on purpose —
+     *  these rows carry no highlighted match, because there is none. */
+    searchSuggestions: 'Suggestions',
+    searchAskAi: 'Ask AI about “{query}”',
+    searchAskFailed: 'The assistant could not help with this',
     dismiss: 'Dismiss',
     notification: 'Notification',
     notifications: 'Notifications ({hotkey})',

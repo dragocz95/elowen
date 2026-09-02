@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { setupServer } from 'msw/node';
+import { http, HttpResponse, delay } from 'msw';
+import { onUnhandledRequest } from '../../msw';
 import { LanguageProvider } from '../../../lib/i18n';
+import { en } from '../../../lib/i18n/dictionaries/en';
 
 function W({ children }: { children: React.ReactNode }) { return <LanguageProvider>{children}</LanguageProvider>; }
 // The diacritics tests search in Czech: "retence" (and "retenc" with no diacritics at all) must find the
@@ -39,6 +43,41 @@ const openPalette = () => fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
 const type = (query: string) => fireEvent.change(screen.getByRole('combobox'), { target: { value: query } });
 /** The group headings cmdk rendered, in order — the launcher's fixed group order made visible. */
 const headings = () => [...document.querySelectorAll('[cmdk-group-heading]')].map((el) => el.textContent);
+const optionCount = () => document.querySelectorAll('[cmdk-item]').length;
+/** Row values (the entry ids) currently rendered — a stable handle the highlight cannot split. */
+const rowValues = () => [...document.querySelectorAll('[cmdk-item]')].map((el) => el.getAttribute('data-value'));
+
+// The two assisted passes go over the network. Every suite in this file gets the server, defaulting to
+// "this instance has no semantic layer" (503) — the same answer an install with no embedding provider
+// gives — so the tests that are NOT about assistance behave exactly as they did before it existed.
+const server = setupServer(
+  http.post('*/api/search/rank', () => HttpResponse.json({ error: 'embeddings-not-configured' }, { status: 503 })),
+  http.post('*/api/search/ask', () => HttpResponse.json({ error: 'model-not-configured' }, { status: 503 })),
+);
+beforeAll(() => server.listen({ onUnhandledRequest }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+/** Longer than the palette's 300 ms debounce, short enough to stay a fast test. Real timers rather than
+ *  fake ones: msw, fetch and React's act queue all schedule work of their own, and a faked clock makes
+ *  the interleaving of those the thing under test instead of the debounce. */
+const PAST_DEBOUNCE_MS = 450;
+const settle = (ms = PAST_DEBOUNCE_MS) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+
+/** Serve `/search/rank` from a query → answer table, recording the queries that actually went out.
+ *  `delayMs` is PER QUERY, which is what lets a test put one answer behind another and check that the
+ *  overtaken one is discarded rather than rendered. */
+function serveRank(byQuery: Record<string, { ids: string[]; delayMs?: number }>) {
+  const queries: string[] = [];
+  server.use(http.post('*/api/search/rank', async ({ request }) => {
+    const body = await request.json() as { query: string };
+    queries.push(body.query);
+    const answer = byQuery[body.query];
+    if (answer?.delayMs) await delay(answer.delayMs);
+    return HttpResponse.json({ results: (answer?.ids ?? []).map((id) => ({ id, score: 0.7 })) });
+  }));
+  return queries;
+}
 
 beforeEach(() => {
   // The stored locale outlives a test — and `LanguageProvider` re-resolves it on mount, so a Czech
@@ -288,12 +327,174 @@ describe('CommandPalette', () => {
     expect(primitivesCss).toMatch(/input\.command-palette-search:focus-visible\s*\{\s*box-shadow:\s*none;/);
   });
 
-  // A query that matches nothing gets an answer, not silence — cmdk's `CommandEmpty`.
+  // A query that matches nothing gets an answer, not silence — and since the assisted passes landed, the
+  // answer carries exactly ONE actionable row: the offer to ask the assistant. There are no destinations
+  // among them, which is what this asserts; the Ask row itself is covered further down.
   it('says so when nothing matches', () => {
     render(<CommandPalette />, { wrapper: W });
     openPalette();
     type('no-such-setting-anywhere');
     expect(screen.getByText('No results')).toBeInTheDocument();
-    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+    expect(rowValues()).toEqual(['__ask-ai__']);
+  });
+});
+
+/** The two passes BEHIND the lexical filter. Both are network work on a keystroke-driven surface, so what
+ *  matters as much as the results is when they are NOT reached: above the lexical floor, below the query
+ *  length, before the debounce, and forever after the daemon has said it cannot help. */
+describe('CommandPalette — assisted search', () => {
+  // "kanban" is a single plugin page and nothing else, so it is genuinely thin; the daemon answers with a
+  // row that shares no word with it, which is the whole point of the layer.
+  it('asks for suggestions after the debounce and renders them in their own group', async () => {
+    const queries = serveRank({ kanban: { ids: ['settings:brain:brain.maxSteps'] } });
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    type('kanban');
+
+    // Nothing has gone out yet — the lexical answer is already on screen and the debounce is running.
+    expect(queries).toEqual([]);
+    expect(headings()).not.toContain(en.common.searchSuggestions);
+
+    await settle();
+    await waitFor(() => expect(headings()).toContain(en.common.searchSuggestions));
+    expect(queries).toEqual(['kanban']);
+    // Same row anatomy as a lexical hit — but with no accent, because nothing matched literally.
+    const suggestion = document.querySelector<HTMLElement>('[cmdk-item][data-value="settings:brain:brain.maxSteps"]')!;
+    expect(suggestion).toHaveAttribute('role', 'option');
+    expect(suggestion.querySelector('.text-primary')).toBeNull();
+    expect(suggestion.textContent).toContain('/settings?cat=brain');
+
+    // And it navigates like any other row.
+    fireEvent.click(suggestion);
+    expect(push).toHaveBeenCalledWith('/settings?cat=brain');
+  });
+
+  // THE GATE. A query the lexical pass already answered must not cost a request at all — this is the
+  // assertion that fails if the `< 3 lexical hits` condition is loosened or removed.
+  it('leaves the network alone when the lexical pass already found enough', async () => {
+    const queries = serveRank({});
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    type('memory');
+    expect(optionCount()).toBeGreaterThanOrEqual(3);
+
+    await settle();
+    expect(queries).toEqual([]);
+  });
+
+  // …and the same for a query too short to be a question rather than a prefix.
+  it('leaves the network alone for a query shorter than three characters', async () => {
+    const queries = serveRank({});
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    type('zq'); // matches nothing, but is a prefix, not a question
+    await settle();
+    expect(queries).toEqual([]);
+  });
+
+  // STALENESS, with the timing arranged so it is genuinely tested: the first answer is slow enough to be
+  // OVERTAKEN by the second, so it would land last and win if nothing discarded it. The palette discards
+  // it twice over — the request is aborted on the next keystroke, and a response that beat the abort
+  // carries an older request id — and this is what fails if both of those go.
+  //
+  //   t=0   type "kanban"        t=300 its request goes out (500 ms slow)
+  //   t=350 type "kanbon"        t=650 its request goes out and answers at once
+  //   t=800 "kanban" would have answered — after the answer that replaced it
+  it('never renders a ranking answer to a query the user has moved past', async () => {
+    const queries = serveRank({
+      kanban: { ids: ['account:security'], delayMs: 500 },
+      kanbon: { ids: ['page:memory'] },
+    });
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+
+    type('kanban');
+    await settle(350);              // past the debounce: the slow request is in flight
+    expect(queries).toEqual(['kanban']);
+    type('kanbon');                 // …and the user has already moved on
+    await settle(900);              // past the moment the overtaken answer would have landed
+
+    expect(queries).toEqual(['kanban', 'kanbon']);
+    expect(rowValues()).toContain('page:memory');
+    // The superseded answer never appeared — not before the new one, and not after it either.
+    expect(rowValues()).not.toContain('account:security');
+
+    // …and abandoning a request is not a failure: the layer is still live for the next query.
+    type('tasks');
+    await settle();
+    expect(queries).toEqual(['kanban', 'kanbon', 'tasks']);
+  });
+
+  // An instance with no embedding provider is not a broken instance. It says so once, and the palette
+  // stops asking for the rest of the session — silently, with nothing on screen about it.
+  it('silences the semantic layer for the rest of the session after a 503, showing nothing', async () => {
+    let calls = 0;
+    server.use(http.post('*/api/search/rank', () => {
+      calls++;
+      return HttpResponse.json({ error: 'embeddings-not-configured' }, { status: 503 });
+    }));
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+
+    type('kanban');
+    await settle();
+    expect(calls).toBe(1);
+    expect(headings()).not.toContain(en.common.searchSuggestions);
+    expect(screen.queryByText(en.common.searchAskFailed)).not.toBeInTheDocument();
+    // The lexical answer is untouched — the layer failing is not the search failing.
+    expect(rowValues()).toContain('plugin:/p/work/kanban');
+
+    type('tasks');
+    await settle();
+    expect(calls).toBe(1);
+  });
+
+  it('offers to ask the assistant when nothing matched at all', async () => {
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    type('no-such-setting-anywhere');
+    // The offer stands whether or not the semantic pass ran; it is the answer to "nothing at all".
+    await settle();
+    const ask = screen.getByRole('option', { name: /Ask AI about/ });
+    expect(ask.textContent).toContain('no-such-setting-anywhere');
+    expect(screen.getByText('No results')).toBeInTheDocument();
+  });
+
+  it('spins in the row while asking, then renders the answers as suggestions', async () => {
+    server.use(http.post('*/api/search/ask', async () => {
+      await delay(120);
+      return HttpResponse.json({ results: [{ id: 'settings:brain:brain.maxSteps' }, { id: 'page:memory' }] });
+    }));
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    type('no-such-setting-anywhere');
+
+    fireEvent.click(screen.getByRole('option', { name: /Ask AI about/ }));
+    // The pending state lives IN the row: the shared Spinner, and the row taken out of the cursor.
+    await waitFor(() => expect(document.querySelector('[cmdk-item] .animate-spin')).not.toBeNull());
+    expect(screen.getByRole('option', { name: /Ask AI about/ })).toHaveAttribute('aria-busy', 'true');
+
+    await waitFor(() => expect(headings()).toContain(en.common.searchSuggestions));
+    expect(rowValues()).toEqual(['settings:brain:brain.maxSteps', 'page:memory']);
+    // With rows to show, the empty state and its offer are gone.
+    expect(screen.queryByText('No results')).not.toBeInTheDocument();
+  });
+
+  // A failed ask is reported where the question was asked. Never a toast: the palette is a transient
+  // overlay, and a notification on the page underneath outlives the surface that raised it.
+  it('reports an ask failure as a muted line inside the palette', async () => {
+    render(<CommandPalette />, { wrapper: W }); // the default handler already refuses
+    openPalette();
+    type('no-such-setting-anywhere');
+
+    fireEvent.click(screen.getByRole('option', { name: /Ask AI about/ }));
+    await waitFor(() => expect(screen.getByText(en.common.searchAskFailed)).toBeInTheDocument());
+    expect(screen.queryByRole('option', { name: /Ask AI about/ })).not.toBeInTheDocument();
+    expect(screen.getByText('No results')).toBeInTheDocument();
+
+    // Retyping is the way back: a new question starts from a clean state.
+    type('no-such-setting-either');
+    expect(screen.queryByText(en.common.searchAskFailed)).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Ask AI about/ })).toBeInTheDocument();
   });
 });
