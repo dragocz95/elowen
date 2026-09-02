@@ -1598,6 +1598,7 @@ export const sk = {
     planDecisionTitle: 'Plán je pripravený',
     workMode: { build: 'Build', plan: 'Plánovanie', workflow: 'Workflow' },
     workModeLabel: 'Pracovný režim',
+    workModeMenu: 'Zmeniť pracovný režim',
     modeSwitched: 'Pracovný režim:',
     renameTitle: 'Premenovať konverzáciu',
     commandField: {

@@ -141,27 +141,27 @@ describe('web slash commands: work mode + rename', () => {
     expect(sendBodies).toEqual([]);
   });
 
-  it('sends in build mode by default and shows no mode pill', async () => {
+  it('sends in build mode by default and the composer switch names Build', async () => {
     renderChat();
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
     await send('ahoj');
     await waitFor(() => expect(sendBodies.length).toBe(1));
     expect(sendBodies[0]).toMatchObject({ mode: 'build' });
-    expect(screen.queryByTestId('chat-work-mode')).toBeNull();
+    expect(screen.getByTestId('chat-work-mode-switch')).toHaveTextContent('Build');
   });
 
-  it('/plan switches the work mode, shows it, and stamps every following send', async () => {
+  it('/plan switches the work mode, shows it on the switch, and stamps every following send', async () => {
     renderChat();
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
     await runSlash('plan');
-    expect(await screen.findByTestId('chat-work-mode')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('chat-work-mode-switch')).toHaveTextContent('Plan'));
     await send('rozmysli to');
     await waitFor(() => expect(sendBodies.length).toBe(1));
     expect(sendBodies[0]).toMatchObject({ text: 'rozmysli to', mode: 'plan' });
 
-    // …and back: /build clears the pill and the stamp returns to build.
+    // …and back: /build returns the switch to Build and the stamp to build.
     await runSlash('build');
-    await waitFor(() => expect(screen.queryByTestId('chat-work-mode')).toBeNull());
+    await waitFor(() => expect(screen.getByTestId('chat-work-mode-switch')).toHaveTextContent('Build'));
     await send('do it');
     await waitFor(() => expect(sendBodies.length).toBe(2));
     expect(sendBodies[1]).toMatchObject({ mode: 'build' });
@@ -295,7 +295,7 @@ describe('web slash commands: work mode + rename', () => {
 
   // The decision itself now comes from the DAEMON (the work mode rides the snapshot's control frame), so
   // these two drive the mode the way the daemon reports it and use the composer's own `/plan` only for
-  // what it still owns: the mode pill and the mode the next send is stamped with.
+  // what it still owns: the switch's label and the mode the next send is stamped with.
   async function submitPlanInPlanMode(): Promise<void> {
     await runSlash('plan');
     const es = FakeES.instances[0];
@@ -316,9 +316,9 @@ describe('web slash commands: work mode + rename', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('plan-decision-implement')); });
     await waitFor(() => expect(sendBodies.length).toBe(1));
     expect(sendBodies[0]).toMatchObject({ text: 'Implement the plan you proposed above.', mode: 'build' });
-    // Approving leaves plan mode, so the decision and the mode pill are gone.
+    // Approving leaves plan mode, so the decision is gone and the switch reads Build again.
     await waitFor(() => expect(screen.queryByTestId('plan-decision-implement')).toBeNull());
-    expect(screen.queryByTestId('chat-work-mode')).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('chat-work-mode-switch')).toHaveTextContent('Build'));
   });
 
   it('keeps the plan decision available when approving it fails', async () => {
@@ -333,7 +333,7 @@ describe('web slash commands: work mode + rename', () => {
 
     // Still approvable, and still in plan mode — the failed attempt changed nothing.
     expect(await screen.findByTestId('plan-decision-implement')).toBeInTheDocument();
-    expect(screen.getByTestId('chat-work-mode')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-work-mode-switch')).toHaveTextContent('Plan');
 
     // And a retry works once the daemon accepts it.
     server.use(http.post('*/api/brain/send', async ({ request }) => {
@@ -362,7 +362,7 @@ describe('web slash commands: /help and /model overlays', () => {
     expect(within(dialog).queryByText('/help')).toBeNull();
 
     await act(async () => { fireEvent.click(within(dialog).getByText('/plan')); });
-    expect(await screen.findByTestId('chat-work-mode')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('chat-work-mode-switch')).toHaveTextContent('Plan'));
   });
 
   it('/help filters by name and by description', async () => {
