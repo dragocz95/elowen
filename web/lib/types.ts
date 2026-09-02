@@ -69,6 +69,10 @@ export interface BrainProvider {
   apiKeySet: boolean;
   /** Sampling temperature. Absent = the field is not sent and the model's own default applies. */
   temperature?: number;
+  /** Present only when the operator switched this provider's NATIVE (hosted) tool search off. The literal
+   *  type mirrors the daemon: "on" is the ABSENCE of the field, never a `true`, so nothing a client sends
+   *  can grant a route the provider gates have not already earned. */
+  hostedToolSearchEnabled?: false;
 }
 /** One Elowen AI (brain) model. `source` = how its provider authenticates (drives the OAuth badge). */
 export interface BrainModelOption {

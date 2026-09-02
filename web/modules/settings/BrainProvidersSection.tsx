@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ChevronRight, ListChecks, EyeOff, Server, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ChevronRight, ListChecks, EyeOff, Server, ShieldCheck, SlidersHorizontal, Settings2 } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
+import { HelpTip } from '../../components/ui/HelpTip';
+import { Toggle } from '../../components/ui/Toggle';
+import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/shadcn/popover';
 import { Segmented } from '../../components/ui/Segmented';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
@@ -39,13 +42,18 @@ const OAUTH_ICON: Record<string, string> = {
 const API_TYPES: BrainProviderType[] = ['openai', 'anthropic'];
 
 type HostedSearchStatus = 'supported' | 'unsupported' | 'unverified';
-type HostedSearchStatusMap = Record<string, Record<string, HostedSearchStatus>>;
 type HostedSearchStatusResponse = Awaited<ReturnType<typeof elowenClient.brainHostedToolSearchStatus>>;
+/** One hosted-search record per provider the daemon says the native search can apply to. Membership IS
+ *  the capability answer — a provider absent from this map gets no switch, because the daemon would never
+ *  give it a hosted route to switch off. */
+type HostedSearchEntry = HostedSearchStatusResponse['providers'][number];
+type HostedSearchInfo = Omit<HostedSearchEntry, 'providerId' | 'models'> & { models: Record<string, HostedSearchStatus> };
+type HostedSearchMap = Record<string, HostedSearchInfo>;
 
-const toHostedSearchStatusMap = (response: HostedSearchStatusResponse): HostedSearchStatusMap => Object.fromEntries(
-  response.providers.map((provider) => [
-    provider.providerId,
-    Object.fromEntries(provider.models.map((model) => [model.modelId, model.status])),
+const toHostedSearchMap = (response: HostedSearchStatusResponse): HostedSearchMap => Object.fromEntries(
+  response.providers.map(({ providerId, models, ...rest }) => [
+    providerId,
+    { ...rest, models: Object.fromEntries(models.map((model) => [model.modelId, model.status])) },
   ]),
 );
 
@@ -192,6 +200,64 @@ function OAuthModelsModal({ type, initial, onSave, onClose }: {
       emptySelectionHint={t.brain.pickModelsHint}
       countLabel={(n) => t.managePicker.modelsSelected.replace('{n}', String(n))}
     />
+  );
+}
+
+/** The per-provider native-tool-search switch, behind the record's own settings affordance.
+ *
+ *  It is THE control of the row (the `control` slot), not a third action: the trailing side of a settings
+ *  record allows two buttons, and both an account and a provider entry already spend them. The popover
+ *  carries the switch, the explanation, and what a session spawned right now would actually get — the
+ *  daemon decides that last part, so "verified", "unsupported" and "off" are never re-derived here.
+ *
+ *  Only providers the daemon reported as hosted-search capable ever render one; everything else has no
+ *  hosted route to switch off, and a dead switch would promise otherwise. */
+function HostedToolSearchControl({ providerLabel, info, pending, onChange }: {
+  providerLabel: string;
+  info: HostedSearchInfo;
+  pending: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const stateLabel = info.effective === 'off' ? t.brain.hostedSearchOff
+    : info.effective === 'unsupported' ? t.brain.hostedSearchUnsupported
+      : info.effective === 'unverified' ? t.brain.hostedSearchUnverified
+        : t.brain.hostedSearchActive;
+  const tone = info.effective === 'active' ? 'accent' : info.effective === 'unsupported' ? 'danger' : 'default';
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`${t.brain.hostedSearchSettings}: ${providerLabel}`}
+          title={t.brain.hostedSearchSettings}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
+        >
+          <Settings2 size={15} aria-hidden />
+        </button>
+      </PopoverTrigger>
+      {/* Radix gives the content `role="dialog"`; it has no visible heading, so it names itself. */}
+      <PopoverContent align="end" aria-label={t.brain.hostedSearchTitle} className="w-72">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-start justify-between gap-3">
+            <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+              {t.brain.hostedSearchTitle}
+              <HelpTip>{t.brain.hostedSearchHelp}</HelpTip>
+            </span>
+            <Toggle
+              checked={info.enabled}
+              disabled={pending}
+              onChange={onChange}
+              label={`${t.brain.hostedSearchTitle}: ${providerLabel}`}
+            />
+          </div>
+          <span className="flex">
+            <Badge tone={tone}>{stateLabel}</Badge>
+          </span>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -395,20 +461,21 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
   const updateConfig = useUpdateConfig();
   const [disconnectTarget, setDisconnectTarget] = useState<BrainProviderType | null>(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
-  const [hostedSearchStatus, setHostedSearchStatus] = useState<HostedSearchStatusMap>({});
+  const [hostedSearch, setHostedSearch] = useState<HostedSearchMap>({});
   const [verifyingProvider, setVerifyingProvider] = useState<string | null>(null);
+  const [hostedSearchPending, setHostedSearchPending] = useState<string | null>(null);
   const hostedStatusGeneration = useRef(0);
 
   const refreshHostedSearchStatus = async () => {
     const generation = ++hostedStatusGeneration.current;
     const response = await elowenClient.brainHostedToolSearchStatus();
-    if (hostedStatusGeneration.current === generation) setHostedSearchStatus(toHostedSearchStatusMap(response));
+    if (hostedStatusGeneration.current === generation) setHostedSearch(toHostedSearchMap(response));
   };
   useEffect(() => {
     let cancelled = false;
     const generation = ++hostedStatusGeneration.current;
     void elowenClient.brainHostedToolSearchStatus().then((response) => {
-      if (!cancelled && hostedStatusGeneration.current === generation) setHostedSearchStatus(toHostedSearchStatusMap(response));
+      if (!cancelled && hostedStatusGeneration.current === generation) setHostedSearch(toHostedSearchMap(response));
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [config?.brain?.providers]);
@@ -497,6 +564,39 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
 
   const remove = (id: string) => persist(providers.filter((p) => p.id !== id).map(({ apiKeySet, ...p }) => p));
 
+  // The switch travels through the ordinary provider save path — it is a field on the provider row, not a
+  // capability claim, so it needs no endpoint of its own (the probe-owned verification map stays read-only
+  // through the config API, and no value of this field can grant a route).
+  //
+  // A connected OAuth account may still have no explicit entry: the same upsert the model picker performs
+  // creates one under the built-in provider id, which is exactly the id the daemon reports the account's
+  // hosted status under. Turning the switch back ON omits the field rather than sending `true`, because
+  // absent is the only spelling of "on" the daemon stores.
+  const setHostedToolSearchEnabled = (
+    entryId: string, type: BrainProviderType, label: string, enabled: boolean,
+  ) => {
+    const keyless = providers.map(({ apiKeySet, ...p }) => p);
+    const existing = keyless.find((p) => p.id === entryId);
+    const { hostedToolSearchEnabled: _current, ...base } = existing ?? { id: entryId, label, type, baseUrl: '', models: [] };
+    const entry = enabled ? base : { ...base, hostedToolSearchEnabled: false as const };
+    const next = existing ? keyless.map((p) => (p.id === entryId ? entry : p)) : [...keyless, entry];
+    setHostedSearchPending(entryId);
+    save.mutate(next, {
+      onSuccess: () => {
+        setHostedSearchPending(null);
+        // The saved config re-runs the status effect on its own, but a caller that hands back the same
+        // provider list would leave the badge stating the pre-toggle answer. Ask directly; the generation
+        // guard drops whichever of the two lands second.
+        void refreshHostedSearchStatus();
+        toast(t.brain.saved);
+      },
+      onError: () => {
+        setHostedSearchPending(null);
+        toast(t.brain.hostedSearchToggleError, 'error');
+      },
+    });
+  };
+
   const startConnect = (type: string) =>
     void elowenClient.brainOauthStart(type)
       .then((f) => setFlow(f))
@@ -539,11 +639,23 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
         {oauthTypes.filter((type) => !hiddenOauth.includes(type) || isConnected(type)).map((type) => {
           const connected = isConnected(type);
           const icon = OAUTH_ICON[type] ?? type;
-          const usage = connected ? rateLimits.data?.[OAUTH_ENTRY_ID[type]] : undefined;
+          const entryId = OAUTH_ENTRY_ID[type] ?? type;
+          const usage = connected ? rateLimits.data?.[entryId] : undefined;
+          // Only reported for a CONNECTED account whose provider can carry a hosted route at all —
+          // Copilot and Kimi never appear here, and neither does a disconnected Claude/ChatGPT account.
+          const hostedInfo = hostedSearch[entryId];
           return (
             <SettingsRow
               key={type}
               label={typeLabel(type)}
+              control={hostedInfo ? (
+                <HostedToolSearchControl
+                  providerLabel={typeLabel(type)}
+                  info={hostedInfo}
+                  pending={hostedSearchPending === entryId}
+                  onChange={(enabled) => setHostedToolSearchEnabled(entryId, type as BrainProviderType, typeLabel(type), enabled)}
+                />
+              ) : undefined}
               // A connected account is a multi-value record: a connection badge, one usage meter per
               // rate-limit window, and two actions. It does not fit the one-value table a phone gives a
               // record's trailing side.
@@ -595,7 +707,8 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
           <>
             {apiProviders.map((p) => {
               const azure = isAzureResponsesProvider(p);
-              const modelStates = p.models.map((modelId) => hostedSearchStatus[p.id]?.[modelId] ?? 'unverified');
+              const hostedInfo = hostedSearch[p.id];
+              const modelStates = p.models.map((modelId) => hostedInfo?.models[modelId] ?? 'unverified');
               const hostedState: HostedSearchStatus = modelStates.length > 0 && modelStates.every((status) => status === 'supported')
                 ? 'supported'
                 : modelStates.some((status) => status === 'unsupported') ? 'unsupported' : 'unverified';
@@ -610,6 +723,14 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
                   // to three buttons — the same multi-value record as an account above.
                   trailingLayout="stack"
                   iconNode={<DomainFavicon baseUrl={p.baseUrl} fallback={<BrainCircuit size={15} strokeWidth={1.75} />} />}
+                  control={hostedInfo ? (
+                    <HostedToolSearchControl
+                      providerLabel={p.label}
+                      info={hostedInfo}
+                      pending={hostedSearchPending === p.id}
+                      onChange={(enabled) => setHostedToolSearchEnabled(p.id, p.type, p.label, enabled)}
+                    />
+                  ) : undefined}
                   // Badges REPORT — they are not actions, and carrying them in the actions slot put six
                   // slots in a cell whose ceiling is two. The hosted-search badge is also its own verify
                   // control: it already states the answer, so a separate button beside it said the same
