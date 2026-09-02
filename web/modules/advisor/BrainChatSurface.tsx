@@ -468,13 +468,16 @@ function AttachmentThumb({ image }: { image: BrainMessageImage }) {
         onClick={() => setOpen(true)}
         title={t.brainChat.attachmentOpen}
         aria-label={t.brainChat.attachmentOpen}
-        className="block overflow-hidden rounded-lg border border-border transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        // The width cap sits on the FRAME, not the picture. A percentage max-width on the <img> is ignored
+        // while the flex item measures its content, so a wide picture capped only by height left the
+        // border hanging around empty space — the button was sized for the uncapped width.
+        className="block max-w-[min(16rem,100%)] overflow-hidden rounded-lg border border-border transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
         <img
           src={`/api${image.url}`}
           alt={t.brainChat.attachmentAlt}
           onError={() => setFailed(true)}
-          className="max-h-48 max-w-[min(16rem,100%)] object-contain"
+          className="block max-h-48 max-w-full object-contain"
         />
       </button>
       {open ? <ImageLightbox image={image} onClose={() => setOpen(false)} /> : null}

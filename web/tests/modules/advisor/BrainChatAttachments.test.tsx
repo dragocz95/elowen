@@ -94,6 +94,19 @@ describe('a user turn with attachments', () => {
     expect(img.closest('button')?.getAttribute('aria-label')).toBeTruthy();
   });
 
+  it('caps the width on the frame, so the border hugs the picture', async () => {
+    // A percentage max-width on the <img> is ignored while the flex item measures its content, so a wide
+    // picture capped only by height left the frame sized for the uncapped width, with the border hanging
+    // around empty space. The cap therefore belongs to the frame; the picture just fills it.
+    const es = await renderSurface('full');
+    act(() => es.emit({ type: 'user', text: 'mrkni na tohle', durableId: 'm1', images: [IMAGE] }));
+    const img = await attachment();
+
+    expect(img.closest('button')?.className).toContain('max-w-[min(16rem,100%)]');
+    expect(img.className).toContain('max-w-full');
+    expect(img.className).not.toMatch(/max-w-\[/);
+  });
+
   it('keeps the message text beside it', async () => {
     const es = await renderSurface('full');
     act(() => es.emit({ type: 'user', text: 'mrkni na tohle', durableId: 'm1', images: [IMAGE] }));
