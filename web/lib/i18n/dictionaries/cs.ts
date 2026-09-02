@@ -1608,8 +1608,6 @@ export const cs = {
     commandField: {
       open: 'Otevřít pole příkazů',
       title: 'Pole příkazů',
-      hint: 'Vyberte příkaz — spustí se ve vaší konverzaci.',
-      activeMode: 'aktivní režim',
       compact: 'Zhustit',
       rename: 'Přejmenovat',
       newChat: 'Nová konverzace',

@@ -1603,8 +1603,6 @@ export const sk = {
     commandField: {
       open: 'Otvoriť pole príkazov',
       title: 'Pole príkazov',
-      hint: 'Vyberte príkaz — spustí sa vo vašej konverzácii.',
-      activeMode: 'aktívny režim',
       compact: 'Zhustiť',
       rename: 'Premenovať',
       newChat: 'Nová konverzácia',

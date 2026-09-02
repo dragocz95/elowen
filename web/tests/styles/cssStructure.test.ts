@@ -88,10 +88,6 @@ const EXTERNALLY_SET: Record<string, string> = {
   // Viewport/composer measurements owned by BrainChatSurface's layout effect, not global design tokens.
   '--chat-visual-bottom-offset': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
   '--chat-composer-height': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
-  '--i': 'modules/advisor/CommandOrbit.tsx, lib/cosmosFilaments.ts',
-  '--k': 'modules/advisor/CommandOrbit.tsx, the arc layout scale',
-  '--fx': 'modules/advisor/CommandOrbit.tsx, pod entry offset',
-  '--fy': 'modules/advisor/CommandOrbit.tsx, pod entry offset',
   '--live-ring': 'per-instance override hook on .live-dot; unset by default, hence the literal fallback',
 };
 

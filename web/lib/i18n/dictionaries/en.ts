@@ -1629,8 +1629,6 @@ export const en = {
     commandField: {
       open: 'Open the command field',
       title: 'Command field',
-      hint: 'Pick a command — it runs in your conversation.',
-      activeMode: 'active mode',
       compact: 'Compact',
       rename: 'Rename',
       newChat: 'New conversation',
