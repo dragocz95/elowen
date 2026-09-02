@@ -742,6 +742,27 @@ CREATE TABLE IF NOT EXISTS activity_buckets (
 );
 CREATE INDEX IF NOT EXISTS idx_activity_buckets_day ON activity_buckets(day);
 
+-- Embedding cache for the site-wide search ranking (`POST /search/rank`, the command palette's semantic
+-- layer). NOT user-scoped and deliberately so: the rows are vectors of the app's OWN interface strings —
+-- page titles, settings labels — which every account sees anyway, so caching them per user would embed
+-- the same few hundred strings once per account.
+--
+-- `key` is sha256(model \0 text): the model is part of the key rather than a filter, so switching the
+-- embedding model MISSES instead of scoring a query against vectors of a different (possibly
+-- different-width) space. `dims` is stored beside the packed Float32 BLOB so a width mismatch is visible
+-- without unpacking. Bounded by SEARCH_VECTOR_CACHE_MAX rows, oldest inserted evicted first — this is a
+-- cache, so an evicted row simply costs one re-embed.
+CREATE TABLE IF NOT EXISTS search_vectors (
+  key TEXT PRIMARY KEY,
+  model TEXT NOT NULL,
+  dims INTEGER NOT NULL,
+  vector BLOB NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- Eviction orders by (created_at, rowid); only created_at can be indexed (SQLite refuses rowid in an
+-- index), and it is the selective half — the rowid is just the tie-break within one second.
+CREATE INDEX IF NOT EXISTS idx_search_vectors_age ON search_vectors(created_at);
+
 -- Plugin-owned schema migrations bookkeeping (plugin-platform F1c). Plugin tables live in THIS database
 -- (one WAL/backup/transaction domain — see src/store/pluginDb.ts for why not a per-plugin file); each
 -- plugin applies its own ordered steps through ctx.db().migrate(), recorded here exactly once.

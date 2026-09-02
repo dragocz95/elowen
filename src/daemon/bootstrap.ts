@@ -117,8 +117,8 @@ export async function buildApp(opts: BuildOpts) {
     elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainCreds, brainOauth, embeddings,
-    brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets, embedQueue, memoryCategorizer,
-    dashDigests, dashDigestInference,
+    brainStore, usageOrigins, memoryStore, searchVectors, memoryCategoryStore, userPluginConfig, pluginSecrets, embedQueue, memoryCategorizer,
+    dashDigests, dashDigestInference, memoryModelInference,
     pluginProvider, hookAudit, brain, themes, brand, setPluginHostPush,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
@@ -265,6 +265,10 @@ export async function buildApp(opts: BuildOpts) {
     brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain,
     restartDaemon, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets,
     memoryCategorizer, dashDigests, dashDigestInference,
+    // The palette's "Ask AI" runs on the SAME workspace route as memory categorization rather than a
+    // block of its own: it is the same kind of cheap one-shot question, and a second setting to configure
+    // would be a second way for the feature to be silently off.
+    searchVectors, searchAskInference: memoryModelInference,
     embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes,
     killAccountProcesses: async (userId) => processRegistry.killAccount(userId) + (subagentRunner ? await subagentRunner.killAccountProcesses(userId) : 0),
     ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),

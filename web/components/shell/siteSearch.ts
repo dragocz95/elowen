@@ -231,6 +231,39 @@ export function filterEntries(entries: SearchEntry[], query: string): SearchEntr
   return entries.filter((entry) => searchFilter(entry.id, q, [entry.title, entry.subtitle ?? '', ...entry.keywords]) === 1);
 }
 
+/** Bounds the daemon's search schemas enforce (`src/api/schemas/search.ts`); mirrored here because the
+ *  web may not import daemon source at runtime, and an over-limit request is refused rather than
+ *  truncated server-side. Truncating HERE keeps a long query or an unusually long label a shorter
+ *  suggestion instead of no suggestion at all. */
+const SEARCH_MAX_CANDIDATES = 400;
+const SEARCH_MAX_TEXT_CHARS = 200;
+export const SEARCH_MAX_QUERY_CHARS = 200;
+
+const clamp = (text: string, max = SEARCH_MAX_TEXT_CHARS): string => text.slice(0, max);
+
+/** What the semantic pass compares against: one line per row carrying everything the lexical filter
+ *  already searches — the title, its section, and the aliases/hints in `keywords`. It is deliberately the
+ *  same material, because the two passes must agree about what a row IS and differ only in how they
+ *  match it. */
+export function rankCandidates(entries: SearchEntry[]): { id: string; text: string }[] {
+  return entries.slice(0, SEARCH_MAX_CANDIDATES).map((entry) => ({
+    id: clamp(entry.id),
+    text: clamp([entry.title, entry.subtitle ?? '', ...entry.keywords].filter(Boolean).join(' · ')),
+  })).filter((candidate) => candidate.text !== '');
+}
+
+/** What the assistant reads: exactly the title and subtitle the palette RENDERS, so the model is choosing
+ *  between the same rows the user was looking at rather than an internal representation of them. */
+export function askCandidates(entries: SearchEntry[]): { id: string; title: string; subtitle?: string }[] {
+  return entries.slice(0, SEARCH_MAX_CANDIDATES)
+    .filter((entry) => entry.title !== '')
+    .map((entry) => ({
+      id: clamp(entry.id),
+      title: clamp(entry.title),
+      ...(entry.subtitle ? { subtitle: clamp(entry.subtitle) } : {}),
+    }));
+}
+
 /** The palette's rows, from data that already exists. Pure — unit-tested in `tests/lib/siteSearch.test.ts`. */
 export function buildSearchIndex(t: LocaleDict, pluginEntries: PluginUiListing[]): SearchEntry[] {
   // Read the string the component renders. Nothing here holds a second copy of any label.

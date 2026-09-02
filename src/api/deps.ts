@@ -94,6 +94,12 @@ export interface ServerDeps {
   memoryCategorizer?: import('../brain/memoryCategorizer.js').MemoryCategorizer;
   /** Text→vector embeddings via an OpenAI-compatible /v1/embeddings endpoint, reusing brain provider creds. Absent → memory retrieval (Phase 4) has no embedder. */
   embeddings?: EmbeddingService;
+  /** Durable cache of the site-search index's embedding vectors (`POST /search/rank`). Absent (minimal
+   *  test wiring) → ranking still works, it just re-embeds every candidate on every call. */
+  searchVectors?: import('../store/searchVectorStore.js').SearchVectorStore;
+  /** Builds the "Ask AI" completion client for `POST /search/ask` — the workspace categorization route,
+   *  the same one the memory curator uses. Null → the route answers 503 `model-not-configured`. */
+  searchAskInference?: () => import('../inference/types.js').InferenceClient | null;
   /** The ONE shared plugin registry provider (merged contributions of every enabled plugin). Feeds the
    *  runtime plugin-contribution introspection endpoint. Absent → that endpoint reports an empty shape. */
   plugins?: import('../plugins/pluginsProvider.js').PluginRegistryProvider;

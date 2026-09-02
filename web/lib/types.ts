@@ -105,6 +105,15 @@ export interface ManagedSession { id: string; title: string; provider?: string; 
  *  the template's arguments ($ARGUMENTS/$1..$9) on the daemon; `prompt` is kept for menu/identification. */
 /** One fulltext-search match across the caller's brain conversations. */
 export interface BrainSearchHit { sessionId: string; sessionTitle: string; role: string; snippet: string; ts: string }
+
+/** Site-wide search assistance (POST /search/rank, POST /search/ask) — the two layers behind the command
+ *  palette's own lexical filter. The palette sends its OWN index as candidates and gets ids back, so the
+ *  daemon never learns a route: it ranks, or it picks, and the palette resolves the ids against the rows
+ *  it already built. `score` is cosine similarity; an ask answer carries no score because there is none. */
+export interface SearchRankCandidate { id: string; text: string }
+export interface SearchAskCandidate { id: string; title: string; subtitle?: string }
+export interface SearchRankResult { results: { id: string; score: number }[] }
+export interface SearchAskResult { results: { id: string }[] }
 /** The display-transcript shapes AND the REST DTOs the dock lists are the daemon↔web wire contract,
  *  defined once in src/shared and imported (type-only, so nothing bundles) rather than re-declared —
  *  the web mirror can no longer drift from what the daemon serves (the /auth/me User actually drifted

@@ -37,6 +37,7 @@ import { bearerFromAuth, type BrainCredentialAccess } from '../brain/providerUsa
 import { BrainStore } from '../store/brainStore.js';
 import { UsageOriginStore, billSettledTurn } from '../store/usageOriginStore.js';
 import { MemoryStore } from '../store/memoryStore.js';
+import { SearchVectorStore } from '../store/searchVectorStore.js';
 import { DashDigestStore } from '../store/dashDigestStore.js';
 import { piInferenceClient } from '../brain/piInference.js';
 import { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
@@ -356,6 +357,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // instance would start empty and attribute every live turn to `internal`.
   const usageOrigins = new UsageOriginStore(db);
   const memoryStore = new MemoryStore(db);
+  // Embedding cache for the command palette's semantic layer. NOT user-scoped — the cached texts are the
+  // app's own interface strings — so one instance serves every account, and after the first ranked query
+  // per locale only the query itself reaches the provider.
+  const searchVectors = new SearchVectorStore(db);
   const dashDigests = new DashDigestStore(db);
   const memoryCategoryStore = new MemoryCategoryStore(db);
   // ONE embedding-config mapper shared by the retrieval service AND the background embed queue, so both
@@ -831,7 +836,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
-    embeddings, embeddingConfig, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, pluginSecrets,
+    embeddings, embeddingConfig, brainStore, usageOrigins, memoryStore, searchVectors, memoryCategoryStore, userPluginConfig, pluginSecrets,
     memoryService, embedQueue, memoryModelInference, memoryCategorizer, dashDigests, dashDigestInference,
     pluginProvider, hookAudit, brain, themes, brand,
     // Sync view of the last loaded registry (undefined before the first load) — for wiring that must

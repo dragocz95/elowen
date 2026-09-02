@@ -10,6 +10,7 @@ import { registerConfigRoutes } from './config.js';
 import { registerPluginRoutes } from './plugins/index.js';
 import { registerUsageRoutes } from './usage.js';
 import { registerMemoryRoutes } from './memory.js';
+import { registerSearchRoutes } from './search.js';
 import { registerHookRoutes } from './hooks.js';
 import { registerPluginApiRoutes, registerRootPluginApiRoutes } from './pluginApi.js';
 import { registerPluginUiRoutes } from './pluginUi.js';
@@ -35,6 +36,7 @@ export function registerRoutes(app: ElowenApp, ctx: RouteContext): void {
   // `/plugins/:name/...` admin routes registered just above.
   registerPluginApiRoutes(app, ctx);
   registerMemoryRoutes(app, ctx);
+  registerSearchRoutes(app, ctx);
   registerHookRoutes(app, ctx);
   // @platform-keep root-plugin-routes :: registerRootPluginApiRoutes(app, ctx)
   // Generic plugin platform for future github/sandblox consumers; zero in-repo callers is expected.
