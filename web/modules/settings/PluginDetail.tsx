@@ -1,5 +1,5 @@
 'use client';
-import { Activity as ReactActivity, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Activity as ReactActivity, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft, Check, Circle, Settings2, SlidersHorizontal, Sparkles, Activity, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { LoadingState, ErrorState } from '../../components/ui/states';
@@ -85,8 +85,15 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
   }, [tab]);
   // A contributed section owns its own saves, so it reports through the channel the kit gives it and the
   // workspace shows THAT while its tab is open — the config draft's status belongs to the config form.
-  const [sectionSave, setSectionSave] = useState<{ status: SaveStatus; retry?: () => void }>({ status: 'idle' });
-  const onSectionSaveState = useCallback((status: SaveStatus, retry?: () => void) => setSectionSave({ status, retry }), []);
+  // Keyed by section id, because the panels stay MOUNTED once visited: a section that failed a save
+  // keeps reporting that failure while the reader is looking at a different one, and a single slot would
+  // show them the other section's status under this section's tab.
+  const [sectionSave, setSectionSave] = useState<Record<string, { status: SaveStatus; retry?: () => void }>>({});
+  const sectionSaveHandlers = useMemo(() => new Map(detailSections.map((section) => [
+    section.id,
+    (status: SaveStatus, retry?: () => void) => setSectionSave((current) => ({ ...current, [section.id]: { status, retry } })),
+  ])), [detailSections]);
+  const activeSectionSave = tab.startsWith('section:') ? sectionSave[tab.slice('section:'.length)] : undefined;
 
   // `#plugin-activity` etc. makes a workspace tab shareable without changing the existing settings URL.
   // The listing arrives after mount, so a contributed section is matched once it is actually known —
@@ -107,11 +114,14 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
   const platformCount = detail.provides.platforms?.length ?? 0;
   const tabs = [
     { value: 'setup', label: t.pluginDetail.tabSetup, icon: Settings2 },
+    // Right after Setup, ahead of the workspace's own tuning tabs: a contributed section reports what the
+    // plugin is DOING — whether it can run at all — which is the second question an operator asks after
+    // "is it configured", not something to find past Advanced.
+    ...detailSections.map((s) => ({ value: sectionTabId(s.id), label: s.label, icon: pluginLucideIcon(s.icon) })),
     { value: 'behavior', label: t.pluginDetail.tabBehavior, icon: SlidersHorizontal },
     { value: 'capabilities', label: t.pluginDetail.tabCapabilities, icon: ShieldCheck },
     { value: 'activity', label: t.pluginDetail.tabActivity, icon: Activity },
     { value: 'advanced', label: t.pluginDetail.tabAdvanced, icon: Sparkles },
-    ...detailSections.map((s) => ({ value: sectionTabId(s.id), label: s.label, icon: pluginLucideIcon(s.icon) })),
   ];
   const editorProps = { name, detail, fieldLabel, fieldHint, fieldOptions, riskText, draft };
 
@@ -135,7 +145,7 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
                 tabs, the contributed section on its own. Showing the draft's "saved" beside a section
                 that just failed would report on the wrong surface. */}
             {tab.startsWith('section:') ? (
-              <AutoSaveStatus status={sectionSave.status} onRetry={sectionSave.retry} />
+              <AutoSaveStatus status={activeSectionSave?.status ?? 'idle'} onRetry={activeSectionSave?.retry} />
             ) : (
               <AutoSaveStatus
                 status={draft.status}
@@ -193,7 +203,7 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
               fetched, let alone executed, because somebody opened the plugin's configuration form. */}
           {detailSections.map((section) => (
             <WorkspacePanel key={section.id} id={sectionTabId(section.id)} active={tab} visited={visitedTabs}>
-              {uiEntry ? <PluginSettingsSection entry={uiEntry} sectionId={section.id} onSaveState={onSectionSaveState} /> : null}
+              {uiEntry ? <PluginSettingsSection entry={uiEntry} sectionId={section.id} onSaveState={sectionSaveHandlers.get(section.id)!} /> : null}
             </WorkspacePanel>
           ))}
         </div>

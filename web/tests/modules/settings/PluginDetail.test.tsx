@@ -88,16 +88,13 @@ beforeEach(() => {
   useNotificationDestinations.mockReturnValue({ data: [] });
   usePluginUi.mockReturnValue({ data: [] });
   loadPluginUi.mockReset();
-  loadPluginUi.mockResolvedValue({
-    pages: [],
-    settings: {
-      runtime: ({ surface, onSaveState }: { surface: string; onSaveState?: (status: string) => void }) => (
-        <div data-testid="plugin-section-runtime" data-surface={surface}>
-          <button type="button" onClick={() => onSaveState?.('saving')}>report saving</button>
-        </div>
-      ),
-    },
-  });
+  const section = (id: string) => ({ surface, onSaveState }: { surface: string; onSaveState?: (status: string) => void }) => (
+    <div data-testid={`plugin-section-${id}`} data-surface={surface}>
+      <button type="button" onClick={() => onSaveState?.('saving')}>{`${id} report saving`}</button>
+      <button type="button" onClick={() => onSaveState?.('error')}>{`${id} report failure`}</button>
+    </div>
+  );
+  loadPluginUi.mockResolvedValue({ pages: [], settings: { runtime: section('runtime'), limits: section('limits') } });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -586,8 +583,52 @@ describe('PluginDetail plugin-contributed sections', () => {
     usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
     renderDetail();
     fireEvent.click(within(screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav })).getByRole('radio', { name: 'Runtime' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'report saving' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'runtime report saving' }));
     expect(await screen.findByText(en.common.saving)).toBeInTheDocument();
+  });
+
+  it('keeps each contributed section\'s save state to itself', async () => {
+    usePluginUi.mockReturnValue({ data: [{
+      name: 'testy', url: '/plugins/testy/web/abc.js', apiVersion: 1, nav: [],
+      settings: [
+        { id: 'runtime', label: 'Runtime', placement: 'pluginDetail' },
+        { id: 'limits', label: 'Limits', placement: 'pluginDetail' },
+      ],
+    }] });
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    renderDetail();
+    const nav = screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav });
+
+    fireEvent.click(within(nav).getByRole('radio', { name: 'Runtime' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'runtime report failure' }));
+    expect(await screen.findByText(en.common.saveFailed)).toBeInTheDocument();
+
+    // A visited panel stays mounted, so Runtime is still reporting its failure — but under Limits' tab
+    // that failure belongs to a surface the reader is not looking at.
+    fireEvent.click(within(nav).getByRole('radio', { name: 'Limits' }));
+    await screen.findByTestId('plugin-section-limits');
+    expect(screen.queryByText(en.common.saveFailed)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'limits report saving' }));
+    expect(await screen.findByText(en.common.saving)).toBeInTheDocument();
+
+    // Going back finds Runtime's own failure intact, not overwritten by its neighbour's save.
+    fireEvent.click(within(nav).getByRole('radio', { name: 'Runtime' }));
+    expect(await screen.findByText(en.common.saveFailed)).toBeInTheDocument();
+    expect(screen.queryByText(en.common.saving)).toBeNull();
+  });
+
+  it('puts an operational section right after Setup, not past Advanced', async () => {
+    usePluginUi.mockReturnValue({ data: listing('pluginDetail') });
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    renderDetail();
+    const nav = screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav });
+    // "Can it run" is the question straight after "is it configured"; buried behind Advanced it reads as
+    // an expert setting rather than the plugin's status.
+    expect(within(nav).getAllByRole('radio').map((radio) => radio.textContent)).toEqual([
+      en.pluginDetail.tabSetup, 'Runtime', en.pluginDetail.tabBehavior,
+      en.pluginDetail.tabCapabilities, en.pluginDetail.tabActivity, en.pluginDetail.tabAdvanced,
+    ]);
   });
 });
 
