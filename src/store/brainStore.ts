@@ -18,7 +18,8 @@ import {
 } from '../brain/delegatedScope.js';
 import { BrainUsageStore, numeric, rollupDroppedUsage } from './brainUsageStore.js';
 import { BrainDelegationStore } from './brainDelegationStore.js';
-import type { BrainCard, BrainGoalState } from '../brain/events.js';
+import type { BrainCard, BrainGoalState, BrainInlineArtifact } from '../brain/events.js';
+import type { StoredInlineArtifact } from '../brain/inlineArtifacts.js';
 import { ProviderRequestStore } from './providerRequestStore.js';
 import type { BrainDebugLegacyTranscriptPage } from '../shared/wireContract.js';
 
@@ -1006,6 +1007,95 @@ export class BrainStore {
     return cards;
   }
 
+  /** Persist a normalized open inline artifact. INSERT-only is deliberate: reopening an existing id would
+   * silently revoke the serializable ref a plugin already stored; callers must update or close through it. */
+  insertInlineArtifact(row: StoredInlineArtifact): void {
+    this.db.prepare(`INSERT INTO brain_inline_artifacts
+      (session_id, ref_session_id, plugin, artifact_id, tool_call_id, token_hash, payload, expires_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
+      .run(row.artifact.sessionId, row.artifact.sessionId, row.artifact.plugin, row.artifact.id,
+        row.artifact.toolCallId, row.tokenHash, JSON.stringify(row.artifact), row.expiresAtMs);
+  }
+
+  updateInlineArtifact(row: StoredInlineArtifact): void {
+    const changed = this.db.prepare(`UPDATE brain_inline_artifacts
+      SET payload = ?, expires_at = ?, updated_at = datetime('now')
+      WHERE session_id = ? AND plugin = ? AND artifact_id = ? AND token_hash = ?`)
+      .run(JSON.stringify(row.artifact), row.expiresAtMs, row.artifact.sessionId, row.artifact.plugin,
+        row.artifact.id, row.tokenHash);
+    if (changed.changes !== 1) throw new Error('invalid inline artifact reference');
+  }
+
+  getInlineArtifactCandidates(refSessionId: string, plugin: string, artifactId: string): StoredInlineArtifact[] {
+    const rows = this.db.prepare(`SELECT session_id, tool_call_id, token_hash, payload, expires_at
+      FROM brain_inline_artifacts WHERE ref_session_id = ? AND plugin = ? AND artifact_id = ?`)
+      .all(refSessionId, plugin, artifactId) as { session_id: string; tool_call_id: string; token_hash: string; payload: string; expires_at: number }[];
+    return rows.flatMap((row) => {
+      const parsed = this.inlineArtifactRow(row.session_id, plugin, artifactId, row);
+      return parsed ? [parsed] : [];
+    });
+  }
+
+  /** Current durable hydration in insertion order. Malformed rows are skipped independently so one manually
+   * damaged artifact cannot take every plugin view out of the conversation status response. */
+  getInlineArtifacts(sessionId: string): BrainInlineArtifact[] {
+    const rows = this.db.prepare(`SELECT plugin, artifact_id, tool_call_id, token_hash, payload, expires_at
+      FROM brain_inline_artifacts WHERE session_id = ? ORDER BY rowid ASC`)
+      .all(sessionId) as { plugin: string; artifact_id: string; tool_call_id: string; token_hash: string; payload: string; expires_at: number }[];
+    return rows.flatMap((row) => {
+      const parsed = this.inlineArtifactRow(sessionId, row.plugin, row.artifact_id, row);
+      return parsed ? [parsed.artifact] : [];
+    });
+  }
+
+  deleteInlineArtifact(sessionId: string, plugin: string, artifactId: string): boolean {
+    return this.db.prepare('DELETE FROM brain_inline_artifacts WHERE session_id = ? AND plugin = ? AND artifact_id = ?')
+      .run(sessionId, plugin, artifactId).changes === 1;
+  }
+
+  deleteInlineArtifactsForSession(sessionId: string): BrainInlineArtifact[] {
+    return this.db.transaction(() => {
+      const artifacts = this.getInlineArtifacts(sessionId);
+      this.db.prepare('DELETE FROM brain_inline_artifacts WHERE session_id = ?').run(sessionId);
+      return artifacts;
+    })();
+  }
+
+  /** Atomically claim every due row before publishing expiry tombstones. A second status read or timer tick
+   * therefore sees nothing and cannot fan out duplicate close events. */
+  takeExpiredInlineArtifacts(now: number): BrainInlineArtifact[] {
+    return this.db.transaction(() => {
+      const rows = this.db.prepare(`SELECT session_id, plugin, artifact_id, tool_call_id, token_hash, payload, expires_at
+        FROM brain_inline_artifacts WHERE expires_at <= ? ORDER BY expires_at ASC, rowid ASC`)
+        .all(now) as { session_id: string; plugin: string; artifact_id: string; tool_call_id: string; token_hash: string; payload: string; expires_at: number }[];
+      this.db.prepare('DELETE FROM brain_inline_artifacts WHERE expires_at <= ?').run(now);
+      return rows.flatMap((row) => {
+        const parsed = this.inlineArtifactRow(row.session_id, row.plugin, row.artifact_id, row);
+        return parsed ? [parsed.artifact] : [];
+      });
+    })();
+  }
+
+  nextInlineArtifactExpiry(): number | undefined {
+    const row = this.db.prepare('SELECT MIN(expires_at) AS expires_at FROM brain_inline_artifacts')
+      .get() as { expires_at: number | null };
+    return row.expires_at ?? undefined;
+  }
+
+  private inlineArtifactRow(
+    sessionId: string,
+    plugin: string,
+    artifactId: string,
+    row: { tool_call_id: string; token_hash: string; payload: string; expires_at: number },
+  ): StoredInlineArtifact | undefined {
+    try {
+      const artifact = JSON.parse(row.payload) as BrainInlineArtifact;
+      if (!artifact || artifact.status !== 'open' || artifact.id !== artifactId || artifact.plugin !== plugin
+        || artifact.sessionId !== sessionId || artifact.toolCallId !== row.tool_call_id) return undefined;
+      return { artifact, tokenHash: row.token_hash, expiresAtMs: row.expires_at };
+    } catch { return undefined; }
+  }
+
   /** Stamp this daemon boot's identity onto the delegation store, so a `running` sub-agent row records the
    *  boot that owns it and a later boot can tell a restart orphan from live work — see
    *  {@link BrainDelegationStore.setBootId}. Called once at daemon start. */
@@ -1359,6 +1449,7 @@ export class BrainStore {
       this.db.prepare('UPDATE brain_sessions SET parent_session_id = NULL WHERE parent_session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_goals WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_cards WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_inline_artifacts WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_session_events WHERE session_id = ?').run(id);
       // Only as the ORIGIN: a workflow outlives any one of its node children (getWorkflowRuns simply
       // stops resolving that node's drill-in), so deleting a node session must not take the DAG with it.
@@ -1411,6 +1502,7 @@ export class BrainStore {
       this.db.prepare('DELETE FROM brain_subagent_runs WHERE parent_session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_workflows WHERE parent_session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_cards WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_inline_artifacts WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_session_events WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_tool_result_spills WHERE session_id = ?').run(id);
       this.providerRequests.clearSession(id);
@@ -1477,6 +1569,8 @@ export class BrainStore {
       this.db.prepare('UPDATE brain_tool_result_spills SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_goals SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_cards SET session_id = ? WHERE session_id = ?').run(newId, oldId);
+      this.db.prepare("UPDATE brain_inline_artifacts SET session_id = ?, payload = json_set(payload, '$.sessionId', ?) WHERE session_id = ?")
+        .run(newId, newId, oldId);
       this.db.prepare('UPDATE brain_session_events SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       // No JSON surgery for the node session ids inside `state`: only a session addressed by a
       // deterministic channel id is ever re-keyed, and node children run on single-use uuid channel ids,
@@ -1590,6 +1684,7 @@ export class BrainStore {
       // holding their conversation content behind — keyed to session ids that no longer exist.
       this.db.prepare('DELETE FROM brain_workflows WHERE parent_session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_cards WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
+      this.db.prepare('DELETE FROM brain_inline_artifacts WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_session_events WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_request_session_summary WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_provider_requests WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);

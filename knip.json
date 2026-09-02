@@ -81,6 +81,8 @@
     "botframework-connector",
     "grammy",
     "baileys",
-    "qrcode"
+    "qrcode",
+    "puppeteer-core",
+    "proxy-chain"
   ]
 }

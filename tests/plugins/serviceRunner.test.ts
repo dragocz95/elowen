@@ -124,6 +124,25 @@ describe('plugin lifecycle contributions + PluginServiceRunner', () => {
     expect(order).toEqual(['stop-stops-first', 'stop-refuses', 'start-stops-first']);
   });
 
+  it('shutdown stops every service newest-first without restarting a failing critical sibling', async () => {
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('demo', {}, noopLog);
+    const order: string[] = [];
+    ctx.registerService({
+      name: 'critical', criticalStop: true,
+      start() { order.push('start-critical'); },
+      stop() { order.push('stop-critical'); throw new Error('broken shutdown'); },
+    });
+    ctx.registerService({ name: 'ordinary', start() { order.push('start-ordinary'); }, stop() { order.push('stop-ordinary'); } });
+    const runner = new PluginServiceRunner(() => Promise.resolve(reg));
+    await runner.startAll();
+    order.length = 0;
+    await expect(runner.shutdownAll()).resolves.toBeUndefined();
+    expect(order).toEqual(['stop-ordinary', 'stop-critical']);
+    await runner.shutdownAll();
+    expect(order).toEqual(['stop-ordinary', 'stop-critical']);
+  });
+
   it('registerService refuses a malformed contribution', () => {
     const reg = new PluginRegistry();
     const warn = vi.fn();

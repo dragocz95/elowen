@@ -1,7 +1,7 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ZodTypeAny } from 'zod';
 import type { SubagentCompletionEmitter, SubagentEmitter, TurnIdentity, TurnModel, WorkflowCompletionEmitter, WorkflowEmitter } from './policyContext.js';
-import type { AskAnswer, AskQuestion, BrainCard, WorkflowCompletion, WorkflowUpdate, WorkflowWorkspaceRef } from '../brain/events.js';
+import type { AskAnswer, AskQuestion, BrainCard, BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate, WorkflowCompletion, WorkflowUpdate, WorkflowWorkspaceRef } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface } from '../brain/slashCommands.js';
@@ -1245,6 +1245,15 @@ export interface NotificationDestinationProvider {
   list(): NotificationDestination[] | Promise<NotificationDestination[]>;
 }
 
+/** Serializable authority for one open inline artifact. The token is opaque plugin metadata: core
+ * verifies it together with the host-stamped plugin, session and artifact id on every later mutation. */
+export interface PluginChatArtifactRef {
+  version: 1;
+  sessionId: string;
+  artifactId: string;
+  token: string;
+}
+
 /** What a plugin's `register(ctx)` receives. Every `register*` call feeds the shared PluginRegistry. */
 export interface PluginContext {
   /** Contribute a tool. `ownerUserId` scopes it to ONE Elowen account: it is then composed only into
@@ -1564,6 +1573,15 @@ export interface PluginContext {
    *  above the status bar) — a non-pinned card won't surface there. No-op outside an interactive prompt
    *  turn (cron/worker sessions wire no emitter). */
   emitCard(card: BrainCard): void;
+  /** Inline artifacts live beside the durable tool segment named by `toolCallId`, not in the out-of-band
+   * BrainCard panel. `open` is valid only inside a prompt tool execution; update/close accept the opaque,
+   * serializable ref later from API routes, cleanup jobs or boot reconciliation. Core stamps this plugin's
+   * name, authorizes every ref mutation and enforces `expiresAt` independently of plugin liveness. */
+  chatArtifacts: {
+    open(toolCallId: string, artifact: PluginChatArtifact): PluginChatArtifactRef;
+    update(ref: PluginChatArtifactRef, update: PluginChatArtifactUpdate): BrainInlineArtifact;
+    close(ref: PluginChatArtifactRef): void;
+  };
   /** The daemon-level background-process registry (`Bash(background:true)` children). The terminal
    *  plugin registers a handle here per spawn so the CLI + web can list/read/kill them from a panel next
    *  to the todos, without going through an agent turn. Process-global (not turn-scoped) — see

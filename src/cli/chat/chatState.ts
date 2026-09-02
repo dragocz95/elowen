@@ -1,4 +1,5 @@
-import type { BrainCard } from '../../brain/events.js';
+import type { BrainCard, BrainInlineArtifact } from '../../brain/events.js';
+import { InlineArtifactCollection } from './inlineArtifacts.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { TranscriptModel } from '../../brain/transcriptModel.js';
 import type { BrainRateLimits, BrainStatus, BrainWorkMode, GoalView, McpServerView, PublicBrand } from './brainClient.js';
@@ -26,6 +27,7 @@ export interface ChatStateSeed {
   yoloOn?: boolean;
   workMode?: BrainWorkMode;
   cards?: BrainCard[];
+  artifacts?: BrainInlineArtifact[];
   queued?: { id: string; text: string }[];
   processes?: ProcessInfo[];
   goal?: GoalView | null;
@@ -45,7 +47,7 @@ export class ChatState {
   /** Focused child state comes only from that child's stream. Identity and persisted cards hydrate from
    *  its atomic snapshot; live usage/cards then stay current on the same lane. Parent values must never be
    *  used as fallbacks because a delegated session may select a different provider and model. */
-  childView: { sessionId: string; model: string; provider: string; providerLabel: string; usageProvider: string; transcript: TranscriptModel; processes: ProcessInfo[]; loading: boolean; usage: BrainStatus['usage']; cards: BrainCard[] } | null = null;
+  childView: { sessionId: string; model: string; provider: string; providerLabel: string; usageProvider: string; transcript: TranscriptModel; processes: ProcessInfo[]; loading: boolean; usage: BrainStatus['usage']; cards: BrainCard[]; artifacts: InlineArtifactCollection } | null = null;
   childAc: AbortController | null = null;
   /** The ExitPlanMode call whose decision has already been put to the user, so a replayed terminal `idle`
    *  cannot ask again. Lives on the state rather than the stream because it must outlive a stream
@@ -80,6 +82,7 @@ export class ChatState {
   rateLimitsByProvider: Record<string, BrainRateLimits> = {};
   workMode: BrainWorkMode;
   cards: BrainCard[];
+  readonly artifacts: InlineArtifactCollection;
   queued: { id: string; text: string }[];
   processes: ProcessInfo[];
   private currentGoal: GoalView | null;
@@ -125,6 +128,7 @@ export class ChatState {
     this.yoloOn = seed.yoloOn ?? false;
     this.workMode = seed.workMode ?? 'build';
     this.cards = seed.cards ?? [];
+    this.artifacts = new InlineArtifactCollection(seed.artifacts ?? []);
     this.queued = seed.queued ?? [];
     this.processes = seed.processes ?? [];
     this.currentGoal = seed.goal ?? null;

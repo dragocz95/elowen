@@ -178,6 +178,8 @@ export interface BrainStreamSnapshotFrame {
   session?: { model: string; provider: string; providerLabel?: string; usageProvider?: string };
   /** Persisted display cards for reconnect and read-only drill-in hydration. */
   cards?: BrainCard[];
+  /** Persisted open inline artifacts, folded with any artifact lifecycle events in the replay tail. */
+  artifacts?: BrainInlineArtifact[];
   /** The daemon's authoritative control state at snapshot time. The tail is transient — cleared at settle,
    *  bounded, and terminal-less across an internal retry — so this, not the tail's shape, decides whether a
    *  turn is running and whether a question is parked. Both fields are explicit, so hydrating from this
@@ -212,6 +214,35 @@ interface BrainCardItem {
 }
 export interface BrainCard { id: string; title?: string; items?: BrainCardItem[]; body?: string; pinned?: boolean }
 
+/** JSON payload carried by a plugin-owned inline chat artifact. */
+type BrainInlineArtifactData = null | boolean | number | string | BrainInlineArtifactData[] | { [key: string]: BrainInlineArtifactData };
+interface BrainInlineArtifactLiveMedia { transport: 'sse'; path: string }
+/** Durable open artifact snapshot hydrated from status/snapshot responses. */
+export interface BrainInlineArtifact {
+  id: string;
+  plugin: string;
+  sessionId: string;
+  toolCallId: string;
+  view: string;
+  fallback: string;
+  data?: BrainInlineArtifactData;
+  media?: BrainInlineArtifactLiveMedia;
+  expiresAt: string;
+  status: 'open';
+  createdAt: string;
+  updatedAt: string;
+}
+/** Live close/expiry tombstone; provider state removes the matching open artifact immediately. */
+interface BrainInlineArtifactClosed {
+  id: string;
+  plugin: string;
+  sessionId: string;
+  toolCallId: string;
+  status: 'closed';
+  reason: 'closed' | 'expired';
+}
+export type BrainInlineArtifactEvent = BrainInlineArtifact | BrainInlineArtifactClosed;
+
 /** One background shell process (terminal plugin's `Bash(background:true)`). The transcript panel next to
  *  the todos lists the ones the open conversation owns; the telemetry rail lists those plus, in a separate
  *  section, everything it does not. Both read output for the modal and kill on demand. `sessionId` is the
@@ -239,7 +270,7 @@ export interface McpServerStatus { name: string; status: string }
  *  display name — render `providerLabel || provider`. `usageProvider` is the internal pi provider that
  *  keys GET /brain/rate-limits/all and is never shown; PI's `elowen-<id>` registry namespace lives only
  *  in that field. Both are optional for rolling compatibility with an older daemon. */
-export interface BrainStatus { running: boolean; sessionId: string | null; model: string; provider?: string; providerLabel?: string; usageProvider?: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; workMode?: BrainWorkMode; pendingPlan?: BrainPendingPlan | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; yolo?: boolean; project?: BrainProject; lspEnabled?: boolean; mcp?: McpServerStatus[] | null }
+export interface BrainStatus { running: boolean; sessionId: string | null; model: string; provider?: string; providerLabel?: string; usageProvider?: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; workMode?: BrainWorkMode; pendingPlan?: BrainPendingPlan | null; cards?: BrainCard[]; artifacts?: BrainInlineArtifact[]; queued?: { id: string; text: string }[]; yolo?: boolean; project?: BrainProject; lspEnabled?: boolean; mcp?: McpServerStatus[] | null }
 /** One subscription rate-limit window of a connected OAuth account (mirrors the daemon's providerUsage). */
 interface UsageWindow { usedPercent: number; windowMinutes: number | null; resetsAt: number | null }
 /** A connected OAuth account's usage rail: its windows (ordered shortest-first) plus plan/freshness meta. */

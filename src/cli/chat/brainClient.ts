@@ -3,7 +3,7 @@ import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { stripControlChars } from '../../shared/text.js';
 import { parseMascotArt } from './mascotArt.js';
-import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainGoalState } from '../../brain/events.js';
+import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainGoalState, BrainInlineArtifact } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import type { SlashCommandDef } from '../../brain/slashCommands.js';
@@ -14,6 +14,7 @@ import {
 } from '../../brain/session/liveEventReplay.js';
 
 export type BrainStreamFrame = BrainEvent | BrainStreamSnapshot;
+export interface ArtifactMediaFrame { data: string; mimeType: 'image/jpeg' | 'image/png' }
 
 /** The daemon writes SSE keep-alive bytes every 30 s. Two missed keep-alives plus headroom means the
  * connection is half-open: abort only this fetch so the stable bound stream can reconnect and hydrate. */
@@ -80,7 +81,7 @@ export interface BrainRateLimits {
  *  display name — render `providerLabel || provider`, never anything else. `usageProvider` is the internal
  *  pi provider that keys GET /brain/rate-limits/all and is not an identity to show. Both new fields are
  *  optional for rolling compatibility with an older daemon during a local upgrade. */
-export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; provider: string; providerLabel?: string; usageProvider?: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
+export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; provider: string; providerLabel?: string; usageProvider?: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; artifacts?: BrainInlineArtifact[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
 /**
  * The subscription-rail key for a status or snapshot frame.
  *
@@ -794,6 +795,54 @@ export class BrainClient {
     });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/subagent/send`);
+  }
+
+  /** Stream transient media from a host-validated artifact path. The bearer token is reused only for a
+   * root-relative path on this daemon, so an artifact payload can never redirect credentials elsewhere.
+   * Only `event: frame` JPEG/PNG payloads reach the renderer; status/action events stay on the ordinary
+   * inline_artifact channel where they update the durable textual fallback. */
+  async streamArtifactMedia(
+    path: string,
+    onFrame: (frame: ArtifactMediaFrame) => void,
+    signal: AbortSignal,
+    backoffMs = 1000,
+  ): Promise<void> {
+    if (!path.startsWith('/') || path.startsWith('//')) throw new Error('artifact media path must be root-relative');
+    while (!signal.aborted) {
+      const attempt = new AbortController();
+      const abortAttempt = (): void => attempt.abort(signal.reason);
+      signal.addEventListener('abort', abortAttempt, { once: true });
+      if (signal.aborted) abortAttempt();
+      try {
+        const res = await this.f(`${this.o.base}${path}`, { headers: this.headers(), signal: attempt.signal });
+        if (res.status === 401) throw new Unauthorized();
+        if (!res.ok || !res.body) throw new Error(`elowen artifact ${res.status} on ${path}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parsed = parseSse(buffer);
+          buffer = parsed.rest;
+          for (const frame of parsed.frames) {
+            if (frame.event !== 'frame') continue;
+            try {
+              const payload = JSON.parse(frame.data) as { data?: unknown; mimeType?: unknown };
+              if (typeof payload.data !== 'string' || !payload.data) continue;
+              if (payload.mimeType !== 'image/jpeg' && payload.mimeType !== 'image/png') continue;
+              onFrame({ data: payload.data, mimeType: payload.mimeType });
+            } catch { /* malformed plugin frame */ }
+          }
+        }
+      } catch (error) {
+        if (error instanceof Unauthorized || signal.aborted) throw error;
+      } finally {
+        signal.removeEventListener('abort', abortAttempt);
+      }
+      if (!signal.aborted) await reconnectDelay(backoffMs, signal);
+    }
   }
 
   /** Open the SSE stream and deliver each BrainEvent to `onEvent` until `signal` aborts. Follows the

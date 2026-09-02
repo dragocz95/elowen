@@ -10,7 +10,7 @@ import type { ComponentType } from 'react';
 /** See index.js — bump on incompatible changes to `ElowenUiRuntime`. Deliberately a LITERAL type:
  *  the web app re-declares the value and annotates it with `typeof PLUGIN_UI_API_VERSION`, so a kit
  *  bump that forgets the host fails the web typecheck instead of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 12;
+export declare const PLUGIN_UI_API_VERSION: 13;
 
 /** Public props of `ElowenUiRuntime.components.Slider`. */
 export interface SliderProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'type'> {
@@ -187,6 +187,37 @@ export interface PluginUserPanelProps {
   surface: 'user';
 }
 
+/** JSON payload published with a plugin-owned inline chat artifact. */
+export type PluginChatArtifactData = null | boolean | number | string | PluginChatArtifactData[] | { [key: string]: PluginChatArtifactData };
+
+/** An optional authenticated same-plugin SSE source the artifact component may consume. */
+export interface PluginChatArtifactLiveMedia {
+  transport: 'sse';
+  path: string;
+}
+
+/** The normalized open artifact snapshot handed to a registered chat artifact component. */
+export interface PluginChatArtifact {
+  id: string;
+  plugin: string;
+  sessionId: string;
+  toolCallId: string;
+  view: string;
+  fallback: string;
+  data?: PluginChatArtifactData;
+  media?: PluginChatArtifactLiveMedia;
+  expiresAt: string;
+  status: 'open';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Props for a plugin component rendered inline after its artifact's matching tool segment. */
+export interface PluginChatArtifactProps {
+  plugin: string;
+  artifact: PluginChatArtifact;
+}
+
 /** What a bundle hands to window.__elowenRegisterPluginUi. Routes are `/`-joined segment patterns
  *  (`''` = the root page, `detail/:id` captures params). Contextual component maps are keyed by their
  *  matching manifest panel ids and mount only in the corresponding host surface. */
@@ -202,6 +233,8 @@ export interface PluginUiRegistration {
   accountChip?: Record<string, ComponentType<PluginPageProps>>;
   user?: Record<string, ComponentType<PluginUserPanelProps>>;
   project?: Record<string, ComponentType<PluginProjectPanelProps>>;
+  /** Inline chat views keyed by the artifact `view` selected by the publishing plugin. */
+  chatArtifacts?: Record<string, ComponentType<PluginChatArtifactProps>>;
   settings?: Record<string, ComponentType<PluginPageProps>>;
   /** Ids of `settings` sections that draw their OWN page frame — the shell, the masthead and the save
    *  indicator — and therefore want none from the host.

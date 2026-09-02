@@ -13,6 +13,7 @@ import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
 import type { Flows } from './flows.js';
 import { HydrationNoticeOwner } from './hydrationNoticeOwner.js';
+import { InlineArtifactCollection } from './inlineArtifacts.js';
 
 const historyNotice = (scope: 'conversation' | 'sub-agent', error: unknown): string => {
   if (error instanceof SnapshotTimeoutError) return color.error(`${scope} transcript history timed out`);
@@ -160,6 +161,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           invalidateAsyncState();
           client.rebind(event.sessionId);
           pendingSessionReset = event.sessionId;
+          rt.artifacts.replace([]);
           rt.setGoal(null);
           rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
           void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:session-rollover'); });
@@ -193,6 +195,11 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         if (event.type === 'step') onTurnActive();
         if (event.type === 'step' && event.usage) rt.usage = event.usage;
         if (event.type === 'card') rt.cards = upsertCard(rt.cards, event.card);
+        if (event.type === 'inline_artifact') {
+          rt.artifacts.apply(event.artifact);
+          render('stream:inline_artifact');
+          return;
+        }
         if (event.type === 'session-event') {
           void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:session-event'); });
         }
@@ -256,11 +263,13 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           else if (snapshot.truncated) truncatedSnapshotPending = true;
           if (snapshot.sessionId && snapshot.sessionId !== streamSessionAtOpen) {
             invalidateAsyncState();
+            rt.artifacts.replace([]);
             rt.setGoal(null);
             rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
             void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:snapshot-session'); });
           }
           rt.transcript.replaceHistory(snapshot.history);
+          if (snapshot.artifacts) rt.artifacts.replace(snapshot.artifacts);
           for (const event of snapshot.events) onEvent(event, true, true);
           // The bounded replay can lose its terminal idle, but control is taken atomically with history and
           // the journal. Synthesize only that missed control edge: it clears stale Stop state and retires a
@@ -306,7 +315,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       const ac = new AbortController();
       rt.childAc = ac;
       const transcript = new TranscriptModel();
-      rt.childView = { sessionId, model: '', provider: '', providerLabel: '', usageProvider: '', transcript, processes: [], loading: true, usage: null, cards: [] };
+      rt.childView = { sessionId, model: '', provider: '', providerLabel: '', usageProvider: '', transcript, processes: [], loading: true, usage: null, cards: [], artifacts: new InlineArtifactCollection() };
       render('child:opening');
       let processRevision = 0;
 
@@ -351,10 +360,10 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         }
         const repairAtTerminal = truncatedSnapshotPending && (event.type === 'idle' || event.type === 'error');
         if (event.type === 'process') { processRevision += 1; rt.childView.processes = event.processes; }
-        // A card is panel state, not transcript state, and every agent emits its checklist under the same
-        // `todos` id — merging it into the parent's list is what painted the parent's checklist under a
-        // child's transcript.
+        // Cards and inline artifacts are session sidecars, not transcript turns. Keep both on the child lane
+        // so a drilled-in agent can never inherit the parent's panel or media state.
         else if (event.type === 'card') { rt.childView.cards = upsertCard(rt.childView.cards, event.card); }
+        else if (event.type === 'inline_artifact') { rt.childView.artifacts.apply(event.artifact); }
         else {
           // The child's lane already carries its own context/cost on every step and idle — the parent lane
           // harvests the identical field. Taking it here is what lets the panel follow the focused agent;
@@ -429,6 +438,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
             rt.childView!.usageProvider = usageProviderOf(snapshot.session);
           }
           rt.childView!.cards = snapshot.cards ?? [];
+          if (snapshot.artifacts) rt.childView!.artifacts.replace(snapshot.artifacts);
           rt.childView!.transcript.replaceHistory(snapshot.history);
           rt.childView!.loading = false;
           for (const event of snapshot.events) fold(event, true);

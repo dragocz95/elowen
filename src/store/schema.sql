@@ -487,6 +487,26 @@ CREATE TABLE IF NOT EXISTS brain_cards (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (session_id, card_id)
 );
+-- Inline plugin artifacts are transcript sidecars anchored to one durable tool call. They deliberately do
+-- not share brain_cards: cards are out-of-band checklist/status panels with different ordering and lifecycle.
+-- The raw authority token is never stored; only its SHA-256 hash is retained for update/close verification.
+CREATE TABLE IF NOT EXISTS brain_inline_artifacts (
+  session_id TEXT NOT NULL,
+  -- Immutable session scope carried by the serialized ref. `session_id` may be re-keyed when core archives
+  -- or binds a conversation; retaining the opening scope keeps the plugin's stored ref valid across that move.
+  ref_session_id TEXT NOT NULL,
+  plugin TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  tool_call_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (session_id, plugin, artifact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_brain_inline_artifacts_expiry ON brain_inline_artifacts(expires_at);
+CREATE INDEX IF NOT EXISTS idx_brain_inline_artifacts_ref ON brain_inline_artifacts(ref_session_id, plugin, artifact_id);
 -- Visible, display-only markers of owner-driven session-state changes (model switch, work-mode switch,
 -- rename, reasoning change). Rendered as a subtle system line INTERLEAVED into the transcript by time,
 -- and replayed on reconnect — but deliberately NOT part of brain_messages, so they never enter the

@@ -8,6 +8,7 @@ import { padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 import { TurnRenderer } from './turnRenderer.js';
 import type { TranscriptRow } from './turnRenderer.js';
 import type { ComposeLocale } from './composeLabels.js';
+import type { InlineArtifactCollection } from './inlineArtifacts.js';
 
 interface TurnLayoutEntry {
   turn: ChatTurn | null;
@@ -26,6 +27,8 @@ const SCROLLBAR_DRAG_INDEX_MS = 16;
 const DIRECT_SCROLL_JUMP_LINES = 1_024;
 /** Soft bound: one exceptionally tall visible turn may exceed it, but off-screen rows are evicted. */
 export const CHAT_VIEWPORT_ROW_CACHE_LIMIT = 2_048;
+
+const isTerminalImageLine = (line: string): boolean => line.includes('\x1b_G') || line.includes('\x1b]1337;File=');
 
 export interface ChatViewportState {
   transcript: TranscriptRead;
@@ -47,6 +50,10 @@ export interface ChatViewportState {
   showThoughts?: boolean;
   /** Locale for the localized composing-tool action label. Defaults to English. */
   locale?: ComposeLocale;
+  /** Durable artifact sidecar plus its terminal projection. Kept outside TranscriptModel so media frames do
+   * not enter the conversation history or its long-history change journal. */
+  inlineArtifacts?: InlineArtifactCollection;
+  renderInlineArtifacts?: (toolCallId: string, width: number) => string[];
 }
 
 export interface ChatViewportMetrics {
@@ -108,6 +115,8 @@ export class ChatViewport implements Component {
   private layoutTranscript: TranscriptRead | null = null;
   private layoutConversationKey: string | null = null;
   private layoutRevision = -1;
+  private layoutArtifacts: InlineArtifactCollection | null = null;
+  private layoutArtifactRevision = -1;
   private knownStart = 0;
   private suffixReconnect: { boundary: number; start: number } | null = null;
   private heightIndex = new DynamicHeightIndex();
@@ -149,6 +158,15 @@ export class ChatViewport implements Component {
   }
 
   invalidate(): void { /* computed from current state */ }
+
+  /** A media frame changes only the turn containing its anchored tool call. Re-render that exact cached turn
+   * instead of resetting or scanning the history; a cold/off-screen turn will naturally pick the frame up
+   * when it is first materialized. */
+  invalidateToolCall(toolCallId: string): void {
+    const index = this.state.transcript.toolTurnIndex(toolCallId);
+    if (index === undefined) return;
+    this.invalidateExternalTurn(index);
+  }
 
   /** True only when totalLines is exact for every turn at the current layout context. */
   private isHistoryIndexComplete(): boolean {
@@ -375,7 +393,7 @@ export class ChatViewport implements Component {
     const visible = this.collectWindow(start, start + height);
     while (visible.length < height) visible.push({ line: '' });
     this.lastRows = visible.map((r) => r.line);
-    this.lastPlainRows = this.lastRows.map((line) => terminalPlainText(line));
+    this.lastPlainRows = this.lastRows.map((line) => isTerminalImageLine(line) ? '' : terminalPlainText(line));
     this.lastTotal = totalRows;
     const scrollMetrics = this.visualScrollMetrics(height);
     const rendered = visible.map((entry, i) => {
@@ -384,9 +402,12 @@ export class ChatViewport implements Component {
       }
       if (entry.kind === 'subagent' && entry.key) this.subagentRows.set(i + 1, entry.key);
       if (entry.kind === 'workflow' && entry.key) this.workflowRows.set(i + 1, entry.key);
-      const content = i === 0 && this.scrollOffset > 0
+      const content = i === 0 && this.scrollOffset > 0 && !isTerminalImageLine(entry.line)
         ? this.historyChip(entry.line, chatWidth - 2)
         : entry.line;
+      // Image protocol rows are cursor-control payloads, not printable text. Padding or appending the
+      // scrollbar would write characters at the image placement and can corrupt/overpaint it.
+      if (isTerminalImageLine(content)) return content;
       let cell = padAnsi(content, chatWidth - 2);
       // Drag-to-copy highlight: reverse-video the selected rows; re-arm after every SGR reset inside
       // the line, otherwise the first themed span would cancel the inversion mid-row.
@@ -414,16 +435,18 @@ export class ChatViewport implements Component {
     const theme = chatTheme();
     const showThoughts = this.state.showThoughts !== false;
     const transcript = this.state.transcript;
+    const artifacts = this.state.inlineArtifacts ?? null;
     const conversationKey = this.state.conversationKey ?? '';
     const transcriptChanged = this.layoutTranscript !== transcript;
+    const artifactsChanged = this.layoutArtifacts !== artifacts;
     const conversationChanged = this.layoutConversationKey !== null
       && this.layoutConversationKey !== conversationKey;
     const contextChanged = this.layoutWidth !== width
       || this.layoutTheme !== theme
       || this.layoutShowsThoughts !== showThoughts;
 
-    if (conversationChanged || transcriptChanged || contextChanged) {
-      const anchor = !conversationChanged && !transcriptChanged && contextChanged
+    if (conversationChanged || transcriptChanged || artifactsChanged || contextChanged) {
+      const anchor = !conversationChanged && !transcriptChanged && (contextChanged || artifactsChanged)
         ? this.captureViewportAnchor(true)
         : null;
       if (conversationChanged) {
@@ -440,8 +463,10 @@ export class ChatViewport implements Component {
       }
       this.resetLayout(transcript.turnCount, transcriptChanged || conversationChanged, anchor);
       this.layoutTranscript = transcript;
+      this.layoutArtifacts = artifacts;
       this.layoutConversationKey = conversationKey;
       this.layoutRevision = transcript.revision;
+      this.layoutArtifactRevision = artifacts?.revision ?? -1;
       this.layoutWidth = width;
       this.layoutTheme = theme;
       this.layoutShowsThoughts = showThoughts;
@@ -471,6 +496,23 @@ export class ChatViewport implements Component {
       }
     }
     this.layoutRevision = change.revision;
+
+    if (artifacts) {
+      const artifactChange = artifacts.changesSince(this.layoutArtifactRevision);
+      if (artifactChange.kind === 'full') {
+        this.resetLayout(transcript.turnCount, false, this.captureViewportAnchor(true));
+      } else if (artifactChange.kind === 'tools') {
+        const dirtyTurns = new Set<number>();
+        for (const toolCallId of artifactChange.toolCallIds) {
+          const index = transcript.toolTurnIndex(toolCallId);
+          if (index !== undefined) dirtyTurns.add(index);
+        }
+        for (const index of dirtyTurns) this.invalidateExternalTurn(index);
+      }
+      this.layoutArtifactRevision = artifactChange.revision;
+    } else {
+      this.layoutArtifactRevision = -1;
+    }
 
     // The live tail can mutate its elapsed label/output between object replacements. It alone is volatile;
     // settled entries keep both exact heights and any retained rows.
@@ -697,6 +739,14 @@ export class ChatViewport implements Component {
     this.refreshMetrics();
   }
 
+  private invalidateExternalTurn(index: number): void {
+    if (index < 0 || index >= this.layout.length || this.currentContentWidth <= 0) return;
+    const entry = this.layout[index];
+    if (!entry || entry.height == null) return;
+    this.clearSelection();
+    this.renderAndRecord(index, entry.rows != null);
+  }
+
   private applySuffixReconnect(): void {
     if (this.suffixReconnect && this.knownStart === this.suffixReconnect.boundary) {
       this.knownStart = this.suffixReconnect.start;
@@ -782,6 +832,7 @@ export class ChatViewport implements Component {
       composingMarkerReady: this.state.composingMarkerReady === true,
       spinnerFrame: this.state.spinnerFrame ?? 0,
       locale: this.state.locale ?? 'en',
+      renderInlineArtifacts: this.state.renderInlineArtifacts,
       expandedThoughts: this.expandedThoughts,
       expandedTools: this.expandedTools,
     });

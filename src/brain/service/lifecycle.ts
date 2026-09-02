@@ -11,6 +11,7 @@ import { catalogModelVision } from '../modelCapabilities.js';
 import { defaultUserSessionId, freshUserSessionId, isNonUserSession, isOwnedUserSession, isChannelSession, channelIdOf } from '../sessionId.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { CardRegistry } from '../cards.js';
+import type { InlineArtifactRegistry } from '../inlineArtifacts.js';
 import type { ClientAttachments } from './attachments.js';
 import type { GoalLoopService } from './goalLoop.js';
 import { clientDir, gitProjectRoot } from './workDir.js';
@@ -59,6 +60,9 @@ interface LifecycleDeps {
   /** The conversation's display cards (todo checklist) — `/clear` empties the panel with the history it
    *  belongs to, and the cache has to be evicted along with the rows it mirrors. */
   cards: Pick<CardRegistry, 'forSession' | 'clearSession'>;
+  /** Inline artifacts belong to the transcript being cleared and must emit removal before the live session
+   * is replaced, unlike ordinary live-session disposal where they intentionally survive. */
+  artifacts?: Pick<InlineArtifactRegistry, 'closeSession'>;
   /** Session composition (LiveSessionSpawner.spawn) — the single spawn source. */
   spawn(opts: SpawnOpts): Promise<LiveBrain>;
   policy?: (userId: number) => Policy;
@@ -509,6 +513,7 @@ export class ConversationLifecycle {
       if (blocked) throw new Error(blocked);
       const previous = this.d.sessions.get(sessionId);
       const clearedCardIds = this.d.cards.forSession(sessionId).map((c) => c.id);
+      this.d.artifacts?.closeSession(sessionId);
       this.d.store.clearSessionHistory(sessionId);
       this.d.cards.clearSession(sessionId); // evict the write-through cache over the rows just deleted
       const storedModel = this.d.store.getSession(sessionId)?.model ?? '';

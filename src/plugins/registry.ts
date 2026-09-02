@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate } from '../brain/events.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -171,6 +172,13 @@ export interface PluginHostWiring {
   };
   /** Trusted canonical browser URL from deployment metadata; null means this install has none configured. */
   publicWebUrl?: () => string | null;
+  /** Core-owned inline artifact lifecycle. This is a direct PluginContext capability, not a generic
+   * ctx.host read: every enabled plugin may publish its own bounded chat view. */
+  chatArtifacts?: {
+    open(plugin: string, sessionId: string, toolCallId: string, artifact: PluginChatArtifact): PluginChatArtifactRef;
+    update(plugin: string, ref: PluginChatArtifactRef, update: PluginChatArtifactUpdate): BrainInlineArtifact;
+    close(plugin: string, ref: PluginChatArtifactRef): void;
+  };
 }
 
 export class PluginRegistry {
@@ -1318,6 +1326,22 @@ export class PluginRegistry {
       // Fire-and-forget display card into the current conversation (no-op outside an interactive turn —
       // e.g. cron/worker sessions wire no emitter). Reads the emitter off the same ALS as askUser.
       emitCard: (card) => { currentCardEmitter()?.(card); },
+      chatArtifacts: {
+        open: (toolCallId, artifact) => {
+          const sessionId = currentSessionId();
+          if (!sessionId) throw new Error('chatArtifacts.open is only available inside a conversation tool call');
+          if (!host?.chatArtifacts) throw new Error('inline chat artifacts are not available in this process');
+          return host.chatArtifacts.open(name, sessionId, toolCallId, artifact);
+        },
+        update: (ref, update) => {
+          if (!host?.chatArtifacts) throw new Error('inline chat artifacts are not available in this process');
+          return host.chatArtifacts.update(name, ref, update);
+        },
+        close: (ref) => {
+          if (!host?.chatArtifacts) throw new Error('inline chat artifacts are not available in this process');
+          host.chatArtifacts.close(name, ref);
+        },
+      },
       processes: processRegistry,
       subagentEmitter: currentSubagentEmitter,
       subagentCompletionEmitter: currentSubagentCompletionEmitter,

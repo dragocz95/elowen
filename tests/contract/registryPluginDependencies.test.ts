@@ -20,6 +20,8 @@ const REGISTRY_PLUGIN_DEPENDENCIES: Record<string, string> = {
   grammy: 'telegram — the Bot API client the adapter is built on (plugins/telegram/lib/adapter.mjs in the registry)',
   baileys: 'whatsapp — the WhatsApp Web protocol client behind the paired session (plugins/whatsapp/lib/adapter.mjs in the registry)',
   qrcode: 'whatsapp — renders the pairing QR the Settings screen shows (plugins/whatsapp/lib/adapter.mjs in the registry)',
+  'puppeteer-core': 'browser — controls the operator-installed Chrome without downloading a second browser binary',
+  'proxy-chain': 'browser — provides the loopback HTTP/CONNECT proxy substrate for enforced egress policy',
   // Published FROM this repository (packages/plugin-shared) and imported by registry plugins. Installed
   // plugins resolve it through the daemon's node_modules, so it has to stay declared.
   // tests/contract/pluginSharedPackage.test.ts pins its exact version alongside this.

@@ -2,6 +2,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { logger } from '../../shared/logger.js';
 import type { CardRegistry } from '../cards.js';
+import type { InlineArtifactRegistry } from '../inlineArtifacts.js';
 import type { ChannelSessionService } from '../channels.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import { processRegistry } from '../processRegistry.js';
@@ -25,6 +26,7 @@ interface SessionTeardownDeps {
   elicitation: ElicitationRegistry;
   goals: GoalLoopService;
   cards: CardRegistry;
+  artifacts?: Pick<InlineArtifactRegistry, 'closeSession'>;
   channelService: ChannelSessionService;
   lifecycle: ConversationLifecycle;
   idleClock: IdleSessionClock;
@@ -47,6 +49,7 @@ export class SessionTeardownService {
   private readonly elicitation: ElicitationRegistry;
   private readonly goals: GoalLoopService;
   private readonly cards: CardRegistry;
+  private readonly artifacts: Pick<InlineArtifactRegistry, 'closeSession'>;
   private readonly channelService: ChannelSessionService;
   private readonly lifecycle: ConversationLifecycle;
   private readonly idleClock: IdleSessionClock;
@@ -58,6 +61,7 @@ export class SessionTeardownService {
     this.elicitation = deps.elicitation;
     this.goals = deps.goals;
     this.cards = deps.cards;
+    this.artifacts = deps.artifacts ?? { closeSession() {} };
     this.channelService = deps.channelService;
     this.lifecycle = deps.lifecycle;
     this.idleClock = deps.idleClock;
@@ -394,6 +398,7 @@ export class SessionTeardownService {
     this.cancelDelegatedWorkFor(id);
     this.elicitation.cancelForSession(id, 'conversation deleted'); // release a parked turn before dropping its session
     this.goals.cancelGoalContinuation(id);
+    this.artifacts.closeSession(id);
     this.cards.clearSession(id);
     if (isChannelSession(id)) this.sessions.channelDispose(channelIdOf(id));
     else this.sessions.dispose(id);

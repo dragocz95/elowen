@@ -1,4 +1,4 @@
-import type { BrainCard, BrainEvent, BrainGoalState } from '../events.js';
+import type { BrainCard, BrainEvent, BrainGoalState, BrainInlineArtifact } from '../events.js';
 import type { BrainMessageView } from '../messageView.js';
 import type { BrainStreamControl } from '../../shared/wireContract.js';
 
@@ -50,6 +50,8 @@ export interface BrainStreamSnapshot extends LiveEventSnapshot {
   session?: { model: string; provider: string; providerLabel?: string; usageProvider?: string };
   /** Persisted display cards for reconnect/drill-in hydration before live replay events are applied. */
   cards?: BrainCard[];
+  /** Persisted open inline artifacts. Optional for rolling compatibility with an older daemon. */
+  artifacts?: BrainInlineArtifact[];
   /** See {@link BrainStreamControl}. Optional only for rolling compatibility with an older daemon. */
   control?: BrainStreamControl;
   run?: number;
@@ -121,6 +123,9 @@ export function appendReplayBrainEvent(events: BrainEvent[], event: BrainEvent, 
     replace = events.findLastIndex((entry) => entry.type === 'workflow' && entry.id === event.id);
   } else if (event.type === 'card') {
     replace = events.findLastIndex((entry) => entry.type === 'card' && entry.card.id === event.card.id);
+  } else if (event.type === 'inline_artifact') {
+    replace = events.findLastIndex((entry) => entry.type === 'inline_artifact'
+      && entry.artifact.plugin === event.artifact.plugin && entry.artifact.id === event.artifact.id);
   } else if (event.type === 'notice') {
     replace = events.findLastIndex((entry) => entry.type === 'notice' && entry.kind === event.kind);
   } else if (event.type === 'queue' || event.type === 'process' || event.type === 'goal') {
@@ -255,6 +260,9 @@ export class LiveEventReplay {
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'workflow' && entry.event.id === stamped.id);
     } else if (stamped.type === 'card') {
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'card' && entry.event.card.id === stamped.card.id);
+    } else if (stamped.type === 'inline_artifact') {
+      replace = this.entries.findLastIndex((entry) => entry.event.type === 'inline_artifact'
+        && entry.event.artifact.plugin === stamped.artifact.plugin && entry.event.artifact.id === stamped.artifact.id);
     } else if (stamped.type === 'notice') {
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'notice' && entry.event.kind === stamped.kind);
     } else if (stamped.type === 'queue' || stamped.type === 'process' || stamped.type === 'goal') {

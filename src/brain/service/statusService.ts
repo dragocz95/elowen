@@ -7,7 +7,7 @@ import type { BrainMessageView } from '../messageView.js';
 import type { BrainContextBreakdown, BrainPendingPlan, BrainWorkMode } from '../../shared/wireContract.js';
 import { buildContextBreakdown, contextSnapshotOf } from '../contextBreakdown.js';
 import { sessionUsageSnapshot } from '../events.js';
-import type { AskQuestion, BrainCard, BrainEvent, BrainUsage } from '../events.js';
+import type { AskQuestion, BrainCard, BrainEvent, BrainInlineArtifact, BrainUsage } from '../events.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import { queuedWithPending } from '../session/queueMirror.js';
@@ -84,6 +84,7 @@ export interface BrainStatusView {
   workMode: BrainWorkMode;
   pendingPlan: BrainPendingPlan | null;
   cards: BrainCard[];
+  artifacts: BrainInlineArtifact[];
   queued: { id: string; text: string }[];
   yolo: boolean;
   project: BrainProjectView;
@@ -171,6 +172,7 @@ interface StatusServiceDeps {
   attachments: ClientAttachments;
   elicitation: ElicitationRegistry;
   cards: CardRegistry;
+  artifacts?: { forSession(sessionId: string): BrainInlineArtifact[] };
   lifecycle: ConversationLifecycle;
   permissions: PermissionApprovalService;
   config: BrainDeps['config'];
@@ -427,6 +429,9 @@ export class BrainStatusService {
       // CONVERSATION, not the live session: reopening a chat the user closed has no live brain yet, and
       // that is exactly when the todo checklist has to come back rather than show up empty.
       cards: activeId ? this.d.cards.forSession(activeId) : [],
+      // Inline artifacts are a separate transcript sidecar, anchored to durable tool-call ids. The registry
+      // sweeps expired rows before returning, so hydration cannot resurrect stale plugin state.
+      artifacts: activeId ? this.d.artifacts?.forSession(activeId) ?? [] : [],
       // PI's transient pending backlog (steered + follow-up) plus any message waiting under a manual
       // /compact, so a reconnecting/booting client restores its pending chips — kept in step with the live
       // `queue` event mapped from PI's `queue_update` and the compaction-pending publishes.
@@ -599,6 +604,7 @@ export class BrainStatusService {
         usageProvider: live?.provider ?? '',
       },
       cards: this.d.cards.forSession(sessionId),
+      artifacts: this.d.artifacts?.forSession(sessionId) ?? [],
       goal: this.d.store.getGoal(sessionId) ?? null,
       history: anchoredViews,
       control: {

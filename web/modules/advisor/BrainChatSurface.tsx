@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink } from 'lucide-react';
@@ -11,7 +11,7 @@ import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
 import { useToast } from '../../components/ui/Toast';
-import type { BrainCard, BrainMessageFile, BrainMessageImage, BrainWorkMode } from '../../lib/types';
+import type { BrainCard, BrainInlineArtifact, BrainMessageFile, BrainMessageImage, BrainWorkMode } from '../../lib/types';
 import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } from '../../lib/transcript';
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
@@ -52,6 +52,7 @@ import {
 } from '../../lib/chatPresentation';
 import { cardTasks, cardTasksAddressable } from '../../lib/railTasks';
 import { useSessionTasks } from '../../lib/queries';
+import { InlineArtifact } from './InlineArtifact';
 
 const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
 
@@ -632,7 +633,7 @@ function ToolAuthoringHint({ turn, locale }: {
   );
 }
 
-function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
+export function Message({ turn, artifacts, full, showRole, showThoughts, tk }: { turn: ChatTurn; artifacts: BrainInlineArtifact[]; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
   const { t, locale } = useTranslation();
   const { agentName } = useBrand();
   if (turn.role === 'divider') return <ContextDivider full={full} />;
@@ -654,7 +655,12 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
         ? <SharedImage key={i} image={seg.image} caption={seg.caption} full={full} />
         : seg.kind === 'file'
         ? <SharedFile key={i} file={seg.file} caption={seg.caption} full={full} />
-        : <ToolPills key={i} tools={seg.items} full={full} live={turn.streaming && i === turn.segments.length - 1} />))}
+        : <Fragment key={i}>
+            <ToolPills tools={seg.items} full={full} live={turn.streaming && i === turn.segments.length - 1} />
+            {artifacts
+              .filter((artifact) => seg.items.some((tool) => tool.id === artifact.toolCallId))
+              .map((artifact) => <InlineArtifact key={`${artifact.plugin}:${artifact.id}`} artifact={artifact} />)}
+          </Fragment>))}
         {turn.composing ? <ToolAuthoringHint turn={turn} locale={locale as ComposeLocale} /> : null}
       </>;
 
@@ -836,7 +842,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const { toast } = useToast();
   const c = useBrainChat();
   const {
-    turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
+    turns, busy, ready, notice, ask, cards, artifacts, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
     usage, goal, lineCfg, currentModel, provider, providerLabel, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, commands, runSlash, slash, sessions, activeSessionId, focusNonce,
@@ -1417,6 +1423,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               key={key}
               tk={key}
               turn={turn}
+              artifacts={artifacts}
               full={variant === 'full'}
               showRole={i === 0 || turns[i - 1].role !== turn.role}
               showThoughts={showThoughts}

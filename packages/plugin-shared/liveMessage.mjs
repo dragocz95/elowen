@@ -39,6 +39,7 @@ export const UNRENDERED_EVENT_KINDS = Object.freeze([
   'session',        // the adapter is told its session id out of band (turnOnEvent) before the turn runs
   'delivery',       // a sink-confirmation for scheduler plugins, not a message
   'workflow',       // no room rendering for a DAG panel yet — a room shows the delegating tool row instead
+  'inline_artifact', // owner web/CLI plugin component; rooms keep the matching tool row and final answer
   'session-event',  // owner-surface marker for out-of-turn state changes; a room has no such controls
   'queue',          // the pending-message chips are an owner-composer affordance
   'user',           // the platform already shows the user's own message

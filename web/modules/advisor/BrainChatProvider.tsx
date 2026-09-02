@@ -9,7 +9,7 @@ import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useToast } from '../../components/ui/Toast';
 import { useBrainSessions, useBrainCommands, useConfig } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
-import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainStreamSnapshotFrame, BrainUsage, BrainWorkMode, McpServerStatus, SessionTask, SlashCommandDef, StatuslineConfig } from '../../lib/types';
+import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainInlineArtifact, BrainInlineArtifactEvent, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainStreamSnapshotFrame, BrainUsage, BrainWorkMode, McpServerStatus, SessionTask, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { collectSubagents, collectWorkflows, emptyView, fromSnapshot, reduce, submittedPlan, upsertCard, type ChatTurn, type ChatView, type SubagentState, type TranscriptEvent, type WorkflowState } from '../../lib/transcript';
 import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/brainSession';
 import { subscribeRevive } from '../../lib/useRevive';
@@ -100,6 +100,26 @@ function snapshotUsage(events: BrainStreamSnapshotFrame['events']): BrainUsage |
   return latest;
 }
 
+/** Apply one full artifact snapshot or close tombstone while preserving the opening order. */
+function foldInlineArtifact(current: BrainInlineArtifact[], event: BrainInlineArtifactEvent): BrainInlineArtifact[] {
+  const index = current.findIndex((artifact) => artifact.plugin === event.plugin && artifact.id === event.id);
+  if (event.status === 'closed') return index < 0 ? current : current.filter((_, itemIndex) => itemIndex !== index);
+  if (index < 0) return [...current, event];
+  const next = [...current];
+  next[index] = event;
+  return next;
+}
+
+/** Snapshot hydration starts from durable open artifacts, then applies replay-tail updates/tombstones in order. */
+function snapshotArtifacts(snapshot: BrainStreamSnapshotFrame): BrainInlineArtifact[] | undefined {
+  let artifacts = Object.prototype.hasOwnProperty.call(snapshot, 'artifacts') ? [...(snapshot.artifacts ?? [])] : undefined;
+  for (const event of snapshot.events) {
+    if (event.type !== 'inline_artifact' || !event.artifact || typeof event.artifact !== 'object') continue;
+    artifacts = foldInlineArtifact(artifacts ?? [], event.artifact as BrainInlineArtifactEvent);
+  }
+  return artifacts;
+}
+
 /** Read the telemetry sections off a status response, normalizing "absent" to null. */
 const telemetryOf = (st: BrainStatus): BrainTelemetry => ({
   project: st.project ?? null,
@@ -128,6 +148,7 @@ export interface BrainChatValue {
   notice: string;
   ask: Ask | null;
   cards: BrainCard[];
+  artifacts: BrainInlineArtifact[];
   agentsOpen: boolean;
   setAgentsOpen: (v: boolean) => void;
   statsOpen: boolean;
@@ -342,6 +363,7 @@ function useBrainChatController(): BrainChatValue {
   const [notice, setNotice] = useState('');
   const [ask, setAsk] = useState<Ask | null>(null);
   const [cards, setCards] = useState<BrainCard[]>([]);
+  const [artifacts, setArtifacts] = useState<BrainInlineArtifact[]>([]);
   // The todo plugin's HTTP routes answer the caller without re-emitting the panel, so a task mutated from
   // the web has to rebuild the card here. `todoCard` composes it exactly as the plugin does, structured
   // fields and all: the rail's Tasks section reads its rows straight off the card, and a hand-rolled
@@ -437,7 +459,7 @@ function useBrainChatController(): BrainChatValue {
   const truncatedPendingRef = useRef(false);
   /** Per-field stream freshness. Status starts before the stream, so any overlapping frame that lands first
    *  is newer truth for that field and must not be overwritten by the older read. */
-  const hydrationStampRef = useRef({ session: 0, model: 0, control: 0, cards: 0, queue: 0 });
+  const hydrationStampRef = useRef({ session: 0, model: 0, control: 0, cards: 0, artifacts: 0, queue: 0 });
   /** How long the stream may stay silent before it counts as dead, in either phase — operator-tunable
    *  (`runtime.limits`), floored at the heartbeat interval, and falling back to the built-in defaults until
    *  the config arrives, so a daemon that never answers behaves exactly as before. */
@@ -476,6 +498,7 @@ function useBrainChatController(): BrainChatValue {
     setAsk(null); // drop any parked question from the previous conversation
     setPendingPlan(null); // a pending plan belongs to the conversation being left; the decided key derives from the session id and follows the rehydration below
     setCards([]); // and any cards from the previous conversation
+    setArtifacts([]); // inline artifacts are session-scoped transcript sidecars
     setQueued([]); // and any pending mid-turn queue from the previous conversation
     setRemovingQueue(new Set()); // its in-flight removes name ids that mean something else here
     setGoal(null); // a goal belongs to ONE conversation; the snapshot frame hydrates this one's own
@@ -552,6 +575,11 @@ function useBrainChatController(): BrainChatValue {
             hydrationStampRef.current.cards += 1;
             setCards(withoutBackgroundProcessCards(snap.cards ?? []));
           }
+          const hydratedArtifacts = snapshotArtifacts(snap);
+          if (hydratedArtifacts) {
+            hydrationStampRef.current.artifacts += 1;
+            setArtifacts(hydratedArtifacts);
+          }
           // Explicit nulls matter here: the snapshot can clear a question or plan that another surface settled.
           if (control) {
             hydrationStampRef.current.control += 1;
@@ -576,9 +604,11 @@ function useBrainChatController(): BrainChatValue {
           // Rebind without changing generation. The fresh conversation is rebuilt solely from stream events.
           hydrationStampRef.current.session += 1;
           hydrationStampRef.current.cards += 1;
+          hydrationStampRef.current.artifacts += 1;
           boundSessionRef.current = sessionId;
           setActiveSessionId(sessionId);
           setCards([]);
+          setArtifacts([]);
           setGoal(null);
           // Close the lazy-load window and bump its epoch so an older page cannot duplicate the new session.
           clearHistoryWindow();
@@ -614,6 +644,10 @@ function useBrainChatController(): BrainChatValue {
           if (isBackgroundProcessCardId(card.id)) { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
           hydrationStampRef.current.cards += 1;
           setCards((cur) => upsertCard(cur, card));
+        },
+        inlineArtifact: (artifact) => {
+          hydrationStampRef.current.artifacts += 1;
+          setArtifacts((current) => foldInlineArtifact(current, artifact));
         },
         // A queue frame supersedes every optimistic removal still in flight.
         queue: (items) => {
@@ -725,6 +759,7 @@ function useBrainChatController(): BrainChatValue {
       setPendingPlan(st.pendingPlan ?? null);
     }
     if (fresh.cards === statusHydrationStamp.cards) setCards(withoutBackgroundProcessCards(st.cards ?? []));
+    if (fresh.artifacts === statusHydrationStamp.artifacts && Object.prototype.hasOwnProperty.call(st, 'artifacts')) setArtifacts(st.artifacts ?? []);
     if (fresh.queue === statusHydrationStamp.queue) setQueued(st.queued ?? []);
   };
 
@@ -779,7 +814,7 @@ function useBrainChatController(): BrainChatValue {
   const openReadOnly = async (sessionId: string): Promise<void> => {
     stream.close();
     const generation = nextGeneration();
-    setAsk(null); setNotice(''); setGoal(null);
+    setAsk(null); setNotice(''); setGoal(null); setArtifacts([]);
     // The composer is about to be replaced by the read-only banner, so drop the in-flight marker at once.
     setView((cur) => ({ ...cur, thinking: false }));
     setReadOnly(sessionId);
@@ -798,6 +833,7 @@ function useBrainChatController(): BrainChatValue {
           const folded = fromSnapshot(snap);
           setView({ ...folded, thinking: snap.control ? snap.control.streaming : folded.thinking });
           setCards(withoutBackgroundProcessCards(snap.cards ?? []));
+          setArtifacts(snapshotArtifacts(snap) ?? []);
           if (snap.session) { setCurrentModel(snap.session.model); applyProviderIdentity(snap.session); }
           if (snap.sessionId) setActiveSessionId(snap.sessionId);
           if (snap.control) {
@@ -825,6 +861,7 @@ function useBrainChatController(): BrainChatValue {
           if (isBackgroundProcessCardId(card.id)) return;
           setCards((cur) => upsertCard(cur, card));
         },
+        inlineArtifact: (artifact) => setArtifacts((current) => foldInlineArtifact(current, artifact)),
         error: (message) => applyEvent({ type: 'error', message }),
         openError: () => {
           toast(t.brainChat.searchOpenError, 'error');
@@ -1184,7 +1221,7 @@ function useBrainChatController(): BrainChatValue {
   useEffect(() => () => stream.stop(), []);
 
   return {
-    turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
+    turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, artifacts, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks, helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
     queued: visibleQueue, readOnly, activeSessionId,
     usage, telemetry, goal, subagents, workflows, lineCfg, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,

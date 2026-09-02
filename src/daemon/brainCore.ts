@@ -584,6 +584,20 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       host: {
         tmux,
         elowenCli,
+        chatArtifacts: {
+          open: (plugin, sessionId, toolCallId, artifact) => {
+            if (!brain) throw new Error('inline chat artifacts are unavailable in this process');
+            return brain.openPluginChatArtifact(plugin, sessionId, toolCallId, artifact);
+          },
+          update: (plugin, ref, update) => {
+            if (!brain) throw new Error('inline chat artifacts are unavailable in this process');
+            return brain.updatePluginChatArtifact(plugin, ref, update);
+          },
+          close: (plugin, ref) => {
+            if (!brain) throw new Error('inline chat artifacts are unavailable in this process');
+            brain.closePluginChatArtifact(plugin, ref);
+          },
+        },
         stores: {
           projects,
           homeProject: () => projects.get(homeProject.id) ?? {

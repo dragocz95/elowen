@@ -117,6 +117,24 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
     expect(state.reads).toBe(2); // the announcement's read + one loop check that found it idle
   });
 
+  it('stops plugin services after the turn drain and before process exit', async () => {
+    const order: string[] = [];
+    const brain = ({
+      busy: () => ({ turns: 0, children: 0, undelivered: 0 }),
+      notify: async () => { /* quiet */ },
+      beginDrain: () => order.push('begin-drain'),
+      shutdownPluginServices: async () => { order.push('stop-services'); },
+    }) as unknown as BrainService;
+    await new Promise<void>((resolve) => {
+      installGracefulShutdown(brain, silentLog, {
+        pollMs: 1, drainMs: 200, notify: false,
+        exit: ((code: number) => { order.push(`exit-${code}`); resolve(); }) as never,
+      });
+      process.emit('SIGTERM');
+    });
+    expect(order).toEqual(['begin-drain', 'stop-services', 'exit-0']);
+  });
+
   it('tells the brain to stop admitting new turns the moment draining starts', async () => {
     // Without this the drain waits on busy(), but fresh input keeps arriving through the window and can
     // hold busy() above zero for the full budget. The handler must latch the admission gate first.

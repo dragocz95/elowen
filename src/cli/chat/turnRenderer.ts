@@ -49,6 +49,8 @@ export interface TurnRenderOptions {
   spinnerFrame: number;
   /** Locale for the localized composing-tool action label. Defaults to English when omitted. */
   locale?: ComposeLocale;
+  /** Generic transcript sidecar rows anchored to an exact durable tool call id. */
+  renderInlineArtifacts?: (toolCallId: string, width: number) => string[];
   expandedThoughts: ReadonlySet<string>;
   expandedTools: ReadonlySet<string>;
 }
@@ -261,6 +263,10 @@ export class TurnRenderer {
               const suffix = group.count > 1 ? ` ${color.faint(`×${group.count}`)}` : '';
               add(`${TOOL_INDENT}${color.faint(spec.glyph)} ${color.dim(truncateToWidth(spec.title, Math.max(12, width - 10), '…'))}${suffix}`);
             }
+          }
+          for (const member of group.members ?? [item]) {
+            if (!member.id) continue;
+            for (const line of options.renderInlineArtifacts?.(member.id, width) ?? []) add(line);
           }
         }
         continue;

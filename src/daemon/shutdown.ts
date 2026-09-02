@@ -147,6 +147,11 @@ export function installGracefulShutdown(
         }
         await new Promise((r) => setTimeout(r, pollMs));
       }
+      try {
+        await brain?.shutdownPluginServices?.();
+      } catch (error) {
+        log.error('plugin service shutdown failed — exiting anyway', error);
+      }
       log.info(`drained — exiting ${exitCode}${exitCode === RESTART_EXIT_CODE ? ' (supervisor restarts us)' : ''}`);
       exit(exitCode);
     })();

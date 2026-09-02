@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ComponentType } from 'react';
+import type { PluginChatArtifactProps, PluginUiRegistration } from 'elowen-plugin-ui-kit';
 import { ensurePluginUiRuntime, matchPluginPage, PLUGIN_UI_API_VERSION, type PluginPageProps } from '../../lib/pluginUi';
 import { pluginNavEntries } from '../../lib/pluginNav';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
@@ -28,9 +29,10 @@ describe('plugin UI runtime', () => {
     // as every built-in page's instead of in a band the bundle lays out for itself. 10 publishes the
     // canonical Radix-backed Slider and DirectoryPicker. 11 adds the async-safe ConfirmDialog contract,
     // including pending/error ownership across the plugin ABI. 12 lets retained plugin panels contribute
-    // the same structured search/filter/action contract through ControlSurfaceToolbar.
-    expect(PLUGIN_UI_API_VERSION).toBe(12);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(12);
+    // the same structured search/filter/action contract through ControlSurfaceToolbar. 13 adds inline chat
+    // artifact component registration while reusing the existing host runtime and modal primitives.
+    expect(PLUGIN_UI_API_VERSION).toBe(13);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(13);
     expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({
       WorkspaceShell: expect.any(Function),
       WorkspaceHero: expect.any(Function),
@@ -60,6 +62,16 @@ describe('plugin UI runtime', () => {
       useQueries: expect.any(Function),
       useQueryClient: expect.any(Function),
     }));
+  });
+
+  it('types chat artifact views as a first-class plugin registration surface', () => {
+    const ArtifactView = ({ plugin, artifact }: PluginChatArtifactProps) => `${plugin}:${artifact.view}`;
+    const registration: PluginUiRegistration = {
+      requiresApiVersion: 13,
+      chatArtifacts: { preview: ArtifactView },
+    };
+
+    expect(registration.chatArtifacts?.preview).toBe(ArtifactView);
   });
 
   it('keeps the date-range helpers a usage page filters with', () => {

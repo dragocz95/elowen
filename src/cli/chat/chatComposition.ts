@@ -37,6 +37,7 @@ import { OverlayController } from './overlayController.js';
 import { RenderShell } from './renderShell.js';
 import { DEFAULT_COMPOSE_MARKER_MS, DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS, LONG_COMPOSE_TOOLS } from './composeLabels.js';
 import { activityChip, bottomHintItems, fitSegments, fitVariants, goalMeta, modelMetaLine, quitHint, startScreenHintItems, statusline } from './composeLines.js';
+import { InlineArtifactCollection, InlineArtifactPresenter } from './inlineArtifacts.js';
 
 export interface ShellInputDeps {
   cycleThinkingLevel(): void;
@@ -342,7 +343,19 @@ export function createChatComposition(
     }
   };
 
-  const parentViewport = new ChatViewport(
+  let parentViewport!: ChatViewport;
+  const parentArtifacts = new InlineArtifactPresenter({
+    collection: rt.artifacts,
+    stream: (path, onFrame, signal) => client.streamArtifactMedia(path, onFrame, signal),
+    maxHeightCells: () => Math.max(3, Math.floor(term.rows * 0.35)),
+    onInvalidate: (toolCallId, fullRedraw) => {
+      parentViewport?.invalidateToolCall(toolCallId);
+      if (rt.childView) return;
+      if (fullRedraw) renderForced('artifact:frame-iterm2');
+      else render('artifact:frame');
+    },
+  });
+  parentViewport = new ChatViewport(
     {
       transcript: rt.transcript,
       conversationKey: client.boundSession,
@@ -350,6 +363,8 @@ export function createChatComposition(
       notice: rt.notice,
       modelName: rt.modelName,
       thinkingSeconds: 0,
+      inlineArtifacts: rt.artifacts,
+      renderInlineArtifacts: (toolCallId, width) => parentArtifacts.render(toolCallId, width),
     },
     mdTheme,
     () => rowBudget().sections.transcript,
@@ -358,6 +373,7 @@ export function createChatComposition(
   );
   let childViewport: ChatViewport | null = null;
   let childViewportSession = '';
+  let childArtifacts: InlineArtifactPresenter | null = null;
   /** How a model names itself in the chrome: the provider as the OPERATOR named it (its configured
    *  label, else its config id) plus the model. The daemon already strips PI's internal `elowen-<id>`
    *  registry namespace at the API boundary, so nothing here has to know it exists. */
@@ -375,6 +391,8 @@ export function createChatComposition(
         ? undefined
         : (rt.childView?.transcript.notice ?? rt.transcript.notice),
       notice: '', modelName: childModelName(), thinkingSeconds: 0,
+      inlineArtifacts: rt.childView?.artifacts,
+      renderInlineArtifacts: (toolCallId, width) => childArtifacts?.render(toolCallId, width) ?? [],
     },
     mdTheme,
     () => rowBudget().sections.transcript,
@@ -664,11 +682,29 @@ export function createChatComposition(
       spinnerFrame,
       showThoughts: rt.showThoughts,
       locale: rt.locale,
+      inlineArtifacts: rt.artifacts,
+      renderInlineArtifacts: (toolCallId, width) => parentArtifacts.render(toolCallId, width),
     });
     if (rt.childView) {
+      // Older test/extension-shaped child views predate inline artifacts. Normalize them at this boundary;
+      // production StreamCoordinator always supplies the collection.
+      const childArtifactCollection = rt.childView.artifacts
+        ?? (rt.childView.artifacts = new InlineArtifactCollection());
       if (!childViewport || childViewportSession !== rt.childView.sessionId) {
+        childArtifacts?.stop();
         childViewport = newChildViewport();
         childViewportSession = rt.childView.sessionId;
+        childArtifacts = new InlineArtifactPresenter({
+          collection: childArtifactCollection,
+          stream: (path, onFrame, signal) => client.streamArtifactMedia(path, onFrame, signal),
+          maxHeightCells: () => Math.max(3, Math.floor(term.rows * 0.35)),
+          onInvalidate: (toolCallId, fullRedraw) => {
+            childViewport?.invalidateToolCall(toolCallId);
+            if (!rt.childView || rt.childView.sessionId !== childViewportSession) return;
+            if (fullRedraw) renderForced('child:artifact-frame-iterm2');
+            else render('child:artifact-frame');
+          },
+        });
       }
       childViewport.setState({
         transcript: rt.childView.transcript,
@@ -683,10 +719,14 @@ export function createChatComposition(
         spinnerFrame,
         showThoughts: rt.showThoughts,
         locale: rt.locale,
+        inlineArtifacts: childArtifactCollection,
+        renderInlineArtifacts: (toolCallId, width) => childArtifacts?.render(toolCallId, width) ?? [],
       });
     } else if (childViewport) {
       // Parent and child keep independent scroll/expand registries. Closing a child discards only its
       // viewport state; reopening starts clean and can never inherit the parent's scroll anchor.
+      childArtifacts?.stop();
+      childArtifacts = null;
       childViewport = null;
       childViewportSession = '';
     }
@@ -1295,6 +1335,9 @@ export function createChatComposition(
     clearInterruptArm();
     leader.cancel();
     animations.stop();
+    parentArtifacts.stop();
+    childArtifacts?.stop();
+    childArtifacts = null;
     unregisterHighlight();
     inputRouter?.stop();
     overlayController.stop();

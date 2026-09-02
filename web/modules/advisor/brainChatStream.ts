@@ -8,6 +8,7 @@ import type {
   AskQuestion,
   BrainCard,
   BrainGoal,
+  BrainInlineArtifactEvent,
   BrainMessageImage,
   BrainStreamSnapshotFrame,
   BrainUsage,
@@ -42,6 +43,7 @@ interface LiveStreamHandlers {
   title: () => void;
   process: (processes: ProcessInfo[]) => void;
   card: (card: BrainCard) => void;
+  inlineArtifact: (artifact: BrainInlineArtifactEvent) => void;
   queue: (items: { id: string; text: string }[]) => void;
   user: (frame: { text: string; durableId?: string; images?: BrainMessageImage[]; createdAt?: string }) => void;
   discardUser: (frame: { durableId: string; text: string }) => void;
@@ -60,7 +62,7 @@ interface LiveStreamHandlers {
 
 interface ReadOnlyStreamHandlers extends Pick<LiveStreamHandlers,
   'text' | 'reasoning' | 'toolAuthoring' | 'tool' | 'toolProgress' | 'subagent' | 'workflow' |
-  'diff' | 'toolOutput' | 'toolEnd' | 'image' | 'file' | 'idle'
+  'diff' | 'toolOutput' | 'toolEnd' | 'image' | 'file' | 'inlineArtifact' | 'idle'
 > {
   snapshot: (snapshot: BrainStreamSnapshotFrame) => void;
   card: (card: BrainCard) => void;
@@ -202,6 +204,7 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     // Process events are full snapshots pushed on spawn/exit/kill, sharing the hydration query's shape.
     onFrame('process', (e) => handlers.process((JSON.parse((e as MessageEvent).data) as { processes: ProcessInfo[] }).processes));
     onFrame('card', (e) => handlers.card((JSON.parse((e as MessageEvent).data) as { card: BrainCard }).card));
+    onFrame('inline_artifact', (e) => handlers.inlineArtifact((JSON.parse((e as MessageEvent).data) as { artifact: BrainInlineArtifactEvent }).artifact));
     // Queue events are server-authoritative full snapshots, not deltas.
     onFrame('queue', (e) => handlers.queue((JSON.parse((e as MessageEvent).data) as { items: { id: string; text: string }[] }).items));
     // The daemon authoritatively renders every immediate or queued user turn; the composer never echoes it.
@@ -284,6 +287,7 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
       handlers.idle(usage);
     });
     onFrame('card', (e) => handlers.card((JSON.parse((e as MessageEvent).data) as { card: BrainCard }).card));
+    onFrame('inline_artifact', (e) => handlers.inlineArtifact((JSON.parse((e as MessageEvent).data) as { artifact: BrainInlineArtifactEvent }).artifact));
     onFrame('error', (e) => {
       // Native transport errors have no payload and must leave browser auto-reconnect running.
       const data = (e as MessageEvent).data;

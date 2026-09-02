@@ -1,6 +1,6 @@
 {
   "name": "elowen",
-  "version": "0.28.24",
+  "version": "0.28.25",
   "description": "Elowen is a self-hosted personal AI agent you talk to: chat, act, automate and extend from the CLI, web, Discord, Telegram, Microsoft Teams or WhatsApp.",
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,7 @@
     "tmux"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "bin": {
     "elowen": "dist/cli/bin.js",
@@ -112,6 +112,8 @@
     "grammy": "^1.44.0",
     "hono": "^4.6.0",
     "jose": "^5.10.0",
+    "proxy-chain": "3.0.0",
+    "puppeteer-core": "25.9.0",
     "qrcode": "^1.5.4",
     "shiki": "^4.3.1",
     "typebox": "^1.1.38",

@@ -248,6 +248,7 @@ export class ChatApplication {
       yoloOn: boot?.yolo ?? false,
       workMode: 'build',
       cards: boot?.cards ?? [],
+      artifacts: boot?.artifacts ?? [],
       queued: boot?.queued ?? [],
       processes,
       showThoughts,
@@ -416,6 +417,7 @@ export class ChatApplication {
     state.fastOn = status.fast ?? false;
     state.fastAvailable = status.fastAvailable ?? false;
     state.cards = status.cards ?? [];
+    if (status.artifacts) state.artifacts.replace(status.artifacts);
     state.queued = status.queued ?? [];
     state.lspEnabled = status.lspEnabled ?? null;
     state.yoloOn = status.yolo ?? state.yoloOn;

@@ -5,6 +5,24 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.25] - 2026-09-02
+
+### Added
+
+- Added generic plugin-owned inline chat artifacts anchored to durable tool calls, with bounded payloads,
+  durable reload hydration, authenticated same-plugin live media, expiry, and plugin-scoped update/close refs.
+- Added lazy inline artifact rendering in web chat and bounded live image thumbnails in Kitty/iTerm2 terminals,
+  while preserving text fallbacks on terminals without an image protocol.
+- Plugin services now receive a bounded terminal shutdown after the turn drain, so browser/process-owning
+  services can release child processes and profile locks before the daemon exits.
+
+### Changed
+
+- The plugin UI contract is now API 13 (`elowen-plugin-ui-kit` 0.8.0), adding `chatArtifacts` without changing
+  existing page, settings, Account, User, Project, modal, or BrainCard contracts.
+- The minimum supported Node.js version is 22.12.0, matching the secure `puppeteer-core` runtime shipped for
+  registry browser plugins.
+
 ## [0.28.24] - 2026-09-02
 
 ### Added

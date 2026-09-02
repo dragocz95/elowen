@@ -64,6 +64,27 @@ describe('LiveEventReplay', () => {
     ]);
   });
 
+  it('fans out artifact updates and keeps only the newest state for reconnect', () => {
+    const delivered: BrainEvent[] = [];
+    const replay = new LiveEventReplay(new Set([(event: BrainEvent) => delivered.push(event)]));
+    const base = {
+      id: 'a', plugin: 'demo', sessionId: 'brain-1', toolCallId: 'call-1', view: 'live',
+      fallback: 'Live.', status: 'open' as const, expiresAt: '2030-01-01T00:00:00.000Z',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    replay.publish({ type: 'inline_artifact', artifact: { ...base, data: { state: 'open' } } });
+    replay.publish({ type: 'inline_artifact', artifact: { ...base, data: { state: 'updated' } } });
+    replay.publish({
+      type: 'inline_artifact',
+      artifact: { id: 'a', plugin: 'demo', sessionId: 'brain-1', toolCallId: 'call-1', status: 'closed', reason: 'closed' },
+    });
+
+    expect(delivered).toHaveLength(3);
+    expect(replay.snapshot().events).toEqual([expect.objectContaining({
+      type: 'inline_artifact', artifact: expect.objectContaining({ status: 'closed' }),
+    })]);
+  });
+
   // Coalescing used to re-serialize the WHOLE accumulated string on every provider chunk, which is
   // quadratic in the length of a streamed answer — paid on the event loop every other session shares.
   // The assertion is on TIME because that is the property being protected; a correctness-only test

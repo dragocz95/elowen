@@ -43,6 +43,7 @@ export interface TranscriptRead {
   readonly activityStartedAt: number | undefined;
   readonly notice: string | undefined;
   turnAt(index: number): ChatTurn | undefined;
+  toolTurnIndex(toolCallId: string): number | undefined;
   changesSince(revision: number): TranscriptChange;
 }
 
@@ -123,6 +124,7 @@ export class TranscriptModel implements TranscriptRead {
   get notice(): string | undefined { return this.noticeState; }
 
   turnAt(index: number): ChatTurn | undefined { return this.visit(index); }
+  toolTurnIndex(toolCallId: string): number | undefined { return this.toolLocations.get(toolCallId)?.turn; }
   subagents(): readonly SubagentState[] { return this.subagentProjection; }
   workflows(): readonly WorkflowState[] { return this.workflowProjection; }
   lastAssistantText(): string { return this.lastAssistant; }

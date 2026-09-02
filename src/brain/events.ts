@@ -53,6 +53,10 @@ export type BrainEvent =
    *  replaces it; an empty card (no items/body) removes it. Generalizes what the todo checklist used to
    *  do with its own bespoke event. */
   | { type: 'card'; card: BrainCard }
+  /** A plugin-owned inline artifact anchored to one durable tool call. Open/update events carry the full
+   * current snapshot; close/expiry carry a tombstone so every attached surface removes it immediately.
+   * Artifacts are a separate transcript sidecar from BrainCard and may be ignored by older clients. */
+  | { type: 'inline_artifact'; artifact: BrainInlineArtifact | BrainInlineArtifactClosed }
   /** Live streamed output of an IN-PROGRESS `Bash` foreground run — and ONLY that tool, so every
    *  other tool stays silent (no `_update` re-noise flooding the SSE). Mapped from PI's
    *  `tool_execution_update`, THROTTLED to at most one per `PROGRESS_THROTTLE_MS` per tool call, and
@@ -294,6 +298,56 @@ export async function runCompaction(session: AgentSession, customInstruction?: s
 export type { AskQuestion };
 /** The user's answer to one question: the picked option label(s) plus an optional free-text "Other". */
 export interface AskAnswer { header: string; selected: string[]; other?: string }
+
+/** JSON data a plugin may attach to an inline chat artifact. The host validates depth, node count,
+ * string size and serialized bytes before this reaches storage or a client. */
+export type PluginChatArtifactData = null | boolean | number | string | PluginChatArtifactData[] | { [key: string]: PluginChatArtifactData };
+
+/** A live-media source owned by the publishing plugin. Only authenticated same-plugin SSE API paths are
+ * accepted; frames themselves remain transient and never enter this payload or the brain event bus. */
+export interface PluginChatArtifactLiveMedia {
+  transport: 'sse';
+  path: string;
+}
+
+/** Plugin-authored artifact input. Core adds plugin/session/tool-call identity and lifecycle timestamps. */
+export interface PluginChatArtifact {
+  id: string;
+  view: string;
+  fallback: string;
+  data?: PluginChatArtifactData;
+  media?: PluginChatArtifactLiveMedia;
+  expiresAt: string;
+}
+
+/** Partial replacement used after open. `media:null` removes the live-media descriptor. */
+export interface PluginChatArtifactUpdate {
+  view?: string;
+  fallback?: string;
+  data?: PluginChatArtifactData;
+  media?: PluginChatArtifactLiveMedia | null;
+  expiresAt?: string;
+}
+
+/** Durable, normalized open state sent to chat clients and returned by status hydration. */
+export interface BrainInlineArtifact extends PluginChatArtifact {
+  plugin: string;
+  sessionId: string;
+  toolCallId: string;
+  status: 'open';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Transient removal signal. Closed artifacts are deleted from durable hydration immediately. */
+export interface BrainInlineArtifactClosed {
+  id: string;
+  plugin: string;
+  sessionId: string;
+  toolCallId: string;
+  status: 'closed';
+  reason: 'closed' | 'expired';
+}
 
 /** One row of a card's checklist. `status` drives the glyph (○ pending / ◐ in-progress / ✔ done).
  *  `startedAt` is an epoch-ms display clock: live renderers derive elapsed time from it instead of baking

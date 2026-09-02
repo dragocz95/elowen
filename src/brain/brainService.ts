@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { PluginHookBus } from '../plugins/hookBus.js';
 import { PluginServiceRunner } from '../plugins/serviceRunner.js';
-import type { DelegatedChildrenSettlement, DelegatedContinueResult, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
+import type { DelegatedChildrenSettlement, DelegatedContinueResult, PluginChatArtifactRef, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
 import { ElicitationRegistry } from './elicitation.js';
 import { CardRegistry } from './cards.js';
 import type { BrainSearchHit, BrainGoalRow, RecoverableRun, RecoverableWorkflow } from '../store/brainStore.js';
@@ -22,11 +22,12 @@ import { delegatedChannelSendOpts, type DelegatedTurnRequest } from './delegated
 import { SubagentDispatch } from '../subagent/dispatch.js';
 import { lastAssistant, lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
-import type { AskAnswer, BrainEvent, CompactResult, WorkflowCompletion } from './events.js';
+import type { AskAnswer, BrainEvent, BrainInlineArtifact, BrainInlineArtifactClosed, CompactResult, PluginChatArtifact, PluginChatArtifactUpdate, WorkflowCompletion } from './events.js';
+import { InlineArtifactRegistry } from './inlineArtifacts.js';
 import { terminalizeWorkflow } from './workflowRuns.js';
 import { normalizeDelegatedExecutionScope, scopeExceedsCurrentAccess, type DelegatingTurnAccess } from './delegatedScope.js';
 import { buildPermissionRuleset, noninteractivePermissionBoundary } from './toolPermissions.js';
-import { isNonUserSession, isOwnedUserSession, isSubagentSession, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
+import { isNonUserSession, isOwnedUserSession, isSubagentSession, isChannelSession, channelIdOf, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
 import { ClientAttachments } from './service/attachments.js';
 import { DelegatedSessionService } from './service/delegatedSession.js';
@@ -152,6 +153,12 @@ export class BrainService {
    *  `card` event. Shared by owner chat and channel sessions. Store-backed, so a panel (the todo
    *  checklist) survives closing the conversation and the daemon restarting, not just an SSE reconnect. */
   private cards = new CardRegistry(() => this.d.store);
+  /** Inline plugin artifacts use their own durable sidecar and lifecycle. The publisher resolves the live
+   * session at mutation time, so API-route updates and core expiry reach attached clients out of turn. */
+  private artifacts = new InlineArtifactRegistry(
+    () => this.d.store,
+    (sessionId, artifact) => this.publishInlineArtifact(sessionId, artifact),
+  );
   /** Live client streams + long-lived session taps → the session each is attached to. */
   private attachments = new ClientAttachments();
   /** How long each live conversation has been continuously unwatched AND idle — the reaper's clock. */
@@ -277,7 +284,7 @@ export class BrainService {
     });
     this.lifecycle = new ConversationLifecycle({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
-      elicitation: this.elicitation, goals: this.goals, cards: this.cards,
+      elicitation: this.elicitation, goals: this.goals, cards: this.cards, artifacts: this.artifacts,
       spawn: (o) => this.spawner.spawn(o),
       get policy() { return d.policy; },
       get userSettings() { return d.userSettings; },
@@ -335,7 +342,7 @@ export class BrainService {
     });
     this.statusView = new BrainStatusService({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
-      elicitation: this.elicitation, cards: this.cards,
+      elicitation: this.elicitation, cards: this.cards, artifacts: this.artifacts,
       lifecycle: this.lifecycle, permissions: this.permissionSvc,
       get config() { return d.config; },
       get runtime() { return d.runtime; },
@@ -454,12 +461,35 @@ export class BrainService {
     // Destructive-lifecycle unit. Every collaborator is a live instance built above.
     this.teardown = new SessionTeardownService({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
-      elicitation: this.elicitation, goals: this.goals, cards: this.cards,
+      elicitation: this.elicitation, goals: this.goals, cards: this.cards, artifacts: this.artifacts,
       channelService: this.channelService, lifecycle: this.lifecycle, idleClock: this.idleClock,
       resolvePlugins: () => this.resolvePlugins(),
     });
     this.processSvc = new SessionProcessService({ store: d.store, attachments: this.attachments, identity: this.identity });
     this.queue = new SessionQueueService({ sessions: this.sessions, lifecycle: this.lifecycle });
+    // Schedule persisted expiries immediately, before any plugin is loaded. A disabled or crashed publisher
+    // therefore cannot leave a stale artifact alive until its own boot reconcile happens.
+    this.artifacts.reconcile();
+  }
+
+  private publishInlineArtifact(sessionId: string, artifact: BrainInlineArtifact | BrainInlineArtifactClosed): void {
+    const live = this.sessions.get(sessionId)
+      ?? (isChannelSession(sessionId) ? this.sessions.channelGet(channelIdOf(sessionId)) : undefined);
+    live?.replay.publish({ type: 'inline_artifact', artifact });
+  }
+
+  /** Host seam used by PluginContext. Open is session-bound by the current tool turn in registry.ts; the
+   * explicit toolCallId is the first argument PI supplied to ToolDefinition.execute. */
+  openPluginChatArtifact(plugin: string, sessionId: string, toolCallId: string, artifact: PluginChatArtifact): PluginChatArtifactRef {
+    return this.artifacts.open(plugin, sessionId, toolCallId, artifact);
+  }
+
+  updatePluginChatArtifact(plugin: string, ref: PluginChatArtifactRef, update: PluginChatArtifactUpdate): BrainInlineArtifact {
+    return this.artifacts.update(plugin, ref, update);
+  }
+
+  closePluginChatArtifact(plugin: string, ref: PluginChatArtifactRef): void {
+    this.artifacts.close(plugin, ref);
   }
 
   /** Admin daemon-restart handler for a platform `/restart` slash. Late-bound: it's built after the brain
@@ -515,6 +545,13 @@ export class BrainService {
     const local = this.d.stepDrain.unsafeCount(this.sessions.activeTurnSessionIds());
     const remote = await (this.d.remoteStepDrain?.midStepWork() ?? Promise.resolve(0));
     return local + remote;
+  }
+
+  /** The turn drain has finished and process exit is now terminal. Stop browser/process-owning plugin
+   * services before systemd tears down the remaining cgroup; unlike a hot reload this never rolls back. */
+  async shutdownPluginServices(): Promise<void> {
+    if (!this.pluginRuntimeStarted || !this.pluginServicesStarted) return;
+    await this.pluginServices.shutdownAll();
   }
 
   /** The delegated children currently claimed live — the drain-start log's identity companion to

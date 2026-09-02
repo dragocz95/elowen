@@ -14,8 +14,7 @@ const log = logger('plugin-services');
  *  Lifecycle, owned by the host (BrainService):
  *  - full daemon start:   runBootReconciles() → platform adapters listen → startAll()
  *  - plugin reload:       stopAll() → registry swap → runBootReconciles() → startAll()
- *  - process exit:        nothing — the daemon drains TURNS, not plugin loops; timers are unref'd and
- *                         die with the process, exactly like the core startLoops intervals.
+ *  - process exit:        shutdownAll() after the turn drain, before process.exit
  *  A sub-agent runner never calls any of this (it starts only the `subagent` adapter). */
 export class PluginServiceRunner {
   private running: {
@@ -104,5 +103,20 @@ export class PluginServiceRunner {
       }
     }
     this.running = [];
+  }
+
+  /** Process shutdown is terminal, not a registry swap: stop every service newest-first and never restart a
+   * critical sibling whose stop failed. Each service keeps the same bounded grace as reload, but one broken
+   * plugin cannot prevent the daemon from reaching its final exit after the turn drain completed. */
+  async shutdownAll(): Promise<void> {
+    const running = [...this.running].reverse();
+    this.running = [];
+    for (const { plugin, name, stop } of running) {
+      try {
+        await withTimeout(Promise.resolve(stop()), STOP_GRACE_MS, `stop exceeded ${STOP_GRACE_MS}ms`);
+      } catch (e) {
+        log.error(`[${plugin}] service '${name}' shutdown abandoned: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 }
