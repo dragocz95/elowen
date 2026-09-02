@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import { interpolate } from '../../../lib/i18n';
@@ -28,6 +28,8 @@ const CONFIG = {
 const OAUTH = { 'oauth-anthropic': true, 'oauth-openai-codex': false, 'oauth-github-copilot': false, 'oauth-kimi': false };
 const oauthRefetch = vi.fn();
 const rateLimitsRefetch = vi.fn();
+/** Per test: the rate-limit windows the connected accounts report, keyed by built-in provider id. */
+let RATE_LIMITS: Record<string, { provider: string; planType: string | null; windows: { usedPercent: number; windowMinutes: number | null; resetsAt: number | null }[]; fetchedAt: number; stale: boolean }> | undefined;
 
 // The connect dialog polls /brain/oauth/flow; the poll promise is resolved by hand so a test can land an
 // answer at a chosen moment (notably after the dialog was cancelled). Hoisted because the elowenClient
@@ -96,7 +98,7 @@ vi.mock('../../../lib/queries', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useConfig: () => ({ data: CONFIG }),
   useBrainOauthStatus: () => ({ data: OAUTH, refetch: oauthRefetch }),
-  useBrainRateLimitsAll: () => ({ data: undefined, refetch: rateLimitsRefetch }),
+  useBrainRateLimitsAll: () => ({ data: RATE_LIMITS, refetch: rateLimitsRefetch }),
 }));
 vi.mock('../../../lib/mutations', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -130,6 +132,7 @@ beforeEach(() => {
   saveProviders.mockImplementation((_providers, options) => options?.onSuccess?.());
   disconnect.mockClear(); updateConfig.mockClear();
   oauthRefetch.mockClear(); rateLimitsRefetch.mockClear();
+  RATE_LIMITS = undefined;
   oauthFlowMocks.start.mockClear(); oauthFlowMocks.flow.mockClear(); oauthFlowMocks.pending.resolve = null;
   probeMock.probe.mockClear(); probeMock.pending.length = 0;
   hostedMocks.status.mockReset(); hostedMocks.status.mockResolvedValue({ providers: [] });
@@ -230,6 +233,31 @@ describe('BrainSection — OAuth account model picker', () => {
     expect(screen.queryByRole('button', { name: `${en.brain.hostedSearchSettings}: Relay` })).toBeNull();
     // A disconnected account is absent from the daemon's list for the same reason.
     expect(screen.queryByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-github-copilot']}` })).toBeNull();
+  });
+
+  it('keeps the subscription meters when the account also carries the tool search switch', async () => {
+    // The gear once took the row's `control` slot, and SettingsRow treats `children` as a mere alias of
+    // it — so the usage rail passed as children silently vanished on every connected account. The meters
+    // are the record's value; the gear is an action beside manage and disconnect.
+    RATE_LIMITS = { anthropic: { provider: 'anthropic', planType: 'max', windows: [{ usedPercent: 31, windowMinutes: 300, resetsAt: null }], fetchedAt: Date.now(), stale: false } };
+    hostedMocks.status.mockResolvedValue({ providers: [hostedProvider('anthropic')] });
+
+    renderSection();
+    const gear = await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-anthropic']}` });
+    const row = gear.closest('.settings-row')!;
+    expect(row.querySelectorAll('[data-testid="oauth-usage-window"]')).toHaveLength(1);
+    expect(gear.closest('.settings-row__actions')).not.toBeNull();
+    expect(row.querySelector('.settings-row__control')?.querySelector('[data-testid="oauth-usage-window"]')).not.toBeNull();
+  });
+
+  it('opens the switch popover with focus on the switch, not on the help tip', async () => {
+    hostedMocks.status.mockResolvedValue({ providers: [hostedProvider('anthropic')] });
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-anthropic']}` }));
+    const dialog = await screen.findByRole('dialog', { name: en.brain.hostedSearchTitle });
+    // Radix autofocuses the first tabbable in the panel; a HelpTip there opens its tooltip over the panel.
+    await waitFor(() => expect(within(dialog).getByRole('switch')).toHaveFocus());
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
   it('turns the native tool search off through the provider save path and reports the state', async () => {

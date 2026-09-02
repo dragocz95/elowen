@@ -36,7 +36,7 @@ describe('SettingsSurface', () => {
   });
 });
 
-/** The canonical record: a label and ONE control, optionally a short status and at most two actions.
+/** The canonical record: a label and ONE control, optionally a short status and at most three actions.
  *  These pin the source/DOM side of it. The layout half — one grid row on a wide card, a two-line band
  *  in a narrow container — is pinned in tests/app/settingsThemeGlobal.test.ts, against the stylesheets. */
 describe('SettingsRow anatomy', () => {
@@ -90,14 +90,14 @@ describe('SettingsRow anatomy', () => {
     expect(container.querySelector('.settings-row')).toHaveAttribute('data-trailing', 'stack');
   });
 
-  describe('the two-action ceiling', () => {
+  describe('the three-action ceiling', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     afterEach(() => warn.mockClear());
 
     it('accepts the ceiling silently', () => {
-      render(<SettingsRow label="Provider" actions={<><button type="button">Edit</button><button type="button">Remove</button></>} />);
+      render(<SettingsRow label="Provider" actions={<><button type="button">Edit</button><button type="button">Settings</button><button type="button">Remove</button></>} />);
 
-      expect(MAX_ROW_ACTIONS).toBe(2);
+      expect(MAX_ROW_ACTIONS).toBe(3);
       expect(warn).not.toHaveBeenCalled();
     });
 
@@ -105,7 +105,7 @@ describe('SettingsRow anatomy', () => {
      *  almost every call site hands in — so a check that trusted it would report every overloaded row
      *  as compliant and the ceiling would mean nothing. */
     it('warns when a call site exceeds it, fragment or not', () => {
-      render(<SettingsRow label="Provider" actions={<><button type="button">Edit</button><button type="button">Test</button><button type="button">Remove</button></>} />);
+      render(<SettingsRow label="Provider" actions={<><button type="button">Edit</button><button type="button">Test</button><button type="button">Settings</button><button type="button">Remove</button></>} />);
 
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('"Provider"'));
     });

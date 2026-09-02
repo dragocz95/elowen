@@ -69,10 +69,11 @@ function splitIntoColumns(children: ReactNode, columns: 1 | 2): ReactNode {
   );
 }
 
-/** How many trailing actions a record may carry beside its control. Two is the ceiling because the
- *  trailing side is ONE line: a record with three buttons stops being a record and becomes a toolbar,
- *  which belongs in the section header where there is room for it. */
-export const MAX_ROW_ACTIONS = 2;
+/** How many trailing actions a record may carry beside its control. Three is the ceiling because the
+ *  trailing side is ONE line and icon-only actions are what a record carries (manage / settings /
+ *  remove); anything more stops being a record and becomes a toolbar, which belongs in the section
+ *  header where there is room for it. */
+export const MAX_ROW_ACTIONS = 3;
 
 /** Trailing slots in a node, counting THROUGH fragments. `Children.count` reports `<><A/><B/><C/></>`
  *  as one, which is the shape most call sites hand in, so counting without this would report every

@@ -205,10 +205,10 @@ function OAuthModelsModal({ type, initial, onSave, onClose }: {
 
 /** The per-provider native-tool-search switch, behind the record's own settings affordance.
  *
- *  It is THE control of the row (the `control` slot), not a third action: the trailing side of a settings
- *  record allows two buttons, and both an account and a provider entry already spend them. The popover
- *  carries the switch, the explanation, and what a session spawned right now would actually get — the
- *  daemon decides that last part, so "verified", "unsupported" and "off" are never re-derived here.
+ *  It sits among the row's actions, beside manage and disconnect — the row's control is its value (the
+ *  subscription meters), and putting the gear there had hidden them. The popover carries the switch, the
+ *  explanation, and what a session spawned right now would actually get — the daemon decides that last
+ *  part, so "verified", "unsupported" and "off" are never re-derived here.
  *
  *  Only providers the daemon reported as hosted-search capable ever render one; everything else has no
  *  hosted route to switch off, and a dead switch would promise otherwise. */
@@ -240,17 +240,19 @@ function HostedToolSearchControl({ providerLabel, info, pending, onChange }: {
       {/* Radix gives the content `role="dialog"`; it has no visible heading, so it names itself. */}
       <PopoverContent align="end" aria-label={t.brain.hostedSearchTitle} className="w-72">
         <div className="flex flex-col gap-3">
+          {/* The switch comes FIRST in DOM order: the popover autofocuses its first tabbable, and a HelpTip
+              there would open its tooltip over the panel the moment it appeared. */}
           <div className="flex items-start justify-between gap-3">
-            <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-              {t.brain.hostedSearchTitle}
+            <span className="text-sm font-medium text-foreground">{t.brain.hostedSearchTitle}</span>
+            <span className="flex items-center gap-1.5">
+              <Toggle
+                checked={info.enabled}
+                disabled={pending}
+                onChange={onChange}
+                label={`${t.brain.hostedSearchTitle}: ${providerLabel}`}
+              />
               <HelpTip>{t.brain.hostedSearchHelp}</HelpTip>
             </span>
-            <Toggle
-              checked={info.enabled}
-              disabled={pending}
-              onChange={onChange}
-              label={`${t.brain.hostedSearchTitle}: ${providerLabel}`}
-            />
           </div>
           <span className="flex">
             <Badge tone={tone}>{stateLabel}</Badge>
@@ -648,17 +650,12 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
             <SettingsRow
               key={type}
               label={typeLabel(type)}
-              control={hostedInfo ? (
-                <HostedToolSearchControl
-                  providerLabel={typeLabel(type)}
-                  info={hostedInfo}
-                  pending={hostedSearchPending === entryId}
-                  onChange={(enabled) => setHostedToolSearchEnabled(entryId, type as BrainProviderType, typeLabel(type), enabled)}
-                />
-              ) : undefined}
+              // The subscription's rate-limit windows ARE the record's value; the hosted-search switch is
+              // an action beside the other two, not the control — it must never displace the meters.
+              control={usage ? <OAuthUsageRail usage={usage} /> : undefined}
               // A connected account is a multi-value record: a connection badge, one usage meter per
-              // rate-limit window, and two actions. It does not fit the one-value table a phone gives a
-              // record's trailing side.
+              // rate-limit window, and up to three icon actions. It does not fit the one-value table a
+              // phone gives a record's trailing side.
               trailingLayout="stack"
               status={(
                 <span className="flex flex-wrap items-center gap-2">
@@ -670,6 +667,14 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
               actions={connected ? (
                 <>
                   <Button variant="ghost" icon={ListChecks} aria-label={`${t.brain.pickModels}: ${typeLabel(type)}`} onClick={() => setModelsFor(type as BrainProviderType)}>{t.brain.pickModels}</Button>
+                  {hostedInfo ? (
+                    <HostedToolSearchControl
+                      providerLabel={typeLabel(type)}
+                      info={hostedInfo}
+                      pending={hostedSearchPending === entryId}
+                      onChange={(enabled) => setHostedToolSearchEnabled(entryId, type as BrainProviderType, typeLabel(type), enabled)}
+                    />
+                  ) : null}
                   <Button variant="ghost" icon={Unlink} aria-label={`${t.brain.disconnect}: ${typeLabel(type)}`} onClick={() => setDisconnectTarget(type as BrainProviderType)} />
                 </>
               ) : (
@@ -678,9 +683,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
                   <Button variant="ghost" icon={EyeOff} aria-label={`${t.brain.hideAccount}: ${typeLabel(type)}`} onClick={() => hideOauth(type)} />
                 </>
               )}
-            >
-              {usage ? <OAuthUsageRail usage={usage} /> : null}
-            </SettingsRow>
+            />
           );
         })}
       </SettingsGroup>
@@ -723,16 +726,8 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
                   // to three buttons — the same multi-value record as an account above.
                   trailingLayout="stack"
                   iconNode={<DomainFavicon baseUrl={p.baseUrl} fallback={<BrainCircuit size={15} strokeWidth={1.75} />} />}
-                  control={hostedInfo ? (
-                    <HostedToolSearchControl
-                      providerLabel={p.label}
-                      info={hostedInfo}
-                      pending={hostedSearchPending === p.id}
-                      onChange={(enabled) => setHostedToolSearchEnabled(p.id, p.type, p.label, enabled)}
-                    />
-                  ) : undefined}
                   // Badges REPORT — they are not actions, and carrying them in the actions slot put six
-                  // slots in a cell whose ceiling is two. The hosted-search badge is also its own verify
+                  // slots in a cell whose ceiling is three. The hosted-search badge is also its own verify
                   // control: it already states the answer, so a separate button beside it said the same
                   // thing twice.
                   status={(
@@ -767,6 +762,14 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
                       apiKey: '', api: p.api ?? '', temperature: p.temperature === undefined ? '' : String(p.temperature),
                       compatibility: p.compatibility ?? DEFAULT_PROVIDER_COMPATIBILITY,
                     })} />
+                    {hostedInfo ? (
+                      <HostedToolSearchControl
+                        providerLabel={p.label}
+                        info={hostedInfo}
+                        pending={hostedSearchPending === p.id}
+                        onChange={(enabled) => setHostedToolSearchEnabled(p.id, p.type, p.label, enabled)}
+                      />
+                    ) : null}
                     <Button variant="ghost" icon={Trash2} aria-label={`${t.brain.removeProvider}: ${p.label}`} onClick={() => setRemoveTarget(p.id)} />
                     </>
                   )}
