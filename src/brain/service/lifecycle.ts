@@ -611,10 +611,15 @@ export class ConversationLifecycle {
     const settings = this.d.userSettings?.(userId);
     const hop = decideVisionHop({
       hasImages, onFallback: !!b.visionFallback,
+      // The CONFIG entry id, because this half is compared against the user's `visionModelProvider`
+      // setting, which is a config id too.
       currentModel: b.model, currentProvider: b.providerId,
-      // Same source of truth the model descriptor uses to decide whether to strip images
-      // (providers.ts modelEntry): a model the catalog knows reads images keeps its turn.
-      currentModelHasVision: !!b.providerId && !!b.model && catalogModelVision(b.providerId, b.model) === true,
+      // The REGISTRY id, because this half asks the models.dev catalog, and every catalog helper expects
+      // the registry form — it strips the `elowen-` namespace itself. Handing it the config id would
+      // strip a legitimately `elowen-`-prefixed entry name (`elowen-openrouter`, which configStore
+      // accepts) down to another provider's catalog row and silently skip the hop. Same source of truth
+      // the model descriptor uses to decide whether to strip images (providers.ts modelEntry).
+      currentModelHasVision: !!b.provider && !!b.model && catalogModelVision(b.provider, b.model) === true,
       visionModel: settings?.visionModel, visionModelProvider: settings?.visionModelProvider,
     });
     if (hop.action === 'none') return b;

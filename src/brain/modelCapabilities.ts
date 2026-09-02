@@ -168,8 +168,21 @@ function nameWithin(model: string): CatalogCapability | undefined {
   return best ? agreedCapability(catalogByName().get(best)!) : undefined;
 }
 
-/** The model's row in the models.dev catalog, or undefined when it lists no such model.
- *  Custom endpoints register under `elowen-<id>`, where `<id>` is the operator's provider key. */
+/**
+ * EVERY `provider` argument in this module is a PI REGISTRY id — `elowen-<config id>` for a custom
+ * endpoint, a built-in name (`anthropic`, `openai-codex`) for an OAuth account. Never a config entry id.
+ *
+ * The distinction is load-bearing rather than cosmetic, because these helpers strip the namespace
+ * themselves: configStore only rejects `/` in a provider id, so an operator may legitimately name an
+ * entry `elowen-openrouter`. Handed the CONFIG form, that name strips to `openrouter` and resolves a
+ * different vendor's catalog row; handed the REGISTRY form (`elowen-elowen-openrouter`) it strips back
+ * to exactly the id the operator chose, which is in no catalog — the honest answer.
+ *
+ * Callers hold both ids side by side (`LiveBrain.provider` is the registry one, `LiveBrain.providerId`
+ * the config one), so reach for the registry one here, deliberately.
+ */
+
+/** The model's row in the models.dev catalog, or undefined when it lists no such model. */
 function catalogCapability(provider: string, model: string) {
   const key = fromRegistryProvider(provider);
   const row = catalogRow(catalogName(key), model);
