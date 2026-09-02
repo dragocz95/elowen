@@ -48,13 +48,16 @@ type OpenFocus = 'none' | 'default' | 'last';
  * is handed to plugin bundles through `window.ElowenUiRuntime.components`, so its props are a published
  * contract and did not change with the port.
  */
-export function ActionMenu({ items, label, trigger, triggerClassName, align = 'right' }: {
+export function ActionMenu({ items, label, trigger, triggerClassName, align = 'right', openOnHover = true }: {
   items: ActionMenuItem[];
   label?: string;
   trigger?: ReactNode;
   /** Override the trigger button styling. Defaults to the red destructive-action look. */
   triggerClassName?: string;
   align?: 'left' | 'right';
+  /** `false` makes the menu click/keyboard-only. For a trigger that sits in the reading path — a row
+   *  the pointer crosses on its way somewhere else — a hover-opened panel is an interruption, not help. */
+  openOnHover?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -88,8 +91,8 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
   return (
     <div
       className="relative"
-      onMouseEnter={() => openMenu('none')}
-      onMouseLeave={scheduleClose}
+      onMouseEnter={openOnHover ? () => openMenu('none') : undefined}
+      onMouseLeave={openOnHover ? scheduleClose : undefined}
     >
       <DropdownMenu
         open={open}

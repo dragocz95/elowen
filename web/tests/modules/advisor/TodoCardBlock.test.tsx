@@ -119,7 +119,7 @@ async function renderCard(mobile = true): Promise<HTMLElement> {
   return screen.findByTestId('chat-card');
 }
 
-/** Open one row's action menu by the label it hangs off. */
+/** Open one row's action menu from the ⋯ at the end of the row. */
 async function openRowMenu(subject: string): Promise<HTMLElement> {
   fireEvent.click(screen.getByRole('button', { name: `Task actions: ${subject}` }));
   return screen.findByRole('menu');
@@ -195,6 +195,28 @@ describe('todo card — the checklist as a control surface', () => {
     await waitFor(() => expect(patched).toEqual([{ taskId: '2', status: 'in_progress' }]));
     await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Mark as completed: Ship the fix' }))
       .toHaveAttribute('aria-checked', 'mixed'));
+  });
+
+  it('opens the row menu on a click only, never because the pointer crossed the row', async () => {
+    // The row sits in the reading path: a pointer on its way to the composer crosses it on every pass,
+    // and the generic ActionMenu opens on hover. Here that would pop a menu over the very text being read.
+    await renderCard();
+    const trigger = screen.getByRole('button', { name: 'Task actions: Ship the fix' });
+
+    fireEvent.mouseEnter(trigger.parentElement!);
+    fireEvent.mouseEnter(trigger);
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    fireEvent.click(trigger);
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+  });
+
+  it('ticks the row off from its text as well — the label is the box\'s caption', async () => {
+    await renderCard();
+
+    await act(async () => { fireEvent.click(screen.getByText('Draft the notes')); });
+    await waitFor(() => expect(patched).toEqual([{ taskId: '3', status: 'completed' }]));
   });
 
   it('sends nothing when the status picked is the one the row already has', async () => {

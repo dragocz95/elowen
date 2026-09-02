@@ -270,13 +270,15 @@ function StaticCard({ card, live }: { card: BrainCard; live: boolean }) {
   );
 }
 
-/** One task of the transcript's todo card: a tick box, the label, and everything else behind the label.
+/** One task of the transcript's todo card: a tick box with its label, and a small ⋯ at the end of the row.
  *
  *  Two controls, and deliberately only two. The box covers the move the list is opened for — finishing a
- *  task, or reopening one ticked too early — and the LABEL is the row menu's trigger, which is what makes
- *  the third status, and the way into the full list, reachable by the same tap that reads the row. Nothing
- *  is revealed on hover: this card is the checklist a phone gets, and a control that only exists under a
- *  pointer does not exist there at all.
+ *  task, or reopening one ticked too early — and the label is its `<label>`, so the text is the same
+ *  target the way a native checkbox's caption is. The third status and the way into the full list sit
+ *  behind the ⋯, which opens on click only: this row is in the reading path, and a menu that opened when
+ *  the pointer merely crossed it would interrupt the reader on every pass over the card. Nothing is
+ *  revealed on hover either: this card is the checklist a phone gets, and a control that only exists
+ *  under a pointer does not exist there at all.
  *
  *  The vocabulary is the rail's Tasks section, down to the aria-labels, so ticking a row off feels the
  *  same whichever of the two is on screen. */
@@ -288,6 +290,7 @@ function TodoCardRow({ row, now, disabled, onStatus, onOpen }: {
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
+  const checkboxId = useId();
   const blocked = row.status === 'pending' && row.blockedBy.length > 0;
   const elapsed = row.status === 'in_progress' && Number.isFinite(row.startedAt)
     ? formatDuration(now - row.startedAt!)
@@ -301,6 +304,7 @@ function TodoCardRow({ row, now, disabled, onStatus, onOpen }: {
   return (
     <li data-testid="chat-card-row" className="flex min-h-8 items-center gap-2">
       <Checkbox
+        id={checkboxId}
         // `indeterminate` is what running work looks like: the box is filled, but with the platform's own
         // "some, not all" dash rather than a tick that would read as finished.
         checked={row.status === 'completed' ? true : row.status === 'in_progress' ? 'indeterminate' : false}
@@ -309,30 +313,25 @@ function TodoCardRow({ row, now, disabled, onStatus, onOpen }: {
         aria-label={`${row.status === 'completed' ? t.tasksModal.markPending : t.tasksModal.markCompleted}: ${row.label}`}
         className="shrink-0"
       />
-      {/* The menu wrapper is a plain block, so the flex share is claimed here and the label inside it can
-          truncate instead of setting the row's minimum width. */}
-      <span className="min-w-0 flex-1">
-        <ActionMenu
-          items={actions}
-          label={`${t.tasksModal.taskActions}: ${row.label}`}
-          align="left"
-          triggerClassName="flex min-h-8 w-full min-w-0 items-center gap-1.5 rounded px-1 text-left transition-colors hover:bg-accent"
-          trigger={
-            <>
-              <span className={`min-w-0 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}>
-                {row.label}
-              </span>
-              {elapsed ? (
-                <span data-testid="chat-card-elapsed" className="shrink-0 tabular-nums text-primary">· {elapsed}</span>
-              ) : null}
-              {row.owner ? (
-                <span className="ml-auto shrink-0 truncate text-muted-foreground">{row.owner}</span>
-              ) : null}
-            </>
-          }
-        />
-      </span>
+      <label htmlFor={checkboxId} className="flex min-h-8 min-w-0 flex-1 cursor-pointer items-center gap-1.5">
+        <span className={`min-w-0 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}>
+          {row.label}
+        </span>
+        {elapsed ? (
+          <span data-testid="chat-card-elapsed" className="shrink-0 tabular-nums text-primary">· {elapsed}</span>
+        ) : null}
+        {row.owner ? (
+          <span className="ml-auto shrink-0 truncate text-muted-foreground">{row.owner}</span>
+        ) : null}
+      </label>
       {blocked ? <BlockedTip ids={row.blockedBy} testId="chat-card-blocked" /> : null}
+      <ActionMenu
+        items={actions}
+        label={`${t.tasksModal.taskActions}: ${row.label}`}
+        openOnHover={false}
+        triggerClassName="inline-flex size-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        trigger={<MoreHorizontal size={13} aria-hidden />}
+      />
     </li>
   );
 }
