@@ -40,10 +40,13 @@ export function piInferenceClient(deps: {
 
   return {
     model: `${route.providerId}/${route.model}`,
-    async decide(prompt: string): Promise<{ text: string }> {
+    async decide(prompt: string, opts?: { signal?: AbortSignal }): Promise<{ text: string }> {
       const context: Context = { messages: [{ role: 'user', content: prompt, timestamp: Date.now() }] };
+      const deadline = AbortSignal.timeout(COMPLETION_TIMEOUT_MS);
       const message = await deps.runtime.completeSimple(model, context, {
-        signal: AbortSignal.timeout(COMPLETION_TIMEOUT_MS),
+        // Whichever fires first. A caller with a user waiting on the answer can impose a shorter
+        // deadline than this background ceiling, but never a longer one.
+        signal: opts?.signal ? AbortSignal.any([deadline, opts.signal]) : deadline,
       });
       if (message.stopReason === 'error' || message.stopReason === 'aborted') {
         throw new Error(message.errorMessage || `completion ${message.stopReason}`);

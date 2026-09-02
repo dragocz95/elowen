@@ -11,12 +11,14 @@ const RELAY_TIMEOUT_MS = 60_000;
 export class RelayClient implements InferenceClient {
   readonly model: string;
   constructor(private cfg: RelayConfig) { this.model = cfg.model; }
-  async decide(prompt: string): Promise<{ text: string }> {
+  async decide(prompt: string, opts?: { signal?: AbortSignal }): Promise<{ text: string }> {
+    const deadline = AbortSignal.timeout(RELAY_TIMEOUT_MS);
     const res = await fetch(chatUrl(this.cfg.baseUrl), {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${this.cfg.apiKey}`, ...APP_IDENTITY_HEADERS },
       body: JSON.stringify({ model: this.cfg.model, messages: [{ role: 'user', content: prompt }] }),
-      signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+      // Whichever fires first: the caller can only NARROW the relay ceiling, never extend it.
+      signal: opts?.signal ? AbortSignal.any([deadline, opts.signal]) : deadline,
     });
     if (!res.ok) throw new Error(`relay HTTP ${res.status}`);
     // A proxy can return 200 with an HTML error page; res.json() would then throw an opaque
