@@ -194,6 +194,9 @@ interface BrainProviderPublic {
   apiKeySet: boolean;
   /** Not a secret — the operator set it and needs to see it back. See BrainProviderStored.temperature. */
   temperature?: number;
+  /** Present only when the operator switched this provider's native tool search off. See
+   *  BrainProviderStored.hostedToolSearchEnabled. */
+  hostedToolSearchEnabled?: false;
 }
 
 interface BrainProviderStored {
@@ -205,6 +208,12 @@ interface BrainProviderStored {
    *  applies, which is the only safe default: some models accept nothing else (Kimi K3 answers
    *  `only 1 is allowed for this model`, Claude Opus 4.7+ rejects non-default values too). */
   temperature?: number;
+  /** The operator's "off" switch for this provider's NATIVE tool search, and nothing else — the literal
+   *  type is the invariant, not a stylistic choice. `runtime.hostedToolSearch` is probe-owned and read-only
+   *  through the config API precisely so a client cannot claim an Azure deployment supports hosted search;
+   *  a provider row IS client-writable, so the only value it may carry is the one that can subtract a
+   *  route. Absent = today's behaviour (enabled wherever the gates and the probe allow it). */
+  hostedToolSearchEnabled?: false;
 }
 
 /** A malformed capability falls back independently to the conservative baseline. One typo must not
@@ -256,6 +265,11 @@ function sanitizeBrainProviders(input: unknown): BrainProviderStored[] {
       // invented is worse than sending none, since "none" is a valid, working request everywhere.
       ...(typeof p.temperature === 'number' && Number.isFinite(p.temperature) && p.temperature >= 0 && p.temperature <= 2
         ? { temperature: p.temperature } : {}),
+      // Only an explicit `false` survives. `true`, a truthy string, a number — anything that is not the
+      // literal off switch — drops the field and restores the default, so the stored config has no way to
+      // SAY a route is enabled and a hand-written patch cannot turn one on. Turning the switch back on is
+      // therefore the same wire operation as never having touched it: omit the field.
+      ...(p.hostedToolSearchEnabled === false ? { hostedToolSearchEnabled: false as const } : {}),
       apiKey: typeof p.apiKey === 'string' && p.apiKey ? p.apiKey : null,
     });
   }
@@ -1332,7 +1346,7 @@ export class ConfigStore {
   dashboardConfig(): DashboardBlock { return this.read().dashboard; }
 
   /** Daemon-side brain provider list including plaintext API keys. Never routed to any client. */
-  brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; api?: BrainProviderApi; compatibility?: BrainProviderCompatibility; apiKey: string | null; temperature?: number }[] {
+  brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; api?: BrainProviderApi; compatibility?: BrainProviderCompatibility; apiKey: string | null; temperature?: number; hostedToolSearchEnabled?: false }[] {
     return this.read().brain.providers;
   }
 

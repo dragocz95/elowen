@@ -52,12 +52,31 @@ const probeMock = vi.hoisted(() => {
     })),
   };
 });
+type HostedStatusProvider = {
+  providerId: string;
+  enabled: boolean;
+  verifiable: boolean;
+  effective: 'active' | 'off' | 'unsupported' | 'unverified';
+  models: { modelId: string; status: 'supported' | 'unsupported' | 'unverified'; checkedAt: number | null }[];
+};
 const hostedMocks = vi.hoisted(() => ({
-  status: vi.fn<() => Promise<{ providers: { providerId: string; models: { modelId: string; status: 'supported' | 'unsupported' | 'unverified'; checkedAt: number | null }[] }[] }>>()
+  status: vi.fn<() => Promise<{ providers: {
+    providerId: string;
+    enabled: boolean;
+    verifiable: boolean;
+    effective: 'active' | 'off' | 'unsupported' | 'unverified';
+    models: { modelId: string; status: 'supported' | 'unsupported' | 'unverified'; checkedAt: number | null }[];
+  }[] }>>()
     .mockResolvedValue({ providers: [] }),
   probe: vi.fn<() => Promise<{ providerId: string; modelId: string; status: 'supported' | 'unsupported' | 'error'; reason: string; checkedAt: number }>>()
     .mockResolvedValue({ providerId: 'azure', modelId: 'deployment', status: 'supported', reason: 'server_search_and_replay_ok', checkedAt: 1 }),
 }));
+
+/** One provider record of GET /brain/providers/hosted-tool-search/status, defaulted to the shape the
+ *  daemon reports for a capable, switched-on provider so each test states only what it is about. */
+const hostedProvider = (providerId: string, overrides: Partial<HostedStatusProvider> = {}): HostedStatusProvider => ({
+  providerId, enabled: true, verifiable: false, effective: 'active', models: [], ...overrides,
+});
 
 /** The pending probe for `baseUrl`, as an explicit failure when the component never issued it. */
 const probeFor = (baseUrl: string) => {
@@ -163,8 +182,8 @@ describe('BrainSection — OAuth account model picker', () => {
       baseUrl: 'https://resource.openai.azure.com/openai/v1', models: ['deployment'], apiKeySet: true,
     });
     hostedMocks.status
-      .mockResolvedValueOnce({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] }] })
-      .mockResolvedValue({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'supported', checkedAt: 1 }] }] });
+      .mockResolvedValueOnce({ providers: [hostedProvider('azure', { verifiable: true, effective: 'unverified', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] })] })
+      .mockResolvedValue({ providers: [hostedProvider('azure', { verifiable: true, models: [{ modelId: 'deployment', status: 'supported', checkedAt: 1 }] })] });
 
     renderSection();
     expect(await screen.findByText(en.brain.hostedSearchUnverified)).toBeInTheDocument();
@@ -180,16 +199,95 @@ describe('BrainSection — OAuth account model picker', () => {
       id: 'azure', label: 'Azure production', type: 'openai', api: 'openai-responses',
       baseUrl: 'https://resource.openai.azure.com/openai/v1', models: ['deployment'], apiKeySet: true,
     });
-    let resolveInitial!: (value: { providers: { providerId: string; models: { modelId: string; status: 'unverified'; checkedAt: null }[] }[] }) => void;
+    let resolveInitial!: (value: { providers: HostedStatusProvider[] }) => void;
     hostedMocks.status
       .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
-      .mockResolvedValue({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'supported', checkedAt: 1 }] }] });
+      .mockResolvedValue({ providers: [hostedProvider('azure', { verifiable: true, models: [{ modelId: 'deployment', status: 'supported', checkedAt: 1 }] })] });
 
     renderSection();
     fireEvent.click(screen.getByRole('button', { name: `${en.brain.hostedSearchVerify}: Azure production` }));
     await waitFor(() => expect(screen.getAllByText(en.brain.hostedSearchVerified).length).toBeGreaterThan(0));
-    await act(async () => resolveInitial({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] }] }));
+    await act(async () => resolveInitial({ providers: [hostedProvider('azure', { verifiable: true, effective: 'unverified', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] })] }));
     expect(screen.queryByText(en.brain.hostedSearchUnverified)).not.toBeInTheDocument();
+  });
+
+  it('offers the native tool search switch only where the daemon reports a hosted route', async () => {
+    (CONFIG.brain.providers as unknown[]).push(
+      { id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5'], apiKeySet: true },
+      { id: 'relay', label: 'Relay', type: 'openai', api: 'openai-responses', baseUrl: 'https://openrouter.ai/api/v1', models: ['gpt-5.5'], apiKeySet: true },
+    );
+    hostedMocks.status.mockResolvedValue({ providers: [
+      hostedProvider('openai', { models: [{ modelId: 'gpt-5.5', status: 'supported', checkedAt: null }] }),
+      hostedProvider('anthropic'),
+    ] });
+
+    renderSection();
+    // The connected Claude account carries one too — its entry id is the built-in provider name, which is
+    // what the daemon reports the account's hosted status under.
+    expect(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-anthropic']}` })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: `${en.brain.hostedSearchSettings}: OpenAI` })).toBeInTheDocument();
+    // A relay speaking the same wire API has no hosted route to switch off, so it gets no switch at all.
+    expect(screen.queryByRole('button', { name: `${en.brain.hostedSearchSettings}: Relay` })).toBeNull();
+    // A disconnected account is absent from the daemon's list for the same reason.
+    expect(screen.queryByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-github-copilot']}` })).toBeNull();
+  });
+
+  it('turns the native tool search off through the provider save path and reports the state', async () => {
+    (CONFIG.brain.providers as unknown[]).push({
+      id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5'], apiKeySet: true,
+    });
+    hostedMocks.status
+      .mockResolvedValueOnce({ providers: [hostedProvider('openai', { models: [{ modelId: 'gpt-5.5', status: 'supported', checkedAt: null }] })] })
+      .mockResolvedValue({ providers: [hostedProvider('openai', { enabled: false, effective: 'off', models: [{ modelId: 'gpt-5.5', status: 'supported', checkedAt: null }] })] });
+
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: OpenAI` }));
+    const toggle = await screen.findByRole('switch', { name: `${en.brain.hostedSearchTitle}: OpenAI` });
+    expect(toggle).toBeChecked();
+    expect(screen.getByText(en.brain.hostedSearchActive)).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    // Saved as a field on the provider row through the ordinary providers PUT — no endpoint of its own,
+    // and no API key round-tripped back to the daemon.
+    await waitFor(() => expect(saveProviders).toHaveBeenCalledWith([expect.objectContaining({
+      id: 'openai', hostedToolSearchEnabled: false,
+    })], expect.anything()));
+    expect(saveProviders.mock.calls[0]?.[0][0]).not.toHaveProperty('apiKeySet');
+    await waitFor(() => expect(screen.getByText(en.brain.hostedSearchOff)).toBeInTheDocument());
+    expect(screen.getByRole('switch', { name: `${en.brain.hostedSearchTitle}: OpenAI` })).not.toBeChecked();
+  });
+
+  it('turns it back on by omitting the field rather than sending true', async () => {
+    (CONFIG.brain.providers as unknown[]).push({
+      id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5'], apiKeySet: true, hostedToolSearchEnabled: false,
+    });
+    hostedMocks.status.mockResolvedValue({ providers: [hostedProvider('openai', {
+      enabled: false, effective: 'off', models: [{ modelId: 'gpt-5.5', status: 'supported', checkedAt: null }],
+    })] });
+
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: OpenAI` }));
+    fireEvent.click(await screen.findByRole('switch', { name: `${en.brain.hostedSearchTitle}: OpenAI` }));
+
+    // Absent IS "on": the daemon stores no value meaning enabled, so a `true` would be dropped anyway and
+    // sending one would suggest the client can grant a route it cannot.
+    await waitFor(() => expect(saveProviders).toHaveBeenCalled());
+    expect(saveProviders.mock.calls[0]?.[0][0]).not.toHaveProperty('hostedToolSearchEnabled');
+  });
+
+  it('creates the account entry the switch needs when the OAuth account has none', async () => {
+    hostedMocks.status.mockResolvedValue({ providers: [hostedProvider('anthropic')] });
+
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-anthropic']}` }));
+    fireEvent.click(await screen.findByRole('switch', { name: `${en.brain.hostedSearchTitle}: ${en.brain.types['oauth-anthropic']}` }));
+
+    await waitFor(() => expect(saveProviders).toHaveBeenCalledWith([{
+      id: 'anthropic', label: en.brain.types['oauth-anthropic'], type: 'oauth-anthropic',
+      baseUrl: '', models: [], hostedToolSearchEnabled: false,
+    }], expect.anything()));
   });
 
   it('opens the manage modal for a connected account, picks a model (icon rows), and saves the selection', async () => {

@@ -79,6 +79,47 @@ export function isAzureOpenAIResponsesProvider(
     && isAzureOpenAIResponsesEndpoint(normalizedEndpoint(entry));
 }
 
+/** Could this provider entry EVER carry a hosted route — ignoring the operator switch, the per-model gate
+ *  and (for Azure) the stored probe? It answers "does the native tool search apply to this provider at
+ *  all", which is what decides whether the settings surface offers a switch for it and what the status
+ *  endpoint reports on. Kept beside the route resolver so the two cannot drift: every branch below has a
+ *  counterpart in `resolveHostedToolSearchRoute`. */
+export function isHostedToolSearchCapableProvider(
+  entry: Pick<BrainProviderEntry, 'type' | 'api' | 'baseUrl'>,
+): boolean {
+  if (entry.type === 'oauth-openai-codex' || entry.type === 'oauth-anthropic') return true;
+  const endpoint = normalizedEndpoint(entry);
+  if (entry.type === 'openai' && entry.api === 'openai-responses') {
+    return isOfficialOpenAI(endpoint) || isAzureOpenAIResponsesProvider(entry);
+  }
+  return entry.type === 'anthropic' && isOfficialAnthropic(endpoint);
+}
+
+/** Whether a hosted route on this provider still has to be PROVED by the Azure probe before it is taken.
+ *  Every other capable provider is decided by the gates alone. */
+export function requiresHostedToolSearchProbe(
+  entry: Pick<BrainProviderEntry, 'type' | 'api' | 'baseUrl'>,
+): boolean {
+  return isAzureOpenAIResponsesProvider(entry);
+}
+
+/** Whether this model id passes the provider's own hosted-search model gate — the same family arithmetic
+ *  the route resolver applies, exposed so the settings surface reports a model's eligibility without
+ *  restating it in the browser. Presumes a capable entry, and says nothing about the operator switch.
+ *
+ *  An Azure deployment has an arbitrary NAME (`production-luna` fronting a GPT-5.x deployment), which is
+ *  exactly why that branch of the resolver reads a stored probe instead of the model id — so there is no
+ *  family gate to report here, and the probe status answers for those models instead. */
+export function passesHostedToolSearchModelGate(
+  entry: Pick<BrainProviderEntry, 'type' | 'api' | 'baseUrl'>,
+  modelId: string,
+): boolean {
+  if (isAzureOpenAIResponsesProvider(entry)) return true;
+  return entry.type === 'oauth-anthropic' || entry.type === 'anthropic'
+    ? isAnthropicHostedToolSearchModelId(modelId)
+    : isGpt54OrLater(modelId);
+}
+
 export function hostedToolSearchFingerprint(
   entry: Pick<BrainProviderEntry, 'id' | 'type' | 'api' | 'baseUrl'>,
   modelId: string,
@@ -103,6 +144,11 @@ export function resolveHostedToolSearchRoute(
   runtime: HostedToolSearchRuntime,
 ): HostedToolSearchRoute | undefined {
   if (!runtime.toolDeferralEnabled) return undefined;
+  // The operator turned this provider's native search off in Settings → Brain. Subtractive only: there is
+  // no value of this field that GRANTS a route, so a forged config patch cannot promote an unprobed Azure
+  // deployment — every positive branch below still has to earn itself. Falling through here lands the
+  // session on Elowen's local ToolSearch, which is the same path a non-hosted provider takes.
+  if (entry.hostedToolSearchEnabled === false) return undefined;
 
   if (entry.type === 'oauth-openai-codex') {
     return model.provider === 'openai-codex'

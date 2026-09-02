@@ -1,7 +1,7 @@
 import { brainConfigFromElowen, configuredBrainProviders } from '../../brain/config.js';
 import { probeAzureHostedToolSearch } from '../../brain/hostedToolSearchProbe.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
-import { hostedToolSearchFingerprint, isAzureOpenAIResponsesProvider } from '../../brain/session/hostedToolSearch.js';
+import { hostedToolSearchFingerprint, isAzureOpenAIResponsesProvider, isHostedToolSearchCapableProvider, passesHostedToolSearchModelGate } from '../../brain/session/hostedToolSearch.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
 import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../../shared/hostedToolSearchProtocol.js';
 import type { ElowenApp } from '../context.js';
@@ -49,24 +49,47 @@ export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteCon
     return c.json({ models });
   });
 
+  // Every provider the native tool search can apply to at all — connected OAuth accounts included, which
+  // is why the list comes from the same resolved brain config a session spawns against rather than from
+  // `brain.providers` alone (an account with no explicit row is served under a synthetic entry, and a
+  // disconnected one must not be offered a switch). Azure keeps its probe-backed per-model verdict; every
+  // other capable provider reports the family gate the route resolver would apply, so the settings surface
+  // never restates that arithmetic in the browser.
   app.get('/brain/providers/hosted-tool-search/status', c => {
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     const capabilities = d.config.get().runtime.hostedToolSearch;
-    return c.json({ providers: d.config.brainProviders()
-      .filter(isAzureOpenAIResponsesProvider)
-      .map((provider) => ({
-        providerId: provider.id,
-        models: provider.models.map((modelId) => {
+    const providers = (brainConfigFromElowen(d.config, d.brainAuth)?.providers ?? [])
+      .filter(isHostedToolSearchCapableProvider)
+      .map((provider) => {
+        const verifiable = isAzureOpenAIResponsesProvider(provider);
+        const enabled = provider.hostedToolSearchEnabled !== false;
+        const models = provider.models.map((modelId) => {
+          if (!verifiable) {
+            return {
+              modelId,
+              status: passesHostedToolSearchModelGate(provider, modelId) ? 'supported' as const : 'unsupported' as const,
+              checkedAt: null,
+            };
+          }
           const saved = capabilities[provider.id]?.[modelId];
           const current = !!saved && saved.fingerprint === hostedToolSearchFingerprint(provider, modelId)
             && saved.protocol === HOSTED_TOOL_SEARCH_PROTOCOL;
           return {
             modelId,
-            status: current ? saved.status : 'unverified',
+            status: current ? saved.status : 'unverified' as const,
             checkedAt: current ? saved.checkedAt : null,
           };
-        }),
-      })) });
+        });
+        // What a session would actually get on this provider today. An empty model list is not "no models":
+        // it means the account's whole catalog is offered and the per-model gate decides at spawn, so the
+        // provider is active. Otherwise "active" needs one configured model that really routes.
+        const effective = !enabled ? 'off' as const
+          : models.length === 0 || models.some((model) => model.status === 'supported') ? 'active' as const
+            : models.some((model) => model.status === 'unverified') ? 'unverified' as const
+              : 'unsupported' as const;
+        return { providerId: provider.id, enabled, verifiable, effective, models };
+      });
+    return c.json({ providers });
   });
 
   // Verify Azure hosted tool search end-to-end with one synthetic function and an isolated transcript.

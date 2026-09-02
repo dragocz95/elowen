@@ -486,7 +486,10 @@ describe('brain routes', () => {
       providerId: 'azure-openai', modelId: 'deployment',
     }))).status).toBe(403);
     expect(await (await app.request('/brain/providers/hosted-tool-search/status', auth(adminTok))).json()).toEqual({
-      providers: [{ providerId: 'azure-openai', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] }],
+      providers: [{
+        providerId: 'azure-openai', enabled: true, verifiable: true, effective: 'unverified',
+        models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }],
+      }],
     });
 
     const fetchImpl = vi.fn()
@@ -520,6 +523,66 @@ describe('brain routes', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+
+    // A verified deployment the operator switched off reports the switch, not the probe: the stored
+    // verification survives untouched so turning it back on needs no second probe.
+    config.update({ brain: { providers: [{
+      id: 'azure-openai', label: 'Azure', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://test.openai.azure.com/openai/v1', models: ['deployment'],
+      hostedToolSearchEnabled: false,
+    }] } } as never);
+    expect(await (await app.request('/brain/providers/hosted-tool-search/status', auth(adminTok))).json()).toEqual({
+      providers: [{
+        providerId: 'azure-openai', enabled: false, verifiable: true, effective: 'off',
+        models: [{ modelId: 'deployment', status: 'supported', checkedAt: expect.any(Number) }],
+      }],
+    });
+  });
+
+  it('reports hosted tool search for connected OAuth accounts and official endpoints', async () => {
+    // The list comes from the resolved brain config, so a connected account appears under its built-in
+    // provider id even with no explicit entry — and a provider with no hosted route never appears at all.
+    const brainAuth: BrainCredentialAccess = {
+      get: (p) => (p === 'anthropic' || p === 'github-copilot'
+        ? { type: 'oauth', access: 'tok', refresh: 'r', expires: Date.now() + 3_600_000, accountId: 'acct-1' }
+        : undefined),
+      getApiKey: async () => undefined,
+    };
+    const { app, adminTok, config } = setup({ brainAuth });
+    config.update({ brain: { providers: [
+      // Official OpenAI: the model gate decides per model, with no probe involved.
+      { id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5', 'gpt-4o'], apiKey: 'k' },
+      // A relay speaking the same wire API carries no hosted route, so it gets no switch.
+      { id: 'relay', label: 'Relay', type: 'openai', api: 'openai-responses', baseUrl: 'https://openrouter.ai/api/v1', models: ['gpt-5.5'], apiKey: 'k' },
+    ] } } as never);
+
+    const body = await (await app.request('/brain/providers/hosted-tool-search/status', auth(adminTok))).json() as {
+      providers: { providerId: string; enabled: boolean; verifiable: boolean; effective: string; models: unknown[] }[];
+    };
+    expect(body.providers.map((p) => p.providerId).sort()).toEqual(['anthropic', 'openai']);
+    expect(body.providers.find((p) => p.providerId === 'openai')).toEqual({
+      providerId: 'openai', enabled: true, verifiable: false, effective: 'active',
+      models: [
+        { modelId: 'gpt-5.5', status: 'supported', checkedAt: null },
+        { modelId: 'gpt-4o', status: 'unsupported', checkedAt: null },
+      ],
+    });
+    // A connected account with no explicit entry offers its whole catalog, so the per-model gate decides
+    // at spawn and the account itself is active.
+    expect(body.providers.find((p) => p.providerId === 'anthropic')).toEqual({
+      providerId: 'anthropic', enabled: true, verifiable: false, effective: 'active', models: [],
+    });
+
+    config.update({ brain: { providers: [
+      { id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1', models: ['gpt-4o'] },
+      { id: 'anthropic', label: 'Claude account', type: 'oauth-anthropic', baseUrl: '', models: [], hostedToolSearchEnabled: false },
+    ] } } as never);
+    const off = await (await app.request('/brain/providers/hosted-tool-search/status', auth(adminTok))).json() as {
+      providers: { providerId: string; enabled: boolean; effective: string }[];
+    };
+    expect(off.providers.find((p) => p.providerId === 'anthropic')).toMatchObject({ enabled: false, effective: 'off' });
+    // Every configured model fails the family gate — reported as unsupported, not as "not verified".
+    expect(off.providers.find((p) => p.providerId === 'openai')).toMatchObject({ enabled: true, effective: 'unsupported' });
   });
 
   it('status → start → send happy path', async () => {

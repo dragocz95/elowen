@@ -30,6 +30,12 @@ export interface BrainProviderEntry {
   /** Sampling temperature for this endpoint; absent sends none. Per-provider rather than global because
    *  some models accept only their own default and 400 on anything else. */
   temperature?: number;
+  /** Operator switch for this provider's NATIVE (hosted) tool search. Typed as the literal `false` on
+   *  purpose: the only thing an operator may state here is "off". Absent — the default, and the only other
+   *  value the config can hold — leaves today's behaviour, where the route is granted solely by the
+   *  provider/model gates and, for Azure, a stored positive probe. So the flag can subtract a route and
+   *  never add one, which is what keeps it safe to carry through the generic config PATCH. */
+  hostedToolSearchEnabled?: false;
 }
 
 export interface BrainRuntimeConfig {

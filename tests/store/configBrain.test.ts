@@ -311,4 +311,36 @@ describe('brain provider wire-API (api) round-trip', () => {
       expect(cs.get().brain.providers[0]).not.toHaveProperty('temperature');
     });
   });
+
+  describe('hostedToolSearchEnabled', () => {
+    const withFlag = (hostedToolSearchEnabled: unknown) => {
+      const cs = new ConfigStore(openDb(':memory:'));
+      cs.update({ brain: { providers: [{ ...entry, hostedToolSearchEnabled }] } } as never);
+      return cs.brainProviders()[0];
+    };
+
+    it('persists the operator’s off switch', () => {
+      expect(withFlag(false)?.hostedToolSearchEnabled).toBe(false);
+    });
+
+    it('stores no value that could ENABLE a route', () => {
+      // The provider row is client-writable through the generic config PATCH, so the only thing it may
+      // ever say is "off". `true` is not a second spelling of the default — it is dropped, which is what
+      // keeps a forged patch from promoting an unprobed Azure deployment. Anything malformed lands on the
+      // same default rather than on a partially-honoured value.
+      for (const bad of [true, 'false', 0, 1, null, {}, []]) {
+        expect(withFlag(bad)).not.toHaveProperty('hostedToolSearchEnabled');
+      }
+    });
+
+    it('is absent by default, and omitting it is how the switch goes back on', () => {
+      const cs = new ConfigStore(openDb(':memory:'));
+      cs.update({ brain: { providers: [{ ...entry, hostedToolSearchEnabled: false }] } } as never);
+      expect(cs.brainProviders()[0]?.hostedToolSearchEnabled).toBe(false);
+
+      cs.update({ brain: { providers: [entry] } });
+      expect(cs.brainProviders()[0]).not.toHaveProperty('hostedToolSearchEnabled');
+      expect(cs.get().brain.providers[0]).not.toHaveProperty('hostedToolSearchEnabled');
+    });
+  });
 });
