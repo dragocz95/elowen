@@ -24,7 +24,7 @@ function StaticMascot({ state, iconSrc }: { state: SpatialMascotState; iconSrc: 
 /** The mascot: the instance's themeable artwork with the per-state ember ring that makes it read as alive.
  *
  *  It has no intrinsic size: everything inside is sized in percentages, so it fills whatever box the
- *  caller gives it. The advisor's TelemetryPanel and CommandOrbit are its callers today. */
+ *  caller gives it. The advisor's TelemetryPanel is its caller today. */
 export function MascotGlyph({ state = 'idle' }: { state?: SpatialMascotState }) {
   const { appName, mascotSrc } = useBrand();
   return (

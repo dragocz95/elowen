@@ -119,14 +119,14 @@ async function renderCard(mobile = true): Promise<HTMLElement> {
   return screen.findByTestId('chat-card');
 }
 
-/** The row IS the control: one button per task, named after it. */
-function rowOf(card: HTMLElement, subject: string): HTMLElement {
-  return within(card).getByRole('button', { name: `Task actions: ${subject}` });
+/** The row IS the control: one button per task, named after it (with its owner, when the row has one). */
+function rowOf(card: HTMLElement, subject: string, owner?: string): HTMLElement {
+  return within(card).getByRole('button', { name: `Task actions: ${subject}${owner ? ` · ${owner}` : ''}` });
 }
 
 /** Open one row's action menu by clicking the row. */
-async function openRowMenu(subject: string): Promise<HTMLElement> {
-  fireEvent.click(screen.getByRole('button', { name: `Task actions: ${subject}` }));
+async function openRowMenu(subject: string, owner?: string): Promise<HTMLElement> {
+  fireEvent.click(screen.getByRole('button', { name: `Task actions: ${subject}${owner ? ` · ${owner}` : ''}` }));
   return screen.findByRole('menu');
 }
 
@@ -157,23 +157,23 @@ describe('todo card — the checklist as a control surface', () => {
     // a box invites a stray click, and every change here reaches the agent's plan.
     expect(within(card).queryAllByRole('checkbox')).toHaveLength(0);
     expect(within(rowOf(card, 'Reviewing the card')).getByTestId('chat-card-running')).toBeInTheDocument();
-    expect(rowOf(card, 'Draft the notes').querySelector('svg.lucide-circle')).not.toBeNull();
+    expect(rowOf(card, 'Draft the notes', 'reviewer').querySelector('svg.lucide-circle')).not.toBeNull();
     expect(rowOf(card, 'Read the code').querySelector('svg.lucide-circle-check')).not.toBeNull();
     // The row is the control, and its whole text is the target.
-    expect(rowOf(card, 'Draft the notes')).toHaveAccessibleName('Task actions: Draft the notes');
+    expect(rowOf(card, 'Draft the notes', 'reviewer')).toHaveAccessibleName('Task actions: Draft the notes · reviewer');
   });
 
   it('finishes a pending row from its menu and rebuilds the card from the answer', async () => {
     const card = await renderCard();
 
-    const menu = await openRowMenu('Draft the notes');
+    const menu = await openRowMenu('Draft the notes', 'reviewer');
     await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Completed' })); });
     await waitFor(() => expect(patched).toEqual([{ taskId: '3', status: 'completed' }]));
 
     // The plugin's HTTP routes answer the caller without re-emitting the panel, so the card is rebuilt
     // locally from the response. That rebuild has to keep the structured fields: a row that came back
     // without its id would still be listed and would no longer have a menu.
-    await waitFor(() => expect(rowOf(card, 'Draft the notes').querySelector('svg.lucide-circle-check')).not.toBeNull());
+    await waitFor(() => expect(rowOf(card, 'Draft the notes', 'reviewer').querySelector('svg.lucide-circle-check')).not.toBeNull());
     expect(card.textContent).toContain('2/4');
     expect(within(card).getByRole('progressbar', { name: 'Tasks' })).toHaveAttribute('aria-valuenow', '50');
   });
@@ -220,7 +220,7 @@ describe('todo card — the checklist as a control surface', () => {
   it('sends nothing when the status picked is the one the row already has', async () => {
     await renderCard();
 
-    const menu = await openRowMenu('Draft the notes');
+    const menu = await openRowMenu('Draft the notes', 'reviewer');
     await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Pending' })); });
     expect(patched).toEqual([]);
   });
@@ -245,7 +245,7 @@ describe('todo card — the checklist as a control surface', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Tasks' })).toBeNull());
 
-    const menu = await openRowMenu('Draft the notes');
+    const menu = await openRowMenu('Draft the notes', 'reviewer');
     await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open the task list' })); });
     expect(await screen.findByRole('dialog', { name: 'Tasks' })).toBeInTheDocument();
   });
@@ -299,11 +299,11 @@ describe('todo card — the checklist as a control surface', () => {
     server.use(http.patch('*/api/plugins/todo/api/task', () => HttpResponse.json({ error: 'nope' }, { status: 503 })));
     const card = await renderCard();
 
-    const menu = await openRowMenu('Draft the notes');
+    const menu = await openRowMenu('Draft the notes', 'reviewer');
     await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Completed' })); });
 
     expect(await screen.findByText(/elowen 503/, { selector: '[data-slot="toast-description"]' })).toBeInTheDocument();
-    expect(rowOf(card, 'Draft the notes').querySelector('svg.lucide-circle')).not.toBeNull();
+    expect(rowOf(card, 'Draft the notes', 'reviewer').querySelector('svg.lucide-circle')).not.toBeNull();
     expect(card.textContent).toContain('1/4');
   });
 });

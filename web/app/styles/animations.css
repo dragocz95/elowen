@@ -35,6 +35,24 @@
   50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 42%, transparent); }
 }
 
+/* The composer's stop button breathes while a turn runs: a slow halo of the PRIMARY token swells outward
+   and fades (≈1.8 s cycle) while the icon scales a barely-perceptible hair. Box-shadow and transform only —
+   no opacity flash, no layout shift. The colour is always a mix over the token, never a literal value.
+   The class is written literally in BrainChatSurface.tsx (a plain CSS class, not a Tailwind utility), so
+   the purge keeps it in the stylesheet. The send button never carries it. */
+@keyframes stop-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-primary) 40%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--color-primary) 0%, transparent); }
+}
+
+@keyframes stop-pulse-icon {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+.animate-stop-pulse { animation: stop-pulse 1.8s ease-in-out infinite; }
+.animate-stop-pulse > svg { animation: stop-pulse-icon 1.8s ease-in-out infinite; }
+
 .animate-fade-up { animation: fade-up var(--motion-slow) var(--ease-out) both; }
 .animate-pop-in { animation: pop-in var(--motion-base) var(--ease-out) both; }
 .animate-drawer-in { animation: drawer-in var(--motion-base) var(--ease-out) both; }
@@ -65,12 +83,18 @@ html:is([data-effects='reduced'], [data-effects='off']) .live-dot::after,
 html:is([data-effects='reduced'], [data-effects='off']) .flow-active,
 html:is([data-effects='reduced'], [data-effects='off']) .ambient-pulse { animation: none !important; }
 
+/* The stop pulse is ambient decoration on top of a state the button itself already states (it exists
+   only while a turn runs), so quiet effects drop it entirely — hover/focus states stay untouched. */
+html:is([data-effects='reduced'], [data-effects='off']) .animate-stop-pulse,
+html:is([data-effects='reduced'], [data-effects='off']) .animate-stop-pulse > svg { animation: none !important; }
+
 /* Slowed rather than stopped: a spinner is the only thing telling the user that work is still running, so
    freezing it would read as "hung". Quiet effects ask for less motion, not for less information. */
 html:is([data-effects='reduced'], [data-effects='off']) .animate-spin { animation-duration: 2.4s !important; }
 
 @media (prefers-reduced-motion: reduce) {
-  html[data-effects-mode='auto'] .ambient-pulse { animation: none !important; }
+  html[data-effects-mode='auto'] .ambient-pulse,
+  html[data-effects-mode='auto'] .animate-stop-pulse { animation: none !important; }
 }
 
 html[data-effects='off'] {

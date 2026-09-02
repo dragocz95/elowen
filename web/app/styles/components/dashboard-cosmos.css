@@ -1,16 +1,12 @@
-/* Dashboard ambient layers and the shared cosmos-* keyframes: .dash-label, .dash-beam, .home-composer glow, .ember-fall, .logo-adaptive. The keyframes outlived the old hero cosmos — the command orbit and the workflow canvas still run on them. */
+/* Dashboard ambient layers and the shared cosmos-* keyframes: .dash-label, .dash-beam, .home-composer glow, .ember-fall, .logo-adaptive. The keyframes outlived the old hero cosmos — the workflow canvas still runs on them. */
 
 /* Keep the original flat Elowen assets on the single OLED palette. */
 .logo-adaptive { content: url('/elowen-logo.png'); }
 
 /* Driven by .wf-dag__node--running (workflow canvas). */
 @keyframes cosmos-breathe { 50% { opacity: 0.78; filter: blur(5px); } }
-/* Driven by .cmd-orbit__pod (command palette) and .wf-dag__edge--live (workflow canvas). */
+/* Driven by .wf-dag__edge--live (workflow canvas). */
 @keyframes cosmos-fil-flow { to { stroke-dashoffset: -37; } }
-@keyframes cosmos-pod-in {
-  from { opacity: 0; translate: calc(-50% + var(--fx, 0px)) calc(-50% + var(--fy, 0px)); scale: 0.4; filter: blur(8px); }
-  to { opacity: 1; translate: -50% -50%; scale: 1; filter: none; }
-}
 
 /* ambient ember drizzle behind the navigation rail (rendered only in effects mode 'full') */
 /* Fills its host (the nav rail); no z-index — the rail's own items sit on z-10 above it. The explicit

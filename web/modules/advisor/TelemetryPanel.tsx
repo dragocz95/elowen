@@ -1,7 +1,7 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Braces, ChevronDown, Clock3, Gauge, GitBranch, ListChecks, PanelRightClose, PanelRightOpen, Server, Target, TerminalSquare, Users, Workflow, X, type LucideIcon } from 'lucide-react';
+import { Braces, ChevronDown, Clock3, Compass, Cpu, Gauge, GitBranch, Hammer, ListChecks, MessageSquarePlus, PanelRightClose, PanelRightOpen, PenLine, Server, Shrink, Target, TerminalSquare, Users, Workflow, X, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
 import { interpolate } from '../../lib/i18n/interpolate';
@@ -14,7 +14,6 @@ import { MascotGlyph } from '../../components/ui/SpatialMascot';
 import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
 import { Badge } from '../../components/ui/shadcn/badge';
 import { Button } from '../../components/ui/shadcn/button';
-import { Checkbox } from '../../components/ui/shadcn/checkbox';
 import { Progress } from '../../components/ui/shadcn/progress';
 import { ScrollArea } from '../../components/ui/shadcn/scroll-area';
 import { Separator } from '../../components/ui/shadcn/separator';
@@ -27,12 +26,12 @@ import { useNow } from '../../lib/useNow';
 import { TODO_PREVIEW_ITEMS } from '../../lib/chatPresentation';
 import { cardTasks, cardTasksAddressable, orderTasks, sessionTaskRows, type RailTask } from '../../lib/railTasks';
 import { workflowLabel, workflowProgress } from '../../lib/workflowDag';
-import { BlockedTip } from './BlockedTip';
 import { useBrainChat } from './BrainChatProvider';
 import { useTelemetryRail } from './telemetryRailState';
 import { ProcessOutputModal } from './ProcessPanel';
+import { TodoRow, type TodoRowIds } from './TodoRow';
 import { ownedSessionIds, isOwnProcess, processOrigin } from '../../lib/processScope';
-import { CommandOrbit } from './CommandOrbit';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
 import { goalSubgoalTally, useGoalElapsed } from './GoalStatus';
 import type { BrainGoal, ProcessInfo } from '../../lib/types';
 
@@ -40,9 +39,12 @@ import type { BrainGoal, ProcessInfo } from '../../lib/types';
  *  the agent, breathing while a turn runs and settling when it does not, so the rail reads as inhabited
  *  rather than a dashboard.
  *
- *  It is also the door to the command field: clicking it opens the orbital field of slash commands as an
- *  overlay. An overlay rather than the rail itself — an orbit needs roughly 26rem before its pods start
- *  colliding with the core, which even the widest rail does not reach.
+ *  It is also the door to the command field: clicking it opens a dropdown of the slash commands worth
+ *  reaching for mid-conversation — the work modes as a radio group, the one-off actions beneath a
+ *  separator. The rows come from the daemon's catalog (`GET /brain/commands`, already surface-filtered)
+ *  and execute through the controller's own `runSlash` — the menu is a second door onto the composer's
+ *  slash menu, never a second implementation of it. A curated command that this account's surface does
+ *  not expose simply has no row.
  *
  *  The flat glyph rather than the full WebGL mascot: that scene frames itself at a fixed pixel size, so a
  *  rail this narrow would crop it down to a pair of eyes.
@@ -50,75 +52,135 @@ import type { BrainGoal, ProcessInfo } from '../../lib/types';
  *  `size` is a plain square in pixels rather than a share of the rail. In the redesigned head the mascot
  *  sits BESIDE the status text instead of above it, so its box is what the header row is built around; a
  *  percentage-sized owl would re-flow that row on every drag. */
+const MASCOT_COMMANDS: readonly { name: string; icon: LucideIcon }[] = [
+  { name: 'plan', icon: Compass },
+  { name: 'build', icon: Hammer },
+  { name: 'workflow', icon: Workflow },
+  { name: 'compact', icon: Shrink },
+  { name: 'rename', icon: PenLine },
+  { name: 'new', icon: MessageSquarePlus },
+  { name: 'model', icon: Cpu },
+];
+
 function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
   const { t } = useTranslation();
-  const [fieldOpen, setFieldOpen] = useState(false);
-  const mascotRef = useRef<HTMLButtonElement>(null);
-  const wasOpen = useRef(false);
-  // Closing returns focus to the mascot explicitly. The overlay restores whatever was focused when it
-  // opened, which is the mascot only when it was opened by an actual click — a pointer tap leaves focus on
-  // the body on some browsers, and the user would land back at the top of the document.
-  useEffect(() => {
-    if (wasOpen.current && !fieldOpen) mascotRef.current?.focus();
-    wasOpen.current = fieldOpen;
-  }, [fieldOpen]);
+  const { commands, runSlash, workMode } = useBrainChat();
+  const field = t.brainChat.commandField;
+  const labels: Record<string, string> = {
+    plan: t.brainChat.workMode.plan,
+    build: t.brainChat.workMode.build,
+    workflow: t.brainChat.workMode.workflow,
+    compact: field.compact,
+    rename: field.rename,
+    new: field.newChat,
+    model: field.model,
+  };
+  // The catalog is surface-filtered, so a curated command the daemon withheld gets no row at all.
+  const cataloged = MASCOT_COMMANDS.flatMap(({ name, icon }) => {
+    const command = commands.find((c) => c.name === name);
+    return command ? [{ command, icon }] : [];
+  });
+  const modeCommands = cataloged.filter(({ command }) => command.kind === 'mode');
+  const actionCommands = cataloged.filter(({ command }) => command.kind !== 'mode');
+  const run = (name: string): void => {
+    const command = cataloged.find((c) => c.command.name === name)?.command;
+    if (command) runSlash(command);
+  };
   return (
-    <>
-      <button
-        ref={mascotRef}
-        type="button"
-        data-testid="telemetry-mascot"
-        aria-label={t.brainChat.commandField.open}
-        title={t.brainChat.commandField.open}
-        aria-haspopup="dialog"
-        aria-expanded={fieldOpen}
-        onClick={() => setFieldOpen(true)}
-        style={{ width: size, height: size }}
-        className="shrink-0 rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-      >
-        <MascotGlyph state={busy ? 'saving' : 'idle'} />
-      </button>
-      {fieldOpen ? <CommandOrbit onClose={() => setFieldOpen(false)} /> : null}
-    </>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-testid="telemetry-mascot"
+          aria-label={field.open}
+          title={field.open}
+          style={{ width: size, height: size }}
+          className="shrink-0 rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        >
+          <MascotGlyph state={busy ? 'saving' : 'idle'} />
+        </button>
+      </DropdownMenuTrigger>
+      {/* `align="start"` keeps the panel anchored to the owl's left edge at either size the trigger
+          renders at; Radix's collision handling is what stops it running off the viewport at the rail's
+          edge. Click/keyboard only — a hover-open menu has no place above a live conversation. */}
+      <DropdownMenuContent align="start" sideOffset={6} className="min-w-52" data-testid="telemetry-mascot-menu">
+        <DropdownMenuLabel>{field.title}</DropdownMenuLabel>
+        {modeCommands.length > 0 ? (
+          <DropdownMenuRadioGroup value={workMode} onValueChange={run}>
+            {modeCommands.map(({ command, icon: Icon }) => (
+              <DropdownMenuRadioItem key={command.name} value={command.name} data-testid={`telemetry-menu-${command.name}`}>
+                <Icon size={14} aria-hidden className="shrink-0" />
+                {labels[command.name] ?? command.name}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        ) : null}
+        {modeCommands.length > 0 && actionCommands.length > 0 ? <DropdownMenuSeparator /> : null}
+        {actionCommands.map(({ command, icon: Icon }) => (
+          <DropdownMenuItem key={command.name} data-testid={`telemetry-menu-${command.name}`} onSelect={() => run(command.name)}>
+            <Icon size={14} aria-hidden className="mt-0.5 shrink-0" />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="truncate">{labels[command.name] ?? command.name}</span>
+              {command.description ? <span className="truncate text-xs text-muted-foreground">{command.description}</span> : null}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-/** A section heading: a quiet label with an optional right-aligned meta value, mirroring the CLI rail. */
-function SectionHead({ label, meta }: { label: string; meta?: ReactNode }) {
+/** The ONE heading every rail-body section shares: an icon in the left slot — the fold chevron where
+ *  the section folds, the section's own glyph where it does not, so the left edge lines up either way —
+ *  then the quiet uppercase label, then the meta on the right, always in the shared badge, so a
+ *  percentage, a tally and a plan name wear the same treatment at the same size. */
+function SectionHead({ label, icon, meta }: { label: string; icon?: ReactNode; meta?: ReactNode }) {
   return (
-    <div className="telemetry-section-head flex items-baseline justify-between gap-2 text-xs uppercase tracking-wide text-subtle-foreground">
+    <div className="telemetry-section-head flex w-full min-w-0 items-center gap-1.5 text-xs uppercase tracking-wide text-subtle-foreground">
+      {icon ?? null}
       {/* The label truncates like the meta does: it is a translated string, and at the narrow end of the
           rail an uppercase heading like "OTHER PROCESSES" is otherwise a width floor the row cannot go
           under, pushing the whole section past the column. */}
       <span className="min-w-0 truncate">{label}</span>
-      {meta ? <span className="shrink-0 truncate font-mono normal-case tracking-normal">{meta}</span> : null}
+      {meta ? <span className="ml-auto shrink-0 truncate">{meta}</span> : null}
     </div>
   );
+}
+
+/** The shared right-aligned meta badge: one treatment for every section's count or value. */
+function SectionMeta({ children }: { children: ReactNode }) {
+  return <Badge variant="secondary" className="px-1 py-0 text-[10px] tabular-nums">{children}</Badge>;
 }
 
 /** A live-work section that can be folded away. Open by default and on every mount: these sections exist
  *  to be watched while they run, and a fold that persisted would hide a running agent from the one view
  *  that reports it. Folding is for the reader who wants the rail quiet right now, not a stored setting. */
-function LiveSection({ label, count, testId, meter, children }: {
+function LiveSection({ label, count, testId, meter, listClassName = 'flex flex-col gap-0.5', children }: {
   label: string;
   count: ReactNode;
   testId: string;
   /** A meter shown above the rows, folding away with them. The tally stays in the head, which is what a
    *  folded section still has to report. */
   meter?: ReactNode;
+  /** The row list's classes. The default spreads status rows a hair apart; the Tasks section passes the
+   *  todo card's gapless list instead, because its rows carry their own padding. */
+  listClassName?: string;
   children: ReactNode;
 }) {
   return (
     <Collapsible defaultOpen data-testid={testId} className="flex flex-col gap-1">
-      <CollapsibleTrigger className="group flex w-full items-center gap-1.5 text-left [&[data-state=open]_svg]:rotate-0 [&[data-state=closed]_svg]:-rotate-90">
-        <ChevronDown size={11} className="shrink-0 text-subtle-foreground transition-transform" aria-hidden />
-        <span className="min-w-0 flex-1">
-          <SectionHead label={label} meta={<Badge variant="secondary" className="px-1 py-0 text-[10px] tabular-nums">{count}</Badge>} />
-        </span>
+      {/* The trigger owns only the fold behaviour; the row's layout is the shared SectionHead, whose
+          icon slot the chevron occupies so a folded and a static section line up on the same edge. */}
+      <CollapsibleTrigger className="group w-full text-left [&[data-state=open]_svg]:rotate-0 [&[data-state=closed]_svg]:-rotate-90">
+        <SectionHead
+          label={label}
+          icon={<ChevronDown size={11} className="shrink-0 text-subtle-foreground transition-transform" aria-hidden />}
+          meta={<SectionMeta>{count}</SectionMeta>}
+        />
       </CollapsibleTrigger>
       <CollapsibleContent>
         {meter ? <div className="pb-1 pl-[18px]">{meter}</div> : null}
-        <ul className="flex flex-col gap-0.5">{children}</ul>
+        <ul className={listClassName}>{children}</ul>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -168,18 +230,20 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }
   );
 }
 
+/** The rail's row test ids for the shared `TodoRow`: the names the rail's own tests have always used. */
+const RAIL_TASK_ROW_IDS: TodoRowIds = { row: 'telemetry-row', running: 'telemetry-task-running', elapsed: 'telemetry-task-elapsed', blocked: 'telemetry-task-blocked' };
+
 /** The conversation's task list, as the rail reports it: a done/total meter, the work that matters now,
- *  and one tick box per row.
+ *  and one menu control per row.
  *
- *  It is the same live-work section as Processes and Agents — same head, same row primitive — with the
- *  status dot replaced by a control, because this is the one section whose rows the reader can also
- *  CHANGE. Ticking a box patches the task; the label opens the full list, where renaming, ownership and
- *  the finished work live. The rows are previewed to the shared todo cap, so a forty-task plan cannot
- *  push the rest of the rail off the screen. */
-function TasksSection({ tasks, disabled, onToggle, onOpen }: {
+ *  It is the same live-work section as Processes and Agents — same head, same fold — but the rows are
+ *  the transcript todo card's own `TodoRow`s, not the section's read-out rows, because this is the one
+ *  section whose rows the reader can also CHANGE. A row's menu patches the task; "Open the task list"
+ *  leads to the full list, where renaming, ownership and the finished work live. The rows are previewed
+ *  to the shared todo cap, so a forty-task plan cannot push the rest of the rail off the screen. */
+function TasksSection({ tasks, onStatus, onOpen }: {
   tasks: readonly RailTask[];
-  disabled: boolean;
-  onToggle: (task: RailTask) => void;
+  onStatus: (task: RailTask, status: RailTask['status']) => void;
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
@@ -194,44 +258,18 @@ function TasksSection({ tasks, disabled, onToggle, onOpen }: {
       count={`${done}/${tasks.length}`}
       testId="telemetry-tasks"
       meter={<Progress className="h-1" value={(done / tasks.length) * 100} aria-label={t.telemetry.tasks} />}
+      listClassName="flex flex-col"
     >
-      {shown.map((task, index) => {
-        const blocked = task.status === 'pending' && task.blockedBy.length > 0;
-        const elapsed = task.status === 'in_progress' && Number.isFinite(task.startedAt)
-          ? formatDuration(now - task.startedAt!)
-          : undefined;
-        const toggleLabel = `${task.status === 'completed' ? t.tasksModal.markPending : t.tasksModal.markCompleted}: ${task.label}`;
-        return (
-          <li key={task.id ?? `row-${index}`} className="flex items-center gap-1.5">
-            {task.status === 'in_progress' ? (
-              <span className="shrink-0 text-primary" role="img" aria-label={t.tasksModal.statusInProgress}>◐</span>
-            ) : (
-              <Checkbox
-                checked={task.status === 'completed'}
-                // A row with no id came from a card too old to address, and a disabled box is honest
-                // about that where a box that silently does nothing would not be.
-                disabled={disabled || !task.id}
-                onCheckedChange={() => onToggle(task)}
-                aria-label={toggleLabel}
-                className="size-3.5 shrink-0"
-              />
-            )}
-            <LiveRow
-              label={task.label}
-              {...(elapsed ? { meta: elapsed } : {})}
-              tone="none"
-              muted={blocked || task.status === 'completed'}
-              title={task.owner ? `${task.label} — ${task.owner}` : task.label}
-              ariaLabel={`${t.telemetry.tasksOpen}: ${task.label}`}
-              onClick={onOpen}
-            />
-            {task.owner ? (
-              <span className="shrink-0 truncate text-xs text-subtle-foreground" title={task.owner}>{task.owner}</span>
-            ) : null}
-            {blocked ? <BlockedTip ids={task.blockedBy} testId="telemetry-task-blocked" /> : null}
-          </li>
-        );
-      })}
+      {shown.map((task, index) => (
+        <TodoRow
+          key={task.id ?? `row-${index}`}
+          row={task}
+          now={now}
+          onStatus={onStatus}
+          onOpen={onOpen}
+          ids={RAIL_TASK_ROW_IDS}
+        />
+      ))}
       {hidden > 0 ? (
         <li className="pt-0.5">
           <MorePill expanded={expanded} hidden={hidden} onToggle={() => setExpanded((value) => !value)} label={t.telemetry.tasks} />
@@ -332,10 +370,10 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   // The CardBlock rule, mirrored: a list whose every row is ticked has nothing left to track.
   const showTasks = tasks.length > 0 && tasks.some((task) => task.status !== 'completed');
   const updateTask = useUpdateSessionTask();
-  const toggleTask = (task: RailTask): void => {
-    if (!activeSessionId || !task.id) return;
+  const setTaskStatus = (task: RailTask, status: RailTask['status']): void => {
+    if (!activeSessionId || !task.id || status === task.status) return;
     updateTask.mutate(
-      { sessionId: activeSessionId, taskId: task.id, status: task.status === 'completed' ? 'pending' : 'completed' },
+      { sessionId: activeSessionId, taskId: task.id, status },
       { onSuccess: (result) => syncSessionTasks(result.tasks), onError: (error: Error) => toast(error.message, 'error') },
     );
   };
@@ -368,10 +406,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   return (
     <div className="flex w-full min-w-0 flex-col gap-4 px-3 py-3 [&_li]:min-w-0">
       {usage ? (
-        <section className="flex flex-col gap-1.5" data-testid="telemetry-context">
+        <section className="flex flex-col gap-1" data-testid="telemetry-context">
           <SectionHead
             label={t.brainChat.context}
-            meta={usage.percent == null ? undefined : `${Math.round(usage.percent)}%`}
+            icon={<Gauge size={11} className="shrink-0 text-subtle-foreground" aria-hidden />}
+            meta={usage.percent == null ? undefined : <SectionMeta>{Math.round(usage.percent)}%</SectionMeta>}
           />
           <ContextMeter percent={usage.percent ?? 0} label={t.brainChat.context} />
           <p className="font-mono text-xs text-muted-foreground">
@@ -382,7 +421,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
 
       {activeGoal ? (
         <section className="flex flex-col gap-1" data-testid="telemetry-goal">
-          <SectionHead label={t.telemetry.goal} meta={goalMeta} />
+          <SectionHead
+            label={t.telemetry.goal}
+            icon={<Target size={11} className="shrink-0 text-subtle-foreground" aria-hidden />}
+            meta={goalMeta ? <SectionMeta>{goalMeta}</SectionMeta> : undefined}
+          />
           <p className="flex items-center gap-1.5 text-xs">
             <Target size={11} className="shrink-0 text-primary" aria-hidden />
             <span className="min-w-0 truncate text-foreground" title={activeGoal.goal}>{activeGoal.goal}</span>
@@ -401,17 +444,18 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
       ) : null}
 
       {limits?.windows.length ? (
-        <section className="flex flex-col gap-1.5" data-testid="telemetry-limits">
+        <section className="flex flex-col gap-1" data-testid="telemetry-limits">
           <SectionHead
             label={t.telemetry.limits}
-            meta={limits.planType ? <Badge variant="secondary" className="px-1 py-0 text-[10px]">{limits.planType}</Badge> : undefined}
+            icon={<Clock3 size={11} className="shrink-0 text-subtle-foreground" aria-hidden />}
+            meta={limits.planType ? <SectionMeta>{limits.planType}</SectionMeta> : undefined}
           />
           <OAuthUsageRail usage={limits} />
         </section>
       ) : null}
 
       {showTasks ? (
-        <TasksSection tasks={tasks} disabled={updateTask.isPending} onToggle={toggleTask} onOpen={openTasks} />
+        <TasksSection tasks={tasks} onStatus={setTaskStatus} onOpen={openTasks} />
       ) : null}
 
       {runningWorkflows.length > 0 ? (
@@ -567,7 +611,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
 
       {telemetry.lspEnabled !== null ? (
         <section className="flex flex-col gap-1" data-testid="telemetry-lsp">
-          <SectionHead label={t.telemetry.lsp} />
+          <SectionHead label={t.telemetry.lsp} icon={<Braces size={11} className="shrink-0 text-subtle-foreground" aria-hidden />} />
           <p className="flex items-center gap-1.5 text-xs">
             <Badge variant={telemetry.lspEnabled ? 'soft-success' : 'secondary'} className="px-1 py-0 text-[10px]">
               {telemetry.lspEnabled ? t.telemetry.lspActive : t.telemetry.lspInactive}
