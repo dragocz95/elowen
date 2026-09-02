@@ -12,6 +12,7 @@ import { ContextWindowModal } from '../../modules/settings/ContextWindowModal';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
+import { ModelRolesSection } from '../../modules/settings/ModelRolesSection';
 import { DashboardSection } from '../../modules/settings/DashboardSection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
@@ -380,7 +381,10 @@ export default function SettingsPage() {
   // from the sink; the two whose state is assembled from several independent autosaves are folded here.
   const feedbackByCategory: Partial<Record<string, SaveFeedback>> = {
     ...sectionFeedback,
-    models: combineSaveFeedback(modelsSave, windowsSave),
+    // The roles group reports its three autosaves (embedding, utility, digest) already folded into one;
+    // it is folded again here with the catalog's own saves so the deck header speaks for the whole section
+    // rather than for whichever half saved last.
+    models: combineSaveFeedback(modelsSave, windowsSave, sectionFeedback.models ?? { status: 'idle' }),
     system: combineSaveFeedback(autoUpdateSave, defaultsSave, pushContactSave, retentionSave),
   };
   const activeFeedback = feedbackByCategory[category] ?? { status: 'idle' as const };
@@ -540,6 +544,9 @@ export default function SettingsPage() {
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>
           <>
+            {/* WHICH MODEL DOES WHAT comes first; the catalog below answers WHICH MODELS EXIST. The two
+                halves of the same question, in the order someone asks them. */}
+            <ModelRolesSection onSaveState={reportSaveState} onOpenSection={setCategory} />
             {/* One catalog, grouped by the engine that runs the model — the same grouping the
              *  executor picker uses, so what admins configure here matches what users pick. */}
             {visibleProviders.map((prov) => {
