@@ -546,6 +546,10 @@ export default function SettingsPage() {
             {/* WHICH MODEL DOES WHAT comes first; the catalog below answers WHICH MODELS EXIST. The two
                 halves of the same question, in the order someone asks them. */}
             <ModelRolesSection onSaveState={reportSaveState} onOpenSection={setCategory} />
+            {/* The catalog's own heading. A title only: the per-provider cards below carry the rows and
+                stay exactly as they are, but without this the page went from the roles group straight to
+                unlabelled provider cards and the second half of the question had no name. */}
+            <SettingsGroup title={t.settings.modelCatalog} description={t.settings.modelCatalogHint} icon={Boxes} />
             {/* One catalog, grouped by the engine that runs the model — the same grouping the
              *  executor picker uses, so what admins configure here matches what users pick. */}
             {visibleProviders.map((prov) => {

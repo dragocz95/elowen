@@ -461,6 +461,8 @@ export const cs = {
     brainSectionHint: 'Spravujte identitu asistenta, propojené AI účty, poskytovatele a runtime limity.',
     // Settings → Models → Model roles: every instance-level answer to "which model does what", in one
     // group above the catalog that says which models exist at all.
+    modelCatalog: 'Katalog modelů',
+    modelCatalogHint: 'Které modely vůbec existují a které z nich tato instance nabízí.',
     modelRoles: {
       title: 'Role modelů',
       hint: 'Který model plní kterou úlohu této instance.',
@@ -1846,6 +1848,12 @@ export const cs = {
     modelRolesHint: 'Které modely používají vaše vlastní konverzace.',
     chatRuntimeTitle: 'Chod konverzace',
     chatRuntimeHint: 'Jak se konverzace chová \u2014 žádná z těchto voleb nevybírá model.',
+    // A stored pick the catalog no longer offers. The runtime does not honour it — the spawn chain
+    // skips a refused selection and compaction discards a stale one — so the row names what runs.
+    unavailableBadge: 'Nedostupný',
+    unavailableSummary: '{model} \u2014 nedostupný, použije se {fallback}',
+    unavailableNoFallback: 'žádný záskok',
+    projectPinFallback: 'Tento projekt se vrací k modelu {fallback}.',
     inheritUnknown: 'Zděděno',
     primaryModelLabel: 'Hlavní model',
     visionModelLabel: 'Záložní vision model',

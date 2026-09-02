@@ -18,6 +18,7 @@ import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus'
 import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useMe, useMyCliSettings, useMyPermissions, useBrainModels } from '../../lib/queries';
 import { useSaveMyCliSettings, useSaveMyPermissions } from '../../lib/mutations';
+import { isOfferedModel, roleKey, splitRoleKey } from '../../lib/modelRoles';
 import { PermissionRulesCard } from './PermissionRulesCard';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 
@@ -103,18 +104,25 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the array identity changes on every /auth/me render
     [models.data, allowedExecs.join('\u0000')],
   );
-  // The instance's own default — what an EMPTY personal primary resolves to. Read off the catalog flag
-  // the daemon computes with the spawn path's rule, not off `serverDefault`, which answers a different
-  // question for a provider with an empty manual list.
-  const instanceDefault = modelOptions.find((m) => m.default);
+  // The instance's own default — what an EMPTY personal primary resolves to. It comes from the DAEMON
+  // (`serverDefaultRoute`), computed by the helper the spawn path itself calls, and NOT from this
+  // catalog: for a member the catalog is already narrowed to `allowed_execs`, which need not contain the
+  // instance default, while the runtime uses it regardless (`selectionAllowed` judges only COMPLETE
+  // selections). Looking it up here is what left such an account showing "Inherited" and nothing else.
+  // The catalog flag is kept as the fallback for a daemon too old to send the route.
+  const instanceDefault = data?.serverDefaultRoute
+    ?? (() => { const flagged = modelOptions.find((m) => m.default); return flagged ? { provider: flagged.provider, providerLabel: flagged.providerLabel, model: flagged.model } : undefined; })();
   // The model this account's next conversation actually starts on: the local pick while one is in flight,
   // otherwise the persisted one, otherwise the instance default.
   const primaryKey = primarySelection || (data?.model ? `${data.modelProvider ?? ''}::${data.model}` : '');
-  const activeModel = data
-      ? (primaryKey
-        ? modelOptions.find((m) => `${m.provider}::${m.model}` === primaryKey)
-        : (instanceDefault ?? modelOptions[0]))
-    : undefined;
+  // An OFFERED explicit pick, or undefined when the pick is stale/refused — which is also what the
+  // runtime does with it, so the two agree.
+  const primaryPick = primaryKey ? modelOptions.find((m) => roleKey(m.provider, m.model) === primaryKey) : undefined;
+  const activeModel = data && !primaryKey ? (modelOptions.find((m) => m.default) ?? modelOptions[0]) : primaryPick;
+  // What the row must NAME as the effective primary: the honoured pick, else the instance default. A
+  // stale pick contributes nothing, because the runtime skips it and starts on the default instead.
+  const effectivePrimaryName = primaryPick?.model ?? instanceDefault?.model ?? '';
+  const primaryUnavailable = !!primaryKey && !primaryPick;
   const reasoningLevels = activeModel?.reasoningLevels ?? NO_REASONING_LEVELS;
   const anyFastRoute = modelOptions.some((model) => model.fastAvailable === true);
   const activeFastSupported = activeModel?.fastAvailable === true;
@@ -231,8 +239,16 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
   if (isLoading || !data) return <LoadingState />;
 
   const inheritedBadge = <Badge>{t.settings.modelRoles.inherited}</Badge>;
+  const unavailableBadge = <Badge tone="warning">{t.cli.unavailableBadge}</Badge>;
   const inheritLabel = (model: string | undefined) =>
     (model ? interpolate(t.settings.modelRoles.inherit, { model }) : t.cli.inheritUnknown);
+  /** What a stored pick the catalog no longer offers must say: the id it holds, that it is not usable,
+   *  and the model that therefore runs instead. Silence here is the lie — the runtime has already moved
+   *  on and the row would otherwise present the dead pick as the active model. */
+  const unavailableLabel = (stored: string, fallback: string) => interpolate(t.cli.unavailableSummary, {
+    model: splitRoleKey(stored).model || stored,
+    fallback: fallback || t.cli.unavailableNoFallback,
+  });
 
   // VISION, three honest states. The catalog's verdict is TRI-STATE: `false` is a catalogued text-only
   // model, ABSENT means the catalog has no row — so the picker filters on `!== false` (fail-open) rather
@@ -240,12 +256,21 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
   // primary explicitly reports `true`.
   const visionModels = modelOptions.filter((m) => m.vision !== false);
   const primaryReadsImages = activeModel?.vision === true;
+  const visionPick = visionSelection ? visionModels.find((m) => roleKey(m.provider, m.model) === visionSelection) : undefined;
+  const visionUnavailable = !!visionSelection && !visionPick;
   const visionDefaultLabel = primaryReadsImages
     ? interpolate(t.cli.visionInherit, { model: activeModel!.model })
     : t.cli.visionNoFallback;
-  const visionStatus = visionSelection
-    ? undefined
-    : primaryReadsImages ? inheritedBadge : <Badge tone="warning">{t.cli.visionNoFallbackBadge}</Badge>;
+  const visionStatus = visionUnavailable
+    ? unavailableBadge
+    : visionSelection
+      ? undefined
+      : primaryReadsImages ? inheritedBadge : <Badge tone="warning">{t.cli.visionNoFallbackBadge}</Badge>;
+
+  // COMPACTION falls back to the effective primary when its pick is stale (`resolveCompactionFallback`
+  // discards one it cannot resolve), so that is the model the unavailable summary must name.
+  const compactPick = compactSelection ? modelOptions.find((m) => roleKey(m.provider, m.model) === compactSelection) : undefined;
+  const compactUnavailable = !!compactSelection && !compactPick;
 
   const projectRoots = Object.keys(projectPins);
   const clearProjectPin = (root: string) => setProjectPins((current) => {
@@ -262,7 +287,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         title={t.cli.primaryModelLabel}
         icon={Brain}
         description={t.help.cliPrimaryModel}
-        status={primarySelection ? undefined : inheritedBadge}
+        status={primaryUnavailable ? unavailableBadge : primarySelection ? undefined : inheritedBadge}
         control={(
           <BrainModelField
             value={primarySelection}
@@ -271,6 +296,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
             title={t.cli.primaryModelLabel}
             subtitle={t.help.cliPrimaryModel}
             defaultLabel={inheritLabel(instanceDefault?.model)}
+            missingLabel={unavailableLabel(primarySelection, instanceDefault?.model ?? '')}
             keyOf={(m) => `${m.provider}::${m.model}`}
             manageAriaLabel={`${t.managePicker.manage}: ${t.cli.primaryModelLabel}`}
           />
@@ -307,6 +333,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
             title={t.cli.visionModelLabel}
             subtitle={t.help.cliVisionModel}
             defaultLabel={visionDefaultLabel}
+            missingLabel={unavailableLabel(visionSelection, primaryReadsImages ? effectivePrimaryName : '')}
             keyOf={(m) => `${m.provider}::${m.model}`}
             manageAriaLabel={`${t.managePicker.manage}: ${t.cli.visionModelLabel}`}
           />
@@ -317,7 +344,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         title={t.cli.compactModelLabel}
         icon={Shrink}
         description={t.help.cliCompactModel}
-        status={compactSelection ? undefined : inheritedBadge}
+        status={compactUnavailable ? unavailableBadge : compactSelection ? undefined : inheritedBadge}
         control={(
           <BrainModelField
             value={compactSelection}
@@ -325,7 +352,8 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
             models={modelOptions}
             title={t.cli.compactModelLabel}
             subtitle={t.help.cliCompactModel}
-            defaultLabel={inheritLabel(activeModel?.model)}
+            defaultLabel={inheritLabel(effectivePrimaryName)}
+            missingLabel={unavailableLabel(compactSelection, effectivePrimaryName)}
             keyOf={(m) => `${m.provider}::${m.model}`}
             manageAriaLabel={`${t.managePicker.manage}: ${t.cli.compactModelLabel}`}
           />
@@ -430,7 +458,13 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         onClose={() => setConfirmYolo(false)}
       />
       {projectsOpen ? (
-        <ProjectModelsDrawer pins={projectPins} onClear={clearProjectPin} onClose={() => setProjectsOpen(false)} />
+        <ProjectModelsDrawer
+          pins={projectPins}
+          offered={(pin) => isOfferedModel(roleKey(pin.provider, pin.model), modelOptions)}
+          fallback={effectivePrimaryName}
+          onClear={clearProjectPin}
+          onClose={() => setProjectsOpen(false)}
+        />
       ) : null}
       {thresholdsOpen ? (
         <CompactThresholdsDrawer

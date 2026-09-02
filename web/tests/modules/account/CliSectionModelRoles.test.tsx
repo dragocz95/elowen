@@ -117,6 +117,73 @@ describe('Account → Models — Model roles', () => {
     expect(screen.getByRole('link', { name: en.cli.openSettings })).toHaveAttribute('href', '/settings?cat=models');
   });
 
+  /** BLOCKER 1a. `/brain/models` strips models outside `allowed_execs` for a member, but the RUNTIME
+   *  still starts an empty personal choice on the instance default (`selectionAllowed` judges COMPLETE
+   *  selections only). Looking the default up in the personal catalog therefore found nothing and the row
+   *  showed a bare "Inherited" with no model. It reads the daemon's `serverDefaultRoute` instead. */
+  it('names the instance default even when the personal catalog does not contain it', () => {
+    state.allowedExecs = ['elowen:anthropic/claude-haiku']; // the default, claude-opus, is filtered out
+    state.cli = { ...CLI, serverDefaultRoute: { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus' } };
+    renderSection();
+    expect(pick(en.cli.primaryModelLabel)).toHaveTextContent(interpolate(en.settings.modelRoles.inherit, { model: 'claude-opus' }));
+    // …and not the bare "Inherit" with nothing behind it, which is what the personal-catalog lookup gave.
+    expect(pick(en.cli.primaryModelLabel).textContent?.trim()).not.toBe(en.cli.inheritUnknown);
+  });
+
+  /** BLOCKER 1b. A stored pick whose provider or model is no longer offered is NOT what runs: the spawn
+   *  chain skips it and starts on the instance default, and compaction discards a stale pick. Rendering
+   *  the bare id as the active model is the lie. */
+  it('marks an unavailable primary and names the model that runs instead', () => {
+    state.cli = {
+      ...CLI, model: 'ghost-model', modelProvider: 'deleted-provider',
+      serverDefaultRoute: { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus' },
+    };
+    const { container } = renderSection();
+    const row = Array.from(container.querySelectorAll('.settings-row'))
+      .find((n) => n.querySelector('.settings-row__title')?.textContent?.startsWith(en.cli.primaryModelLabel))!;
+    expect(row.querySelector('.settings-row__status')!.textContent).toBe(en.cli.unavailableBadge);
+    expect(pick(en.cli.primaryModelLabel)).toHaveTextContent(
+      interpolate(en.cli.unavailableSummary, { model: 'ghost-model', fallback: 'claude-opus' }),
+    );
+  });
+
+  it('marks an unavailable compaction pick and names the primary it falls back to', () => {
+    state.cli = { ...CLI, model: 'claude-haiku', modelProvider: 'anthropic', compactModel: 'ghost', compactModelProvider: 'deleted-provider' };
+    const { container } = renderSection();
+    const row = Array.from(container.querySelectorAll('.settings-row'))
+      .find((n) => n.querySelector('.settings-row__title')?.textContent?.startsWith(en.cli.compactModelLabel))!;
+    expect(row.querySelector('.settings-row__status')!.textContent).toBe(en.cli.unavailableBadge);
+    expect(pick(en.cli.compactModelLabel)).toHaveTextContent(
+      interpolate(en.cli.unavailableSummary, { model: 'ghost', fallback: 'claude-haiku' }),
+    );
+  });
+
+  it('marks an unavailable vision pick', () => {
+    state.cli = { ...CLI, model: 'claude-haiku', modelProvider: 'anthropic', visionModel: 'ghost', visionModelProvider: 'deleted-provider' };
+    const { container } = renderSection();
+    const row = Array.from(container.querySelectorAll('.settings-row'))
+      .find((n) => n.querySelector('.settings-row__title')?.textContent?.startsWith(en.cli.visionModelLabel))!;
+    expect(row.querySelector('.settings-row__status')!.textContent).toBe(en.cli.unavailableBadge);
+  });
+
+  it('marks an unavailable project pin in the drawer and still clears it in one click', async () => {
+    state.cli = {
+      ...CLI, model: 'claude-haiku', modelProvider: 'anthropic',
+      projectModelPreferences: { '/var/www/kolin': { provider: 'deleted-provider', model: 'ghost' } },
+    };
+    const { container } = renderSection();
+    const row = Array.from(container.querySelectorAll('.settings-row'))
+      .find((n) => n.querySelector('.settings-row__title')?.textContent?.startsWith(en.cli.projectModelsTitle))!;
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: en.managePicker.manage }));
+
+    expect(await screen.findByText('/var/www/kolin')).toBeInTheDocument();
+    expect(screen.getByText(en.cli.unavailableBadge)).toBeInTheDocument();
+    expect(screen.getByText(interpolate(en.cli.projectPinFallback, { fallback: 'claude-haiku' }))).toBeInTheDocument();
+    // Clearing a dead pin is the whole point of showing it.
+    fireEvent.click(screen.getByRole('button', { name: en.cli.projectModelsClear.replace('{project}', '/var/www/kolin') }));
+    await waitFor(() => expect(saveCli).toHaveBeenCalledWith({ projectModelPreferences: {} }));
+  });
+
   /** The personal allow-list narrows every picker on this page, admin or not. It can only ever hide a
    *  model — `isOfferableExec` on the daemon stays the single existence bound. */
   it('narrows every role picker by the caller\'s own allow-list', async () => {

@@ -480,6 +480,8 @@ export const en = {
     brainSectionHint: 'Manage the assistant identity, connected AI accounts, providers and runtime limits.',
     // Settings → Models → Model roles: every instance-level answer to "which model does what", in one
     // group above the catalog that says which models exist at all.
+    modelCatalog: 'Model catalog',
+    modelCatalogHint: 'Which models exist at all, and which of them this instance offers.',
     modelRoles: {
       title: 'Model roles',
       hint: 'Which model performs each task for this instance.',
@@ -1874,6 +1876,12 @@ export const en = {
     modelRolesHint: 'Which model your own conversations use.',
     chatRuntimeTitle: 'Chat runtime',
     chatRuntimeHint: 'How a conversation behaves — none of these choose a model.',
+    // A stored pick the catalog no longer offers. The runtime does not honour it — the spawn chain
+    // skips a refused selection and compaction discards a stale one — so the row names what runs.
+    unavailableBadge: 'Unavailable',
+    unavailableSummary: '{model} \u2014 unavailable, falls back to {fallback}',
+    unavailableNoFallback: 'no fallback',
+    projectPinFallback: 'This project falls back to {fallback}.',
     inheritUnknown: 'Inherit',
     primaryModelLabel: 'Primary model',
     visionModelLabel: 'Vision fallback model',
