@@ -1596,7 +1596,7 @@ export const sk = {
     planImplement: 'Implementovať plán',
     planDecision: 'Plán čaká na vaše rozhodnutie — alebo ho ďalej spresňujte správou.',
     planDecisionTitle: 'Plán je pripravený',
-    workMode: { build: 'Build', plan: 'Plánovanie', workflow: 'Workflow' },
+    workMode: { build: 'Realizácia', plan: 'Plánovanie', workflow: 'Postup' },
     workModeLabel: 'Pracovný režim',
     workModeMenu: 'Zmeniť pracovný režim',
     modeSwitched: 'Pracovný režim:',
