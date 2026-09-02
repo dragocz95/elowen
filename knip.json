@@ -70,6 +70,9 @@
     ],
     "web/components/ui/shadcn/tooltip.tsx": [
       "exports"
+    ],
+    "web/components/ui/shadcn/command.tsx": [
+      "exports"
     ]
   },
   "ignore": [
