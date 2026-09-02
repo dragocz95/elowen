@@ -1599,6 +1599,15 @@ export const sk = {
     workMode: { build: 'Realizácia', plan: 'Plánovanie', workflow: 'Postup' },
     workModeLabel: 'Pracovný režim',
     workModeMenu: 'Zmeniť pracovný režim',
+    commandHints: {
+      plan: 'Najprv premyslieť postup, bez úprav',
+      build: 'Vykonávať zmeny pomocou nástrojov',
+      workflow: 'Riadiť úlohu ako graf sub-agentov',
+      compact: 'Zhrnúť konverzáciu a uvoľniť kontext',
+      rename: 'Premenovať túto konverzáciu',
+      new: 'Začať novú konverzáciu',
+      model: 'Prepnúť model AI',
+    },
     modeSwitched: 'Pracovný režim:',
     renameTitle: 'Premenovať konverzáciu',
     commandField: {

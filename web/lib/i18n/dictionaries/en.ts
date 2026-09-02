@@ -1625,6 +1625,17 @@ export const en = {
     workMode: { build: 'Build', plan: 'Plan', workflow: 'Workflow' },
     workModeLabel: 'Work mode',
     workModeMenu: 'Change work mode',
+    /** One-line hints under the command rows of the mode switch and the mascot menu. The daemon catalog
+     *  describes commands in English only; these are the reader's-language twins, keyed by slash name. */
+    commandHints: {
+      plan: 'Think the approach through before editing',
+      build: 'Implement changes with tools',
+      workflow: 'Orchestrate the task as a graph of sub-agents',
+      compact: 'Summarize the conversation to free up context',
+      rename: 'Rename this conversation',
+      new: 'Start a fresh conversation',
+      model: 'Switch the AI model',
+    },
     modeSwitched: 'Work mode:',
     renameTitle: 'Rename conversation',
     commandField: {

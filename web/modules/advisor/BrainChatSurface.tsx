@@ -923,7 +923,7 @@ function WorkModeSwitch({ variant }: { variant: 'full' | 'compact' }) {
               <RowIcon size={14} aria-hidden className="mt-0.5 shrink-0" />
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span className="truncate">{label}</span>
-                {command.description ? <span className="truncate text-xs text-muted-foreground">{command.description}</span> : null}
+                <span className="truncate text-xs text-muted-foreground">{t.brainChat.commandHints[command.name]}</span>
               </span>
             </DropdownMenuRadioItem>
           ))}

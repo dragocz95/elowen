@@ -86,6 +86,9 @@ function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
     const command = cataloged.find((c) => c.command.name === name)?.command;
     if (command) runSlash(command);
   };
+  // The reader's-language hint where the dictionary has one; the catalog's English line otherwise.
+  const hints: Record<string, string | undefined> = t.brainChat.commandHints;
+  const hintFor = (name: string): string | undefined => hints[name] ?? cataloged.find((c) => c.command.name === name)?.command.description;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -121,7 +124,7 @@ function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
             <Icon size={14} aria-hidden className="mt-0.5 shrink-0" />
             <span className="flex min-w-0 flex-col gap-0.5">
               <span className="truncate">{labels[command.name] ?? command.name}</span>
-              {command.description ? <span className="truncate text-xs text-muted-foreground">{command.description}</span> : null}
+              {hintFor(command.name) ? <span className="truncate text-xs text-muted-foreground">{hintFor(command.name)}</span> : null}
             </span>
           </DropdownMenuItem>
         ))}

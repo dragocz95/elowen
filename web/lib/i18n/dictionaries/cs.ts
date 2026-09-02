@@ -1604,6 +1604,15 @@ export const cs = {
     workMode: { build: 'Realizace', plan: 'Plánování', workflow: 'Postup' },
     workModeLabel: 'Pracovní režim',
     workModeMenu: 'Změnit pracovní režim',
+    commandHints: {
+      plan: 'Nejdříve promyslet postup, bez úprav',
+      build: 'Provádět změny pomocí nástrojů',
+      workflow: 'Řídit úkol jako graf sub-agentů',
+      compact: 'Shrnout konverzaci a uvolnit kontext',
+      rename: 'Přejmenovat tuto konverzaci',
+      new: 'Začít novou konverzaci',
+      model: 'Přepnout model AI',
+    },
     modeSwitched: 'Pracovní režim:',
     renameTitle: 'Přejmenovat konverzaci',
     commandField: {
