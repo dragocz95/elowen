@@ -40,18 +40,21 @@
    no opacity flash, no layout shift. The colour is always a mix over the token, never a literal value.
    The class is written literally in BrainChatSurface.tsx (a plain CSS class, not a Tailwind utility), so
    the purge keeps it in the stylesheet. The send button never carries it. */
+/* A ring that leaves the button and fades as it grows — read from across the room, not only up close:
+   it starts opaque at the edge and is still a third visible at its widest. */
 @keyframes stop-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-primary) 40%, transparent); }
-  50% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--color-primary) 0%, transparent); }
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-primary) 85%, transparent); }
+  70% { box-shadow: 0 0 0 12px color-mix(in oklab, var(--color-primary) 30%, transparent); }
+  100% { box-shadow: 0 0 0 16px color-mix(in oklab, var(--color-primary) 0%, transparent); }
 }
 
 @keyframes stop-pulse-icon {
   0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
+  50% { transform: scale(1.12); }
 }
 
-.animate-stop-pulse { animation: stop-pulse 1.8s ease-in-out infinite; }
-.animate-stop-pulse > svg { animation: stop-pulse-icon 1.8s ease-in-out infinite; }
+.animate-stop-pulse { animation: stop-pulse 1.6s ease-out infinite; }
+.animate-stop-pulse > svg { animation: stop-pulse-icon 1.6s ease-in-out infinite; }
 
 .animate-fade-up { animation: fade-up var(--motion-slow) var(--ease-out) both; }
 .animate-pop-in { animation: pop-in var(--motion-base) var(--ease-out) both; }

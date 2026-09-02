@@ -904,7 +904,9 @@ function WorkModeSwitch({ variant }: { variant: 'full' | 'compact' }) {
           data-testid="chat-work-mode-switch"
           aria-label={t.brainChat.workModeMenu}
           title={`${t.brainChat.workModeLabel}: ${t.brainChat.workMode[workMode]}`}
-          className={`flex h-9 shrink-0 items-center gap-1.5 px-2 text-xs font-medium transition-colors ${
+          // A phone gets the glyph alone, square, so the composer keeps its width for the text; the
+          // label joins it from the app's phone breakpoint up (PHONE_MAX_WIDTH = 767 → `md:`).
+          className={`flex h-9 w-9 shrink-0 items-center justify-center gap-1.5 px-0 text-xs font-medium transition-colors md:w-auto md:px-2 ${
             variant === 'full' ? 'rounded-xl' : 'rounded-lg'
           } ${
             workMode === 'build'
@@ -913,7 +915,7 @@ function WorkModeSwitch({ variant }: { variant: 'full' | 'compact' }) {
           }`}
         >
           <Icon size={15} aria-hidden />
-          <span className="hidden min-[420px]:inline">{t.brainChat.workMode[workMode]}</span>
+          <span className="hidden md:inline">{t.brainChat.workMode[workMode]}</span>
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={6} className="min-w-56" data-testid="chat-work-mode-menu">
