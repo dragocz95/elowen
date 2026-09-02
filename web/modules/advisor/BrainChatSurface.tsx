@@ -17,7 +17,6 @@ import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
-import { Checkbox } from '../../components/ui/shadcn/checkbox';
 import { Progress } from '../../components/ui/shadcn/progress';
 import { Input } from '../../components/ui/Input';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
@@ -270,27 +269,24 @@ function StaticCard({ card, live }: { card: BrainCard; live: boolean }) {
   );
 }
 
-/** One task of the transcript's todo card: a tick box with its label, and a small ⋯ at the end of the row.
+/** One task of the transcript's todo card: the same glyph-and-text line the read-only card draws, and the
+ *  whole line is the one control — a click opens a small menu with the three statuses and the way into
+ *  the full list. The CLI panel behaves identically (a click on a row opens that task's actions), so the
+ *  two clients agree on what a row does.
  *
- *  Two controls, and deliberately only two. The box covers the move the list is opened for — finishing a
- *  task, or reopening one ticked too early — and the label is its `<label>`, so the text is the same
- *  target the way a native checkbox's caption is. The third status and the way into the full list sit
- *  behind the ⋯, which opens on click only: this row is in the reading path, and a menu that opened when
- *  the pointer merely crossed it would interrupt the reader on every pass over the card. Nothing is
- *  revealed on hover either: this card is the checklist a phone gets, and a control that only exists
- *  under a pointer does not exist there at all.
+ *  Deliberately no tick box: a box invites a stray click to finish a task, and every change here reaches
+ *  the agent's plan. A menu makes the move explicit, and it opens on click only — the row is in the
+ *  reading path, and a panel that opened when the pointer merely crossed it would interrupt the reader on
+ *  every pass over the card. The row is as wide as its text, not the column, so the target is the text.
  *
- *  The vocabulary is the rail's Tasks section, down to the aria-labels, so ticking a row off feels the
- *  same whichever of the two is on screen. */
-function TodoCardRow({ row, now, disabled, onStatus, onOpen }: {
+ *  `BlockedTip` is a button of its own and rides beside the trigger, not inside it. */
+function TodoCardRow({ row, now, onStatus, onOpen }: {
   row: RailTask;
   now: number;
-  disabled: boolean;
   onStatus: (row: RailTask, status: RailTask['status']) => void;
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
-  const checkboxId = useId();
   const blocked = row.status === 'pending' && row.blockedBy.length > 0;
   const elapsed = row.status === 'in_progress' && Number.isFinite(row.startedAt)
     ? formatDuration(now - row.startedAt!)
@@ -302,36 +298,31 @@ function TodoCardRow({ row, now, disabled, onStatus, onOpen }: {
     { label: t.telemetry.tasksOpen, icon: ListChecks, onSelect: onOpen },
   ];
   return (
-    <li data-testid="chat-card-row" className="flex min-h-8 items-center gap-2">
-      <Checkbox
-        id={checkboxId}
-        // `indeterminate` is what running work looks like: the box is filled, but with the platform's own
-        // "some, not all" dash rather than a tick that would read as finished.
-        checked={row.status === 'completed' ? true : row.status === 'in_progress' ? 'indeterminate' : false}
-        disabled={disabled}
-        onCheckedChange={() => onStatus(row, row.status === 'completed' ? 'pending' : 'completed')}
-        aria-label={`${row.status === 'completed' ? t.tasksModal.markPending : t.tasksModal.markCompleted}: ${row.label}`}
-        className="shrink-0"
-      />
-      <label htmlFor={checkboxId} className="flex min-h-8 min-w-0 flex-1 cursor-pointer items-center gap-1.5">
-        <span className={`min-w-0 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}>
-          {row.label}
-        </span>
-        {elapsed ? (
-          <span data-testid="chat-card-elapsed" className="shrink-0 tabular-nums text-primary">· {elapsed}</span>
-        ) : null}
-        {row.owner ? (
-          <span className="ml-auto shrink-0 truncate text-muted-foreground">{row.owner}</span>
-        ) : null}
-      </label>
-      {blocked ? <BlockedTip ids={row.blockedBy} testId="chat-card-blocked" /> : null}
+    <li data-testid="chat-card-row" className="flex items-center gap-1">
       <ActionMenu
         items={actions}
         label={`${t.tasksModal.taskActions}: ${row.label}`}
+        align="left"
         openOnHover={false}
-        triggerClassName="inline-flex size-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        trigger={<MoreHorizontal size={13} aria-hidden />}
+        triggerClassName="flex min-h-8 min-w-0 items-center gap-1.5 rounded px-1 text-left transition-colors hover:bg-accent"
+        trigger={
+          <>
+            <span aria-hidden className={`shrink-0 ${row.status === 'completed' ? 'text-success' : row.status === 'in_progress' ? 'text-primary' : 'text-muted-foreground'}`}>
+              {row.status === 'completed' ? '✔' : row.status === 'in_progress' ? '◐' : '○'}
+            </span>
+            <span className={`min-w-0 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}>
+              {row.label}
+            </span>
+            {elapsed ? (
+              <span data-testid="chat-card-elapsed" className="shrink-0 tabular-nums text-primary">· {elapsed}</span>
+            ) : null}
+            {row.owner ? (
+              <span className="shrink-0 text-muted-foreground opacity-70">· {row.owner}</span>
+            ) : null}
+          </>
+        }
       />
+      {blocked ? <BlockedTip ids={row.blockedBy} testId="chat-card-blocked" /> : null}
     </li>
   );
 }
@@ -366,7 +357,9 @@ function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTa
   };
   if (done === rows.length) return null;
   return (
-    <div data-testid="chat-card" className="flex flex-col leading-relaxed">
+    // `self-start`: the card is as wide as its longest row, not the column, so the head's meter and the
+    // rows' targets sit next to the text instead of at the far edge of a wide screen.
+    <div data-testid="chat-card" className="flex max-w-full flex-col self-start leading-relaxed">
       <CardHead
         title={card.title ?? t.brainChat.cardFallback}
         done={done}
@@ -398,7 +391,6 @@ function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTa
               key={row.id}
               row={row}
               now={now}
-              disabled={updateTask.isPending}
               onStatus={setStatus}
               onOpen={openTasks}
             />

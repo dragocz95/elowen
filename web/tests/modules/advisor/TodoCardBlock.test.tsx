@@ -119,7 +119,12 @@ async function renderCard(mobile = true): Promise<HTMLElement> {
   return screen.findByTestId('chat-card');
 }
 
-/** Open one row's action menu from the ⋯ at the end of the row. */
+/** The row IS the control: one button per task, named after it. */
+function rowOf(card: HTMLElement, subject: string): HTMLElement {
+  return within(card).getByRole('button', { name: `Task actions: ${subject}` });
+}
+
+/** Open one row's action menu by clicking the row. */
 async function openRowMenu(subject: string): Promise<HTMLElement> {
   fireEvent.click(screen.getByRole('button', { name: `Task actions: ${subject}` }));
   return screen.findByRole('menu');
@@ -148,42 +153,43 @@ describe('todo card — the checklist as a control surface', () => {
     expect(within(card).getByTestId('chat-card-elapsed')).toHaveTextContent(/\d+[smh]/);
     expect(card.textContent).toContain('reviewer');
 
-    // Three states, three box states — a running task is neither open nor finished.
-    expect(within(card).getByRole('checkbox', { name: 'Mark as completed: Reviewing the card' }))
-      .toHaveAttribute('aria-checked', 'mixed');
-    expect(within(card).getByRole('checkbox', { name: 'Mark as completed: Draft the notes' })).not.toBeChecked();
-    expect(within(card).getByRole('checkbox', { name: 'Mark as pending: Read the code' })).toBeChecked();
+    // Three states, three glyphs, the same ones the read-only card and the CLI panel draw. No tick box:
+    // a box invites a stray click, and every change here reaches the agent's plan.
+    expect(within(card).queryAllByRole('checkbox')).toHaveLength(0);
+    expect(rowOf(card, 'Reviewing the card')).toHaveTextContent('◐');
+    expect(rowOf(card, 'Draft the notes')).toHaveTextContent('○');
+    expect(rowOf(card, 'Read the code')).toHaveTextContent('✔');
+    // The row is the control, and its whole text is the target.
+    expect(rowOf(card, 'Draft the notes')).toHaveAccessibleName('Task actions: Draft the notes');
   });
 
-  it('ticks a pending row off through its box and rebuilds the card from the answer', async () => {
+  it('finishes a pending row from its menu and rebuilds the card from the answer', async () => {
     const card = await renderCard();
 
-    await act(async () => {
-      fireEvent.click(within(card).getByRole('checkbox', { name: 'Mark as completed: Draft the notes' }));
-    });
+    const menu = await openRowMenu('Draft the notes');
+    await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Completed' })); });
     await waitFor(() => expect(patched).toEqual([{ taskId: '3', status: 'completed' }]));
 
     // The plugin's HTTP routes answer the caller without re-emitting the panel, so the card is rebuilt
     // locally from the response. That rebuild has to keep the structured fields: a row that came back
-    // without its id would still be listed and would no longer be tickable.
-    await waitFor(() => expect(within(card).getByRole('checkbox', { name: 'Mark as pending: Draft the notes' })).toBeChecked());
+    // without its id would still be listed and would no longer have a menu.
+    await waitFor(() => expect(rowOf(card, 'Draft the notes')).toHaveTextContent('✔'));
     expect(card.textContent).toContain('2/4');
     expect(within(card).getByRole('progressbar', { name: 'Tasks' })).toHaveAttribute('aria-valuenow', '50');
   });
 
-  it('reopens a completed row through the same box', async () => {
+  it('reopens a completed row from the same menu', async () => {
     const card = await renderCard();
 
-    await act(async () => {
-      fireEvent.click(within(card).getByRole('checkbox', { name: 'Mark as pending: Read the code' }));
-    });
+    const menu = await openRowMenu('Read the code');
+    await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Pending' })); });
     await waitFor(() => expect(patched).toEqual([{ taskId: '4', status: 'pending' }]));
-    await waitFor(() => expect(within(card).getByRole('checkbox', { name: 'Mark as completed: Read the code' })).not.toBeChecked());
+    await waitFor(() => expect(rowOf(card, 'Read the code')).toHaveTextContent('○'));
   });
 
-  // The third status has no box of its own — it lives behind the row label, which is a tap and not a
-  // hover, so the phone reaches it the same way a mouse does.
-  it('offers every status behind the row label and patches the one that is chosen', async () => {
+  // Every status lives behind the row, which is a tap and not a hover, so the phone reaches it the same
+  // way a mouse does.
+  it('offers every status behind the row and patches the one that is chosen', async () => {
     await renderCard();
 
     const menu = await openRowMenu('Ship the fix');
@@ -193,8 +199,7 @@ describe('todo card — the checklist as a control surface', () => {
 
     await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'In progress' })); });
     await waitFor(() => expect(patched).toEqual([{ taskId: '2', status: 'in_progress' }]));
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Mark as completed: Ship the fix' }))
-      .toHaveAttribute('aria-checked', 'mixed'));
+    await waitFor(() => expect(rowOf(screen.getByTestId('chat-card'), 'Ship the fix')).toHaveTextContent('◐'));
   });
 
   it('opens the row menu on a click only, never because the pointer crossed the row', async () => {
@@ -210,13 +215,6 @@ describe('todo card — the checklist as a control surface', () => {
 
     fireEvent.click(trigger);
     expect(await screen.findByRole('menu')).toBeInTheDocument();
-  });
-
-  it('ticks the row off from its text as well — the label is the box\'s caption', async () => {
-    await renderCard();
-
-    await act(async () => { fireEvent.click(screen.getByText('Draft the notes')); });
-    await waitFor(() => expect(patched).toEqual([{ taskId: '3', status: 'completed' }]));
   });
 
   it('sends nothing when the status picked is the one the row already has', async () => {
@@ -301,12 +299,11 @@ describe('todo card — the checklist as a control surface', () => {
     server.use(http.patch('*/api/plugins/todo/api/task', () => HttpResponse.json({ error: 'nope' }, { status: 503 })));
     const card = await renderCard();
 
-    await act(async () => {
-      fireEvent.click(within(card).getByRole('checkbox', { name: 'Mark as completed: Draft the notes' }));
-    });
+    const menu = await openRowMenu('Draft the notes');
+    await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Completed' })); });
 
     expect(await screen.findByText(/elowen 503/, { selector: '[data-slot="toast-description"]' })).toBeInTheDocument();
-    expect(within(card).getByRole('checkbox', { name: 'Mark as completed: Draft the notes' })).not.toBeChecked();
+    expect(rowOf(card, 'Draft the notes')).toHaveTextContent('○');
     expect(card.textContent).toContain('1/4');
   });
 });
@@ -318,11 +315,9 @@ describe('todo card — reachable on a 390px screen', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
     const card = await renderCard();
 
-    const controls = [
-      ...within(card).getAllByRole('button'),
-      ...within(card).getAllByRole('checkbox'),
-    ];
-    expect(controls.length).toBeGreaterThan(6);
+    const controls = within(card).getAllByRole('button');
+    // the fold, the way into the list, four rows, one blocked marker
+    expect(controls.length).toBeGreaterThanOrEqual(7);
     for (const control of controls) {
       expect(control, control.outerHTML).toHaveAccessibleName();
     }
