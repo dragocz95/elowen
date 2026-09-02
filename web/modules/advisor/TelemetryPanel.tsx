@@ -1,32 +1,39 @@
 'use client';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Braces, ChevronDown, Clock3, Gauge, GitBranch, PanelRightClose, PanelRightOpen, Server, Target, TerminalSquare, Users, Workflow, X, type LucideIcon } from 'lucide-react';
+import { Ban, Braces, ChevronDown, Clock3, Gauge, GitBranch, ListChecks, PanelRightClose, PanelRightOpen, Server, Target, TerminalSquare, Users, Workflow, X, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
 import { interpolate } from '../../lib/i18n/interpolate';
 import { elowenClient } from '../../lib/elowenClient';
-import { useBrainProcesses, useBrainRateLimitsAll } from '../../lib/queries';
+import { useBrainProcesses, useBrainRateLimitsAll, useSessionTasks } from '../../lib/queries';
+import { useUpdateSessionTask } from '../../lib/mutations';
 import { formatTokens, formatCost, formatDuration } from '../../lib/format';
 import { OAuthUsageRail, usageProgressClass, usageMeterValue, usageWindowLabel } from '../settings/OAuthUsageRail';
 import { MascotGlyph } from '../../components/ui/SpatialMascot';
 import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
 import { Badge } from '../../components/ui/shadcn/badge';
 import { Button } from '../../components/ui/shadcn/button';
+import { Checkbox } from '../../components/ui/shadcn/checkbox';
 import { Progress } from '../../components/ui/shadcn/progress';
 import { ScrollArea } from '../../components/ui/shadcn/scroll-area';
 import { Separator } from '../../components/ui/shadcn/separator';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
+import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { MorePill } from '../../components/ui/MorePill';
 import { useToast } from '../../components/ui/Toast';
 import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
+import { useNow } from '../../lib/useNow';
+import { TODO_PREVIEW_ITEMS } from '../../lib/chatPresentation';
 import { workflowLabel, workflowProgress } from '../../lib/workflowDag';
 import { useBrainChat } from './BrainChatProvider';
+import { useTelemetryRail } from './telemetryRailState';
 import { ProcessOutputModal } from './ProcessPanel';
-import { ownedSessionIds, isOwnProcess, processOrigin } from '../../lib/processScope';
+import { ownedSessionIds, isOwnProcess, processOrigin, isBackgroundProcessCardId } from '../../lib/processScope';
 import { CommandOrbit } from './CommandOrbit';
 import { goalSubgoalTally, useGoalElapsed } from './GoalStatus';
-import type { BrainGoal, ProcessInfo } from '../../lib/types';
+import type { BrainCard, BrainGoal, ProcessInfo, SessionTask } from '../../lib/types';
 
 /** The owl presides over the rail the way it tops the CLI panel — and it is not decoration: it mirrors
  *  the agent, breathing while a turn runs and settling when it does not, so the rail reads as inhabited
@@ -91,10 +98,13 @@ function SectionHead({ label, meta }: { label: string; meta?: ReactNode }) {
 /** A live-work section that can be folded away. Open by default and on every mount: these sections exist
  *  to be watched while they run, and a fold that persisted would hide a running agent from the one view
  *  that reports it. Folding is for the reader who wants the rail quiet right now, not a stored setting. */
-function LiveSection({ label, count, testId, children }: {
+function LiveSection({ label, count, testId, meter, children }: {
   label: string;
   count: ReactNode;
   testId: string;
+  /** A meter shown above the rows, folding away with them. The tally stays in the head, which is what a
+   *  folded section still has to report. */
+  meter?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -102,10 +112,11 @@ function LiveSection({ label, count, testId, children }: {
       <CollapsibleTrigger className="group flex w-full items-center gap-1.5 text-left [&[data-state=open]_svg]:rotate-0 [&[data-state=closed]_svg]:-rotate-90">
         <ChevronDown size={11} className="shrink-0 text-subtle-foreground transition-transform" aria-hidden />
         <span className="min-w-0 flex-1">
-          <SectionHead label={label} meta={<Badge variant="secondary" className="px-1 py-0 text-[10px]">{count}</Badge>} />
+          <SectionHead label={label} meta={<Badge variant="secondary" className="px-1 py-0 text-[10px] tabular-nums">{count}</Badge>} />
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent>
+        {meter ? <div className="pb-1 pl-[18px]">{meter}</div> : null}
         <ul className="flex flex-col gap-0.5">{children}</ul>
       </CollapsibleContent>
     </Collapsible>
@@ -121,13 +132,17 @@ function LiveSection({ label, count, testId, children }: {
  *  `title` rather than a `Tooltip` for the truncated label — the app's Tooltip is a CONTROLLED popover
  *  (see components/ui/shadcn/tooltip.tsx), which would need open state per row in a list that can hold
  *  dozens, while the native attribute is what a truncated cell is for. */
-function LiveRow({ label, meta, tone, title, onClick, ariaLabel }: {
+function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }: {
   label: string;
   meta?: string;
-  tone: 'running' | 'idle';
+  /** `none` leaves the dot off, for a section whose row already carries a status control of its own — the
+   *  Tasks section puts a checkbox there, and a dot beside it would state the same thing twice. */
+  tone: 'running' | 'idle' | 'none';
   title?: string;
   onClick?: () => void;
   ariaLabel: string;
+  /** Quiets the label for a row that cannot proceed (a task waiting on its blockers). */
+  muted?: boolean;
 }) {
   return (
     <Button
@@ -145,10 +160,164 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel }: {
       // every layout pass over budget and only truncation inside it saves the row.
       className="h-6 min-w-0 flex-1 justify-start gap-1.5 rounded px-1 text-left text-xs disabled:cursor-default disabled:opacity-100"
     >
-      <span className={`shrink-0 ${tone === 'running' ? 'text-success' : 'text-subtle-foreground'}`} aria-hidden>●</span>
-      <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
+      {tone === 'none' ? null : <span className={`shrink-0 ${tone === 'running' ? 'text-success' : 'text-subtle-foreground'}`} aria-hidden>●</span>}
+      <span className={`min-w-0 flex-1 truncate ${muted ? 'text-muted-foreground' : 'text-foreground'}`}>{label}</span>
       {meta ? <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{meta}</span> : null}
     </Button>
+  );
+}
+
+/** One row of the rail's Tasks section, in the shape the section lays out.
+ *
+ *  It is the STRUCTURED half of a card item (see `lib/todoCard.ts`), never the glued `text`: the rail
+ *  places the label, the owner and the blocked marker itself rather than parsing them back out. `id` is
+ *  the todo plugin's own handle and the only thing that makes a row addressable — a card emitted before
+ *  structured items existed has none, which is what the session-task fallback below is for. */
+interface RailTask {
+  id?: string;
+  label: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  startedAt?: number;
+  owner?: string;
+  blockedBy: string[];
+}
+
+/** Running work first, then what is waiting, then what is done — the rail reports live work, so the row
+ *  worth reading is at the top. `sort` is stable, so each group keeps the list's own order. */
+const TASK_ORDER: Record<RailTask['status'], number> = { in_progress: 0, pending: 1, completed: 2 };
+const orderTasks = (tasks: readonly RailTask[]): RailTask[] =>
+  [...tasks].sort((a, b) => TASK_ORDER[a.status] - TASK_ORDER[b.status]);
+
+/** The conversation's checklist rows, read off the cards the stream has already delivered — no request
+ *  of its own and nothing to poll. Background-process cards are excluded exactly as they are from the
+ *  transcript: the rail reports those as processes, not as work to tick off. */
+function cardTasks(cards: readonly BrainCard[]): RailTask[] {
+  return cards
+    .filter((card) => !isBackgroundProcessCardId(card.id))
+    .flatMap((card) => card.items ?? [])
+    .map((item) => ({
+      ...(item.id !== undefined ? { id: item.id } : {}),
+      label: item.label ?? item.text,
+      status: item.status ?? 'pending',
+      ...(item.startedAt !== undefined ? { startedAt: item.startedAt } : {}),
+      ...(item.owner !== undefined ? { owner: item.owner } : {}),
+      blockedBy: item.blockedBy ?? [],
+    }));
+}
+
+const sessionTaskRows = (tasks: readonly SessionTask[]): RailTask[] => tasks.map((task) => ({
+  id: task.id,
+  label: task.status === 'in_progress' && task.activeForm ? task.activeForm : task.subject,
+  status: task.status,
+  ...(task.startedAt !== undefined ? { startedAt: task.startedAt } : {}),
+  ...(task.owner !== undefined ? { owner: task.owner } : {}),
+  blockedBy: task.blockedBy,
+}));
+
+/** Why a pending row cannot start yet.
+ *
+ *  The app's Tooltip is a CONTROLLED popover (see components/ui/shadcn/tooltip.tsx), so it needs open
+ *  state of its own — which is why the ordinary rail row uses a native `title` instead. A blocked task is
+ *  the exception that earns one: the blocker ids are information the reader has to be able to reach on a
+ *  touch screen, where there is no hover for a `title` to answer. Only a blocked row mounts one. */
+function BlockedTip({ ids }: { ids: readonly string[] }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const tipId = useId();
+  const text = interpolate(t.telemetry.taskBlocked, { ids: ids.map((id) => `#${id}`).join(', ') });
+  return (
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipAnchor asChild>
+        <button
+          type="button"
+          data-testid="telemetry-task-blocked"
+          aria-label={text}
+          aria-describedby={open ? tipId : undefined}
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onClick={() => setOpen((value) => !value)}
+          className="shrink-0 text-subtle-foreground transition-colors hover:text-foreground"
+        >
+          <Ban size={11} aria-hidden />
+        </button>
+      </TooltipAnchor>
+      <TooltipContent id={tipId} align="end" className="w-auto max-w-56">{text}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** The conversation's task list, as the rail reports it: a done/total meter, the work that matters now,
+ *  and one tick box per row.
+ *
+ *  It is the same live-work section as Processes and Agents — same head, same row primitive — with the
+ *  status dot replaced by a control, because this is the one section whose rows the reader can also
+ *  CHANGE. Ticking a box patches the task; the label opens the full list, where renaming, ownership and
+ *  the finished work live. The rows are previewed to the shared todo cap, so a forty-task plan cannot
+ *  push the rest of the rail off the screen. */
+function TasksSection({ tasks, disabled, onToggle, onOpen }: {
+  tasks: readonly RailTask[];
+  disabled: boolean;
+  onToggle: (task: RailTask) => void;
+  onOpen: () => void;
+}) {
+  const { t } = useTranslation();
+  const now = useNow();
+  const [expanded, setExpanded] = useState(false);
+  const done = tasks.filter((task) => task.status === 'completed').length;
+  const hidden = Math.max(0, tasks.length - TODO_PREVIEW_ITEMS);
+  const shown = expanded || hidden === 0 ? tasks : tasks.slice(0, TODO_PREVIEW_ITEMS);
+  return (
+    <LiveSection
+      label={t.telemetry.tasks}
+      count={`${done}/${tasks.length}`}
+      testId="telemetry-tasks"
+      meter={<Progress className="h-1" value={(done / tasks.length) * 100} aria-label={t.telemetry.tasks} />}
+    >
+      {shown.map((task, index) => {
+        const blocked = task.status === 'pending' && task.blockedBy.length > 0;
+        const elapsed = task.status === 'in_progress' && Number.isFinite(task.startedAt)
+          ? formatDuration(now - task.startedAt!)
+          : undefined;
+        const toggleLabel = `${task.status === 'completed' ? t.tasksModal.markPending : t.tasksModal.markCompleted}: ${task.label}`;
+        return (
+          <li key={task.id ?? `row-${index}`} className="flex items-center gap-1.5">
+            {task.status === 'in_progress' ? (
+              <span className="shrink-0 text-primary" role="img" aria-label={t.tasksModal.statusInProgress}>◐</span>
+            ) : (
+              <Checkbox
+                checked={task.status === 'completed'}
+                // A row with no id came from a card too old to address, and a disabled box is honest
+                // about that where a box that silently does nothing would not be.
+                disabled={disabled || !task.id}
+                onCheckedChange={() => onToggle(task)}
+                aria-label={toggleLabel}
+                className="size-3.5 shrink-0"
+              />
+            )}
+            <LiveRow
+              label={task.label}
+              {...(elapsed ? { meta: elapsed } : {})}
+              tone="none"
+              muted={blocked || task.status === 'completed'}
+              title={task.owner ? `${task.label} — ${task.owner}` : task.label}
+              ariaLabel={`${t.telemetry.tasksOpen}: ${task.label}`}
+              onClick={onOpen}
+            />
+            {task.owner ? (
+              <span className="shrink-0 truncate text-xs text-subtle-foreground" title={task.owner}>{task.owner}</span>
+            ) : null}
+            {blocked ? <BlockedTip ids={task.blockedBy} /> : null}
+          </li>
+        );
+      })}
+      {hidden > 0 ? (
+        <li className="pt-0.5">
+          <MorePill expanded={expanded} hidden={hidden} onToggle={() => setExpanded((value) => !value)} label={t.telemetry.tasks} />
+        </li>
+      ) : null}
+    </LiveSection>
   );
 }
 
@@ -176,8 +345,9 @@ function ContextMeter({ percent, label }: { percent: number; label: string }) {
 function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const { usage, telemetry, activeSessionId, provider, goal, subagents, workflows, setAgentsOpen } = useBrainChat();
+  const { usage, telemetry, activeSessionId, provider, goal, subagents, workflows, cards, setAgentsOpen, setTasksOpen, syncSessionTasks } = useBrainChat();
   const { data: allProcesses = [] } = useBrainProcesses();
+  const rail = useTelemetryRail();
   const qc = useQueryClient();
   // Track the open process by id, not a click-time copy, so the modal follows the live list (it stops
   // polling once the process exits, and closes when the process is pruned away).
@@ -226,10 +396,35 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
       }
     }
   };
+  // The task list, from the cards the stream already carries. A card that predates the structured items
+  // has rows but no ids, and a row that cannot be addressed cannot be ticked — only then is the plugin's
+  // task list fetched, once, as the fallback. A conversation with no card at all asks for nothing.
+  const cardRows = useMemo(() => cardTasks(cards), [cards]);
+  const addressable = cardRows.length > 0 && cardRows.every((task) => !!task.id);
+  const taskFallback = useSessionTasks(cardRows.length > 0 && !addressable ? activeSessionId : null);
+  const fallbackTasks = taskFallback.data?.tasks;
+  const tasks = useMemo(
+    () => orderTasks(addressable ? cardRows : sessionTaskRows(fallbackTasks ?? [])),
+    [addressable, cardRows, fallbackTasks],
+  );
+  // The CardBlock rule, mirrored: a list whose every row is ticked has nothing left to track.
+  const showTasks = tasks.length > 0 && tasks.some((task) => task.status !== 'completed');
+  const updateTask = useUpdateSessionTask();
+  const toggleTask = (task: RailTask): void => {
+    if (!activeSessionId || !task.id) return;
+    updateTask.mutate(
+      { sessionId: activeSessionId, taskId: task.id, status: task.status === 'completed' ? 'pending' : 'completed' },
+      { onSuccess: (result) => syncSessionTasks(result.tasks), onError: (error: Error) => toast(error.message, 'error') },
+    );
+  };
+  // On a phone the rail IS the screen, so the list has to take it rather than open behind the sheet that
+  // raised it — the same handover the workflow drill-in makes.
+  const openTasks = useCallback((): void => { rail?.setMobileOpen(false); setTasksOpen(true); }, [rail, setTasksOpen]);
   const sections = [
     usage !== null,
     activeGoal !== null,
     !!limits?.windows.length,
+    showTasks,
     runningWorkflows.length > 0,
     liveAgents.length > 0,
     processes.length > 0,
@@ -291,6 +486,10 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           />
           <OAuthUsageRail usage={limits} />
         </section>
+      ) : null}
+
+      {showTasks ? (
+        <TasksSection tasks={tasks} disabled={updateTask.isPending} onToggle={toggleTask} onOpen={openTasks} />
       ) : null}
 
       {runningWorkflows.length > 0 ? (
@@ -583,9 +782,13 @@ function CompactTelemetryItem({ id, icon: Icon, label, value, progress, tone = '
  *  so even a short desktop can reach every instrument without widening the conversation gutter. */
 function TelemetryStub({ busy, onToggle }: { busy: boolean; onToggle?: () => void }) {
   const { t } = useTranslation();
-  const { usage, telemetry, activeSessionId, provider, goal, subagents, workflows } = useBrainChat();
+  const { usage, telemetry, activeSessionId, provider, goal, subagents, workflows, cards } = useBrainChat();
   const { data: limitsByProvider = {} } = useBrainRateLimitsAll();
   const { data: allProcesses = [] } = useBrainProcesses();
+  // The strip reads the cards directly and never falls back to a fetch: a card with no structured ids
+  // still has rows to count, and counting is all an instrument does.
+  const tasks = useMemo(() => cardTasks(cards), [cards]);
+  const doneTasks = tasks.filter((task) => task.status === 'completed').length;
   const limits = provider ? (limitsByProvider[provider] ?? null) : null;
   const activeGoal = goal?.status === 'active' ? goal : null;
   const liveAgents = subagents.filter((agent) => agent.status === 'running' || agent.resultDelivery === 'pending');
@@ -655,6 +858,17 @@ function TelemetryStub({ busy, onToggle }: { busy: boolean; onToggle?: () => voi
               icon={Target}
               label={activeGoal.goal}
               value={activeGoal.turn_budget > 0 ? `${activeGoal.turns_used}/${activeGoal.turn_budget}` : String(activeGoal.turns_used)}
+              tone="primary"
+              onOpen={onToggle}
+            />
+          ) : null}
+          {doneTasks < tasks.length ? (
+            <CompactTelemetryItem
+              id="tasks"
+              icon={ListChecks}
+              label={t.telemetry.tasks}
+              value={`${doneTasks}/${tasks.length}`}
+              progress={(doneTasks / tasks.length) * 100}
               tone="primary"
               onOpen={onToggle}
             />

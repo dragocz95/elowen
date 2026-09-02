@@ -870,9 +870,16 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const transcriptExtras = mobile !== undefined;
   // TODO cards with open work (CardBlock hides a card whose every item is done). The phone bar has no room
   // for a control of its own, so the ⋯ menu opens them in a dialog instead.
+  //
+  // A visible docked rail reports the same checklist ROWS in its Tasks section, where they are also
+  // tickable, so repeating them under the transcript would announce the same work twice — the rule the
+  // agents chip above already follows. It is the rows the rail takes over, not the card: a card carrying
+  // freeform `body` still belongs here, because the rail has nowhere to put that body. A phone (no docked
+  // rail, `telemetryShown` undefined) and a collapsed rail both keep the card exactly as before.
   const todoCards = cards.filter((cd) => {
     if (isBackgroundProcessCardId(cd.id)) return false;
     const items = cd.items ?? [];
+    if (railOwnsLiveWork && items.length > 0 && !cd.body) return false;
     return items.length === 0 ? true : !items.every((i) => i.status === 'completed');
   });
   const fileRef = useRef<HTMLInputElement>(null);
