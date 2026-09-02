@@ -832,7 +832,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const {
     turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
-    usage, goal, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
+    usage, goal, lineCfg, currentModel, provider, providerLabel, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, commands, runSlash, slash, sessions, activeSessionId, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts,
     workMode, planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
@@ -1519,8 +1519,10 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             <>
               {lineCfg.showModel && (currentModel || active?.model) ? (() => {
                 const model = currentModel || active?.model || '';
+                // See ChatDeckHero: only the live identity carries the operator's label; a session-list
+                // row falls back to its config id, which is already the public name.
                 const modelProvider = currentModel ? provider : (active?.provider ?? '');
-                const label = brainModelQualifiedLabel({ provider: modelProvider, model });
+                const label = brainModelQualifiedLabel({ provider: modelProvider, providerLabel: currentModel ? providerLabel : '', model });
                 return <span data-stat="model" className="min-w-0 truncate" title={label}>{label}</span>;
               })() : null}
               {lineCfg.showContext && usage && usage.percent != null ? (

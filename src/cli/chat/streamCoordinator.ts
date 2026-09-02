@@ -5,6 +5,7 @@ import { SnapshotHydrator, SnapshotTimeoutError, type SnapshotLaneLease } from '
 import type { BrainEvent } from '../../brain/events.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import type { BrainStreamSnapshot } from '../../brain/session/liveEventReplay.js';
+import { usageProviderOf } from './brainClient.js';
 import type { BrainStreamFrame } from './brainClient.js';
 import type { SubagentPanelEntry } from './components.js';
 import type { WorkflowState } from '../../brain/transcript.js';
@@ -305,7 +306,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       const ac = new AbortController();
       rt.childAc = ac;
       const transcript = new TranscriptModel();
-      rt.childView = { sessionId, model: '', provider: '', transcript, processes: [], loading: true, usage: null, cards: [] };
+      rt.childView = { sessionId, model: '', provider: '', providerLabel: '', usageProvider: '', transcript, processes: [], loading: true, usage: null, cards: [] };
       render('child:opening');
       let processRevision = 0;
 
@@ -421,7 +422,11 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           else if (snapshot.truncated) truncatedSnapshotPending = true;
           if (snapshot.session) {
             rt.childView!.model = snapshot.session.model;
+            // Public identity for the child's model line, internal pi provider for its usage rail — the
+            // same split the parent gets from /brain/status. See BrainStatus.
             rt.childView!.provider = snapshot.session.provider;
+            rt.childView!.providerLabel = snapshot.session.providerLabel ?? '';
+            rt.childView!.usageProvider = usageProviderOf(snapshot.session);
           }
           rt.childView!.cards = snapshot.cards ?? [];
           rt.childView!.transcript.replaceHistory(snapshot.history);

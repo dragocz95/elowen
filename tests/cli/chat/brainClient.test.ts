@@ -1,5 +1,25 @@
 import { describe, it, expect, vi } from 'vitest';
-import { BRAIN_STREAM_SILENCE_LIMIT_MS, BrainClient, parseSse, Unauthorized } from '../../../src/cli/chat/brainClient.js';
+import { BRAIN_STREAM_SILENCE_LIMIT_MS, BrainClient, parseSse, Unauthorized, usageProviderOf } from '../../../src/cli/chat/brainClient.js';
+
+describe('usageProviderOf — the subscription-rail key across daemon versions', () => {
+  it('takes the explicit field a current daemon sends', () => {
+    expect(usageProviderOf({ provider: 'claude-account', usageProvider: 'anthropic' })).toBe('anthropic');
+  });
+
+  // An older daemon has no such field and put the pi provider in `provider` itself. Reading it there is
+  // exactly the rail that release drew; without it a CLI ahead of its daemon loses the limits section.
+  it('falls back to `provider` when the daemon predates the public/internal split', () => {
+    expect(usageProviderOf({ provider: 'openai-codex' })).toBe('openai-codex');
+  });
+
+  // A CURRENT daemon sends '' for a conversation with no live session. That is an answer — "nothing is
+  // running, so no rail" — and must not collapse into the public config id, which names no pi provider.
+  // Mutation: spell the fallback with `||` and this returns `ollama`, keying the rail on a config id.
+  it('keeps an explicit empty string rather than falling back to the public id', () => {
+    expect(usageProviderOf({ provider: 'ollama', usageProvider: '' })).toBe('');
+    expect(usageProviderOf({})).toBe('');
+  });
+});
 
 describe('parseSse', () => {
   it('splits complete frames and keeps the tail', () => {

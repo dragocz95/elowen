@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
 import { CHANNEL_PREFIX, SUBAGENT_PLATFORM } from '../brain/sessionId.js';
+import { fromRegistryProvider } from '../shared/execs.js';
 import type {
   BrainDebugPage, BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugRequestDetail,
   BrainDebugRequestItem, BrainDebugRequestStatus, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
@@ -749,7 +750,12 @@ export class ProviderRequestStore {
     return {
       requestId: String(row.request_id), sessionId: String(row.session_id), seq: Number(row.seq), turnId: String(row.turn_id),
       retryOf: row.retry_of === null ? null : String(row.retry_of), kind: row.kind as ProviderRequestKind,
-      configuredProvider: String(row.configured_provider), wireProvider: String(row.wire_provider), api: String(row.api), model: String(row.model),
+      configuredProvider: String(row.configured_provider),
+      // The stored row keeps PI's registry name exactly as the request carried it — it is a record and is
+      // never rewritten. The DTO is read by the diagnostics panel, so the namespace is translated away
+      // HERE, at the read boundary: a custom endpoint reads as `ollama`, a built-in stays `anthropic`.
+      wireProvider: fromRegistryProvider(String(row.wire_provider)),
+      api: String(row.api), model: String(row.model),
       startedAt: Number(row.started_at), responseAt: row.response_at === null ? null : Number(row.response_at),
       finishedAt: row.finished_at === null ? null : Number(row.finished_at), status: row.status as BrainDebugRequestStatus,
       httpStatus: row.http_status === null ? null : Number(row.http_status), errorCode: row.error_code === null ? null : String(row.error_code),

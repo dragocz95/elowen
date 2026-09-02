@@ -87,7 +87,9 @@ describe('stream snapshot session identity and cards', () => {
 
     const snapshot = status.streamSnapshot(1, SESSION);
 
-    expect(snapshot.session).toEqual({ model: 'stored-model', provider: 'stored-provider' });
+    // This harness configures no providers, so the public id is all that resolves — the label stays
+    // empty and there is no live session to name an internal usage provider.
+    expect(snapshot.session).toEqual({ model: 'stored-model', provider: 'stored-provider', providerLabel: '', usageProvider: '' });
     expect(snapshot.cards).toEqual([card]);
   });
 
@@ -95,7 +97,7 @@ describe('stream snapshot session identity and cards', () => {
     const { sessions, status } = harness();
     liveOrigin(sessions);
 
-    expect(status.streamSnapshot(1, SESSION).session).toEqual({ model: 'live-model', provider: 'live-provider' });
+    expect(status.streamSnapshot(1, SESSION).session).toEqual({ model: 'live-model', provider: 'live-provider', providerLabel: '', usageProvider: '' });
   });
 });
 

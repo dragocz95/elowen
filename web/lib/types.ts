@@ -173,8 +173,9 @@ export interface BrainStreamSnapshotFrame {
   /** The session actually tapped — differs from the requested one after an idle rollover the dead stream
    *  never saw. */
   sessionId?: string;
-  /** Authoritative identity of the tapped session, including a child drill-in. */
-  session?: { model: string; provider: string };
+  /** Authoritative identity of the tapped session, including a child drill-in. Same public/internal split
+   *  as {@link BrainStatus}: `provider`/`providerLabel` are for display, `usageProvider` for the rail. */
+  session?: { model: string; provider: string; providerLabel?: string; usageProvider?: string };
   /** Persisted display cards for reconnect and read-only drill-in hydration. */
   cards?: BrainCard[];
   /** The daemon's authoritative control state at snapshot time. The tail is transient — cleared at settle,
@@ -224,7 +225,11 @@ export interface McpServerStatus { name: string; status: string }
 /** `thinkingLevel*` are the reasoning-effort controls of the conversation's CURRENT model — the levels it
  *  offers (empty when it has none), their provider-facing labels, and the one in force. They drive the
  *  `/reasoning` picker, which writes back through POST /brain/think. */
-export interface BrainStatus { running: boolean; sessionId: string | null; model: string; provider?: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; workMode?: BrainWorkMode; pendingPlan?: BrainPendingPlan | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; yolo?: boolean; project?: BrainProject; lspEnabled?: boolean; mcp?: McpServerStatus[] | null }
+/** `provider` is the PUBLIC provider identity (the operator's config entry id) and `providerLabel` its
+ *  display name — render `providerLabel || provider`. `usageProvider` is the internal pi provider that
+ *  keys GET /brain/rate-limits/all and is never shown; PI's `elowen-<id>` registry namespace lives only
+ *  in that field. Both are optional for rolling compatibility with an older daemon. */
+export interface BrainStatus { running: boolean; sessionId: string | null; model: string; provider?: string; providerLabel?: string; usageProvider?: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; workMode?: BrainWorkMode; pendingPlan?: BrainPendingPlan | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; yolo?: boolean; project?: BrainProject; lspEnabled?: boolean; mcp?: McpServerStatus[] | null }
 /** One subscription rate-limit window of a connected OAuth account (mirrors the daemon's providerUsage). */
 interface UsageWindow { usedPercent: number; windowMinutes: number | null; resetsAt: number | null }
 /** A connected OAuth account's usage rail: its windows (ordered shortest-first) plus plan/freshness meta. */

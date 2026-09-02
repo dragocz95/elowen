@@ -195,8 +195,16 @@ export interface BrainChatValue {
   models: BrainModelOption[] | null;
   /** The active conversation's model id (from status / a switch) — the picker's trigger label + active mark. */
   currentModel: string;
-  /** The active conversation's provider, used to scope provider-specific telemetry cache. */
+  /** The active conversation's PUBLIC provider identity — the operator's config entry id. It is what a
+   *  model pick is matched against, and what a display falls back to when no label is known. */
   provider: string;
+  /** The operator's display name for that provider (`Ollama`). Everything a human reads renders
+   *  `providerLabel || provider`; PI's internal `elowen-<id>` registry name reaches neither. */
+  providerLabel: string;
+  /** The INTERNAL pi provider of the active model — the key into the subscription-usage map, never a
+   *  display value. Kept apart from `provider` because pi provider ids and config entry ids are different
+   *  namespaces, and one field carrying both is what leaked `elowen-<id>` into the chat header. */
+  usageProvider: string;
   /** Switch this conversation to `m` in place (respawn under the same id; no SSE reconnect). */
   setModel: (m: BrainModelOption) => void;
   /** Fetch the catalog on first picker open (idempotent-cheap; re-invoked by the picker's error retry). */
@@ -371,6 +379,20 @@ function useBrainChatController(): BrainChatValue {
   const [modelsError, setModelsError] = useState(false);
   const [currentModel, setCurrentModel] = useState('');
   const [provider, setProvider] = useState('');
+  const [providerLabel, setProviderLabel] = useState('');
+  const [usageProvider, setUsageProvider] = useState('');
+  /** The three provider fields always move TOGETHER. Carrying a label or a usage key over from the
+   *  previous provider would mislabel the header or paint another account's subscription rail.
+   *
+   *  `usageProvider` falls back to `provider` for one reason: a daemon older than the public/internal
+   *  provider split sends no such field and puts the pi provider straight in `provider`, so reading it
+   *  there draws exactly the rail that release drew. `??` rather than `||`, because a CURRENT daemon
+   *  sends `''` for a conversation with no live session and that empty string is an answer, not a gap. */
+  const applyProviderIdentity = useCallback((identity: { provider?: string; providerLabel?: string; usageProvider?: string }) => {
+    setProvider(identity.provider ?? '');
+    setProviderLabel(identity.providerLabel ?? '');
+    setUsageProvider(identity.usageProvider ?? identity.provider ?? '');
+  }, []);
   const [modelStatus, setModelStatus] = useState<SaveStatus>('idle');
   const latestModelRef = useRef<BrainModelOption | null>(null);
   const modelQueueRef = useRef(Promise.resolve());
@@ -529,7 +551,7 @@ function useBrainChatController(): BrainChatValue {
           if (snap.session) {
             hydrationStampRef.current.model += 1;
             setCurrentModel(snap.session.model);
-            setProvider(snap.session.provider);
+            applyProviderIdentity(snap.session);
           }
           if (Object.prototype.hasOwnProperty.call(snap, 'cards')) {
             hydrationStampRef.current.cards += 1;
@@ -641,7 +663,7 @@ function useBrainChatController(): BrainChatValue {
               setLineCfg(status.statusline);
               hydrationStampRef.current.model += 1;
               setCurrentModel(status.model);
-              setProvider(status.provider ?? '');
+              applyProviderIdentity(status);
             })
             .catch(() => { /* best-effort */ });
         },
@@ -700,7 +722,7 @@ function useBrainChatController(): BrainChatValue {
     setLineCfg(st.statusline);
     if (fresh.model === statusHydrationStamp.model) {
       setCurrentModel(st.model);
-      setProvider(st.provider ?? '');
+      applyProviderIdentity(st);
     }
     if (fresh.control === statusHydrationStamp.control) {
       setAsk(st.pendingAsk ?? null);
@@ -769,7 +791,7 @@ function useBrainChatController(): BrainChatValue {
     // The parent identity is wrong for every child-specific control while the snapshot is in flight. Clear
     // it and address the child immediately; the atomic snapshot below fills the authoritative pair.
     setCurrentModel('');
-    setProvider('');
+    applyProviderIdentity({});
     setActiveSessionId(sessionId);
     clearHistoryWindow();
     stream.openReadOnly({
@@ -781,7 +803,7 @@ function useBrainChatController(): BrainChatValue {
           const folded = fromSnapshot(snap);
           setView({ ...folded, thinking: snap.control ? snap.control.streaming : folded.thinking });
           setCards(withoutBackgroundProcessCards(snap.cards ?? []));
-          if (snap.session) { setCurrentModel(snap.session.model); setProvider(snap.session.provider); }
+          if (snap.session) { setCurrentModel(snap.session.model); applyProviderIdentity(snap.session); }
           if (snap.sessionId) setActiveSessionId(snap.sessionId);
           if (snap.control) {
             setAsk(snap.control.pendingAsk);
@@ -918,9 +940,13 @@ function useBrainChatController(): BrainChatValue {
         const { model } = await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
         if (latestModelRef.current !== m) return;
         setCurrentModel(model);
-        setProvider(m.provider);
+        // A catalog entry names the public identity only; the internal usage key arrives with the next
+        // status poll. Until then the rail keys on the config id (the setter's compatibility fallback),
+        // which is what this surface did before the split — it either matches an OAuth account whose
+        // ids coincide, or matches nothing and hides, never another account's windows.
+        applyProviderIdentity({ provider: m.provider, providerLabel: m.providerLabel });
         setModelStatus('saved');
-        toast(`${t.brainChat.modelSwitched} ${brainModelQualifiedLabel({ provider: m.provider, model })}`, 'ok');
+        toast(`${t.brainChat.modelSwitched} ${brainModelQualifiedLabel({ provider: m.provider, providerLabel: m.providerLabel, model })}`, 'ok');
       } catch (e) {
         if (latestModelRef.current === m) {
           setModelStatus('error');
@@ -1168,7 +1194,7 @@ function useBrainChatController(): BrainChatValue {
     queued: visibleQueue, readOnly, activeSessionId,
     usage, telemetry, goal, subagents, workflows, lineCfg, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
-    models, currentModel, provider, setModel: (m) => runModel(m), loadModels: () => void loadModels(), modelsLoading, modelsError, modelStatus, retryModel,
+    models, currentModel, provider, providerLabel, usageProvider, setModel: (m) => runModel(m), loadModels: () => void loadModels(), modelsLoading, modelsError, modelStatus, retryModel,
     showThoughts: thoughts === 'show',
     setShowThoughts: (v) => setThoughts(v ? 'show' : 'hide'),
     workMode, setWorkMode: runMode, planDecision, implementPlan, dismissPlan, planSubmitting,

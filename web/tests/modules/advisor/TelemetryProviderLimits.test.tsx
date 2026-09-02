@@ -28,7 +28,7 @@ const server = setupServer(
   http.post('*/api/brain/visibility', () => HttpResponse.json({ ok: true })),
   http.get('*/api/brain/messages', () => HttpResponse.json({ items: [], hasMore: false, nextBefore: null })),
   http.get('*/api/brain/status', () => HttpResponse.json({
-    running: true, sessionId: 'brain-1', model: 'gpt', provider: 'openai-codex', usage: null, statusline: null, cards: [], queued: [],
+    running: true, sessionId: 'brain-1', model: 'gpt', provider: 'codex-account', providerLabel: 'Codex', usageProvider: 'openai-codex', usage: null, statusline: null, cards: [], queued: [],
   })),
   http.get('*/api/brain/rate-limits/all', () => {
     rateLimitFetches += 1;
@@ -71,12 +71,40 @@ describe('telemetry provider usage cache', () => {
     expect(screen.queryByTestId('telemetry-limits')).toBeNull();
     FakeES.instances[1]!.emit('snapshot', {
       type: 'snapshot', sessionId: 'brain-ch-subagent-child', history: [], events: [], cards: [],
-      session: { model: 'claude', provider: 'anthropic' },
+      session: { model: 'claude', provider: 'claude-account', providerLabel: 'Claude', usageProvider: 'anthropic' },
       control: { streaming: false, pendingAsk: null, workMode: 'build', pendingPlan: null },
       hasMore: false, nextBefore: null,
     });
 
     await waitFor(() => expect(screen.getByTestId('telemetry-limits')).toHaveTextContent('child-plan'));
     expect(screen.getByTestId('telemetry-limits')).not.toHaveTextContent('parent-plan');
+  });
+
+  // A web build can run ahead of its daemon. An older daemon sends no `usageProvider` at all, because
+  // back then `provider` WAS the pi id — so the rail key falls back to it and the section keeps drawing
+  // exactly as that release drew it, on both the status poll and the snapshot frame.
+  // Mutation: set the key from `usageProvider ?? ''` and neither rail renders.
+  it('keeps the limits rail against a daemon that predates the provider split', async () => {
+    server.use(
+      http.get('*/api/brain/status', () => HttpResponse.json({
+        running: true, sessionId: 'brain-1', model: 'gpt', provider: 'openai-codex',
+        usage: null, statusline: null, cards: [], queued: [],
+      })),
+    );
+    const { wrapper } = createWrapper();
+    render(<ToastProvider><BrainChatProvider><Attach /><TelemetryPanel variant="column" /></BrainChatProvider></ToastProvider>, { wrapper });
+    await waitFor(() => expect(FakeES.instances).toHaveLength(1));
+    await waitFor(() => expect(screen.getByTestId('telemetry-limits')).toHaveTextContent('parent-plan'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open child' }));
+    await waitFor(() => expect(FakeES.instances).toHaveLength(2));
+    FakeES.instances[1]!.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-ch-subagent-child', history: [], events: [], cards: [],
+      session: { model: 'claude', provider: 'anthropic' },
+      control: { streaming: false, pendingAsk: null, workMode: 'build', pendingPlan: null },
+      hasMore: false, nextBefore: null,
+    });
+
+    await waitFor(() => expect(screen.getByTestId('telemetry-limits')).toHaveTextContent('child-plan'));
   });
 });

@@ -62,7 +62,18 @@ export interface BrainStatusView {
   sessionId: string | null;
   title: string;
   model: string;
+  /** The PUBLIC provider identity: the operator's config entry id (`ollama`). This is the only provider
+   *  name a client may show or key a model selection on — PI's internal registry namespace
+   *  (`elowen-ollama`) stops at this boundary. */
   provider: string;
+  /** The operator's display name for that provider (`Ollama`), or '' when the entry is gone from config.
+   *  Clients render `providerLabel || provider`, so a removed provider still reads as its id. */
+  providerLabel: string;
+  /** The INTERNAL pi provider the active model belongs to (`anthropic`, `openai-codex`, `elowen-ollama`).
+   *  Deliberately a separate field from `provider`: it is not an identity to display but the key into the
+   *  subscription-usage map (`/brain/rate-limits/all`), which pi provider ids own. Overloading one field
+   *  with both meanings is what put `elowen-ollama` on the statusline. */
+  usageProvider: string;
   usage: BrainUsage | null;
   thinkingLevel: string;
   thinkingLevels: string[];
@@ -309,6 +320,16 @@ export class BrainStatusService {
     return cfg && cfg.providers.length > 0 ? cfg : null;
   }
 
+  /** A provider config id paired with the operator's label for it — the public half of every DTO this
+   *  service emits. The label is resolved from the SAME configured provider set the model catalogue is
+   *  built from (models.ts), so what the picker groups by and what the statusline shows cannot drift.
+   *  A stored id whose provider was deleted keeps the id and gets an empty label rather than vanishing. */
+  private publicProvider(configId: string): { provider: string; providerLabel: string } {
+    if (!configId) return { provider: '', providerLabel: '' };
+    const entry = this.currentConfig()?.providers.find((p) => p.id === configId);
+    return { provider: configId, providerLabel: entry?.label ?? '' };
+  }
+
   /** The model id `resolveBrainModel` would pick from the CURRENT config (server default selection), or
    *  null when no provider resolves. Cheap + synchronous — the single source of truth /system/readiness
    *  reuses so the chat-readiness check and the brain agree on what "runnable" means. */
@@ -384,7 +405,11 @@ export class BrainStatusService {
     const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
     const cwd = clientDir(policy, b?.workDir ?? row?.work_dir ?? undefined) ?? null;
     return {
-      running: !!b, sessionId: b?.sessionId ?? null, title, model: b?.model ?? '', provider: b?.provider ?? '',
+      running: !!b, sessionId: b?.sessionId ?? null, title, model: b?.model ?? '',
+      // The live session's CONFIG provider id (`b.providerId`), never PI's registry name — falling back to
+      // the conversation's stamped provider so a cold conversation still names who runs it.
+      ...this.publicProvider(b?.providerId ?? row?.provider ?? ''),
+      usageProvider: b?.provider ?? '',
       usage: b ? sessionUsageSnapshot(b.session, this.d.store, b.sessionId) : null,
       thinkingLevel: (sess?.thinkingLevel as string) ?? b?.thinkingLevel ?? '',
       thinkingLevels: supports ? (sess?.getAvailableThinkingLevels?.() ?? []) : [],
@@ -566,7 +591,13 @@ export class BrainStatusService {
     return {
       type: 'snapshot',
       sessionId,
-      session: { model: live?.model ?? row.model, provider: live?.providerId ?? row.provider },
+      // Same public/internal split as `status` above: a drilled-in sub-agent renders its own model line
+      // from this frame and selects its own subscription rail, and neither may see the registry namespace.
+      session: {
+        model: live?.model ?? row.model,
+        ...this.publicProvider(live?.providerId ?? row.provider),
+        usageProvider: live?.provider ?? '',
+      },
       cards: this.d.cards.forSession(sessionId),
       goal: this.d.store.getGoal(sessionId) ?? null,
       history: anchoredViews,

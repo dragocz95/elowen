@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { catalogModelCost, catalogModelVision, descriptorCapabilities, inferredModelCapabilities } from '../../src/brain/modelCapabilities.js';
+import { fromRegistryProvider, toRegistryProvider } from '../../src/shared/execs.js';
 
 /** The effort ladder Elowen would offer for a model on a custom endpoint registered as `elowen-<id>`. */
 const levels = (provider: string, model: string) => inferredModelCapabilities(`elowen-${provider}`, model).levels;
@@ -166,5 +167,41 @@ describe('catalogModelVision — a text-only model is known, so pi-ai can downgr
   it('is undefined for an unknown model (caller keeps the image default) and for Codex OAuth', () => {
     expect(vision('acme-relay', 'some-private-model-xyz')).toBeUndefined();
     expect(catalogModelVision('openai-codex', 'gpt-5.6')).toBeUndefined();
+  });
+});
+
+/**
+ * Every helper here takes a REGISTRY id and strips one `elowen-` namespace itself. configStore only
+ * rejects `/` in a provider id, so `elowen-openrouter` is a config id an operator may really choose —
+ * and it is the one shape where handing in the config id instead of the registry id is not merely
+ * sloppy but resolves a DIFFERENT vendor's rows.
+ */
+describe('the provider argument is the registry id, never the config entry id', () => {
+  const CONFIG_ID = 'elowen-openrouter';
+  const REGISTRY_ID = toRegistryProvider(CONFIG_ID); // elowen-elowen-openrouter
+
+  it('round-trips a config id that itself starts with the namespace', () => {
+    expect(REGISTRY_ID).toBe('elowen-elowen-openrouter');
+    expect(fromRegistryProvider(REGISTRY_ID)).toBe(CONFIG_ID);
+    // …while the config id, if it ever reached a helper, strips to somebody else's vendor name.
+    expect(fromRegistryProvider(CONFIG_ID)).toBe('openrouter');
+  });
+
+  // The live bug this guards: `true` means "already reads images", which SKIPS the vision hop and sends
+  // the photo to a text-only endpoint. The registry form must not borrow OpenRouter's answer.
+  it('does not answer a custom `elowen-openrouter` endpoint out of OpenRouter\'s vision rows', () => {
+    expect(catalogModelVision('openrouter', 'perplexity/sonar')).toBe(true);
+    expect(catalogModelVision(REGISTRY_ID, 'perplexity/sonar')).toBe(false);
+  });
+
+  // The same divergence one tier down, on the reasoning ladder: OpenRouter's own row for this model
+  // offers `xhigh`, while the upstream `z-ai` namespace the operator's endpoint proxies offers `max`.
+  it('keeps the effort ladder on the endpoint the operator actually configured', () => {
+    expect(inferredModelCapabilities('openrouter', 'z-ai/glm-5.2').levels).toEqual(['high', 'xhigh']);
+    expect(inferredModelCapabilities(REGISTRY_ID, 'z-ai/glm-5.2').levels).toEqual(['high', 'max']);
+  });
+
+  it('prices it from the same endpoint identity the ladder and vision came from', () => {
+    expect(catalogModelCost(REGISTRY_ID, 'z-ai/glm-5.2')).toEqual(catalogModelCost('elowen-zai', 'glm-5.2'));
   });
 });

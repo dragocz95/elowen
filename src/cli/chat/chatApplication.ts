@@ -8,7 +8,7 @@ import { commandsFor } from '../../brain/slashCommands.js';
 import type { SlashCommandDef } from '../../shared/wireContract.js';
 import { TranscriptModel } from '../../brain/transcriptModel.js';
 import { ChatApplicationLifetime } from './applicationLifetime.js';
-import { BrainClient } from './brainClient.js';
+import { BrainClient, usageProviderOf } from './brainClient.js';
 import { MASCOT_ART } from './mascot.js';
 import type { BrainStatus } from './brainClient.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
@@ -234,6 +234,8 @@ export class ChatApplication {
       notice: notices.render(),
       modelName: boot?.model || options.model || '',
       provider: boot?.provider ?? '',
+      providerLabel: boot?.providerLabel ?? '',
+      usageProvider: boot ? usageProviderOf(boot) : '',
       conversationTitle: boot?.title ?? '',
       lineCfg: boot?.statusline ?? null,
       usage: boot?.usage ?? null,
@@ -395,8 +397,14 @@ export class ChatApplication {
 
   private applyStatus(status: BrainStatus): void {
     const state = this.state;
-    const nextProvider = status.provider || state.provider;
-    state.provider = nextProvider;
+    // The provider id and its label move TOGETHER — carrying a label over from a previous provider would
+    // put the wrong name on the model line. An empty poll (no live session yet) keeps the last known pair
+    // rather than blanking the line mid-conversation.
+    if (status.provider) {
+      state.provider = status.provider;
+      state.providerLabel = status.providerLabel ?? '';
+    }
+    state.usageProvider = usageProviderOf(status);
     state.modelName = status.model || state.modelName;
     state.conversationTitle = status.title ?? state.conversationTitle;
     state.lineCfg = status.statusline;

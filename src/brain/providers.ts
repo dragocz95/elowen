@@ -2,7 +2,7 @@ import { ModelRegistry, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
-import { BRAIN_REGISTRY_PROVIDER_PREFIX } from '../shared/execs.js';
+import { BRAIN_REGISTRY_PROVIDER_PREFIX, toRegistryProvider } from '../shared/execs.js';
 import { trimTrailingSlash } from '../shared/url.js';
 import { installOpenRouterMeter } from './openrouterMeter.js';
 import { DEFAULT_OPENAI_COMPATIBILITY, type BrainProviderType, type BrainProviderApi } from '../store/configStore.js';
@@ -234,7 +234,7 @@ const windowFor = (cfg: BrainRuntimeConfig, providerId: string, model: string): 
 /** The registry provider name a config entry registers/reads under. Custom endpoints get a stable
  *  `elowen-<id>` namespace; OAuth entries resolve to the built-in provider. */
 export function registryProviderName(p: BrainProviderEntry): string {
-  return OAUTH_BUILTIN[p.type] ?? `${BRAIN_REGISTRY_PROVIDER_PREFIX}${p.id}`;
+  return OAUTH_BUILTIN[p.type] ?? toRegistryProvider(p.id);
 }
 
 /** A credential-less ModelRuntime for reading the built-in catalog and Elowen's descriptor profiles —

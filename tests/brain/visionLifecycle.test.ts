@@ -4,11 +4,16 @@ import { ClientAttachments } from '../../src/brain/service/attachments.js';
 import { LiveSessionRegistry } from '../../src/brain/session/liveRegistry.js';
 import type { LiveBrain, SpawnOpts } from '../../src/brain/session/liveBrain.js';
 
-function live(spec: { provider?: string; model: string; thinkingLevel?: string }): LiveBrain {
+/** `provider` is the CONFIG entry id (`LiveBrain.providerId`); `registryProvider` is PI's name for it
+ *  (`LiveBrain.provider`). They default to the same string because these fixtures are OAuth-style
+ *  entries, where the operator's id IS the pi provider — the vision-hop test below sets them apart
+ *  deliberately, which is the only shape that can catch the two being confused. */
+function live(spec: { provider?: string; registryProvider?: string; model: string; thinkingLevel?: string }): LiveBrain {
   return {
     session: { dispose: vi.fn(), isStreaming: false } as never,
     sessionId: 'brain-1',
     providerId: spec.provider,
+    provider: spec.registryProvider ?? spec.provider ?? '',
     model: spec.model,
     thinkingLevel: spec.thinkingLevel,
     requestProfile: {},
@@ -123,5 +128,36 @@ describe('ConversationLifecycle vision fallback', () => {
     const result = await lifecycle.maybeVisionHop(1, original, true);
     expect(result.visionFallback).toBe(false);
     expect(result.visionFallbackReturn).toBeUndefined();
+  });
+
+  // configStore only rejects `/` in a provider id, so an operator may name a custom endpoint
+  // `elowen-openrouter`. PI then registers it as `elowen-elowen-openrouter`, and the catalog helpers
+  // strip exactly one namespace. Asking them with the CONFIG id strips it to `openrouter` and answers
+  // out of OpenRouter's own rows: `perplexity/sonar` reads images THERE, so the hop was skipped and a
+  // text-only endpoint got the photo. Asked with the REGISTRY id the name stays the operator's own,
+  // which no catalog knows, and the model resolves through its upstream namespace to text-only.
+  // Mutation: pass `b.providerId` into catalogModelVision again and this stops hopping.
+  it('resolves vision from the registry id, so an `elowen-`-prefixed config id cannot borrow another vendor', async () => {
+    const sessions = new LiveSessionRegistry<LiveBrain>();
+    const original = live({
+      provider: 'elowen-openrouter', registryProvider: 'elowen-elowen-openrouter', model: 'perplexity/sonar',
+    });
+    sessions.set('brain-1', original);
+    const spawn = vi.fn(async () => live({ provider: 'alibaba', model: 'qwen3.8-max' }));
+    const lifecycle = new ConversationLifecycle({
+      store: { getSession: () => ({ id: 'brain-1', user_id: 1, work_dir: '' }) },
+      sessions,
+      attachments: new ClientAttachments(),
+      elicitation: { cancelForSession: vi.fn() },
+      goals: { cancelGoalContinuation: vi.fn(), resumeAfterRespawn: vi.fn(), pauseForRespawnFailure: vi.fn() },
+      spawn,
+      policy: () => ({ allowedProjectIds: 'all', allowedPaths: () => [] }),
+      userSettings: () => ({ visionModelProvider: 'alibaba', visionModel: 'qwen3.8-max' }),
+      selectionAllowed: () => true,
+    } as never);
+
+    await lifecycle.maybeVisionHop(1, original, true);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawn.mock.calls[0]![0]).toMatchObject({ selection: { provider: 'alibaba', model: 'qwen3.8-max' } });
   });
 });

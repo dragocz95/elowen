@@ -69,6 +69,23 @@ describe('modelProvider', () => {
       expect(brainModelQualifiedLabel({ provider: 'alibaba', model: 'deepseek-v4-pro' }))
         .toBe('alibaba/deepseek-v4-pro');
     });
+
+    // The structured form is prose for a human, so the operator's own name for the provider wins. The
+    // string form is not: it names an exec the reader may have to type or match in an allow-list, so it
+    // stays spelled as stored. Mutation: use the label in the string branch too and the exec case fails.
+    it('prefers the operator label in the structured form and the stored id in the string form', () => {
+      const custom = brainModel({ provider: 'ollama', providerLabel: 'Ollama', model: 'kimi-k2.7-code', exec: 'ollama/kimi-k2.7-code' });
+      expect(brainModelQualifiedLabel({ provider: 'ollama', providerLabel: 'Ollama', model: 'kimi-k2.7-code' }))
+        .toBe('Ollama/kimi-k2.7-code');
+      expect(brainModelQualifiedLabel('ollama/kimi-k2.7-code', [custom])).toBe('ollama/kimi-k2.7-code');
+    });
+
+    // A provider deleted from Settings leaves no label behind; its config id is the honest fallback, and
+    // it is already the PUBLIC name — PI's internal `elowen-<id>` namespace never reaches a client.
+    it('falls back to the provider id when no label is known', () => {
+      expect(brainModelQualifiedLabel({ provider: 'ollama', providerLabel: '', model: 'kimi-k2.7-code' }))
+        .toBe('ollama/kimi-k2.7-code');
+    });
   });
 
   describe('execModel', () => {

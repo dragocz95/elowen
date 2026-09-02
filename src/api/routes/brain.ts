@@ -81,7 +81,9 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!d.brain) return c.json(null);
     try {
       const status = d.brain.status(c.get('user').id, c.req.query('session'));
-      const service = usageServices[status.provider];
+      // `usageProvider`, not `provider`: the map is keyed by PI provider id, while `provider` is the
+      // operator's config entry id that clients display. See BrainStatusView for the split.
+      const service = usageServices[status.usageProvider];
       if (!service) return c.json(null);
       return c.json(await service.getUsage());
     } catch { return c.json({ error: 'unknown session' }, 404); }

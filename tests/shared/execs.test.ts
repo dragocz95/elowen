@@ -18,6 +18,8 @@ import {
   EXEC_NOTES,
   isWellFormedExec,
   isAllowedExec,
+  toRegistryProvider,
+  fromRegistryProvider,
 } from '../../src/shared/execs.js';
 
 describe('shared/execs', () => {
@@ -262,6 +264,30 @@ describe('shared/execs', () => {
       expect(isModelVisibleForUser(null, stale, 'alibaba/qwen3.8-max', PROVIDERS)).toBe(false);
       expect(isModelVisibleForUser({ allowed_execs: [] }, stale, 'alibaba/qwen3.8-max', PROVIDERS)).toBe(false);
       expect(isModelVisibleForUser({ allowed_execs: ['alibaba/qwen3.8-max'] }, stale, 'alibaba/qwen3.8-max', PROVIDERS)).toBe(false);
+    });
+  });
+
+  /** The single translation between the public config id and PI's internal registry namespace. Every
+   *  display and every DTO carries the public half; only the registry and the spawn path see the other. */
+  describe('registry provider namespace', () => {
+    it('round-trips a custom provider config id through the registry namespace', () => {
+      expect(toRegistryProvider('ollama')).toBe('elowen-ollama');
+      expect(fromRegistryProvider(toRegistryProvider('ollama'))).toBe('ollama');
+    });
+
+    // An OAuth entry resolves to a BUILT-IN pi provider that never carries the namespace, so the read
+    // direction has to be total: a caller must not have to know which kind of provider it holds.
+    // Mutation: make fromRegistryProvider slice unconditionally and `anthropic` comes back as `hropic`.
+    it('leaves a built-in (OAuth) provider name untouched', () => {
+      for (const builtin of ['anthropic', 'openai-codex', 'kimi-coding', 'github-copilot']) {
+        expect(fromRegistryProvider(builtin)).toBe(builtin);
+      }
+    });
+
+    // The prefix is anchored: a config id that merely CONTAINS the namespace keeps every character.
+    it('strips only an anchored namespace', () => {
+      expect(fromRegistryProvider('my-elowen-relay')).toBe('my-elowen-relay');
+      expect(fromRegistryProvider('elowen-elowen-relay')).toBe('elowen-relay');
     });
   });
 });

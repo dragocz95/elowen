@@ -3908,6 +3908,38 @@ describe('BrainService', () => {
     // The last idle is the deterministic post-turn one — it must carry the qualified identity so every
     // platform footer can name the billing provider without making another catalog lookup.
     expect(idles[idles.length - 1].model).toMatch(/^[^/]+\/.+/);
+    // …and it names the provider the OPERATOR configured, never PI's registry name for it. The live
+    // channel here is registered as `elowen-relay`; the footer says `relay`.
+    expect(idles[idles.length - 1].model).toBe('relay/m');
+  });
+
+  // The same footer, taking its fallback branch. `providerId` (the config id) is normally always set by
+  // the spawner, so the fallback reads the live session's PI registry name — and printing that raw would
+  // put `elowen-ollama/…` in front of a whole Discord room. It is translated instead.
+  // Mutation: drop fromRegistryProvider from the fallback in channels.ts and this reads `elowen-ollama/m`.
+  it('never leaks the registry namespace into the channel idle footer when the config id is absent', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const policy = { allowedProjectIds: new Set([1]), allowedPaths: () => ['/repo/a'] };
+    const seen: { type: string; model?: string }[] = [];
+    const send = () => svc.channelSend({ channelId: 'disc-idle-legacy', ownerUserId: 1, policy, onEvent: (e) => seen.push(e) }, 'ahoj');
+
+    await send(); // establishes the live channel
+    const registry = (svc as unknown as {
+      sessions: { channelGet(id: string): { providerId?: string; provider: string } | undefined };
+    }).sessions;
+    const live = registry.channelGet('disc-idle-legacy')!;
+    live.providerId = undefined;
+    live.provider = 'elowen-ollama';
+
+    seen.length = 0;
+    await send();
+
+    const idles = seen.filter((e) => e.type === 'idle');
+    expect(idles.length).toBeGreaterThan(0);
+    const footer = idles[idles.length - 1].model!;
+    expect(footer).not.toContain('elowen-');
+    expect(footer).toBe('ollama/m');
   });
 
   it('notify fans out to started platforms that implement notify()', async () => {
