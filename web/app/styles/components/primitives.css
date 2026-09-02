@@ -259,3 +259,10 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
   .overlay-menu-item { min-height: var(--touch-target); }
   .overlay-touch-target { min-width: var(--touch-target); min-height: var(--touch-target); }
 }
+
+/* The command palette's search field drops the global focus halo. The `input:focus-visible` rule in
+   base.css draws a primary ring around every focused control; here the panel itself is the focus
+   indication — the input row is its top edge, and a ring there reads as a stray outline around nothing.
+   Scoped to this one input (the palette marks it `.command-palette-search`); global focus styles and
+   every other control keep the halo. Same treatment as `.chat-composer textarea` in chat.css. */
+input.command-palette-search:focus-visible { box-shadow: none; }

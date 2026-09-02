@@ -1,38 +1,51 @@
 'use client';
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Search, CornerDownLeft, type LucideIcon } from 'lucide-react';
-import { MODULES } from '../../modules/registry';
+import { CornerDownLeft } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginUi } from '../../lib/queries';
-import { pluginNavEntries } from '../../lib/pluginNav';
+import { buildSearchIndex, filterEntries, findNormalizedRange, SEARCH_GROUP_ORDER, type SearchEntry, type SearchGroup } from './siteSearch';
 import { focusOverlaySurface, useOverlayIsolation } from '../ui/overlayStack';
 import { Dialog, DialogContent, DialogOverlay } from '../ui/shadcn/dialog';
-
-interface Command { id: string; label: string; hint?: string; icon: LucideIcon; run: () => void }
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from '../ui/shadcn/command';
 
 export const COMMAND_PALETTE_OPEN_EVENT = 'elowen:open-command-palette';
 
-/** Accent-highlight the matched query substring within a label. */
+/** Accent-highlight the matched query substring within a label. The match is diacritics-insensitive —
+ *  `retenc` highlights "Retence" — because it goes through the index's NFD normalizer, which maps the
+ *  hit back onto the ORIGINAL string so the accented characters are the ones that colour. */
 function Highlight({ text, q }: { text: string; q: string }) {
-  if (!q) return <>{text}</>;
-  const i = text.toLowerCase().indexOf(q.toLowerCase());
-  if (i < 0) return <>{text}</>;
-  return <>{text.slice(0, i)}<span className="text-primary">{text.slice(i, i + q.length)}</span>{text.slice(i + q.length)}</>;
+  const range = q.trim() ? findNormalizedRange(text, q) : null;
+  if (!range) return <>{text}</>;
+  const [start, end] = range;
+  return <>{text.slice(0, start)}<span className="text-primary">{text.slice(start, end)}</span>{text.slice(end)}</>;
 }
 
-/** The open palette: the shadcn `Dialog` (and therefore Radix) wrapped around a combobox of commands.
+/** Group headings are reuses of names the app already prints — the rail's, the Settings deck's, the
+ *  account deck's and the plugin group's — so the palette coins no second copy of any of them. */
+function headingFor(t: ReturnType<typeof useTranslation>['t'], group: Exclude<SearchGroup, 'actions'>): string {
+  if (group === 'pages') return t.common.primaryNav;
+  if (group === 'settings') return t.page.settings;
+  if (group === 'account') return t.account.title;
+  return t.settings.plugins;
+}
+
+/** The open palette: the shadcn `Dialog` (and therefore Radix) wrapped around the shadcn `Command`
+ *  (cmdk) searching the whole site.
  *
  *  THE DIALOG IS RADIX'S, exactly as in `Modal` — the focus trap, Tab looping, `role="dialog"`, Escape and
- *  the layer stack that decides which of several open overlays Escape belongs to, so a dialog raised FROM a
- *  command dismisses itself before this one. The app keeps only what Radix has no notion of: the overlay
+ *  the layer stack that decides which of several open overlays Escape belongs to, so a dialog raised FROM
+ *  a command dismisses itself before this one. The app keeps only what Radix has no notion of: the overlay
  *  stack's `inert` isolation and scroll lock (`useOverlayIsolation`), which element takes focus on open and
  *  which gets it back on close, and the backdrop press. See `Modal.tsx` for why each of those is declined
  *  from Radix rather than merely reimplemented.
  *
- *  THE COMBOBOX IS THE APP'S. Radix has no combobox primitive, so the input's `role="combobox"`, the
- *  listbox and its options, and the Arrow/Home/End/Enter cursor below are authored here on purpose.
+ *  THE COMBOBOX IS CMDK'S. The roving cursor and its wraparound (`loop`), Home/End, Enter and the
+ *  `combobox`/`listbox`/`option` ARIA wiring are the primitive's; filtering is the app's (`shouldFilter=
+ *  {false}` + `filterEntries`, diacritics-insensitive), as is grouping, the highlight and the routing.
+ *  The rows come from `lib/siteSearch.ts` — pages, the Settings and Account decks and their static rows,
+ *  and plugin pages — never from a second copy of any label.
  *
  *  Mounted only while the palette is open, like every overlay here: `useOverlayIsolation` captures the
  *  element to return focus to on its FIRST render, so a component that stayed mounted while closed would
@@ -41,18 +54,16 @@ function Highlight({ text, q }: { text: string; q: string }) {
  *  It is also portaled to <body>, like `Modal` and `WorkspaceTakeover`. That is not cosmetic either:
  *  `overlayStack` isolates the background by marking every CHILD OF BODY except the overlay root `inert`,
  *  so an overlay rendered inside the shell tree would have its own body-level ancestor made inert and
- *  would blank itself out. */
-function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onClose: () => void }) {
+ *  would blank itself out. The cmdk parts render INSIDE this dialog — they have no portal of their own,
+ *  which is exactly why the shadcn `CommandDialog` is not used (see `command.tsx`). */
+function CommandPaletteDialog({ entries, onClose }: { entries: SearchEntry[]; onClose: () => void }) {
   const { t } = useTranslation();
-  // Query and cursor live HERE, so closing the palette discards them with the component and the next
-  // open starts from an empty field without a reset effect flashing the previous search first.
+  const router = useRouter();
+  // Query lives HERE, so closing the palette discards it with the component and the next open starts
+  // from an empty field without a reset effect flashing the previous search first.
   const [query, setQuery] = useState('');
-  const [active, setActive] = useState(0);
   const layerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const listId = useId();
-  const optionId = (index: number) => `${listId}-option-${index}`;
   /** Whether the press that is about to produce a click started on the backdrop itself. */
   const pressedBackdrop = useRef(false);
 
@@ -60,28 +71,23 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
   // Escape are Radix's now; running both would mean two implementations answering the same Tab.
   const { restoreFocus } = useOverlayIsolation({ enabled: true, rootRef: layerRef });
 
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q ? commands.filter((c) => `${c.label} ${c.hint ?? ''}`.toLowerCase().includes(q)) : commands;
-  }, [commands, query]);
+  // The empty query is a calm launcher: pages plus the Settings and Account decks' SECTIONS only —
+  // a section entry's id is `settings:<id>` / `account:<id>`, a row's carries the row path after it.
+  // Typing is what reveals the rows (and the plugin pages). cmdk is handed `shouldFilter={false}`:
+  // what is rendered IS the filtered list, so the list is a pure function of the query.
+  const showRows = query.trim().length > 0;
+  const isLauncherEntry = (entry: SearchEntry): boolean =>
+    !entry.id.slice(entry.group.length + 1).includes(':');
+  const matching = filterEntries(entries, query).filter((entry) => showRows || isLauncherEntry(entry));
+  const visibleGroups = (showRows ? SEARCH_GROUP_ORDER : (['pages', 'settings', 'account'] as const))
+    .filter((group): group is Exclude<SearchGroup, 'actions'> => group !== 'actions')
+    .map((group) => ({ group, heading: headingFor(t, group), entries: matching.filter((entry) => entry.group === group) }))
+    .filter(({ entries: groupEntries }) => groupEntries.length > 0);
 
-  useEffect(() => { if (active >= results.length) setActive(0); }, [results.length, active]);
-  // The list scrolls, and Arrow navigation wraps, so the active row is routinely outside the visible
-  // window — most obviously the moment Up from the first row lands on the last.
-  useEffect(() => { optionRefs.current[active]?.scrollIntoView({ block: 'nearest' }); }, [active, results.length]);
-
-  // Wraparound matches `SelectMenu`, the app's reference listbox: it moves modulo the option count rather
-  // than stopping at the ends.
-  const move = (delta: number) => {
-    if (results.length === 0) return;
-    setActive((i) => (i + delta + results.length) % results.length);
-  };
-  const onKeyDown = (e: ReactKeyboardEvent) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
-    else if (e.key === 'Home') { e.preventDefault(); setActive(0); }
-    else if (e.key === 'End') { e.preventDefault(); setActive(Math.max(0, results.length - 1)); }
-    else if (e.key === 'Enter') { e.preventDefault(); results[active]?.run(); }
+  const run = (entry: SearchEntry | undefined) => {
+    if (!entry) return;
+    router.push(entry.href);
+    onClose();
   };
 
   return createPortal(
@@ -127,57 +133,54 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
             restoreFocus();
           }}
         >
-          <div className="flex items-center gap-2.5 border-b border-border px-4">
-            <Search size={16} className="shrink-0 text-muted-foreground" aria-hidden />
-            <input
+          {/* cmdk owns the roving cursor, its wraparound, Home/End, Enter and the ARIA; the app owns
+              grouping, filtering (diacritics-insensitive, see `filterEntries`), highlighting and
+              routing. The input row keeps the launcher's height; the panel is the focus indication, so
+              the field itself drops the global focus halo (primitives.css, `.command-palette-search`). */}
+          <Command
+            loop
+            shouldFilter={false}
+            label={t.common.searchCommands}
+            className="h-auto w-full bg-transparent [&_[data-slot=command-input-wrapper]]:h-12 [&_[data-slot=command-input-wrapper]]:px-4 [&_[data-slot=command-input-wrapper]]:gap-2.5"
+          >
+            <CommandInput
               data-autofocus
-              role="combobox"
-              aria-label={t.common.searchCommands}
-              aria-autocomplete="list"
-              aria-haspopup="listbox"
-              aria-controls={listId}
-              aria-expanded={results.length > 0}
-              aria-activedescendant={results.length > 0 ? optionId(active) : undefined}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={onKeyDown}
-              placeholder={t.common.searchCommands}
-              className="h-12 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+              onValueChange={setQuery}
+              aria-label={t.common.searchCommands}
+              placeholder={t.common.searchSite}
+              className="command-palette-search h-12 w-full bg-transparent px-0 text-sm text-foreground placeholder:text-muted-foreground"
             />
-          </div>
-          {/* The rows are `role="option"` on the buttons themselves, as in `SelectMenu`, but held out of the
-              Tab cycle: focus stays in the combobox and the active row is announced through
-              `aria-activedescendant`. The <li> wrappers are presentational so the listbox owns options only. */}
-          <ul id={listId} role="listbox" aria-label={t.common.searchCommands} className="max-h-[50dvh] overflow-y-auto p-1.5">
-            {results.length === 0 ? (
-              <li role="presentation" className="px-3 py-6 text-center text-sm text-muted-foreground">{t.common.noCommands}</li>
-            ) : results.map((c, i) => {
-              const Icon = c.icon;
-              return (
-                <li key={c.id} role="presentation">
-                  <button
-                    id={optionId(i)}
-                    ref={(node) => { optionRefs.current[i] = node; }}
-                    type="button"
-                    role="option"
-                    aria-selected={i === active}
-                    tabIndex={-1}
-                    onMouseEnter={() => setActive(i)}
-                    onClick={() => c.run()}
-                    // The active row is a wash of the foreground (`accent`), not a step up the surface
-                    // ramp: a skin may collapse that ramp — studio-oled paints surface, elevated and
-                    // overlay the same near-black — and a highlight built from it disappears entirely.
-                    className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${i === active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'}`}
-                  >
-                    <Icon size={15} className="shrink-0" aria-hidden />
-                    <span className="flex-1 text-foreground"><Highlight text={c.label} q={query.trim()} /></span>
-                    {c.hint ? <span className="font-mono text-[11px] text-muted-foreground">{c.hint}</span> : null}
-                    {i === active ? <CornerDownLeft size={13} className="text-muted-foreground" aria-hidden /> : null}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+            <CommandList label={t.common.searchCommands} className="max-h-[50dvh] p-1.5">
+              <CommandEmpty className="px-3 py-6 text-center text-sm text-muted-foreground">{t.common.searchNoResults}</CommandEmpty>
+              {visibleGroups.map(({ group, heading, entries: groupEntries }) => (
+                <CommandGroup key={group} heading={<span className="uppercase tracking-wider">{heading}</span>}>
+                  {groupEntries.map((entry) => {
+                    const Icon = entry.icon;
+                    return (
+                      <CommandItem
+                        key={entry.id}
+                        value={entry.id}
+                        onSelect={(value) => run(entries.find((candidate) => candidate.id === value))}
+                        className="group rounded-md gap-3 px-3 py-2"
+                      >
+                        {Icon ? <Icon size={15} className="shrink-0 text-muted-foreground" aria-hidden /> : null}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm text-foreground"><Highlight text={entry.title} q={query} /></span>
+                          {entry.subtitle ? (
+                            <span className="block truncate text-xs text-muted-foreground"><Highlight text={entry.subtitle} q={query} /></span>
+                          ) : null}
+                        </span>
+                        {/* The route / deep-link is today's hint column, mono as it always was. */}
+                        <CommandShortcut className="font-mono text-[11px] tracking-normal">{entry.href}</CommandShortcut>
+                        <CornerDownLeft size={13} className="shrink-0 text-muted-foreground opacity-0 group-data-[selected=true]:opacity-100" aria-hidden />
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              ))}
+            </CommandList>
+          </Command>
         </DialogContent>
       </DialogOverlay>
     </Dialog>,
@@ -186,7 +189,6 @@ function CommandPaletteDialog({ commands, onClose }: { commands: Command[]; onCl
 }
 
 export function CommandPalette() {
-  const router = useRouter();
   const { t, locale } = useTranslation();
   const pluginUi = usePluginUi(locale);
   const [open, setOpen] = useState(false);
@@ -206,19 +208,13 @@ export function CommandPalette() {
     };
   }, []);
 
-  const commands = useMemo<Command[]>(() => {
-    const go = (route: string) => () => { router.push(route); setOpen(false); };
-    const nav = MODULES.map((m) => ({ id: `nav:${m.route}`, label: `${t.common.goTo} ${t.page[m.id as keyof typeof t.page] ?? m.label}`, hint: m.route, icon: m.icon, run: go(m.route) }));
-    // One entry per plugin PAGE (a world with sub-items contributes each of them), already localized
-    // by the daemon's listing.
-    const pluginNav = pluginNavEntries(pluginUi.data ?? [])
-      .flatMap<{ href?: string; label: string; icon?: LucideIcon }>((world) => world.subItems ?? [world])
-      .flatMap((entry) => entry.href && entry.icon
-        ? [{ id: `nav:${entry.href}`, label: `${t.common.goTo} ${entry.label}`, hint: entry.href, icon: entry.icon, run: go(entry.href) }]
-        : []);
-    return [...nav, ...pluginNav];
-  }, [router, t, pluginUi.data]);
+  // One index for the whole site, rebuilt while the palette is open (or about to open). `t` arrives
+  // brand-resolved from useTranslation, so the index's `{agentName}` strings are display-ready.
+  const entries = useMemo(
+    () => buildSearchIndex(t, pluginUi.data ?? []),
+    [t, pluginUi.data],
+  );
 
   if (!open) return null;
-  return <CommandPaletteDialog commands={commands} onClose={() => setOpen(false)} />;
+  return <CommandPaletteDialog entries={entries} onClose={() => setOpen(false)} />;
 }

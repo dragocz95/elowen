@@ -4,6 +4,9 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 
+// The account deck reads `?cat=` for deep links (the site search's account entries point at it); the
+// suite renders the view bare, so give it the hook without a router.
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams() }));
 // Monaco is browser-only and never mounts under jsdom; stub the personality body editor.
 vi.mock('../../../lib/monaco/monacoLoader', () => ({
   MonacoEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (

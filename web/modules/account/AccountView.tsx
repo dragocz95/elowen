@@ -35,6 +35,7 @@ import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/S
 import { WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { MotionReveal } from '../../components/ui/Motion';
+import { useSearchParams } from 'next/navigation';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
 import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
@@ -89,6 +90,26 @@ export function AccountView() {
   const prefPct = Math.round(preference * 100);
   const [section, setSection] = usePersistentState<AccountSection>('elowen.account.section', 'profile', isAccountSection);
   const [visitedSections, setVisitedSections] = useState<Set<AccountSection>>(() => new Set([section]));
+  // Deep link: `/account?cat=<section>` opens that section, the same form `/settings?cat=` uses (and the
+  // site search's account entries point at). Two sources, exactly as on Settings: `useSearchParams`
+  // reacts to CLIENT-side navigations, while the first load / F5 reads `window.location` directly —
+  // this route is statically optimized, so useSearchParams answers EMPTY until a client navigation —
+  // and popstate follows back/forward afterwards. A section id whose owner is gone is reset to
+  // `profile` by the listing check below.
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const urlCat = searchParams.get('cat');
+    if (urlCat && isAccountSection(urlCat)) setSection(urlCat as AccountSection);
+  }, [searchParams, setSection]);
+  useEffect(() => {
+    const apply = () => {
+      const cat = new URLSearchParams(window.location.search).get('cat');
+      if (cat && isAccountSection(cat)) setSection(cat as AccountSection);
+    };
+    apply();
+    window.addEventListener('popstate', apply);
+    return () => window.removeEventListener('popstate', apply);
+  }, [setSection]);
   const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<AccountSection, SaveFeedback>>>({});
   const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
     if (!isAccountSection(id)) return;

@@ -18,6 +18,8 @@ const primitives = {
   'button.tsx': { radix: '@radix-ui/react-slot', cva: true },
   'checkbox.tsx': { radix: '@radix-ui/react-checkbox', cva: true },
   'collapsible.tsx': { radix: '@radix-ui/react-collapsible', cva: false },
+  // cmdk, not Radix: the palette's listbox/combobox plumbing is cmdk's, the overlay stays the app's.
+  'command.tsx': { radix: null, cva: false },
   'context-menu.tsx': { radix: '@radix-ui/react-context-menu', cva: true },
   'dialog.tsx': { radix: '@radix-ui/react-dialog', cva: true },
   'dropdown-menu.tsx': { radix: '@radix-ui/react-dropdown-menu', cva: true },
