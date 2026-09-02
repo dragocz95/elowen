@@ -28,7 +28,7 @@ const server = setupServer(
   http.post('*/api/brain/visibility', () => HttpResponse.json({ ok: true })),
   http.get('*/api/brain/messages', () => HttpResponse.json({ items: [], hasMore: false, nextBefore: null })),
   http.get('*/api/brain/status', () => HttpResponse.json({
-    running: true, sessionId: 'brain-1', model: 'gpt', provider: 'openai-codex', usage: null, statusline: null, cards: [], queued: [],
+    running: true, sessionId: 'brain-1', model: 'gpt', provider: 'codex-account', providerLabel: 'Codex', usageProvider: 'openai-codex', usage: null, statusline: null, cards: [], queued: [],
   })),
   http.get('*/api/brain/rate-limits/all', () => {
     rateLimitFetches += 1;
@@ -71,7 +71,7 @@ describe('telemetry provider usage cache', () => {
     expect(screen.queryByTestId('telemetry-limits')).toBeNull();
     FakeES.instances[1]!.emit('snapshot', {
       type: 'snapshot', sessionId: 'brain-ch-subagent-child', history: [], events: [], cards: [],
-      session: { model: 'claude', provider: 'anthropic' },
+      session: { model: 'claude', provider: 'claude-account', providerLabel: 'Claude', usageProvider: 'anthropic' },
       control: { streaming: false, pendingAsk: null, workMode: 'build', pendingPlan: null },
       hasMore: false, nextBefore: null,
     });

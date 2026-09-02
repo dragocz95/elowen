@@ -21,7 +21,7 @@ import { ModelOptionList } from './ModelOptionList';
  *  never drift into showing the same catalog two different ways. */
 export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact' }) {
   const { t } = useTranslation();
-  const { models, currentModel, provider, modelsLoading, loadModels, modelStatus, retryModel } = useBrainChat();
+  const { models, currentModel, provider, providerLabel, modelsLoading, loadModels, modelStatus, retryModel } = useBrainChat();
   const [open, setOpen] = useState(false);
   const firstOpenHandled = useRef(false);
 
@@ -32,7 +32,7 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
     if (models === null && !modelsLoading) loadModels();
   };
 
-  const label = currentModel ? brainModelQualifiedLabel({ provider, model: currentModel }) : t.brainChat.modelPicker;
+  const label = currentModel ? brainModelQualifiedLabel({ provider, providerLabel, model: currentModel }) : t.brainChat.modelPicker;
 
   return (
     <div data-testid="chat-model-picker" className="relative shrink-0">

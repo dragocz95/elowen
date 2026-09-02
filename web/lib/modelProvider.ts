@@ -70,14 +70,22 @@ export function brainModelLabel(exec: string, models: readonly BrainModelOption[
  * Use this where a model appears on its own, with no group header to say whose it is: selection
  * summaries, the chip for a current pick. The provider is what disambiguates there — the catalog
  * carries `deepseek-v4-pro` from one provider and `deepseek/deepseek-v4-pro` from another, and the
- * bare name leaves the reader guessing. It also matches what the database now stores since the
- * `elowen:` prefix went away, so there is no translation between what you read and what gets sent.
+ * bare name leaves the reader guessing.
+ *
+ * The STRUCTURED form is prose for a human, so it prefers the operator's own name for the provider
+ * (`Ollama`) and falls back to the config entry id when no label is known. The STRING form is not: it
+ * names an exec the reader may also have to type or match in an allow-list, so it stays spelled exactly
+ * as the database stores it since the `elowen:` prefix went away. Neither ever shows PI's internal
+ * `elowen-<id>` registry namespace — the daemon strips that at the API boundary.
  */
 export function brainModelQualifiedLabel(
-  identity: string | Pick<BrainModelOption, 'provider' | 'model'>,
+  identity: string | (Pick<BrainModelOption, 'provider' | 'model'> & Partial<Pick<BrainModelOption, 'providerLabel'>>),
   models?: readonly BrainModelOption[],
 ): string {
-  if (typeof identity !== 'string') return identity.provider ? `${identity.provider}/${identity.model}` : identity.model;
+  if (typeof identity !== 'string') {
+    const provider = identity.providerLabel || identity.provider;
+    return provider ? `${provider}/${identity.model}` : identity.model;
+  }
   const found = models?.find((m) => brainModelId(m) === identity);
   return found ? `${found.provider}/${found.model}` : identity;
 }

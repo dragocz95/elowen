@@ -21,13 +21,18 @@ import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
  *  (see chat.css), so the answer holds from the first paint instead of waiting for a measurement. */
 export function ChatDeckHero() {
   const { t } = useTranslation();
-  const { sessions, currentModel, provider, usage } = useBrainChat();
+  const { sessions, currentModel, provider, providerLabel, usage } = useBrainChat();
 
   const count = sessions.data?.length ?? 0;
   const active = sessions.data?.find((s) => s.active);
   const modelName = currentModel || active?.model;
+  // A label exists only for the LIVE identity; a session-list row carries the config id alone, which is
+  // already the public name and reads fine on its own.
   const modelProvider = currentModel ? provider : active?.provider;
-  const model = modelName ? brainModelQualifiedLabel({ provider: modelProvider ?? '', model: modelName }) : undefined;
+  const modelProviderLabel = currentModel ? providerLabel : '';
+  const model = modelName
+    ? brainModelQualifiedLabel({ provider: modelProvider ?? '', providerLabel: modelProviderLabel, model: modelName })
+    : undefined;
 
   const stats: { label: string; value: string; mono?: boolean }[] = [
     { label: t.chat.heroConversations, value: String(count) },

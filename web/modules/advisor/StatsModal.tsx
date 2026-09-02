@@ -17,7 +17,7 @@ type Section = (typeof SECTIONS)[number];
 
 export function StatsModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
-  const { usage, currentModel, provider, activeSessionId } = useBrainChat();
+  const { usage, currentModel, provider, providerLabel, activeSessionId } = useBrainChat();
   const usageQuery = useModelUsage();
   const summary = buildUsageSummary(usageQuery.data);
 
@@ -102,7 +102,7 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
             {/* Model row */}
             <div className="flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2">
               <span className="text-xs text-muted-foreground">{t.stats.model}</span>
-              <span className="text-sm font-mono text-foreground">{currentModel ? brainModelQualifiedLabel({ provider, model: currentModel }) : '—'}</span>
+              <span className="text-sm font-mono text-foreground">{currentModel ? brainModelQualifiedLabel({ provider, providerLabel, model: currentModel }) : '—'}</span>
             </div>
 
             {/* Metrics grid */}

@@ -241,7 +241,7 @@ describe('ProviderRequestStore', () => {
   // provider too, which is the very id the translated value now reads as.
   // Mutation: return `String(row.wire_provider)` unchanged and this reads `elowen-ollama`.
   it('reports the wire provider by its public id while the stored row keeps the registry name', () => {
-    const { db, brain, requests } = fixture();
+    const { db, requests } = fixture();
     const custom = requests.start({
       sessionId: 's1', turnId: 'turn:1', kind: 'chat', configuredProvider: 'ollama',
       wireProvider: 'elowen-ollama', api: 'openai-completions', model: 'kimi-k2.7-code', payload: body(), startedAt: 1_000,

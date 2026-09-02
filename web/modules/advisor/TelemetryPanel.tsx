@@ -176,7 +176,7 @@ function ContextMeter({ percent, label }: { percent: number; label: string }) {
 function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const { usage, telemetry, activeSessionId, provider, goal, subagents, workflows, setAgentsOpen } = useBrainChat();
+  const { usage, telemetry, activeSessionId, usageProvider, goal, subagents, workflows, setAgentsOpen } = useBrainChat();
   const { data: allProcesses = [] } = useBrainProcesses();
   const qc = useQueryClient();
   // Track the open process by id, not a click-time copy, so the modal follows the live list (it stops
@@ -187,8 +187,10 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   // A drill-in session is intentionally not owner-addressable through /brain/rate-limits?session=. Fetch
   // the owner-wide provider map and select with the focused snapshot's provider instead; an empty provider
   // while that snapshot loads must show no rail rather than leaking the parent's account into the child.
+  // The map is keyed by pi provider id, so it is `usageProvider` that selects here — the public config id
+  // shown everywhere else is a different namespace and would match nothing.
   const { data: limitsByProvider = {} } = useBrainRateLimitsAll();
-  const limits = provider ? (limitsByProvider[provider] ?? null) : null;
+  const limits = usageProvider ? (limitsByProvider[usageProvider] ?? null) : null;
 
   const mcp = telemetry.mcp;
   const mcpConnected = mcp?.filter((s) => s.status === 'connected') ?? [];
@@ -583,10 +585,10 @@ function CompactTelemetryItem({ id, icon: Icon, label, value, progress, tone = '
  *  so even a short desktop can reach every instrument without widening the conversation gutter. */
 function TelemetryStub({ busy, onToggle }: { busy: boolean; onToggle?: () => void }) {
   const { t } = useTranslation();
-  const { usage, telemetry, activeSessionId, provider, goal, subagents, workflows } = useBrainChat();
+  const { usage, telemetry, activeSessionId, usageProvider, goal, subagents, workflows } = useBrainChat();
   const { data: limitsByProvider = {} } = useBrainRateLimitsAll();
   const { data: allProcesses = [] } = useBrainProcesses();
-  const limits = provider ? (limitsByProvider[provider] ?? null) : null;
+  const limits = usageProvider ? (limitsByProvider[usageProvider] ?? null) : null;
   const activeGoal = goal?.status === 'active' ? goal : null;
   const liveAgents = subagents.filter((agent) => agent.status === 'running' || agent.resultDelivery === 'pending');
   const runningWorkflows = workflows.filter((workflow) => workflow.status === 'running');
