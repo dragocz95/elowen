@@ -4,9 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { useAssignProject, useSavePluginConfig, useTogglePlugin, useResetUsage, useWriteProjectFile } from '../../lib/mutations';
+import { useAssignProject, useSavePluginConfig, useTogglePlugin, useResetUsage, useUpdateSessionTask, useWriteProjectFile } from '../../lib/mutations';
 
 let lastAssignCall: { method: string; userId: string; projectId?: string } | null = null;
+let lastTaskPatch: unknown = null;
 const server = setupServer(
   http.post('*/api/users/:userId/projects', async ({ params, request }) => {
     const body = (await request.json()) as { projectId: number };
@@ -21,6 +22,10 @@ const server = setupServer(
   http.patch('*/api/plugins/:name', () => HttpResponse.json({ name: 'dev-commands', enabled: false })),
   http.post('*/api/usage/reset', () => HttpResponse.json({ ok: true })),
   http.put('*/api/projects/:id/file', () => HttpResponse.json({ ok: true })),
+  http.patch('*/api/plugins/todo/api/task', async ({ request }) => {
+    lastTaskPatch = await request.json();
+    return HttpResponse.json({ task: { id: '4' }, tasks: [] });
+  }),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
 
@@ -83,6 +88,26 @@ describe('useResetUsage', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(spy).toHaveBeenCalledWith({ queryKey: ['usage-by-model'] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ['usage-by-day'] });
+  });
+});
+
+describe('useUpdateSessionTask', () => {
+  // The hook used to forward `status` alone, so a rename or an owner change reached the daemon as an
+  // empty patch and the optimistic row kept the old subject.
+  it('forwards any patch field and applies it optimistically', async () => {
+    const client = new QueryClient();
+    client.setQueryData(['session-tasks', 'brain-9'], {
+      tasks: [{ id: '4', subject: 'Old name', description: '', status: 'pending', owner: 'Luna', metadata: {}, blockedBy: [], blocks: [] }],
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    const { result } = renderHook(() => useUpdateSessionTask(), { wrapper });
+    result.current.mutate({ sessionId: 'brain-9', taskId: '4', subject: 'Ship it', owner: '' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(lastTaskPatch).toEqual({ taskId: '4', subject: 'Ship it', owner: '' });
+    const cached = client.getQueryData<{ tasks: { subject: string; owner?: string; status: string }[] }>(['session-tasks', 'brain-9']);
+    expect(cached?.tasks[0]).toMatchObject({ subject: 'Ship it', status: 'pending' });
+    // A cleared owner is absent on a task, not an empty chip.
+    expect(cached?.tasks[0]?.owner).toBeUndefined();
   });
 });
 

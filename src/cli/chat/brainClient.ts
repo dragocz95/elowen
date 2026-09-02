@@ -94,6 +94,13 @@ export interface SessionTaskView {
   blockedBy: string[];
   blocks: string[];
 }
+/** What PATCH /plugins/todo/api/task accepts: any subset of the fields the user may change from the
+ *  `/tasks` modal. An `owner` of null or '' clears it; the daemon refuses a patch that names nothing. */
+export interface SessionTaskPatch {
+  status?: SessionTaskView['status'];
+  subject?: string;
+  owner?: string | null;
+}
 export type GoalView = BrainGoalState;
 export interface RuntimeToolView { name: string; plugin: string; description?: string; schema?: string }
 /** One configured brain provider from the public config (API key stripped to `apiKeySet`). */
@@ -536,9 +543,13 @@ export class BrainClient {
     return body.tasks ?? [];
   }
 
-  async updateSessionTask(taskId: string, status: SessionTaskView['status']): Promise<{ task: SessionTaskView; tasks: SessionTaskView[] }> {
+  /** Patch one session task. A bare status keeps the original call shape; the object form also renames a
+   *  task or changes its owner (null/'' clears it). */
+  async updateSessionTask(taskId: string, patch: SessionTaskView['status'] | SessionTaskPatch): Promise<{ task: SessionTaskView; tasks: SessionTaskView[] }> {
     const res = await this.f(`${this.o.base}/plugins/todo/api/task${this.boundQs()}`, {
-      method: 'PATCH', headers: this.headers(true), body: JSON.stringify({ taskId, status }),
+      method: 'PATCH',
+      headers: this.headers(true),
+      body: JSON.stringify({ taskId, ...(typeof patch === 'string' ? { status: patch } : patch) }),
     });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/todo/api/task`);

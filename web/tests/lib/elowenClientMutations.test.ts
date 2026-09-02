@@ -9,6 +9,7 @@ const server = setupServer(
   http.delete('*/api/brain/queue/:id', async ({ request }) => { await record(request); return HttpResponse.json({ removed: true }); }),
   http.patch('*/api/brain/sessions/:id', async ({ request, params }) => { await record(request); return HttpResponse.json({ id: params['id'], title: 'Renamed' }); }),
   http.post('*/api/brain/send', async ({ request }) => { await record(request); return HttpResponse.json({ ok: true }, { status: 202 }); }),
+  http.patch('*/api/plugins/todo/api/task', async ({ request }) => { await record(request); return HttpResponse.json({ task: { id: '4' }, tasks: [] }); }),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
 
@@ -28,5 +29,11 @@ describe('elowenClient mutations', () => {
     expect(calls.at(-1)).toMatchObject({ url: '/api/brain/send', method: 'POST', body: { text: 'outline it', session: 'brain-9', mode: 'plan' } });
     await elowenClient.brainSend('hi');
     expect((calls.at(-1)?.body as Record<string, unknown>)['mode']).toBeUndefined();
+  });
+  it('updateSessionTask sends a bare status unchanged, and spreads a patch object', async () => {
+    await elowenClient.updateSessionTask('brain-9', '4', 'completed');
+    expect(calls.at(-1)).toMatchObject({ url: '/api/plugins/todo/api/task', method: 'PATCH', body: { taskId: '4', status: 'completed' } });
+    await elowenClient.updateSessionTask('brain-9', '4', { subject: 'Ship it', owner: null });
+    expect(calls.at(-1)?.body).toEqual({ taskId: '4', subject: 'Ship it', owner: null });
   });
 });

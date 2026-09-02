@@ -25,6 +25,34 @@ describe('normalizeCard — untrusted ctx.emitCard payload', () => {
     ]);
   });
 
+  it('carries an item\'s structured fields through, bounded, and omits the ones not sent', () => {
+    const c = normalizeCard({
+      id: 'todos',
+      items: [
+        { text: '#4 Ship it — Luna (blocked by #2)', label: 'Ship it', id: '4', owner: 'Luna', blockedBy: ['2'] },
+        { text: 'plain row' },
+        {
+          text: 'hostile row',
+          id: 'x'.repeat(200),
+          owner: 'o'.repeat(200),
+          label: 'l'.repeat(500),
+          blockedBy: ['  ', 7, ...Array.from({ length: 30 }, (_, i) => String(i + 1))],
+        },
+      ],
+    });
+    expect(c!.items![0]).toEqual({
+      text: '#4 Ship it — Luna (blocked by #2)', status: 'pending', id: '4', label: 'Ship it', owner: 'Luna', blockedBy: ['2'],
+    });
+    // A producer that sends only text stays byte-identical to what it always was — no empty keys added.
+    expect(c!.items![1]).toEqual({ text: 'plain row', status: 'pending' });
+    const bounded = c!.items![2];
+    expect(bounded.id).toHaveLength(64);
+    expect(bounded.owner).toHaveLength(64);
+    expect(bounded.label).toHaveLength(200);
+    // Non-strings and blank entries are dropped, then the list is capped.
+    expect(bounded.blockedBy).toEqual(Array.from({ length: 20 }, (_, i) => String(i + 1)));
+  });
+
   it('returns null without an id, and flags an empty card', () => {
     expect(normalizeCard({ title: 'x' })).toBeNull();
     expect(normalizeCard('x')).toBeNull();

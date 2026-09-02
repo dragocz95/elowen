@@ -197,8 +197,18 @@ export interface BrainStreamSnapshotFrame {
  *  /brain/answer, and that answer shape is web-side only. */
 export interface AskAnswer { header: string; selected: string[]; other?: string }
 
-/** ctx.emitCard display card (mirror src/brain/events.ts) — a live panel keyed by `id`. */
-interface BrainCardItem { text: string; status?: 'pending' | 'in_progress' | 'completed'; startedAt?: number }
+/** ctx.emitCard display card (mirror src/brain/events.ts) — a live panel keyed by `id`. `text` is the
+ *  required plain-text form every consumer renders; `id`/`label`/`owner`/`blockedBy` are the optional
+ *  structured view of the same row, absent on a card an older producer emitted. */
+interface BrainCardItem {
+  text: string;
+  status?: 'pending' | 'in_progress' | 'completed';
+  startedAt?: number;
+  id?: string;
+  label?: string;
+  owner?: string;
+  blockedBy?: string[];
+}
 export interface BrainCard { id: string; title?: string; items?: BrainCardItem[]; body?: string; pinned?: boolean }
 
 /** One background shell process (terminal plugin's `Bash(background:true)`). The transcript panel next to
@@ -637,6 +647,13 @@ export interface ToolCatalogOption {
 // @platform-keep session-task-list :: SessionTask && useSessionTasks && TasksModal && brain_cards && /plugins/todo/api/tasks
 /** Generic per-conversation checklist platform for future github/sandblox consumers; zero callers is expected.
  * This is the todo/session-card system, not the retired work plugin domain. */
+/** What PATCH /plugins/todo/api/task accepts: any subset of the fields a user may change from the UI.
+ *  An `owner` of null or '' clears the owner; an empty patch is refused by the daemon. */
+export interface SessionTaskPatch {
+  status?: SessionTask['status'];
+  subject?: string;
+  owner?: string | null;
+}
 export interface SessionTask {
   id: string;
   subject: string;
