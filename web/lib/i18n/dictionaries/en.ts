@@ -1624,6 +1624,7 @@ export const en = {
     planDecisionTitle: 'Plan ready',
     workMode: { build: 'Build', plan: 'Plan', workflow: 'Workflow' },
     workModeLabel: 'Work mode',
+    workModeMenu: 'Change work mode',
     modeSwitched: 'Work mode:',
     renameTitle: 'Rename conversation',
     commandField: {

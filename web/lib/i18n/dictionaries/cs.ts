@@ -1603,6 +1603,7 @@ export const cs = {
     planDecisionTitle: 'Plán je připraven',
     workMode: { build: 'Build', plan: 'Plánování', workflow: 'Workflow' },
     workModeLabel: 'Pracovní režim',
+    workModeMenu: 'Změnit pracovní režim',
     modeSwitched: 'Pracovní režim:',
     renameTitle: 'Přejmenovat konverzaci',
     commandField: {

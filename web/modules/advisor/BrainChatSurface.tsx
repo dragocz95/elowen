@@ -2,7 +2,7 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, Compass, Hammer, Workflow, type LucideIcon } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
@@ -11,12 +11,13 @@ import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
 import { useToast } from '../../components/ui/Toast';
-import type { BrainCard, BrainInlineArtifact, BrainMessageFile, BrainMessageImage, BrainWorkMode } from '../../lib/types';
+import type { BrainCard, BrainInlineArtifact, BrainMessageFile, BrainMessageImage, BrainWorkMode, SlashCommandDef } from '../../lib/types';
 import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } from '../../lib/transcript';
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Progress } from '../../components/ui/shadcn/progress';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
 import { Input } from '../../components/ui/Input';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -861,31 +862,84 @@ function ReasoningButton({ full, onOpen }: { full?: boolean; onOpen: () => void 
   );
 }
 
-/** Which work mode the next send is stamped with. Rendered only OUTSIDE build mode: build is the default
- *  every conversation starts in, so a permanent "Build" chip would be noise — while plan/workflow change
- *  what the agent may do and must never be a hidden switch. */
-function WorkModePill({ mode, full }: { mode: BrainWorkMode; full?: boolean }) {
+/** Which work mode the next send is stamped with — shown and changed in ONE control that sits in the
+ *  composer row immediately left of the send/stop button, on every surface (full page, dock, phone).
+ *
+ *  The trigger is a small ghost button showing the CURRENT mode's glyph and label, so the mode is always
+ *  visible (it changes what the agent may do and must never be a hidden switch) and always one click from
+ *  being changed — the old read-only pill made you hunt for the slash command instead. Plan and workflow
+ *  keep the pill's accent tint so a non-default mode still reads as "on"; build stays quiet.
+ *
+ *  Opening is the shadcn DropdownMenu (click/keyboard only — a hover-open menu has no place above a live
+ *  conversation) over a `RadioGroup` of the daemon catalog's `kind:'mode'` commands, each row carrying the
+ *  command's one-line description as muted secondary text. Selecting runs the SAME `runSlash` path the
+ *  slash menu and `/help` use, so the toast, the daemon command and every side effect stay identical —
+ *  this is a second door onto the composer, never a second implementation.
+ *
+ *  Radix owns the keyboard grammar (Enter/Space open, arrows move, Escape closes and refocuses the
+ *  trigger); the trigger is in the natural tab order right before send. On a 390px phone the label
+ *  collapses to the glyph — `aria-label` names the control regardless. */
+const WORK_MODE_GLYPHS: Record<BrainWorkMode, LucideIcon> = { build: Hammer, plan: Compass, workflow: Workflow };
+
+function WorkModeSwitch({ variant }: { variant: 'full' | 'compact' }) {
   const { t } = useTranslation();
-  if (mode === 'build') return null;
+  const { commands, runSlash, workMode } = useBrainChat();
+  // The catalog is surface-filtered, so a mode the daemon withheld gets no row; the slash name IS the
+  // mode value (`BrainChatProvider.WORK_MODES`), which is what lets a name pick a glyph without a cast
+  // beyond the catalog's own string typing.
+  const modeCommands = commands
+    .filter((cmd): cmd is SlashCommandDef & { name: BrainWorkMode } => cmd.kind === 'mode' && cmd.name in WORK_MODE_GLYPHS)
+    .map((cmd) => ({ command: cmd, icon: WORK_MODE_GLYPHS[cmd.name], label: t.brainChat.workMode[cmd.name] }));
+  const run = (name: string): void => {
+    const command = modeCommands.find((m) => m.command.name === name)?.command;
+    if (command) runSlash(command);
+  };
+  const Icon = WORK_MODE_GLYPHS[workMode];
   return (
-    <span
-      data-testid="chat-work-mode"
-      title={t.brainChat.workModeLabel}
-      className={`shrink-0 rounded-md border border-primary/40 bg-primary/10 px-1.5 font-medium uppercase tracking-wide text-primary ${full ? 'py-0.5 text-tiny' : 'py-px text-[0.625rem]'}`}
-    >
-      <span className="sr-only">{t.brainChat.workModeLabel}: </span>{t.brainChat.workMode[mode]}
-    </span>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-testid="chat-work-mode-switch"
+          aria-label={t.brainChat.workModeMenu}
+          title={`${t.brainChat.workModeLabel}: ${t.brainChat.workMode[workMode]}`}
+          className={`flex h-9 shrink-0 items-center gap-1.5 px-2 text-xs font-medium transition-colors ${
+            variant === 'full' ? 'rounded-xl' : 'rounded-lg'
+          } ${
+            workMode === 'build'
+              ? 'border border-border text-muted-foreground hover:bg-accent hover:text-foreground'
+              : 'border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
+          }`}
+        >
+          <Icon size={15} aria-hidden />
+          <span className="hidden min-[420px]:inline">{t.brainChat.workMode[workMode]}</span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={6} className="min-w-56" data-testid="chat-work-mode-menu">
+        <DropdownMenuRadioGroup value={workMode} onValueChange={run}>
+          {modeCommands.map(({ command, icon: RowIcon, label }) => (
+            <DropdownMenuRadioItem key={command.name} value={command.name} data-testid={`chat-work-mode-${command.name}`}>
+              <RowIcon size={14} aria-hidden className="mt-0.5 shrink-0" />
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="truncate">{label}</span>
+                {command.description ? <span className="truncate text-xs text-muted-foreground">{command.description}</span> : null}
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
 /** Phone-only overflow for the conversation bar: on a narrow screen the bar can't hold the model picker
- *  and work-mode pill inline without cramming, so they fold behind one ⋯ button. The reasoning button is
- *  deliberately NOT here — it is changed often enough that burying it behind two taps was the complaint.
- *  A transient popover (outside-pointer / Escape dismiss, same grammar as ModelPicker), never a persistent
- *  panel. Desktop keeps every control inline and never mounts this. */
-function BarOverflowMenu({ workMode, onOpenTasks }: {
-  workMode: BrainWorkMode; onOpenTasks: () => void;
-}) {
+ *  inline without cramming, so it folds behind one ⋯ button. The work-mode indicator deliberately does NOT
+ *  live here any more — the composer's WorkModeSwitch shows (and changes) the mode on every surface, so a
+ *  second, read-only mention would be noise. The reasoning button is also NOT here — it is changed often
+ *  enough that burying it behind two taps was the complaint. A transient popover (outside-pointer / Escape
+ *  dismiss, same grammar as ModelPicker), never a persistent panel. Desktop keeps every control inline and
+ *  never mounts this. */
+function BarOverflowMenu({ onOpenTasks }: { onOpenTasks: () => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -919,11 +973,6 @@ function BarOverflowMenu({ workMode, onOpenTasks }: {
             <ListChecks size={16} className="text-muted-foreground" aria-hidden />
             <span>{t.chat.todos}</span>
           </button>
-          {workMode !== 'build' ? (
-            <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
-              <span>{t.brainChat.workModeLabel}:</span><WorkModePill mode={workMode} full />
-            </div>
-          ) : null}
         </div>
       ) : null}
     </div>
@@ -995,7 +1044,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     usage, goal, lineCfg, currentModel, provider, providerLabel, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, commands, runSlash, slash, sessions, activeSessionId, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts,
-    workMode, planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
+    planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
     registerSurface,
   } = c;
 
@@ -1454,7 +1503,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             <span className="truncate">{active?.title || t.brainChat.newChat}</span>
             <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
           </button>
-          <WorkModePill mode={workMode} />
           <ProjectPicker variant="compact" />
           <ModelPicker variant="compact" />
           <ReasoningButton onOpen={() => setReasoningOpen(true)} />
@@ -1492,12 +1540,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
             </button>
           ) : null}
-          {/* On a phone the model picker and work-mode pill fold into the ⋯ menu below; on desktop they
-              stay inline. The pill is a security indicator (plan/workflow), so it also shows inline on
-              desktop and, when non-build, inside the ⋯ menu on mobile. */}
+          {/* On a phone the model picker folds into the ⋯ menu below; on desktop it stays inline. The
+              work mode does not ride the toolbar any more: the composer's WorkModeSwitch is its single
+              indicator and control on every surface. */}
           {mobile === false ? (
             <div className="chat-page-toolbar__wide-controls flex shrink-0 items-center gap-1.5">
-              <WorkModePill mode={workMode} full />
               <ProjectPicker variant="full" />
               <ModelPicker variant="full" />
             </div>
@@ -1535,7 +1582,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           {mobile !== undefined ? (
             <div className={mobile ? '' : 'chat-page-toolbar__overflow'}>
               <BarOverflowMenu
-                workMode={workMode}
                 onOpenTasks={() => setTasksOpen(true)}
               />
             </div>
@@ -1878,6 +1924,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               : 'rounded-lg border border-border bg-background px-3 py-2 focus:border-primary'
           }`}
         />
+        {/* The work-mode switch sits immediately left of send/stop, at the same 36px height, on every
+            surface — the mode the NEXT send is stamped with belongs beside the control that stamps it. */}
+        <WorkModeSwitch variant={variant === 'full' ? 'full' : 'compact'} />
         {busy ? (
           <button
             type="button"
