@@ -131,17 +131,26 @@ function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
   );
 }
 
-/** A section heading: a quiet label with an optional right-aligned meta value, mirroring the CLI rail. */
-function SectionHead({ label, meta }: { label: string; meta?: ReactNode }) {
+/** The ONE heading every rail-body section shares: an icon in the left slot — the fold chevron where
+ *  the section folds, the section's own glyph where it does not, so the left edge lines up either way —
+ *  then the quiet uppercase label, then the meta on the right, always in the shared badge, so a
+ *  percentage, a tally and a plan name wear the same treatment at the same size. */
+function SectionHead({ label, icon, meta }: { label: string; icon?: ReactNode; meta?: ReactNode }) {
   return (
-    <div className="telemetry-section-head flex items-baseline justify-between gap-2 text-xs uppercase tracking-wide text-subtle-foreground">
+    <div className="telemetry-section-head flex w-full min-w-0 items-center gap-1.5 text-xs uppercase tracking-wide text-subtle-foreground">
+      {icon ?? null}
       {/* The label truncates like the meta does: it is a translated string, and at the narrow end of the
           rail an uppercase heading like "OTHER PROCESSES" is otherwise a width floor the row cannot go
           under, pushing the whole section past the column. */}
       <span className="min-w-0 truncate">{label}</span>
-      {meta ? <span className="shrink-0 truncate font-mono normal-case tracking-normal">{meta}</span> : null}
+      {meta ? <span className="ml-auto shrink-0 truncate">{meta}</span> : null}
     </div>
   );
+}
+
+/** The shared right-aligned meta badge: one treatment for every section's count or value. */
+function SectionMeta({ children }: { children: ReactNode }) {
+  return <Badge variant="secondary" className="px-1 py-0 text-[10px] tabular-nums">{children}</Badge>;
 }
 
 /** A live-work section that can be folded away. Open by default and on every mount: these sections exist
@@ -158,11 +167,14 @@ function LiveSection({ label, count, testId, meter, children }: {
 }) {
   return (
     <Collapsible defaultOpen data-testid={testId} className="flex flex-col gap-1">
-      <CollapsibleTrigger className="group flex w-full items-center gap-1.5 text-left [&[data-state=open]_svg]:rotate-0 [&[data-state=closed]_svg]:-rotate-90">
-        <ChevronDown size={11} className="shrink-0 text-subtle-foreground transition-transform" aria-hidden />
-        <span className="min-w-0 flex-1">
-          <SectionHead label={label} meta={<Badge variant="secondary" className="px-1 py-0 text-[10px] tabular-nums">{count}</Badge>} />
-        </span>
+      {/* The trigger owns only the fold behaviour; the row's layout is the shared SectionHead, whose
+          icon slot the chevron occupies so a folded and a static section line up on the same edge. */}
+      <CollapsibleTrigger className="group w-full text-left [&[data-state=open]_svg]:rotate-0 [&[data-state=closed]_svg]:-rotate-90">
+        <SectionHead
+          label={label}
+          icon={<ChevronDown size={11} className="shrink-0 text-subtle-foreground transition-transform" aria-hidden />}
+          meta={<SectionMeta>{count}</SectionMeta>}
+        />
       </CollapsibleTrigger>
       <CollapsibleContent>
         {meter ? <div className="pb-1 pl-[18px]">{meter}</div> : null}
@@ -416,10 +428,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   return (
     <div className="flex w-full min-w-0 flex-col gap-4 px-3 py-3 [&_li]:min-w-0">
       {usage ? (
-        <section className="flex flex-col gap-1.5" data-testid="telemetry-context">
+        <section className="flex flex-col gap-1" data-testid="telemetry-context">
           <SectionHead
             label={t.brainChat.context}
-            meta={usage.percent == null ? undefined : `${Math.round(usage.percent)}%`}
+            icon={<Gauge size={11} className="shrink-0 text-subtle-foreground" aria-hidden />}
+            meta={usage.percent == null ? undefined : <SectionMeta>{Math.round(usage.percent)}%</SectionMeta>}
           />
           <ContextMeter percent={usage.percent ?? 0} label={t.brainChat.context} />
           <p className="font-mono text-xs text-muted-foreground">
@@ -430,7 +443,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
 
       {activeGoal ? (
         <section className="flex flex-col gap-1" data-testid="telemetry-goal">
-          <SectionHead label={t.telemetry.goal} meta={goalMeta} />
+          <SectionHead
+            label={t.telemetry.goal}
+            icon={<Target size={11} className="shrink-0 text-subtle-foreground" aria-hidden />}
+            meta={goalMeta ? <SectionMeta>{goalMeta}</SectionMeta> : undefined}
+          />
           <p className="flex items-center gap-1.5 text-xs">
             <Target size={11} className="shrink-0 text-primary" aria-hidden />
             <span className="min-w-0 truncate text-foreground" title={activeGoal.goal}>{activeGoal.goal}</span>
@@ -449,10 +466,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
       ) : null}
 
       {limits?.windows.length ? (
-        <section className="flex flex-col gap-1.5" data-testid="telemetry-limits">
+        <section className="flex flex-col gap-1" data-testid="telemetry-limits">
           <SectionHead
             label={t.telemetry.limits}
-            meta={limits.planType ? <Badge variant="secondary" className="px-1 py-0 text-[10px]">{limits.planType}</Badge> : undefined}
+            icon={<Clock3 size={11} className="shrink-0 text-subtle-foreground" aria-hidden />}
+            meta={limits.planType ? <SectionMeta>{limits.planType}</SectionMeta> : undefined}
           />
           <OAuthUsageRail usage={limits} />
         </section>
@@ -615,7 +633,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
 
       {telemetry.lspEnabled !== null ? (
         <section className="flex flex-col gap-1" data-testid="telemetry-lsp">
-          <SectionHead label={t.telemetry.lsp} />
+          <SectionHead label={t.telemetry.lsp} icon={<Braces size={11} className="shrink-0 text-subtle-foreground" aria-hidden />} />
           <p className="flex items-center gap-1.5 text-xs">
             <Badge variant={telemetry.lspEnabled ? 'soft-success' : 'secondary'} className="px-1 py-0 text-[10px]">
               {telemetry.lspEnabled ? t.telemetry.lspActive : t.telemetry.lspInactive}
