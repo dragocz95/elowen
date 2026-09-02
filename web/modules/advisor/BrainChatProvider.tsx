@@ -17,6 +17,7 @@ import { resolveStreamSilence } from '../../lib/streamWatchdog';
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { isBackgroundProcessCardId } from '../../lib/processScope';
+import { todoCard } from '../../lib/todoCard';
 import {
   BRAIN_COMPOSE_EVENT,
   BRAIN_OPEN_EVENT,
@@ -333,19 +334,13 @@ function useBrainChatController(): BrainChatValue {
   const [notice, setNotice] = useState('');
   const [ask, setAsk] = useState<Ask | null>(null);
   const [cards, setCards] = useState<BrainCard[]>([]);
+  // The todo plugin's HTTP routes answer the caller without re-emitting the panel, so a task mutated from
+  // the web has to rebuild the card here. `todoCard` composes it exactly as the plugin does, structured
+  // fields and all: the rail's Tasks section reads its rows straight off the card, and a hand-rolled
+  // rebuild that dropped `id` or `startedAt` would leave it unable to address a row and freeze the
+  // running clock the moment anyone ticked a checkbox.
   const syncSessionTasks = useCallback((tasks: SessionTask[]): void => {
-    const completed = new Set(tasks.filter((task) => task.status === 'completed').map((task) => task.id));
-    const card: BrainCard = {
-      id: 'todos', title: 'Todos', pinned: true,
-      items: tasks.map((task) => {
-        const blockers = task.blockedBy.filter((id) => !completed.has(id));
-        const blocked = blockers.length ? ` (blocked by ${blockers.map((id) => `#${id}`).join(', ')})` : '';
-        const owner = task.owner ? ` — ${task.owner}` : '';
-        const text = task.status === 'in_progress' && task.activeForm ? task.activeForm : task.subject;
-        return { text: `${text}${owner}${blocked}`, status: task.status };
-      }),
-    };
-    setCards((current) => upsertCard(current, card));
+    setCards((current) => upsertCard(current, todoCard(tasks)));
   }, []);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
