@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
-import type { PluginChatArtifactProps, PluginUiRegistration } from 'elowen-plugin-ui-kit';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import type { PluginChatArtifactProps, PluginChatPendingInput, PluginUiRegistration } from 'elowen-plugin-ui-kit';
 import { createWrapper } from '../../test-utils';
 import type { BrainInlineArtifact, PluginUiListing } from '../../../lib/types';
 import { InlineArtifact } from '../../../modules/advisor/InlineArtifact';
@@ -12,9 +12,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../../lib/queries', () => ({ usePluginUi: () => mocks.listing }));
 vi.mock('../../../lib/pluginUi', () => ({
-  // The host is on 14; the fixtures below stay on 13 so the older-bundle path (`requiresApiVersion <=
+  // The host is on 15; the fixtures below stay on 13/14 so the older-bundle path (`requiresApiVersion <=
   // host`) keeps being exercised by the same suite.
-  PLUGIN_UI_API_VERSION: 14,
+  PLUGIN_UI_API_VERSION: 15,
   loadPluginUi: mocks.loadPluginUi,
 }));
 
@@ -81,9 +81,9 @@ describe('InlineArtifact', () => {
     const show = (narration?: string) => <Wrapper><InlineArtifact artifact={artifact} narration={narration} /></Wrapper>;
     const view = render(show('Opening the portal'));
     expect(await screen.findByTestId('artifact-view')).toHaveTextContent('Opening the portal');
-    // The whole chat contract is three props: the plugin name, its own artifact, and the visible prose.
-    // No transcript, no turns, no tool payloads — a bundle cannot reach past its own slot.
-    expect(Object.keys(seen[0]!).sort()).toEqual(['artifact', 'narration', 'plugin']);
+    // The whole chat contract is four props: the plugin name, its own artifact, the visible prose and the
+    // parked question. No transcript, no turns, no tool payloads — a bundle cannot reach past its own slot.
+    expect(Object.keys(seen[0]!).sort()).toEqual(['artifact', 'narration', 'pendingInput', 'plugin']);
 
     // Streaming updates it in place…
     view.rerender(show('Opening the portal and signing in.'));
@@ -95,6 +95,38 @@ describe('InlineArtifact', () => {
     expect(screen.getByTestId('artifact-view')).toBeEmptyDOMElement();
     view.rerender(show(undefined));
     expect(seen.at(-1)!.narration).toBe('');
+  });
+
+  it('tells the artifact a prompt is waiting, with no part of the question and a way back to it', async () => {
+    const seen: PluginChatArtifactProps[] = [];
+    const View = (props: PluginChatArtifactProps) => {
+      seen.push(props);
+      return <button type="button" data-testid="artifact-view" onClick={() => props.pendingInput?.reveal()}>
+        {props.pendingInput?.label ?? 'none'}
+      </button>;
+    };
+    mocks.loadPluginUi.mockResolvedValue({ requiresApiVersion: 15, chatArtifacts: { preview: View } });
+
+    const reveal = vi.fn();
+    const { wrapper: Wrapper } = createWrapper();
+    const show = (pendingInput?: PluginChatPendingInput | null) => (
+      <Wrapper><InlineArtifact artifact={artifact} pendingInput={pendingInput} /></Wrapper>
+    );
+    const view = render(show({ label: 'The assistant is waiting for your choice', reveal }));
+    expect(await screen.findByTestId('artifact-view')).toHaveTextContent('The assistant is waiting for your choice');
+    // The whole contract: the host's own line and the way back. No question, no options, no id — nothing
+    // a bundle could answer with, or render out of step with what the user is actually being asked.
+    expect(Object.keys(seen.at(-1)!.pendingInput!).sort()).toEqual(['label', 'reveal']);
+
+    fireEvent.click(screen.getByTestId('artifact-view'));
+    expect(reveal).toHaveBeenCalledTimes(1);
+
+    // Answered, discarded, or a different conversation: the alert a covering surface draws goes with it.
+    view.rerender(show(null));
+    expect(screen.getByTestId('artifact-view')).toHaveTextContent('none');
+    // A host older than API 15 sends nothing, which must reach the bundle as the same empty value.
+    view.rerender(show(undefined));
+    expect(seen.at(-1)!.pendingInput).toBeNull();
   });
 
   it('renders the artifact fallback when the bundle is unavailable', async () => {

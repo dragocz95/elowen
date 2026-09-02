@@ -57,6 +57,7 @@ import {
 import { cardTasks, cardTasksAddressable, type RailTask } from '../../lib/railTasks';
 import { useSessionTasks } from '../../lib/queries';
 import { useUpdateSessionTask } from '../../lib/mutations';
+import type { PluginChatPendingInput } from 'elowen-plugin-ui-kit';
 import { InlineArtifact } from './InlineArtifact';
 
 const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
@@ -841,7 +842,7 @@ function ToolAuthoringHint({ turn, locale }: {
   );
 }
 
-export function Message({ turn, artifacts, narration, full, showRole, showThoughts, tk }: { turn: ChatTurn; artifacts: BrainInlineArtifact[]; narration?: string; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
+export function Message({ turn, artifacts, narration, pendingInput, full, showRole, showThoughts, tk }: { turn: ChatTurn; artifacts: BrainInlineArtifact[]; narration?: string; pendingInput?: PluginChatPendingInput | null; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
   const { t, locale } = useTranslation();
   const { agentName } = useBrand();
   if (turn.role === 'divider') return <ContextDivider full={full} />;
@@ -867,7 +868,7 @@ export function Message({ turn, artifacts, narration, full, showRole, showThough
             <ToolPills tools={seg.items} full={full} live={turn.streaming && i === turn.segments.length - 1} />
             {artifacts
               .filter((artifact) => seg.items.some((tool) => tool.id === artifact.toolCallId))
-              .map((artifact) => <InlineArtifact key={`${artifact.plugin}:${artifact.id}`} artifact={artifact} narration={narration} />)}
+              .map((artifact) => <InlineArtifact key={`${artifact.plugin}:${artifact.id}`} artifact={artifact} narration={narration} pendingInput={pendingInput} />)}
           </Fragment>))}
         {turn.composing ? <ToolAuthoringHint turn={turn} locale={locale as ComposeLocale} /> : null}
       </>;
@@ -1064,6 +1065,26 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   // on the dashboard.
   useEffect(() => registerSurface(), [registerSurface]);
 
+  /** What an inline plugin artifact is told about a prompt waiting on the user (plugin UI API 15).
+   *
+   *  An artifact that expands into its own surface covers this surface — the question card included — so
+   *  a reader watching, say, a live browser never learns that the agent stopped to ask them something.
+   *  The contract is deliberately contentless: the app's own translated line, plus the way back to the
+   *  card that owns answering. Nothing about the question crosses into a bundle, and nothing a bundle
+   *  draws can drift from what the user is actually being asked.
+   *
+   *  `reveal` belongs to THIS surface, not to a lookup: a phone with the dock open on /chat mounts two,
+   *  and each one hands its own artifacts its own card. */
+  const pendingInput = useMemo<PluginChatPendingInput | null>(() => (ask ? {
+    label: t.brainChat.askWaiting,
+    reveal: () => {
+      const card = askRef.current;
+      if (!card) return;
+      card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      card.focus({ preventScroll: true });
+    },
+  } : null), [ask, t.brainChat.askWaiting]);
+
   const [pickerOpen, setPickerOpen] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
   // Whether the statusline row (model / context / tokens / cost) is shown is a per-device display choice —
@@ -1121,6 +1142,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const scrollRef = useRef<HTMLDivElement>(null);
   const surfaceRootRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
+  const askRef = useRef<HTMLDivElement>(null);
   // Lazy-load (scroll-up) state. `loadingOlder` drives the top spinner.
   // The prepend anchor rides on a real turn ELEMENT: at scroll-trigger we grab the topmost turn node and its
   // offsetTop; after older turns land above it, we shift scrollTop by exactly how far that node moved. Node
@@ -1638,6 +1660,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               turn={turn}
               artifacts={artifacts}
               narration={narration}
+              pendingInput={pendingInput}
               full={variant === 'full'}
               showRole={i === 0 || turns[i - 1].role !== turn.role}
               showThoughts={showThoughts}
@@ -1712,12 +1735,16 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           />
         ) : null}
         {ask ? (
-          <AskQuestionCard
-            key={ask.id}
-            questions={ask.questions}
-            kind={ask.kind}
-            onSubmit={(answers) => onAnswer(ask.id, answers)}
-          />
+          // Wrapped and focusable so `pendingInput.reveal` has something to bring the reader to: a plugin
+          // artifact expanded over the dock hides this card, and the way back has to be the card itself.
+          <div ref={askRef} tabIndex={-1} className="scroll-mt-4 focus:outline-none">
+            <AskQuestionCard
+              key={ask.id}
+              questions={ask.questions}
+              kind={ask.kind}
+              onSubmit={(answers) => onAnswer(ask.id, answers)}
+            />
+          </div>
         ) : null}
         </div>
       </div>

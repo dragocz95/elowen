@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import type { PluginUiRegistration } from 'elowen-plugin-ui-kit';
+import type { PluginChatPendingInput, PluginUiRegistration } from 'elowen-plugin-ui-kit';
 import type { BrainInlineArtifact, PluginUiListing } from '../../lib/types';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginUi } from '../../lib/queries';
@@ -11,10 +11,16 @@ import { PluginErrorBoundary, PluginPlaceholder } from '../../components/plugin/
  * complete degradation path: missing/unavailable bundles, unknown views and render crashes all stay local to
  * this slot and never affect the surrounding chat.
  *
- * `narration` is the assistant prose the transcript is showing right now (see `liveNarration`). An artifact
- * that expands over the dock hides the conversation it belongs to, so the contract hands it that one
- * bounded string — never the transcript, never a tool payload, never hidden reasoning. */
-export function InlineArtifact({ artifact, narration }: { artifact: BrainInlineArtifact; narration?: string }) {
+ * `narration` is the assistant prose the transcript is showing right now (see `liveNarration`), and
+ * `pendingInput` says that the host is waiting on an answer, with the callback that brings its own
+ * question card back into view. An artifact that expands over the dock hides both, so the contract hands
+ * it one bounded string and one label-plus-callback — never the transcript, never a tool payload, never
+ * hidden reasoning, and never the question's options or answer shape. */
+export function InlineArtifact({ artifact, narration, pendingInput }: {
+  artifact: BrainInlineArtifact;
+  narration?: string;
+  pendingInput?: PluginChatPendingInput | null;
+}) {
   const { locale } = useTranslation();
   const listing = usePluginUi(locale);
   const entry = listing.data?.find((candidate: PluginUiListing) => candidate.name === artifact.plugin);
@@ -41,7 +47,7 @@ export function InlineArtifact({ artifact, narration }: { artifact: BrainInlineA
   return (
     <div data-testid="chat-inline-artifact" data-plugin={artifact.plugin} data-artifact-id={artifact.id}>
       <PluginErrorBoundary notice={artifact.fallback}>
-        <Component plugin={artifact.plugin} artifact={artifact} narration={narration ?? ''} />
+        <Component plugin={artifact.plugin} artifact={artifact} narration={narration ?? ''} pendingInput={pendingInput ?? null} />
       </PluginErrorBoundary>
     </div>
   );

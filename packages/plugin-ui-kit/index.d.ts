@@ -10,7 +10,7 @@ import type { ComponentType } from 'react';
 /** See index.js — bump on incompatible changes to `ElowenUiRuntime`. Deliberately a LITERAL type:
  *  the web app re-declares the value and annotates it with `typeof PLUGIN_UI_API_VERSION`, so a kit
  *  bump that forgets the host fails the web typecheck instead of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 14;
+export declare const PLUGIN_UI_API_VERSION: 15;
 
 /** Public props of `ElowenUiRuntime.components.Slider`. */
 export interface SliderProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'type'> {
@@ -212,10 +212,34 @@ export interface PluginChatArtifact {
   updatedAt: string;
 }
 
+/** A prompt the host is waiting on, offered to an artifact that covers it (API 15).
+ *
+ *  It carries no content at all — not the question, not its options, not an id. A surface that hides the
+ *  host's question card only needs to say that one is waiting and to hand the reader back to it, and both
+ *  of those are host-owned: `label` is the app's own translated line, `reveal` brings the real card into
+ *  view and focuses it. Everything about answering — the options, validation, the request — stays where it
+ *  already is, so nothing an artifact renders can drift from what the user is actually being asked. */
+export interface PluginChatPendingInput {
+  /** The host's own user-visible line, already translated. Render it as-is. */
+  label: string;
+  /** Bring the host's prompt into view and focus it. A covering surface should close itself first. */
+  reveal: () => void;
+}
+
 /** Props for a plugin component rendered inline after its artifact's matching tool segment. */
 export interface PluginChatArtifactProps {
   plugin: string;
   artifact: PluginChatArtifact;
+  /** API 15. Set while the host is waiting on an answer from the user, `null` when it is not.
+   *
+   *  Same reason as `narration`: an artifact whose surface covers the dock covers the question card with
+   *  it, and a reader who cannot see that they are being asked something will sit and wait for an agent
+   *  that is waiting for them. Show that a prompt is waiting, then call `reveal` — after closing your own
+   *  surface — to put the reader in front of the real card.
+   *
+   *  It clears the moment the prompt is answered, discarded or the conversation is switched. Hosts older
+   *  than API 15 pass nothing, so read it as optional. */
+  pendingInput?: PluginChatPendingInput | null;
   /** API 14. The assistant prose the transcript is rendering RIGHT NOW, for an artifact that draws a
    *  surface over the dock and therefore hides the conversation it belongs to.
    *

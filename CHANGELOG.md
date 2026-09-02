@@ -7,6 +7,14 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ### Added
 
+- Plugin UI API 15: an inline chat artifact also receives `pendingInput` while the app is waiting on an
+  answer — the app's own translated line plus a `reveal()` callback that brings the question card back into
+  view and focuses it. An artifact whose surface covers the dock covers that card with it, so it can now
+  say a prompt is waiting and hand the reader back to it. Deliberately contentless: the question, its
+  options, the answer shape and the elicitation id never cross into a bundle.
+
+### Added
+
 - Plugin UI API 14: an inline chat artifact now receives `narration`, the assistant prose the transcript is
   rendering right now, so an artifact that expands over the dock can still show what is being said. It is a
   projection of the host's own visible text — newest assistant turn, latest text segment, whitespace-collapsed

@@ -33,8 +33,11 @@ describe('plugin UI runtime', () => {
     // artifact component registration while reusing the existing host runtime and modal primitives. 14 adds
     // `narration` to a chat artifact's props: the assistant prose the transcript is showing right now, for
     // an artifact whose own surface covers the transcript — no new runtime primitive, one bounded string.
-    expect(PLUGIN_UI_API_VERSION).toBe(14);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(14);
+    // 15 adds `pendingInput` beside it: the same idea for the question card an expanded artifact also
+    // covers, and deliberately contentless — the app's own translated line plus a callback that brings the
+    // real card back, so nothing about the question crosses into a bundle.
+    expect(PLUGIN_UI_API_VERSION).toBe(15);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(15);
     expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({
       WorkspaceShell: expect.any(Function),
       WorkspaceHero: expect.any(Function),
@@ -69,10 +72,10 @@ describe('plugin UI runtime', () => {
   it('types chat artifact views as a first-class plugin registration surface', () => {
     // `narration` is optional on purpose: a bundle compiled against API 13 destructures the two props it
     // knows and still typechecks, and one written for 14 reads the third without a host-version guard.
-    const ArtifactView = ({ plugin, artifact, narration }: PluginChatArtifactProps) =>
-      `${plugin}:${artifact.view}:${narration ?? ''}`;
+    const ArtifactView = ({ plugin, artifact, narration, pendingInput }: PluginChatArtifactProps) =>
+      `${plugin}:${artifact.view}:${narration ?? ''}:${pendingInput?.label ?? ''}`;
     const registration: PluginUiRegistration = {
-      requiresApiVersion: 14,
+      requiresApiVersion: 15,
       chatArtifacts: { preview: ArtifactView },
     };
 
