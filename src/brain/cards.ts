@@ -7,6 +7,47 @@ const MAX_ITEMS = 50;
 const MAX_TEXT = 200;
 const MAX_TITLE = 120;
 const MAX_BODY = 2000;
+// An item's structured fields are handles and chips, never prose: an id identifies a row, an owner names
+// a person. Capping them well below MAX_TEXT keeps a hostile plugin from smuggling a second body through
+// the side channel a renderer lays out beside the text.
+const MAX_ITEM_ID = 64;
+const MAX_OWNER = 64;
+const MAX_BLOCKED_BY = 20;
+// How many RAW entries the scan may look at before it gives up. The kept-entry cap alone bounds the
+// output but not the work: `emitCard` runs on the daemon's event loop, so a plugin sending a
+// million-element `blockedBy` would buy a million trims for a list that can never hold more than twenty.
+// Comfortably above MAX_BLOCKED_BY so an array padded with a few non-strings still yields a full list.
+const MAX_BLOCKED_BY_SCAN = 200;
+
+/** The unresolved blockers of one row, bounded on BOTH ends: at most MAX_BLOCKED_BY entries kept, and at
+ *  most MAX_BLOCKED_BY_SCAN raw entries inspected to find them. Whichever comes first stops the loop. */
+function normalizeBlockedBy(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const ids: string[] = [];
+  const scan = Math.min(raw.length, MAX_BLOCKED_BY_SCAN);
+  for (let index = 0; index < scan && ids.length < MAX_BLOCKED_BY; index += 1) {
+    const value: unknown = raw[index];
+    if (typeof value !== 'string') continue;
+    const id = value.trim().slice(0, MAX_ITEM_ID);
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
+/** The structured, additive half of a checklist row (see BrainCardItem). Absent fields are simply not
+ *  emitted, so an item stays byte-identical to what an older producer sent. */
+function normalizeItemDetail(item: Record<string, unknown>): Omit<BrainCardItem, 'text' | 'status' | 'startedAt'> {
+  const id = typeof item.id === 'string' ? item.id.trim().slice(0, MAX_ITEM_ID) : '';
+  const label = typeof item.label === 'string' ? item.label.trim().slice(0, MAX_TEXT) : '';
+  const owner = typeof item.owner === 'string' ? item.owner.trim().slice(0, MAX_OWNER) : '';
+  const blockedBy = normalizeBlockedBy(item.blockedBy);
+  return {
+    ...(id ? { id } : {}),
+    ...(label ? { label } : {}),
+    ...(owner ? { owner } : {}),
+    ...(blockedBy.length ? { blockedBy } : {}),
+  };
+}
 
 /** Coerce an untrusted `ctx.emitCard` payload into a clean, bounded BrainCard — items with empty text
  *  are dropped, an unknown status falls back to `pending`, and text/title/body/item-count are capped.
@@ -32,6 +73,7 @@ export function normalizeCard(raw: unknown): BrainCard | null {
       text,
       status: STATUSES.has(status as string) ? (status as BrainCardItem['status']) : 'pending',
       ...(startedAt != null ? { startedAt } : {}),
+      ...normalizeItemDetail(item),
     });
   }
   const body = typeof o.body === 'string' && o.body.trim() ? o.body.slice(0, MAX_BODY) : undefined;

@@ -332,6 +332,23 @@ describe('BrainClient', () => {
     }));
   });
 
+  it('updateSessionTask PATCHes a bare status exactly as it always did, and a patch object whole', async () => {
+    const f = vi.fn(async () => j(201, { sessionId: 'brain-9' })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    await c.start();
+    f.mockImplementation(async () => j(200, { task: { id: '4' }, tasks: [] }) as Response);
+
+    await c.updateSessionTask('4', 'completed');
+    expect(f).toHaveBeenLastCalledWith('http://x/plugins/todo/api/task?session=brain-9', expect.objectContaining({
+      method: 'PATCH', body: JSON.stringify({ taskId: '4', status: 'completed' }),
+    }));
+
+    await c.updateSessionTask('4', { subject: 'Ship it', owner: null });
+    expect(f).toHaveBeenLastCalledWith('http://x/plugins/todo/api/task?session=brain-9', expect.objectContaining({
+      method: 'PATCH', body: JSON.stringify({ taskId: '4', subject: 'Ship it', owner: null }),
+    }));
+  });
+
   it('commands GETs the caller-filtered CLI slash catalog', async () => {
     const f = vi.fn(async () => j(200, { commands: [{ name: 'help', description: 'Help', kind: 'info' }] })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });

@@ -1579,6 +1579,27 @@ describe('BrainStore', () => {
       expect(store.getCards('old')).toEqual([card('todos', 'Older card')]);
     });
 
+    it('round-trips an item\'s structured fields, and still loads a card stored without them', () => {
+      const structured = {
+        id: 'todos', title: 'Todos', pinned: true,
+        items: [{
+          text: '#4 Ship it — Luna (blocked by #2)',
+          status: 'in_progress' as const,
+          startedAt: 123_456,
+          id: '4',
+          label: 'Ship it',
+          owner: 'Luna',
+          blockedBy: ['2'],
+        }],
+      };
+      store.upsertCard('s1', structured);
+      expect(store.getCards('s1')).toEqual([structured]);
+      // A row written before these fields existed: it must load unchanged, not gain empty ones.
+      const legacy = card('todos', 'Older card');
+      store.upsertCard('legacy', legacy);
+      expect(store.getCards('legacy')).toEqual([legacy]);
+    });
+
     it('re-emitting a card updates it in place instead of appending a second panel', () => {
       store.upsertCard('s1', card('todos', 'Ship it'));
       store.upsertCard('s1', card('todos', 'Shipped'));

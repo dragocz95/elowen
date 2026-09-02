@@ -44,11 +44,14 @@ import {
   DEFAULT_COMPOSE_MARKER_MS,
   DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS,
   LONG_COMPOSE_TOOLS,
+  TODO_CARD_ID,
   TODO_PREVIEW_ITEMS,
   composingLabel,
   todoPreviewItems,
   type ComposeLocale,
 } from '../../lib/chatPresentation';
+import { cardTasks, cardTasksAddressable } from '../../lib/railTasks';
+import { useSessionTasks } from '../../lib/queries';
 
 const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
 
@@ -868,11 +871,32 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   // The transcript's out-of-band extras (TODO cards, agents chip) wait for the measurement too: rendering
   // them while the viewport is still unknown paints them once on a phone before the layout resolves.
   const transcriptExtras = mobile !== undefined;
+  // Whether the rail's Tasks section is actually RENDERING this conversation's checklist right now — the
+  // exact condition TelemetryPanel builds its rows from, so the transcript can only hand the rows over to
+  // a section that has them. Structured card rows are enough on their own; a legacy card (rows without
+  // ids) is shown by the rail only once its session-task fallback has answered, and while that query is
+  // loading — or has failed — the rail shows nothing at all. React Query shares the fetch with the rail's
+  // own `useSessionTasks`, so consulting it here costs no extra request.
+  const railCardRows = useMemo(() => cardTasks(cards), [cards]);
+  const railRowsAddressable = cardTasksAddressable(railCardRows);
+  const railFallback = useSessionTasks(
+    railOwnsLiveWork && railCardRows.length > 0 && !railRowsAddressable ? activeSessionId : null,
+  );
+  const railShowsTasks = railOwnsLiveWork && railCardRows.length > 0
+    && (railRowsAddressable || (railFallback.data?.tasks.length ?? 0) > 0);
   // TODO cards with open work (CardBlock hides a card whose every item is done). The phone bar has no room
   // for a control of its own, so the ⋯ menu opens them in a dialog instead.
+  //
+  // A visible docked rail reports the same checklist ROWS in its Tasks section, where they are also
+  // tickable, so repeating them under the transcript would announce the same work twice — the rule the
+  // agents chip above already follows. It is the rows the rail takes over, not the card: a card carrying
+  // freeform `body` still belongs here, because the rail has nowhere to put that body. Only the TODO card
+  // is ever handed over — another plugin's card is not task-shaped and the rail never lists it. A phone
+  // (no docked rail, `telemetryShown` undefined) and a collapsed rail both keep the card exactly as before.
   const todoCards = cards.filter((cd) => {
     if (isBackgroundProcessCardId(cd.id)) return false;
     const items = cd.items ?? [];
+    if (railShowsTasks && cd.id === TODO_CARD_ID && items.length > 0 && !cd.body) return false;
     return items.length === 0 ? true : !items.every((i) => i.status === 'completed');
   });
   const fileRef = useRef<HTMLInputElement>(null);

@@ -26,6 +26,7 @@ const noopInput: ShellInputDeps = {
   openThemePicker: () => {},
   openModelPicker: () => {},
   openSessionsModal: () => {},
+  openTaskActions: () => {},
 };
 
 /** Composition fixture only: terminal lifecycle and stream teardown remain covered by their own owners. */
@@ -936,7 +937,7 @@ describe('chat application shell ownership', () => {
       panelVisible: () => false, panelLeftEdge: () => 120,
       slashOverlay: () => null, mentionOverlay: () => null,
       rowBudget: () => ({ sections: { transcript: 5 } }),
-      subPanel, cardPanel: { isMoreRow: () => false, isHeaderRow: () => false },
+      subPanel, cardPanel: { isMoreRow: () => false, isHeaderRow: () => false, taskAt: () => null },
       chatWidth: () => 120,
     } as unknown as ChatInputContext;
     const router = new InputRouter(tui, context);
@@ -967,6 +968,84 @@ describe('chat application shell ownership', () => {
     expect(subPanel.canScroll()).toBe(false);
     expect(listener(`\x1b[<65;10;${agentRowY}M`)).toEqual({ consume: true });
     expect(viewport.scroll).toHaveBeenCalledWith(-3);
+    router.stop();
+  });
+
+  it('opens the task actions for the Todo row that was clicked, and only for a row that owns a task', () => {
+    let listener!: (data: string) => { consume: boolean } | undefined;
+    const tui = { addInputListener: vi.fn((next) => { listener = next; return vi.fn(); }) } as unknown as TUI;
+    const subPanel = new SubagentPanel(); // no running children → the card panel starts at the stack top
+    const cardPanel = new CardPanel();
+    cardPanel.setMaxRows(30);
+    const openTaskActions = vi.fn();
+    const render = vi.fn();
+    const renderForced = vi.fn();
+    const context = {
+      state: { childView: null }, term: { columns: 120, write: vi.fn() },
+      editor: { focused: true, getText: () => '' },
+      stream: {}, quit: vi.fn(), renderForced,
+      keymap: () => ({ matches: () => false, isLeader: () => false, directAction: () => null }),
+      leader: () => ({ pending: () => false }), dispatchAction: vi.fn(), render,
+      animations: { nudgeMascot: vi.fn() }, hasMessages: () => true,
+      activeViewport: () => ({
+        isScrollbarHit: () => false, subagentAt: () => null, workflowAt: () => null,
+        isExpandableRow: () => false, beginSelect: () => false, hasSelection: () => false, scroll: vi.fn(),
+      }),
+      panelVisible: () => false, panelLeftEdge: () => 120,
+      slashOverlay: () => null, mentionOverlay: () => null,
+      rowBudget: () => ({ sections: { transcript: 5 } }),
+      subPanel, cardPanel, chatWidth: () => 120, openTaskActions,
+    } as unknown as ChatInputContext;
+    const router = new InputRouter(tui, context);
+    router.attach();
+
+    // panelsTop = TOP_RULE_ROWS + transcript(5) + 1, and the card panel's own row 0 is its header.
+    const cardRowY = (row: number): number => TOP_RULE_ROWS + 5 + 1 + row;
+    const click = (row: number): { consume: boolean } | undefined => listener(`\x1b[<0;10;${cardRowY(row)}M`);
+
+    cardPanel.set([{
+      id: 'todos', title: 'Todos', pinned: true,
+      items: [
+        { text: '#7 A', status: 'in_progress', id: '7', label: 'A' },
+        { text: '#8 B', status: 'pending', id: '8', label: 'B' },
+      ],
+    }]);
+    cardPanel.render(120);
+
+    expect(click(2)).toEqual({ consume: true });
+    expect(openTaskActions).toHaveBeenCalledWith('8'); // the SECOND item, not the first or the header
+    openTaskActions.mockClear();
+    expect(click(1)).toEqual({ consume: true });
+    expect(openTaskActions).toHaveBeenCalledWith('7');
+
+    // The header still collapses the card rather than opening the task under the cursor.
+    openTaskActions.mockClear();
+    expect(click(0)).toEqual({ consume: true });
+    expect(openTaskActions).not.toHaveBeenCalled();
+    expect(render).toHaveBeenCalledWith('input:todos-toggle');
+
+    // A legacy card has no ids, so its rows stay inert and the click falls through to the transcript.
+    cardPanel.toggleCollapsed(); // back to expanded
+    cardPanel.set([{ id: 'todos', title: 'Todos', pinned: true, items: [{ text: 'A', status: 'pending' }] }]);
+    cardPanel.render(120);
+    openTaskActions.mockClear();
+    expect(click(1)).toBeUndefined();
+    expect(openTaskActions).not.toHaveBeenCalled();
+
+    // Another plugin's card may carry ids of its own, and they are ITS handles — sending one to the todo
+    // actions would open a task list entry that does not exist. Its rows fall through unchanged, and its
+    // header still collapses the card.
+    cardPanel.set([{
+      id: 'other', title: 'Other', pinned: true,
+      items: [{ text: '#7 Foreign', status: 'pending', id: '7', label: 'Foreign' }],
+    }]);
+    cardPanel.render(120);
+    render.mockClear();
+    expect(click(1)).toBeUndefined();
+    expect(openTaskActions).not.toHaveBeenCalled();
+    expect(click(0)).toEqual({ consume: true });
+    expect(openTaskActions).not.toHaveBeenCalled();
+    expect(render).toHaveBeenCalledWith('input:todos-toggle');
     router.stop();
   });
 
@@ -1680,8 +1759,8 @@ describe('chat application shell ownership', () => {
 
   it('stops a manual rail drag before the Context line has to drop its tokens or percentage', async () => {
     const h = compositionHarness({ columns: 120, rows: 24, turns: 0 });
-    // A realistic long-usage state: "200k / 200k tokens · 100% · $888.46" needs more than the rail's
-    // fixed 36-column minimum, so before the floor existed dragging all the way in ate the token count.
+    // A realistic long-usage state. "200k / 200k tokens · 100%" fits the rail's 36-column minimum once
+    // the cost has moved into the Context header, so the drag reaches the minimum with nothing lost.
     h.rt.usage = { tokens: 199_999, contextWindow: 200_000, percent: 99.9, totalTokens: 199_999, cost: 888.46 };
     const composition = makeComposition(h);
     composition.resume();
@@ -1695,8 +1774,9 @@ describe('chat application shell ownership', () => {
 
     const { width, rail } = await dragRailToNarrowest(h);
 
-    // The user simply cannot reach a width that truncates the summary line.
-    expect(width).toBeGreaterThan(TELEMETRY_MIN_COLUMNS);
+    // The user simply cannot reach a width that truncates the summary line — and for this usage that
+    // floor is the rail minimum itself, because the price relocates rather than blocking the drag.
+    expect(width).toBe(TELEMETRY_MIN_COLUMNS);
     expect(rail).toContain('200k / 200k');
     expect(rail).toContain('100%');
     expect(rail).toContain('$888.46');

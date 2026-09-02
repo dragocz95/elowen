@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, elowenClient } from './elowenClient';
 import { clearToken } from './token';
 import { QUERY_KEYS } from './queries';
-import type { ConfigPatch, ConfigSnapshot, UserPatch, ProfilePatch, CliSettings, TerminalSettings, TerminalSettingsSnapshot, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask, UserPluginConfigDetail } from './types';
+import type { ConfigPatch, ConfigSnapshot, UserPatch, ProfilePatch, CliSettings, TerminalSettings, TerminalSettingsSnapshot, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, MemoryMaintenanceState, MemoryRecategorizeMode, PluginInfo, PluginDetail, PluginSkill, SessionTask, SessionTaskPatch, UserPluginConfigDetail } from './types';
 
 /** Admin: clear the caller's brain usage and origin rollup. */
 export function useResetUsage() {
@@ -271,15 +271,25 @@ export function useUpdatePluginSkill() {
     onSettled: () => { void qc.invalidateQueries({ queryKey: ['plugin-skills'] }); },
   });
 }
+/** Patch one session task: status, subject, owner, or any combination. Every field is optional, so the
+ *  original status-only call shape still applies; the daemon refuses a patch that names nothing. */
 export function useUpdateSessionTask() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { sessionId: string; taskId: string; status: SessionTask['status'] }) => elowenClient.updateSessionTask(v.sessionId, v.taskId, v.status),
-    onMutate: async (v) => {
-      const key = ['session-tasks', v.sessionId];
+    mutationFn: ({ sessionId, taskId, ...patch }: { sessionId: string; taskId: string } & SessionTaskPatch) =>
+      elowenClient.updateSessionTask(sessionId, taskId, patch),
+    onMutate: async ({ sessionId, taskId, ...patch }) => {
+      const key = ['session-tasks', sessionId];
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<{ tasks: SessionTask[] }>(key);
-      qc.setQueryData<{ tasks: SessionTask[] }>(key, (cur) => cur ? { tasks: cur.tasks.map((task) => task.id === v.taskId ? { ...task, status: v.status } : task) } : cur);
+      // A cleared owner arrives as null/'' on the wire but is simply absent on a task, so mirror that
+      // rather than leaving an empty chip in the optimistic row.
+      const applied: Partial<SessionTask> = {
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.subject !== undefined ? { subject: patch.subject } : {}),
+        ...(patch.owner !== undefined ? { owner: patch.owner || undefined } : {}),
+      };
+      qc.setQueryData<{ tasks: SessionTask[] }>(key, (cur) => cur ? { tasks: cur.tasks.map((task) => task.id === taskId ? { ...task, ...applied } : task) } : cur);
       return { key, prev };
     },
     onError: (_error, _value, context) => { if (context?.prev) qc.setQueryData(context.key, context.prev); },

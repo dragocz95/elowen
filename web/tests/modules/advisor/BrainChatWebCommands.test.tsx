@@ -263,25 +263,34 @@ describe('web slash commands: work mode + rename', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('/tasks shows descriptions, updates status and deletes with confirmation', async () => {
+  it('/tasks reveals a description, ticks a task off and deletes with confirmation', async () => {
     renderChat();
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
     await runSlash('tasks');
     const dialog = await screen.findByRole('dialog');
+    // The description is private agent context, so it folds under its own row instead of being printed
+    // for every task at once; the subject is what the list shows.
+    expect(await within(dialog).findByText('Inspect auth')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Check private token handling')).toBeNull();
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: 'Inspect auth' })); });
     expect(await within(dialog).findByText('Check private token handling')).toBeInTheDocument();
-    expect(within(dialog).getByText('Deploy after verification')).toBeInTheDocument();
 
-    const status = within(dialog).getByRole('combobox', { name: 'Status: Inspect auth' });
-    await act(async () => { fireEvent.change(status, { target: { value: 'completed' } }); });
+    // The tick box replaced the native status <select>: it carries the two everyday states, and the
+    // third one lives in the row's ⋯ menu beside rename and delete.
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Mark as completed: Inspect auth' }));
+    });
     await waitFor(() => expect(sessionTasks[0]?.status).toBe('completed'));
 
-    fireEvent.click(within(dialog).getAllByRole('button', { name: 'Delete' })[0]!);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Task actions: Ship fix' }));
+    const menu = await within(dialog).findByRole('menu');
+    await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete' })); });
     // `alertdialog`, not `dialog`: a confirmation is an alert dialog now, which is what makes it
     // undismissable by a stray press outside it.
     const confirm = await screen.findByRole('alertdialog', { name: 'Delete this task?' });
     await act(async () => { fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' })); });
-    await waitFor(() => expect(sessionTasks.map((task) => task.id)).toEqual(['2']));
-    await waitFor(() => expect(screen.queryByText('Inspect auth')).toBeNull());
+    await waitFor(() => expect(sessionTasks.map((task) => task.id)).toEqual(['1']));
+    await waitFor(() => expect(screen.queryByText('Ship fix')).toBeNull());
   });
 
   // The decision itself now comes from the DAEMON (the work mode rides the snapshot's control frame), so

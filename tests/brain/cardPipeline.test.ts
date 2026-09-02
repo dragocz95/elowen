@@ -25,6 +25,55 @@ describe('normalizeCard — untrusted ctx.emitCard payload', () => {
     ]);
   });
 
+  it('carries an item\'s structured fields through, bounded, and omits the ones not sent', () => {
+    const c = normalizeCard({
+      id: 'todos',
+      items: [
+        { text: '#4 Ship it — Luna (blocked by #2)', label: 'Ship it', id: '4', owner: 'Luna', blockedBy: ['2'] },
+        { text: 'plain row' },
+        {
+          text: 'hostile row',
+          id: 'x'.repeat(200),
+          owner: 'o'.repeat(200),
+          label: 'l'.repeat(500),
+          blockedBy: ['  ', 7, ...Array.from({ length: 30 }, (_, i) => String(i + 1))],
+        },
+      ],
+    });
+    expect(c!.items![0]).toEqual({
+      text: '#4 Ship it — Luna (blocked by #2)', status: 'pending', id: '4', label: 'Ship it', owner: 'Luna', blockedBy: ['2'],
+    });
+    // A producer that sends only text stays byte-identical to what it always was — no empty keys added.
+    expect(c!.items![1]).toEqual({ text: 'plain row', status: 'pending' });
+    const bounded = c!.items![2];
+    expect(bounded.id).toHaveLength(64);
+    expect(bounded.owner).toHaveLength(64);
+    expect(bounded.label).toHaveLength(200);
+    // Non-strings and blank entries are dropped, then the list is capped.
+    expect(bounded.blockedBy).toEqual(Array.from({ length: 20 }, (_, i) => String(i + 1)));
+  });
+
+  /** `emitCard` runs on the daemon's event loop, so the WORK the normalizer does has to be bounded too,
+   *  not only its output: filtering and mapping a hostile array before capping it made the cost linear in
+   *  whatever the plugin chose to send. The scan now stops at a fixed number of RAW entries, so both the
+   *  kept count and the number of entries the loop ever inspects stay flat. */
+  it('bounds the work blockedBy normalisation does, not only its length', () => {
+    const huge = Array.from({ length: 500_000 }, (_, i) => String(i + 1));
+    const item = normalizeCard({ id: 'todos', items: [{ text: 'row', id: '1', blockedBy: huge }] })!.items![0]!;
+    expect(item.blockedBy).toEqual(Array.from({ length: 20 }, (_, i) => String(i + 1)));
+
+    // Usable ids sitting PAST the scan window yield nothing rather than buying a walk of the whole array:
+    // the cap is on entries inspected, so it holds whatever shape the hostile array takes.
+    const padded = [...Array.from({ length: 400 }, () => 0), 'late'];
+    const late = normalizeCard({ id: 'todos', items: [{ text: 'row', id: '1', blockedBy: padded }] })!.items![0]!;
+    expect(late.blockedBy).toBeUndefined();
+
+    // Junk INSIDE the window costs only a typeof, so a short pad still yields a full list.
+    const shortPad = [...Array.from({ length: 5 }, () => null), ...huge];
+    const kept = normalizeCard({ id: 'todos', items: [{ text: 'row', id: '1', blockedBy: shortPad }] })!.items![0]!;
+    expect(kept.blockedBy).toHaveLength(20);
+  });
+
   it('returns null without an id, and flags an empty card', () => {
     expect(normalizeCard({ title: 'x' })).toBeNull();
     expect(normalizeCard('x')).toBeNull();

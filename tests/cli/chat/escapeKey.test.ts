@@ -12,6 +12,7 @@ const noopInput = {
   openThemePicker: () => {},
   openModelPicker: () => {},
   openSessionsModal: () => {},
+  openTaskActions: () => {},
 };
 
 const makeComposition = (h: Harness) => {

@@ -45,6 +45,8 @@ export interface ChatInputContext {
   telemetry: TelemetryPanel;
   killProcess(id: string): void;
   openWorkflowModal(workflowId: string): void;
+  /** Open the per-task action sheet for one Todo row — the same modal `/tasks` reaches through its list. */
+  openTaskActions(taskId: string): void;
   rowBudget(): LayoutBudget;
   subPanel: SubagentPanel;
   cardPanel: CardPanel;
@@ -130,8 +132,10 @@ export class InputRouter {
         if (this.resizingPanel && event.down) {
           // A hand-driven resize must never be the thing that costs the Context section its token count
           // or percentage, so the drag stops at whichever floor is higher: the rail's absolute minimum,
-          // or the width the CURRENT token/percent/cost line genuinely needs. Recomputed every frame —
-          // usage, percentage and cost all move while a conversation runs.
+          // or the width the CURRENT token/percent line genuinely needs. The cost is not part of that
+          // floor — it relocates to the Context header rather than disappearing — which is what lets a
+          // drag reach the minimum. Recomputed every frame: usage, percentage and cost all move while a
+          // conversation runs.
           const floor = Math.max(TELEMETRY_MIN_COLUMNS, context.telemetry.contextRequiredWidth());
           context.setPanelWidth(Math.max(floor, Math.min(TELEMETRY_MAX_COLUMNS, term.columns - event.x + 1)));
           context.renderForced('geometry:telemetry-resize');
@@ -213,6 +217,12 @@ export class InputRouter {
       const target = subRelative >= 0 ? context.subPanel.targetAt(subRelative) : null;
       if (target) { void stream.openSubagent(target); return { consume: true }; }
       const cardRelative = subRelative - renderedSubRows;
+      // A TODO row opens that task's actions directly, skipping the list level of /tasks. Only the todo
+      // card registers task rows — another plugin's ids are its own handles, not ones /tasks could act
+      // on — so a click anywhere else falls straight through to the header/more controls below, exactly
+      // as it did before rows became clickable.
+      const cardTask = cardRelative >= 0 ? context.cardPanel.taskAt(cardRelative) : null;
+      if (cardTask) { context.openTaskActions(cardTask); return { consume: true }; }
       if (cardRelative >= 0 && context.cardPanel.isMoreRow(cardRelative)) {
         context.cardPanel.toggleExpanded();
         context.renderForced('geometry:todos-expand');

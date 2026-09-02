@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { UserBlock, StatusBar, CardPanel, SubagentPanel, ProcessPanel, QueuedMessages, ApprovalDock, diffBlock, framedDiffBlock, cardBlock, toolOutputBlock } from '../../../src/cli/chat/components.js';
-import { chatTheme } from '../../../src/cli/chat/theme.js';
+import { UserBlock, StatusBar, CardPanel, SubagentPanel, ProcessPanel, QueuedMessages, ApprovalDock, diffBlock, framedDiffBlock, cardRows, toolOutputBlock } from '../../../src/cli/chat/components.js';
+import type { BrainCard } from '../../../src/brain/events.js';
+import { chatTheme, color } from '../../../src/cli/chat/theme.js';
 
 const strip = (lines: string[]): string[] => lines.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+/** The painted form of a card — what CardPanel pushes into the fixed stack, minus the row→task map. */
+const paintedRows = (card: BrainCard, maxRows?: number, collapsed?: boolean): string[] =>
+  cardRows(card, maxRows, collapsed).map((row) => row.text);
 
 describe('chat components', () => {
   beforeAll(() => { initTheme(); }); // renderDiff needs the pi theme
@@ -21,7 +25,7 @@ describe('chat components', () => {
     const user = new UserBlock(dangerous).render(40).join('\n');
     const queue = new QueuedMessages();
     queue.set([{ id: 'q', text: dangerous }], dangerous);
-    const card = cardBlock({ id: 'c', title: dangerous, pinned: true, items: [{ text: dangerous, status: 'pending' }] }).join('\n');
+    const card = paintedRows({ id: 'c', title: dangerous, pinned: true, items: [{ text: dangerous, status: 'pending' }] }).join('\n');
     const agents = new SubagentPanel();
     agents.set([{ sessionId: 's', task: dangerous, detail: dangerous, status: 'running', tools: 1, seconds: 1 }]);
     const approval = new ApprovalDock({
@@ -377,7 +381,7 @@ describe('chat components', () => {
     }]);
     const plain = strip(panel.render(80));
     const moreRows = plain.filter((line) => /\+\d+ more/.test(line));
-    expect(moreRows).toHaveLength(1); // no duplicate emitter re-writing the note cardBlock already added
+    expect(moreRows).toHaveLength(1); // no duplicate emitter re-writing the note cardRows already added
     expect(moreRows[0]).toContain('+4 more'); // 8 items − 4 previewed
     const moreIndex = plain.findIndex((line) => /\+\d+ more/.test(line));
     expect(panel.isMoreRow(moreIndex)).toBe(true);
@@ -389,8 +393,8 @@ describe('chat components', () => {
     expect(expanded.some((line) => line.includes('Show less'))).toBe(true);
   });
 
-  it('cardBlock renders a compact todo checklist plus optional body', () => {
-    const out = cardBlock({
+  it('cardRows renders a compact todo checklist plus optional body', () => {
+    const out = paintedRows({
       id: 'todos', title: 'Todos',
       items: [
         { text: 'Alpha', status: 'completed' },
@@ -408,14 +412,143 @@ describe('chat components', () => {
     expect(body).toContain('note line');
   });
 
-  it('cardBlock derives elapsed time at render time instead of freezing it in card text', () => {
+  it('cardRows heads the card with a segmented meter that never rounds to a lie', () => {
+    const bar = (done: number, total: number): string => {
+      const items = Array.from({ length: total }, (_, i) => ({
+        text: `T${i}`, status: (i < done ? 'completed' : 'pending') as 'completed' | 'pending',
+      }));
+      return strip(paintedRows({ id: 'todos', title: 'Todos', items }))[0]!;
+    };
+    expect(bar(3, 5)).toContain('▰▰▰▱▱ 3/5');
+    expect(bar(0, 5)).toContain('▱▱▱▱▱ 0/5');
+    expect(bar(5, 5)).toContain('▰▰▰▰▰ 5/5');
+    // A meter that reads full while work remains, or empty once something is done, is worse than none:
+    // 19/20 keeps a dark segment and 1/20 lights one despite rounding to the opposite end.
+    expect(bar(19, 20)).toContain('▰▰▰▰▱ 19/20');
+    expect(bar(1, 20)).toContain('▰▱▱▱▱ 1/20');
+    // Fewer items than segments never pads the bar out to a width the list cannot fill.
+    expect(bar(1, 2)).toContain('▰▱ 1/2');
+    // An itemless card has no progress to show and no rows to click.
+    const bodyOnly = strip(paintedRows({ id: 'note', title: 'Note', body: 'text' }))[0]!;
+    expect(bodyOnly).not.toContain('▱');
+    expect(bodyOnly).toContain('click');
+  });
+
+  it('cardRows lays structured todo rows out from fields and leaves id-less rows exactly as they were', () => {
+    const structured = strip(paintedRows({
+      id: 'todos', title: 'Todos',
+      items: [
+        { text: '#1 Done thing', status: 'completed', id: '1', label: 'Done thing' },
+        { text: '#2 Ship it — filip', status: 'pending', id: '2', label: 'Ship it', owner: 'filip' },
+        { text: '#3 Later (blocked by #2)', status: 'pending', id: '3', label: 'Later', blockedBy: ['2'] },
+      ],
+    }));
+    expect(structured[0]).toContain('click a row'); // the rows themselves are actionable now
+    expect(structured[1]).toBe('    [x] #1 Done thing');
+    expect(structured[2]).toBe('    [ ] #2 Ship it — filip');
+    // The long "(blocked by #2)" prose becomes a marker; several blockers stay on one row.
+    expect(structured[3]).toBe('    [ ] #3 Later ⇠ #2');
+    const many = strip(paintedRows({
+      id: 'todos', items: [{ text: '#4 x', status: 'pending', id: '4', label: 'Wide', blockedBy: ['2', '3'] }],
+    }));
+    expect(many[1]).toBe('    [ ] #4 Wide ⇠ #2 #3');
+
+    // Legacy cards, and any other plugin's card, carry no ids: their glued `text` renders unchanged and
+    // the header keeps promising only what a click there actually does.
+    const legacy = paintedRows({
+      id: 'todos', title: 'Todos',
+      items: [
+        { text: 'Done thing', status: 'completed' },
+        { text: 'Ship it — filip', status: 'pending' },
+        { text: 'Later (blocked by #2)', status: 'pending' },
+      ],
+    });
+    expect(strip(legacy)[0]).toContain(' click');
+    expect(strip(legacy)[0]).not.toContain('click a row');
+    expect(strip(legacy).slice(1)).toEqual([
+      '    [x] Done thing',
+      '    [ ] Ship it — filip',
+      '    [ ] Later (blocked by #2)',
+    ]);
+
+    // A blocked row recedes as a whole; an unblocked pending row keeps its brighter body.
+    const blocked = paintedRows({
+      id: 'todos',
+      items: [
+        { text: '#2 Ship it', status: 'pending', id: '2', label: 'Ship it' },
+        { text: '#3 Later', status: 'pending', id: '3', label: 'Later', blockedBy: ['2'] },
+      ],
+    });
+    expect(blocked[2]).toContain(color.faint('Later'));
+    expect(blocked[1]).toContain(color.dim('Ship it'));
+    expect(blocked[1]).not.toContain(color.faint('Ship it'));
+
+    // Untrusted plugin text reaches the row through `label` and `owner` now, so both are projected too.
+    const dangerous = 'visible\ttext\x1b[2J\x1b]52;c;Zm9yZ2Vk\x07';
+    const projected = paintedRows({
+      id: 'todos', items: [{ text: 'x', status: 'pending', id: '9', label: dangerous, owner: dangerous }],
+    }).join('\n');
+    expect(projected).not.toContain('\x1b[2J');
+    expect(projected).not.toContain('\x1b]52');
+  });
+
+  it('CardPanel maps only structured rows to their task, and never the controls sharing the panel', () => {
+    const panel = new CardPanel();
+    panel.setMaxRows(30);
+    panel.set([{
+      id: 'todos', title: 'Todos', pinned: true,
+      items: [
+        { text: '#1 A', status: 'completed', id: '1', label: 'A' },
+        { text: '#2 B', status: 'in_progress', id: '2', label: 'B' },
+        { text: '#3 C', status: 'pending', id: '3', label: 'C' },
+      ],
+    }]);
+    panel.render(80);
+    expect(panel.taskAt(0)).toBeNull(); // the header collapses the card, it does not open a task
+    expect(panel.taskAt(1)).toBe('1');
+    expect(panel.taskAt(2)).toBe('2');
+    expect(panel.taskAt(3)).toBe('3');
+    expect(panel.taskAt(4)).toBeNull();
+
+    // The truncated more-row overwrites whatever item sat there: it must expand, not open that task.
+    panel.setMaxRows(3);
+    panel.render(80);
+    expect(panel.isMoreRow(2)).toBe(true);
+    expect(panel.taskAt(2)).toBeNull();
+    expect(panel.taskAt(1)).toBe('1');
+    panel.setMaxRows(0);
+    expect(panel.render(80)).toEqual([]);
+    expect(panel.taskAt(1)).toBeNull();
+
+    // A card without ids offers no task rows at all.
+    panel.setMaxRows(30);
+    panel.set([{ id: 'todos', title: 'Todos', pinned: true, items: [{ text: 'A', status: 'pending' }] }]);
+    panel.render(80);
+    expect(panel.taskAt(1)).toBeNull();
+
+    // Card items are a GENERIC mechanism, so another plugin may emit rows carrying ids of its own — and
+    // those ids are its handles, not tasks /tasks could act on. Its rows stay inert and its header keeps
+    // promising only the collapse a click there really performs.
+    panel.set([{
+      id: 'other', title: 'Other', pinned: true,
+      items: [{ text: '#1 Foreign', status: 'pending', id: '1', label: 'Foreign' }],
+    }]);
+    const foreign = panel.render(80);
+    expect(strip(foreign)[0]).toContain(' click');
+    expect(strip(foreign)[0]).not.toContain('click a row');
+    expect(strip(foreign)[1]).toBe('    [ ] #1 Foreign'); // still laid out from the structured fields
+    expect(panel.taskAt(1)).toBeNull();
+    expect(panel.isHeaderRow(0)).toBe(true);
+  });
+
+  it('cardRows derives elapsed time at render time instead of freezing it in card text', () => {
     const realNow = Date.now;
     const card = { id: 'todos', items: [{ text: '#112 Kontroluji vzhled karty', status: 'in_progress' as const, startedAt: 100_000 }] };
     try {
       Date.now = () => 100_000;
-      expect(strip(cardBlock(card))[1]).toContain('#112 Kontroluji vzhled karty · 0s');
+      expect(strip(paintedRows(card))[1]).toContain('#112 Kontroluji vzhled karty · 0s');
       Date.now = () => 269_000;
-      expect(strip(cardBlock(card))[1]).toContain('#112 Kontroluji vzhled karty · 2m 49s');
+      expect(strip(paintedRows(card))[1]).toContain('#112 Kontroluji vzhled karty · 2m 49s');
     } finally {
       Date.now = realNow;
     }

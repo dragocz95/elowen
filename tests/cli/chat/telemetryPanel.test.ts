@@ -10,6 +10,13 @@ const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
  *  is literal spaces. Trim them off to recover where the row's actual CONTENT ends. */
 const contentExtent = (row: string): number => visibleWidth(strip(row).replace(/\s+$/u, ''));
 
+/** Plain-text rows with the background padding removed, so a row can be compared as written text. */
+const railRows = (panel: TelemetryPanel, width: number): string[] =>
+  panel.render(width).map((row) => strip(row).replace(/\s+$/u, ''));
+/** The Context section's header row, and the summary line that always follows it when expanded. */
+const contextHeader = (rows: string[]): string => rows.find((row) => row.includes('Context'))!;
+const contextSummary = (rows: string[]): string => rows[rows.findIndex((row) => row.includes('Context')) + 1]!.trimStart();
+
 /** PANEL_BAR_MARGIN in telemetryPanel.ts. Kept in sync by the assertion below: content must end at least
  *  this many columns before the right edge, so a two-space gutter mirrors the two-space left indent. */
 const PANEL_BAR_MARGIN = 2;
@@ -94,17 +101,12 @@ describe('the context section never drops the price', () => {
     expect(text).toContain('$888.46');
   });
 
-  it('drops the absolute token count before the percentage or the price, as width tightens', () => {
-    const wide = new TelemetryPanel(fullState).render(80).map(strip).join('\n');
-    expect(wide).toContain('200k'); // tokens present with plenty of room
-    expect(wide).toContain('100%');
-    expect(wide).toContain('$888.46');
-
-    const narrow = new TelemetryPanel(fullState).render(TELEMETRY_MIN_COLUMNS).map(strip).join('\n');
-    // The token count is the widest, least essential segment — the first one sacrificed.
-    expect(narrow).not.toContain('200k');
-    expect(narrow).toContain('100%');
-    expect(narrow).toContain('$888.46');
+  it('keeps the percentage last of all once even the token count cannot fit beside it', () => {
+    // Below TELEMETRY_MIN_COLUMNS no rail width can hold `tokens · %`; the percentage is what survives,
+    // and the price is still safe in the header rather than truncated into the line.
+    const rows = railRows(new TelemetryPanel(fullState), 24);
+    expect(contextSummary(rows)).toBe('100%');
+    expect(contextHeader(rows)).toContain('$888.46');
   });
 
   it('falls back to the plain "—" percentage when there is no usage at all, unaffected by the price logic', () => {
@@ -112,6 +114,31 @@ describe('the context section never drops the price', () => {
     const text = new TelemetryPanel(() => noUsage).render(60).map(strip).join('\n');
     expect(text).toContain('—');
     expect(text).not.toContain('$');
+  });
+});
+
+describe('the session cost moves into the Context header when the rail is too narrow for the line', () => {
+  it('renders the untouched `tokens · % · $` line, with an empty header meta, while it fits', () => {
+    const rows = railRows(new TelemetryPanel(fullState), 80);
+    expect(contextSummary(rows)).toBe('200k / 200k tokens · 100% · $888.46');
+    // Nothing is added to the header at a comfortable width: it stays chevron + label.
+    expect(contextHeader(rows).trim()).toBe('▾ Context');
+  });
+
+  it('moves the cost to the header meta and keeps `tokens · %` in the line at the rail minimum', () => {
+    const rows = railRows(new TelemetryPanel(fullState), TELEMETRY_MIN_COLUMNS);
+    expect(contextHeader(rows).trim()).toBe('▾ Context $888.46');
+    expect(contextSummary(rows)).toBe('200k / 200k tokens · 100%');
+    expect(contextSummary(rows)).not.toContain('$');
+  });
+
+  it('shows the cost exactly once, never truncated, at every width the rail can be dragged to', () => {
+    const panel = new TelemetryPanel(fullState);
+    for (let width = TELEMETRY_MIN_COLUMNS; width <= TELEMETRY_MAX_COLUMNS; width += 1) {
+      const rendered = railRows(panel, width).join('\n');
+      expect(rendered.match(/\$888\.46/gu)?.length ?? 0, `width ${width}`).toBe(1);
+      expect(rendered, `width ${width}`).toContain('100%');
+    }
   });
 });
 
@@ -147,28 +174,34 @@ describe('contextRequiredWidth is the floor a manual drag may not cross', () => 
     usage: null, cwd: '~/x', branch: 'main', mcp: null, lspEnabled: null, floatOffset: 0,
   });
 
-  it('matches the real length of the full token/percent/cost line plus the panel gutter', () => {
-    const panel = new TelemetryPanel(fullState);
+  it('measures the token/percent line WITHOUT the cost, plus the panel gutter', () => {
+    // Long enough that `tokens · %` alone still outgrows the rail minimum, so the floor is content-driven
+    // rather than clamped — which is what makes the "without the cost" part of the claim observable.
+    const state: TelemetryState = {
+      ...shortState(),
+      usage: { tokens: 999_999_999, contextWindow: 999_999_999, percent: 100, totalTokens: 999_999_999, cost: 123_456.78 },
+    };
+    const panel = new TelemetryPanel(() => state);
     const required = panel.contextRequiredWidth();
-    // The line the floor exists to protect: "200k / 200k tokens · 100% · $888.46".
-    const summary = strip(panel.render(TELEMETRY_MAX_COLUMNS)
-      .map(strip)
-      .find((row) => row.includes('tokens'))!)
-      .replace(/\s+$/u, '')
-      .trimStart();
+    const rows = railRows(panel, required);
+    expect(contextSummary(rows)).toBe('1000.0M / 1000.0M tokens · 100%');
     // Row = two-space indent + the line; the rail then keeps PANEL_BAR_MARGIN on each edge.
-    expect(required).toBe(visibleWidth(summary) + PANEL_BAR_MARGIN * 3);
-    expect(required).toBeGreaterThan(TELEMETRY_MIN_COLUMNS);
+    expect(required).toBe(visibleWidth(contextSummary(rows)) + PANEL_BAR_MARGIN * 3);
+    // The cost is not in the measured line because it is in the header — and it fits there.
+    expect(contextHeader(rows).trim()).toBe('▾ Context $123456.78');
   });
 
-  it('keeps every segment at the floor and at every width above it, unlike the old fixed 36', () => {
+  it('lets a drag reach the rail minimum for a realistic long-usage context', () => {
+    // The old floor measured the full "200k / 200k tokens · 100% · $888.46" line and so refused to shrink
+    // past ~39 columns. The cost now relocates instead, and the rail is free down to its own minimum.
     const panel = new TelemetryPanel(fullState);
-    const required = panel.contextRequiredWidth();
-    // The reported bug: the rail's fixed minimum is NOT wide enough for this content, so a drag that
-    // could reach it made the tiered fallback throw the token count away.
-    expect(panel.render(TELEMETRY_MIN_COLUMNS).map(strip).join('\n')).not.toContain('200k / 200k');
-    for (let width = required; width <= TELEMETRY_MAX_COLUMNS; width += 1) {
-      const rendered = panel.render(width).map(strip).join('\n');
+    expect(panel.contextRequiredWidth()).toBeLessThanOrEqual(TELEMETRY_MIN_COLUMNS);
+  });
+
+  it('keeps every segment at the floor and at every width above it', () => {
+    const panel = new TelemetryPanel(fullState);
+    for (let width = panel.contextRequiredWidth(); width <= TELEMETRY_MAX_COLUMNS; width += 1) {
+      const rendered = railRows(panel, width).join('\n');
       expect(rendered, `width ${width}`).toContain('200k / 200k');
       expect(rendered, `width ${width}`).toContain('100%');
       expect(rendered, `width ${width}`).toContain('$888.46');
@@ -189,7 +222,12 @@ describe('contextRequiredWidth is the floor a manual drag may not cross', () => 
   });
 
   it('drops to the header alone once the user folds the Context section', () => {
-    const panel = new TelemetryPanel(fullState);
+    // A context long enough that the expanded floor genuinely exceeds the rail minimum, so folding is
+    // observably what lowers it.
+    const panel = new TelemetryPanel(() => ({
+      ...fullState(),
+      usage: { tokens: 999_999_999, contextWindow: 999_999_999, percent: 100, totalTokens: 999_999_999, cost: 123_456.78 },
+    }));
     expect(panel.contextRequiredWidth()).toBeGreaterThan(TELEMETRY_MIN_COLUMNS);
     panel.toggleSection('context');
     // A folded section shows no summary line, so it has nothing left to protect.

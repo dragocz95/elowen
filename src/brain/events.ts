@@ -295,11 +295,27 @@ export interface AskAnswer { header: string; selected: string[]; other?: string 
 
 /** One row of a card's checklist. `status` drives the glyph (○ pending / ◐ in-progress / ✔ done).
  *  `startedAt` is an epoch-ms display clock: live renderers derive elapsed time from it instead of baking
- *  a stale label into `text`; older persisted cards legitimately omit it. */
+ *  a stale label into `text`; older persisted cards legitimately omit it.
+ *
+ *  `text` is the REQUIRED plain-text form of the row and the only field every consumer is guaranteed to
+ *  understand — a chat platform posting a static message, a card persisted by an older daemon, the shared
+ *  `makeCardLines` renderer. The fields below it are an ADDITIVE structured view of that same row, so a
+ *  renderer that can lay out its parts (a `#id` prefix, an owner chip, a blocked-by marker) does not have
+ *  to parse them back out of `text`. All four are optional: a producer that emits none, and a card stored
+ *  before they existed, stay perfectly valid.
+ *
+ *  `id` is the emitting plugin's own handle for the row (the todo task id), stable across re-emits.
+ *  `label` is the bare human text without the decorations `text` glues on. `owner` names who holds the
+ *  row. `blockedBy` lists the ids still blocking it — unresolved ones only, since a renderer shows what
+ *  is in the way now, not the history of what once was. */
 export interface BrainCardItem {
   text: string;
   status?: 'pending' | 'in_progress' | 'completed';
   startedAt?: number;
+  id?: string;
+  label?: string;
+  owner?: string;
+  blockedBy?: string[];
 }
 /** A structured display panel a plugin pushes via `ctx.emitCard` — a generic, reusable replacement for
  *  the old bespoke todo widget. `id` is stable (a re-emit with the same id replaces the panel; an empty
