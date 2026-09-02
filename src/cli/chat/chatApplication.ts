@@ -8,7 +8,7 @@ import { commandsFor } from '../../brain/slashCommands.js';
 import type { SlashCommandDef } from '../../shared/wireContract.js';
 import { TranscriptModel } from '../../brain/transcriptModel.js';
 import { ChatApplicationLifetime } from './applicationLifetime.js';
-import { BrainClient } from './brainClient.js';
+import { BrainClient, usageProviderOf } from './brainClient.js';
 import { MASCOT_ART } from './mascot.js';
 import type { BrainStatus } from './brainClient.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
@@ -235,7 +235,7 @@ export class ChatApplication {
       modelName: boot?.model || options.model || '',
       provider: boot?.provider ?? '',
       providerLabel: boot?.providerLabel ?? '',
-      usageProvider: boot?.usageProvider ?? '',
+      usageProvider: boot ? usageProviderOf(boot) : '',
       conversationTitle: boot?.title ?? '',
       lineCfg: boot?.statusline ?? null,
       usage: boot?.usage ?? null,
@@ -404,7 +404,7 @@ export class ChatApplication {
       state.provider = status.provider;
       state.providerLabel = status.providerLabel ?? '';
     }
-    state.usageProvider = status.usageProvider ?? '';
+    state.usageProvider = usageProviderOf(status);
     state.modelName = status.model || state.modelName;
     state.conversationTitle = status.title ?? state.conversationTitle;
     state.lineCfg = status.statusline;

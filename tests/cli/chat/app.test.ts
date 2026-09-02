@@ -360,6 +360,11 @@ describe('ChatApplication shutdown ownership', () => {
     await vi.waitFor(() => expect(state.rateLimitsByProvider['openai-codex']).toEqual(codexLimits));
 
     expect(state.provider).toBe('openai-codex');
+    // This status frame is an OLDER daemon's: it carries no `usageProvider`, because `provider` still WAS
+    // the pi id before the public/internal split. The rail key falls back to it, so a CLI upgraded ahead
+    // of its daemon keeps drawing the limits instead of silently losing the whole section.
+    // Mutation: key the rail on `status.usageProvider ?? ''` and this reads '' — no rail.
+    expect(state.usageProvider).toBe('openai-codex');
     expect(client.rateLimitsAll).toHaveBeenCalledOnce();
     expect(internals.rateLimitsFetchedAt).not.toBe(999);
   });

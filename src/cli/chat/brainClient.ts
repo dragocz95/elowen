@@ -81,6 +81,22 @@ export interface BrainRateLimits {
  *  pi provider that keys GET /brain/rate-limits/all and is not an identity to show. Both new fields are
  *  optional for rolling compatibility with an older daemon during a local upgrade. */
 export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; provider: string; providerLabel?: string; usageProvider?: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
+/**
+ * The subscription-rail key for a status or snapshot frame.
+ *
+ * `usageProvider` is what a current daemon sends. A daemon older than the public/internal provider split
+ * has no such field and puts the pi provider straight in `provider`, so reading that as the key there
+ * reproduces exactly the rail the older release drew — otherwise a CLI upgraded ahead of its daemon
+ * loses the limits rail entirely.
+ *
+ * `??`, deliberately not `||`: a CURRENT daemon sends `''` for a conversation with no live session, and
+ * that empty string is an answer ("nothing is running, so no rail"), not a missing field. Collapsing it
+ * would key the rail on a config id that names no pi provider.
+ */
+export function usageProviderOf(frame: { provider?: string; usageProvider?: string }): string {
+  return frame.usageProvider ?? frame.provider ?? '';
+}
+
 /** One language server as GET /brain/lsp reports it. The subsystem lives in the `lsp` plugin now, so
  *  this is a WIRE contract the CLI owns as that endpoint's client — like McpServerView below — and not
  *  a type reaching across the core→plugin boundary. */

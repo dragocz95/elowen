@@ -382,11 +382,16 @@ function useBrainChatController(): BrainChatValue {
   const [providerLabel, setProviderLabel] = useState('');
   const [usageProvider, setUsageProvider] = useState('');
   /** The three provider fields always move TOGETHER. Carrying a label or a usage key over from the
-   *  previous provider would mislabel the header or paint another account's subscription rail. */
+   *  previous provider would mislabel the header or paint another account's subscription rail.
+   *
+   *  `usageProvider` falls back to `provider` for one reason: a daemon older than the public/internal
+   *  provider split sends no such field and puts the pi provider straight in `provider`, so reading it
+   *  there draws exactly the rail that release drew. `??` rather than `||`, because a CURRENT daemon
+   *  sends `''` for a conversation with no live session and that empty string is an answer, not a gap. */
   const applyProviderIdentity = useCallback((identity: { provider?: string; providerLabel?: string; usageProvider?: string }) => {
     setProvider(identity.provider ?? '');
     setProviderLabel(identity.providerLabel ?? '');
-    setUsageProvider(identity.usageProvider ?? '');
+    setUsageProvider(identity.usageProvider ?? identity.provider ?? '');
   }, []);
   const [modelStatus, setModelStatus] = useState<SaveStatus>('idle');
   const latestModelRef = useRef<BrainModelOption | null>(null);
@@ -935,8 +940,10 @@ function useBrainChatController(): BrainChatValue {
         const { model } = await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
         if (latestModelRef.current !== m) return;
         setCurrentModel(model);
-        // The pick names the public identity; the internal usage key comes back on the next status
-        // poll, so the rail hides for a beat rather than showing the previous account's windows.
+        // A catalog entry names the public identity only; the internal usage key arrives with the next
+        // status poll. Until then the rail keys on the config id (the setter's compatibility fallback),
+        // which is what this surface did before the split — it either matches an OAuth account whose
+        // ids coincide, or matches nothing and hides, never another account's windows.
         applyProviderIdentity({ provider: m.provider, providerLabel: m.providerLabel });
         setModelStatus('saved');
         toast(`${t.brainChat.modelSwitched} ${brainModelQualifiedLabel({ provider: m.provider, providerLabel: m.providerLabel, model })}`, 'ok');

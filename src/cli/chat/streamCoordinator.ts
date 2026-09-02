@@ -5,6 +5,7 @@ import { SnapshotHydrator, SnapshotTimeoutError, type SnapshotLaneLease } from '
 import type { BrainEvent } from '../../brain/events.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import type { BrainStreamSnapshot } from '../../brain/session/liveEventReplay.js';
+import { usageProviderOf } from './brainClient.js';
 import type { BrainStreamFrame } from './brainClient.js';
 import type { SubagentPanelEntry } from './components.js';
 import type { WorkflowState } from '../../brain/transcript.js';
@@ -425,7 +426,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
             // same split the parent gets from /brain/status. See BrainStatus.
             rt.childView!.provider = snapshot.session.provider;
             rt.childView!.providerLabel = snapshot.session.providerLabel ?? '';
-            rt.childView!.usageProvider = snapshot.session.usageProvider ?? '';
+            rt.childView!.usageProvider = usageProviderOf(snapshot.session);
           }
           rt.childView!.cards = snapshot.cards ?? [];
           rt.childView!.transcript.replaceHistory(snapshot.history);
