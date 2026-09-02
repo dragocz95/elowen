@@ -51,7 +51,7 @@ import type { LiveBrain, QueuedUserEcho, SpawnOpts } from './session/liveBrain.j
 import { clearDeliveredUserEchoes, echoDeliveredId, enqueueMirrored } from './session/queueMirror.js';
 import { abortSessionWork } from './session/abortSessionWork.js';
 import { steerCustomMessage } from './session/steerCustomMessage.js';
-import { execRefSpec } from '../shared/execs.js';
+import { execRefSpec, fromRegistryProvider } from '../shared/execs.js';
 
 /** How a delegated steer ended: `delivered` = the message provably reached the child's context (its
  *  durable user row exists); `idle` = the child was not mid-turn here, or its turn ended before the queue
@@ -1137,7 +1137,9 @@ export class ChannelSessionService {
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',
-            model: execRefSpec({ program: 'elowen', provider: ch.providerId || ch.provider, model: ch.model }),
+            // A platform footer renders this spec, so the fallback half has to be translated: `ch.provider`
+            // is PI's registry name, and emitting it raw would put `elowen-<id>` in front of the room.
+            model: execRefSpec({ program: 'elowen', provider: ch.providerId || fromRegistryProvider(ch.provider), model: ch.model }),
             usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId),
           });
         } finally { detach?.(); }
