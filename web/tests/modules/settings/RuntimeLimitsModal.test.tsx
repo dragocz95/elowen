@@ -41,8 +41,11 @@ describe('RuntimeLimitsModal', () => {
     const { apply } = renderModal();
 
     expect(screen.getByText('30 s')).toBeTruthy();
-    // Two retention knobs share the days unit (activity log, IP address), so the value alone is ambiguous.
+    // Two retention knobs share the 30-day value (activity log, IP address); provider diagnostics use
+    // their own shorter window and a separate storage budget.
     expect(screen.getAllByText('30 days')).toHaveLength(2);
+    expect(screen.getByText('14 days')).toBeTruthy();
+    expect(screen.getByText('1024 MiB')).toBeTruthy();
 
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Local shell timeout' }), { key: 'ArrowRight' });
     expect(apply(0).limits.localShellTimeoutMs).toBe(35000);
@@ -50,8 +53,14 @@ describe('RuntimeLimitsModal', () => {
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Activity log retention' }), { key: 'ArrowLeft' });
     expect(apply(1).limits.eventRetentionDays).toBe(29);
 
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Provider diagnostics retention' }), { key: 'ArrowLeft' });
+    expect(apply(2).limits.providerRequestRetentionDays).toBe(13);
+
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Provider diagnostics storage limit' }), { key: 'ArrowRight' });
+    expect(apply(3).limits.providerRequestRetentionMiB).toBe(1088);
+
     fireEvent.keyDown(screen.getByRole('slider', { name: 'IP address retention' }), { key: 'ArrowRight' });
-    expect(apply(2).limits.originIpRetentionDays).toBe(31);
+    expect(apply(4).limits.originIpRetentionDays).toBe(31);
   });
 
   it('keeps a slider change inside the canonical field bounds', () => {

@@ -71,6 +71,8 @@ export const runtimeLimitsPatchSchema = z.object({
   memoryCuratorMaxOps: z.number().optional(),
   toolDeferThreshold: z.number().optional(),
   eventRetentionDays: z.number().optional(),
+  providerRequestRetentionDays: z.number().optional(),
+  providerRequestRetentionMiB: z.number().optional(),
   originIpRetentionDays: z.number().optional(),
   streamSilenceLimitMs: z.number().optional(),
   streamReviveSilenceLimitMs: z.number().optional(),

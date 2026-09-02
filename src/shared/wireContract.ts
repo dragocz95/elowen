@@ -604,6 +604,12 @@ export interface RuntimeLimits {
   memoryCuratorMaxOps: number;
   toolDeferThreshold: number;
   eventRetentionDays: number;
+  /** Exact provider request diagnostics are secondary operational data, not conversation history. The
+   *  janitor drops whole oldest diagnostic sessions past this age, never a partial request. */
+  providerRequestRetentionDays: number;
+  /** Global logical budget for V2 provider diagnostics. Whole oldest diagnostic sessions are removed once
+   *  their conservative accounted size exceeds this many MiB; the conversations themselves remain. */
+  providerRequestRetentionMiB: number;
   /** How long a recorded client IP stays readable in the origin-usage rollup before the hourly janitor
    *  replaces it with `redacted` and merges its bucket. The totals survive the redaction; only the
    *  address goes. The row itself is deleted later, on `eventRetentionDays` — so this is the

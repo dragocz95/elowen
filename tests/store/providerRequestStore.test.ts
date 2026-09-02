@@ -265,6 +265,27 @@ describe('ProviderRequestStore', () => {
     expect(brain.debugLegacyTranscript('missing')).toBeUndefined();
   });
 
+  it('prunes whole diagnostic sessions by age and byte budget without deleting conversations or pending work', () => {
+    const { db, brain, requests } = fixture();
+    const old = start(brain, 's1');
+    finish(brain, old.requestId);
+    const recent = start(brain, 's2');
+    finish(brain, recent.requestId);
+    db.prepare("UPDATE brain_request_session_summary SET last_request_at = 1000 WHERE session_id = 's1'").run();
+    db.prepare("UPDATE brain_request_session_summary SET last_request_at = 2000 WHERE session_id = 's2'").run();
+
+    expect(requests.pruneDiagnostics(1500, Number.MAX_SAFE_INTEGER)).toMatchObject({ sessions: 1 });
+    expect(requests.rows('s1')).toEqual([]);
+    expect(brain.getSession('s1')?.id).toBe('s1');
+    expect(requests.rows('s2')).toHaveLength(1);
+
+    const pending = start(brain, 's1');
+    db.prepare("UPDATE brain_request_session_summary SET last_request_at = 500 WHERE session_id = 's1'").run();
+    expect(requests.pruneDiagnostics(3000, 0)).toMatchObject({ sessions: 1 });
+    expect(requests.rows('s2')).toEqual([]);
+    expect(requests.row(pending.requestId)).toMatchObject({ status: 'pending' });
+  });
+
   it('follows delete, clear, rekey, fork, user deletion, retention delete, and usage reset lifecycle', () => {
     const { db, brain, requests } = fixture();
     const first = start(brain);

@@ -301,6 +301,9 @@ export class ProviderRequestStore {
     let previousDigest: string | null = null;
     let storedBytes = 0;
     let count = 0;
+    let rootInserted = true;
+    let rootPreviousDigest: string | null = null;
+    let rootSegment: ProviderRequestSegmentIdentity | null = null;
     for (const value of values) {
       const segment = this.putSegment(sessionId, kind, value);
       storedBytes += segment.storedBytes;
@@ -308,7 +311,9 @@ export class ProviderRequestStore {
       const nodeDigest: string = createHash('sha256').update(
         `${PROVIDER_REQUEST_CHAIN_VERSION}\0${previousDigest ?? ''}\0${segment.value.kind}\0${segment.value.digest}\0${segment.value.canonicalizationVersion}`,
       ).digest('hex');
-      const inserted = this.db.prepare(
+      rootPreviousDigest = previousDigest;
+      rootSegment = segment.value;
+      rootInserted = this.db.prepare(
         `INSERT OR IGNORE INTO brain_request_segment_chains
            (session_id, digest, previous_digest, item_kind, item_digest, item_canonicalization_version, item_count)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -316,26 +321,27 @@ export class ProviderRequestStore {
         sessionId, nodeDigest, previousDigest, segment.value.kind, segment.value.digest,
         segment.value.canonicalizationVersion, count,
       ).changes === 1;
-      if (inserted) {
-        storedBytes += CHAIN_NODE_STORAGE_OVERHEAD;
-      } else {
-        const stored = this.db.prepare(
-          `SELECT previous_digest, item_kind, item_digest, item_canonicalization_version, item_count
-             FROM brain_request_segment_chains WHERE session_id = ? AND digest = ?`
-        ).get(sessionId, nodeDigest) as {
-          previous_digest: string | null; item_kind: string; item_digest: string;
-          item_canonicalization_version: number; item_count: number;
-        } | undefined;
-        if (!stored
-          || stored.previous_digest !== previousDigest
-          || stored.item_kind !== segment.value.kind
-          || stored.item_digest !== segment.value.digest
-          || stored.item_canonicalization_version !== segment.value.canonicalizationVersion
-          || stored.item_count !== count) {
-          throw new Error(`provider request chain digest collision for ${sessionId}/${nodeDigest}`);
-        }
-      }
+      if (rootInserted) storedBytes += CHAIN_NODE_STORAGE_OVERHEAD;
       previousDigest = nodeDigest;
+    }
+    // Every prefix digest commits to the preceding digest and item. Validating the final node is enough to
+    // detect an INSERT conflict while avoiding one extra SELECT for every historical message on every call.
+    if (previousDigest && !rootInserted && rootSegment) {
+      const stored = this.db.prepare(
+        `SELECT previous_digest, item_kind, item_digest, item_canonicalization_version, item_count
+           FROM brain_request_segment_chains WHERE session_id = ? AND digest = ?`
+      ).get(sessionId, previousDigest) as {
+        previous_digest: string | null; item_kind: string; item_digest: string;
+        item_canonicalization_version: number; item_count: number;
+      } | undefined;
+      if (!stored
+        || stored.previous_digest !== rootPreviousDigest
+        || stored.item_kind !== rootSegment.kind
+        || stored.item_digest !== rootSegment.digest
+        || stored.item_canonicalization_version !== rootSegment.canonicalizationVersion
+        || stored.item_count !== count) {
+        throw new Error(`provider request chain digest collision for ${sessionId}/${previousDigest}`);
+      }
     }
     return { value: { digest: previousDigest, count }, storedBytes };
   }
@@ -894,6 +900,49 @@ export class ProviderRequestStore {
 
   rows(sessionId: string): Record<string, unknown>[] {
     return this.db.prepare('SELECT * FROM brain_provider_requests WHERE session_id = ? ORDER BY seq').all(sessionId) as Record<string, unknown>[];
+  }
+
+  pruneDiagnostics(olderThan: number, maxStoredBytes: number, maxSessions = 8): { sessions: number; storedBytes: number } {
+    return this.db.transaction(() => {
+      const limit = Number.isFinite(maxSessions) ? Math.max(1, Math.min(100, Math.floor(maxSessions))) : 8;
+      const cap = Number.isFinite(maxStoredBytes) && maxStoredBytes >= 0 ? Math.floor(maxStoredBytes) : Number.MAX_SAFE_INTEGER;
+      let sessions = 0;
+      let storedBytes = 0;
+      const remove = (row: { session_id: string; stored_bytes: number }) => {
+        this.clearSession(row.session_id);
+        sessions += 1;
+        storedBytes += row.stored_bytes;
+      };
+      const expired = this.db.prepare(
+        `SELECT summary.session_id, summary.stored_bytes
+           FROM brain_request_session_summary summary
+          WHERE summary.stored_bytes > 0 AND summary.last_request_at IS NOT NULL AND summary.last_request_at < ?
+            AND NOT EXISTS (
+              SELECT 1 FROM brain_provider_requests request
+               WHERE request.session_id = summary.session_id AND request.status = 'pending'
+            )
+          ORDER BY summary.last_request_at ASC, summary.session_id ASC LIMIT ?`
+      ).all(olderThan, limit) as { session_id: string; stored_bytes: number }[];
+      for (const row of expired) remove(row);
+
+      let total = Number((this.db.prepare('SELECT COALESCE(SUM(stored_bytes), 0) value FROM brain_request_session_summary').get() as { value: number }).value);
+      while (sessions < limit && total > cap) {
+        const row = this.db.prepare(
+          `SELECT summary.session_id, summary.stored_bytes
+             FROM brain_request_session_summary summary
+            WHERE summary.stored_bytes > 0
+              AND NOT EXISTS (
+                SELECT 1 FROM brain_provider_requests request
+                 WHERE request.session_id = summary.session_id AND request.status = 'pending'
+              )
+            ORDER BY COALESCE(summary.last_request_at, summary.capture_started_at) ASC, summary.session_id ASC LIMIT 1`
+        ).get() as { session_id: string; stored_bytes: number } | undefined;
+        if (!row) break;
+        remove(row);
+        total -= row.stored_bytes;
+      }
+      return { sessions, storedBytes };
+    })();
   }
 
   clearSession(sessionId: string): void {

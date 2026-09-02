@@ -10,8 +10,10 @@ import type { EventStore } from '../store/eventStore.js';
 import type { BrainStore } from '../store/brainStore.js';
 import type { MemoryStore } from '../store/memoryStore.js';
 import { USAGE_HISTORY_DAYS } from '../store/memoryStore.js';
+import type { ProviderRequestStore } from '../store/providerRequestStore.js';
 import type { UsageOriginStore } from '../store/usageOriginStore.js';
 import type { UserStore } from '../store/userStore.js';
+import type { RuntimeLimits } from '../shared/wireContract.js';
 import { announceBoot, installGracefulShutdown, type ShutdownControl } from './shutdown.js';
 
 const MEMORY_EVICTION_BATCH_SIZE = 1_000;
@@ -39,6 +41,22 @@ export function runMemoryEvictionSweep(deps: MemoryEvictionSweepDeps): number {
     }
   }
   return removed;
+}
+
+export interface ProviderRequestRetentionSweepDeps {
+  providerRequests: Pick<ProviderRequestStore, 'pruneDiagnostics'>;
+  limits: () => Pick<RuntimeLimits, 'providerRequestRetentionDays' | 'providerRequestRetentionMiB'>;
+  now: () => number;
+}
+
+export function runProviderRequestRetentionSweep(
+  deps: ProviderRequestRetentionSweepDeps,
+): { sessions: number; storedBytes: number } {
+  const limits = deps.limits();
+  return deps.providerRequests.pruneDiagnostics(
+    deps.now() - limits.providerRequestRetentionDays * 86_400_000,
+    limits.providerRequestRetentionMiB * 1_048_576,
+  );
 }
 
 interface MaintenanceDeps {
@@ -109,6 +127,23 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     };
     purgeEvents();
     const stopEventPurge = clock.setInterval(purgeEvents, 3_600_000);
+    // Exact provider bodies are diagnostics, not conversation history. Manifest V2 keeps their write path
+    // linear; this second guard bounds retained V2 data by both age and logical bytes. Whole sessions are
+    // removed atomically so every request that remains is still exactly reconstructable.
+    const sweepProviderRequestRetention = () => {
+      try {
+        const result = runProviderRequestRetentionSweep({
+          providerRequests: deps.brainStore.providerRequests,
+          limits: () => deps.config.get().runtime.limits,
+          now: () => clock.now(),
+        });
+        if (result.sessions > 0) {
+          deps.log.info(`provider request retention: removed ${result.sessions} diagnostic session(s), ${result.storedBytes} logical byte(s)`);
+        }
+      } catch (e) { deps.log.error('provider request retention sweep failed', e); }
+    };
+    sweepProviderRequestRetention();
+    const stopProviderRequestRetention = clock.setInterval(sweepProviderRequestRetention, 3_600_000);
     // Origin accounting holds IP addresses, so it is swept in two steps rather than one. First the
     // address is redacted (the spend totals survive, the personal datum does not), on its own shorter
     // horizon; only later does the row go entirely, on the same retention window the activity log uses.
@@ -193,6 +228,6 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     const stopEmbedQueue = clock.setInterval(() => {
       void deps.embedQueue.drain().catch((e) => deps.log.error('embed queue drain failed', e));
     }, 30_000);
-    return () => { stopTokenPurge(); stopEventPurge(); stopOriginRetention(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopIdleSessionReap(); stopEmbedQueue(); };
+    return () => { stopTokenPurge(); stopEventPurge(); stopProviderRequestRetention(); stopOriginRetention(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopIdleSessionReap(); stopEmbedQueue(); };
   };
 }

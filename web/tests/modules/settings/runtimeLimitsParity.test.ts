@@ -92,12 +92,15 @@ describe('runtime limits — web editor against the daemon clamp', () => {
   // Guards the parsing itself: were a regex to stop matching, every table above would silently be empty
   // and all three assertions would pass on nothing.
   it('actually read both tables', () => {
-    expect(Object.keys(daemonBounds())).toHaveLength(13);
-    expect(Object.keys(webBounds())).toHaveLength(12);
+    expect(Object.keys(daemonBounds())).toHaveLength(15);
+    expect(Object.keys(webBounds())).toHaveLength(14);
     expect(daemonBounds().localShellTimeoutMs).toEqual([10000, 300000]);
     expect(daemonBounds().memorySemanticFloorPerMille).toEqual([100, 800]);
     expect(webBounds().eventRetentionDays).toEqual([1, 365]);
+    expect(webBounds().providerRequestRetentionDays).toEqual([1, 90]);
+    expect(webBounds().providerRequestRetentionMiB).toEqual([64, 16384]);
     expect(webDefaults.memorySemanticFloorPerMille).toBe(200);
+    expect(webDefaults.providerRequestRetentionMiB).toBe(1024);
   });
 
   // The two score weights are the one group where a bound is a CORRECTNESS limit, not taste: semantic

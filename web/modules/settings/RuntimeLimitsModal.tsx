@@ -1,5 +1,5 @@
 'use client';
-import { Gauge, TerminalSquare, Radar, History, EyeOff, Activity, AlarmClock, MessageSquare, Copy, CopyCheck, Star, HeartPulse, PenLine, Cpu, type LucideIcon } from 'lucide-react';
+import { Gauge, TerminalSquare, Radar, History, HardDrive, EyeOff, Activity, AlarmClock, MessageSquare, Copy, CopyCheck, Star, HeartPulse, PenLine, Cpu, type LucideIcon } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -16,7 +16,8 @@ export const RUNTIME_LIMIT_DEFAULTS: RuntimeLimits = {
   localShellTimeoutMs: 30000, memorySemanticFloorPerMille: 200,
   memoryDuplicatePerMille: 930, memoryParaphrasePerMille: 700,
   memoryImportanceWeightPerMille: 100, memoryVitalityWeightPerMille: 100, memoryCuratorMaxOps: 2,
-  toolDeferThreshold: 10, eventRetentionDays: 30, originIpRetentionDays: 30,
+  toolDeferThreshold: 10, eventRetentionDays: 30,
+  providerRequestRetentionDays: 14, providerRequestRetentionMiB: 1024, originIpRetentionDays: 30,
   streamSilenceLimitMs: 75000, streamReviveSilenceLimitMs: 45000, toastDurationMs: 4500,
 };
 
@@ -27,7 +28,7 @@ const PER_MILLE = 1_000;
 /** Score weights travel in the same per-mille unit but read as a percentage of the score. */
 const PER_MILLE_PER_PERCENT = 10;
 
-type RuntimeLimitKind = 'seconds' | 'cosine' | 'count' | 'days' | 'share';
+type RuntimeLimitKind = 'seconds' | 'cosine' | 'count' | 'days' | 'mib' | 'share';
 type RuntimeLimitField = {
   key: keyof RuntimeLimits;
   kind: RuntimeLimitKind;
@@ -54,6 +55,8 @@ const RUNTIME_LIMIT_FIELDS: RuntimeLimitField[] = [
   { key: 'memoryVitalityWeightPerMille', kind: 'share', min: 0, max: 300, step: 10, icon: HeartPulse },
   { key: 'memoryCuratorMaxOps', kind: 'count', min: 0, max: 6, step: 1, icon: PenLine },
   { key: 'eventRetentionDays', kind: 'days', min: 1, max: 365, step: 1, icon: History },
+  { key: 'providerRequestRetentionDays', kind: 'days', min: 1, max: 90, step: 1, icon: History },
+  { key: 'providerRequestRetentionMiB', kind: 'mib', min: 64, max: 16384, step: 64, icon: HardDrive },
   // Next to the log retention because both answer "how long is this kept", but this one is the privacy
   // horizon: past it the recorded address is replaced by a placeholder and only the totals remain.
   { key: 'originIpRetentionDays', kind: 'days', min: 1, max: 365, step: 1, icon: EyeOff },
@@ -70,6 +73,7 @@ const DISPLAY_DIVISORS: Record<RuntimeLimitKind, number> = {
   cosine: PER_MILLE,
   count: 1,
   days: 1,
+  mib: 1,
   share: PER_MILLE_PER_PERCENT,
 };
 
@@ -106,6 +110,7 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, status
     if (field.kind === 'cosine') return value.toFixed(2);
     if (field.kind === 'share') return `${value} %`;
     if (field.kind === 'days') return `${value} ${plural(t.brain.runtime.dayUnit, value)}`;
+    if (field.kind === 'mib') return `${value} MiB`;
     return String(value);
   };
   return (

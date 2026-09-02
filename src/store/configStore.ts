@@ -461,6 +461,10 @@ const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = {
   memoryCuratorMaxOps: 2,
   toolDeferThreshold: 10,
   eventRetentionDays: 30,
+  // Exact provider bodies are useful for recent incident diagnosis, but they are large secondary data.
+  // Two weeks spans normal investigation; 1 GiB remains generous after manifest V2 removes prefix repeats.
+  providerRequestRetentionDays: 14,
+  providerRequestRetentionMiB: 1_024,
   // Thirty days of readable addresses: long enough to investigate a month's traffic pattern, short enough
   // that an address nobody looked at stops being stored as one. Must stay at or below eventRetentionDays
   // in practice — a longer horizon simply never fires, because the row is deleted first.
@@ -542,6 +546,10 @@ const RUNTIME_LIMIT_BOUNDS: Record<keyof RuntimeLimits, [min: number, max: numbe
   // break for nothing; past 100 no realistic MCP surface would ever engage it.
   toolDeferThreshold: [1, 100],
   eventRetentionDays: [1, 365],
+  providerRequestRetentionDays: [1, 90],
+  // Small installations still need enough room for a few large exact requests; beyond 16 GiB the setting
+  // no longer acts as a meaningful guard against the class of incident it exists to prevent.
+  providerRequestRetentionMiB: [64, 16_384],
   // Same range as the log retention above, and for the same reason: a day is the shortest horizon that
   // still lets anyone look at yesterday, a year the longest anyone can call a retention window.
   originIpRetentionDays: [1, 365],
