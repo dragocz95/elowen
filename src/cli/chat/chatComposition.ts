@@ -13,7 +13,7 @@ import { activeKeymap, createLeaderState } from './keys.js';
 import type { KeybindAction } from './keys.js';
 import { padAnsi, terminalSafeAnsi } from '../ui/text.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
-import { computeTelemetryRailBudget, TELEMETRY_MAX_COLUMNS } from './layoutBudget.js';
+import { computeTelemetryRailBudget } from './layoutBudget.js';
 import type { LayoutBudget } from './layoutBudget.js';
 import { prewarmCodeHighlight, setCodeHighlightListener } from './codeHighlight.js';
 import type { TuiDiagnostics } from './tuiDiagnostics.js';
@@ -271,7 +271,10 @@ export function createChatComposition(
     // The rail's reserved columns must be final before chatWidth() is read below, so this is decided
     // ahead of everything else in the frame — never mid-layout, where it would race a stale width.
     if (panelWidthAutoFit && panelVisible()) {
-      panelWidth = telemetry.naturalWidth(TELEMETRY_MAX_COLUMNS);
+      // Start the rail at the narrowest width that still shows every Context number — the same floor
+      // the drag clamp (inputRouter.ts) enforces — instead of fitting the widest section. One-shot on
+      // the first visible frame; a manual drag consumes the flag and wins, a later frame never re-measures.
+      panelWidth = telemetry.contextRequiredWidth();
       panelWidthAutoFit = false;
       // Without this, the overlay's own rendered position/width lags behind the new panelWidth until
       // some unrelated reflow trigger catches up — exactly like the manual drag-resize callback below.

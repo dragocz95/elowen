@@ -111,27 +111,15 @@ export class TelemetryPanel implements Component {
     const functional = this.composeSections(this.sections(this.getState(), width));
     return this.maxRows == null || panelLogo(art, width).length + 2 + functional.rows.length <= this.maxRows;
   }
-  /** How wide the rail's content actually needs to be, given everything currently populated, capped at
-   *  `maxColumns`. Used to auto-fit the panel to its smallest useful size once at start instead of always
-   *  opening at the fixed default width. */
-  naturalWidth(maxColumns: number): number {
-    const cap = Math.max(TELEMETRY_MIN_COLUMNS, Math.floor(maxColumns));
-    const sections = this.sections(this.getState(), cap); // build at the cap so nothing truncates yet
-    let widest = 0;
-    for (const section of sections) {
-      for (const row of measurableRows(section)) widest = Math.max(widest, visibleWidth(row));
-    }
-    return Math.min(cap, Math.max(TELEMETRY_MIN_COLUMNS, widest + PANEL_BAR_MARGIN * 2));
-  }
   /** The narrowest rail width at which the Context section still shows every number it has: the
    *  `tokens · %` summary line, beside a header wide enough for the cost meta it takes on at exactly
-   *  these widths. The manual drag-resize clamp (`inputRouter.ts`) uses this as its lower bound, so a
-   *  hand-driven resize is never the reason a value disappears. The cost is deliberately NOT measured
+   *  these widths. The first-frame auto-fit (`chatComposition.ts`) starts the rail here, and the manual
+   *  drag-resize clamp (`inputRouter.ts`) uses it as its lower bound, so neither launch nor a hand-driven
+   *  resize is ever the reason a value disappears. The cost is deliberately NOT measured
    *  inline: below the width where the full line fits it MOVES into the header instead of being dropped
    *  ({@link contextSummary}), which is what lets a drag reach TELEMETRY_MIN_COLUMNS rather than stopping
-   *  at the full line's length. Measured exactly like {@link naturalWidth} but scoped to Context alone,
-   *  so it is independent of what the other sections happen to want, and recomputed on demand: tokens,
-   *  percent and cost all move while a conversation runs. */
+   *  at the full line's length. Scoped to Context alone, so it is independent of what the other sections
+   *  happen to want, and recomputed on demand: tokens, percent and cost all move while a conversation runs. */
   contextRequiredWidth(): number {
     // Build at the rail's own maximum so nothing truncates during the measurement, in the same narrow
     // layout the rail itself adopts at this floor.
