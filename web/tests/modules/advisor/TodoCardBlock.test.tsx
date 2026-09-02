@@ -157,8 +157,8 @@ describe('todo card — the checklist as a control surface', () => {
     // a box invites a stray click, and every change here reaches the agent's plan.
     expect(within(card).queryAllByRole('checkbox')).toHaveLength(0);
     expect(within(rowOf(card, 'Reviewing the card')).getByTestId('chat-card-running')).toBeInTheDocument();
-    expect(rowOf(card, 'Draft the notes')).toHaveTextContent('○');
-    expect(rowOf(card, 'Read the code')).toHaveTextContent('✔');
+    expect(rowOf(card, 'Draft the notes').querySelector('svg.lucide-circle')).not.toBeNull();
+    expect(rowOf(card, 'Read the code').querySelector('svg.lucide-circle-check')).not.toBeNull();
     // The row is the control, and its whole text is the target.
     expect(rowOf(card, 'Draft the notes')).toHaveAccessibleName('Task actions: Draft the notes');
   });
@@ -173,7 +173,7 @@ describe('todo card — the checklist as a control surface', () => {
     // The plugin's HTTP routes answer the caller without re-emitting the panel, so the card is rebuilt
     // locally from the response. That rebuild has to keep the structured fields: a row that came back
     // without its id would still be listed and would no longer have a menu.
-    await waitFor(() => expect(rowOf(card, 'Draft the notes')).toHaveTextContent('✔'));
+    await waitFor(() => expect(rowOf(card, 'Draft the notes').querySelector('svg.lucide-circle-check')).not.toBeNull());
     expect(card.textContent).toContain('2/4');
     expect(within(card).getByRole('progressbar', { name: 'Tasks' })).toHaveAttribute('aria-valuenow', '50');
   });
@@ -184,7 +184,7 @@ describe('todo card — the checklist as a control surface', () => {
     const menu = await openRowMenu('Read the code');
     await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Pending' })); });
     await waitFor(() => expect(patched).toEqual([{ taskId: '4', status: 'pending' }]));
-    await waitFor(() => expect(rowOf(card, 'Read the code')).toHaveTextContent('○'));
+    await waitFor(() => expect(rowOf(card, 'Read the code').querySelector('svg.lucide-circle')).not.toBeNull());
   });
 
   // Every status lives behind the row, which is a tap and not a hover, so the phone reaches it the same
@@ -303,7 +303,7 @@ describe('todo card — the checklist as a control surface', () => {
     await act(async () => { fireEvent.click(within(menu).getByRole('menuitem', { name: 'Completed' })); });
 
     expect(await screen.findByText(/elowen 503/, { selector: '[data-slot="toast-description"]' })).toBeInTheDocument();
-    expect(rowOf(card, 'Draft the notes')).toHaveTextContent('○');
+    expect(rowOf(card, 'Draft the notes').querySelector('svg.lucide-circle')).not.toBeNull();
     expect(card.textContent).toContain('1/4');
   });
 });

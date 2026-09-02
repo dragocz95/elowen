@@ -307,18 +307,14 @@ function TodoCardRow({ row, now, onStatus, onOpen }: {
         triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-accent"
         trigger={
           <>
+            {/* The same vocabulary the tool rows use: a turning spinner for the task being worked on,
+                a ticked circle for a finished one, an empty circle for one still waiting. */}
             {row.status === 'in_progress' ? (
-              // A half-filled dot drawn from the text colour rather than the `◐` glyph, which fonts render
-              // anywhere between a hollow ring and a solid disc.
-              <span
-                aria-hidden
-                data-testid="chat-card-running"
-                className="inline-block size-[0.75em] shrink-0 rounded-full border border-current bg-[linear-gradient(90deg,currentColor_50%,transparent_50%)] text-primary"
-              />
+              <span data-testid="chat-card-running" className="flex shrink-0"><Spinner size="xs" tone="text-primary" /></span>
+            ) : row.status === 'completed' ? (
+              <CheckCircle2 size={11} aria-hidden className="shrink-0 text-success" />
             ) : (
-              <span aria-hidden className={`shrink-0 ${row.status === 'completed' ? 'text-success' : 'text-muted-foreground'}`}>
-                {row.status === 'completed' ? '✔' : '○'}
-              </span>
+              <Circle size={11} aria-hidden className="shrink-0 text-muted-foreground" />
             )}
             <span className={`min-w-0 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}>
               {row.label}
