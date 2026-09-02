@@ -13,7 +13,7 @@ import { createWrapper } from '../test-utils';
 // navigation already lists it), so the deck must not offer the same surface a second time — and the
 // ids that used to name a deck section survive in localStorage and in links, which is why they are
 // forwarded to that page instead of dropped.
-const CORE_RAIL = ['System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Recap', 'Data'];
+const CORE_RAIL = ['System', 'Elowen AI', 'Models', 'Plugins', 'Recap', 'Data'];
 
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], providers: { 'claude-code': { bin: 'claude', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),

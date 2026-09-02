@@ -5,7 +5,8 @@ import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema, userCreateSchema } from '../schemas/auth.js';
 import { editablePrompts, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
 import { isExecAllowedForUser, isOfferableExec } from '../../shared/execs.js';
-import { configuredBrainProviders, DEFAULT_BRAIN_MODEL } from '../../brain/config.js';
+import { brainConfigFromElowen, configuredBrainProviders, DEFAULT_BRAIN_MODEL } from '../../brain/config.js';
+import { brainDefaultSelection, buildBrainRegistry, inMemoryModelRuntime } from '../../brain/providers.js';
 import { grantablePluginNames } from '../../shared/pluginAccess.js';
 import { discoverPlugins } from '../../plugins/loader.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
@@ -121,11 +122,25 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ ok: true });
   });
   // Per-user CLI/brain settings (model override + auto-compact) — self-service, consumed by `elowen chat`.
-  // `serverDefault` tells the UI what "empty model" resolves to: the first dedicated brain provider's
-  // first model, else the explicit core default used by clients before a provider is configured.
-  const serverDefaultModel = () => {
-    const cfg = d.config.get();
-    return cfg.brain.providers[0]?.models[0] || DEFAULT_BRAIN_MODEL;
+  //
+  // `serverDefaultRoute` tells the UI what an EMPTY personal model resolves to, computed by the daemon
+  // helper the spawn path itself calls (`brainDefaultSelection` → `entryDefaultModelId`). Reading
+  // `providers[0].models[0]` here instead was wrong twice over: it names nothing for a bare connected
+  // OAuth account with no manual list, where the runtime uses the provider catalog's own default.
+  //
+  // It is DISPLAY-ONLY and deliberately ignores the caller's allow-list. The instance default is
+  // admin-controlled and the runtime applies it to a member whose personal catalog does not list it
+  // (`selectionAllowed` only judges COMPLETE selections), so filtering it here would leave that member's
+  // account page showing a bare "Inherited" with no model behind it. It grants nothing: every write still
+  // goes through `isExecAllowedForUser` below.
+  //
+  // `serverDefault` stays a bare model id for older clients (`elowen chat`) that read only that field.
+  const serverDefaultRoute = async () => {
+    const cfg = brainConfigFromElowen(d.config, d.brainAuth);
+    if (!cfg || cfg.providers.length === 0) return undefined;
+    // The registry is only consulted for a provider with no manual list, but building it is the same
+    // credential-less catalog read `GET /brain/models` already performs per request.
+    return brainDefaultSelection(buildBrainRegistry(cfg, await inMemoryModelRuntime()), cfg);
   };
   app.get('/auth/me/cli-settings', async (c) => {
     const u = c.get('user');
@@ -139,14 +154,20 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // rather than guessing — the same way the browser gates a plugin's affordances on a confirmed listing.
     const live = new Set(((await d.plugins?.get())?.platforms ?? []).map((platform) => platform.name));
     const availableLinks = PLATFORM_IDENTITIES.filter((desc) => live.has(desc.platform)).map((desc) => desc.linkSettingKey);
-    return c.json({ ...s, userInstructions: s.personalityBody, serverDefault: serverDefaultModel(), availableLinks, revision: d.userSettings?.revision(u.id, 'cli') ?? 0 });
+    const defaultRoute = await serverDefaultRoute();
+    return c.json({
+      ...s, userInstructions: s.personalityBody,
+      serverDefault: defaultRoute?.model ?? DEFAULT_BRAIN_MODEL,
+      ...(defaultRoute ? { serverDefaultRoute: defaultRoute } : {}),
+      availableLinks, revision: d.userSettings?.revision(u.id, 'cli') ?? 0,
+    });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { expectedRevision?: unknown; model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; msteamsUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown; fastMode?: unknown };
+    const b = (await c.req.json().catch(() => ({}))) as { expectedRevision?: unknown; model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; projectModelPreferences?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; msteamsUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown; fastMode?: unknown };
     if (b.expectedRevision !== undefined && (!Number.isInteger(b.expectedRevision) || (b.expectedRevision as number) < 0)) return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
-    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; msteamsUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean; fastMode?: boolean } = {};
+    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; projectModelPreferences?: Record<string, { provider: string; model: string }>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; msteamsUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean; fastMode?: boolean } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
     if (typeof b.visionModel === 'string') patch.visionModel = b.visionModel.trim();
@@ -160,6 +181,29 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // Per-model threshold map (key `providerId/model` → percent). The store cleans/clamps every entry, so
     // the route only gates on it being a plain object; a non-object (or array) is ignored.
     if (b.autoCompactAtByModel && typeof b.autoCompactAtByModel === 'object' && !Array.isArray(b.autoCompactAtByModel)) patch.autoCompactAtByModel = b.autoCompactAtByModel as Record<string, number>;
+    // Per-project model pins (canonical Git root → provider/model). The map REPLACES the stored one, which
+    // is what lets a user clear a pin `switchModel` wrote for them without knowing it — clearing one means
+    // sending the map WITHOUT that entry, which is what the account drawer does.
+    //
+    // Because it replaces, a malformed entry must REJECT the whole request rather than be dropped: silently
+    // discarding the bad halves and storing the survivors turns a garbled payload into `{}`, which wipes
+    // every pin the user has and looks like a successful save. The boundary answers 400 and writes nothing.
+    if (b.projectModelPreferences !== undefined) {
+      if (!b.projectModelPreferences || typeof b.projectModelPreferences !== 'object' || Array.isArray(b.projectModelPreferences)) {
+        return c.json({ error: 'projectModelPreferences must be an object mapping a project root to { provider, model }' }, 400);
+      }
+      const pins: Record<string, { provider: string; model: string }> = {};
+      for (const [root, value] of Object.entries(b.projectModelPreferences as Record<string, unknown>)) {
+        const { provider, model } = (value && typeof value === 'object' ? value : {}) as { provider?: unknown; model?: unknown };
+        const trimmedProvider = typeof provider === 'string' ? provider.trim() : '';
+        const trimmedModel = typeof model === 'string' ? model.trim() : '';
+        if (!root.trim() || !trimmedProvider || !trimmedModel) {
+          return c.json({ error: `projectModelPreferences entry '${root}' must carry a non-empty provider and model` }, 400);
+        }
+        pins[root] = { provider: trimmedProvider, model: trimmedModel };
+      }
+      patch.projectModelPreferences = pins;
+    }
     if (typeof b.autoRecall === 'boolean') patch.autoRecall = b.autoRecall;
     if (typeof b.autoLiveRecall === 'boolean') patch.autoLiveRecall = b.autoLiveRecall;
     if (typeof b.autoSave === 'boolean') patch.autoSave = b.autoSave;
@@ -195,6 +239,15 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (patch.compactModel && patch.compactModelProvider
       && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.compactModelProvider, patch.compactModel), providers)) {
       return c.json({ error: 'model not allowed' }, 400);
+    }
+    // Every entry that SURVIVES the replacement must be one this account may run, and a disallowed one
+    // rejects the request outright — same reason a malformed one does, since the map replaces wholesale
+    // and dropping the offender would store a silently different map. A stale pin the user is DROPPING
+    // never reaches here, so clearing an entry the allow-list has since revoked stays possible.
+    if (patch.projectModelPreferences) {
+      const refused = Object.entries(patch.projectModelPreferences)
+        .find(([, pin]) => !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(pin.provider, pin.model), providers));
+      if (refused) return c.json({ error: `model not allowed for project '${refused[0]}'` }, 400);
     }
     try {
       d.userSettings.setCliSettings(u.id, { ...patch, ...links }, b.expectedRevision as number | undefined);
@@ -242,7 +295,13 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     const activationPending = Boolean(reapply && typeof d.brain?.hasActiveSession === 'function' && d.brain.hasActiveSession(u.id));
     if (reapply) void Promise.resolve(reapply).catch((e) => console.warn(`cli-settings: live re-apply for user ${u.id} failed: ${e instanceof Error ? e.message : String(e)}`));
     const saved = d.userSettings.cliSettings(u.id);
-    return c.json({ ...saved, userInstructions: saved.personalityBody, serverDefault: serverDefaultModel(), revision: d.userSettings.revision(u.id, 'cli'), ...(activationPending ? { pending: true } : {}) });
+    const savedDefaultRoute = await serverDefaultRoute();
+    return c.json({
+      ...saved, userInstructions: saved.personalityBody,
+      serverDefault: savedDefaultRoute?.model ?? DEFAULT_BRAIN_MODEL,
+      ...(savedDefaultRoute ? { serverDefaultRoute: savedDefaultRoute } : {}),
+      revision: d.userSettings.revision(u.id, 'cli'), ...(activationPending ? { pending: true } : {}),
+    });
   });
   // Per-user web-terminal appearance (xterm palette/font/cursor) — self-service, kept separate from
   // cli-settings so it neither trips the model allow-list nor restarts the brain. The store validates

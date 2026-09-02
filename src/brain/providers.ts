@@ -357,6 +357,28 @@ function defaultCatalogModel(registry: ModelRegistry, providerName: string): str
   return (preferred && models.some((m) => m.id === preferred) ? preferred : models[0]?.id);
 }
 
+/** The model id one provider entry runs when nothing was selected: its first manually listed model, else
+ *  the provider catalog's own default. THE rule — `resolveBrainModelRoute` below calls this, so a surface
+ *  that has to DISPLAY the answer cannot drift from the one the spawn path computes. Re-deriving it as
+ *  `entry.models[0]` is what made `serverDefault` disagree for a provider with an empty manual list. */
+function entryDefaultModelId(registry: ModelRegistry, entry: BrainProviderEntry): string | undefined {
+  return entry.models[0] || defaultCatalogModel(registry, registryProviderName(entry));
+}
+
+/** WHERE A CONVERSATION STARTS when the account has expressed no preference: the first configured
+ *  provider and {@link entryDefaultModelId} on it. Display-only — it answers "what does empty resolve
+ *  to", carries the provider's label for a picker summary, and deliberately knows nothing about any
+ *  caller's allow-list, because the instance default is admin-controlled and applies to a member whose
+ *  own catalog does not list it. Undefined when no provider is configured at all. */
+export function brainDefaultSelection(
+  registry: ModelRegistry, cfg: BrainRuntimeConfig,
+): { provider: string; providerLabel: string; model: string } | undefined {
+  const entry = cfg.providers[0];
+  if (!entry) return undefined;
+  const model = entryDefaultModelId(registry, entry);
+  return model ? { provider: entry.id, providerLabel: entry.label, model } : undefined;
+}
+
 function resolveEntryModel(
   registry: ModelRegistry,
   cfg: BrainRuntimeConfig,
@@ -415,7 +437,7 @@ export function resolveBrainModelRoute(
   const entry = (sel?.provider ? cfg.providers.find((p) => p.id === sel.provider) : undefined) ?? cfg.providers[0];
   if (!entry) throw new Error('no brain provider configured');
   const providerName = registryProviderName(entry);
-  const defaultId = entry.models[0] || defaultCatalogModel(registry, providerName);
+  const defaultId = entryDefaultModelId(registry, entry);
   const modelId = sel?.model || defaultId;
   if (!modelId) throw new Error(`brain provider '${entry.id}' has no models configured`);
   const model = withIncrementalToolStreaming(resolveEntryModel(registry, cfg, entry, modelId));

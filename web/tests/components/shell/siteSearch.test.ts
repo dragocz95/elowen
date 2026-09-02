@@ -52,6 +52,21 @@ describe('buildSearchIndex', () => {
     expect(entries.find((e) => e.title === t.brain.retention.title)?.href).toBe('/settings?cat=brain');
   });
 
+  /** The rows that MOVED must point at their new home, and the retired section must not linger in the
+   *  index — a palette row that opens a page which no longer exists is worse than no row. */
+  it('files the moved model-role rows under Models and drops the retired Memory section', () => {
+    for (const title of [
+      t.settings.modelRoles.utility, t.settings.modelRoles.digest, t.settings.modelRoles.instanceDefault,
+      t.memory.embeddingProvider, t.memory.embeddingDimensions,
+    ]) {
+      expect(entries.find((e) => e.title === title)?.href, `${title} must live in Models now`).toBe('/settings?cat=models');
+    }
+    expect(entries.some((e) => e.href === '/settings?cat=memory')).toBe(false);
+    // The personal primary moved off the profile and into the account's own Models section.
+    expect(entries.find((e) => e.title === t.cli.primaryModelLabel)?.href).toBe('/account?cat=cli');
+    expect(entries.find((e) => e.title === t.cli.projectModelsTitle)?.href).toBe('/account?cat=cli');
+  });
+
   it('indexes the account sections as ?cat= deep links', () => {
     for (const id of ['profile', 'cli', 'memory', 'personality', 'notifications', 'security', 'terminal']) {
       const entry = entries.find((e) => e.href === `/account?cat=${id}`);

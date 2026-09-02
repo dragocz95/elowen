@@ -18,28 +18,36 @@ const CLI: CliSettings = {
   autoRecall: true, autoLiveRecall: true, autoSave: true,
 };
 const PERMISSIONS: PermissionSettings = { tools: {}, bash: {}, yolo: false, unattendedAsks: 'allow' };
+// `default: true` is what the daemon marks as the model the spawn path resolves, so an unset primary
+// resolves to k3 — which is the model the compaction row must then name in its inherit label.
 const MODELS: BrainModelOption[] = [
-  { provider: 'kimi-coding', providerLabel: 'Kimi', model: 'k3', exec: 'elowen:kimi-coding/k3', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+  { provider: 'kimi-coding', providerLabel: 'Kimi', model: 'k3', exec: 'elowen:kimi-coding/k3', source: 'oauth', contextWindow: 200000, contextWindowSet: false, default: true },
 ];
 vi.mock('../../../lib/queries', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
+  useMe: () => ({ data: { user: { id: 2, is_admin: false, allowed_execs: [] } } }),
   useMyCliSettings: () => ({ data: CLI, isLoading: false }),
   useMyPermissions: () => ({ data: PERMISSIONS, isLoading: false }),
   useBrainModels: () => ({ data: MODELS }),
 }));
 
 import { CliSection } from '../../../modules/account/CliSection';
+import { interpolate } from '../../../lib/i18n';
 
 const renderSection = () => render(<ToastProvider><CliSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
 
 beforeEach(() => { saveCli.mockClear(); savePermissions.mockClear(); });
 
 describe('CliSection — compaction model picker', () => {
-  it('renders even with auto-compact off (manual /compact uses it too) and seeds on the default label', () => {
+  // MOVED with the control from the Elowen AI card into Account → Models → Model roles. The row still
+  // renders with auto-compact off (manual /compact uses it too); what changed is that its unset state
+  // now NAMES the primary model it inherits instead of saying "Conversation model".
+  it('renders even with auto-compact off and names the primary model it inherits', () => {
     renderSection();
     expect(screen.getByText(en.cli.compactModelLabel)).toBeTruthy();
-    // The compaction summary chip shows "Conversation model" until a distinct model is picked.
-    expect(screen.getByText(en.cli.compactModelDefault)).toBeTruthy();
+    expect(screen.getByRole('button', { name: `${en.managePicker.manage}: ${en.cli.compactModelLabel}` }))
+      .toHaveTextContent(interpolate(en.settings.modelRoles.inherit, { model: 'k3' }));
+    expect(screen.getAllByText(en.settings.modelRoles.inherited).length).toBeGreaterThan(0);
   });
 
   it('picking a model autosaves compactModel/compactModelProvider as provider::model', async () => {

@@ -41,7 +41,7 @@ describe('cli-settings routes', () => {
     // account page offers a platform link only where a sender could actually arrive. An empty array is
     // therefore the honest answer and must not be confused with the field being absent, which is how an
     // older daemon reads and which means "offer all of them".
-    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false, serverDefault: 'claude-opus-4-8', availableLinks: [], revision: 0 });
+    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, projectModelPreferences: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false, serverDefault: 'claude-opus-4-8', serverDefaultRoute: { provider: 'relay', providerLabel: 'Relay', model: 'claude-opus-4-8' }, availableLinks: [], revision: 0 });
   });
 
   it('PATCH saves the override and restarts a running brain', async () => {
@@ -51,7 +51,7 @@ describe('cli-settings routes', () => {
     // first model stays `claude-opus-4-8` so `serverDefault` is unchanged by the fixture.
     config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['claude-opus-4-8', 'ollama/kimi-k2.7-code'], apiKey: 'k' }] } });
     const res = await app.request('/auth/me/cli-settings', patch(amyTok, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', autoCompact: true, autoCompactAt: 70 }));
-    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false, serverDefault: 'claude-opus-4-8', revision: 1 });
+    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, projectModelPreferences: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false, serverDefault: 'claude-opus-4-8', serverDefaultRoute: { provider: 'relay', providerLabel: 'Relay', model: 'claude-opus-4-8' }, revision: 1 });
     expect(restart).toHaveBeenCalledTimes(1);
     // The threshold also reaches conversations that are ALREADY live — the restart above only covers this
     // user's active chat, not their other sessions or the channel sessions they own.
@@ -154,6 +154,111 @@ describe('cli-settings routes', () => {
     expect(res.status).toBe(200);
     // Stored and echoed back, with each value clamped into the 30–95 band.
     expect((await res.json()).autoCompactAtByModel).toEqual({ 'relay/gpt-x': 65, 'ant/claude-x': 95 });
+  });
+
+  // Account → Models shows the pins `switchModel` writes implicitly and offers to clear them. Reading them
+  // needs GET to publish the map; clearing one needs PATCH to accept the map back, minus the dropped entry.
+  it('GET publishes the per-project model pins and PATCH clears one by replacing the map', async () => {
+    const { app, amyTok, config } = setup();
+    config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['claude-opus-4-8', 'glm'], apiKey: 'k' }] } });
+    const written = await app.request('/auth/me/cli-settings', patch(amyTok, {
+      projectModelPreferences: { '/var/www/kolin': { provider: 'relay', model: 'glm' }, '/var/www/elowen': { provider: 'relay', model: 'claude-opus-4-8' } },
+    }));
+    expect(written.status).toBe(200);
+    expect((await app.request('/auth/me/cli-settings', auth(amyTok)).then((r) => r.json())).projectModelPreferences).toEqual({
+      '/var/www/kolin': { provider: 'relay', model: 'glm' },
+      '/var/www/elowen': { provider: 'relay', model: 'claude-opus-4-8' },
+    });
+    // Clearing is the same write with the entry left out — the map replaces wholesale.
+    await app.request('/auth/me/cli-settings', patch(amyTok, { projectModelPreferences: { '/var/www/kolin': { provider: 'relay', model: 'glm' } } }));
+    expect((await app.request('/auth/me/cli-settings', auth(amyTok)).then((r) => r.json())).projectModelPreferences).toEqual({
+      '/var/www/kolin': { provider: 'relay', model: 'glm' },
+    });
+    // …and an empty map clears every pin.
+    await app.request('/auth/me/cli-settings', patch(amyTok, { projectModelPreferences: {} }));
+    expect((await app.request('/auth/me/cli-settings', auth(amyTok)).then((r) => r.json())).projectModelPreferences).toEqual({});
+  });
+
+  it('PATCH judges every surviving project pin against the personal allow-list', async () => {
+    const { app, users, config } = setup();
+    config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['kimi', 'glm'], apiKey: 'k' }] } });
+    const bob = users.create('bob', 'pw');
+    const bobTok = users.issueToken(bob.id);
+    users.setAllowedExecs(bob.id, ['elowen:relay/glm']);
+    // A pin naming a model this account may NOT run is refused outright — the map cannot widen the list.
+    const refused = await app.request('/auth/me/cli-settings', patch(bobTok, { projectModelPreferences: { '/p': { provider: 'relay', model: 'kimi' } } }));
+    expect(refused.status).toBe(400);
+    expect((await refused.json()).error).toContain("'/p'");
+    expect((await app.request('/auth/me/cli-settings', auth(bobTok)).then((r) => r.json())).projectModelPreferences).toEqual({});
+    // An allowed one goes through.
+    expect((await app.request('/auth/me/cli-settings', patch(bobTok, { projectModelPreferences: { '/p': { provider: 'relay', model: 'glm' } } }))).status).toBe(200);
+  });
+
+  /** The map REPLACES the stored one, so dropping a malformed entry and saving the survivors turns a
+   *  garbled payload into `{}` — every pin the user has, wiped, and reported as a successful save. The
+   *  boundary rejects and writes NOTHING. */
+  it('PATCH refuses a malformed project pin instead of silently wiping the stored map', async () => {
+    const { app, amyTok, config } = setup();
+    config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['claude-opus-4-8', 'glm'], apiKey: 'k' }] } });
+    const stored = { '/var/www/kolin': { provider: 'relay', model: 'glm' } };
+    expect((await app.request('/auth/me/cli-settings', patch(amyTok, { projectModelPreferences: stored }))).status).toBe(200);
+
+    for (const bad of [
+      { '/a': { provider: 'relay' } },                  // half an entry
+      { '/a': { provider: 'relay', model: '   ' } },    // blank after trimming
+      { '/a': 'relay/glm' },                            // not an object
+      { '': { provider: 'relay', model: 'glm' } },      // no project root
+      { '/a': null },
+    ]) {
+      const res = await app.request('/auth/me/cli-settings', patch(amyTok, { projectModelPreferences: bad }));
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+      expect((await res.json()).error).toContain('projectModelPreferences');
+    }
+    // …and a payload that is not a map at all.
+    expect((await app.request('/auth/me/cli-settings', patch(amyTok, { projectModelPreferences: ['/a'] }))).status).toBe(400);
+    expect((await app.request('/auth/me/cli-settings', patch(amyTok, { projectModelPreferences: 'nope' }))).status).toBe(400);
+
+    // None of them wrote anything.
+    expect((await app.request('/auth/me/cli-settings', auth(amyTok)).then((r) => r.json())).projectModelPreferences).toEqual(stored);
+  });
+
+  it('PATCH refuses a mixed valid/invalid pin map whole, keeping the stored pins intact', async () => {
+    const { app, amyTok, config } = setup();
+    config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['claude-opus-4-8', 'glm'], apiKey: 'k' }] } });
+    const stored = { '/var/www/kolin': { provider: 'relay', model: 'glm' } };
+    await app.request('/auth/me/cli-settings', patch(amyTok, { projectModelPreferences: stored }));
+
+    const res = await app.request('/auth/me/cli-settings', patch(amyTok, {
+      projectModelPreferences: { '/var/www/kolin': { provider: 'relay', model: 'glm' }, '/var/www/broken': { provider: 'relay', model: '' } },
+    }));
+    expect(res.status).toBe(400);
+    expect((await app.request('/auth/me/cli-settings', auth(amyTok)).then((r) => r.json())).projectModelPreferences).toEqual(stored);
+  });
+
+  /** The instance default is what an EMPTY personal model resolves to, and the runtime applies it to a
+   *  member whose own allow-list does not name it (`selectionAllowed` judges COMPLETE selections only).
+   *  Filtering it by the caller would leave that member's account page saying "Inherited" and nothing else. */
+  it('GET reports the instance default even when the caller may not run it', async () => {
+    const { app, users, config } = setup();
+    config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['claude-opus-4-8', 'glm'], apiKey: 'k' }] } });
+    const bob = users.create('bob', 'pw');
+    users.setAllowedExecs(bob.id, ['elowen:relay/glm']); // NOT the default
+    const body = await app.request('/auth/me/cli-settings', auth(users.issueToken(bob.id))).then((r) => r.json());
+    expect(body.serverDefaultRoute).toEqual({ provider: 'relay', providerLabel: 'Relay', model: 'claude-opus-4-8' });
+    expect(body.serverDefault).toBe('claude-opus-4-8');
+  });
+
+  /** A bare connected OAuth account carries no manual model list, and the runtime then starts on the
+   *  provider CATALOG's default. Reading `providers[0].models[0]` reported nothing at all here, so the
+   *  row this feeds would have shown an em dash while conversations ran perfectly well. */
+  it('GET resolves the instance default from the provider catalog when no model list is configured', async () => {
+    const { app, amyTok, config } = setup();
+    config.update({ brain: { providers: [{ id: 'claude', label: 'Claude account', type: 'oauth-anthropic', baseUrl: '', models: [], apiKey: '' }] } });
+    const body = await app.request('/auth/me/cli-settings', auth(amyTok)).then((r) => r.json());
+    expect(body.serverDefaultRoute?.provider).toBe('claude');
+    // Whatever the catalog's own default is, it has to be a real model id rather than the empty list.
+    expect(body.serverDefaultRoute?.model).toBeTruthy();
+    expect(body.serverDefault).toBe(body.serverDefaultRoute.model);
   });
 
   it('PATCH refuses a Discord id already linked to another user (409, no override)', async () => {

@@ -11,7 +11,7 @@ import type { BrainModelOption } from '../../lib/types';
  *  stays visible as a pinned, selected row so a save can never silently drop it. `keyOf` bridges the
  *  caller's id encoding (`provider/model` vs `provider::model`) — the empty string always means
  *  "default". */
-export function BrainModelField({ value, onChange, models, title, subtitle, defaultLabel, keyOf, allowDefault = true, manageAriaLabel }: {
+export function BrainModelField({ value, onChange, models, title, subtitle, defaultLabel, keyOf, allowDefault = true, manageAriaLabel, missingLabel }: {
   value: string;
   onChange: (key: string) => void;
   models: BrainModelOption[];
@@ -24,12 +24,19 @@ export function BrainModelField({ value, onChange, models, title, subtitle, defa
   allowDefault?: boolean;
   /** Optional context-specific accessible name when the page contains several pickers. */
   manageAriaLabel?: string;
+  /** What to call a stored value the catalog no longer offers. The row stays selected either way — a
+   *  save must never silently drop it — but the RUNTIME does not honour such a pick: the spawn chain
+   *  skips a selection the allow-list refuses, a removed provider makes the route throw, and a stale
+   *  compaction pick is discarded. Rendering the bare id as if it were active is what made the page
+   *  claim a model no conversation was running on, so a caller that knows the effective fallback passes
+   *  the honest sentence here. Optional: absent, the id is shown as before. */
+  missingLabel?: string;
 }) {
   const selected = models.find((m) => keyOf(m) === value);
 
   const items: ManageSelectionItem[] = [
     ...(allowDefault ? [{ id: '', label: defaultLabel, group: '' }] : []),
-    ...(value && !selected ? [{ id: value, label: value, group: '', icon: <ModelIcon name={value} size={14} /> }] : []),
+    ...(value && !selected ? [{ id: value, label: missingLabel ?? value, group: '', icon: <ModelIcon name={value} size={14} /> }] : []),
     ...models.map((m) => ({
       id: keyOf(m),
       label: m.model,
@@ -45,14 +52,14 @@ export function BrainModelField({ value, onChange, models, title, subtitle, defa
       .map(([provider, label]) => [provider, <ModelIcon key={provider} name={label} size={14} />]),
   );
 
-  const summary = value ? selected?.model ?? value : defaultLabel;
+  const summary = value ? selected?.model ?? missingLabel ?? value : defaultLabel;
   return (
     <RowPicker
       label={manageAriaLabel ?? title}
       title={title}
       subtitle={subtitle}
       summary={summary}
-      icon={value ? <ModelIcon name={summary} size={13} /> : undefined}
+      icon={value && selected ? <ModelIcon name={summary} size={13} /> : undefined}
       items={items}
       value={value}
       onChange={onChange}

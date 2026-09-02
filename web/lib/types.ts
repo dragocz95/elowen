@@ -89,6 +89,10 @@ export interface BrainModelOption {
   reasoningLabels?: Record<string, string>;
   fastAvailable?: boolean;
   default?: boolean;
+  /** Whether the daemon's capability catalog KNOWS this model reads images. ABSENT means "not
+   *  catalogued" — a picker filtering on vision must KEEP such a model (fail-open); only an explicit
+   *  `false` is a catalogued text-only model. */
+  vision?: boolean;
 }
 /** One brain conversation in the session picker (web chat + CLI). */
 export interface BrainSessionInfo { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean }
@@ -331,7 +335,7 @@ export interface ProfilePatch { name?: string; email?: string; default_exec?: st
  *  `availableLinks` is the daemon's answer to WHICH of those platforms is worth showing — the ones whose
  *  adapter is actually serving turns. An empty array means none are, which is different from the key
  *  being absent (a daemon too old to have an opinion), so the two must not be collapsed. */
-export interface CliSettings extends Partial<Record<PlatformLinkKey, string>> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; fastMode?: boolean; serverDefault?: string; availableLinks?: PlatformLinkKey[]; revision?: number; pending?: boolean }
+export interface CliSettings extends Partial<Record<PlatformLinkKey, string>> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; projectModelPreferences?: Record<string, { provider: string; model: string }>; advisorStyle: string; userInstructions?: string; personalityBody?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; fastMode?: boolean; serverDefault?: string; serverDefaultRoute?: { provider: string; providerLabel: string; model: string }; availableLinks?: PlatformLinkKey[]; revision?: number; pending?: boolean }
 export interface UserPluginConfigDetail {
   name: string;
   description?: string;

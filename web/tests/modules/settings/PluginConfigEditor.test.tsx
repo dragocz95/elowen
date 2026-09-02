@@ -6,9 +6,10 @@ import type { PluginConfigField, RolePolicy } from '../../../lib/types';
 import { createWrapper } from '../../test-utils';
 
 const instanceMutation = vi.hoisted(() => vi.fn());
+const catalog = vi.hoisted(() => ({ models: [] as unknown[] }));
 vi.mock('../../../lib/mutations', () => ({ useSavePluginConfig: () => ({ mutateAsync: instanceMutation }) }));
 vi.mock('../../../lib/queries', () => ({
-  useBrainModels: () => ({ data: [] }),
+  useBrainModels: () => ({ data: catalog.models }),
   useConfig: () => ({ data: undefined }),
   useNotificationDestinations: () => ({ data: [] }),
   usePlugins: () => ({ data: [] }),
@@ -119,5 +120,52 @@ describe('PluginConfigEditor role policy deletion', () => {
     expect(screen.queryByText('Support')).toBeNull();
     expect(screen.getByRole('status')).toHaveTextContent('was saved');
     expect(screen.getByRole('status')).toHaveTextContent('activation is pending');
+  });
+});
+
+/** A connected Claude/ChatGPT account exposes no embeddings endpoint, so an `embeddingModel` field that
+ *  offers one can only ever produce a runtime failure. The core embedding role has always filtered them
+ *  out; the plugin editor did not. Every OTHER model field keeps the whole catalog, because a chat
+ *  completion works on an OAuth account perfectly well. */
+describe('PluginConfigEditor model fields', () => {
+  const models = [
+    { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus', exec: 'elowen:anthropic/claude-opus', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+    { provider: 'openai', providerLabel: 'OpenAI', model: 'text-embedding-3-small', exec: 'elowen:openai/text-embedding-3-small', source: 'api-key', contextWindow: 8192, contextWindowSet: false },
+  ];
+  const mountFields = () => {
+    const schema: PluginConfigField[] = [
+      { key: 'chat', label: 'Chat model', type: 'model' },
+      { key: 'embed', label: 'Embedding model', type: 'embeddingModel' },
+    ];
+    function Fixture() {
+      const draft = usePluginConfigDraft('demo', { configSchema: schema, config: {} }, { save: vi.fn<Save>() });
+      return (
+        <PluginConfigEditor
+          name="demo"
+          detail={{ name: 'demo', configSchema: schema, secretsSet: [] }}
+          fieldLabel={(item) => item.label}
+          fieldHint={(item) => item.hint}
+          fieldOptions={(item) => item.options ?? []}
+          riskText={(risk) => risk}
+          draft={draft}
+          mode="all"
+        />
+      );
+    }
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><Fixture /></Wrapper>);
+  };
+
+  it('keeps OAuth accounts out of an embeddingModel picker but offers them for a chat model', async () => {
+    catalog.models = models;
+    mountFields();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Embedding model' }));
+    expect(await screen.findByRole('button', { name: 'text-embedding-3-small' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'claude-opus' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat model' }));
+    expect(await screen.findByRole('button', { name: 'claude-opus' })).toBeInTheDocument();
   });
 });

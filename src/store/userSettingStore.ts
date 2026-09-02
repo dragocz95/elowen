@@ -11,7 +11,7 @@ import { PLATFORM_IDENTITIES, platformIdentity, type PlatformIdentityDescriptor,
  *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph).
  *  The platform link fields are DERIVED from the identity descriptors, so a new platform gets its
  *  setting field, its validation and its account-view input from one declaration. */
-export interface CliSettings extends Record<PlatformLinkKey, string> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; fastMode: boolean }
+export interface CliSettings extends Record<PlatformLinkKey, string> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; projectModelPreferences: Record<string, ProjectModelPreference>; advisorStyle: string; personalityBody: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; fastMode: boolean }
 export interface ProjectModelPreference { provider: string; model: string }
 export type UserSettingsResource = 'cli' | 'terminal' | 'permissions' | 'nav';
 
@@ -31,12 +31,12 @@ export class UserSettingsRevisionConflict extends Error {
 // resets the level to empty whenever the active model does not offer it, which would then loop against a
 // default that model cannot honour. The level belongs per model, not in the fallback.
 const emptyLinks = Object.fromEntries(PLATFORM_IDENTITIES.map((d) => [d.linkSettingKey, ''])) as Record<PlatformLinkKey, string>;
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', ...emptyLinks, autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false };
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, projectModelPreferences: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', ...emptyLinks, autoRecall: true, autoLiveRecall: true, autoSave: false, fastMode: false };
 
 /** The defaults a caller with no settings store falls back to. Exported so nobody has to re-list the
  *  fields — a hand-written copy is exactly how `telegramUserId` went missing from the account view. */
 export function cliSettingsDefaults(): CliSettings {
-  return { ...CLI_DEFAULTS, autoCompactAtByModel: {} };
+  return { ...CLI_DEFAULTS, autoCompactAtByModel: {}, projectModelPreferences: {} };
 }
 
 /** Raised when a user tries to link a platform identity another user has already claimed. ONE class for
@@ -79,19 +79,23 @@ function autoCompactThresholds(raw: string | null): Record<string, number> {
   try { return cleanThresholdMap(JSON.parse(raw)); } catch { return {}; }
 }
 
+/** Clean a per-project model map (canonical Git root → provider/model): keep only entries whose root and
+ *  whose provider AND model are non-empty strings. Shared by the reader (post-JSON.parse) and the writer
+ *  so a stored map and an incoming patch validate identically. */
+function cleanProjectModelMap(parsed: unknown): Record<string, ProjectModelPreference> {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).flatMap(([root, value]) => {
+    if (!root || !value || typeof value !== 'object') return [];
+    const { provider, model } = value as { provider?: unknown; model?: unknown };
+    return typeof provider === 'string' && provider && typeof model === 'string' && model
+      ? [[root, { provider, model }]]
+      : [];
+  }));
+}
+
 function projectModelPreferences(raw: string | null): Record<string, ProjectModelPreference> {
   if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).flatMap(([root, value]) => {
-      if (!root || !value || typeof value !== 'object') return [];
-      const { provider, model } = value as { provider?: unknown; model?: unknown };
-      return typeof provider === 'string' && provider && typeof model === 'string' && model
-        ? [[root, { provider, model }]]
-        : [];
-    }));
-  } catch { return {}; }
+  try { return cleanProjectModelMap(JSON.parse(raw)); } catch { return {}; }
 }
 
 /** Per-user key/value settings. A row exists only for a value the user has explicitly set — absence means
@@ -188,6 +192,8 @@ export class UserSettingStore {
       autoCompact: all.autoCompact !== undefined ? all.autoCompact === 'true' : CLI_DEFAULTS.autoCompact,
       autoCompactAt: all.autoCompactAt !== undefined ? clampPercent(Number(all.autoCompactAt)) : CLI_DEFAULTS.autoCompactAt,
       autoCompactAtByModel: autoCompactThresholds(all.autoCompactAtByModel ?? null),
+      // Published so Account can SHOW the pins `switchModel` writes implicitly, and clear a stale one.
+      projectModelPreferences: projectModelPreferences(all.projectModelPreferences ?? null),
       advisorStyle: isAdvisorStyle(all.advisorStyle) ? all.advisorStyle : CLI_DEFAULTS.advisorStyle,
       personalityBody: all.personalityBody ?? CLI_DEFAULTS.personalityBody,
       ...(Object.fromEntries(PLATFORM_IDENTITIES.map((d) => [d.linkSettingKey, all[d.linkSettingKey] ?? ''])) as Record<PlatformLinkKey, string>),
@@ -221,6 +227,10 @@ export class UserSettingStore {
       // The per-model threshold map replaces the stored one wholesale (cleaned + clamped); an empty map
       // clears every override so all models fall back to the global threshold.
       if (patch.autoCompactAtByModel !== undefined) this.set(userId, 'autoCompactAtByModel', JSON.stringify(cleanThresholdMap(patch.autoCompactAtByModel)));
+      // Same wholesale replacement, and the only way a user can CLEAR a pin `switchModel` wrote for them:
+      // an entry left out of the submitted map is dropped. The route has already checked every entry that
+      // remains against the caller's allow-list, so this can narrow the map but never widen it.
+      if (patch.projectModelPreferences !== undefined) this.set(userId, 'projectModelPreferences', JSON.stringify(cleanProjectModelMap(patch.projectModelPreferences)));
       if (patch.autoRecall !== undefined) this.set(userId, 'autoRecall', String(patch.autoRecall));
       if (patch.autoLiveRecall !== undefined) this.set(userId, 'autoLiveRecall', String(patch.autoLiveRecall));
       if (patch.autoSave !== undefined) this.set(userId, 'autoSave', String(patch.autoSave));

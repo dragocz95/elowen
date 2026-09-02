@@ -668,6 +668,10 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
 }) {
   const { t, locale } = useTranslation();
   const { data: brainModels } = useBrainModels();
+  // A connected Claude/ChatGPT account exposes no embeddings endpoint, so offering one for an
+  // `embeddingModel` field can only ever produce a runtime failure. Same filter the core embedding role
+  // uses; every other model field keeps the whole catalog, because a chat completion works there.
+  const embeddingCapableModels = useMemo(() => (brainModels ?? []).filter((m) => m.source !== 'oauth'), [brainModels]);
   const { values, setValue: set } = draft;
   const [replacingSecrets, setReplacingSecrets] = useState<Set<string>>(new Set());
   const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
@@ -747,8 +751,8 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         // Brain-only picker: the shared modal/search catalog used by account and cron settings.
         return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={brainModels ?? []} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
       case 'embeddingModel':
-        // Same shared brain catalog, used to pick the model that produces embeddings.
-        return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={brainModels ?? []} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
+        // Same shared brain catalog, minus the OAuth accounts that cannot embed at all (see above).
+        return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={embeddingCapableModels} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
       case 'provider':
         // Reuse a configured brain provider's key as this plugin's credentials (voice, image gen).
         return <PluginProviderField label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} providerType={f.providerType} />;

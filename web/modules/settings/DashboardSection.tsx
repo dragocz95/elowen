@@ -1,16 +1,16 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
-import { Boxes, LayoutDashboard, MessageSquareQuote, RefreshCw, Repeat, Server, Sparkles, SquareStack, Undo2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Boxes, LayoutDashboard, MessageSquareQuote, RefreshCw, Repeat, Sparkles, SquareStack, Undo2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Toggle } from '../../components/ui/Toggle';
 import { ChoiceField } from '../../components/ui/ChoiceField';
-import { ModelCatalogField } from '../../components/ui/ModelCatalogField';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { useConfig, useBrainModels, useDashRecap } from '../../lib/queries';
+import { useConfig, useCategorizationSettings, useDashRecap } from '../../lib/queries';
+import { resolveDigestRoute } from '../../lib/modelRoles';
 import { useUpdateConfig } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
@@ -20,14 +20,20 @@ import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface'
  *  of the day (once, twice, every few hours), and the daemon clamps anything outside 1–24 anyway. */
 const DIGEST_PER_DAY_CHOICES = [1, 2, 3, 4, 6, 8, 12, 24] as const;
 
-/** Settings → Dashboard: the personalized dashboard controls. What renders (recap strip, agent-written
- *  greeting and quick-action pills, continue pills), whether the daily digest generates at all, and
- *  which model writes it. The digest model inherits its key/endpoint from the referenced brain provider
- *  (like the memory models); unset, it falls back to the memory categorization model. */
-export function DashboardSection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
+/** Settings → Recap: the personalized dashboard controls. What renders (recap strip, agent-written
+ *  greeting and quick-action pills, continue pills) and how often the daily digest refreshes.
+ *
+ *  WHICH MODEL writes the digest is a model role, not a dashboard setting, and lives in Settings →
+ *  Models with the other roles it inherits from. This section keeps a read-only row stating the answer
+ *  and linking there, so nothing has to be walked to learn it. */
+export function DashboardSection({ onSaveState, onOpenSection }: {
+  onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void;
+  /** Switch the settings deck to another core section (the cross-link to the model roles). */
+  onOpenSection?: (id: string) => void;
+}) {
   const { t } = useTranslation();
   const { data: config } = useConfig();
-  const { data: brainModels } = useBrainModels();
+  const { data: categorization } = useCategorizationSettings();
   const recap = useDashRecap();
   const updateConfig = useUpdateConfig();
   const queryClient = useQueryClient();
@@ -39,8 +45,6 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
   const [pillsEnabled, setPillsEnabled] = useState(false);
   const [continueEnabled, setContinueEnabled] = useState(true);
   const [perDay, setPerDay] = useState(1);
-  const [providerId, setProviderId] = useState('');
-  const [model, setModel] = useState('');
   const [seeded, setSeeded] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
 
@@ -54,23 +58,17 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
       setPillsEnabled(block.pillsEnabled);
       setContinueEnabled(block.continueEnabled);
       setPerDay(block.digestPerDay ?? 1);
-      setProviderId(block.digest.providerId);
-      setModel(block.digest.model);
       setSeeded(true);
     }
   }, [config, seeded]);
 
-  const catalog = useMemo(() => {
-    const opts = (brainModels ?? []).filter((m) => !providerId || m.provider === providerId);
-    return Array.from(new Set(opts.map((m) => m.model)));
-  }, [brainModels, providerId]);
-
+  // `digest` is deliberately absent from the patch: the config block merges field by field, so leaving
+  // it out preserves whatever Settings → Models wrote — this section is no longer one of its writers.
   const save = async () => {
     await updateConfig.mutateAsync({
       dashboard: {
         recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled,
         digestPerDay: perDay,
-        digest: { providerId: providerId.trim(), model: model.trim() },
       },
     });
     // The recap route reads config live; refetch so the dashboard reflects the change immediately.
@@ -78,7 +76,7 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
     void queryClient.invalidateQueries({ queryKey: ['config'] });
   };
   const { status, retry } = useAutoSaveStatus(
-    [recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled, perDay, providerId, model],
+    [recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled, perDay],
     save,
     { ready: seeded },
   );
@@ -88,10 +86,13 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
 
   if (!config) return <LoadingState />;
 
-  // Every brain provider qualifies, OAuth accounts included: since 1. 9. 2026 the digest runs through
-  // the brain's own provider stack (piInferenceClient), which authenticates Claude/Codex accounts the
-  // same way live conversations do. The earlier oauth exclusion guarded the RelayClient-only path.
-  const providers = config.brain?.providers ?? [];
+  // What the digest ACTUALLY runs on, through the shared helper that mirrors the daemon's rule. BOTH
+  // halves of a pair decide, so a half-set stored digest pair reads as inherited here exactly as the
+  // runtime treats it — `digest.model || categorization.model` used to report the orphaned half instead.
+  const digestRoute = resolveDigestRoute(
+    { providerId: config.dashboard?.digest.providerId, model: config.dashboard?.digest.model },
+    { providerId: categorization?.providerId, model: categorization?.model },
+  );
   const digestStatus = recap.data?.digest?.status;
   const statusBadge = digestStatus === 'ready'
     ? <Badge tone="accent">{t.settings.dashboardSection.statusReady}</Badge>
@@ -169,28 +170,24 @@ export function DashboardSection({ onSaveState }: { onSaveState?: (section: stri
         icon={Undo2}
         control={<Toggle checked={continueEnabled} onChange={setContinueEnabled} label={t.settings.dashboardSection.continue} disabled={!recapEnabled} />}
       />
+      {/* Read-only: which model writes the digest is a model ROLE, chosen next to the roles it inherits
+          from. Stating the answer here and linking there is what keeps the reader from walking. */}
       <SettingsRow
-        label={t.settings.dashboardSection.provider}
-        description={t.settings.dashboardSection.modelFallback}
-        icon={Server}
-        control={
-          <ChoiceField
-            title={t.settings.dashboardSection.provider}
-            options={[{ value: '', label: t.settings.dashboardSection.providerInherit }, ...providers.map((p) => ({ value: p.id, label: p.label }))]}
-            value={providerId}
-            onChange={(next) => { setProviderId(next); if (next !== providerId) setModel(''); }}
-            picker="always"
-          />
-        }
+        label={t.settings.dashboardSection.model}
+        description={t.settings.dashboardSection.modelDesc}
+        icon={Boxes}
+        status={(
+          <span className="flex min-w-0 items-center gap-2">
+            {digestRoute.route && digestRoute.inherited ? <Badge>{t.settings.modelRoles.inherited}</Badge> : null}
+            <span className="truncate font-mono">{digestRoute.route?.model ?? '—'}</span>
+          </span>
+        )}
+        actions={(
+          <Button variant="ghost" size="sm" icon={Boxes} onClick={() => onOpenSection?.('models')}>
+            {t.settings.dashboardSection.modelLink}
+          </Button>
+        )}
       />
-      {providerId ? (
-        <SettingsRow
-          label={t.settings.dashboardSection.model}
-          description={t.settings.dashboardSection.modelDesc}
-          icon={Boxes}
-          control={<ModelCatalogField value={model} onChange={setModel} catalog={catalog} title={t.settings.dashboardSection.model} subtitle={t.settings.dashboardSection.modelDesc} />}
-        />
-      ) : null}
     </SettingsGroup>
   );
 }

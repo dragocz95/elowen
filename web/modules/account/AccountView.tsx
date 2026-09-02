@@ -1,8 +1,8 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, SquareTerminal, Settings2 } from 'lucide-react';
+import { UserCog, Mail, Boxes, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, SquareTerminal, Settings2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { ElowenApiError, apiErrorMessage } from '../../lib/elowenClient';
+import { ElowenApiError } from '../../lib/elowenClient';
 import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
 
 /** The platform links this form edits, keyed exactly like the daemon's `CliSettings`. */
@@ -16,7 +16,6 @@ import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
@@ -77,7 +76,6 @@ export function AccountView() {
   const brainModels = useBrainModels();
   const updateMe = useUpdateMe();
   const saveLinks = useSaveMyCliSettings();
-  const saveModel = useSaveMyCliSettings();
   const uploadAvatar = useUploadAvatar();
   const changePassword = useChangePassword();
   const { toast } = useToast();
@@ -153,10 +151,7 @@ export function AccountView() {
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  // The user's default Elowen AI chat model, kept as `provider::model` ('' = server default). Lives in
-  // cliSettings (not on the User) — seeded once, then this local state drives the picker highlight.
-  const [elowenSel, setElowenSel] = useState('');
-  const [elowenSeeded, setElowenSeeded] = useState(false);
+  const [linksSeeded, setLinksSeeded] = useState(false);
   // Platform account links live in cliSettings; Teams is normally filled automatically from verified UPN.
   // Held as ONE map keyed by the daemon's platform-link keys rather than a state hook per platform, so
   // a platform added to the identity descriptors gets its field here instead of being silently missing.
@@ -220,16 +215,17 @@ export function AccountView() {
     }
   }, { ready: profileBase !== null, savable: Object.keys(profilePatch).length > 0 });
 
-  // Seed the Elowen-AI default once cliSettings load; thereafter local state is the source of truth.
+  // Seed the platform links once cliSettings load; thereafter local state is the source of truth. The
+  // default chat model used to be seeded here too — it now lives with the other personal model roles in
+  // the Models section, which owns its own seed guard and its own autosave.
   useEffect(() => {
-    if (cli.data && !elowenSeeded) {
-      setElowenSel(cli.data.model ? `${cli.data.modelProvider ?? ''}::${cli.data.model}` : '');
+    if (cli.data && !linksSeeded) {
       const seeded = Object.fromEntries(PLATFORM_LINK_ORDER.map((key) => [key, cli.data?.[key] ?? ''])) as PlatformLinks;
       setLinks(seeded);
       setLinksBase(seeded);
-      setElowenSeeded(true);
+      setLinksSeeded(true);
     }
-  }, [cli.data, elowenSeeded]);
+  }, [cli.data, linksSeeded]);
   // Autosave only links changed in this form. In particular, a Teams TOFU link may appear server-side
   // while this page is open; saving an unrelated Discord field must not send the stale empty Teams value.
   const linksPatch: PlatformLinks = {};
@@ -247,25 +243,6 @@ export function AccountView() {
       throw error;
     }
   }, { ready: linksBase !== null, savable: Object.keys(linksPatch).length > 0 });
-
-  // Picking an Elowen AI model writes ONLY model+modelProvider (the cli-settings PATCH merges, so
-  // CliSection's other fields are untouched) and the daemon restarts a running brain on the new model.
-  // The picker hands back a `provider::model` key ('' = clear to the server default). An immediate
-  // autosave keeps rapid selections serialized and gives the picker the same retryable status as its peers.
-  const modelSave = useAutoSaveStatus([elowenSel], async () => {
-    const sep = elowenSel.indexOf('::');
-    const provider = sep > -1 ? elowenSel.slice(0, sep) : '';
-    const model = sep > -1 ? elowenSel.slice(sep + 2) : '';
-    try {
-      const saved = await saveModel.mutateAsync({ model: elowenSel ? model : '', modelProvider: elowenSel ? provider : '' });
-      const canonical = saved.model ? `${saved.modelProvider ?? ''}::${saved.model}` : '';
-      if (canonical !== elowenSel) setElowenSel(canonical);
-    } catch (error) {
-      toast(apiErrorMessage(error), 'error');
-      throw error;
-    }
-  }, { ready: elowenSeeded, delay: 0 });
-  const applyElowen = (key: string) => setElowenSel(key);
 
   useEffect(() => {
     const supported = isPushSupported();
@@ -336,7 +313,7 @@ export function AccountView() {
     { id: 'profile', icon: UserCog, label: t.account.tabProfile, description: t.account.profileHint },
     ...deckPluginSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
     ...userConfigSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
-    { id: 'cli', icon: Cpu, label: t.account.tabCli, description: t.account.defaultElowenAiHint },
+    { id: 'cli', icon: Boxes, label: t.account.tabCli, description: t.cli.modelRolesHint },
     { id: 'memory', icon: Brain, label: t.account.tabMemory, description: t.help.memoryRecall },
     { id: 'personality', icon: Sparkles, label: t.account.tabPersonality, description: t.personality.intro },
     { id: 'notifications', icon: Bell, label: t.account.tabNotifications, description: t.help.pushEnable },
@@ -346,7 +323,6 @@ export function AccountView() {
   const profileFeedback = combineSaveFeedback(
     { status: profileSave.status, retry: profileSave.retry },
     { status: linksSave.status, retry: linksSave.retry },
-    { status: modelSave.status, retry: modelSave.retry },
     // Plugin connectors in the Linked accounts drawer report here too — without this their save state
     // would be recorded and then read by nobody, since `profile` takes its feedback from this fold.
     sectionFeedback.profile ?? { status: 'idle' },
@@ -414,25 +390,6 @@ export function AccountView() {
 
       <AccountPanel id="profile" active={section} visited={visitedSections}>
       {(() => {
-        const rowElowen = elowenModels.length > 0 ? (
-          <SpatialRow
-            title={t.account.defaultElowenAi}
-            description={t.account.defaultElowenAiHint}
-            icon={Brain}
-            control={(
-              <BrainModelField
-                value={elowenSel}
-                onChange={applyElowen}
-                models={elowenModels}
-                title={t.account.defaultElowenAi}
-                subtitle={t.account.defaultElowenAiHint}
-                defaultLabel={t.account.defaultElowenAiNone}
-                keyOf={(m) => `${m.provider}::${m.model}`}
-                manageAriaLabel={`${t.managePicker.manage}: ${t.account.defaultElowenAi}`}
-              />
-            )}
-          />
-        ) : null;
         // The row's title is drawn text, not a <label> the input is bound to, so each field carries its
         // own accessible name — otherwise a screen reader reaches an unnamed box.
         const rowName = (
@@ -543,7 +500,7 @@ export function AccountView() {
             </SpatialIdentity>
 
             <SpatialGroup>
-              {rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{linkRows}
+              {rowName}{rowEmail}{rowUiScale}{rowEffects}{linkRows}
             </SpatialGroup>
           </div>
         );

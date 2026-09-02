@@ -80,16 +80,20 @@ const SETTINGS_ROWS: Record<SettingsCategory, RowSpec[]> = {
     { path: 'brain.toolLoading.title', hint: 'brain.toolLoading.hint' },
     { path: 'brain.retention.title', hint: 'brain.retention.hint' },
   ],
-  models: [],
-  plugins: [],
-  memory: [
+  // The Model roles group. Its per-provider CATALOG rows are runtime data and stay out (their static
+  // group titles go in below), but the roles themselves are fixed rows with fixed labels — and they are
+  // where the retired Memory section's embedding and categorization rows now live.
+  models: [
+    { path: 'settings.modelRoles.instanceDefault', hint: 'settings.modelRoles.instanceDefaultHelp' },
+    { path: 'settings.modelRoles.utility', hint: 'settings.modelRoles.utilityHelp', keywords: ['categorization', 'titles', 'memory'] },
+    { path: 'settings.modelRoles.digest', hint: 'settings.modelRoles.digestHelp', keywords: ['recap'] },
     { path: 'memory.embeddingProvider', hint: 'help.embeddingProvider' },
     { path: 'memory.embeddingModel', hint: 'help.embeddingIntro' },
     { path: 'memory.embeddingModelCustom', hint: 'help.embeddingModelCustom' },
     { path: 'memory.embeddingDimensions', hint: 'help.embeddingDimensions' },
-    { path: 'categorization.providerLabel', hint: 'help.categorizationProvider' },
-    { path: 'categorization.modelLabel', hint: 'help.categorizationIntro' },
+    { path: 'settings.modelRoles.personal', hint: 'settings.modelRoles.personalHelp' },
   ],
+  plugins: [],
   dashboard: [
     { path: 'settings.dashboardSection.recap', hint: 'settings.dashboardSection.recapDesc' },
     { path: 'settings.dashboardSection.digest', hint: 'settings.dashboardSection.digestDesc' },
@@ -97,7 +101,7 @@ const SETTINGS_ROWS: Record<SettingsCategory, RowSpec[]> = {
     { path: 'settings.dashboardSection.greeting', hint: 'settings.dashboardSection.greetingDesc' },
     { path: 'settings.dashboardSection.pills', hint: 'settings.dashboardSection.pillsDesc' },
     { path: 'settings.dashboardSection.continue', hint: 'settings.dashboardSection.continueDesc' },
-    { path: 'settings.dashboardSection.provider', hint: 'settings.dashboardSection.modelFallback' },
+    // Read-only here since the digest model became a role: the row states the answer and links to Models.
     { path: 'settings.dashboardSection.model', hint: 'settings.dashboardSection.modelDesc' },
   ],
   data: [
@@ -116,7 +120,6 @@ const ACCOUNT_SECTIONS: { id: string; icon: LucideIcon; titlePath: string; hintP
   {
     id: 'profile', icon: UserCog, titlePath: 'account.tabProfile', hintPath: 'account.profileHint',
     rows: [
-      { path: 'account.defaultElowenAi', hint: 'account.defaultElowenAiHint' },
       { path: 'account.name' },
       { path: 'account.email' },
       { path: 'account.uiScale', hint: 'help.accountUiScale' },
@@ -125,15 +128,21 @@ const ACCOUNT_SECTIONS: { id: string; icon: LucideIcon; titlePath: string; hintP
     ],
   },
   {
-    id: 'cli', icon: Cpu, titlePath: 'account.tabCli', hintPath: 'account.defaultElowenAiHint',
+    id: 'cli', icon: Cpu, titlePath: 'account.tabCli', hintPath: 'cli.modelRolesHint',
     rows: [
+      // Model roles first, in the order the section renders them — the primary model moved here from
+      // the profile, and the per-project pins and the instance cross-link are new rows.
+      { path: 'cli.primaryModelLabel', hint: 'help.cliPrimaryModel' },
+      { path: 'cli.thinkingLabel', hint: 'help.cliThinking' },
+      { path: 'cli.visionModelLabel', hint: 'help.cliVisionModel' },
+      { path: 'cli.compactModelLabel', hint: 'help.cliCompactModel' },
+      { path: 'cli.projectModelsTitle', hint: 'help.cliProjectModels' },
+      { path: 'cli.instanceModelsTitle', hint: 'help.cliInstanceModels' },
+      // …then the Chat runtime group.
+      { path: 'cli.autoCompact', hint: 'help.cliAutoCompact' },
+      { path: 'cli.fastModeTitle', hint: 'help.cliFastMode' },
       { path: 'cli.yoloTitle' },
-      { path: 'cli.unattendedTitle' },
-      { path: 'cli.fastModeTitle' },
-      { path: 'cli.autoCompact' },
-      { path: 'cli.compactModelLabel' },
-      { path: 'cli.visionModelLabel' },
-      { path: 'cli.thinkingLabel' },
+      { path: 'cli.unattendedTitle', hint: 'help.cliUnattendedAsks' },
     ],
   },
   {
