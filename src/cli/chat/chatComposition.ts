@@ -45,6 +45,7 @@ export interface ShellInputDeps {
   openThemePicker(): void;
   openModelPicker(): void;
   openSessionsModal(): void;
+  openTaskActions(taskId: string): void;
 }
 
 /** Cohesive stateful chat composition owned by ChatApplication. Unlike the former callback-shaped
@@ -1257,6 +1258,7 @@ export function createChatComposition(
       telemetry,
       killProcess,
       openWorkflowModal,
+      openTaskActions: deps.openTaskActions,
       rowBudget,
       subPanel,
       cardPanel,

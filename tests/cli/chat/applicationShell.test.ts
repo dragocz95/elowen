@@ -26,6 +26,7 @@ const noopInput: ShellInputDeps = {
   openThemePicker: () => {},
   openModelPicker: () => {},
   openSessionsModal: () => {},
+  openTaskActions: () => {},
 };
 
 /** Composition fixture only: terminal lifecycle and stream teardown remain covered by their own owners. */
@@ -936,7 +937,7 @@ describe('chat application shell ownership', () => {
       panelVisible: () => false, panelLeftEdge: () => 120,
       slashOverlay: () => null, mentionOverlay: () => null,
       rowBudget: () => ({ sections: { transcript: 5 } }),
-      subPanel, cardPanel: { isMoreRow: () => false, isHeaderRow: () => false },
+      subPanel, cardPanel: { isMoreRow: () => false, isHeaderRow: () => false, taskAt: () => null },
       chatWidth: () => 120,
     } as unknown as ChatInputContext;
     const router = new InputRouter(tui, context);
@@ -967,6 +968,69 @@ describe('chat application shell ownership', () => {
     expect(subPanel.canScroll()).toBe(false);
     expect(listener(`\x1b[<65;10;${agentRowY}M`)).toEqual({ consume: true });
     expect(viewport.scroll).toHaveBeenCalledWith(-3);
+    router.stop();
+  });
+
+  it('opens the task actions for the Todo row that was clicked, and only for a row that owns a task', () => {
+    let listener!: (data: string) => { consume: boolean } | undefined;
+    const tui = { addInputListener: vi.fn((next) => { listener = next; return vi.fn(); }) } as unknown as TUI;
+    const subPanel = new SubagentPanel(); // no running children → the card panel starts at the stack top
+    const cardPanel = new CardPanel();
+    cardPanel.setMaxRows(30);
+    const openTaskActions = vi.fn();
+    const render = vi.fn();
+    const renderForced = vi.fn();
+    const context = {
+      state: { childView: null }, term: { columns: 120, write: vi.fn() },
+      editor: { focused: true, getText: () => '' },
+      stream: {}, quit: vi.fn(), renderForced,
+      keymap: () => ({ matches: () => false, isLeader: () => false, directAction: () => null }),
+      leader: () => ({ pending: () => false }), dispatchAction: vi.fn(), render,
+      animations: { nudgeMascot: vi.fn() }, hasMessages: () => true,
+      activeViewport: () => ({
+        isScrollbarHit: () => false, subagentAt: () => null, workflowAt: () => null,
+        isExpandableRow: () => false, beginSelect: () => false, hasSelection: () => false, scroll: vi.fn(),
+      }),
+      panelVisible: () => false, panelLeftEdge: () => 120,
+      slashOverlay: () => null, mentionOverlay: () => null,
+      rowBudget: () => ({ sections: { transcript: 5 } }),
+      subPanel, cardPanel, chatWidth: () => 120, openTaskActions,
+    } as unknown as ChatInputContext;
+    const router = new InputRouter(tui, context);
+    router.attach();
+
+    // panelsTop = TOP_RULE_ROWS + transcript(5) + 1, and the card panel's own row 0 is its header.
+    const cardRowY = (row: number): number => TOP_RULE_ROWS + 5 + 1 + row;
+    const click = (row: number): { consume: boolean } | undefined => listener(`\x1b[<0;10;${cardRowY(row)}M`);
+
+    cardPanel.set([{
+      id: 'todos', title: 'Todos', pinned: true,
+      items: [
+        { text: '#7 A', status: 'in_progress', id: '7', label: 'A' },
+        { text: '#8 B', status: 'pending', id: '8', label: 'B' },
+      ],
+    }]);
+    cardPanel.render(120);
+
+    expect(click(2)).toEqual({ consume: true });
+    expect(openTaskActions).toHaveBeenCalledWith('8'); // the SECOND item, not the first or the header
+    openTaskActions.mockClear();
+    expect(click(1)).toEqual({ consume: true });
+    expect(openTaskActions).toHaveBeenCalledWith('7');
+
+    // The header still collapses the card rather than opening the task under the cursor.
+    openTaskActions.mockClear();
+    expect(click(0)).toEqual({ consume: true });
+    expect(openTaskActions).not.toHaveBeenCalled();
+    expect(render).toHaveBeenCalledWith('input:todos-toggle');
+
+    // A legacy card has no ids, so its rows stay inert and the click falls through to the transcript.
+    cardPanel.toggleCollapsed(); // back to expanded
+    cardPanel.set([{ id: 'todos', title: 'Todos', pinned: true, items: [{ text: 'A', status: 'pending' }] }]);
+    cardPanel.render(120);
+    openTaskActions.mockClear();
+    expect(click(1)).toBeUndefined();
+    expect(openTaskActions).not.toHaveBeenCalled();
     router.stop();
   });
 

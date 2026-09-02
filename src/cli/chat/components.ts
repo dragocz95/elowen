@@ -1,7 +1,7 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
 import type { Component, Container, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
-import type { AskQuestion, BrainCard } from '../../brain/events.js';
+import type { AskQuestion, BrainCard, BrainCardItem } from '../../brain/events.js';
 import type { WorkflowState } from '../../brain/transcript.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { ansi, chatTheme, color, inputRow, paintRow } from './theme.js';
@@ -77,6 +77,9 @@ export class CardPanel implements Component {
    *  can hit-test a mouse click against them and toggle the checklist open/closed. */
   private headerRows = new Set<number>();
   private moreRows = new Set<number>();
+  /** Row index (0-based within this panel's output) → the task that row opens. Only a card whose items
+   *  carry ids contributes entries, so a legacy card's rows stay inert. */
+  private taskRows = new Map<number, string>();
   invalidate(): void { /* re-rendered on the next frame */ }
   set(cards: BrainCard[]): void { this.cards = cards; }
   setMaxRows(rows: number): void { this.maxRows = Math.max(0, Math.floor(rows)); }
@@ -85,12 +88,19 @@ export class CardPanel implements Component {
   isExpanded(): boolean { return this.expanded; }
   isHeaderRow(index: number): boolean { return this.headerRows.has(index); }
   isMoreRow(index: number): boolean { return this.moreRows.has(index); }
+  /** The task a click on this row manages, or null when the row is not an addressable checklist item. */
+  taskAt(index: number): string | null { return this.taskRows.get(index) ?? null; }
   /** Uncapped row count for the shell's row allocator. */
   desiredRows(_width = 80): number { return this.buildRows().length; }
   render(_width?: number): string[] {
     const lines = this.buildRows();
     if (lines.length <= this.maxRows) return lines;
-    if (this.maxRows <= 0) { this.headerRows = new Set(); this.moreRows = new Set(); return []; }
+    if (this.maxRows <= 0) {
+      this.headerRows = new Set();
+      this.moreRows = new Set();
+      this.taskRows = new Map();
+      return [];
+    }
     const shown = lines.slice(0, this.maxRows);
     if (this.maxRows > 1) {
       const moreRow = this.maxRows - 1;
@@ -99,10 +109,13 @@ export class CardPanel implements Component {
       const label = this.expanded ? '▴ Show less' : `… +${lines.length - this.maxRows + 1} more`;
       shown[moreRow] = `    ${color.accent(`\x1b[4m${label}\x1b[24m`)}`;
       this.headerRows.delete(moreRow);
+      // The row now carries the expand control; whatever item it used to show is off-screen.
+      this.taskRows.delete(moreRow);
       this.moreRows.add(moreRow);
     }
     this.headerRows = new Set([...this.headerRows].filter((row) => row < this.maxRows));
     this.moreRows = new Set([...this.moreRows].filter((row) => row < this.maxRows));
+    this.taskRows = new Map([...this.taskRows].filter(([row]) => row < this.maxRows));
     return shown;
   }
 
@@ -112,29 +125,32 @@ export class CardPanel implements Component {
       && !(c.items && c.items.length > 0 && c.items.every((i) => i.status === 'completed')));
     this.headerRows = new Set();
     this.moreRows = new Set();
+    this.taskRows = new Map();
     const lines: string[] = [];
     for (const c of visible) {
-      this.headerRows.add(lines.length); // a card's first row is its clickable header
+      const base = lines.length;
+      this.headerRows.add(base); // a card's first row is its clickable header
       const isTodoPreview = c.id === 'todos' && !this.expanded && !this.collapsed
         && (c.items?.length ?? 0) > TODO_PREVIEW_ITEMS;
       const isTodoExpanded = c.id === 'todos' && this.expanded && !this.collapsed
         && (c.items?.length ?? 0) > TODO_PREVIEW_ITEMS;
       const bodyRows = c.body ? terminalPlainText(c.body).split('\n').length : 0;
-      const block = cardBlock(
+      const block = cardRows(
         c,
         isTodoPreview ? TODO_PREVIEW_ITEMS + bodyRows : Number.POSITIVE_INFINITY,
         this.collapsed,
       );
       if (isTodoPreview) {
-        // cardBlock already emits the `… +N more` note as the row right after the previewed items; just
+        // cardRows already emits the `… +N more` note as the row right after the previewed items; just
         // register its clickable position — re-writing it here duplicated the exact same string.
-        this.moreRows.add(lines.length + 1 + TODO_PREVIEW_ITEMS);
+        this.moreRows.add(base + 1 + TODO_PREVIEW_ITEMS);
       } else if (isTodoExpanded) {
-        const lessRow = lines.length + block.length;
-        block.push(`    ${color.faint('▴ Show less')}`);
+        const lessRow = base + block.length;
+        block.push({ text: `    ${color.faint('▴ Show less')}` });
         this.moreRows.add(lessRow);
       }
-      lines.push(...block);
+      block.forEach((row, index) => { if (row.taskId) this.taskRows.set(base + index, row.taskId); });
+      lines.push(...block.map((row) => row.text));
     }
     return lines;
   }
@@ -613,7 +629,7 @@ export class StatusBar implements Component {
   }
 }
 
-function cardItemElapsed(item: NonNullable<BrainCard['items']>[number], now: number): string {
+function cardItemElapsed(item: BrainCardItem, now: number): string {
   const startedAt = item.startedAt;
   if (item.status !== 'in_progress' || typeof startedAt !== 'number' || !Number.isFinite(startedAt)) return '';
   const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
@@ -623,35 +639,81 @@ function cardItemElapsed(item: NonNullable<BrainCard['items']>[number], now: num
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+/** How many segments the card header's progress meter uses. Five is enough to read the shape of the work
+ *  at a glance and short enough to sit beside the title at every width the card already fits. */
+const CARD_PROGRESS_CELLS = 5;
+
+/** A compact segmented meter in the rail's own `▰`/`▱` vocabulary. It never reads full while work
+ *  remains and never reads empty once something is finished — a meter that rounds to a lie at either end
+ *  is worse than no meter at all. */
+function cardProgressBar(done: number, total: number): string {
+  const cells = Math.min(CARD_PROGRESS_CELLS, total);
+  if (done >= total) return WHITE('▰'.repeat(cells));
+  const filled = Math.min(cells - 1, Math.max(done > 0 ? 1 : 0, Math.round((done / total) * cells)));
+  return WHITE('▰'.repeat(filled)) + FAINTC('▱'.repeat(cells - filled));
+}
+
+/** One rendered card row, plus the task it belongs to when the emitter gave the item an id. The CardPanel
+ *  turns those ids into its clickable row → task map, which is how a click on a Todo row reaches that
+ *  task's action sheet. */
+export interface CardRow { text: string; taskId?: string }
+
+/** Render one checklist item.
+ *
+ *  An item WITHOUT an id is a legacy card, or another plugin's card: `text` is the only form it has, so it
+ *  renders exactly as it always did and its row stays inert. An item WITH an id was laid out by its
+ *  emitter as fields, so the id, the owner and the blocked marker are placed here instead of being glued
+ *  into one string — which is also what makes the row addressable. */
+function cardItemRow(item: BrainCardItem, now: number): CardRow {
+  const elapsed = cardItemElapsed(item, now);
+  const suffix = elapsed ? FAINTC(` · ${elapsed}`) : '';
+  if (!item.id) {
+    const text = inlineText(item.text);
+    if (item.status === 'completed') return { text: `    ${GREENC('[x]')} ${DIM(text)}` };
+    if (item.status === 'in_progress') return { text: `    ${color.warning('[•]')} ${color.warning(text)}${suffix}` };
+    return { text: `    ${FAINTC('[ ]')} ${DIM(text)}` };
+  }
+  const id = FAINTC(`#${item.id}`);
+  const label = inlineText(item.label ?? item.text);
+  const owner = item.owner ? FAINTC(` — ${inlineText(item.owner)}`) : '';
+  if (item.status === 'completed') return { text: `    ${GREENC('[x]')} ${id} ${DIM(label)}${owner}`, taskId: item.id };
+  if (item.status === 'in_progress') {
+    return { text: `    ${color.warning('[•]')} ${id} ${color.warning(label)}${owner}${suffix}`, taskId: item.id };
+  }
+  // Only a pending row can be waiting on something: an in-progress task is already running despite its
+  // edges, and a finished one is nobody's dependant. The marker replaces the long "(blocked by #3)" text,
+  // and the whole row recedes so the work that CAN start is what stands out.
+  const blockers = item.blockedBy ?? [];
+  const blocked = blockers.length ? FAINTC(` ⇠ ${blockers.map((blocker) => `#${blocker}`).join(' ')}`) : '';
+  const body = blockers.length ? FAINTC(label) : DIM(label);
+  return { text: `    ${FAINTC('[ ]')} ${id} ${body}${owner}${blocked}`, taskId: item.id };
+}
+
 /** Render one display card (title + checklist items + freeform body) as fixed-panel rows — the item
  *  glyphs use a compact terminal checklist style. `maxRows` bounds the WHOLE card
  *  (items + body) so a big card can't overrun the fixed bottom stack and wreck the TUI. */
-export function cardBlock(card: BrainCard, maxRows = 12, collapsed = false): string[] {
+export function cardRows(card: BrainCard, maxRows = 12, collapsed = false): CardRow[] {
   const items = card.items ?? [];
   const now = Date.now();
   const done = items.filter((i) => i.status === 'completed').length;
-  const counter = items.length ? FAINTC(`  ${done}/${items.length}`) : '';
-  const header = `  ${FAINTC(collapsed ? '▸' : '▾')} ${bold(WHITE(inlineText(card.title ?? 'Todos')))}${counter} ${FAINTC('click')}`;
-  if (collapsed) return [header];
-  const lines = [header];
+  const progress = items.length ? `  ${cardProgressBar(done, items.length)} ${FAINTC(`${done}/${items.length}`)}` : '';
+  // Only a card whose items carry ids has clickable rows; on any other card a click still does exactly one
+  // thing — collapse the card — so the hint stays honest about what is on offer.
+  const hint = items.some((i) => i.id) ? 'click a row' : 'click';
+  const header = `  ${FAINTC(collapsed ? '▸' : '▾')} ${bold(WHITE(inlineText(card.title ?? 'Todos')))}${progress} ${FAINTC(hint)}`;
+  if (collapsed) return [{ text: header }];
+  const rows: CardRow[] = [{ text: header }];
   const bodyLines = card.body ? terminalPlainText(card.body).split('\n') : [];
   const shownItems = Math.min(items.length, Math.max(0, maxRows - bodyLines.length));
   const visibleItems = card.id === 'todos'
     ? todoPreviewItems(items, shownItems)
     : items.slice(0, shownItems);
-  for (const it of visibleItems) {
-    const text = inlineText(it.text);
-    const elapsed = cardItemElapsed(it, now);
-    if (it.status === 'completed') lines.push(`    ${GREENC('[x]')} ${DIM(text)}`);
-    else if (it.status === 'in_progress') {
-      const suffix = elapsed ? FAINTC(` · ${elapsed}`) : '';
-      lines.push(`    ${color.warning('[•]')} ${color.warning(text)}${suffix}`);
-    } else lines.push(`    ${FAINTC('[ ]')} ${DIM(text)}`);
-  }
-  if (items.length > shownItems) lines.push(`    ${FAINTC(`… +${items.length - shownItems} more`)}`);
-  for (const l of bodyLines.slice(0, maxRows)) lines.push(`    ${DIM(l)}`);
-  return lines;
+  for (const it of visibleItems) rows.push(cardItemRow(it, now));
+  if (items.length > shownItems) rows.push({ text: `    ${FAINTC(`… +${items.length - shownItems} more`)}` });
+  for (const l of bodyLines.slice(0, maxRows)) rows.push({ text: `    ${DIM(l)}` });
+  return rows;
 }
+
 
 // Diff colours matched to what Claude Code actually renders (sampled from a real screenshot): a saturated
 // medium-green line background — ANSI-256 index 22 = rgb(0,95,0) — with the vivid Monokai syntax palette on

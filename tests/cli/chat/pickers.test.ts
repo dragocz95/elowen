@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { initTheme } from '@earendil-works/pi-coding-agent';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import { ChatState } from '../../../src/cli/chat/chatState.js';
 import { createPickers } from '../../../src/cli/chat/pickers.js';
@@ -105,6 +106,69 @@ describe('picker application lifetime', () => {
 
     expect(setModel).toHaveBeenCalledWith({ provider: 'mock', model: 'next-model' });
     expect(restartStream).toHaveBeenCalledTimes(expectedRestarts);
+    await lifetime.stop();
+  });
+
+  it('opens the task actions straight from a task id and mirrors the change back through the shared card mapper', async () => {
+    initTheme(); // the picker's SelectList paints through pi's theme
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let modal: { handleInput(data: string): void; render(width: number): string[] } | null = null;
+    const tui = {
+      terminal: { columns: 120, rows: 40 },
+      showOverlay: vi.fn((component: typeof modal) => {
+        modal = component;
+        return { hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false, focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true };
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const before = [
+      { id: '7', subject: 'Wire the card', description: 'private', activeForm: 'Wiring the card', status: 'in_progress', startedAt: 4_000, owner: 'filip', blockedBy: [], blocks: ['8'] },
+      { id: '8', subject: 'Ship it', description: 'private too', status: 'pending', blockedBy: ['7'], blocks: [] },
+    ];
+    const after = [
+      { ...before[0]!, status: 'completed', startedAt: undefined },
+      { ...before[1]!, status: 'in_progress', activeForm: 'Shipping it', startedAt: 9_000 },
+    ];
+    const updateSessionTask = vi.fn(async () => ({ task: after[1]!, tasks: after }));
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const pickers = createPickers(
+      state,
+      {
+        client: { sessionTasks: async () => before, updateSessionTask },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      {} as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+
+    // A clicked card row hands over a bare task id — there is no list level in between to carry the task.
+    pickers.openTaskActions('8');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const plain = (): string => modal!.render(80).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+    expect(plain()).toContain('Task #8');
+    expect(plain()).toContain('In progress');
+
+    modal!.handleInput('\x1b[B'); // Back → Pending
+    modal!.handleInput('\x1b[B'); // → In progress
+    modal!.handleInput('\r');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(updateSessionTask).toHaveBeenCalledWith('8', 'in_progress');
+
+    // The todo plugin does NOT re-emit its card from the HTTP routes, so the picker rebuilds it — through
+    // the one shared mapper, which is why the structured fields and the running row's clock survive.
+    const card = state.cards.find((c) => c.id === 'todos');
+    expect(card?.items).toEqual([
+      { text: '#7 Wire the card — filip', status: 'completed', id: '7', label: 'Wire the card', owner: 'filip' },
+      { text: '#8 Shipping it', status: 'in_progress', startedAt: 9_000, id: '8', label: 'Shipping it' },
+    ]);
+
+    // A row whose task the agent deleted between render and click reports that instead of opening a sheet.
+    tui.showOverlay.mockClear();
+    pickers.openTaskActions('404');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(tui.showOverlay).not.toHaveBeenCalled();
+    expect(state.notice).toContain('task #404 no longer exists');
     await lifetime.stop();
   });
 

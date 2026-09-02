@@ -45,6 +45,8 @@ export interface ChatInputContext {
   telemetry: TelemetryPanel;
   killProcess(id: string): void;
   openWorkflowModal(workflowId: string): void;
+  /** Open the per-task action sheet for one Todo row — the same modal `/tasks` reaches through its list. */
+  openTaskActions(taskId: string): void;
   rowBudget(): LayoutBudget;
   subPanel: SubagentPanel;
   cardPanel: CardPanel;
@@ -215,6 +217,11 @@ export class InputRouter {
       const target = subRelative >= 0 ? context.subPanel.targetAt(subRelative) : null;
       if (target) { void stream.openSubagent(target); return { consume: true }; }
       const cardRelative = subRelative - renderedSubRows;
+      // A checklist row the emitter gave an id to opens that task's actions directly, skipping the list
+      // level of /tasks. Tested first because the header and the more-row are the only controls a card
+      // without ids has: a card that never registers a task row cannot shadow them.
+      const cardTask = cardRelative >= 0 ? context.cardPanel.taskAt(cardRelative) : null;
+      if (cardTask) { context.openTaskActions(cardTask); return { consume: true }; }
       if (cardRelative >= 0 && context.cardPanel.isMoreRow(cardRelative)) {
         context.cardPanel.toggleExpanded();
         context.renderForced('geometry:todos-expand');

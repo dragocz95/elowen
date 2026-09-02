@@ -309,6 +309,7 @@ export class ChatApplication {
       openThemePicker: pickers.openThemePicker,
       openModelPicker: pickers.openModelPicker,
       openSessionsModal: pickers.openSessionsModal,
+      openTaskActions: pickers.openTaskActions,
     });
   }
 

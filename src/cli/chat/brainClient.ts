@@ -91,6 +91,9 @@ export interface SessionTaskView {
   activeForm?: string;
   status: 'pending' | 'in_progress' | 'completed';
   owner?: string;
+  /** Epoch ms the task entered `in_progress`. The card's elapsed clock is derived from it, so a task list
+   *  fetched after a mutation can rebuild the panel without dropping the running row's timer. */
+  startedAt?: number;
   blockedBy: string[];
   blocks: string[];
 }
