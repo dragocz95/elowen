@@ -49,7 +49,7 @@ describe('AccountView', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
     const rail = screen.getByRole('radiogroup', { name: 'Account sections' });
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
+      'Account', 'Models', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
     // The deck carries the hero's metric rail, with the account's own facts on it. Every one of them
     // comes from /auth/me and the model list the sections already load, so the rail renders for a plain
@@ -73,7 +73,7 @@ describe('AccountView', () => {
 
     const rail = await screen.findByRole('radiogroup', { name: 'Account sections' });
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'Account', 'GitHub', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
+      'Account', 'GitHub', 'Models', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
   });
 
@@ -98,7 +98,7 @@ describe('AccountView', () => {
 
     const rail = await screen.findByRole('radiogroup', { name: 'Account sections' });
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
+      'Account', 'Models', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
     // Nothing of the panel exists until the drawer is opened — one click, one overlay, no second window.
     // This bundle registers no chip, which is also the guarantee that the closed summary stays clean: the

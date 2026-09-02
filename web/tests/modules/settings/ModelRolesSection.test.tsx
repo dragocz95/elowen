@@ -24,7 +24,8 @@ const MODELS: BrainModelOption[] = [
   { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-haiku', exec: 'elowen:anthropic/claude-haiku', source: 'api-key', contextWindow: 200000, contextWindowSet: false },
   { provider: 'openai', providerLabel: 'OpenAI', model: 'text-embedding-3-small', exec: 'elowen:openai/text-embedding-3-small', source: 'api-key', contextWindow: 8192, contextWindowSet: false },
 ];
-const state = vi.hoisted(() => ({ digest: { providerId: '', model: '' }, personalModel: '' }));
+const state = vi.hoisted(() => ({ digest: { providerId: '', model: '' }, personalModel: '', embeddingError: false, categorizationError: false }));
+const mocks = vi.hoisted(() => ({ refetchEmbedding: vi.fn(), refetchCategorization: vi.fn() }));
 const CONFIG = () => ({
   brain: { providers: [{ id: 'anthropic', label: 'Anthropic', type: 'oauth-anthropic' }, { id: 'openai', label: 'OpenAI', type: 'openai' }] },
   dashboard: { recapEnabled: true, digestEnabled: true, greetingEnabled: false, pillsEnabled: false, continueEnabled: true, digestPerDay: 1, digest: state.digest },
@@ -32,8 +33,12 @@ const CONFIG = () => ({
 vi.mock('../../../lib/queries', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useConfig: () => ({ data: CONFIG() }),
-  useEmbeddingSettings: () => ({ data: EMBEDDING, isError: false, refetch: vi.fn() }),
-  useCategorizationSettings: () => ({ data: CATEGORIZATION, isError: false, refetch: vi.fn() }),
+  useEmbeddingSettings: () => (state.embeddingError
+    ? { data: undefined, isError: true, refetch: mocks.refetchEmbedding }
+    : { data: EMBEDDING, isError: false, refetch: mocks.refetchEmbedding }),
+  useCategorizationSettings: () => (state.categorizationError
+    ? { data: undefined, isError: true, refetch: mocks.refetchCategorization }
+    : { data: CATEGORIZATION, isError: false, refetch: mocks.refetchCategorization }),
   useBrainModels: () => ({ data: MODELS }),
   useMyCliSettings: () => ({ data: { model: state.personalModel } }),
 }));
@@ -47,8 +52,49 @@ const pick = (rowLabel: string) => screen.getByRole('button', { name: `${en.mana
 
 beforeEach(() => {
   saveCategorization.mockClear(); saveEmbedding.mockClear(); updateConfig.mockClear();
+  mocks.refetchEmbedding.mockClear(); mocks.refetchCategorization.mockClear();
   state.digest = { providerId: '', model: '' };
   state.personalModel = '';
+  state.embeddingError = false; state.categorizationError = false;
+});
+
+// MOVED from MemorySection.test.tsx with the rows: the embedding and categorization forms are the same
+// two writers they were, they just live in the Model roles group now.
+describe('Settings → Models — moved memory forms', () => {
+  it('shows a retryable error instead of a permanent skeleton when embedding settings fail to load', () => {
+    state.embeddingError = true;
+    renderSection();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: en.managePicker.manage })).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mocks.refetchEmbedding).toHaveBeenCalledOnce();
+  });
+
+  it('shows a retryable error when categorization settings fail to load', () => {
+    state.categorizationError = true;
+    renderSection();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mocks.refetchCategorization).toHaveBeenCalledOnce();
+  });
+
+  it('gives the custom model and optional dimensions inputs explicit translated names', () => {
+    renderSection();
+    expect(screen.getByRole('textbox', { name: en.memory.embeddingModelCustom })).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: en.memory.embeddingDimensions })).toHaveValue(1536);
+  });
+
+  /** The pinned empty row used to read "None"; it now says what an empty pair MEANS for this role — the
+   *  titles, the memory curator and the categorizer simply stop running. */
+  it('clears the utility route back to the empty pair through its pinned off row', async () => {
+    renderSection();
+    fireEvent.click(pick(en.settings.modelRoles.utility));
+    const dialog = screen.getByRole('dialog', { name: en.settings.modelRoles.utility });
+    fireEvent.click(within(dialog).getByRole('button', { name: en.settings.modelRoles.utilityOff }));
+    fireEvent.click(within(dialog).getByRole('button', { name: en.managePicker.saveChanges }));
+
+    await waitFor(() => expect(saveCategorization).toHaveBeenCalled(), { timeout: 1500 });
+    expect(saveCategorization.mock.calls.at(-1)![0]).toMatchObject({ providerId: '', model: '' });
+  });
 });
 
 describe('Settings → Models — Model roles', () => {
@@ -67,7 +113,7 @@ describe('Settings → Models — Model roles', () => {
     ]);
     // The Test action and both configured badges travelled with the rows they belong to. Anchored per
     // row, because the two badges read the same word and only their placement tells them apart.
-    const rowOf = (index: number) => container.querySelectorAll('.settings-row')[index]!;
+    const rowOf = (index: number) => container.querySelectorAll('.settings-row')[index]! as HTMLElement;
     expect(within(rowOf(3)).getByRole('button', { name: en.memory.embeddingTest })).toBeInTheDocument();
     expect(rowOf(3).querySelector('.settings-row__status')!.textContent).toBe(en.memory.embeddingConfigured);
     expect(rowOf(1).querySelector('.settings-row__status')!.textContent).toBe(en.categorization.configured);

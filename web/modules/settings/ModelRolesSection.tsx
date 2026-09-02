@@ -23,11 +23,11 @@ import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface'
 
 /** The pair encoding every role picker on this page uses. `::` never appears in a provider id, and a
  *  model id may itself contain slashes — which is exactly why the pair is not joined with one. */
-export const roleKey = (providerId: string, model: string): string => (providerId && model ? `${providerId}::${model}` : '');
+const roleKey = (providerId: string, model: string): string => (providerId && model ? `${providerId}::${model}` : '');
 
 /** Split a `provider::model` key back into its halves. An empty key is "no explicit pick", which every
  *  inheritable role already stores as the empty pair. */
-export function splitRoleKey(key: string): { providerId: string; model: string } {
+function splitRoleKey(key: string): { providerId: string; model: string } {
   const at = key.indexOf('::');
   return at < 0 ? { providerId: '', model: '' } : { providerId: key.slice(0, at), model: key.slice(at + 2) };
 }

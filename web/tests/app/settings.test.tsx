@@ -62,10 +62,10 @@ describe('SettingsPage', () => {
     expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar');
     expect(rail).toHaveAttribute('data-variant', 'menu');
     expect(rail).toHaveAttribute('aria-orientation', 'vertical');
-    expect(rail.querySelectorAll('.segmented__option > svg')).toHaveLength(7);
+    expect(rail.querySelectorAll('.segmented__option > svg')).toHaveLength(6);
     expect(screen.queryByRole('combobox', { name: 'Settings sections' })).toBeNull();
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Recap', 'Data',
+      'System', 'Elowen AI', 'Models', 'Plugins', 'Recap', 'Data',
     ]);
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
     // The dials are a lazy chunk, so the reading lands a tick after the section itself. Spaced before
@@ -222,6 +222,23 @@ describe('SettingsPage', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
   });
 
+  /** The Memory section held nothing but the embedding and categorization models, and those are roles
+   *  now. A retired id with a KNOWN successor must land there rather than share the generic System
+   *  fallback above — an old bookmark that silently drops the reader on System reads as a broken link. */
+  it('resolves the retired ?cat=memory link to Models, from the URL and from localStorage alike', async () => {
+    window.history.replaceState(null, '', '/settings?cat=memory');
+    const { wrapper: Wrapper } = createWrapper();
+    const { unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+    unmount();
+
+    window.history.replaceState(null, '', '/settings');
+    localStorage.setItem('elowen.settings.category', 'memory');
+    const { wrapper: Wrapper2 } = createWrapper();
+    render(<Wrapper2><ToastProvider><SettingsPage /></ToastProvider></Wrapper2>);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+  });
+
   /** Both restart buttons must be DIRECT children of the hero's action row. The rule that stops them
    *  alternating right- then left-aligned down a narrow column — `.workspace-hero__actions >
    *  :not(.workspace-hero__status) { flex: 1 1 10rem }` — is a child selector, so wrapping the pair in a
@@ -271,7 +288,7 @@ describe('SettingsPage', () => {
   it('opens every settings section with a metric rail of its own', async () => {
     for (const [cat, heading] of [
       ['system', 'System'], ['brain', 'Elowen AI'], ['models', 'Models'],
-      ['plugins', 'Plugins'], ['memory', 'Memory'], ['data', 'Data'],
+      ['plugins', 'Plugins'], ['dashboard', 'Recap'], ['data', 'Data'],
     ] as const) {
       localStorage.setItem('elowen.settings.category', cat);
       const { wrapper: Wrapper } = createWrapper();

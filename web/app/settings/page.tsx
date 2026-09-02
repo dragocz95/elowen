@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 // Aliased: `dynamic` is already this route's Next segment-config export, two lines up.
 import nextDynamic from 'next/dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
-import { SlidersHorizontal, X, Pencil, Gauge, LayoutDashboard, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Tags, Timer, ToggleRight } from 'lucide-react';
+import { SlidersHorizontal, X, Pencil, Gauge, LayoutDashboard, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer, ToggleRight } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
@@ -11,7 +11,6 @@ import { ModelNoteModal } from '../../modules/settings/ModelNoteModal';
 import { ContextWindowModal } from '../../modules/settings/ContextWindowModal';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
-import { MemorySection } from '../../modules/settings/MemorySection';
 import { ModelRolesSection } from '../../modules/settings/ModelRolesSection';
 import { DashboardSection } from '../../modules/settings/DashboardSection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
@@ -27,7 +26,7 @@ import { useUpdateConfig, useSystemUpdate, useSystemRestart } from '../../lib/mu
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { SETTINGS_CATEGORY_VALUES, SETTINGS_SECTIONS, type SettingsCategory } from '../../modules/settings/categories';
+import { SECTION_ALIASES, SETTINGS_CATEGORY_VALUES, SETTINGS_SECTIONS, type SettingsCategory } from '../../modules/settings/categories';
 import { isPluginSettingsSectionId, parsePluginSettingsSectionId } from '../../modules/settings/pluginSections';
 import { pluginSectionHref } from '../../lib/pluginNav';
 import { useToast } from '../../components/ui/Toast';
@@ -85,9 +84,15 @@ const SESSION_RETENTION_PRESETS = [7, 10, 30, 90] as const;
 const isSectionId = (value: string): boolean =>
   (CATEGORY_VALUES as readonly string[]).includes(value) || isPluginSettingsSectionId(value);
 
+/** Resolve a retired section id to its successor BEFORE anything judges its validity — otherwise an old
+ *  `?cat=memory` link would fail the check and land the reader on System instead of on the page its
+ *  content actually moved to. Anything with no successor is returned untouched, so `isSectionId`'s own
+ *  fallback still catches a genuinely unknown id. */
+const resolveSectionId = (value: string): string => SECTION_ALIASES[value] ?? value;
+
 /** Categories rendered as an orbital constellation (rows become pods, composites edit in drawers,
  *  the document card frame drops). The rest — catalogs, lists and data views — stay classic. */
-const ORBITAL_CATEGORIES: ReadonlySet<string> = new Set<Category>(['system', 'brain', 'memory']);
+const ORBITAL_CATEGORIES: ReadonlySet<string> = new Set<Category>(['system', 'brain']);
 
 /** Keep a settings document alive after its first visit without eagerly mounting every category's
  *  data hooks. React Activity retains form/search state and pauses effects while a panel is hidden. */
@@ -136,7 +141,11 @@ export default function SettingsPage() {
   // the URL (so F5 / share / the sidebar highlight agree).
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [category, setCategoryState] = usePersistentState<string>('elowen.settings.category', 'system', isSectionId);
+  // Both the stored value and the URL are resolved through the alias table first, so a bookmark or a
+  // remembered `memory` reaches Models rather than failing the validity check and dropping to System.
+  const [storedCategory, setStoredCategory] = usePersistentState<string>('elowen.settings.category', 'system', (v) => isSectionId(resolveSectionId(v)));
+  const category = resolveSectionId(storedCategory);
+  const setCategoryState = useCallback((next: string) => setStoredCategory(resolveSectionId(next)), [setStoredCategory]);
   const [visitedCategories, setVisitedCategories] = useState<Set<string>>(() => new Set([category]));
   // Keyed by DECK SECTION id, not by core category: a plugin-contributed section renders inside this
   // same deck, and an orbital one has no header of its own an autosave indicator could live in.
@@ -151,7 +160,7 @@ export default function SettingsPage() {
   // Only while the Data section is on screen — the log summary is a nicety, not a reason to query the
   // daemon from every other settings tab.
   const logFiles = useLogFiles(category === 'data');
-  const isValidCat = (c: string | null): c is string => !!c && isSectionId(c);
+  const isValidCat = (c: string | null): c is string => !!c && isSectionId(resolveSectionId(c));
   // Settings is core-only: a plugin's settings section is a page of that plugin's world, and showing it
   // here as well put the same surface in two places at once. Remembered categories and old links still
   // arrive with a `plugin:` id, so they are forwarded to that page rather than dropped on the floor —
@@ -391,7 +400,6 @@ export default function SettingsPage() {
   const sectionHints: Record<Category, string> = {
     models: t.settings.modelsSectionHint,
     brain: t.settings.brainSectionHint,
-    memory: t.settings.memorySectionHint,
     dashboard: t.settings.dashboardSectionHint,
     plugins: t.settings.pluginsSectionHint,
     data: t.settings.dataSectionHint,
@@ -446,15 +454,6 @@ export default function SettingsPage() {
         <WorkspaceMetric label={t.settings.metric.pluginWorlds} value={pluginEntries.length} icon={Boxes} />
         <WorkspaceMetric label={t.settings.metric.pluginPages} value={pluginEntries.reduce((n, entry) => n + entry.nav.length, 0)} icon={Blocks} />
         <WorkspaceMetric label={t.settings.metric.pluginSections} value={pluginEntries.reduce((n, entry) => n + entry.settings.length, 0)} icon={SlidersHorizontal} />
-      </>
-    ),
-    memory: (
-      <>
-        {/* The two catalogs this section picks from, counted the same way MemorySection filters them:
-            an OAuth account exposes no embeddings endpoint, so it can never be an embedding model. */}
-        <WorkspaceMetric label={t.settings.metric.embeddingProviders} value={brainProviders.filter((p) => !p.type.startsWith('oauth-')).length} icon={Server} />
-        <WorkspaceMetric label={t.settings.metric.embeddingModels} value={brainCatalog.filter((m) => m.source !== 'oauth').length} icon={Boxes} />
-        <WorkspaceMetric label={t.settings.metric.categorizationModels} value={brainCatalog.length} icon={Tags} />
       </>
     ),
     dashboard: (
@@ -891,12 +890,8 @@ export default function SettingsPage() {
           <BrainSection onSaveState={reportSaveState} />
         </SettingsPanel>
 
-        <SettingsPanel id="memory" active={category} visited={visitedCategories}>
-          <MemorySection onSaveState={reportSaveState} />
-        </SettingsPanel>
-
         <SettingsPanel id="dashboard" active={category} visited={visitedCategories}>
-          <DashboardSection onSaveState={reportSaveState} />
+          <DashboardSection onSaveState={reportSaveState} onOpenSection={setCategory} />
         </SettingsPanel>
 
         <SettingsPanel id="plugins" active={category} visited={visitedCategories}><PluginsSection /></SettingsPanel>
