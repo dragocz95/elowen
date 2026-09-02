@@ -298,13 +298,13 @@ function TodoCardRow({ row, now, onStatus, onOpen }: {
     { label: t.telemetry.tasksOpen, icon: ListChecks, onSelect: onOpen },
   ];
   return (
-    <li data-testid="chat-card-row" className="flex items-center gap-1">
+    <li data-testid="chat-card-row" className="flex min-w-0 items-center gap-1">
       <ActionMenu
         items={actions}
         label={`${t.tasksModal.taskActions}: ${row.label}`}
         align="left"
         openOnHover={false}
-        triggerClassName="flex min-h-8 min-w-0 items-center gap-1.5 rounded px-1 text-left transition-colors hover:bg-accent"
+        triggerClassName="flex min-h-6 min-w-0 items-center gap-1.5 rounded px-1 text-left transition-colors hover:bg-accent"
         trigger={
           <>
             <span aria-hidden className={`shrink-0 ${row.status === 'completed' ? 'text-success' : row.status === 'in_progress' ? 'text-primary' : 'text-muted-foreground'}`}>
@@ -359,7 +359,7 @@ function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTa
   return (
     // `self-start`: the card is as wide as its longest row, not the column, so the head's meter and the
     // rows' targets sit next to the text instead of at the far edge of a wide screen.
-    <div data-testid="chat-card" className="flex max-w-full flex-col self-start leading-relaxed">
+    <div data-testid="chat-card" className="flex max-w-[min(100%,28rem)] flex-col self-start leading-snug">
       <CardHead
         title={card.title ?? t.brainChat.cardFallback}
         done={done}
@@ -368,7 +368,7 @@ function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTa
         onToggle={() => setCollapsed((v) => !v)}
         trailing={
           <>
-            <Progress className="h-1 w-16 shrink-0" value={(done / rows.length) * 100} aria-label={t.telemetry.tasks} />
+            <Progress className="h-0.5 w-10 shrink-0" value={(done / rows.length) * 100} aria-label={t.telemetry.tasks} />
             {/* Renaming, deleting and the bulk clears live in the modal — the card stays a checklist. */}
             <Button
               variant="ghost"
@@ -377,9 +377,9 @@ function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTa
               onClick={openTasks}
               aria-label={t.telemetry.tasksOpen}
               title={t.telemetry.tasksOpen}
-              className="size-8 shrink-0 rounded"
+              className="size-6 shrink-0 rounded"
             >
-              <ListChecks size={13} aria-hidden />
+              <ListChecks size={12} aria-hidden />
             </Button>
           </>
         }
