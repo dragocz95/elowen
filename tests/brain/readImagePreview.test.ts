@@ -8,6 +8,8 @@ import { externalizeImageBlocks } from '../../src/brain/chatImages.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { shapeBrainMessages } from '../../src/brain/messageView.js';
+import { TranscriptModel } from '../../src/brain/transcriptModel.js';
+import { turnsFromHistory } from '../../src/brain/transcript.js';
 
 // Reading an image file handed the PICTURE to the model and the words "Read image file" to the person
 // asking. These pin the whole path that closes that gap: the live event names a stored file, the file is
@@ -38,7 +40,15 @@ describe('the live event a Read of an image produces', () => {
   it('puts the picture in front of the user as an ordinary chat image', () => {
     const event = end({}, dir);
 
-    expect(event).toEqual({ type: 'image', ref: expect.stringMatching(/^\/api\/brain\/chat-images\/[0-9a-f]{64}\.png$/), id: 'r1' });
+    expect(event).toEqual({ type: 'image', ref: expect.stringMatching(/^\/api\/brain\/chat-images\/[0-9a-f]{64}\.png$/), id: 'r1', preview: true });
+  });
+
+  it('adds no line in the terminal — the Read row already names the file', () => {
+    // A shared image becomes a "🖼 …" line there because the agent's "here it is" must point at something;
+    // a picture the agent merely looked at has no such claim behind it, so a line would only be noise.
+    const model = new TranscriptModel();
+    expect(model.apply(end({}, dir)!)).toBe(true); // consumed, not fallen through
+    expect(model.turnAt(0)).toBeUndefined();
   });
 
   it('has really written the bytes, so the ref the client is handed resolves', () => {
@@ -119,8 +129,16 @@ describe('the same Read after a reload', () => {
 
     expect(view!.segments?.map((s) => s.kind)).toEqual(['tool', 'image']);
     expect(view!.segments?.at(-1)).toEqual({
-      kind: 'image', image: { url: `/brain/chat-images/${sharedFile()}`, mimeType: 'image/png' },
+      kind: 'image', image: { url: `/brain/chat-images/${sharedFile()}`, mimeType: 'image/png' }, preview: true,
     });
+  });
+
+  it('rebuilds no terminal line for it either, so a restart changes nothing on screen', () => {
+    const [turn] = turnsFromHistory(shapeBrainMessages(rows()));
+
+    expect(turn?.role).toBe('elowen');
+    const texts = turn?.role === 'elowen' ? turn.segments.filter((s) => s.kind === 'text') : [];
+    expect(texts).toEqual([]);
   });
 
   it('rebuilds nothing extra for a text read', () => {

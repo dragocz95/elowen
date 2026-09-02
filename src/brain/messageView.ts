@@ -607,7 +607,7 @@ export function shapeBrainMessages(
           for (const image of persistedToolResultImages(res?.result)) {
             if (shownImages.has(image.url)) continue;
             shownImages.add(image.url);
-            segments.push({ kind: 'image', image });
+            segments.push({ kind: 'image', image, preview: true });
           }
         }
       }

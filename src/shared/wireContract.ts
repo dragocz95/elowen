@@ -100,8 +100,9 @@ export type BrainSegment =
   | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: BrainSubagentView; wf?: BrainWorkflowView; plan?: string }
   /** An image the agent shared on purpose (`ShareImage`). Its own segment rather than a field on the tool
    *  row, because the picture IS the message here — a reader wants to see it, not a pill saying a tool
-   *  ran. A failed share stays an ordinary tool row so the error is still visible. */
-  | { kind: 'image'; image: BrainMessageImage; caption?: string }
+   *  ran. A failed share stays an ordinary tool row so the error is still visible. `preview` marks the
+   *  picture a `Read` looked at rather than one the agent shared; text-only clients skip those. */
+  | { kind: 'image'; image: BrainMessageImage; caption?: string; preview?: true }
   /** A durable artifact shared on purpose (`ShareFile`). The web renders a download affordance rather than
    *  the tool pill; a failed share remains an ordinary tool row with its refusal visible. */
   | { kind: 'file'; file: BrainMessageFile; caption?: string };

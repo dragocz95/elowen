@@ -180,7 +180,7 @@ export interface HistoryMessage {
   segments?: (
     | { kind: 'text'; text: string }
     | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState; wf?: WorkflowState; plan?: string }
-    | { kind: 'image'; image: { url: string; mimeType: string }; caption?: string }
+    | { kind: 'image'; image: { url: string; mimeType: string }; caption?: string; preview?: true }
     | { kind: 'file'; file: { url: string; name: string; size: number }; caption?: string }
   )[];
   /** The source's own id: the store row's for a `user`/`assistant`/`compaction` row, the session-change
@@ -254,6 +254,9 @@ export function turnsFromHistory(msgs: HistoryMessage[]): ChatTurn[] {
       if (seg.kind === 'text') {
         segments.push({ kind: 'text', text: seg.text });
       } else if (seg.kind === 'image') {
+        // A picture a Read merely looked at adds nothing here: the Read row above already names the file,
+        // and there is no "here it is" to point at.
+        if (seg.preview) continue;
         // The terminal shows no pictures, so the shared image becomes one plain line saying what was sent.
         // Dropping it would be worse than terse: the user would see the agent claim it shared something
         // and find nothing at all.

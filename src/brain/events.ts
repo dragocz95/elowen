@@ -63,8 +63,10 @@ export type BrainEvent =
   | { type: 'tool_progress'; id: string; text: string }
   /** A stored image to put in front of the user: one the agent shared on purpose (`ShareImage`, which
    *  also carries a `caption`), or one an image tool produced and the model's final text forgot to link.
-   *  `ref` is a daemon path under `/api/brain/chat-images/` or the older `/api/brain/images/`. */
-  | { type: 'image'; ref: string; id?: string; caption?: string }
+   *  `ref` is a daemon path under `/api/brain/chat-images/` or the older `/api/brain/images/`. `preview`
+   *  marks the picture a `Read` merely LOOKED AT: the web shows it under the tool row, while a client that
+   *  cannot draw pictures has nothing to add — its Read row already names the file. */
+  | { type: 'image'; ref: string; id?: string; caption?: string; preview?: true }
   /** A general file the agent shared via `ShareFile`. The web renders `ref` as an authenticated download;
    *  `name` and `size` are display metadata preserved with the stored tool result. */
   | { type: 'file'; ref: string; name: string; size: number; id?: string; caption?: string }
@@ -574,7 +576,7 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now(), ima
     // A failed read has no image to show, only its refusal, which the normal output row already carries.
     if (anyE.toolName === IMAGE_PREVIEW_TOOL && imagesDir && anyE.isError !== true) {
       const previewed = storeToolResultImage(anyE.result, imagesDir);
-      if (previewed) return { type: 'image', ref: `/api/brain/chat-images/${previewed.file}`, id: anyE.toolCallId };
+      if (previewed) return { type: 'image', ref: `/api/brain/chat-images/${previewed.file}`, id: anyE.toolCallId, preview: true };
     }
     // Image tools return a markdown link to the stored file; surface it as a first-class event so
     // channel adapters can attach the real file (models often omit the link from their final text). Skip

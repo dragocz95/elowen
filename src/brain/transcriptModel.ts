@@ -180,6 +180,9 @@ export class TranscriptModel implements TranscriptRead {
         return true;
       }
       case 'image': {
+        // A Read that looked at a picture has nothing to add here: its tool row already names the file.
+        // Consumed rather than dropped through `default`, so the event counts as handled.
+        if (event.preview) return true;
         // The terminal draws no pictures, so the shared image becomes one line naming it. Falling through
         // to `default` would drop the event entirely and the agent's "here it is" would point at nothing.
         // Same wording as the rehydrated form in `transcript.ts`, so a restart changes nothing on screen.
