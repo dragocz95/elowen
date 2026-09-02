@@ -38,6 +38,29 @@ export const BARE_PLAIN_PROGRAM: Program = 'claude-code';
 export const BRAIN_REGISTRY_PROVIDER_PREFIX = 'elowen-';
 
 /**
+ * The two directions of the ONE translation between a brain provider's PUBLIC identity (the operator's
+ * config entry id, e.g. `ollama` — what execs, DTOs and every display carry) and its INTERNAL identity
+ * in PI's model registry (`elowen-ollama`).
+ *
+ * They exist as a pair so the namespace is spelled in exactly one place. Every site that used to test
+ * `startsWith('elowen-')` and slice by hand is a site that could drift, and four such copies in
+ * modelCapabilities.ts alone is what made the internal name leak into the CLI and the web.
+ *
+ * `fromRegistryProvider` is deliberately total: an OAuth provider resolves to a BUILT-IN pi provider name
+ * (`anthropic`, `openai-codex`, `kimi-coding`) that carries no namespace, so it passes through unchanged
+ * and callers never need to branch on the provider's kind.
+ */
+export function toRegistryProvider(configId: string): string {
+  return `${BRAIN_REGISTRY_PROVIDER_PREFIX}${configId}`;
+}
+
+export function fromRegistryProvider(registryId: string): string {
+  return registryId.startsWith(BRAIN_REGISTRY_PROVIDER_PREFIX)
+    ? registryId.slice(BRAIN_REGISTRY_PROVIDER_PREFIX.length)
+    : registryId;
+}
+
+/**
  * Default executable name per program. Keyed by Program id so it stays in sync with the prefixes
  * above. Consumed as the provider allow-list seed in configStore.
  */
