@@ -63,6 +63,61 @@ describe('ProviderRequestStore', () => {
     expect(db.prepare("SELECT COUNT(*) n FROM brain_request_segments WHERE session_id = 's1' AND kind = 'input'").get()).toEqual({ n: 2 });
   });
 
+  it('stores growing histories through shared chain roots instead of repeated manifests', () => {
+    const { db, requests } = fixture();
+    const messages: unknown[] = [];
+    for (let index = 0; index < 50; index += 1) {
+      messages.push({ role: index % 2 === 0 ? 'user' : 'assistant', content: `message-${index}` });
+      const attempt = requests.start({
+        sessionId: 's1', turnId: `turn:${index}`, kind: 'chat', configuredProvider: 'configured',
+        wireProvider: 'anthropic', api: 'anthropic-messages', model: 'wire-model',
+        payload: { ...body(), messages: [...messages] }, startedAt: 2_000 + index,
+      });
+      requests.finish({ requestId: attempt.requestId, status: 'succeeded', finishedAt: 3_000 + index });
+    }
+
+    const rows = db.prepare("SELECT manifest_version, length(manifest) bytes, manifest FROM brain_provider_requests WHERE session_id = 's1' ORDER BY seq")
+      .all() as { manifest_version: number; bytes: number; manifest: string }[];
+    const firstHalf = rows.slice(0, 25).reduce((sum, row) => sum + row.bytes, 0);
+    const secondHalf = rows.slice(25).reduce((sum, row) => sum + row.bytes, 0);
+    expect(rows.every((row) => row.manifest_version === 2)).toBe(true);
+    expect(Math.max(...rows.map((row) => row.bytes))).toBeLessThan(700);
+    expect(secondHalf).toBeLessThan(firstHalf * 1.2);
+    expect(rows.some((row) => row.manifest.includes('preview'))).toBe(false);
+    expect(db.prepare("SELECT COUNT(*) n FROM brain_request_segment_chains WHERE session_id = 's1' AND item_kind = 'input'").get())
+      .toEqual({ n: 50 });
+    expect(db.prepare("SELECT COUNT(*) n FROM brain_request_segment_chains WHERE session_id = 's1' AND item_kind = 'tool'").get())
+      .toEqual({ n: 1 });
+    expect(db.prepare("SELECT display_preview FROM brain_request_segments WHERE session_id = 's1' AND kind = 'input' ORDER BY rowid LIMIT 1").get())
+      .toEqual({ display_preview: 'message-0' });
+    expect(db.prepare("SELECT stored_bytes > 0 positive FROM brain_request_session_summary WHERE session_id = 's1'").get())
+      .toEqual({ positive: 1 });
+  });
+
+  it('keeps legacy V1 manifests readable without a data backfill', () => {
+    const { db, brain, requests } = fixture();
+    const attempt = start(brain);
+    const segments = db.prepare(
+      "SELECT kind, digest, canonicalization_version version, display_role role, display_label label, display_preview preview FROM brain_request_segments WHERE session_id = 's1'",
+    ).all() as { kind: string; digest: string; version: number; role: string | null; label: string | null; preview: string | null }[];
+    const ref = (kind: string) => {
+      const segment = segments.find((entry) => entry.kind === kind)!;
+      return {
+        kind, digest: segment.digest, canonicalizationVersion: segment.version,
+        display: { role: segment.role ?? undefined, label: segment.label ?? undefined, preview: segment.preview ?? undefined },
+      };
+    };
+    db.prepare('UPDATE brain_provider_requests SET manifest_version = 1, manifest = ? WHERE request_id = ?').run(JSON.stringify({
+      system: { key: 'system', segment: ref('system') },
+      input: { key: 'messages', segments: [ref('input')] },
+      tools: { key: 'tools', segments: [ref('tool')] },
+      options: ref('options'),
+    }), attempt.requestId);
+
+    expect(requests.reconstruct(attempt.requestId)).toEqual(body());
+    expect(requests.debugRequest('s1', attempt.requestId)?.segments[1]).toMatchObject({ role: 'user', preview: 'hello' });
+  });
+
   it('captures the exact dynamic tool set separately for each request', () => {
     const { brain, requests } = fixture();
     const first = start(brain, 's1', body([]));

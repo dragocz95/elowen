@@ -1593,6 +1593,7 @@ export class BrainStore {
       this.db.prepare('DELETE FROM brain_session_events WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_request_session_summary WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_provider_requests WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
+      this.db.prepare('DELETE FROM brain_request_segment_chains WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_request_segments WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_sessions WHERE user_id = ?').run(userId);

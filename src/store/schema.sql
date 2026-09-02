@@ -326,6 +326,9 @@ CREATE TABLE IF NOT EXISTS brain_provider_requests (
   error_code TEXT,
   error_message TEXT,
   canonicalization_version INTEGER NOT NULL,
+  -- V1 repeats the full segment-ref arrays in every request. V2 stores only persistent chain roots;
+  -- the additive default keeps existing rows readable without rewriting their multi-gigabyte manifests.
+  manifest_version INTEGER NOT NULL DEFAULT 1,
   manifest TEXT NOT NULL,
   response_segment TEXT,
   assistant_message_id TEXT,
@@ -352,7 +355,25 @@ CREATE TABLE IF NOT EXISTS brain_request_segments (
   payload TEXT NOT NULL,
   byte_length INTEGER NOT NULL,
   estimated_tokens INTEGER NOT NULL,
+  -- V2 keeps display metadata with the deduplicated payload instead of repeating it in every request.
+  display_role TEXT,
+  display_label TEXT,
+  display_preview TEXT,
+  v2_referenced INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (session_id, kind, digest, canonicalization_version)
+);
+
+-- Persistent content-addressed lists for V2 input/tool order. A request stores only the final digest;
+-- appending one message creates one node while every earlier prefix remains shared by all later requests.
+CREATE TABLE IF NOT EXISTS brain_request_segment_chains (
+  session_id TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  previous_digest TEXT,
+  item_kind TEXT NOT NULL,
+  item_digest TEXT NOT NULL,
+  item_canonicalization_version INTEGER NOT NULL,
+  item_count INTEGER NOT NULL,
+  PRIMARY KEY (session_id, digest)
 );
 
 CREATE TABLE IF NOT EXISTS brain_request_session_summary (
@@ -369,7 +390,10 @@ CREATE TABLE IF NOT EXISTS brain_request_session_summary (
   cache_write_tokens INTEGER NOT NULL DEFAULT 0,
   total_tokens INTEGER NOT NULL DEFAULT 0,
   cost_usd REAL NOT NULL DEFAULT 0,
-  costed_request_count INTEGER NOT NULL DEFAULT 0
+  costed_request_count INTEGER NOT NULL DEFAULT 0,
+  -- Conservative logical bytes owned by V2 diagnostics. Legacy rows remain zero until a V2 request
+  -- touches their session, avoiding any startup scan or rewrite of historical manifests.
+  stored_bytes INTEGER NOT NULL DEFAULT 0
 );
 
 -- The persisted egress latch of tool-result clearing (brain/session/toolResultClearing.ts). A row means

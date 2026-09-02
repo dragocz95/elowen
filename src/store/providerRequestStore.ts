@@ -8,14 +8,22 @@ import type {
 } from '../shared/wireContract.js';
 
 export const PROVIDER_REQUEST_CANONICALIZATION_VERSION = 1;
+export const PROVIDER_REQUEST_MANIFEST_VERSION = 2;
+const PROVIDER_REQUEST_CHAIN_VERSION = 1;
+const REQUEST_STORAGE_OVERHEAD = 512;
+const SEGMENT_STORAGE_OVERHEAD = 256;
+const CHAIN_NODE_STORAGE_OVERHEAD = 256;
 
 export type ProviderRequestKind = 'chat' | 'compaction' | 'remote_compaction';
 export type ProviderRequestStatus = 'pending' | 'succeeded' | 'error' | 'interrupted';
 
-export interface ProviderRequestSegmentRef {
+interface ProviderRequestSegmentIdentity {
   kind: string;
   digest: string;
   canonicalizationVersion: number;
+}
+
+export interface ProviderRequestSegmentRef extends ProviderRequestSegmentIdentity {
   display?: { role?: string; label?: string; preview?: string };
 }
 
@@ -24,6 +32,23 @@ export interface ProviderRequestManifest {
   system?: { key: string; segment: ProviderRequestSegmentRef };
   input?: { key: string; segments: ProviderRequestSegmentRef[] };
   tools?: { key: string; segments: ProviderRequestSegmentRef[] };
+}
+
+interface ProviderRequestChainRoot {
+  digest: string | null;
+  count: number;
+}
+
+interface ProviderRequestManifestV2 {
+  options: ProviderRequestSegmentIdentity;
+  system?: { key: string; segment: ProviderRequestSegmentIdentity };
+  input?: { key: string; chain: ProviderRequestChainRoot };
+  tools?: { key: string; chain: ProviderRequestChainRoot };
+}
+
+interface StoredValue<T> {
+  value: T;
+  storedBytes: number;
 }
 
 export interface ProviderRequestAttemptInput {
@@ -199,7 +224,7 @@ function displayText(value: unknown, depth = 0): string {
   try { return JSON.stringify(record); } catch { return ''; }
 }
 
-function segmentDisplay(kind: string, value: unknown): ProviderRequestSegmentRef['display'] {
+function segmentDisplay(kind: string, value: unknown): NonNullable<ProviderRequestSegmentRef['display']> {
   const record = displayRecord(value);
   const fn = displayRecord(record?.function);
   const rawRole = typeof record?.role === 'string' ? record.role : typeof record?.type === 'string' ? record.type : undefined;
@@ -216,27 +241,54 @@ function segmentDisplay(kind: string, value: unknown): ProviderRequestSegmentRef
 export class ProviderRequestStore {
   constructor(private readonly db: Db) {}
 
-  private putSegment(sessionId: string, kind: string, value: unknown): ProviderRequestSegmentRef {
+  private putSegment(sessionId: string, kind: string, value: unknown): StoredValue<ProviderRequestSegmentIdentity> {
     const version = PROVIDER_REQUEST_CANONICALIZATION_VERSION;
     const payload = canonicalProviderJson(value);
     const digest = createHash('sha256').update(`${version}\0${kind}\0${payload}`).digest('hex');
     const bytes = Buffer.byteLength(payload);
-    this.db.prepare(
+    const display = segmentDisplay(kind, value);
+    const inserted = this.db.prepare(
       `INSERT OR IGNORE INTO brain_request_segments
-         (session_id, kind, digest, canonicalization_version, payload, byte_length, estimated_tokens)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(sessionId, kind, digest, version, payload, bytes, Math.ceil(bytes / 4));
+         (session_id, kind, digest, canonicalization_version, payload, byte_length, estimated_tokens,
+          display_role, display_label, display_preview, v2_referenced)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+    ).run(
+      sessionId, kind, digest, version, payload, bytes, Math.ceil(bytes / 4),
+      display.role ?? null, display.label ?? null, display.preview ?? null,
+    ).changes === 1;
     const stored = this.db.prepare(
-      `SELECT payload FROM brain_request_segments
+      `SELECT payload, display_role, display_label, display_preview, v2_referenced
+         FROM brain_request_segments
         WHERE session_id = ? AND kind = ? AND digest = ? AND canonicalization_version = ?`
-    ).get(sessionId, kind, digest, version) as { payload: string } | undefined;
+    ).get(sessionId, kind, digest, version) as {
+      payload: string; display_role: string | null; display_label: string | null;
+      display_preview: string | null; v2_referenced: number;
+    } | undefined;
     if (!stored || stored.payload !== payload) {
       throw new Error(`provider request segment digest collision for ${sessionId}/${kind}/${digest}`);
     }
-    return { kind, digest, canonicalizationVersion: version, display: segmentDisplay(kind, value) };
+    let firstV2Reference = inserted;
+    if (!inserted && stored.v2_referenced !== 1) {
+      this.db.prepare(
+        `UPDATE brain_request_segments SET display_role = ?, display_label = ?, display_preview = ?, v2_referenced = 1
+          WHERE session_id = ? AND kind = ? AND digest = ? AND canonicalization_version = ?`
+      ).run(display.role ?? null, display.label ?? null, display.preview ?? null, sessionId, kind, digest, version);
+      firstV2Reference = true;
+    } else if (!inserted && (
+      stored.display_role !== (display.role ?? null)
+      || stored.display_label !== (display.label ?? null)
+      || stored.display_preview !== (display.preview ?? null)
+    )) {
+      throw new Error(`provider request segment display mismatch for ${sessionId}/${kind}/${digest}`);
+    }
+    const displayBytes = Buffer.byteLength(display.role ?? '') + Buffer.byteLength(display.label ?? '') + Buffer.byteLength(display.preview ?? '');
+    return {
+      value: { kind, digest, canonicalizationVersion: version },
+      storedBytes: firstV2Reference ? SEGMENT_STORAGE_OVERHEAD + bytes + displayBytes : 0,
+    };
   }
 
-  private segmentPayload(sessionId: string, ref: ProviderRequestSegmentRef): unknown {
+  private segmentPayload(sessionId: string, ref: ProviderRequestSegmentIdentity): unknown {
     const row = this.db.prepare(
       `SELECT payload FROM brain_request_segments
         WHERE session_id = ? AND kind = ? AND digest = ? AND canonicalization_version = ?`
@@ -245,35 +297,82 @@ export class ProviderRequestStore {
     return JSON.parse(row.payload) as unknown;
   }
 
-  private splitPayload(sessionId: string, payload: unknown): ProviderRequestManifest {
+  private putChain(sessionId: string, kind: string, values: unknown[]): StoredValue<ProviderRequestChainRoot> {
+    let previousDigest: string | null = null;
+    let storedBytes = 0;
+    let count = 0;
+    for (const value of values) {
+      const segment = this.putSegment(sessionId, kind, value);
+      storedBytes += segment.storedBytes;
+      count += 1;
+      const nodeDigest: string = createHash('sha256').update(
+        `${PROVIDER_REQUEST_CHAIN_VERSION}\0${previousDigest ?? ''}\0${segment.value.kind}\0${segment.value.digest}\0${segment.value.canonicalizationVersion}`,
+      ).digest('hex');
+      const inserted = this.db.prepare(
+        `INSERT OR IGNORE INTO brain_request_segment_chains
+           (session_id, digest, previous_digest, item_kind, item_digest, item_canonicalization_version, item_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        sessionId, nodeDigest, previousDigest, segment.value.kind, segment.value.digest,
+        segment.value.canonicalizationVersion, count,
+      ).changes === 1;
+      if (inserted) {
+        storedBytes += CHAIN_NODE_STORAGE_OVERHEAD;
+      } else {
+        const stored = this.db.prepare(
+          `SELECT previous_digest, item_kind, item_digest, item_canonicalization_version, item_count
+             FROM brain_request_segment_chains WHERE session_id = ? AND digest = ?`
+        ).get(sessionId, nodeDigest) as {
+          previous_digest: string | null; item_kind: string; item_digest: string;
+          item_canonicalization_version: number; item_count: number;
+        } | undefined;
+        if (!stored
+          || stored.previous_digest !== previousDigest
+          || stored.item_kind !== segment.value.kind
+          || stored.item_digest !== segment.value.digest
+          || stored.item_canonicalization_version !== segment.value.canonicalizationVersion
+          || stored.item_count !== count) {
+          throw new Error(`provider request chain digest collision for ${sessionId}/${nodeDigest}`);
+        }
+      }
+      previousDigest = nodeDigest;
+    }
+    return { value: { digest: previousDigest, count }, storedBytes };
+  }
+
+  private splitPayload(sessionId: string, payload: unknown): StoredValue<ProviderRequestManifestV2> {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-      return { options: this.putSegment(sessionId, 'options', payload) };
+      const options = this.putSegment(sessionId, 'options', payload);
+      return { value: { options: options.value }, storedBytes: options.storedBytes };
     }
     const source = payload as Record<string, unknown>;
     const options: Record<string, unknown> = { ...source };
-    const manifest: Partial<ProviderRequestManifest> = {};
+    const manifest: Partial<ProviderRequestManifestV2> = {};
+    let storedBytes = 0;
     const systemKey = Object.hasOwn(source, 'system') ? 'system' : Object.hasOwn(source, 'instructions') ? 'instructions' : undefined;
     if (systemKey) {
-      manifest.system = { key: systemKey, segment: this.putSegment(sessionId, 'system', source[systemKey]) };
+      const system = this.putSegment(sessionId, 'system', source[systemKey]);
+      manifest.system = { key: systemKey, segment: system.value };
+      storedBytes += system.storedBytes;
       delete options[systemKey];
     }
     const inputKey = Array.isArray(source.messages) ? 'messages' : Array.isArray(source.input) ? 'input' : undefined;
     if (inputKey) {
-      manifest.input = {
-        key: inputKey,
-        segments: (source[inputKey] as unknown[]).map((item) => this.putSegment(sessionId, 'input', item)),
-      };
+      const input = this.putChain(sessionId, 'input', source[inputKey] as unknown[]);
+      manifest.input = { key: inputKey, chain: input.value };
+      storedBytes += input.storedBytes;
       delete options[inputKey];
     }
     if (Array.isArray(source.tools)) {
-      manifest.tools = {
-        key: 'tools',
-        segments: source.tools.map((tool) => this.putSegment(sessionId, 'tool', tool)),
-      };
+      const tools = this.putChain(sessionId, 'tool', source.tools);
+      manifest.tools = { key: 'tools', chain: tools.value };
+      storedBytes += tools.storedBytes;
       delete options.tools;
     }
-    manifest.options = this.putSegment(sessionId, 'options', options);
-    return manifest as ProviderRequestManifest;
+    const optionSegment = this.putSegment(sessionId, 'options', options);
+    manifest.options = optionSegment.value;
+    storedBytes += optionSegment.storedBytes;
+    return { value: manifest as ProviderRequestManifestV2, storedBytes };
   }
 
   start(input: ProviderRequestAttemptInput): { requestId: string; seq: number } {
@@ -288,18 +387,27 @@ export class ProviderRequestStore {
       const requestId = randomUUID();
       const startedAt = input.startedAt ?? Date.now();
       const manifest = this.splitPayload(input.sessionId, input.payload);
+      const manifestJson = JSON.stringify(manifest.value);
+      const storedBytes = manifest.storedBytes + REQUEST_STORAGE_OVERHEAD + Buffer.byteLength(manifestJson);
       this.db.prepare(
         `INSERT INTO brain_provider_requests
            (request_id, session_id, seq, turn_id, retry_of, kind, configured_provider, wire_provider, api,
-            model, started_at, status, canonicalization_version, manifest)
+            model, started_at, status, canonicalization_version, manifest_version, manifest)
          VALUES (@request_id, @session_id, @seq, @turn_id, @retry_of, @kind, @configured_provider,
-                 @wire_provider, @api, @model, @started_at, 'pending', @version, @manifest)`
+                 @wire_provider, @api, @model, @started_at, 'pending', @canonicalization_version,
+                 @manifest_version, @manifest)`
       ).run({
         request_id: requestId, session_id: input.sessionId, seq, turn_id: input.turnId,
         retry_of: input.retryOf ?? null, kind: input.kind, configured_provider: input.configuredProvider,
         wire_provider: input.wireProvider, api: input.api, model: input.model, started_at: startedAt,
-        version: PROVIDER_REQUEST_CANONICALIZATION_VERSION, manifest: JSON.stringify(manifest),
+        canonicalization_version: PROVIDER_REQUEST_CANONICALIZATION_VERSION,
+        manifest_version: PROVIDER_REQUEST_MANIFEST_VERSION, manifest: manifestJson,
       });
+      this.db.prepare(
+        `INSERT INTO brain_request_session_summary (session_id, capture_started_at, stored_bytes)
+         VALUES (?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET stored_bytes = stored_bytes + excluded.stored_bytes`
+      ).run(input.sessionId, startedAt, storedBytes);
       return { requestId, seq };
     })();
   }
@@ -333,9 +441,12 @@ export class ProviderRequestStore {
       const cacheWriteTokens = finiteInteger(usage?.cacheWrite);
       const totalTokens = finiteInteger(usage?.totalTokens);
       const cost = costTotal(usage?.cost);
-      const responseSegment = input.response === undefined
-        ? null
-        : JSON.stringify(this.putSegment(row.session_id, 'response', input.response));
+      const response = input.response === undefined ? null : this.putSegment(row.session_id, 'response', input.response);
+      const responseSegment = response === null ? null : JSON.stringify(response.value);
+      const terminalStoredBytes = (response?.storedBytes ?? 0)
+        + Buffer.byteLength(responseSegment ?? '')
+        + Buffer.byteLength(input.errorCode ?? '')
+        + Buffer.byteLength(input.errorMessage ?? '');
       const changed = this.db.prepare(
         `UPDATE brain_provider_requests SET
            finished_at = @finished_at, status = @status, error_code = @error_code,
@@ -360,15 +471,15 @@ export class ProviderRequestStore {
         `INSERT INTO brain_request_session_summary
            (session_id, capture_started_at, request_count, error_count, first_request_at, last_request_at,
             input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens,
-            total_tokens, cost_usd, costed_request_count)
+            total_tokens, cost_usd, costed_request_count, stored_bytes)
          VALUES (@session_id, @started_at, 1, @errors, @started_at, @finished_at,
                  @input_tokens, @output_tokens, @reasoning_tokens, @cache_read_tokens, @cache_write_tokens,
-                 @total_tokens, @cost, @costed)
+                 @total_tokens, @cost, @costed, @stored_bytes)
          ON CONFLICT(session_id) DO UPDATE SET
            request_count = request_count + 1,
            error_count = error_count + excluded.error_count,
-           first_request_at = MIN(first_request_at, excluded.first_request_at),
-           last_request_at = MAX(last_request_at, excluded.last_request_at),
+           first_request_at = CASE WHEN first_request_at IS NULL THEN excluded.first_request_at ELSE MIN(first_request_at, excluded.first_request_at) END,
+           last_request_at = CASE WHEN last_request_at IS NULL THEN excluded.last_request_at ELSE MAX(last_request_at, excluded.last_request_at) END,
            input_tokens = input_tokens + excluded.input_tokens,
            output_tokens = output_tokens + excluded.output_tokens,
            reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens,
@@ -376,41 +487,88 @@ export class ProviderRequestStore {
            cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
            total_tokens = total_tokens + excluded.total_tokens,
            cost_usd = cost_usd + excluded.cost_usd,
-           costed_request_count = costed_request_count + excluded.costed_request_count`
+           costed_request_count = costed_request_count + excluded.costed_request_count,
+           stored_bytes = stored_bytes + excluded.stored_bytes`
       ).run({
         session_id: row.session_id, started_at: row.started_at, finished_at: finishedAt,
         errors: input.status === 'error' || input.status === 'interrupted' ? 1 : 0,
         input_tokens: inputTokens ?? 0, output_tokens: outputTokens ?? 0,
         reasoning_tokens: reasoningTokens ?? 0, cache_read_tokens: cacheReadTokens ?? 0,
         cache_write_tokens: cacheWriteTokens ?? 0, total_tokens: totalTokens ?? 0,
-        cost: cost ?? 0, costed: cost === null ? 0 : 1,
+        cost: cost ?? 0, costed: cost === null ? 0 : 1, stored_bytes: terminalStoredBytes,
       });
       return true;
     })();
   }
 
   attachResponse(requestId: string, response: unknown, assistantMessageId?: string): void {
-    const row = this.db.prepare('SELECT session_id FROM brain_provider_requests WHERE request_id = ?')
-      .get(requestId) as { session_id: string } | undefined;
-    if (!row) throw new Error(`provider request correlation invariant: unknown attempt ${requestId}`);
-    const ref = this.putSegment(row.session_id, 'response', response);
-    this.db.prepare(
-      `UPDATE brain_provider_requests SET response_segment = ?, assistant_message_id = COALESCE(?, assistant_message_id)
-        WHERE request_id = ?`
-    ).run(JSON.stringify(ref), assistantMessageId ?? null, requestId);
+    this.db.transaction(() => {
+      const row = this.db.prepare('SELECT session_id, response_segment FROM brain_provider_requests WHERE request_id = ?')
+        .get(requestId) as { session_id: string; response_segment: string | null } | undefined;
+      if (!row) throw new Error(`provider request correlation invariant: unknown attempt ${requestId}`);
+      const responseSegment = this.putSegment(row.session_id, 'response', response);
+      const responseJson = JSON.stringify(responseSegment.value);
+      this.db.prepare(
+        `UPDATE brain_provider_requests SET response_segment = ?, assistant_message_id = COALESCE(?, assistant_message_id)
+          WHERE request_id = ?`
+      ).run(responseJson, assistantMessageId ?? null, requestId);
+      const referenceGrowth = Math.max(0, Buffer.byteLength(responseJson) - Buffer.byteLength(row.response_segment ?? ''));
+      this.db.prepare('UPDATE brain_request_session_summary SET stored_bytes = stored_bytes + ? WHERE session_id = ?')
+        .run(responseSegment.storedBytes + referenceGrowth, row.session_id);
+    })();
+  }
+
+  private chainRefs(sessionId: string, root: ProviderRequestChainRoot): ProviderRequestSegmentRef[] {
+    const refs: ProviderRequestSegmentRef[] = [];
+    let digest = root.digest;
+    for (let expectedCount = root.count; expectedCount > 0; expectedCount -= 1) {
+      if (!digest) throw new Error(`provider request chain ended early: ${sessionId}/${root.digest ?? 'empty'}`);
+      const row = this.db.prepare(
+        `SELECT previous_digest, item_kind, item_digest, item_canonicalization_version, item_count
+           FROM brain_request_segment_chains WHERE session_id = ? AND digest = ?`
+      ).get(sessionId, digest) as {
+        previous_digest: string | null; item_kind: string; item_digest: string;
+        item_canonicalization_version: number; item_count: number;
+      } | undefined;
+      if (!row || row.item_count !== expectedCount) {
+        throw new Error(`provider request chain missing or corrupt: ${sessionId}/${digest}`);
+      }
+      refs.push({
+        kind: row.item_kind, digest: row.item_digest,
+        canonicalizationVersion: row.item_canonicalization_version,
+      });
+      digest = row.previous_digest;
+    }
+    if (digest !== null) throw new Error(`provider request chain exceeds declared length: ${sessionId}/${root.digest}`);
+    return refs.reverse();
   }
 
   reconstruct(requestId: string): unknown {
-    const row = this.db.prepare('SELECT session_id, manifest FROM brain_provider_requests WHERE request_id = ?')
-      .get(requestId) as { session_id: string; manifest: string } | undefined;
+    const row = this.db.prepare('SELECT session_id, manifest_version, manifest FROM brain_provider_requests WHERE request_id = ?')
+      .get(requestId) as { session_id: string; manifest_version: number; manifest: string } | undefined;
     if (!row) throw new Error(`provider request not found: ${requestId}`);
-    const manifest = JSON.parse(row.manifest) as ProviderRequestManifest;
+    if (row.manifest_version === 1) {
+      const manifest = JSON.parse(row.manifest) as ProviderRequestManifest;
+      const options = this.segmentPayload(row.session_id, manifest.options);
+      if (!options || typeof options !== 'object' || Array.isArray(options)) return options;
+      const payload = { ...(options as Record<string, unknown>) };
+      if (manifest.system) payload[manifest.system.key] = this.segmentPayload(row.session_id, manifest.system.segment);
+      if (manifest.input) payload[manifest.input.key] = manifest.input.segments.map((ref) => this.segmentPayload(row.session_id, ref));
+      if (manifest.tools) payload[manifest.tools.key] = manifest.tools.segments.map((ref) => this.segmentPayload(row.session_id, ref));
+      return payload;
+    }
+    if (row.manifest_version !== PROVIDER_REQUEST_MANIFEST_VERSION) {
+      throw new Error(`unsupported provider request manifest version: ${row.manifest_version}`);
+    }
+    const manifest = JSON.parse(row.manifest) as ProviderRequestManifestV2;
     const options = this.segmentPayload(row.session_id, manifest.options);
     if (!options || typeof options !== 'object' || Array.isArray(options)) return options;
     const payload = { ...(options as Record<string, unknown>) };
     if (manifest.system) payload[manifest.system.key] = this.segmentPayload(row.session_id, manifest.system.segment);
-    if (manifest.input) payload[manifest.input.key] = manifest.input.segments.map((ref) => this.segmentPayload(row.session_id, ref));
-    if (manifest.tools) payload[manifest.tools.key] = manifest.tools.segments.map((ref) => this.segmentPayload(row.session_id, ref));
+    if (manifest.input) payload[manifest.input.key] = this.chainRefs(row.session_id, manifest.input.chain)
+      .map((ref) => this.segmentPayload(row.session_id, ref));
+    if (manifest.tools) payload[manifest.tools.key] = this.chainRefs(row.session_id, manifest.tools.chain)
+      .map((ref) => this.segmentPayload(row.session_id, ref));
     return payload;
   }
 
@@ -575,38 +733,67 @@ export class ProviderRequestStore {
     return { items, nextCursor: hasMore ? encodeCursor({ seq: items.at(-1)!.seq }) : null };
   }
 
-  private segmentRefs(row: { manifest: string; response_segment: string | null }): SegmentRefEntry[] {
-    const manifest = JSON.parse(row.manifest) as ProviderRequestManifest;
+  private segmentRefs(
+    sessionId: string,
+    row: { manifest_version: number; manifest: string; response_segment: string | null },
+  ): SegmentRefEntry[] {
     const refs: SegmentRefEntry[] = [];
-    if (manifest.system) refs.push({ section: 'system', key: manifest.system.key, ref: manifest.system.segment });
-    for (const ref of manifest.input?.segments ?? []) refs.push({ section: 'input', key: manifest.input!.key, ref });
-    for (const ref of manifest.tools?.segments ?? []) refs.push({ section: 'tool', key: manifest.tools!.key, ref });
-    refs.push({ section: 'options', key: null, ref: manifest.options });
+    if (row.manifest_version === 1) {
+      const manifest = JSON.parse(row.manifest) as ProviderRequestManifest;
+      if (manifest.system) refs.push({ section: 'system', key: manifest.system.key, ref: manifest.system.segment });
+      for (const ref of manifest.input?.segments ?? []) refs.push({ section: 'input', key: manifest.input!.key, ref });
+      for (const ref of manifest.tools?.segments ?? []) refs.push({ section: 'tool', key: manifest.tools!.key, ref });
+      refs.push({ section: 'options', key: null, ref: manifest.options });
+    } else if (row.manifest_version === PROVIDER_REQUEST_MANIFEST_VERSION) {
+      const manifest = JSON.parse(row.manifest) as ProviderRequestManifestV2;
+      if (manifest.system) refs.push({ section: 'system', key: manifest.system.key, ref: manifest.system.segment });
+      if (manifest.input) {
+        for (const ref of this.chainRefs(sessionId, manifest.input.chain)) refs.push({ section: 'input', key: manifest.input.key, ref });
+      }
+      if (manifest.tools) {
+        for (const ref of this.chainRefs(sessionId, manifest.tools.chain)) refs.push({ section: 'tool', key: manifest.tools.key, ref });
+      }
+      refs.push({ section: 'options', key: null, ref: manifest.options });
+    } else {
+      throw new Error(`unsupported provider request manifest version: ${row.manifest_version}`);
+    }
     if (row.response_segment) refs.push({ section: 'response', key: null, ref: JSON.parse(row.response_segment) as ProviderRequestSegmentRef });
     return refs;
   }
 
   private segmentEntries(sessionId: string, refs: SegmentRefEntry[], start = 0, count = refs.length - start): SegmentEntry[] {
     const selected = refs.slice(start, start + count);
-    const metadata = new Map<string, { byte_length: number; estimated_tokens: number }>();
+    const metadata = new Map<string, {
+      byte_length: number; estimated_tokens: number;
+      display_role: string | null; display_label: string | null; display_preview: string | null;
+    }>();
     for (let offset = 0; offset < selected.length; offset += 100) {
       const chunk = selected.slice(offset, offset + 100);
       const clauses = chunk.map(() => '(kind = ? AND digest = ? AND canonicalization_version = ?)').join(' OR ');
       const params = chunk.flatMap((entry) => [entry.ref.kind, entry.ref.digest, entry.ref.canonicalizationVersion]);
       const rows = this.db.prepare(
-        `SELECT kind, digest, canonicalization_version, byte_length, estimated_tokens
+        `SELECT kind, digest, canonicalization_version, byte_length, estimated_tokens,
+                display_role, display_label, display_preview
            FROM brain_request_segments WHERE session_id = ? AND (${clauses})`
-      ).all(sessionId, ...params) as { kind: string; digest: string; canonicalization_version: number; byte_length: number; estimated_tokens: number }[];
+      ).all(sessionId, ...params) as {
+        kind: string; digest: string; canonicalization_version: number; byte_length: number; estimated_tokens: number;
+        display_role: string | null; display_label: string | null; display_preview: string | null;
+      }[];
       for (const row of rows) metadata.set(`${row.kind}\0${row.digest}\0${row.canonicalization_version}`, row);
     }
     return selected.map((entry, relativeIndex) => {
       const key = `${entry.ref.kind}\0${entry.ref.digest}\0${entry.ref.canonicalizationVersion}`;
       const segment = metadata.get(key);
       if (!segment) throw new Error(`provider request segment missing: ${sessionId}/${entry.ref.kind}/${entry.ref.digest}`);
+      const display = entry.ref.display ?? {
+        ...(segment.display_role ? { role: segment.display_role } : {}),
+        ...(segment.display_label ? { label: segment.display_label } : {}),
+        ...(segment.display_preview ? { preview: segment.display_preview } : {}),
+      };
       return {
         index: start + relativeIndex, section: entry.section, key: entry.key, kind: entry.ref.kind, digest: entry.ref.digest,
         canonicalizationVersion: entry.ref.canonicalizationVersion, byteLength: segment.byte_length,
-        estimatedTokens: segment.estimated_tokens, ...entry.ref.display, ref: entry.ref,
+        estimatedTokens: segment.estimated_tokens, ...display, ref: entry.ref,
       };
     });
   }
@@ -620,7 +807,10 @@ export class ProviderRequestStore {
         WHERE r.session_id = ? AND r.request_id = ?`,
     ).get(sessionId, requestId) as Record<string, unknown> | undefined;
     if (!row) return undefined;
-    const refs = this.segmentRefs({ manifest: String(row.manifest), response_segment: row.response_segment as string | null });
+    const refs = this.segmentRefs(sessionId, {
+      manifest_version: Number(row.manifest_version), manifest: String(row.manifest),
+      response_segment: row.response_segment as string | null,
+    });
     const entries = this.segmentEntries(sessionId, refs);
     return {
       ...this.requestItem(row), canonicalizationVersion: Number(row.canonicalization_version),
@@ -631,10 +821,10 @@ export class ProviderRequestStore {
   }
 
   debugSegmentPayloads(sessionId: string, requestId: string, opts: { cursor?: string; limit?: number; maxBytes?: number } = {}): BrainDebugPayloadPage | undefined {
-    const row = this.db.prepare('SELECT session_id, manifest, response_segment FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
-      .get(sessionId, requestId) as { session_id: string; manifest: string; response_segment: string | null } | undefined;
+    const row = this.db.prepare('SELECT session_id, manifest_version, manifest, response_segment FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
+      .get(sessionId, requestId) as { session_id: string; manifest_version: number; manifest: string; response_segment: string | null } | undefined;
     if (!row) return undefined;
-    const refs = this.segmentRefs(row);
+    const refs = this.segmentRefs(sessionId, row);
     const cursor = decodeCursor<{ index: number }>(opts.cursor);
     const start = cursor?.index ?? 0;
     if (!Number.isInteger(start) || start < 0) throw new Error('invalid debug cursor');
@@ -660,10 +850,10 @@ export class ProviderRequestStore {
 
   debugSegmentPayload(sessionId: string, requestId: string, index: number, maxBytes?: number): BrainDebugSegmentPayload | undefined {
     if (!Number.isInteger(index) || index < 0) throw new Error('invalid debug cursor');
-    const row = this.db.prepare('SELECT session_id, manifest, response_segment FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
-      .get(sessionId, requestId) as { session_id: string; manifest: string; response_segment: string | null } | undefined;
+    const row = this.db.prepare('SELECT session_id, manifest_version, manifest, response_segment FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
+      .get(sessionId, requestId) as { session_id: string; manifest_version: number; manifest: string; response_segment: string | null } | undefined;
     if (!row) return undefined;
-    const refs = this.segmentRefs(row);
+    const refs = this.segmentRefs(sessionId, row);
     if (index >= refs.length) return undefined;
     const [entry] = this.segmentEntries(sessionId, refs, index, 1);
     if (!entry) return undefined;
@@ -675,11 +865,11 @@ export class ProviderRequestStore {
   }
 
   debugRawPayload(sessionId: string, requestId: string, maxBytes?: number): BrainDebugRawPayload | undefined {
-    const row = this.db.prepare('SELECT manifest FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
-      .get(sessionId, requestId) as { manifest: string } | undefined;
+    const row = this.db.prepare('SELECT manifest_version, manifest FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
+      .get(sessionId, requestId) as { manifest_version: number; manifest: string } | undefined;
     if (!row) return undefined;
     const cap = boundedLimit(maxBytes, 256 * 1024, 4 * 1024 * 1024);
-    const refs = this.segmentRefs({ manifest: row.manifest, response_segment: null });
+    const refs = this.segmentRefs(sessionId, { ...row, response_segment: null });
     let segmentBytes = 0;
     for (let start = 0; start < refs.length; start += 100) {
       for (const entry of this.segmentEntries(sessionId, refs, start, 100)) segmentBytes += entry.byteLength;
@@ -709,12 +899,14 @@ export class ProviderRequestStore {
   clearSession(sessionId: string): void {
     this.db.prepare('DELETE FROM brain_request_session_summary WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM brain_provider_requests WHERE session_id = ?').run(sessionId);
+    this.db.prepare('DELETE FROM brain_request_segment_chains WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM brain_request_segments WHERE session_id = ?').run(sessionId);
   }
 
   reassignSession(oldId: string, newId: string): void {
     this.db.prepare('UPDATE brain_request_session_summary SET session_id = ? WHERE session_id = ?').run(newId, oldId);
     this.db.prepare('UPDATE brain_provider_requests SET session_id = ? WHERE session_id = ?').run(newId, oldId);
+    this.db.prepare('UPDATE brain_request_segment_chains SET session_id = ? WHERE session_id = ?').run(newId, oldId);
     this.db.prepare('UPDATE brain_request_segments SET session_id = ? WHERE session_id = ?').run(newId, oldId);
   }
 

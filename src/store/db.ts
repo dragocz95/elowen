@@ -290,6 +290,15 @@ function applyAdditiveMigrations(db: Db): void {
   // remain physically untouched and read as epoch zero until the user's first logical reset.
   addColumn(db, 'brain_messages', 'usage_epoch', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'brain_provider_requests', 'usage_epoch', 'INTEGER NOT NULL DEFAULT 0');
+  // Provider request manifest V2 is additive and lazy: defaults classify every historical row as V1,
+  // while segment display/accounting columns are populated only when a new request reuses that payload.
+  // SQLite constant-default columns do not rewrite the existing multi-gigabyte capture tables.
+  addColumn(db, 'brain_provider_requests', 'manifest_version', 'INTEGER NOT NULL DEFAULT 1');
+  addColumn(db, 'brain_request_segments', 'display_role', 'TEXT');
+  addColumn(db, 'brain_request_segments', 'display_label', 'TEXT');
+  addColumn(db, 'brain_request_segments', 'display_preview', 'TEXT');
+  addColumn(db, 'brain_request_segments', 'v2_referenced', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'brain_request_session_summary', 'stored_bytes', 'INTEGER NOT NULL DEFAULT 0');
   // Display-only whole-turn timing lives outside message JSON: rehydration reads `content` only, so this
   // additive column cannot alter a provider payload or invalidate the cached transcript prefix.
   addColumn(db, 'brain_messages', 'turn_duration_ms', 'INTEGER');
@@ -308,8 +317,8 @@ function applyAdditiveMigrations(db: Db): void {
      ON CONFLICT(session_id) DO UPDATE SET
        request_count = request_count + excluded.request_count,
        error_count = error_count + excluded.error_count,
-       first_request_at = MIN(first_request_at, excluded.first_request_at),
-       last_request_at = MAX(last_request_at, excluded.last_request_at);
+       first_request_at = CASE WHEN first_request_at IS NULL THEN excluded.first_request_at ELSE MIN(first_request_at, excluded.first_request_at) END,
+       last_request_at = CASE WHEN last_request_at IS NULL THEN excluded.last_request_at ELSE MAX(last_request_at, excluded.last_request_at) END;
      UPDATE brain_provider_requests
         SET status = 'interrupted', finished_at = COALESCE(finished_at, unixepoch('now') * 1000),
             duration_ms = COALESCE(duration_ms, MAX(0, unixepoch('now') * 1000 - started_at)),
