@@ -88,9 +88,9 @@ export function ChatRailSplit({ workspace, docked }: { workspace: ReactNode; doc
         <>
           {/* The rail's only border IS the handle: one line, an 11px hit area, and the double-click reset the
               library gives a separator for free (back to the compact `defaultSize`). Keyboard resizing and
-              the full `role="separator"` ARIA contract are the primitive's too. */}
+              the full `role="separator"` ARIA contract are the primitive's too. No grip glyph: the line
+              itself is the affordance, as on a native split view. */}
           <ResizableHandle
-            withHandle
             aria-label={t.telemetry.resize}
             className="w-px bg-border transition-colors after:w-[11px] hover:bg-primary data-[dragging]:bg-primary"
           />
