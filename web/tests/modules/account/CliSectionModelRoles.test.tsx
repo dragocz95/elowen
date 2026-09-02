@@ -19,9 +19,11 @@ const CLI: CliSettings = {
   autoRecall: true, autoLiveRecall: true, autoSave: true,
 };
 const PERMISSIONS: PermissionSettings = { tools: {}, bash: {}, yolo: false, unattendedAsks: 'allow' };
+// The model the daemon marks `default` is deliberately NOT first: reading list order instead of the
+// flag would name `claude-haiku`, so the fixture can tell the two rules apart.
 const MODELS: BrainModelOption[] = [
-  { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus', exec: 'elowen:anthropic/claude-opus', source: 'oauth', contextWindow: 200000, contextWindowSet: false, vision: true, default: true },
   { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-haiku', exec: 'elowen:anthropic/claude-haiku', source: 'oauth', contextWindow: 200000, contextWindowSet: false, vision: true },
+  { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus', exec: 'elowen:anthropic/claude-opus', source: 'oauth', contextWindow: 200000, contextWindowSet: false, vision: true, default: true },
 ];
 const state = vi.hoisted(() => ({ cli: {} as Record<string, unknown>, isAdmin: false, allowedExecs: [] as string[] }));
 vi.mock('../../../lib/queries', async (importOriginal) => ({

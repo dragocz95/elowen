@@ -17,11 +17,12 @@ vi.mock('../../../lib/mutations', () => ({
 
 const EMBEDDING: EmbeddingSettings = { providerId: 'openai', model: 'text-embedding-3-small', baseUrl: '', dimensions: 1536, configured: true };
 const CATEGORIZATION: CategorizationSettings = { providerId: 'anthropic', model: 'claude-haiku', baseUrl: '', configured: true };
-// `claude-opus` is what the daemon marks as the model the SPAWN PATH resolves — the read-only instance
-// row must read this flag rather than the API's `serverDefault`, which can name a different model.
+// `claude-opus` is what the daemon marks as the model the SPAWN PATH resolves, and it is deliberately
+// NOT first in this list: reading list order (what `serverDefault` effectively answers) would name
+// `claude-haiku` instead, so the fixture can tell the two rules apart.
 const MODELS: BrainModelOption[] = [
-  { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus', exec: 'elowen:anthropic/claude-opus', source: 'oauth', contextWindow: 200000, contextWindowSet: false, default: true },
   { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-haiku', exec: 'elowen:anthropic/claude-haiku', source: 'api-key', contextWindow: 200000, contextWindowSet: false },
+  { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus', exec: 'elowen:anthropic/claude-opus', source: 'oauth', contextWindow: 200000, contextWindowSet: false, default: true },
   { provider: 'openai', providerLabel: 'OpenAI', model: 'text-embedding-3-small', exec: 'elowen:openai/text-embedding-3-small', source: 'api-key', contextWindow: 8192, contextWindowSet: false },
 ];
 const state = vi.hoisted(() => ({ digest: { providerId: '', model: '' }, personalModel: '', embeddingError: false, categorizationError: false }));
@@ -125,6 +126,8 @@ describe('Settings → Models — Model roles', () => {
   it('reads the instance default off the catalog flag and offers no picker for it', () => {
     const { container } = renderSection();
     const row = container.querySelector('.settings-row')!;
+    // `claude-haiku` is the catalog's FIRST entry; naming it here would mean the row reports list order
+    // rather than what the next conversation would actually start on.
     expect(row.querySelector('.settings-row__status')!.textContent).toBe('claude-opus');
     expect(row.querySelector('[data-row-picker]')).toBeNull();
   });
