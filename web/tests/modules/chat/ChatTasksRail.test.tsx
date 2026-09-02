@@ -241,3 +241,92 @@ describe('todo card — one home at a time', () => {
     expect(card.textContent).toContain('Deploy notes for the release');
   });
 });
+
+/** Card items are a GENERIC mechanism: any plugin may emit rows, and a plugin that lays its rows out
+ *  properly emits ids too. Those ids are ITS handles — a tick box built from one would PATCH the todo
+ *  plugin with an id that means nothing there. Only the card the todo plugin itself emits is task-shaped,
+ *  and every surface has to agree on that or the two halves disagree about who owns the rows. */
+describe('todo card — only the todo plugin owns the rail', () => {
+  const foreignCard = {
+    id: 'other', title: 'Deploy steps', pinned: true,
+    items: [{ text: '#1 Build the image', status: 'pending', id: '1', label: 'Build the image' }],
+  };
+
+  it('leaves another plugin\'s card out of the Tasks section', async () => {
+    statusCards = [foreignCard];
+    setViewport(false);
+    renderChat(<ChatPage />);
+    await expandRail();
+    await screen.findByTestId('telemetry-head');
+    expect(screen.queryByTestId('telemetry-tasks')).toBeNull();
+    // …and nothing of its rows could have been sent to the todo API.
+    expect(patched).toEqual([]);
+  });
+
+  it('keeps another plugin\'s card in the transcript, where it is the only report of that work', async () => {
+    statusCards = [foreignCard];
+    setViewport(false);
+    renderChat(<ChatPage />);
+    await expandRail();
+    const card = await screen.findByTestId('chat-card');
+    expect(card.textContent).toContain('Build the image');
+  });
+
+  it('hands over the todo card while a foreign card sitting beside it keeps rendering', async () => {
+    statusCards = [foreignCard, todoCard()];
+    setViewport(false);
+    renderChat(<ChatPage />);
+    await expandRail();
+    const section = await screen.findByTestId('telemetry-tasks');
+    // The section counts the TODO rows alone — the foreign row is not part of the tally.
+    expect(section.textContent).toContain('2/5');
+    const cards = await screen.findAllByTestId('chat-card');
+    expect(cards.map((card) => card.textContent).join('\n')).toContain('Build the image');
+    expect(cards.map((card) => card.textContent).join('\n')).not.toContain('Reviewing the rail');
+  });
+});
+
+/** A card emitted before structured items existed has rows but no ids, so the rail cannot build its
+ *  section from the card alone — it asks the plugin for the task list instead. Until that answer lands the
+ *  rail shows NOTHING, and a transcript card hidden "because the rail has it" would leave the reader with
+ *  no checklist at all. The handover therefore waits for the rows to actually exist. */
+describe('todo card — a legacy card waits for the fallback before handing over', () => {
+  const LEGACY_ITEMS = [
+    { text: 'Reviewing the rail', status: 'in_progress', startedAt: 100_000 },
+    { text: 'Ship the fix', status: 'pending' },
+  ];
+
+  it('keeps the transcript card while the fallback query is still in flight', async () => {
+    statusCards = [todoCard(LEGACY_ITEMS)];
+    server.use(http.get('*/api/plugins/todo/api/tasks', () => new Promise(() => {})));
+    setViewport(false);
+    renderChat(<ChatPage />);
+    await expandRail();
+    const card = await screen.findByTestId('chat-card');
+    expect(card.textContent).toContain('Reviewing the rail');
+    expect(screen.queryByTestId('telemetry-tasks')).toBeNull();
+  });
+
+  it('keeps the transcript card when the fallback query fails', async () => {
+    statusCards = [todoCard(LEGACY_ITEMS)];
+    server.use(http.get('*/api/plugins/todo/api/tasks', () => HttpResponse.json({ error: 'nope' }, { status: 503 })));
+    setViewport(false);
+    renderChat(<ChatPage />);
+    await expandRail();
+    const card = await screen.findByTestId('chat-card');
+    expect(card.textContent).toContain('Reviewing the rail');
+    await waitFor(() => expect(screen.queryByTestId('telemetry-tasks')).toBeNull());
+    expect(card.textContent).toContain('Reviewing the rail');
+  });
+
+  it('hands the rows over once the fallback has answered with them', async () => {
+    statusCards = [todoCard(LEGACY_ITEMS)];
+    setViewport(false);
+    renderChat(<ChatPage />);
+    await expandRail();
+    const section = await screen.findByTestId('telemetry-tasks');
+    expect(within(section).getAllByTestId('telemetry-row').map((row) => row.textContent))
+      .toEqual([expect.stringContaining('Draft the notes')]);
+    await waitFor(() => expect(screen.queryByTestId('chat-card')).toBeNull());
+  });
+});

@@ -1,3 +1,4 @@
+import { TODO_CARD_ID } from './chatPresentation.js';
 import type { BrainCard, BrainCardItem } from '../brain/events.js';
 
 /** One task as the todo plugin's HTTP API returns it, narrowed to the PUBLIC fields the Todo card shows.
@@ -26,7 +27,7 @@ export interface TodoCardTask {
 export function todoCard(tasks: readonly TodoCardTask[]): BrainCard {
   const completed = new Set(tasks.filter((task) => task.status === 'completed').map((task) => task.id));
   return {
-    id: 'todos',
+    id: TODO_CARD_ID,
     title: 'Todos',
     pinned: true,
     items: tasks.map((task): BrainCardItem => {

@@ -8,7 +8,7 @@ import { ansi, chatTheme, color, inputRow, paintRow } from './theme.js';
 import { highlightLine, wrapTokens } from './codeHighlight.js';
 import type { CodeToken } from './codeHighlight.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
-import { TODO_PREVIEW_ITEMS, todoPreviewItems } from '../../shared/chatPresentation.js';
+import { TODO_CARD_ID, TODO_PREVIEW_ITEMS, todoPreviewItems } from '../../shared/chatPresentation.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
@@ -130,9 +130,10 @@ export class CardPanel implements Component {
     for (const c of visible) {
       const base = lines.length;
       this.headerRows.add(base); // a card's first row is its clickable header
-      const isTodoPreview = c.id === 'todos' && !this.expanded && !this.collapsed
+      const isTodo = c.id === TODO_CARD_ID;
+      const isTodoPreview = isTodo && !this.expanded && !this.collapsed
         && (c.items?.length ?? 0) > TODO_PREVIEW_ITEMS;
-      const isTodoExpanded = c.id === 'todos' && this.expanded && !this.collapsed
+      const isTodoExpanded = isTodo && this.expanded && !this.collapsed
         && (c.items?.length ?? 0) > TODO_PREVIEW_ITEMS;
       const bodyRows = c.body ? terminalPlainText(c.body).split('\n').length : 0;
       const block = cardRows(
@@ -149,7 +150,10 @@ export class CardPanel implements Component {
         block.push({ text: `    ${color.faint('▴ Show less')}` });
         this.moreRows.add(lessRow);
       }
-      block.forEach((row, index) => { if (row.taskId) this.taskRows.set(base + index, row.taskId); });
+      // Only the todo card's rows are task handles. `cardRows` already withholds `taskId` elsewhere; the
+      // id is repeated here so a future emitter of card rows cannot make another plugin's card clickable
+      // by accident.
+      if (isTodo) block.forEach((row, index) => { if (row.taskId) this.taskRows.set(base + index, row.taskId); });
       lines.push(...block.map((row) => row.text));
     }
     return lines;
@@ -660,11 +664,14 @@ export interface CardRow { text: string; taskId?: string }
 
 /** Render one checklist item.
  *
- *  An item WITHOUT an id is a legacy card, or another plugin's card: `text` is the only form it has, so it
- *  renders exactly as it always did and its row stays inert. An item WITH an id was laid out by its
- *  emitter as fields, so the id, the owner and the blocked marker are placed here instead of being glued
- *  into one string — which is also what makes the row addressable. */
-function cardItemRow(item: BrainCardItem, now: number): CardRow {
+ *  An item WITHOUT an id is a legacy card: `text` is the only form it has, so it renders exactly as it
+ *  always did and its row stays inert. An item WITH an id was laid out by its emitter as fields, so the
+ *  id, the owner and the blocked marker are placed here instead of being glued into one string.
+ *
+ *  `addressable` is what makes the row CLICKABLE, and it is a property of the card rather than of the
+ *  item: only the todo card's ids are task handles the /tasks actions can act on. Another plugin's card
+ *  gets the same laid-out rendering — the fields are a generic mechanism — with no taskId on the row. */
+function cardItemRow(item: BrainCardItem, now: number, addressable: boolean): CardRow {
   const elapsed = cardItemElapsed(item, now);
   const suffix = elapsed ? FAINTC(` · ${elapsed}`) : '';
   if (!item.id) {
@@ -676,9 +683,10 @@ function cardItemRow(item: BrainCardItem, now: number): CardRow {
   const id = FAINTC(`#${item.id}`);
   const label = inlineText(item.label ?? item.text);
   const owner = item.owner ? FAINTC(` — ${inlineText(item.owner)}`) : '';
-  if (item.status === 'completed') return { text: `    ${GREENC('[x]')} ${id} ${DIM(label)}${owner}`, taskId: item.id };
+  const handle = addressable ? { taskId: item.id } : {};
+  if (item.status === 'completed') return { text: `    ${GREENC('[x]')} ${id} ${DIM(label)}${owner}`, ...handle };
   if (item.status === 'in_progress') {
-    return { text: `    ${color.warning('[•]')} ${id} ${color.warning(label)}${owner}${suffix}`, taskId: item.id };
+    return { text: `    ${color.warning('[•]')} ${id} ${color.warning(label)}${owner}${suffix}`, ...handle };
   }
   // Only a pending row can be waiting on something: an in-progress task is already running despite its
   // edges, and a finished one is nobody's dependant. The marker replaces the long "(blocked by #3)" text,
@@ -686,7 +694,7 @@ function cardItemRow(item: BrainCardItem, now: number): CardRow {
   const blockers = item.blockedBy ?? [];
   const blocked = blockers.length ? FAINTC(` ⇠ ${blockers.map((blocker) => `#${blocker}`).join(' ')}`) : '';
   const body = blockers.length ? FAINTC(label) : DIM(label);
-  return { text: `    ${FAINTC('[ ]')} ${id} ${body}${owner}${blocked}`, taskId: item.id };
+  return { text: `    ${FAINTC('[ ]')} ${id} ${body}${owner}${blocked}`, ...handle };
 }
 
 /** Render one display card (title + checklist items + freeform body) as fixed-panel rows — the item
@@ -695,20 +703,23 @@ function cardItemRow(item: BrainCardItem, now: number): CardRow {
 export function cardRows(card: BrainCard, maxRows = 12, collapsed = false): CardRow[] {
   const items = card.items ?? [];
   const now = Date.now();
+  const isTodo = card.id === TODO_CARD_ID;
   const done = items.filter((i) => i.status === 'completed').length;
   const progress = items.length ? `  ${cardProgressBar(done, items.length)} ${FAINTC(`${done}/${items.length}`)}` : '';
-  // Only a card whose items carry ids has clickable rows; on any other card a click still does exactly one
-  // thing — collapse the card — so the hint stays honest about what is on offer.
-  const hint = items.some((i) => i.id) ? 'click a row' : 'click';
+  // Only the TODO card's rows are clickable — its ids are the handles /tasks acts on, and another
+  // plugin's ids are not. Anywhere else a click still does exactly one thing (collapse the card), so the
+  // hint stays honest about what is on offer.
+  const addressable = isTodo && items.some((i) => i.id);
+  const hint = addressable ? 'click a row' : 'click';
   const header = `  ${FAINTC(collapsed ? '▸' : '▾')} ${bold(WHITE(inlineText(card.title ?? 'Todos')))}${progress} ${FAINTC(hint)}`;
   if (collapsed) return [{ text: header }];
   const rows: CardRow[] = [{ text: header }];
   const bodyLines = card.body ? terminalPlainText(card.body).split('\n') : [];
   const shownItems = Math.min(items.length, Math.max(0, maxRows - bodyLines.length));
-  const visibleItems = card.id === 'todos'
+  const visibleItems = isTodo
     ? todoPreviewItems(items, shownItems)
     : items.slice(0, shownItems);
-  for (const it of visibleItems) rows.push(cardItemRow(it, now));
+  for (const it of visibleItems) rows.push(cardItemRow(it, now, addressable));
   if (items.length > shownItems) rows.push({ text: `    ${FAINTC(`… +${items.length - shownItems} more`)}` });
   for (const l of bodyLines.slice(0, maxRows)) rows.push({ text: `    ${DIM(l)}` });
   return rows;

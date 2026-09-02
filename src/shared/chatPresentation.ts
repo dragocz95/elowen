@@ -6,6 +6,14 @@
 
 export type ComposeLocale = 'en' | 'cs' | 'sk';
 
+/** The todo plugin's card id — the ONE card whose rows are the conversation's task list.
+ *
+ * Every surface that treats a card as TASKS matches on this and nothing else: the CLI's clickable rows,
+ * the web rail's Tasks section, the transcript card the rail takes over. Card items are a generic
+ * mechanism, so another plugin may well emit rows carrying ids of its own — and those ids are its
+ * handles, not task handles the todo API would accept. Matching on "has items with ids" would send them
+ * to it anyway. */
+export const TODO_CARD_ID = 'todos';
 export const TODO_PREVIEW_ITEMS = 4;
 export const DEFAULT_COMPOSE_MARKER_MS = 10_000;
 export const DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS = 3_000;

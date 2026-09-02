@@ -1,3 +1,4 @@
+import { TODO_CARD_ID } from './chatPresentation';
 import type { BrainCard, SessionTask } from './types';
 
 /** Build the pinned `todos` card from a task list — the web's ONE place that composes that card.
@@ -20,7 +21,7 @@ import type { BrainCard, SessionTask } from './types';
 export function todoCard(tasks: readonly SessionTask[]): BrainCard {
   const completed = new Set(tasks.filter((task) => task.status === 'completed').map((task) => task.id));
   return {
-    id: 'todos',
+    id: TODO_CARD_ID,
     title: 'Todos',
     pinned: true,
     items: tasks.map((task) => {

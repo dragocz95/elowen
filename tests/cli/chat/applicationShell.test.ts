@@ -1031,6 +1031,21 @@ describe('chat application shell ownership', () => {
     openTaskActions.mockClear();
     expect(click(1)).toBeUndefined();
     expect(openTaskActions).not.toHaveBeenCalled();
+
+    // Another plugin's card may carry ids of its own, and they are ITS handles — sending one to the todo
+    // actions would open a task list entry that does not exist. Its rows fall through unchanged, and its
+    // header still collapses the card.
+    cardPanel.set([{
+      id: 'other', title: 'Other', pinned: true,
+      items: [{ text: '#7 Foreign', status: 'pending', id: '7', label: 'Foreign' }],
+    }]);
+    cardPanel.render(120);
+    render.mockClear();
+    expect(click(1)).toBeUndefined();
+    expect(openTaskActions).not.toHaveBeenCalled();
+    expect(click(0)).toEqual({ consume: true });
+    expect(openTaskActions).not.toHaveBeenCalled();
+    expect(render).toHaveBeenCalledWith('input:todos-toggle');
     router.stop();
   });
 

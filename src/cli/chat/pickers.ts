@@ -11,6 +11,7 @@ import { openStatsOverlay } from './statsOverlay.js';
 import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { trimTrailingSlash } from '../../shared/url.js';
 import { todoCard } from '../../shared/todoCard.js';
+import { TODO_CARD_ID } from '../../shared/chatPresentation.js';
 import { WORK_MODE_LABEL, type BrainProviderView, type SessionTaskView } from './brainClient.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources, ChatTaskScope } from './chatCapabilities.js';
@@ -526,7 +527,7 @@ export function createPickers(
    *  they answer the caller and leave the panel to whoever asked. So a change made from `/tasks` or from a
    *  card row has to rebuild the card here, through the ONE mapper the plugin's own renderer mirrors. */
   const syncTodoCard = (next: SessionTaskView[]): void => {
-    rt.cards = [...rt.cards.filter((item) => item.id !== 'todos'), todoCard(next)];
+    rt.cards = [...rt.cards.filter((item) => item.id !== TODO_CARD_ID), todoCard(next)];
   };
 
   const confirmDeleteTask = (taskId: string, subject: string): void => {

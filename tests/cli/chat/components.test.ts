@@ -525,6 +525,20 @@ describe('chat components', () => {
     panel.set([{ id: 'todos', title: 'Todos', pinned: true, items: [{ text: 'A', status: 'pending' }] }]);
     panel.render(80);
     expect(panel.taskAt(1)).toBeNull();
+
+    // Card items are a GENERIC mechanism, so another plugin may emit rows carrying ids of its own — and
+    // those ids are its handles, not tasks /tasks could act on. Its rows stay inert and its header keeps
+    // promising only the collapse a click there really performs.
+    panel.set([{
+      id: 'other', title: 'Other', pinned: true,
+      items: [{ text: '#1 Foreign', status: 'pending', id: '1', label: 'Foreign' }],
+    }]);
+    const foreign = panel.render(80);
+    expect(strip(foreign)[0]).toContain(' click');
+    expect(strip(foreign)[0]).not.toContain('click a row');
+    expect(strip(foreign)[1]).toBe('    [ ] #1 Foreign'); // still laid out from the structured fields
+    expect(panel.taskAt(1)).toBeNull();
+    expect(panel.isHeaderRow(0)).toBe(true);
   });
 
   it('cardRows derives elapsed time at render time instead of freezing it in card text', () => {

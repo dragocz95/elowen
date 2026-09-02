@@ -217,9 +217,10 @@ export class InputRouter {
       const target = subRelative >= 0 ? context.subPanel.targetAt(subRelative) : null;
       if (target) { void stream.openSubagent(target); return { consume: true }; }
       const cardRelative = subRelative - renderedSubRows;
-      // A checklist row the emitter gave an id to opens that task's actions directly, skipping the list
-      // level of /tasks. Tested first because the header and the more-row are the only controls a card
-      // without ids has: a card that never registers a task row cannot shadow them.
+      // A TODO row opens that task's actions directly, skipping the list level of /tasks. Only the todo
+      // card registers task rows — another plugin's ids are its own handles, not ones /tasks could act
+      // on — so a click anywhere else falls straight through to the header/more controls below, exactly
+      // as it did before rows became clickable.
       const cardTask = cardRelative >= 0 ? context.cardPanel.taskAt(cardRelative) : null;
       if (cardTask) { context.openTaskActions(cardTask); return { consume: true }; }
       if (cardRelative >= 0 && context.cardPanel.isMoreRow(cardRelative)) {

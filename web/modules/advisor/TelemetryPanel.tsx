@@ -26,14 +26,15 @@ import { useToast } from '../../components/ui/Toast';
 import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
 import { useNow } from '../../lib/useNow';
 import { TODO_PREVIEW_ITEMS } from '../../lib/chatPresentation';
+import { cardTasks, cardTasksAddressable, orderTasks, sessionTaskRows, type RailTask } from '../../lib/railTasks';
 import { workflowLabel, workflowProgress } from '../../lib/workflowDag';
 import { useBrainChat } from './BrainChatProvider';
 import { useTelemetryRail } from './telemetryRailState';
 import { ProcessOutputModal } from './ProcessPanel';
-import { ownedSessionIds, isOwnProcess, processOrigin, isBackgroundProcessCardId } from '../../lib/processScope';
+import { ownedSessionIds, isOwnProcess, processOrigin } from '../../lib/processScope';
 import { CommandOrbit } from './CommandOrbit';
 import { goalSubgoalTally, useGoalElapsed } from './GoalStatus';
-import type { BrainCard, BrainGoal, ProcessInfo, SessionTask } from '../../lib/types';
+import type { BrainGoal, ProcessInfo } from '../../lib/types';
 
 /** The owl presides over the rail the way it tops the CLI panel — and it is not decoration: it mirrors
  *  the agent, breathing while a turn runs and settling when it does not, so the rail reads as inhabited
@@ -166,53 +167,6 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }
     </Button>
   );
 }
-
-/** One row of the rail's Tasks section, in the shape the section lays out.
- *
- *  It is the STRUCTURED half of a card item (see `lib/todoCard.ts`), never the glued `text`: the rail
- *  places the label, the owner and the blocked marker itself rather than parsing them back out. `id` is
- *  the todo plugin's own handle and the only thing that makes a row addressable — a card emitted before
- *  structured items existed has none, which is what the session-task fallback below is for. */
-interface RailTask {
-  id?: string;
-  label: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  startedAt?: number;
-  owner?: string;
-  blockedBy: string[];
-}
-
-/** Running work first, then what is waiting, then what is done — the rail reports live work, so the row
- *  worth reading is at the top. `sort` is stable, so each group keeps the list's own order. */
-const TASK_ORDER: Record<RailTask['status'], number> = { in_progress: 0, pending: 1, completed: 2 };
-const orderTasks = (tasks: readonly RailTask[]): RailTask[] =>
-  [...tasks].sort((a, b) => TASK_ORDER[a.status] - TASK_ORDER[b.status]);
-
-/** The conversation's checklist rows, read off the cards the stream has already delivered — no request
- *  of its own and nothing to poll. Background-process cards are excluded exactly as they are from the
- *  transcript: the rail reports those as processes, not as work to tick off. */
-function cardTasks(cards: readonly BrainCard[]): RailTask[] {
-  return cards
-    .filter((card) => !isBackgroundProcessCardId(card.id))
-    .flatMap((card) => card.items ?? [])
-    .map((item) => ({
-      ...(item.id !== undefined ? { id: item.id } : {}),
-      label: item.label ?? item.text,
-      status: item.status ?? 'pending',
-      ...(item.startedAt !== undefined ? { startedAt: item.startedAt } : {}),
-      ...(item.owner !== undefined ? { owner: item.owner } : {}),
-      blockedBy: item.blockedBy ?? [],
-    }));
-}
-
-const sessionTaskRows = (tasks: readonly SessionTask[]): RailTask[] => tasks.map((task) => ({
-  id: task.id,
-  label: task.status === 'in_progress' && task.activeForm ? task.activeForm : task.subject,
-  status: task.status,
-  ...(task.startedAt !== undefined ? { startedAt: task.startedAt } : {}),
-  ...(task.owner !== undefined ? { owner: task.owner } : {}),
-  blockedBy: task.blockedBy,
-}));
 
 /** Why a pending row cannot start yet.
  *
@@ -396,11 +350,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
       }
     }
   };
-  // The task list, from the cards the stream already carries. A card that predates the structured items
-  // has rows but no ids, and a row that cannot be addressed cannot be ticked — only then is the plugin's
-  // task list fetched, once, as the fallback. A conversation with no card at all asks for nothing.
+  // The task list, from the TODO card the stream already carries. A card that predates the structured
+  // items has rows but no ids, and a row that cannot be addressed cannot be ticked — only then is the
+  // plugin's task list fetched, once, as the fallback. A conversation with no todo card asks for nothing.
   const cardRows = useMemo(() => cardTasks(cards), [cards]);
-  const addressable = cardRows.length > 0 && cardRows.every((task) => !!task.id);
+  const addressable = cardTasksAddressable(cardRows);
   const taskFallback = useSessionTasks(cardRows.length > 0 && !addressable ? activeSessionId : null);
   const fallbackTasks = taskFallback.data?.tasks;
   const tasks = useMemo(
