@@ -420,8 +420,13 @@ export interface PluginUiListing {
   /** Contextual panels contributed to a selected Project. Optional for older daemons. */
   project?: { id: string; label: string; icon?: string }[];
   /** `layout` picks the section's rendering: 'orbital' uses the constellation layout the core
-   *  Settings sections use, anything else (or absent) the classic stacked rows. */
-  settings: { id: string; label: string; icon?: string; layout?: 'classic' | 'orbital' }[];
+   *  Settings sections use, anything else (or absent) the classic stacked rows.
+   *
+   *  `placement` picks where the section is OFFERED: 'page' (the default, and what a daemon too old to
+   *  send the field means) gives the plugin a world in the main navigation, 'pluginDetail' offers it as a
+   *  tab of Settings → Plugins → that plugin and nowhere else. Its direct address keeps resolving either
+   *  way — placement decides what the app advertises, not what it can render. */
+  settings: { id: string; label: string; icon?: string; layout?: 'classic' | 'orbital'; placement?: 'page' | 'pluginDetail' }[];
   /** Localized flat view strings for the bundle (manifest `web.strings` merged with the locale's
    *  i18n overrides server-side). Optional so an older daemon's listing still parses. */
   strings?: Record<string, string>;

@@ -311,6 +311,27 @@ describe('pluginNavEntries', () => {
     expect(entries[0]!.subItems?.map((s) => s.href)).toEqual(['/p/agents/settings/autopilot', '/p/agents/settings/cli']);
   });
 
+  it('keeps a section placed in the plugin detail out of the menu, its world and all', () => {
+    // The browser plugin's runtime section configures a capability the assistant already ships, so it
+    // belongs in Settings → Plugins → Browser and nowhere else. That plugin contributes nothing else to
+    // the menu, so filtering the section has to cost the whole world rather than leave an empty one.
+    expect(pluginNavEntries([
+      {
+        name: 'browser', url: '/plugins/browser/web/x.js', apiVersion: 1, nav: [],
+        settings: [{ id: 'runtime', label: 'Browser', placement: 'pluginDetail' }],
+      },
+    ])).toHaveLength(0);
+    // A plugin that keeps a page of its own keeps that world — only the placed section leaves the menu.
+    const [mixed] = pluginNavEntries([
+      {
+        name: 'mixed', url: '/plugins/mixed/web/x.js', apiVersion: 1,
+        nav: [{ label: 'Relace', route: 'sessions' }],
+        settings: [{ id: 'tuning', label: 'Tuning', placement: 'pluginDetail' }, { id: 'general', label: 'General' }],
+      },
+    ]);
+    expect(mixed!.subItems?.map((s) => s.href)).toEqual(['/p/mixed/sessions', '/p/mixed/settings/general']);
+  });
+
   it('lists nav pages before settings sections when a plugin has both', () => {
     const entries = pluginNavEntries([
       {

@@ -746,7 +746,9 @@ export interface PluginWebUi {
   /** Administrator-only panels mounted for a selected core User. */
   user: { id: string; label: string; icon?: string }[];
   project: { id: string; label: string; icon?: string }[];
-  settings: { id: string; label: string; icon?: string }[];
+  /** `placement: 'pluginDetail'` keeps the section out of the main navigation and offers it inside
+   *  Settings → Plugins → that plugin instead. Absent means 'page' — what every section did before. */
+  settings: { id: string; label: string; icon?: string; layout?: 'classic' | 'orbital'; placement?: 'page' | 'pluginDetail' }[];
   /** Flat English view strings from the manifest `web.strings` block (bundle labels/hints). */
   strings?: Record<string, string>;
   /** Localized menu labels + view strings from `i18n/<lang>.json` `web` blocks: nav keyed by route,

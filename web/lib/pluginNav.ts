@@ -21,13 +21,20 @@ export function pluginSectionHref(p: PluginUiListing, settingId: string): string
  *  settings section as a standalone page at `/p/<plugin>/settings/<id>`, so a plugin whose whole UI is a
  *  settings section is a plugin with a page — it just used to be reachable only through the Settings deck.
  *  The deck keeps its sections; this only adds the direct way in. A plugin contributing neither claims no
- *  menu space. Pure so the mapping is unit-testable. */
+ *  menu space. Pure so the mapping is unit-testable.
+ *
+ *  A section placed `pluginDetail` is deliberately absent from this mapping: it configures a capability
+ *  the assistant already ships rather than opening a world of its own, so it belongs where the operator
+ *  installs and tunes that plugin. Filtering HERE covers the sidebar and the command palette at once —
+ *  they read the same entries — and leaves the section's own address untouched for anything that links
+ *  to it. A plugin whose every surface is placed there claims no menu space at all. */
 export function pluginNavEntries(listing: PluginUiListing[]): NavEntry[] {
   return listing.flatMap((p) => {
     const base = `/p/${p.name}`;
     const pages = [
       ...p.nav.map((item) => ({ href: item.route ? `${base}/${item.route}` : base, label: item.label, icon: item.icon })),
-      ...p.settings.map((s) => ({ href: pluginSectionHref(p, s.id), label: s.label, icon: s.icon })),
+      ...p.settings.filter((s) => s.placement !== 'pluginDetail')
+        .map((s) => ({ href: pluginSectionHref(p, s.id), label: s.label, icon: s.icon })),
     ];
     const first = pages[0];
     if (!first) return [];

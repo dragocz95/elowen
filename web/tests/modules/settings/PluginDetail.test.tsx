@@ -18,7 +18,8 @@ const useBrainModels = vi.hoisted(() => vi.fn());
 const useUsers = vi.hoisted(() => vi.fn());
 const useNotificationDestinations = vi.hoisted(() => vi.fn());
 const useSystemReadiness = vi.hoisted(() => vi.fn());
-vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useUsers, useNotificationDestinations, useSystemReadiness }));
+const usePluginUi = vi.hoisted(() => vi.fn());
+vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useUsers, useNotificationDestinations, useSystemReadiness, usePluginUi }));
 // The debounced draft writes through this one mutation, so a shared mock is what lets a test prove that
 // editing a record — or the editor inside its modal — actually reaches the server.
 const savePluginConfig = vi.hoisted(() => vi.fn());
@@ -29,6 +30,13 @@ vi.mock('../../../lib/mutations', () => ({
   useClearPluginData: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
+// Stands in for a plugin's ESM bundle: the workspace must load it only when its tab is opened, mount it
+// with the deck surface, and carry whatever it reports through the kit's save channel.
+const loadPluginUi = vi.hoisted(() => vi.fn());
+vi.mock('../../../lib/pluginUi', () => ({
+  PLUGIN_UI_API_VERSION: 15,
+  loadPluginUi,
+}));
 // Monaco is browser-only (web workers) and never mounts under jsdom; stub it with a plain textarea that
 // forwards value/onChange so a `code`/`prompt` field stays exercisable.
 vi.mock('../../../lib/monaco/monacoLoader', () => ({
@@ -78,6 +86,18 @@ beforeEach(() => {
   useBrainModels.mockReturnValue({ data: [] });
   useUsers.mockReturnValue({ data: [] });
   useNotificationDestinations.mockReturnValue({ data: [] });
+  usePluginUi.mockReturnValue({ data: [] });
+  loadPluginUi.mockReset();
+  loadPluginUi.mockResolvedValue({
+    pages: [],
+    settings: {
+      runtime: ({ surface, onSaveState }: { surface: string; onSaveState?: (status: string) => void }) => (
+        <div data-testid="plugin-section-runtime" data-surface={surface}>
+          <button type="button" onClick={() => onSaveState?.('saving')}>report saving</button>
+        </div>
+      ),
+    },
+  });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -527,6 +547,47 @@ describe('PluginDetail destination field', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Filip' }));
     fireEvent.click(screen.getByRole('button', { name: en.managePicker.saveChanges }));
     await waitFor(() => expect(screen.getAllByText('Filip').length).toBeGreaterThan(0));
+  });
+});
+
+describe('PluginDetail plugin-contributed sections', () => {
+  const listing = (placement: 'page' | 'pluginDetail' | undefined) => [{
+    name: 'testy', url: '/plugins/testy/web/abc.js', apiVersion: 1, nav: [],
+    settings: [{ id: 'runtime', label: 'Runtime', ...(placement ? { placement } : {}) }],
+  }];
+
+  it('offers a pluginDetail section as a workspace tab and mounts its bundle component on demand', async () => {
+    usePluginUi.mockReturnValue({ data: listing('pluginDetail') });
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    renderDetail();
+
+    const nav = screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav });
+    expect(within(nav).getByRole('radio', { name: 'Runtime' })).toBeInTheDocument();
+    // A plugin bundle is third-party code: opening the plugin's configuration form must not fetch it.
+    expect(loadPluginUi).not.toHaveBeenCalled();
+
+    fireEvent.click(within(nav).getByRole('radio', { name: 'Runtime' }));
+    await screen.findByTestId('plugin-section-runtime');
+    expect(loadPluginUi).toHaveBeenCalledWith('testy', '/plugins/testy/web/abc.js', undefined);
+    // Mounted as a deck section: the tab above already names it, so it must not head itself again.
+    expect(screen.getByTestId('plugin-section-runtime')).toHaveAttribute('data-surface', 'deck');
+  });
+
+  it('leaves a section placed on a page — the default — out of the workspace entirely', () => {
+    usePluginUi.mockReturnValue({ data: listing(undefined) });
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    renderDetail();
+    const nav = screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav });
+    expect(within(nav).queryByRole('radio', { name: 'Runtime' })).toBeNull();
+  });
+
+  it('shows the section its own save state rather than the config form\'s', async () => {
+    usePluginUi.mockReturnValue({ data: listing('pluginDetail') });
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    renderDetail();
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav })).getByRole('radio', { name: 'Runtime' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'report saving' }));
+    expect(await screen.findByText(en.common.saving)).toBeInTheDocument();
   });
 });
 

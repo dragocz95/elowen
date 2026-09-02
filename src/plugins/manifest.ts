@@ -234,8 +234,16 @@ export interface PluginManifest {
     /** `layout` picks which of the app's two settings renderings the section's groups/rows use:
      *  'classic' (default) stacks rows, 'orbital' renders them as the constellation of pods the core
      *  Settings sections use. A section moved out of core keeps the look it had; a new one that just
-     *  lists fields wants the default. */
-    settings?: { id: string; label: string; icon?: string; layout?: 'classic' | 'orbital' }[];
+     *  lists fields wants the default.
+     *
+     *  `placement` picks WHERE the section is offered. 'page' (the default, and what a host too old to
+     *  know the field does) gives the plugin a world in the main navigation — right for a plugin whose
+     *  section IS its product surface (Skills, Cron, Agents). 'pluginDetail' offers it only inside
+     *  Settings → Plugins → that plugin, which is where an operator already goes to configure it: a
+     *  section that only tunes an installed capability does not earn a permanent seat in the menu beside
+     *  the products. The direct address keeps working either way, so nothing that already links to a
+     *  section breaks; it simply stops being advertised. */
+    settings?: { id: string; label: string; icon?: string; layout?: 'classic' | 'orbital'; placement?: 'page' | 'pluginDetail' }[];
     /** Flat English view strings for the bundle (labels, hints), keyed freely by the plugin. Locale
      *  overrides come from `i18n/<lang>.json` `web.strings`; /plugins/ui serves the merged record so
      *  bundle views localize without touching the app dictionaries. */
@@ -352,6 +360,7 @@ const ManifestSchema = Type.Object({
       label: Type.String({ minLength: 1 }),
       icon: Type.Optional(Type.String()),
       layout: Type.Optional(Type.Union([Type.Literal('classic'), Type.Literal('orbital')])),
+      placement: Type.Optional(Type.Union([Type.Literal('page'), Type.Literal('pluginDetail')])),
     }))),
     strings: Type.Optional(Type.Record(Type.String(), Type.String())),
   })),
