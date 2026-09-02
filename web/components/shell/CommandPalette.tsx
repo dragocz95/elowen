@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { CornerDownLeft } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginUi } from '../../lib/queries';
-import { buildSearchIndex, filterEntries, findNormalizedRange, SEARCH_GROUP_ORDER, type SearchEntry, type SearchGroup } from '../../lib/siteSearch';
+import { buildSearchIndex, filterEntries, findNormalizedRange, SEARCH_GROUP_ORDER, type SearchEntry, type SearchGroup } from './siteSearch';
 import { focusOverlaySurface, useOverlayIsolation } from '../ui/overlayStack';
 import { Dialog, DialogContent, DialogOverlay } from '../ui/shadcn/dialog';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from '../ui/shadcn/command';

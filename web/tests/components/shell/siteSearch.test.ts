@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { dictionaries } from '../../lib/i18n/dictionaries';
-import { MODULES } from '../../modules/registry';
-import { SETTINGS_SECTIONS } from '../../modules/settings/categories';
-import { buildSearchIndex, filterEntries, findNormalizedRange, normalizeText, searchFilter } from '../../lib/siteSearch';
-import type { PluginUiListing } from '../../lib/types';
+import { dictionaries } from '../../../lib/i18n/dictionaries';
+import { MODULES } from '../../../modules/registry';
+import { SETTINGS_SECTIONS } from '../../../modules/settings/categories';
+import { buildSearchIndex, filterEntries, findNormalizedRange, normalizeText, searchFilter } from '../../../components/shell/siteSearch';
+import type { PluginUiListing } from '../../../lib/types';
 
 const t = dictionaries.en;
 

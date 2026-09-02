@@ -1,11 +1,11 @@
 import type { LucideIcon } from 'lucide-react';
 import { Bell, Brain, Cpu, KeyRound, Sparkles, SquareTerminal, UserCog } from 'lucide-react';
-import type { LocaleDict } from './i18n/types';
-import { MODULES } from '../modules/registry';
-import { SETTINGS_SECTIONS, type SettingsCategory } from '../modules/settings/categories';
-import { PROVIDERS } from '../modules/settings/providers';
-import { pluginNavEntries } from './pluginNav';
-import type { PluginUiListing } from './types';
+import type { LocaleDict } from '../../lib/i18n/types';
+import { MODULES } from '../../modules/registry';
+import { SETTINGS_SECTIONS, type SettingsCategory } from '../../modules/settings/categories';
+import { PROVIDERS } from '../../modules/settings/providers';
+import { pluginNavEntries } from '../../lib/pluginNav';
+import type { PluginUiListing } from '../../lib/types';
 
 /** Where the site-wide search's rows come from. Every string below is DERIVED — a title is read out of
  *  the dictionary path the owning component already renders, a route out of the registry that owns it —
