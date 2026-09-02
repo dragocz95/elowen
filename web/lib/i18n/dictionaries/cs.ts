@@ -1174,7 +1174,7 @@ export const cs = {
       providerRequestRetentionDays: "Retence diagnostiky providerů",
       providerRequestRetentionDaysHint: "Jak dlouho zůstávají přesná těla požadavků providerům dostupná pro diagnostiku incidentů. Úklid odstraní vždy celou diagnostiku relace, nikdy část požadavku, a konverzace se nedotkne. Rozsah 1–90 dní, výchozí 14 dní.",
       providerRequestRetentionMiB: "Limit úložiště diagnostiky providerů",
-      providerRequestRetentionMiBHint: "Globální logický rozpočet pro přesnou diagnostiku požadavků providerům. Po jeho překročení úklid odstraní nejstarší celé diagnostické relace; konverzace i všechny zachované požadavky zůstanou nedotčené. Rozsah 64–16384 MiB, výchozí 1024 MiB.",
+      providerRequestRetentionMiBHint: "Globální logický rozpočet pro přesnou diagnostiku požadavků providerům v novém formátu. Po jeho překročení úklid odstraní nejstarší celé diagnostické relace; konverzace i všechny zachované požadavky zůstanou nedotčené. Starší capture se řídí věkovým limitem výše. Rozsah 64–16384 MiB, výchozí 1024 MiB.",
       originIpRetentionDays: "Retence IP adres",
       originIpRetentionDaysHint: "Jak dlouho zůstane zaznamenaná IP adresa klienta čitelná v přehledu spotřeby podle původu, než ji hodinový úklid nahradí zástupnou hodnotou. Součty tokenů a nákladů zůstanou zachovány, zmizí pouze adresa. Samotný záznam se odstraní později, podle retence protokolu aktivity výše. Rozsah 1–365 dní, výchozí 30 dní.",
       streamSilenceLimitMs: "Datový tok chatu — limit ticha",

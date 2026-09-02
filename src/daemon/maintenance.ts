@@ -143,7 +143,7 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
       } catch (e) { deps.log.error('provider request retention sweep failed', e); }
     };
     sweepProviderRequestRetention();
-    const stopProviderRequestRetention = clock.setInterval(sweepProviderRequestRetention, 3_600_000);
+    const stopProviderRequestRetention = clock.setInterval(sweepProviderRequestRetention, 300_000);
     // Origin accounting holds IP addresses, so it is swept in two steps rather than one. First the
     // address is redacted (the spend totals survive, the personal datum does not), on its own shorter
     // horizon; only later does the row go entirely, on the same retention window the activity log uses.

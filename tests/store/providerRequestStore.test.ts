@@ -92,6 +92,20 @@ describe('ProviderRequestStore', () => {
       .toEqual({ display_preview: 'message-0' });
     expect(db.prepare("SELECT stored_bytes > 0 positive FROM brain_request_session_summary WHERE session_id = 's1'").get())
       .toEqual({ positive: 1 });
+
+    let chainWrites = 0;
+    const originalPrepare = db.prepare.bind(db);
+    (db as unknown as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
+      if (/INSERT OR IGNORE INTO brain_request_segment_chains/.test(sql)) chainWrites += 1;
+      return originalPrepare(sql);
+    }) as typeof db.prepare;
+    messages.push({ role: 'user', content: 'message-50' });
+    requests.start({
+      sessionId: 's1', turnId: 'turn:50', kind: 'chat', configuredProvider: 'configured',
+      wireProvider: 'anthropic', api: 'anthropic-messages', model: 'wire-model',
+      payload: { ...body(), messages: [...messages] }, startedAt: 2_050,
+    });
+    expect(chainWrites).toBe(1); // only the appended input node; the stable tool chain performs no writes
   });
 
   it('keeps legacy V1 manifests readable without a data backfill', () => {
@@ -271,7 +285,8 @@ describe('ProviderRequestStore', () => {
     finish(brain, old.requestId);
     const recent = start(brain, 's2');
     finish(brain, recent.requestId);
-    db.prepare("UPDATE brain_request_session_summary SET last_request_at = 1000 WHERE session_id = 's1'").run();
+    db.prepare("UPDATE brain_provider_requests SET manifest_version = 1 WHERE session_id = 's1'").run();
+    db.prepare("UPDATE brain_request_session_summary SET last_request_at = 1000, stored_bytes = 0 WHERE session_id = 's1'").run();
     db.prepare("UPDATE brain_request_session_summary SET last_request_at = 2000 WHERE session_id = 's2'").run();
 
     expect(requests.pruneDiagnostics(1500, Number.MAX_SAFE_INTEGER)).toMatchObject({ sessions: 1 });

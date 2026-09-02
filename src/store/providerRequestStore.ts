@@ -51,6 +51,14 @@ interface StoredValue<T> {
   storedBytes: number;
 }
 
+interface PreparedSegment {
+  value: ProviderRequestSegmentIdentity;
+  payload: string;
+  byteLength: number;
+  estimatedTokens: number;
+  display: NonNullable<ProviderRequestSegmentRef['display']>;
+}
+
 export interface ProviderRequestAttemptInput {
   sessionId: string;
   turnId: string;
@@ -241,51 +249,71 @@ function segmentDisplay(kind: string, value: unknown): NonNullable<ProviderReque
 export class ProviderRequestStore {
   constructor(private readonly db: Db) {}
 
-  private putSegment(sessionId: string, kind: string, value: unknown): StoredValue<ProviderRequestSegmentIdentity> {
+  private prepareSegment(kind: string, value: unknown): PreparedSegment {
     const version = PROVIDER_REQUEST_CANONICALIZATION_VERSION;
     const payload = canonicalProviderJson(value);
-    const digest = createHash('sha256').update(`${version}\0${kind}\0${payload}`).digest('hex');
-    const bytes = Buffer.byteLength(payload);
-    const display = segmentDisplay(kind, value);
+    const byteLength = Buffer.byteLength(payload);
+    return {
+      value: {
+        kind,
+        digest: createHash('sha256').update(`${version}\0${kind}\0${payload}`).digest('hex'),
+        canonicalizationVersion: version,
+      },
+      payload,
+      byteLength,
+      estimatedTokens: Math.ceil(byteLength / 4),
+      display: segmentDisplay(kind, value),
+    };
+  }
+
+  private storeSegment(sessionId: string, segment: PreparedSegment): StoredValue<ProviderRequestSegmentIdentity> {
+    const { value, payload, byteLength, estimatedTokens, display } = segment;
     const inserted = this.db.prepare(
       `INSERT OR IGNORE INTO brain_request_segments
          (session_id, kind, digest, canonicalization_version, payload, byte_length, estimated_tokens,
           display_role, display_label, display_preview, v2_referenced)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
     ).run(
-      sessionId, kind, digest, version, payload, bytes, Math.ceil(bytes / 4),
+      sessionId, value.kind, value.digest, value.canonicalizationVersion, payload, byteLength, estimatedTokens,
       display.role ?? null, display.label ?? null, display.preview ?? null,
     ).changes === 1;
     const stored = this.db.prepare(
       `SELECT payload, display_role, display_label, display_preview, v2_referenced
          FROM brain_request_segments
         WHERE session_id = ? AND kind = ? AND digest = ? AND canonicalization_version = ?`
-    ).get(sessionId, kind, digest, version) as {
+    ).get(sessionId, value.kind, value.digest, value.canonicalizationVersion) as {
       payload: string; display_role: string | null; display_label: string | null;
       display_preview: string | null; v2_referenced: number;
     } | undefined;
     if (!stored || stored.payload !== payload) {
-      throw new Error(`provider request segment digest collision for ${sessionId}/${kind}/${digest}`);
+      throw new Error(`provider request segment digest collision for ${sessionId}/${value.kind}/${value.digest}`);
     }
     let firstV2Reference = inserted;
     if (!inserted && stored.v2_referenced !== 1) {
       this.db.prepare(
         `UPDATE brain_request_segments SET display_role = ?, display_label = ?, display_preview = ?, v2_referenced = 1
           WHERE session_id = ? AND kind = ? AND digest = ? AND canonicalization_version = ?`
-      ).run(display.role ?? null, display.label ?? null, display.preview ?? null, sessionId, kind, digest, version);
+      ).run(
+        display.role ?? null, display.label ?? null, display.preview ?? null,
+        sessionId, value.kind, value.digest, value.canonicalizationVersion,
+      );
       firstV2Reference = true;
     } else if (!inserted && (
       stored.display_role !== (display.role ?? null)
       || stored.display_label !== (display.label ?? null)
       || stored.display_preview !== (display.preview ?? null)
     )) {
-      throw new Error(`provider request segment display mismatch for ${sessionId}/${kind}/${digest}`);
+      throw new Error(`provider request segment display mismatch for ${sessionId}/${value.kind}/${value.digest}`);
     }
     const displayBytes = Buffer.byteLength(display.role ?? '') + Buffer.byteLength(display.label ?? '') + Buffer.byteLength(display.preview ?? '');
     return {
-      value: { kind, digest, canonicalizationVersion: version },
-      storedBytes: firstV2Reference ? SEGMENT_STORAGE_OVERHEAD + bytes + displayBytes : 0,
+      value,
+      storedBytes: firstV2Reference ? SEGMENT_STORAGE_OVERHEAD + byteLength + displayBytes : 0,
     };
+  }
+
+  private putSegment(sessionId: string, kind: string, value: unknown): StoredValue<ProviderRequestSegmentIdentity> {
+    return this.storeSegment(sessionId, this.prepareSegment(kind, value));
   }
 
   private segmentPayload(sessionId: string, ref: ProviderRequestSegmentIdentity): unknown {
@@ -297,56 +325,80 @@ export class ProviderRequestStore {
     return JSON.parse(row.payload) as unknown;
   }
 
-  private putChain(sessionId: string, kind: string, values: unknown[]): StoredValue<ProviderRequestChainRoot> {
+  private putChain(
+    sessionId: string,
+    kind: string,
+    values: unknown[],
+    previousRoot?: ProviderRequestChainRoot,
+  ): StoredValue<ProviderRequestChainRoot> {
+    const segments = values.map((value) => this.prepareSegment(kind, value));
     let previousDigest: string | null = null;
+    const nodes = segments.map((segment, index) => {
+      const node = {
+        digest: createHash('sha256').update(
+          `${PROVIDER_REQUEST_CHAIN_VERSION}\0${previousDigest ?? ''}\0${segment.value.kind}\0${segment.value.digest}\0${segment.value.canonicalizationVersion}`,
+        ).digest('hex'),
+        previousDigest,
+        segment,
+        count: index + 1,
+      };
+      previousDigest = node.digest;
+      return node;
+    });
+    const root = { digest: previousDigest, count: nodes.length };
+    const finalNode = nodes.at(-1);
+    if (!finalNode) return { value: root, storedBytes: 0 };
+
+    const storedRoot = this.db.prepare(
+      `SELECT previous_digest, item_kind, item_digest, item_canonicalization_version, item_count
+         FROM brain_request_segment_chains WHERE session_id = ? AND digest = ?`
+    ).get(sessionId, finalNode.digest) as {
+      previous_digest: string | null; item_kind: string; item_digest: string;
+      item_canonicalization_version: number; item_count: number;
+    } | undefined;
+    if (storedRoot) {
+      if (storedRoot.previous_digest !== finalNode.previousDigest
+        || storedRoot.item_kind !== finalNode.segment.value.kind
+        || storedRoot.item_digest !== finalNode.segment.value.digest
+        || storedRoot.item_canonicalization_version !== finalNode.segment.value.canonicalizationVersion
+        || storedRoot.item_count !== finalNode.count) {
+        throw new Error(`provider request chain digest collision for ${sessionId}/${finalNode.digest}`);
+      }
+      return { value: root, storedBytes: 0 };
+    }
+
+    const reusedPrefix = previousRoot
+      && previousRoot.count > 0
+      && previousRoot.count <= nodes.length
+      && nodes[previousRoot.count - 1]?.digest === previousRoot.digest
+      ? previousRoot.count
+      : 0;
     let storedBytes = 0;
-    let count = 0;
-    let rootInserted = true;
-    let rootPreviousDigest: string | null = null;
-    let rootSegment: ProviderRequestSegmentIdentity | null = null;
-    for (const value of values) {
-      const segment = this.putSegment(sessionId, kind, value);
+    for (let index = reusedPrefix; index < nodes.length; index += 1) {
+      const node = nodes[index]!;
+      const segment = this.storeSegment(sessionId, node.segment);
       storedBytes += segment.storedBytes;
-      count += 1;
-      const nodeDigest: string = createHash('sha256').update(
-        `${PROVIDER_REQUEST_CHAIN_VERSION}\0${previousDigest ?? ''}\0${segment.value.kind}\0${segment.value.digest}\0${segment.value.canonicalizationVersion}`,
-      ).digest('hex');
-      rootPreviousDigest = previousDigest;
-      rootSegment = segment.value;
-      rootInserted = this.db.prepare(
+      const inserted = this.db.prepare(
         `INSERT OR IGNORE INTO brain_request_segment_chains
            (session_id, digest, previous_digest, item_kind, item_digest, item_canonicalization_version, item_count)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
       ).run(
-        sessionId, nodeDigest, previousDigest, segment.value.kind, segment.value.digest,
-        segment.value.canonicalizationVersion, count,
+        sessionId, node.digest, node.previousDigest, segment.value.kind, segment.value.digest,
+        segment.value.canonicalizationVersion, node.count,
       ).changes === 1;
-      if (rootInserted) storedBytes += CHAIN_NODE_STORAGE_OVERHEAD;
-      previousDigest = nodeDigest;
-    }
-    // Every prefix digest commits to the preceding digest and item. Validating the final node is enough to
-    // detect an INSERT conflict while avoiding one extra SELECT for every historical message on every call.
-    if (previousDigest && !rootInserted && rootSegment) {
-      const stored = this.db.prepare(
-        `SELECT previous_digest, item_kind, item_digest, item_canonicalization_version, item_count
-           FROM brain_request_segment_chains WHERE session_id = ? AND digest = ?`
-      ).get(sessionId, previousDigest) as {
-        previous_digest: string | null; item_kind: string; item_digest: string;
-        item_canonicalization_version: number; item_count: number;
-      } | undefined;
-      if (!stored
-        || stored.previous_digest !== rootPreviousDigest
-        || stored.item_kind !== rootSegment.kind
-        || stored.item_digest !== rootSegment.digest
-        || stored.item_canonicalization_version !== rootSegment.canonicalizationVersion
-        || stored.item_count !== count) {
-        throw new Error(`provider request chain digest collision for ${sessionId}/${previousDigest}`);
+      if (inserted) storedBytes += CHAIN_NODE_STORAGE_OVERHEAD;
+      else if (index === nodes.length - 1) {
+        throw new Error(`provider request chain root appeared during write: ${sessionId}/${node.digest}`);
       }
     }
-    return { value: { digest: previousDigest, count }, storedBytes };
+    return { value: root, storedBytes };
   }
 
-  private splitPayload(sessionId: string, payload: unknown): StoredValue<ProviderRequestManifestV2> {
+  private splitPayload(
+    sessionId: string,
+    payload: unknown,
+    previous?: ProviderRequestManifestV2,
+  ): StoredValue<ProviderRequestManifestV2> {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       const options = this.putSegment(sessionId, 'options', payload);
       return { value: { options: options.value }, storedBytes: options.storedBytes };
@@ -364,13 +416,13 @@ export class ProviderRequestStore {
     }
     const inputKey = Array.isArray(source.messages) ? 'messages' : Array.isArray(source.input) ? 'input' : undefined;
     if (inputKey) {
-      const input = this.putChain(sessionId, 'input', source[inputKey] as unknown[]);
+      const input = this.putChain(sessionId, 'input', source[inputKey] as unknown[], previous?.input?.chain);
       manifest.input = { key: inputKey, chain: input.value };
       storedBytes += input.storedBytes;
       delete options[inputKey];
     }
     if (Array.isArray(source.tools)) {
-      const tools = this.putChain(sessionId, 'tool', source.tools);
+      const tools = this.putChain(sessionId, 'tool', source.tools, previous?.tools?.chain);
       manifest.tools = { key: 'tools', chain: tools.value };
       storedBytes += tools.storedBytes;
       delete options.tools;
@@ -387,12 +439,17 @@ export class ProviderRequestStore {
         `SELECT request_id FROM brain_provider_requests WHERE session_id = ? AND status = 'pending' LIMIT 1`
       ).get(input.sessionId) as { request_id: string } | undefined;
       if (pending) throw new Error(`provider request correlation invariant: pending attempt ${pending.request_id} already exists`);
-      const seq = (this.db.prepare(
-        'SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM brain_provider_requests WHERE session_id = ?'
-      ).get(input.sessionId) as { seq: number }).seq;
+      const previous = this.db.prepare(
+        `SELECT seq, manifest_version, manifest FROM brain_provider_requests
+          WHERE session_id = ? ORDER BY seq DESC LIMIT 1`
+      ).get(input.sessionId) as { seq: number; manifest_version: number; manifest: string } | undefined;
+      const seq = (previous?.seq ?? 0) + 1;
+      const previousManifest = previous?.manifest_version === PROVIDER_REQUEST_MANIFEST_VERSION
+        ? JSON.parse(previous.manifest) as ProviderRequestManifestV2
+        : undefined;
       const requestId = randomUUID();
       const startedAt = input.startedAt ?? Date.now();
-      const manifest = this.splitPayload(input.sessionId, input.payload);
+      const manifest = this.splitPayload(input.sessionId, input.payload, previousManifest);
       const manifestJson = JSON.stringify(manifest.value);
       const storedBytes = manifest.storedBytes + REQUEST_STORAGE_OVERHEAD + Buffer.byteLength(manifestJson);
       this.db.prepare(
@@ -916,7 +973,7 @@ export class ProviderRequestStore {
       const expired = this.db.prepare(
         `SELECT summary.session_id, summary.stored_bytes
            FROM brain_request_session_summary summary
-          WHERE summary.stored_bytes > 0 AND summary.last_request_at IS NOT NULL AND summary.last_request_at < ?
+          WHERE summary.last_request_at IS NOT NULL AND summary.last_request_at < ?
             AND NOT EXISTS (
               SELECT 1 FROM brain_provider_requests request
                WHERE request.session_id = summary.session_id AND request.status = 'pending'

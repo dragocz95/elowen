@@ -1169,7 +1169,7 @@ export const sk = {
       providerRequestRetentionDays: "Retencia diagnostiky providerov",
       providerRequestRetentionDaysHint: "Ako dlho zostanú presné telá požiadaviek providerom dostupné na diagnostiku incidentov. Upratovanie odstráni vždy celú diagnostiku relácie, nikdy časť požiadavky, a konverzácie sa nedotkne. Rozsah 1–90 dní, predvolené 14 dní.",
       providerRequestRetentionMiB: "Limit úložiska diagnostiky providerov",
-      providerRequestRetentionMiBHint: "Globálny logický rozpočet pre presnú diagnostiku požiadaviek providerom. Po jeho prekročení upratovanie odstráni najstaršie celé diagnostické relácie; konverzácie aj všetky zachované požiadavky zostanú nedotknuté. Rozsah 64–16384 MiB, predvolené 1024 MiB.",
+      providerRequestRetentionMiBHint: "Globálny logický rozpočet pre presnú diagnostiku požiadaviek providerom v novom formáte. Po jeho prekročení upratovanie odstráni najstaršie celé diagnostické relácie; konverzácie aj všetky zachované požiadavky zostanú nedotknuté. Starší capture sa riadi vekovým limitom vyššie. Rozsah 64–16384 MiB, predvolené 1024 MiB.",
       originIpRetentionDays: "Retencia IP adries",
       originIpRetentionDaysHint: "Ako dlho zostane zaznamenaná IP adresa klienta čitateľná v prehľade spotreby podľa pôvodu, než ju hodinové upratovanie nahradí zástupnou hodnotou. Súčty tokenov a nákladov zostanú zachované, zmizne iba adresa. Samotný záznam sa odstráni neskôr, podľa retencie protokolu aktivity vyššie. Rozsah 1–365 dní, predvolené 30 dní.",
       streamSilenceLimitMs: "Dátový tok chatu — limit ticha",

@@ -1195,7 +1195,7 @@ export const en = {
       providerRequestRetentionDays: "Provider diagnostics retention",
       providerRequestRetentionDaysHint: "How long exact provider request bodies remain available for incident diagnosis. Cleanup removes a whole diagnostic session, never part of a request, and leaves the conversation untouched. Range 1-90 days, default 14 days.",
       providerRequestRetentionMiB: "Provider diagnostics storage limit",
-      providerRequestRetentionMiBHint: "The global logical storage budget for exact provider request diagnostics. Above it, cleanup removes the oldest complete diagnostic sessions while preserving conversations and every request that remains. Range 64-16384 MiB, default 1024 MiB.",
+      providerRequestRetentionMiBHint: "The global logical storage budget for new-format exact provider request diagnostics. Above it, cleanup removes the oldest complete diagnostic sessions while preserving conversations and every request that remains; legacy captures are governed by the age limit above. Range 64-16384 MiB, default 1024 MiB.",
       originIpRetentionDays: "IP address retention",
       originIpRetentionDaysHint: "How long a recorded client IP stays readable in the usage-by-origin view before the hourly cleanup replaces it with a placeholder. The token and cost totals survive; only the address goes. The row itself is removed later, on the activity log retention above. Range 1-365 days, default 30 days.",
       streamSilenceLimitMs: "Chat stream — silence limit",
