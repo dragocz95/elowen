@@ -13,6 +13,26 @@ const MAX_BODY = 2000;
 const MAX_ITEM_ID = 64;
 const MAX_OWNER = 64;
 const MAX_BLOCKED_BY = 20;
+// How many RAW entries the scan may look at before it gives up. The kept-entry cap alone bounds the
+// output but not the work: `emitCard` runs on the daemon's event loop, so a plugin sending a
+// million-element `blockedBy` would buy a million trims for a list that can never hold more than twenty.
+// Comfortably above MAX_BLOCKED_BY so an array padded with a few non-strings still yields a full list.
+const MAX_BLOCKED_BY_SCAN = 200;
+
+/** The unresolved blockers of one row, bounded on BOTH ends: at most MAX_BLOCKED_BY entries kept, and at
+ *  most MAX_BLOCKED_BY_SCAN raw entries inspected to find them. Whichever comes first stops the loop. */
+function normalizeBlockedBy(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const ids: string[] = [];
+  const scan = Math.min(raw.length, MAX_BLOCKED_BY_SCAN);
+  for (let index = 0; index < scan && ids.length < MAX_BLOCKED_BY; index += 1) {
+    const value: unknown = raw[index];
+    if (typeof value !== 'string') continue;
+    const id = value.trim().slice(0, MAX_ITEM_ID);
+    if (id) ids.push(id);
+  }
+  return ids;
+}
 
 /** The structured, additive half of a checklist row (see BrainCardItem). Absent fields are simply not
  *  emitted, so an item stays byte-identical to what an older producer sent. */
@@ -20,11 +40,7 @@ function normalizeItemDetail(item: Record<string, unknown>): Omit<BrainCardItem,
   const id = typeof item.id === 'string' ? item.id.trim().slice(0, MAX_ITEM_ID) : '';
   const label = typeof item.label === 'string' ? item.label.trim().slice(0, MAX_TEXT) : '';
   const owner = typeof item.owner === 'string' ? item.owner.trim().slice(0, MAX_OWNER) : '';
-  const blockedBy = (Array.isArray(item.blockedBy) ? item.blockedBy : [])
-    .filter((value): value is string => typeof value === 'string')
-    .map((value) => value.trim().slice(0, MAX_ITEM_ID))
-    .filter((value) => value !== '')
-    .slice(0, MAX_BLOCKED_BY);
+  const blockedBy = normalizeBlockedBy(item.blockedBy);
   return {
     ...(id ? { id } : {}),
     ...(label ? { label } : {}),
