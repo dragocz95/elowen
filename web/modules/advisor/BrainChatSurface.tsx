@@ -1,8 +1,8 @@
 'use client';
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, CheckCircle2, Circle, CircleDot } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
@@ -16,11 +16,15 @@ import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } f
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button, buttonClassName } from '../../components/ui/Button';
+import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
+import { Checkbox } from '../../components/ui/shadcn/checkbox';
+import { Progress } from '../../components/ui/shadcn/progress';
 import { Input } from '../../components/ui/Input';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { AskQuestionCard } from './AskQuestionCard';
 import { AgentsTable } from './AgentsTable';
+import { BlockedTip } from './BlockedTip';
 import { StatsModal } from './StatsModal';
 import { ReasoningModal } from './ReasoningModal';
 import { SkillsModal } from './SkillsModal';
@@ -49,9 +53,11 @@ import {
   composingLabel,
   todoPreviewItems,
   type ComposeLocale,
+  type TodoPreviewItem,
 } from '../../lib/chatPresentation';
-import { cardTasks, cardTasksAddressable } from '../../lib/railTasks';
+import { cardTasks, cardTasksAddressable, type RailTask } from '../../lib/railTasks';
 import { useSessionTasks } from '../../lib/queries';
+import { useUpdateSessionTask } from '../../lib/mutations';
 import { InlineArtifact } from './InlineArtifact';
 
 const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
@@ -160,17 +166,17 @@ function ToolOutputBlock({ output }: { output: NonNullable<ToolItem['output']> }
   );
 }
 
-/** A display card (ctx.emitCard) — the web mirror of the CLI/Discord panel: a clickable title row with a
- *  done/total count that collapses the card, a checklist (done struck through + green, in-progress
- *  accented, pending muted) previewed to its first items, and an optional freeform body. The todo
- *  checklist is the canonical card. A checklist with everything ticked leaves the transcript entirely —
- *  the CLI panel drops it the same way, because a finished list has nothing left to track. */
-export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
-  const { t } = useTranslation();
+/** Fold state, preview window and the elapsed clock — everything a card rendering needs that is NOT about
+ *  what a row looks like, in one place so the read-only and the interactive card cannot drift apart on how
+ *  a card folds or how fast it ticks.
+ *
+ *  The clock is a local interval rather than the shared `useNow` heartbeat because it is allowed to stop:
+ *  it runs only while the turn is live AND some row is actually running, so a settled transcript full of
+ *  finished cards holds no timer at all. */
+function useCardShell<T extends TodoPreviewItem & { startedAt?: number }>(items: readonly T[], live: boolean) {
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const items = card.items ?? [];
   const ticking = live && items.some((item) => item.status === 'in_progress' && Number.isFinite(item.startedAt));
   useEffect(() => {
     setNow(Date.now());
@@ -178,23 +184,64 @@ export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
     const id = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(id);
   }, [ticking]);
+  const previewable = items.length > TODO_PREVIEW_ITEMS;
+  const shown = collapsed ? [] : previewable && !expanded ? todoPreviewItems(items, TODO_PREVIEW_ITEMS) : [...items];
+  return { collapsed, setCollapsed, expanded, setExpanded, now, previewable, shown };
+}
+
+/** The chevron + title + done/total head both card renderings share, and the fold's only trigger.
+ *
+ *  Anything else the head carries rides BESIDE the button rather than inside it: a `<button>` may hold
+ *  phrasing content only, so the todo card's meter (a `progressbar`) and its way into the task list (a
+ *  second button) cannot be nested in the one that folds the card. */
+function CardHead({ title, done, total, collapsed, onToggle, trailing }: {
+  title: string;
+  done: number;
+  total: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  trailing?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ChevronRight size={11} aria-hidden className={`shrink-0 opacity-60 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
+        <span className="truncate">{title}</span>
+        {total > 0 ? <span className="shrink-0 tabular-nums opacity-70">{done}/{total}</span> : null}
+      </button>
+      {trailing}
+    </div>
+  );
+}
+
+/** A card nobody can act on: another plugin's checklist, or a todo card emitted before task ids existed.
+ *  It is the rendering the transcript has always had — a glyph, the glued `text` the emitter composed, and
+ *  a struck-through line once a row is done.
+ *
+ *  Read-only is a CORRECTNESS rule, not a missing feature. Card items are a generic mechanism, so a plugin
+ *  may emit rows with ids of its own; those ids are its handles, and a tick box built from one would PATCH
+ *  the todo API with something that means nothing there. */
+function StaticCard({ card, live }: { card: BrainCard; live: boolean }) {
+  const { t } = useTranslation();
+  const items = card.items ?? [];
+  const { collapsed, setCollapsed, expanded, setExpanded, now, previewable, shown } = useCardShell(items, live);
   const done = items.filter((i) => i.status === 'completed').length;
   if (items.length > 0 && done === items.length) return null;
-  const previewable = items.length > TODO_PREVIEW_ITEMS;
-  const shown = collapsed ? [] : previewable && !expanded ? todoPreviewItems(items, TODO_PREVIEW_ITEMS) : items;
   return (
     <div data-testid="chat-card" className="flex flex-col leading-relaxed">
       {(card.title || items.length > 0) ? (
-        <button
-          type="button"
-          onClick={() => setCollapsed((v) => !v)}
-          aria-expanded={!collapsed}
-          className="flex w-full items-center gap-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ChevronRight size={11} aria-hidden className={`shrink-0 opacity-60 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
-          <span className="truncate">{card.title ?? t.brainChat.cardFallback}</span>
-          {items.length > 0 ? <span className="tabular-nums opacity-70">{done}/{items.length}</span> : null}
-        </button>
+        <CardHead
+          title={card.title ?? t.brainChat.cardFallback}
+          done={done}
+          total={items.length}
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((v) => !v)}
+        />
       ) : null}
       {shown.length > 0 ? (
         <ul className="flex flex-col gap-0.5">
@@ -221,6 +268,168 @@ export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
       {!collapsed && card.body ? <div className="whitespace-pre-wrap break-words text-muted-foreground">{card.body}</div> : null}
     </div>
   );
+}
+
+/** One task of the transcript's todo card: a tick box, the label, and everything else behind the label.
+ *
+ *  Two controls, and deliberately only two. The box covers the move the list is opened for — finishing a
+ *  task, or reopening one ticked too early — and the LABEL is the row menu's trigger, which is what makes
+ *  the third status, and the way into the full list, reachable by the same tap that reads the row. Nothing
+ *  is revealed on hover: this card is the checklist a phone gets, and a control that only exists under a
+ *  pointer does not exist there at all.
+ *
+ *  The vocabulary is the rail's Tasks section, down to the aria-labels, so ticking a row off feels the
+ *  same whichever of the two is on screen. */
+function TodoCardRow({ row, now, disabled, onStatus, onOpen }: {
+  row: RailTask;
+  now: number;
+  disabled: boolean;
+  onStatus: (row: RailTask, status: RailTask['status']) => void;
+  onOpen: () => void;
+}) {
+  const { t } = useTranslation();
+  const blocked = row.status === 'pending' && row.blockedBy.length > 0;
+  const elapsed = row.status === 'in_progress' && Number.isFinite(row.startedAt)
+    ? formatDuration(now - row.startedAt!)
+    : null;
+  const actions: ActionMenuItem[] = [
+    { label: t.tasksModal.statusPending, icon: Circle, onSelect: () => onStatus(row, 'pending') },
+    { label: t.tasksModal.statusInProgress, icon: CircleDot, onSelect: () => onStatus(row, 'in_progress') },
+    { label: t.tasksModal.statusCompleted, icon: CheckCircle2, onSelect: () => onStatus(row, 'completed') },
+    { label: t.telemetry.tasksOpen, icon: ListChecks, onSelect: onOpen },
+  ];
+  return (
+    <li data-testid="chat-card-row" className="flex min-h-8 items-center gap-2">
+      <Checkbox
+        // `indeterminate` is what running work looks like: the box is filled, but with the platform's own
+        // "some, not all" dash rather than a tick that would read as finished.
+        checked={row.status === 'completed' ? true : row.status === 'in_progress' ? 'indeterminate' : false}
+        disabled={disabled}
+        onCheckedChange={() => onStatus(row, row.status === 'completed' ? 'pending' : 'completed')}
+        aria-label={`${row.status === 'completed' ? t.tasksModal.markPending : t.tasksModal.markCompleted}: ${row.label}`}
+        className="shrink-0"
+      />
+      {/* The menu wrapper is a plain block, so the flex share is claimed here and the label inside it can
+          truncate instead of setting the row's minimum width. */}
+      <span className="min-w-0 flex-1">
+        <ActionMenu
+          items={actions}
+          label={`${t.tasksModal.taskActions}: ${row.label}`}
+          align="left"
+          triggerClassName="flex min-h-8 w-full min-w-0 items-center gap-1.5 rounded px-1 text-left transition-colors hover:bg-accent"
+          trigger={
+            <>
+              <span className={`min-w-0 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}>
+                {row.label}
+              </span>
+              {elapsed ? (
+                <span data-testid="chat-card-elapsed" className="shrink-0 tabular-nums text-primary">· {elapsed}</span>
+              ) : null}
+              {row.owner ? (
+                <span className="ml-auto shrink-0 truncate text-muted-foreground">{row.owner}</span>
+              ) : null}
+            </>
+          }
+        />
+      </span>
+      {blocked ? <BlockedTip ids={row.blockedBy} testId="chat-card-blocked" /> : null}
+    </li>
+  );
+}
+
+/** The conversation's checklist, where it has always been — the last thing above the composer — and now
+ *  something the reader can work rather than only read.
+ *
+ *  This is the ONLY checklist on screen whenever the telemetry rail is not carrying its Tasks section: a
+ *  collapsed rail on a desktop, and every phone, which has no dock at all. So it holds the same three
+ *  moves the rail does — tick, change status, open the full list — in a shape that survives a 390px
+ *  screen: no hover reveals, a real menu behind the label, and the meter and the fold in the head rather
+ *  than a second row of chrome.
+ *
+ *  A mutation lands here through the ordinary PATCH and then rebuilds the card from the response
+ *  (`syncSessionTasks`), because the todo plugin's HTTP routes answer the caller without re-emitting the
+ *  panel. Nothing is written into the card before the daemon agrees, so a refused patch leaves the row
+ *  exactly as it was and the failure is reported rather than swallowed. */
+function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTask[]; live: boolean }) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const { activeSessionId, setTasksOpen, syncSessionTasks } = useBrainChat();
+  const updateTask = useUpdateSessionTask();
+  const { collapsed, setCollapsed, expanded, setExpanded, now, previewable, shown } = useCardShell(rows, live);
+  const done = rows.filter((row) => row.status === 'completed').length;
+  const openTasks = (): void => setTasksOpen(true);
+  const setStatus = (row: RailTask, status: RailTask['status']): void => {
+    if (!activeSessionId || !row.id || status === row.status) return;
+    updateTask.mutate(
+      { sessionId: activeSessionId, taskId: row.id, status },
+      { onSuccess: (result) => syncSessionTasks(result.tasks), onError: (error: Error) => toast(error.message, 'error') },
+    );
+  };
+  if (done === rows.length) return null;
+  return (
+    <div data-testid="chat-card" className="flex flex-col leading-relaxed">
+      <CardHead
+        title={card.title ?? t.brainChat.cardFallback}
+        done={done}
+        total={rows.length}
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((v) => !v)}
+        trailing={
+          <>
+            <Progress className="h-1 w-16 shrink-0" value={(done / rows.length) * 100} aria-label={t.telemetry.tasks} />
+            {/* Renaming, deleting and the bulk clears live in the modal — the card stays a checklist. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              data-testid="chat-card-open-tasks"
+              onClick={openTasks}
+              aria-label={t.telemetry.tasksOpen}
+              title={t.telemetry.tasksOpen}
+              className="size-8 shrink-0 rounded"
+            >
+              <ListChecks size={13} aria-hidden />
+            </Button>
+          </>
+        }
+      />
+      {shown.length > 0 ? (
+        <ul className="flex flex-col">
+          {shown.map((row) => (
+            <TodoCardRow
+              key={row.id}
+              row={row}
+              now={now}
+              disabled={updateTask.isPending}
+              onStatus={setStatus}
+              onOpen={openTasks}
+            />
+          ))}
+        </ul>
+      ) : null}
+      {!collapsed && previewable ? (
+        <div className="mt-1">
+          <MorePill expanded={expanded} hidden={rows.length - TODO_PREVIEW_ITEMS} onToggle={() => setExpanded((v) => !v)} />
+        </div>
+      ) : null}
+      {!collapsed && card.body ? <div className="whitespace-pre-wrap break-words text-muted-foreground">{card.body}</div> : null}
+    </div>
+  );
+}
+
+/** A display card (ctx.emitCard) — the web mirror of the CLI/Discord panel: a title row with a done/total
+ *  count that collapses the card, a checklist previewed to its first items, and an optional freeform body.
+ *  A checklist with everything ticked leaves the transcript entirely — the CLI panel drops it the same
+ *  way, because a finished list has nothing left to track.
+ *
+ *  Which of the two renderings a card gets is decided by the SAME pair the rail's Tasks section uses, and
+ *  not by a second opinion of its own: `cardTasks` answers for the todo card and nothing else (it matches
+ *  on `TODO_CARD_ID`), and `cardTasksAddressable` refuses a half-addressable list, so a card older than
+ *  task ids falls back to the read-only rendering instead of offering controls that work on some rows. */
+export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
+  const rows = useMemo(() => cardTasks([card]), [card]);
+  return cardTasksAddressable(rows)
+    ? <TodoCard card={card} rows={rows} live={live} />
+    : <StaticCard card={card} live={live} />;
 }
 
 /** The assistant's tool calls, rendered as tight monospace log rows stacked directly under each other —
