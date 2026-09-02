@@ -2,7 +2,7 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, CheckCircle2, Circle, CircleDot } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, CheckCircle2, Circle, CircleDot } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
@@ -1536,15 +1536,20 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               included. Only the frameless design, which has no page slot, keeps this as its own local
               sticky bar. */}
           <div aria-hidden className="chat-page-toolbar__fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-background to-transparent" />
+          {/* The conversation's own name is the switcher: the one thing a reader looks for when they want
+              another conversation is the name of this one. It opens the shared history drawer (list,
+              search, rename, new) — no second list, no second control. */}
           {onOpenHistory ? (
             <button
               type="button"
               onClick={onOpenHistory}
               aria-label={t.chat.openHistory}
               title={t.chat.openHistory}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              data-testid="chat-conversation-switcher"
+              className="flex h-8 min-w-0 max-w-[18rem] shrink items-center gap-1 rounded-md px-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
             >
-              <PanelLeft size={18} aria-hidden />
+              <span className="truncate">{active?.title || t.brainChat.newChat}</span>
+              <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
             </button>
           ) : null}
           {/* On a phone the model picker and work-mode pill fold into the ⋯ menu below; on desktop they

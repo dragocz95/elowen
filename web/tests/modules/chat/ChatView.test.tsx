@@ -69,11 +69,10 @@ function renderChat(node: ReactNode) {
 describe('ChatView (/chat page)', () => {
   it('hosts the full surface off ONE controller / ONE EventSource, history hidden by default', async () => {
     renderChat(<ChatView />);
-    // The full composer mounts; conversation names stay in the history surface rather than consuming the
-    // narrow page toolbar. Neither the active nor an inactive row renders until history is opened.
+    // The full composer mounts. The ACTIVE conversation's name is in the toolbar — it is the switcher that
+    // opens the history — while the other conversations stay in the history surface until it is opened.
     expect(await screen.findByPlaceholderText(/Write a message|Napište zprávu/i)).toBeInTheDocument();
-    expect(document.querySelector('.chat-page-toolbar__title')).toBeNull();
-    expect(screen.queryByText('First chat')).toBeNull();
+    expect(await screen.findByTestId('chat-conversation-switcher')).toHaveTextContent('First chat');
     expect(screen.queryByText('Second chat')).toBeNull();
     // …and exactly one stream is opened (no second controller / no reconnect).
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
@@ -94,7 +93,7 @@ describe('ChatView (/chat page)', () => {
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
   });
 
-  it('opens the mobile history drawer from the surface header button', async () => {
+  it('opens the history drawer from the conversation name in the toolbar', async () => {
     renderChat(<ChatView />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
     // Drawer closed: its dialog is aria-hidden and not in the a11y tree.
