@@ -1634,8 +1634,8 @@ describe('chat application shell ownership', () => {
 
   it('stops a manual rail drag before the Context line has to drop its tokens or percentage', async () => {
     const h = compositionHarness({ columns: 120, rows: 24, turns: 0 });
-    // A realistic long-usage state: "200k / 200k tokens · 100% · $888.46" needs more than the rail's
-    // fixed 36-column minimum, so before the floor existed dragging all the way in ate the token count.
+    // A realistic long-usage state. "200k / 200k tokens · 100%" fits the rail's 36-column minimum once
+    // the cost has moved into the Context header, so the drag reaches the minimum with nothing lost.
     h.rt.usage = { tokens: 199_999, contextWindow: 200_000, percent: 99.9, totalTokens: 199_999, cost: 888.46 };
     const composition = makeComposition(h);
     composition.resume();
@@ -1649,8 +1649,9 @@ describe('chat application shell ownership', () => {
 
     const { width, rail } = await dragRailToNarrowest(h);
 
-    // The user simply cannot reach a width that truncates the summary line.
-    expect(width).toBeGreaterThan(TELEMETRY_MIN_COLUMNS);
+    // The user simply cannot reach a width that truncates the summary line — and for this usage that
+    // floor is the rail minimum itself, because the price relocates rather than blocking the drag.
+    expect(width).toBe(TELEMETRY_MIN_COLUMNS);
     expect(rail).toContain('200k / 200k');
     expect(rail).toContain('100%');
     expect(rail).toContain('$888.46');

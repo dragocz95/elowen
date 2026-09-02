@@ -61,6 +61,19 @@ interface TelemetrySection {
   minimumRows: number;
 }
 
+/** How the Context section is asked to place the session cost. `auto` is what rendering uses: prefer the
+ *  full `tokens · % · $` line and only move the cost into the header when it does not fit. `narrow` is
+ *  the measurement mode for {@link TelemetryPanel.contextRequiredWidth}, which asks what the rail needs
+ *  once the cost has already moved. */
+type ContextLayout = 'auto' | 'narrow';
+
+interface ContextSummary {
+  /** The summary row, indented like every other rail data row. */
+  row: string;
+  /** The cost for the header's faint meta, or '' while the summary row still carries it inline. */
+  headerMeta: string;
+}
+
 interface TelemetryRows {
   rows: string[];
   processTop: number;
@@ -110,20 +123,23 @@ export class TelemetryPanel implements Component {
     }
     return Math.min(cap, Math.max(TELEMETRY_MIN_COLUMNS, widest + PANEL_BAR_MARGIN * 2));
   }
-  /** The narrowest rail width at which the Context section still shows its token/percent/cost line in
-   *  full. The manual drag-resize clamp (`inputRouter.ts`) uses this as its lower bound, so a user
-   *  dragging the rail inward is never the reason {@link contextSummaryLine} falls into its degraded
-   *  tiers — dropping content is something a hand-driven resize should refuse to do, not something it
-   *  does silently. Measured exactly like {@link naturalWidth} but scoped to Context alone, so it is
-   *  independent of what the other sections happen to want, and recomputed on demand: tokens, percent
-   *  and cost all move while a conversation runs. */
+  /** The narrowest rail width at which the Context section still shows every number it has: the
+   *  `tokens · %` summary line, beside a header wide enough for the cost meta it takes on at exactly
+   *  these widths. The manual drag-resize clamp (`inputRouter.ts`) uses this as its lower bound, so a
+   *  hand-driven resize is never the reason a value disappears. The cost is deliberately NOT measured
+   *  inline: below the width where the full line fits it MOVES into the header instead of being dropped
+   *  ({@link contextSummary}), which is what lets a drag reach TELEMETRY_MIN_COLUMNS rather than stopping
+   *  at the full line's length. Measured exactly like {@link naturalWidth} but scoped to Context alone,
+   *  so it is independent of what the other sections happen to want, and recomputed on demand: tokens,
+   *  percent and cost all move while a conversation runs. */
   contextRequiredWidth(): number {
-    // Build at the rail's own maximum so nothing truncates during the measurement.
-    const section = this.contextSection(this.getState(), TELEMETRY_MAX_COLUMNS);
+    // Build at the rail's own maximum so nothing truncates during the measurement, in the same narrow
+    // layout the rail itself adopts at this floor.
+    const section = this.contextSection(this.getState(), TELEMETRY_MAX_COLUMNS, 'narrow');
     let widest = 0;
     for (const row of measurableRows(section)) widest = Math.max(widest, visibleWidth(row));
     // Capped at that same maximum: beyond it no rail width could show the line anyway, and the tiered
-    // fallback in contextSummaryLine stays the safety net for every width this floor does not govern.
+    // fallback in contextSummary stays the safety net for every width this floor does not govern.
     return Math.min(TELEMETRY_MAX_COLUMNS, Math.max(TELEMETRY_MIN_COLUMNS, widest + PANEL_BAR_MARGIN * 2));
   }
   isProcessHeaderRow(row: number): boolean {
@@ -210,21 +226,23 @@ export class TelemetryPanel implements Component {
   /** The Context section on its own, so the drag-resize floor can measure exactly what the rail renders
    *  instead of a second, drifting copy of the same rows. A folded section keeps just its header; the
    *  chevron mirrors the Sub-agents/Processes panels and a one-value meta (the context %) keeps the
-   *  folded row informative. */
-  private contextSection(st: TelemetryState, width: number): TelemetrySection {
+   *  folded row informative. Expanded, that same meta slot carries the session cost at the widths where
+   *  {@link contextSummary} could not keep it inline. */
+  private contextSection(st: TelemetryState, width: number, layout: ContextLayout = 'auto'): TelemetrySection {
     const usage = st.usage;
     const pct = usage?.percent != null ? `${Math.round(usage.percent)}%` : '—';
     const tokens = usage ? `${formatK(usage.tokens ?? 0)} / ${formatK(usage.contextWindow)}` : '—';
     const collapsed = this.collapsedSections.has('context');
+    const summary = this.contextSummary(width, tokens, pct, usage, layout);
     const header = sectionHeaderRow(
-      sectionHeaderContent(this.chevron('context'), 'Context', collapsed ? `· ${pct}` : ''),
+      sectionHeaderContent(this.chevron('context'), 'Context', collapsed ? `· ${pct}` : summary.headerMeta),
       this.contentWidth(width),
     );
     return {
       id: 'context', minimumRows: 3,
       rows: collapsed ? [header] : [
         header,
-        this.contextSummaryLine(width, tokens, pct, usage),
+        summary.row,
         `${' '.repeat(PANEL_BAR_MARGIN)}${this.contextBar(usage?.percent ?? 0, width)}`,
       ],
     };
@@ -431,22 +449,31 @@ export class TelemetryPanel implements Component {
     return `↻ ${weekday} ${time}`;
   }
 
-  /** Priority-tiered token/percent/cost line: the price Filip asked to always keep, then the percentage
-   *  (which the bar below already shows visually, so it's the cheaper thing to lose), then the absolute
-   *  token count — the widest, least essential piece at a squeezed width. Never truncate a KEPT segment;
-   *  only ever drop the lowest-priority whole segment. */
-  private contextSummaryLine(width: number, tokens: string, pct: string, usage: BrainUsageView | null): string {
+  /** The session cost is the number the rail must never lose, and it is also the segment a narrow rail
+   *  cannot keep inline. So it MOVES instead of degrading: while the full `tokens · % · $` fits the
+   *  content width the line renders exactly as it always has, and below that the cost becomes the Context
+   *  header's faint meta while the line keeps `tokens · %`, then the percentage alone (the bar underneath
+   *  repeats it visually, so it is the cheapest thing to keep inline). The cost appears in exactly one of
+   *  the two places, never both, and {@link contextRequiredWidth} guarantees the narrow form fits. */
+  private contextSummary(
+    width: number,
+    tokens: string,
+    pct: string,
+    usage: BrainUsageView | null,
+    layout: ContextLayout,
+  ): ContextSummary {
     const cw = this.contentWidth(width);
-    const tokensPart = `${color.text(tokens)} ${color.faint('tokens')}`;
-    const pctPart = `${color.faint('·')} ${color.faint(pct)}`;
-    const costPart = usage ? `${color.faint('·')} ${color.faint(`$${usage.cost.toFixed(2)}`)}` : '';
-    const full = [tokensPart, pctPart, costPart].filter(Boolean).join(' ');
-    if (visibleWidth(full) <= cw) return `  ${full}`;
-    const withoutTokens = [pctPart, costPart].filter(Boolean).join(' ');
-    if (visibleWidth(withoutTokens) <= cw) return `  ${withoutTokens}`;
-    // Defensive floor for a pathologically narrow rail below what TELEMETRY_MIN_COLUMNS should ever allow:
-    // keep only the price (or the percentage if there's no usage at all), truncating that as a last resort.
-    return `  ${truncateToWidth(costPart || pctPart, cw, '…')}`;
+    const separator = ` ${color.faint('·')} `;
+    const tokensSegment = `${color.text(tokens)} ${color.faint('tokens')}`;
+    const pctSegment = color.faint(pct);
+    const cost = usage ? `$${usage.cost.toFixed(2)}` : '';
+    if (layout === 'auto') {
+      const full = [tokensSegment, pctSegment, cost ? color.faint(cost) : ''].filter(Boolean).join(separator);
+      if (visibleWidth(full) <= cw) return { row: `  ${full}`, headerMeta: '' };
+    }
+    const withoutCost = [tokensSegment, pctSegment].join(separator);
+    if (visibleWidth(withoutCost) <= cw) return { row: `  ${withoutCost}`, headerMeta: cost };
+    return { row: `  ${truncateToWidth(pctSegment, cw, '…')}`, headerMeta: cost };
   }
 
   /** The context meter spans the panel minus an equal margin on both edges and shares the exact same
@@ -505,8 +532,9 @@ export class TelemetryPanel implements Component {
 /** The rows of a section that carry a real width preference. Progress bars stretch to fill whatever
  *  width they're given and want nothing of their own — excluding them is what keeps a width measurement
  *  a genuine "content" measurement instead of always reporting the cap it was built at. The context bar
- *  is always rows[2] when the section is expanded (rows[0]=header, rows[1]=token/pct/cost line);
- *  rate-limit window rows (rows[1..]) are bars too. */
+ *  is always rows[2] when the section is expanded (rows[0]=header, rows[1]=the summary line);
+ *  rate-limit window rows (rows[1..]) are bars too. The Context header is measured with the line because
+ *  at a narrow width it is the header that carries the cost. */
 function measurableRows(section: TelemetrySection): string[] {
   if (section.id === 'context') return section.rows.slice(0, 2);
   if (section.id === 'limits') return section.rows.slice(0, 1);

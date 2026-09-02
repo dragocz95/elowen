@@ -130,8 +130,10 @@ export class InputRouter {
         if (this.resizingPanel && event.down) {
           // A hand-driven resize must never be the thing that costs the Context section its token count
           // or percentage, so the drag stops at whichever floor is higher: the rail's absolute minimum,
-          // or the width the CURRENT token/percent/cost line genuinely needs. Recomputed every frame —
-          // usage, percentage and cost all move while a conversation runs.
+          // or the width the CURRENT token/percent line genuinely needs. The cost is not part of that
+          // floor — it relocates to the Context header rather than disappearing — which is what lets a
+          // drag reach the minimum. Recomputed every frame: usage, percentage and cost all move while a
+          // conversation runs.
           const floor = Math.max(TELEMETRY_MIN_COLUMNS, context.telemetry.contextRequiredWidth());
           context.setPanelWidth(Math.max(floor, Math.min(TELEMETRY_MAX_COLUMNS, term.columns - event.x + 1)));
           context.renderForced('geometry:telemetry-resize');
