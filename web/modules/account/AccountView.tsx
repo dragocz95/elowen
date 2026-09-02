@@ -372,7 +372,7 @@ export function AccountView() {
       ))}
       {userConfigSections.map((item) => (
         <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
-          <UserPluginConfigSection detail={item.detail} onSaveState={(status, retry) => reportSaveState(item.id, status, retry)} />
+          <UserPluginConfigSection sectionId={item.id} detail={item.detail} onSaveStateAction={reportSaveState} />
         </AccountPanel>
       ))}
       <AccountPanel id="memory" active={section} visited={visitedSections}>

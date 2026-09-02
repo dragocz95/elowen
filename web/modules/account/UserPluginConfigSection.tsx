@@ -1,7 +1,7 @@
 'use client';
 
 import { Settings2 } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { SettingsGroup } from '../../components/ui/SettingsSurface';
 import { useTranslation } from '../../lib/i18n';
@@ -11,9 +11,10 @@ import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { usePluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { PluginConfigEditor } from '../settings/PluginConfigEditor';
 
-export function UserPluginConfigSection({ detail, onSaveState }: {
+export function UserPluginConfigSection({ sectionId, detail, onSaveStateAction }: {
+  sectionId: string;
   detail: UserPluginConfigDetail;
-  onSaveState: (status: SaveStatus, retry?: () => Promise<void>) => void;
+  onSaveStateAction: (sectionId: string, status: SaveStatus, retry?: () => Promise<void>) => void;
 }) {
   const { t, locale } = useTranslation();
   const save = useSaveUserPluginConfig();
@@ -28,7 +29,9 @@ export function UserPluginConfigSection({ detail, onSaveState }: {
     ...option,
     label: translated?.fields?.[field.key]?.options?.[option.value] ?? option.label,
   }));
-  useEffect(() => { onSaveState(draft.status, draft.retry); }, [draft.retry, draft.status, onSaveState]);
+  const onSaveStateRef = useRef(onSaveStateAction);
+  useEffect(() => { onSaveStateRef.current = onSaveStateAction; }, [onSaveStateAction]);
+  useEffect(() => { onSaveStateRef.current(sectionId, draft.status, draft.retry); }, [draft.retry, draft.status, sectionId]);
   return (
     <>
       <SettingsGroup
