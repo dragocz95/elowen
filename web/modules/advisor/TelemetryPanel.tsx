@@ -1,7 +1,7 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Braces, ChevronDown, Clock3, Gauge, GitBranch, ListChecks, PanelRightClose, PanelRightOpen, Server, Target, TerminalSquare, Users, Workflow, X, type LucideIcon } from 'lucide-react';
+import { Braces, ChevronDown, Clock3, Compass, Cpu, Gauge, GitBranch, Hammer, ListChecks, MessageSquarePlus, PanelRightClose, PanelRightOpen, PenLine, Server, Shrink, Target, TerminalSquare, Users, Workflow, X, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
 import { interpolate } from '../../lib/i18n/interpolate';
@@ -32,7 +32,7 @@ import { useBrainChat } from './BrainChatProvider';
 import { useTelemetryRail } from './telemetryRailState';
 import { ProcessOutputModal } from './ProcessPanel';
 import { ownedSessionIds, isOwnProcess, processOrigin } from '../../lib/processScope';
-import { CommandOrbit } from './CommandOrbit';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
 import { goalSubgoalTally, useGoalElapsed } from './GoalStatus';
 import type { BrainGoal, ProcessInfo } from '../../lib/types';
 
@@ -40,9 +40,12 @@ import type { BrainGoal, ProcessInfo } from '../../lib/types';
  *  the agent, breathing while a turn runs and settling when it does not, so the rail reads as inhabited
  *  rather than a dashboard.
  *
- *  It is also the door to the command field: clicking it opens the orbital field of slash commands as an
- *  overlay. An overlay rather than the rail itself — an orbit needs roughly 26rem before its pods start
- *  colliding with the core, which even the widest rail does not reach.
+ *  It is also the door to the command field: clicking it opens a dropdown of the slash commands worth
+ *  reaching for mid-conversation — the work modes as a radio group, the one-off actions beneath a
+ *  separator. The rows come from the daemon's catalog (`GET /brain/commands`, already surface-filtered)
+ *  and execute through the controller's own `runSlash` — the menu is a second door onto the composer's
+ *  slash menu, never a second implementation of it. A curated command that this account's surface does
+ *  not expose simply has no row.
  *
  *  The flat glyph rather than the full WebGL mascot: that scene frames itself at a fixed pixel size, so a
  *  rail this narrow would crop it down to a pair of eyes.
@@ -50,36 +53,81 @@ import type { BrainGoal, ProcessInfo } from '../../lib/types';
  *  `size` is a plain square in pixels rather than a share of the rail. In the redesigned head the mascot
  *  sits BESIDE the status text instead of above it, so its box is what the header row is built around; a
  *  percentage-sized owl would re-flow that row on every drag. */
+const MASCOT_COMMANDS: readonly { name: string; icon: LucideIcon }[] = [
+  { name: 'plan', icon: Compass },
+  { name: 'build', icon: Hammer },
+  { name: 'workflow', icon: Workflow },
+  { name: 'compact', icon: Shrink },
+  { name: 'rename', icon: PenLine },
+  { name: 'new', icon: MessageSquarePlus },
+  { name: 'model', icon: Cpu },
+];
+
 function TelemetryMascot({ busy, size }: { busy: boolean; size: number }) {
   const { t } = useTranslation();
-  const [fieldOpen, setFieldOpen] = useState(false);
-  const mascotRef = useRef<HTMLButtonElement>(null);
-  const wasOpen = useRef(false);
-  // Closing returns focus to the mascot explicitly. The overlay restores whatever was focused when it
-  // opened, which is the mascot only when it was opened by an actual click — a pointer tap leaves focus on
-  // the body on some browsers, and the user would land back at the top of the document.
-  useEffect(() => {
-    if (wasOpen.current && !fieldOpen) mascotRef.current?.focus();
-    wasOpen.current = fieldOpen;
-  }, [fieldOpen]);
+  const { commands, runSlash, workMode } = useBrainChat();
+  const field = t.brainChat.commandField;
+  const labels: Record<string, string> = {
+    plan: t.brainChat.workMode.plan,
+    build: t.brainChat.workMode.build,
+    workflow: t.brainChat.workMode.workflow,
+    compact: field.compact,
+    rename: field.rename,
+    new: field.newChat,
+    model: field.model,
+  };
+  // The catalog is surface-filtered, so a curated command the daemon withheld gets no row at all.
+  const cataloged = MASCOT_COMMANDS.flatMap(({ name, icon }) => {
+    const command = commands.find((c) => c.name === name);
+    return command ? [{ command, icon }] : [];
+  });
+  const modeCommands = cataloged.filter(({ command }) => command.kind === 'mode');
+  const actionCommands = cataloged.filter(({ command }) => command.kind !== 'mode');
+  const run = (name: string): void => {
+    const command = cataloged.find((c) => c.command.name === name)?.command;
+    if (command) runSlash(command);
+  };
   return (
-    <>
-      <button
-        ref={mascotRef}
-        type="button"
-        data-testid="telemetry-mascot"
-        aria-label={t.brainChat.commandField.open}
-        title={t.brainChat.commandField.open}
-        aria-haspopup="dialog"
-        aria-expanded={fieldOpen}
-        onClick={() => setFieldOpen(true)}
-        style={{ width: size, height: size }}
-        className="shrink-0 rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-      >
-        <MascotGlyph state={busy ? 'saving' : 'idle'} />
-      </button>
-      {fieldOpen ? <CommandOrbit onClose={() => setFieldOpen(false)} /> : null}
-    </>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-testid="telemetry-mascot"
+          aria-label={field.open}
+          title={field.open}
+          style={{ width: size, height: size }}
+          className="shrink-0 rounded-full transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        >
+          <MascotGlyph state={busy ? 'saving' : 'idle'} />
+        </button>
+      </DropdownMenuTrigger>
+      {/* `align="start"` keeps the panel anchored to the owl's left edge at either size the trigger
+          renders at; Radix's collision handling is what stops it running off the viewport at the rail's
+          edge. Click/keyboard only — a hover-open menu has no place above a live conversation. */}
+      <DropdownMenuContent align="start" sideOffset={6} className="min-w-52" data-testid="telemetry-mascot-menu">
+        <DropdownMenuLabel>{field.title}</DropdownMenuLabel>
+        {modeCommands.length > 0 ? (
+          <DropdownMenuRadioGroup value={workMode} onValueChange={run}>
+            {modeCommands.map(({ command, icon: Icon }) => (
+              <DropdownMenuRadioItem key={command.name} value={command.name} data-testid={`telemetry-menu-${command.name}`}>
+                <Icon size={14} aria-hidden className="shrink-0" />
+                {labels[command.name] ?? command.name}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        ) : null}
+        {modeCommands.length > 0 && actionCommands.length > 0 ? <DropdownMenuSeparator /> : null}
+        {actionCommands.map(({ command, icon: Icon }) => (
+          <DropdownMenuItem key={command.name} data-testid={`telemetry-menu-${command.name}`} onSelect={() => run(command.name)}>
+            <Icon size={14} aria-hidden className="mt-0.5 shrink-0" />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="truncate">{labels[command.name] ?? command.name}</span>
+              {command.description ? <span className="truncate text-xs text-muted-foreground">{command.description}</span> : null}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
