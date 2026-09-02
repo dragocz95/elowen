@@ -10,6 +10,7 @@ import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useConfig, useCategorizationSettings, useDashRecap } from '../../lib/queries';
+import { resolveDigestRoute } from '../../lib/modelRoles';
 import { useUpdateConfig } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
@@ -85,9 +86,13 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
 
   if (!config) return <LoadingState />;
 
-  // What the digest ACTUALLY runs on, resolved the same way the daemon resolves it: an explicit pair,
-  // else the utility (categorization) route it inherits, else nothing is configured at all.
-  const effectiveDigestModel = config.dashboard?.digest.model || categorization?.model || '';
+  // What the digest ACTUALLY runs on, through the shared helper that mirrors the daemon's rule. BOTH
+  // halves of a pair decide, so a half-set stored digest pair reads as inherited here exactly as the
+  // runtime treats it — `digest.model || categorization.model` used to report the orphaned half instead.
+  const digestRoute = resolveDigestRoute(
+    { providerId: config.dashboard?.digest.providerId, model: config.dashboard?.digest.model },
+    { providerId: categorization?.providerId, model: categorization?.model },
+  );
   const digestStatus = recap.data?.digest?.status;
   const statusBadge = digestStatus === 'ready'
     ? <Badge tone="accent">{t.settings.dashboardSection.statusReady}</Badge>
@@ -171,7 +176,12 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
         label={t.settings.dashboardSection.model}
         description={t.settings.dashboardSection.modelDesc}
         icon={Boxes}
-        status={<span className="truncate font-mono">{effectiveDigestModel || '—'}</span>}
+        status={(
+          <span className="flex min-w-0 items-center gap-2">
+            {digestRoute.route && digestRoute.inherited ? <Badge>{t.settings.modelRoles.inherited}</Badge> : null}
+            <span className="truncate font-mono">{digestRoute.route?.model ?? '—'}</span>
+          </span>
+        )}
         actions={(
           <Button variant="ghost" size="sm" icon={Boxes} onClick={() => onOpenSection?.('models')}>
             {t.settings.dashboardSection.modelLink}

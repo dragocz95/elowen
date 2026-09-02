@@ -19,18 +19,8 @@ import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus'
 import { combineSaveFeedback } from '../../lib/saveFeedback';
 import { elowenClient, ElowenApiError } from '../../lib/elowenClient';
 import type { BrainModelOption } from '../../lib/types';
+import { resolveDigestRoute, roleKey, splitRoleKey } from '../../lib/modelRoles';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
-
-/** The pair encoding every role picker on this page uses. `::` never appears in a provider id, and a
- *  model id may itself contain slashes — which is exactly why the pair is not joined with one. */
-const roleKey = (providerId: string, model: string): string => (providerId && model ? `${providerId}::${model}` : '');
-
-/** Split a `provider::model` key back into its halves. An empty key is "no explicit pick", which every
- *  inheritable role already stores as the empty pair. */
-function splitRoleKey(key: string): { providerId: string; model: string } {
-  const at = key.indexOf('::');
-  return at < 0 ? { providerId: '', model: '' } : { providerId: key.slice(0, at), model: key.slice(at + 2) };
-}
 
 /** Deduped model ids from the brain catalog, scoped to the chosen provider (or all when none picked).
  *  The catalog only ever holds real API/chat/embedding models from configured brain providers — CLI
@@ -185,9 +175,15 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
   // computes the spawn answer and marks it `default` on the catalog, so this row reads that flag and
   // cannot state a model the next conversation would not actually start on.
   const runtimeDefault = catalog.find((m) => m.default);
-  const utilityModel = splitRoleKey(utilityKey).model;
-  const digestInheritLabel = utilityModel
-    ? interpolate(t.settings.modelRoles.inherit, { model: utilityModel })
+  // The same helper the Recap status row reads, so the two surfaces cannot disagree about which model
+  // writes the digest — and neither can disagree with the daemon, whose rule it mirrors.
+  const digestRoute = resolveDigestRoute(splitRoleKey(digestKey), splitRoleKey(utilityKey));
+  // The pinned row's label describes the OPTION, not the current state: it names what choosing inherit
+  // would resolve to, so it must read the utility route alone and stay stable while an explicit digest
+  // model is selected. Resolving it against the live pair made it go blank the moment one was picked.
+  const inheritedDigest = resolveDigestRoute(undefined, splitRoleKey(utilityKey));
+  const digestInheritLabel = inheritedDigest.route
+    ? interpolate(t.settings.modelRoles.inherit, { model: inheritedDigest.route.model })
     : t.settings.modelRoles.inheritUnset;
   // The personal primary this administrator's own conversations start on — the one fact that makes the
   // cross-link worth a row rather than a link in a hint.
@@ -243,7 +239,7 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
         description={t.settings.modelRoles.digestHelp}
         icon={Sparkles}
         trailingLayout="stack"
-        status={digestKey ? undefined : inheritedBadge}
+        status={digestRoute.inherited ? inheritedBadge : undefined}
         actions={(
           <Button variant="ghost" size="sm" icon={LayoutDashboard} onClick={() => onOpenSection?.('dashboard')}>
             {t.settings.modelRoles.recapLink}
