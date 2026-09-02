@@ -304,7 +304,7 @@ function TodoCardRow({ row, now, onStatus, onOpen }: {
         label={`${t.tasksModal.taskActions}: ${row.label}`}
         align="left"
         openOnHover={false}
-        triggerClassName="flex min-h-6 min-w-0 items-center gap-1.5 rounded px-1 text-left transition-colors hover:bg-accent"
+        triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-accent"
         trigger={
           <>
             <span aria-hidden className={`shrink-0 ${row.status === 'completed' ? 'text-success' : row.status === 'in_progress' ? 'text-primary' : 'text-muted-foreground'}`}>
@@ -359,7 +359,7 @@ function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTa
   return (
     // `self-start`: the card is as wide as its longest row, not the column, so the head's meter and the
     // rows' targets sit next to the text instead of at the far edge of a wide screen.
-    <div data-testid="chat-card" className="flex max-w-[min(100%,28rem)] flex-col self-start leading-snug">
+    <div data-testid="chat-card" className="flex max-w-[min(100%,28rem)] flex-col self-start leading-tight">
       <CardHead
         title={card.title ?? t.brainChat.cardFallback}
         done={done}
