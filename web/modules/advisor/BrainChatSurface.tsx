@@ -2,7 +2,7 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, CheckCircle2, Circle, CircleDot } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
@@ -16,14 +16,13 @@ import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } f
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button, buttonClassName } from '../../components/ui/Button';
-import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { Progress } from '../../components/ui/shadcn/progress';
 import { Input } from '../../components/ui/Input';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { AskQuestionCard } from './AskQuestionCard';
 import { AgentsTable } from './AgentsTable';
-import { BlockedTip } from './BlockedTip';
+import { TodoRow, type TodoRowIds } from './TodoRow';
 import { StatsModal } from './StatsModal';
 import { ReasoningModal } from './ReasoningModal';
 import { SkillsModal } from './SkillsModal';
@@ -269,69 +268,9 @@ function StaticCard({ card, live }: { card: BrainCard; live: boolean }) {
   );
 }
 
-/** One task of the transcript's todo card: the same glyph-and-text line the read-only card draws, and the
- *  whole line is the one control — a click opens a small menu with the three statuses and the way into
- *  the full list. The CLI panel behaves identically (a click on a row opens that task's actions), so the
- *  two clients agree on what a row does.
- *
- *  Deliberately no tick box: a box invites a stray click to finish a task, and every change here reaches
- *  the agent's plan. A menu makes the move explicit, and it opens on click only — the row is in the
- *  reading path, and a panel that opened when the pointer merely crossed it would interrupt the reader on
- *  every pass over the card. The row is as wide as its text, not the column, so the target is the text.
- *
- *  `BlockedTip` is a button of its own and rides beside the trigger, not inside it. */
-function TodoCardRow({ row, now, onStatus, onOpen }: {
-  row: RailTask;
-  now: number;
-  onStatus: (row: RailTask, status: RailTask['status']) => void;
-  onOpen: () => void;
-}) {
-  const { t } = useTranslation();
-  const blocked = row.status === 'pending' && row.blockedBy.length > 0;
-  const elapsed = row.status === 'in_progress' && Number.isFinite(row.startedAt)
-    ? formatDuration(now - row.startedAt!)
-    : null;
-  const actions: ActionMenuItem[] = [
-    { label: t.tasksModal.statusPending, icon: Circle, onSelect: () => onStatus(row, 'pending') },
-    { label: t.tasksModal.statusInProgress, icon: CircleDot, onSelect: () => onStatus(row, 'in_progress') },
-    { label: t.tasksModal.statusCompleted, icon: CheckCircle2, onSelect: () => onStatus(row, 'completed') },
-    { label: t.telemetry.tasksOpen, icon: ListChecks, onSelect: onOpen },
-  ];
-  return (
-    <li data-testid="chat-card-row" className="flex min-w-0 items-center gap-1">
-      <ActionMenu
-        items={actions}
-        label={`${t.tasksModal.taskActions}: ${row.label}`}
-        align="left"
-        openOnHover={false}
-        triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-accent"
-        trigger={
-          <>
-            {/* The same vocabulary the tool rows use: a turning spinner for the task being worked on,
-                a ticked circle for a finished one, an empty circle for one still waiting. */}
-            {row.status === 'in_progress' ? (
-              <span data-testid="chat-card-running" className="flex shrink-0"><Spinner size="xs" tone="text-primary" /></span>
-            ) : row.status === 'completed' ? (
-              <CheckCircle2 size={11} aria-hidden className="shrink-0 text-success" />
-            ) : (
-              <Circle size={11} aria-hidden className="shrink-0 text-muted-foreground" />
-            )}
-            <span className={`min-w-0 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}>
-              {row.label}
-            </span>
-            {elapsed ? (
-              <span data-testid="chat-card-elapsed" className="shrink-0 tabular-nums text-primary">· {elapsed}</span>
-            ) : null}
-            {row.owner ? (
-              <span className="shrink-0 text-muted-foreground opacity-70">· {row.owner}</span>
-            ) : null}
-          </>
-        }
-      />
-      {blocked ? <BlockedTip ids={row.blockedBy} testId="chat-card-blocked" /> : null}
-    </li>
-  );
-}
+/** The card's row test ids: the shared `TodoRow` stamps these so the card's tests keep addressing it by
+ *  the names it has always had. */
+const CARD_ROW_IDS: TodoRowIds = { row: 'chat-card-row', running: 'chat-card-running', elapsed: 'chat-card-elapsed', blocked: 'chat-card-blocked' };
 
 /** The conversation's checklist, where it has always been — the last thing above the composer — and now
  *  something the reader can work rather than only read.
@@ -395,12 +334,13 @@ function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTa
       {shown.length > 0 ? (
         <ul className="flex flex-col">
           {shown.map((row) => (
-            <TodoCardRow
+            <TodoRow
               key={row.id}
               row={row}
               now={now}
               onStatus={setStatus}
               onOpen={openTasks}
+              ids={CARD_ROW_IDS}
             />
           ))}
         </ul>

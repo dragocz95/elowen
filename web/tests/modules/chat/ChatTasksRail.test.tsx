@@ -153,28 +153,33 @@ describe('telemetry rail — tasks section', () => {
     expect(section.textContent).toContain('Open the branch');
   });
 
-  it('ticks a pending row off through its checkbox and patches that task', async () => {
+  it('moves a pending row to completed through its row menu and patches that task', async () => {
     const section = await renderDesktopRail();
 
-    await act(async () => {
-      fireEvent.click(within(section).getByRole('checkbox', { name: 'Mark as completed: Draft the notes' }));
-    });
+    await act(async () => { fireEvent.click(within(section).getByRole('button', { name: 'Task actions: Draft the notes · reviewer' })); });
+    await act(async () => { fireEvent.click(await screen.findByRole('menuitem', { name: 'Completed' })); });
     await waitFor(() => expect(patched).toEqual([{ taskId: '3', status: 'completed' }]));
 
     // The plugin's HTTP routes answer the caller without re-emitting the panel, so the card is rebuilt
     // locally from the response. That rebuild has to keep the structured fields: a row that came back
-    // without its id would still be listed and would no longer be tickable.
+    // without its id would still be listed but its menu could no longer address it.
     await waitFor(() => expect(within(section).getAllByTestId('telemetry-row')).toHaveLength(1));
-    expect(within(section).getByRole('checkbox', { name: 'Mark as completed: Draft the notes' })).toBeEnabled();
+    expect(within(section).getByRole('button', { name: 'Task actions: Draft the notes · reviewer' })).toBeEnabled();
   });
 
-  it('reopens a completed row through the same checkbox', async () => {
+  it('reopens a completed row through the same row menu', async () => {
     const section = await renderDesktopRail();
 
-    await act(async () => {
-      fireEvent.click(within(section).getByRole('checkbox', { name: 'Mark as pending: Read the code' }));
-    });
+    await act(async () => { fireEvent.click(within(section).getByRole('button', { name: 'Task actions: Read the code' })); });
+    await act(async () => { fireEvent.click(await screen.findByRole('menuitem', { name: 'Pending' })); });
     await waitFor(() => expect(patched).toEqual([{ taskId: '4', status: 'pending' }]));
+  });
+
+  it('shows the running row as the shared spinner — no tick boxes anywhere in the rail', async () => {
+    const section = await renderDesktopRail();
+
+    expect(within(section).getByTestId('telemetry-task-running')).toBeInTheDocument();
+    expect(within(section).queryByRole('checkbox')).toBeNull();
   });
 
   it('names the unresolved blockers of a waiting row in a tooltip', async () => {
@@ -198,12 +203,11 @@ describe('telemetry rail — tasks section', () => {
     expect(screen.queryByTestId('telemetry-tasks')).toBeNull();
   });
 
-  it('opens the full task list from a row label', async () => {
+  it('opens the full task list from a row menu', async () => {
     const section = await renderDesktopRail();
 
-    await act(async () => {
-      fireEvent.click(within(section).getByRole('button', { name: 'Open the task list: Draft the notes' }));
-    });
+    await act(async () => { fireEvent.click(within(section).getByRole('button', { name: 'Task actions: Draft the notes · reviewer' })); });
+    await act(async () => { fireEvent.click(await screen.findByRole('menuitem', { name: 'Open the task list' })); });
     expect(await screen.findByRole('dialog', { name: 'Tasks' })).toBeInTheDocument();
   });
 });

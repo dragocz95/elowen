@@ -14,7 +14,6 @@ import { MascotGlyph } from '../../components/ui/SpatialMascot';
 import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
 import { Badge } from '../../components/ui/shadcn/badge';
 import { Button } from '../../components/ui/shadcn/button';
-import { Checkbox } from '../../components/ui/shadcn/checkbox';
 import { Progress } from '../../components/ui/shadcn/progress';
 import { ScrollArea } from '../../components/ui/shadcn/scroll-area';
 import { Separator } from '../../components/ui/shadcn/separator';
@@ -27,10 +26,10 @@ import { useNow } from '../../lib/useNow';
 import { TODO_PREVIEW_ITEMS } from '../../lib/chatPresentation';
 import { cardTasks, cardTasksAddressable, orderTasks, sessionTaskRows, type RailTask } from '../../lib/railTasks';
 import { workflowLabel, workflowProgress } from '../../lib/workflowDag';
-import { BlockedTip } from './BlockedTip';
 import { useBrainChat } from './BrainChatProvider';
 import { useTelemetryRail } from './telemetryRailState';
 import { ProcessOutputModal } from './ProcessPanel';
+import { TodoRow, type TodoRowIds } from './TodoRow';
 import { ownedSessionIds, isOwnProcess, processOrigin } from '../../lib/processScope';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
 import { goalSubgoalTally, useGoalElapsed } from './GoalStatus';
@@ -156,13 +155,16 @@ function SectionMeta({ children }: { children: ReactNode }) {
 /** A live-work section that can be folded away. Open by default and on every mount: these sections exist
  *  to be watched while they run, and a fold that persisted would hide a running agent from the one view
  *  that reports it. Folding is for the reader who wants the rail quiet right now, not a stored setting. */
-function LiveSection({ label, count, testId, meter, children }: {
+function LiveSection({ label, count, testId, meter, listClassName = 'flex flex-col gap-0.5', children }: {
   label: string;
   count: ReactNode;
   testId: string;
   /** A meter shown above the rows, folding away with them. The tally stays in the head, which is what a
    *  folded section still has to report. */
   meter?: ReactNode;
+  /** The row list's classes. The default spreads status rows a hair apart; the Tasks section passes the
+   *  todo card's gapless list instead, because its rows carry their own padding. */
+  listClassName?: string;
   children: ReactNode;
 }) {
   return (
@@ -178,7 +180,7 @@ function LiveSection({ label, count, testId, meter, children }: {
       </CollapsibleTrigger>
       <CollapsibleContent>
         {meter ? <div className="pb-1 pl-[18px]">{meter}</div> : null}
-        <ul className="flex flex-col gap-0.5">{children}</ul>
+        <ul className={listClassName}>{children}</ul>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -228,18 +230,20 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }
   );
 }
 
+/** The rail's row test ids for the shared `TodoRow`: the names the rail's own tests have always used. */
+const RAIL_TASK_ROW_IDS: TodoRowIds = { row: 'telemetry-row', running: 'telemetry-task-running', elapsed: 'telemetry-task-elapsed', blocked: 'telemetry-task-blocked' };
+
 /** The conversation's task list, as the rail reports it: a done/total meter, the work that matters now,
- *  and one tick box per row.
+ *  and one menu control per row.
  *
- *  It is the same live-work section as Processes and Agents — same head, same row primitive — with the
- *  status dot replaced by a control, because this is the one section whose rows the reader can also
- *  CHANGE. Ticking a box patches the task; the label opens the full list, where renaming, ownership and
- *  the finished work live. The rows are previewed to the shared todo cap, so a forty-task plan cannot
- *  push the rest of the rail off the screen. */
-function TasksSection({ tasks, disabled, onToggle, onOpen }: {
+ *  It is the same live-work section as Processes and Agents — same head, same fold — but the rows are
+ *  the transcript todo card's own `TodoRow`s, not the section's read-out rows, because this is the one
+ *  section whose rows the reader can also CHANGE. A row's menu patches the task; "Open the task list"
+ *  leads to the full list, where renaming, ownership and the finished work live. The rows are previewed
+ *  to the shared todo cap, so a forty-task plan cannot push the rest of the rail off the screen. */
+function TasksSection({ tasks, onStatus, onOpen }: {
   tasks: readonly RailTask[];
-  disabled: boolean;
-  onToggle: (task: RailTask) => void;
+  onStatus: (task: RailTask, status: RailTask['status']) => void;
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
@@ -254,44 +258,18 @@ function TasksSection({ tasks, disabled, onToggle, onOpen }: {
       count={`${done}/${tasks.length}`}
       testId="telemetry-tasks"
       meter={<Progress className="h-1" value={(done / tasks.length) * 100} aria-label={t.telemetry.tasks} />}
+      listClassName="flex flex-col"
     >
-      {shown.map((task, index) => {
-        const blocked = task.status === 'pending' && task.blockedBy.length > 0;
-        const elapsed = task.status === 'in_progress' && Number.isFinite(task.startedAt)
-          ? formatDuration(now - task.startedAt!)
-          : undefined;
-        const toggleLabel = `${task.status === 'completed' ? t.tasksModal.markPending : t.tasksModal.markCompleted}: ${task.label}`;
-        return (
-          <li key={task.id ?? `row-${index}`} className="flex items-center gap-1.5">
-            {task.status === 'in_progress' ? (
-              <span className="shrink-0 text-primary" role="img" aria-label={t.tasksModal.statusInProgress}>◐</span>
-            ) : (
-              <Checkbox
-                checked={task.status === 'completed'}
-                // A row with no id came from a card too old to address, and a disabled box is honest
-                // about that where a box that silently does nothing would not be.
-                disabled={disabled || !task.id}
-                onCheckedChange={() => onToggle(task)}
-                aria-label={toggleLabel}
-                className="size-3.5 shrink-0"
-              />
-            )}
-            <LiveRow
-              label={task.label}
-              {...(elapsed ? { meta: elapsed } : {})}
-              tone="none"
-              muted={blocked || task.status === 'completed'}
-              title={task.owner ? `${task.label} — ${task.owner}` : task.label}
-              ariaLabel={`${t.telemetry.tasksOpen}: ${task.label}`}
-              onClick={onOpen}
-            />
-            {task.owner ? (
-              <span className="shrink-0 truncate text-xs text-subtle-foreground" title={task.owner}>{task.owner}</span>
-            ) : null}
-            {blocked ? <BlockedTip ids={task.blockedBy} testId="telemetry-task-blocked" /> : null}
-          </li>
-        );
-      })}
+      {shown.map((task, index) => (
+        <TodoRow
+          key={task.id ?? `row-${index}`}
+          row={task}
+          now={now}
+          onStatus={onStatus}
+          onOpen={onOpen}
+          ids={RAIL_TASK_ROW_IDS}
+        />
+      ))}
       {hidden > 0 ? (
         <li className="pt-0.5">
           <MorePill expanded={expanded} hidden={hidden} onToggle={() => setExpanded((value) => !value)} label={t.telemetry.tasks} />
@@ -392,10 +370,10 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   // The CardBlock rule, mirrored: a list whose every row is ticked has nothing left to track.
   const showTasks = tasks.length > 0 && tasks.some((task) => task.status !== 'completed');
   const updateTask = useUpdateSessionTask();
-  const toggleTask = (task: RailTask): void => {
-    if (!activeSessionId || !task.id) return;
+  const setTaskStatus = (task: RailTask, status: RailTask['status']): void => {
+    if (!activeSessionId || !task.id || status === task.status) return;
     updateTask.mutate(
-      { sessionId: activeSessionId, taskId: task.id, status: task.status === 'completed' ? 'pending' : 'completed' },
+      { sessionId: activeSessionId, taskId: task.id, status },
       { onSuccess: (result) => syncSessionTasks(result.tasks), onError: (error: Error) => toast(error.message, 'error') },
     );
   };
@@ -477,7 +455,7 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
       ) : null}
 
       {showTasks ? (
-        <TasksSection tasks={tasks} disabled={updateTask.isPending} onToggle={toggleTask} onOpen={openTasks} />
+        <TasksSection tasks={tasks} onStatus={setTaskStatus} onOpen={openTasks} />
       ) : null}
 
       {runningWorkflows.length > 0 ? (
