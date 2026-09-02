@@ -2,7 +2,7 @@ import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { trimTrailingSlash } from '../shared/url.js';
 import type { BrainProviderEntry, BrainRuntimeConfig } from './providers.js';
 import { buildBrainRegistry, inMemoryModelRuntime, openAiApiFor, registryProviderName, resolveBrainModel, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW } from './providers.js';
-import { inferredModelCapabilities, modelCapabilities } from './modelCapabilities.js';
+import { catalogModelVision, inferredModelCapabilities, modelCapabilities } from './modelCapabilities.js';
 import { resolveFastModeRoute } from './fastMode.js';
 
 /** One pickable model for the account UI dropdown, grouped by the provider entry it runs through.
@@ -23,6 +23,10 @@ export interface BrainModelOption {
   fastAvailable?: boolean;
   /** The exact provider/model resolveBrainModel() chooses when no per-user/channel override exists. */
   default?: boolean;
+  /** Whether the static capability catalog KNOWS this model reads images. Absent means "not catalogued",
+   *  which a picker must treat as selectable (fail-open) rather than as text-only — every `openai-codex`
+   *  model lands here. Only an explicit `false` is a catalogued text-only model. */
+  vision?: boolean;
 }
 
 const FETCH_TTL_MS = 60_000;
@@ -135,6 +139,8 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
         ? { id: e.id, provider: registryProviderName(p), api: openAiApiFor(p) }
         : undefined);
       const fastAvailable = fastModel ? resolveFastModeRoute(p, fastModel) !== undefined : false;
+      // Same static table the cost and modality lookups already consult, so this costs no request.
+      const visionKnown = catalogModelVision(registryProviderName(p), e.id);
       return {
         provider: p.id, providerLabel: p.label, model: e.id,
         source: p.origin ?? 'api-key' as const,
@@ -145,6 +151,7 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
           reasoningLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
         } : {}),
         ...(fastAvailable ? { fastAvailable: true } : {}),
+        ...(visionKnown !== undefined ? { vision: visionKnown } : {}),
         ...(p.id === defaultProvider && e.id === defaultModel ? { default: true } : {}),
       };
     };

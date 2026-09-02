@@ -144,9 +144,9 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { expectedRevision?: unknown; model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; msteamsUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown; fastMode?: unknown };
+    const b = (await c.req.json().catch(() => ({}))) as { expectedRevision?: unknown; model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; projectModelPreferences?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; msteamsUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown; fastMode?: unknown };
     if (b.expectedRevision !== undefined && (!Number.isInteger(b.expectedRevision) || (b.expectedRevision as number) < 0)) return c.json({ error: 'expectedRevision must be a non-negative integer' }, 400);
-    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; msteamsUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean; fastMode?: boolean } = {};
+    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; projectModelPreferences?: Record<string, { provider: string; model: string }>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; msteamsUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean; fastMode?: boolean } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
     if (typeof b.visionModel === 'string') patch.visionModel = b.visionModel.trim();
@@ -160,6 +160,21 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // Per-model threshold map (key `providerId/model` → percent). The store cleans/clamps every entry, so
     // the route only gates on it being a plain object; a non-object (or array) is ignored.
     if (b.autoCompactAtByModel && typeof b.autoCompactAtByModel === 'object' && !Array.isArray(b.autoCompactAtByModel)) patch.autoCompactAtByModel = b.autoCompactAtByModel as Record<string, number>;
+    // Per-project model pins (canonical Git root → provider/model). The map REPLACES the stored one, which
+    // is what lets a user clear a pin `switchModel` wrote for them without knowing it. Shape is checked
+    // here; every surviving entry is judged against the caller's allow-list below, exactly like the three
+    // scalar model picks, so the replacement can only ever narrow what the account may run.
+    if (b.projectModelPreferences && typeof b.projectModelPreferences === 'object' && !Array.isArray(b.projectModelPreferences)) {
+      patch.projectModelPreferences = Object.fromEntries(
+        Object.entries(b.projectModelPreferences as Record<string, unknown>).flatMap(([root, value]) => {
+          if (!root || !value || typeof value !== 'object') return [];
+          const { provider, model } = value as { provider?: unknown; model?: unknown };
+          return typeof provider === 'string' && provider.trim() && typeof model === 'string' && model.trim()
+            ? [[root, { provider: provider.trim(), model: model.trim() }] as const]
+            : [];
+        }),
+      );
+    }
     if (typeof b.autoRecall === 'boolean') patch.autoRecall = b.autoRecall;
     if (typeof b.autoLiveRecall === 'boolean') patch.autoLiveRecall = b.autoLiveRecall;
     if (typeof b.autoSave === 'boolean') patch.autoSave = b.autoSave;
@@ -194,6 +209,13 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     }
     if (patch.compactModel && patch.compactModelProvider
       && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.compactModelProvider, patch.compactModel), providers)) {
+      return c.json({ error: 'model not allowed' }, 400);
+    }
+    // Every entry that SURVIVES the replacement must be one this account may run. A stale pin the user is
+    // dropping never reaches here, so clearing an entry the allow-list has since revoked stays possible.
+    if (patch.projectModelPreferences
+      && Object.values(patch.projectModelPreferences)
+        .some((pin) => !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(pin.provider, pin.model), providers))) {
       return c.json({ error: 'model not allowed' }, 400);
     }
     try {

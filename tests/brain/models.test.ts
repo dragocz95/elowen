@@ -22,6 +22,20 @@ describe('listBrainModels', () => {
     expect(models.find((m) => m.model === 'b')!.default).toBeUndefined();
   });
 
+  // The vision fallback picker filters on this flag, and it filters TRI-STATE: an ABSENT field means "the
+  // catalog has no row", which must stay selectable. Publishing `false` for an uncatalogued model would
+  // hide every model the catalog simply does not describe from a picker that can use it perfectly well.
+  it('publishes the catalog vision verdict, and omits the field entirely when there is no row', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ data: [
+      { id: 'gpt-4o' }, { id: 'gpt-3.5-turbo' }, { id: 'totally-unknown-model' },
+    ] }), { status: 200 })) as unknown as typeof fetch;
+    const cfg: BrainRuntimeConfig = { providers: [{ id: 'openai', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: [], apiKey: 'k' }] };
+    const models = await listBrainModels(cfg, f);
+    expect(models.find((m) => m.model === 'gpt-4o')!.vision).toBe(true);
+    expect(models.find((m) => m.model === 'gpt-3.5-turbo')!.vision).toBe(false);
+    expect(models.find((m) => m.model === 'totally-unknown-model')).not.toHaveProperty('vision');
+  });
+
   it('an operator override wins over the provider-reported context window', async () => {
     const f = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'a', context_length: 32000 }] }), { status: 200 })) as unknown as typeof fetch;
     const cfg: BrainRuntimeConfig = { providers: [openaiProvider(['a'])], contextWindows: { 'relay/a': 8000 } };
