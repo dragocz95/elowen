@@ -37,7 +37,6 @@ import { OverlayController } from './overlayController.js';
 import { RenderShell } from './renderShell.js';
 import { DEFAULT_COMPOSE_MARKER_MS, DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS, LONG_COMPOSE_TOOLS } from './composeLabels.js';
 import { activityChip, bottomHintItems, fitSegments, fitVariants, goalMeta, modelMetaLine, quitHint, startScreenHintItems, statusline } from './composeLines.js';
-import { execRefSpec } from '../../shared/execs.js';
 
 export interface ShellInputDeps {
   cycleThinkingLevel(): void;
@@ -358,11 +357,14 @@ export function createChatComposition(
   );
   let childViewport: ChatViewport | null = null;
   let childViewportSession = '';
-  const modelIdentity = (provider: string, model: string): string =>
-    provider && model ? execRefSpec({ program: 'elowen', provider, model }) : model;
+  /** How a model names itself in the chrome: the provider as the OPERATOR named it (its configured
+   *  label, else its config id) plus the model. The daemon already strips PI's internal `elowen-<id>`
+   *  registry namespace at the API boundary, so nothing here has to know it exists. */
+  const modelIdentity = (provider: string, providerLabel: string, model: string): string =>
+    provider && model ? `${providerLabel || provider}/${model}` : model;
   const childModelName = (): string => {
     const child = rt.childView;
-    return child ? modelIdentity(child.provider, child.model) : '';
+    return child ? modelIdentity(child.provider, child.providerLabel, child.model) : '';
   };
   const newChildViewport = (): ChatViewport => new ChatViewport(
     {
@@ -389,9 +391,11 @@ export function createChatComposition(
    *  cards collide by id (`todos`), so a merge is indistinguishable from the child's own work. */
   const focusedCards = (): BrainCard[] => rt.childView ? rt.childView.cards : rt.cards;
   /** Provider identity follows the same no-parent-fallback rule. While the child snapshot is loading its
-   *  provider is empty, so the limits section stays hidden instead of showing the parent's subscription. */
+   *  provider is empty, so the limits section stays hidden instead of showing the parent's subscription.
+   *  Keyed on `usageProvider` — the INTERNAL pi provider — because that is what /brain/rate-limits/all is
+   *  keyed by; the public config id displayed everywhere else would never match an OAuth account's rail. */
   const focusedRateLimits = (): BrainRateLimits | null => {
-    const provider = rt.childView ? rt.childView.provider : rt.provider;
+    const provider = rt.childView ? rt.childView.usageProvider : rt.usageProvider;
     return provider ? (rt.rateLimitsByProvider[provider] ?? null) : null;
   };
   let currentRunSeconds = 0;
@@ -417,7 +421,7 @@ export function createChatComposition(
     startInput,
     () => Math.max(1, term.rows - TOP_RULE_ROWS),
     () => ({
-      modelLine: modelMetaLine(rt.workMode, modelIdentity(rt.provider, rt.modelName), rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, undefined, rt.yoloOn, rt.fastOn, goalMeta(rt.goal)) + leaderChip(),
+      modelLine: modelMetaLine(rt.workMode, modelIdentity(rt.provider, rt.providerLabel, rt.modelName), rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, undefined, rt.yoloOn, rt.fastOn, goalMeta(rt.goal)) + leaderChip(),
       hints: color.faint(fitSegments(startScreenHintItems(keymap), startScreenBox(term.columns).boxWidth, ' · ')),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice: rt.notice,
@@ -541,8 +545,12 @@ export function createChatComposition(
     const childEntry = child ? currentAgents.find((agent) => agent.sessionId === child.sessionId) : undefined;
     // The child snapshot is authoritative. A parent rail entry may be stale after a model switch, and the
     // parent itself may use an entirely different model from this delegated session.
-    const rawModel = child ? childModelName() : modelIdentity(rt.provider, rt.modelName);
-    const modelArg = opts.provider === false ? rawModel.replace(/^[^/]+\//, '') : rawModel;
+    // `showProvider: false` (the statusline setting) drops the provider half. Taking the bare model id
+    // straight from the state rather than splitting the composed string keeps a model id that contains
+    // slashes of its own (`relay/ollama/kimi-k2.7-code`) intact.
+    const modelArg = opts.provider === false
+      ? (child ? child.model : rt.modelName)
+      : (child ? childModelName() : modelIdentity(rt.provider, rt.providerLabel, rt.modelName));
     const activity = child ? child.transcript.activity : rt.transcript.activity;
     const seconds = child ? (childEntry?.seconds ?? currentRunSeconds) : currentRunSeconds;
     // Parent shows its live reasoning level; a drilled-in child shows its OWN level from the rail entry

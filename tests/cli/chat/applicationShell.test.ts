@@ -1097,6 +1097,8 @@ describe('chat application shell ownership', () => {
       sessionId: 'child-1',
       model: 'child-model',
       provider: 'test',
+      providerLabel: 'Test Provider',
+      usageProvider: 'test',
       transcript: new TranscriptModel([{ role: 'assistant', text: 'child output' }]),
       processes: [],
       loading: false,
@@ -1131,6 +1133,8 @@ describe('chat application shell ownership', () => {
       sessionId: 'child-1',
       model: 'child-model',
       provider: 'test',
+      providerLabel: 'Test Provider',
+      usageProvider: 'test',
       transcript: new TranscriptModel([{ role: 'assistant', text: 'child output' }]),
       processes: [],
       loading: false,
@@ -1375,11 +1379,10 @@ describe('chat application shell ownership', () => {
     'prepares telemetry for real PI overlay geometry at %ix%i before PI applies maxHeight',
     async (columns, rows) => {
       const h = compositionHarness({ columns, rows, turns: 40 });
-      h.rt.provider = 'test';
       h.rt.usage = { tokens: 28_000, contextWindow: 372_000, percent: 8, totalTokens: 28_000, cost: 0.09 };
       h.rt.rateLimitsByProvider = {
-        [h.rt.provider]: {
-          provider: h.rt.provider, planType: 'pro', fetchedAt: 123, stale: false,
+        [h.rt.usageProvider]: {
+          provider: h.rt.usageProvider, planType: 'pro', fetchedAt: 123, stale: false,
           windows: [
             { usedPercent: 23, windowMinutes: 300, resetsAt: 1_900_000_000 },
             { usedPercent: 14, windowMinutes: 10_080, resetsAt: 1_900_500_000 },
@@ -1486,7 +1489,45 @@ describe('chat application shell ownership', () => {
     composition.resume();
     composition.renderForced('test:parent-model-identity');
     await vi.runOnlyPendingTimersAsync();
-    expect(renderMountedRoot(h).map(terminalPlainText).join('\n')).toContain('test · provider-model medium');
+    // The operator's LABEL names the provider here, never its config id and never PI's registry name.
+    expect(renderMountedRoot(h).map(terminalPlainText).join('\n')).toContain('Test Provider · provider-model medium');
+    composition.dispose();
+    composition.stop();
+  });
+
+  // The reported symptom, at the site that showed it: a custom endpoint configured as `ollama` rendered
+  // as `elowen-ollama`, because the status DTO handed the client PI's registry name. The chrome now reads
+  // the public pair only, so the namespace cannot reappear here even if a client held it.
+  // Mutation: render `provider` instead of `providerLabel || provider` and the label assertion fails.
+  it('never renders the internal registry provider name on the model line', async () => {
+    const h = compositionHarness({ columns: 160, rows: 30, turns: 4 });
+    h.rt.provider = 'ollama';
+    h.rt.providerLabel = 'Ollama';
+    h.rt.usageProvider = 'elowen-ollama';
+    h.rt.modelName = 'kimi-k2.7-code';
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:public-provider-identity');
+    await vi.runOnlyPendingTimersAsync();
+    const rendered = renderMountedRoot(h).map(terminalPlainText).join('\n');
+    expect(rendered).toContain('Ollama · kimi-k2.7-code');
+    expect(rendered).not.toContain('elowen-ollama');
+    composition.dispose();
+    composition.stop();
+  });
+
+  // A provider deleted from Settings leaves no label behind, and its id is the honest fallback — an
+  // empty provider slot would leave the model line unattributable.
+  it('falls back to the provider id when the operator label is gone', async () => {
+    const h = compositionHarness({ columns: 160, rows: 30, turns: 4 });
+    h.rt.provider = 'ollama';
+    h.rt.providerLabel = '';
+    h.rt.modelName = 'kimi-k2.7-code';
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:provider-id-fallback');
+    await vi.runOnlyPendingTimersAsync();
+    expect(renderMountedRoot(h).map(terminalPlainText).join('\n')).toContain('ollama · kimi-k2.7-code');
     composition.dispose();
     composition.stop();
   });
@@ -1496,9 +1537,12 @@ describe('chat application shell ownership', () => {
     // Parent model is test/provider-model, reasoning level medium (from the harness). Drill into a child.
     const childTranscript = new TranscriptModel([{ role: 'assistant', text: 'child working' }]);
     childTranscript.apply({ type: 'text', delta: 'thinking…' }); // child is active → activity 'agent'
+    // The rail map comes from /brain/rate-limits/all, which pi provider ids key. The child sits on an
+    // OAuth account whose CONFIG id (`codex-account`) is deliberately not its pi id, so a rail selected
+    // by the displayed identity instead of `usageProvider` would find nothing.
     h.rt.rateLimitsByProvider = {
-      [h.rt.provider]: {
-        provider: h.rt.provider, planType: 'parent-plan', fetchedAt: 1, stale: false,
+      [h.rt.usageProvider]: {
+        provider: h.rt.usageProvider, planType: 'parent-plan', fetchedAt: 1, stale: false,
         windows: [{ usedPercent: 91, windowMinutes: 300, resetsAt: 456 }],
       },
       'openai-codex': {
@@ -1509,7 +1553,9 @@ describe('chat application shell ownership', () => {
     h.rt.childView = {
       sessionId: 'child-42',
       model: 'gpt-5.6-sol',
-      provider: 'openai-codex',
+      provider: 'codex-account',
+      providerLabel: 'Codex',
+      usageProvider: 'openai-codex',
       transcript: childTranscript,
       processes: [],
       loading: false,

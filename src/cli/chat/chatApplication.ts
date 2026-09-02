@@ -234,6 +234,8 @@ export class ChatApplication {
       notice: notices.render(),
       modelName: boot?.model || options.model || '',
       provider: boot?.provider ?? '',
+      providerLabel: boot?.providerLabel ?? '',
+      usageProvider: boot?.usageProvider ?? '',
       conversationTitle: boot?.title ?? '',
       lineCfg: boot?.statusline ?? null,
       usage: boot?.usage ?? null,
@@ -395,8 +397,14 @@ export class ChatApplication {
 
   private applyStatus(status: BrainStatus): void {
     const state = this.state;
-    const nextProvider = status.provider || state.provider;
-    state.provider = nextProvider;
+    // The provider id and its label move TOGETHER — carrying a label over from a previous provider would
+    // put the wrong name on the model line. An empty poll (no live session yet) keeps the last known pair
+    // rather than blanking the line mid-conversation.
+    if (status.provider) {
+      state.provider = status.provider;
+      state.providerLabel = status.providerLabel ?? '';
+    }
+    state.usageProvider = status.usageProvider ?? '';
     state.modelName = status.model || state.modelName;
     state.conversationTitle = status.title ?? state.conversationTitle;
     state.lineCfg = status.statusline;

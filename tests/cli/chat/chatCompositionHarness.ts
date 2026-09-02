@@ -122,7 +122,11 @@ export function compositionHarness(options: {
   const state = new ChatState({
     transcript: new TranscriptModel(history),
     modelName: 'provider-model',
+    // The PUBLIC provider identity (config entry id + the operator's label) is what the chrome renders;
+    // `usageProvider` is the internal pi provider the subscription rail is keyed by. See BrainStatus.
     provider: 'test',
+    providerLabel: 'Test Provider',
+    usageProvider: 'test',
     conversationTitle: 'Harness conversation',
     thinkingLevel: 'medium',
     thinkingLevelLabels: { medium: 'medium' },

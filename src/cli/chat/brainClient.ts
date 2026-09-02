@@ -76,7 +76,11 @@ export interface BrainRateLimits {
   fetchedAt: number;
   stale: boolean;
 }
-export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; provider: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
+/** `provider` is the PUBLIC provider identity (the operator's config entry id) and `providerLabel` its
+ *  display name — render `providerLabel || provider`, never anything else. `usageProvider` is the internal
+ *  pi provider that keys GET /brain/rate-limits/all and is not an identity to show. Both new fields are
+ *  optional for rolling compatibility with an older daemon during a local upgrade. */
+export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; provider: string; providerLabel?: string; usageProvider?: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
 /** One language server as GET /brain/lsp reports it. The subsystem lives in the `lsp` plugin now, so
  *  this is a WIRE contract the CLI owns as that endpoint's client — like McpServerView below — and not
  *  a type reaching across the core→plugin boundary. */
