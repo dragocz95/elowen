@@ -1,17 +1,21 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 
 function W({ children }: { children: React.ReactNode }) { return <LanguageProvider>{children}</LanguageProvider>; }
+// The diacritics tests search in Czech: "retence" (and "retenc" with no diacritics at all) must find the
+// memory-retention row, which is why they render against the Czech dictionary. `initialLocale="cs"` with
+// storage cleared (see the beforeEach below) keeps the provider from resolving a stray stored locale.
+function Cs({ children }: { children: React.ReactNode }) { return <LanguageProvider initialLocale="cs">{children}</LanguageProvider>; }
 
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push, replace: () => {} }) }));
-// The palette gates its "New mission" action on the agents plugin's presence, and lists the pages of
-// every enabled plugin alongside the core modules; this suite runs without a QueryClient, so stub both
-// hooks directly.
+// The palette lists the pages of every enabled plugin alongside the core modules; this suite runs
+// without a QueryClient, so the hook is stubbed directly.
 vi.mock('../../../lib/queries', () => ({
-  useAgentsPlugin: () => true,
-  useWorkPlugin: () => true,
   usePluginUi: () => ({ data: [{
     name: 'work',
     nav: [
@@ -24,22 +28,37 @@ vi.mock('../../../lib/queries', () => ({
 import { CommandPalette, COMMAND_PALETTE_OPEN_EVENT } from '../../../components/shell/CommandPalette';
 import { Modal } from '../../../components/ui/Modal';
 
-// jsdom implements no scrollIntoView, and the palette keeps the active row in view — that is the whole
-// point of wrapping past the ends of a list taller than its scroller.
+const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const primitivesCss = readFileSync(join(WEB, 'app', 'styles', 'components', 'primitives.css'), 'utf-8');
+
+// jsdom implements no scrollIntoView, and cmdk keeps the selected row in view — that is the whole point
+// of wrapping past the ends of a list taller than its scroller.
 beforeAll(() => { Element.prototype.scrollIntoView ??= () => {}; });
 
 const openPalette = () => fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+const type = (query: string) => fireEvent.change(screen.getByRole('combobox'), { target: { value: query } });
+/** The group headings cmdk rendered, in order — the launcher's fixed group order made visible. */
+const headings = () => [...document.querySelectorAll('[cmdk-group-heading]')].map((el) => el.textContent);
+
+beforeEach(() => {
+  // The stored locale outlives a test — and `LanguageProvider` re-resolves it on mount, so a Czech
+  // test would silently render in whatever language the PREVIOUS test left behind.
+  localStorage.clear();
+});
 
 describe('CommandPalette', () => {
   // The searched destination is a PLUGIN page: the board left the core registry with the work plugin,
   // and a palette that only walked MODULES would have quietly stopped being able to reach it.
   it('opens on Ctrl+K, filters, and runs a command on Enter', () => {
     render(<CommandPalette />, { wrapper: W });
-    expect(screen.queryByPlaceholderText('Search commands…')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Search…')).not.toBeInTheDocument();
     openPalette();
-    const input = screen.getByPlaceholderText('Search commands…');
+    const input = screen.getByPlaceholderText('Search…');
     expect(input).toBeInTheDocument();
     fireEvent.change(input, { target: { value: 'kanban' } });
+    // One ArrowDown settles cmdk's roving cursor onto the single match before Enter: cmdk resolves the
+    // initial selection asynchronously and announces it with the first interaction.
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(push).toHaveBeenCalledWith('/p/work/kanban');
   });
@@ -49,19 +68,91 @@ describe('CommandPalette', () => {
   //
   // The marker is asserted alongside the focus because Radix would otherwise cover for its absence: its
   // own `onOpenAutoFocus` default focuses the first TABBABLE control, which here happens to be this same
-  // input (the rows are held at `tabIndex={-1}`). Focus landing correctly therefore does not prove the
+  // input (cmdk's rows are not in the Tab cycle). Focus landing correctly therefore does not prove the
   // app's policy still runs; `data-autofocus` being on the element it aims at is what does.
   it('opens on the window event and hands focus to the search field', () => {
     render(<CommandPalette />, { wrapper: W });
     fireEvent(window, new Event(COMMAND_PALETTE_OPEN_EVENT));
-    const input = screen.getByPlaceholderText('Search commands…');
+    const input = screen.getByPlaceholderText('Search…');
     expect(input).toHaveAttribute('data-autofocus');
     expect(input).toHaveFocus();
   });
 
+  // The EMPTY query is a calm launcher: the page routes plus the Settings and Account decks' sections —
+  // no row entries. Typing is what reveals the rows (and the plugin pages).
+  it('launches calm on an empty query and reveals the rows once you type', () => {
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    expect(headings()).toEqual(['Primary', 'Settings', 'My account']);
+    expect(screen.queryByRole('option', { name: /Memory retention/ })).not.toBeInTheDocument();
+
+    type('retention');
+    expect(screen.getByRole('option', { name: /Memory retention/ })).toBeInTheDocument();
+    // Plugin pages are launcher material only once there is something to search for.
+    type('kanban');
+    expect(screen.getByRole('option', { name: /Kanban/ })).toBeInTheDocument();
+  });
+
+  // Grouped presentation, with the memory-retention row found under its Settings section — and the match
+  // highlighted inside the ORIGINAL accented title. `retence` (Czech), `Retence` (case) and `retenc`
+  // (no diacritics typed at all) must all reach it; cmdk's own filter is neither diacritics- nor
+  // case-aware in the way the app needs, which is why the custom filter in siteSearch owns matching.
+  //
+  // THE ROW LIVES IN SETTINGS → {agentName} AI, so Enter deep-links `/settings?cat=brain`. (The deck's
+  // Memory section hosts the embedding/categorization models; retention is a Brain-runtime record —
+  // pointing the row anywhere else would land the user in a section that does not contain it.)
+  it('finds the memory-retention row from "retence" in any casing or diacritics, and highlights the match', async () => {
+    // Each query gets its own mount: one change per palette keeps the interaction on the single
+    // code path that is deterministic under cmdk's controlled field.
+    for (const q of ['retence', 'Retence', 'retenc']) {
+      const view = render(<CommandPalette />, { wrapper: Cs });
+      openPalette();
+      const input = screen.getByRole('combobox');
+      fireEvent.change(input, { target: { value: q } });
+      // The row is addressed by its cmdk `data-value` (the entry id): when the query lands mid-word,
+      // the highlight splits the title and the flattened accessible name carries an artifact space at
+      // the split ("Retenc e paměti"), so the name is not a stable handle — the value is.
+      const row = await waitFor(() => {
+        const el = document.querySelector<HTMLElement>('[cmdk-item][data-value="settings:brain:brain.retention.title"]');
+        expect(el, `"${q}" must reveal the memory-retention row`).not.toBeNull();
+        return el!;
+      });
+      expect(row).toHaveAttribute('role', 'option');
+      // The subtitle names the section the row lives in.
+      expect(row.textContent).toContain('Elowen AI');
+      // The matched substring wears the accent, mapped back onto the accented original.
+      const highlighted = row.querySelector('.text-primary');
+      expect(highlighted, `"${q}" must highlight the matched substring`).not.toBeNull();
+      expect(highlighted!.textContent).toBe(q.slice(0, 1).toUpperCase() + q.slice(1));
+      view.unmount();
+    }
+    // Two rows legitimately match "retence" (the runtime row's hint mentions it too), and the retention
+    // row is the second: walk the cursor onto it, then Enter runs exactly that row.
+    render(<CommandPalette />, { wrapper: Cs });
+    openPalette();
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'retence' } });
+    const row = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('[cmdk-item][data-value="settings:brain:brain.retention.title"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await waitFor(() => {
+      expect(input).toHaveAttribute('aria-activedescendant', row.id);
+      expect(row).toHaveAttribute('data-selected', 'true');
+    });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(push).toHaveBeenCalledWith('/settings?cat=brain');
+  });
+
   // The palette used to be a bare <input> over a <ul> of <button>s: no combobox, no listbox, no announced
-  // active row, so a screen reader was told nothing about what Enter would run.
-  it('exposes a combobox over a listbox and announces the active option', () => {
+  // active row. cmdk now owns all of that — this pins the wiring it must keep providing.
+  //
+  // cmdk announces the active row through `aria-activedescendant` when the cursor MOVES; mount itself
+  // only paints `aria-selected` on the first row (the announced id lands with the first cursor move), so
+  // the first ArrowDown is the deterministic point from which every move is announced at once.
+  it('exposes a combobox over a listbox and announces the active option', async () => {
     render(<CommandPalette />, { wrapper: W });
     openPalette();
     const input = screen.getByRole('combobox', { name: 'Search commands…' });
@@ -69,32 +160,39 @@ describe('CommandPalette', () => {
     expect(input).toHaveAttribute('aria-controls', list.id);
     expect(input).toHaveAttribute('aria-expanded', 'true');
 
+    // The first row starts active…
     const options = screen.getAllByRole('option');
-    expect(options[0]).toHaveAttribute('aria-selected', 'true');
-    expect(input).toHaveAttribute('aria-activedescendant', options[0]!.id);
-
+    await waitFor(() => expect(options[0]).toHaveAttribute('aria-selected', 'true'));
+    expect(options[0]).toHaveAttribute('data-selected', 'true');
+    // …and ArrowDown moves the cursor, announced on the input and marked on the row.
     fireEvent.keyDown(input, { key: 'ArrowDown' });
-    expect(input).toHaveAttribute('aria-activedescendant', options[1]!.id);
-    expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => {
+      expect(input).toHaveAttribute('aria-activedescendant', options[1]!.id);
+      expect(options[1]).toHaveAttribute('aria-selected', 'true');
+      expect(options[1]).toHaveAttribute('data-selected', 'true');
+    });
   });
 
-  // Wraparound is what SelectMenu — the app's reference listbox — does, so the palette does it too.
-  it('wraps the cursor past both ends of the list', () => {
+  // Wraparound is what SelectMenu — the app's reference listbox — does, and cmdk's `loop` keeps it.
+  it('wraps the cursor past both ends of the list', async () => {
     render(<CommandPalette />, { wrapper: W });
     openPalette();
     const input = screen.getByRole('combobox', { name: 'Search commands…' });
+    fireEvent.keyDown(input, { key: 'Home' });
     const options = screen.getAllByRole('option');
     const last = options.at(-1)!.id;
 
+    // Up from the FIRST row wraps to the last; Down from there wraps back to the first.
     fireEvent.keyDown(input, { key: 'ArrowUp' });
-    expect(input).toHaveAttribute('aria-activedescendant', last);
+    await waitFor(() => expect(input).toHaveAttribute('aria-activedescendant', last));
     fireEvent.keyDown(input, { key: 'ArrowDown' });
-    expect(input).toHaveAttribute('aria-activedescendant', options[0]!.id);
+    await waitFor(() => expect(input).toHaveAttribute('aria-activedescendant', options[0]!.id));
   });
 
   // The dialog is Radix's now, so it has to BE one: an announced modal dialog whose surface sits inside
   // the layer that isolates the page — not a second body child of its own, which is what Radix's
-  // `Dialog.Portal` would produce and what the overlay stack would then mark inert.
+  // `Dialog.Portal` would produce and what the overlay stack would then mark inert. The cmdk parts
+  // render INSIDE that surface: no `CommandDialog`, no portal of their own.
   it('renders the palette as a modal dialog inside the isolating layer', () => {
     render(<CommandPalette />, { wrapper: W });
     openPalette();
@@ -102,8 +200,9 @@ describe('CommandPalette', () => {
     const dialog = screen.getByRole('dialog', { name: 'Open command palette' });
     expect(dialog).toHaveAttribute('aria-modal', 'true');
     expect(dialog.parentElement).toHaveClass('overlay-layer-modal');
+    expect(dialog.parentElement!.parentElement).toBe(document.body);
     expect(dialog.closest('[inert]')).toBeNull();
-    expect(screen.getByRole('combobox', { name: 'Search commands…' }).closest('[role="dialog"]')).toBe(dialog);
+    expect(document.querySelector('[cmdk-root]')!.closest('[role="dialog"]')).toBe(dialog);
   });
 
   // Radix owns the focus trap and Escape; the app keeps the overlay stack's `inert` isolation and the
@@ -174,5 +273,27 @@ describe('CommandPalette', () => {
     fireEvent.pointerDown(backdrop);
     fireEvent.click(backdrop);
     expect(screen.queryByRole('dialog', { name: 'Open command palette' })).not.toBeInTheDocument();
+  });
+
+  // The search field is the ONE input that drops the global focus halo: the panel itself is the focus
+  // indication, and the halo reads there as a stray outline around nothing. The app silences it with a
+  // scoped stylesheet rule — not by touching the global focus styles — and this pins both halves: the
+  // marker class on the input, no ring utility on it, and the rule in the stylesheet that owns overlays.
+  it('carries no focus ring on the search field and keeps the ring everywhere else', () => {
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    const input = screen.getByRole('combobox');
+    expect(input).toHaveClass('command-palette-search');
+    expect(input.className).not.toMatch(/focus-visible:(ring|shadow)/);
+    expect(primitivesCss).toMatch(/input\.command-palette-search:focus-visible\s*\{\s*box-shadow:\s*none;/);
+  });
+
+  // A query that matches nothing gets an answer, not silence — cmdk's `CommandEmpty`.
+  it('says so when nothing matches', () => {
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    type('no-such-setting-anywhere');
+    expect(screen.getByText('No results')).toBeInTheDocument();
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
   });
 });
