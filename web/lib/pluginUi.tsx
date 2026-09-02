@@ -415,10 +415,15 @@ export function loadPluginUi(plugin: string, url: string, cssUrl?: string): Prom
   // executes, so an already-registered plugin whose sheet is still in flight must keep waiting here.
   const pending = pendingLoads.get(url);
   if (pending) return pending;
-  const existing = registrations.get(plugin);
-  if (existing) return Promise.resolve(existing);
-  // Started first so the sheet downloads in parallel with the bundle, not after it.
+  // Started before consulting the registration map: a long-lived page may already hold the plugin's JS
+  // registration while a newly advertised stylesheet URL has never been linked in this document.
   const css = cssUrl ? ensurePluginCss(cssUrl) : Promise.resolve();
+  const existing = registrations.get(plugin);
+  if (existing) {
+    const load = css.then(() => existing);
+    pendingLoads.set(url, load);
+    return load;
+  }
   const script = new Promise<PluginUiRegistration | null>((resolveLoad) => {
     const el = document.createElement('script');
     el.type = 'module';

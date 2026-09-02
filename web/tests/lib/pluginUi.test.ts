@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ComponentType } from 'react';
 import type { PluginChatArtifactProps, PluginUiRegistration } from 'elowen-plugin-ui-kit';
-import { ensurePluginUiRuntime, matchPluginPage, PLUGIN_UI_API_VERSION, type PluginPageProps } from '../../lib/pluginUi';
+import { ensurePluginUiRuntime, loadPluginUi, matchPluginPage, PLUGIN_UI_API_VERSION, type PluginPageProps } from '../../lib/pluginUi';
 import { pluginNavEntries } from '../../lib/pluginNav';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { Puzzle, Sparkles } from 'lucide-react';
@@ -72,6 +72,26 @@ describe('plugin UI runtime', () => {
     };
 
     expect(registration.chatArtifacts?.preview).toBe(ArtifactView);
+  });
+
+  it('applies a newly advertised stylesheet when reusing a cached plugin registration', async () => {
+    ensurePluginUiRuntime();
+    const registration: PluginUiRegistration = { requiresApiVersion: 13 };
+    window.__elowenRegisterPluginUi?.('cached-css-plugin', registration);
+
+    const loaded = loadPluginUi(
+      'cached-css-plugin',
+      '/plugins/cached-css-plugin/web/new-bundle.js',
+      '/plugins/cached-css-plugin/web/new-styles.css',
+    );
+    const stylesheet = Array.from(document.head.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'))
+      .find((link) => link.href.endsWith('/api/plugins/cached-css-plugin/web/new-styles.css'));
+
+    expect(stylesheet).toBeDefined();
+    expect(document.head.querySelector('script[src$="/api/plugins/cached-css-plugin/web/new-bundle.js"]')).toBeNull();
+    stylesheet!.dispatchEvent(new Event('load'));
+    await expect(loaded).resolves.toBe(registration);
+    stylesheet!.remove();
   });
 
   it('keeps the date-range helpers a usage page filters with', () => {
