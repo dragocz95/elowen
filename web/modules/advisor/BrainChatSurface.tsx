@@ -1933,7 +1933,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             data-testid="chat-stop"
             onClick={abort}
             aria-label={t.brainChat.stop}
-            className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors ${
+            /* `animate-stop-pulse` must stay a literal class in TSX: it is a plain CSS class defined once
+               in app/styles/animations.css, so Tailwind's content purge keeps it only because it sees the
+               string here. While a turn runs the button breathes a slow primary halo (see stop-pulse);
+               hover/focus stay readable on top of it, and quiet-effects/reduced-motion silence it. */
+            className={`animate-stop-pulse flex h-9 w-9 shrink-0 items-center justify-center transition-colors ${
               variant === 'full'
                 ? 'rounded-xl bg-primary text-foreground hover:bg-primary-hot'
                 : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
