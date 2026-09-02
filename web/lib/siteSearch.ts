@@ -1,6 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
 import { Bell, Brain, Cpu, KeyRound, Sparkles, SquareTerminal, UserCog } from 'lucide-react';
-import { interpolate } from './i18n';
 import type { LocaleDict } from './i18n/types';
 import { MODULES } from '../modules/registry';
 import { SETTINGS_SECTIONS, type SettingsCategory } from '../modules/settings/categories';
@@ -38,25 +37,14 @@ export interface SearchEntry {
   icon?: LucideIcon;
 }
 
-export interface BuildSearchIndexOptions {
-  /** The assistant's display name, substituted into the `{agentName}` placeholders the dictionary
-   *  strings carry (the Brain section is titled "{agentName} AI"). Absent, placeholders stay verbatim. */
-  agentName?: string;
-}
-
 /** One indexed row inside a settings/account section: the dictionary paths the section's component
  *  already renders. `hint` is the row description (searched as a keyword, never shown), `keywords`
  *  carries pragmatic aliases (an English term for a Czech-labelled control). */
 interface RowSpec { path: string; hint?: string; keywords?: string[] }
 
-interface SectionSpec {
-  id: string;
-  titlePath: string;
-  hintPath?: string;
-  rows: RowSpec[];
-}
-
-/** A dictionary path like `brain.retention.title`, resolved against the dictionary at build time. */
+/** A dictionary path like `brain.retention.title`, resolved against the dictionary at build time. The
+ *  dictionary arriving here is already brand-resolved — `useTranslation` substitutes `{agentName}` and
+ *  `{productName}` into every string — so a path yields final, display-ready text. */
 function dictAt(t: LocaleDict, path: string): string {
   let node: unknown = t;
   for (const part of path.split('.')) {
@@ -214,9 +202,9 @@ export function findNormalizedRange(text: string, query: string): [number, numbe
   return [sources[at]!, sources[at + q.length - 1]! + 1];
 }
 
-/** cmdk's custom `filter`: 1 keeps the item, 0 drops it. Matches over the item's VALUE plus its
- *  keywords (the same concatenation cmdk's own default filter applies), both normalized above — so
- *  "retenc" (no diacritics) scores the "Retence paměti" row. */
+/** One match test, shared by the palette's pre-filter: 1 keeps the item, 0 drops it. Matches over the
+ *  item's VALUE plus its keywords (the same concatenation cmdk's own default filter applies), both
+ *  normalized above — so "retenc" (no diacritics typed) keeps the "Retence paměti" row. */
 export function searchFilter(value: string, search: string, keywords?: string[]): number {
   const q = normalizeText(search);
   if (!q) return 1;
@@ -224,15 +212,20 @@ export function searchFilter(value: string, search: string, keywords?: string[])
   return normalizeText(haystack).includes(q) ? 1 : 0;
 }
 
+/** The palette's rows for one query, pre-filtered. cmdk is given `shouldFilter={false}` — its own
+ *  filter pipeline re-scores items in a store React cannot observe (its snapshot is one mutable
+ *  object), so visibility after a keystroke is left to unrelated re-renders; filtering HERE keeps the
+ *  rendered list a pure function of the query. */
+export function filterEntries(entries: SearchEntry[], query: string): SearchEntry[] {
+  const q = query.trim();
+  if (!q) return entries;
+  return entries.filter((entry) => searchFilter(entry.id, q, [entry.title, entry.subtitle ?? '', ...entry.keywords]) === 1);
+}
+
 /** The palette's rows, from data that already exists. Pure — unit-tested in `tests/lib/siteSearch.test.ts`. */
-export function buildSearchIndex(t: LocaleDict, pluginEntries: PluginUiListing[], options: BuildSearchIndexOptions = {}): SearchEntry[] {
-  const { agentName } = options;
-  // Read the string the component renders and substitute its one live placeholder. Nothing here holds
-  // a second copy of any label.
-  const loc = (path: string): string => {
-    const raw = dictAt(t, path);
-    return agentName !== undefined ? interpolate(raw, { agentName }) : raw;
-  };
+export function buildSearchIndex(t: LocaleDict, pluginEntries: PluginUiListing[]): SearchEntry[] {
+  // Read the string the component renders. Nothing here holds a second copy of any label.
+  const loc = (path: string): string => dictAt(t, path);
 
   const entries: SearchEntry[] = [];
 

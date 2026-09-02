@@ -147,6 +147,8 @@ export const sk = {
     done: 'Hotovo',
     goTo: 'Prejsť na',
     searchCommands: 'Hľadať príkazy…',
+    searchSite: 'Hľadať…',
+    searchNoResults: 'Nič nenájdené',
     noCommands: 'Žiadne príkazy',
     dismiss: 'Zavrieť',
     notification: 'Oznámenie',

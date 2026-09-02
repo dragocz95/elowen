@@ -150,6 +150,8 @@ export const en = {
     done: 'Done',
     goTo: 'Go to',
     searchCommands: 'Search commands…',
+    searchSite: 'Search…',
+    searchNoResults: 'No results',
     noCommands: 'No commands',
     dismiss: 'Dismiss',
     notification: 'Notification',

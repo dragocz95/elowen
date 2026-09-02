@@ -147,6 +147,8 @@ export const cs = {
     done: 'Hotovo',
     goTo: 'Přejít na',
     searchCommands: 'Hledat příkazy…',
+    searchSite: 'Hledat…',
+    searchNoResults: 'Nic nenalezeno',
     noCommands: 'Žádné příkazy',
     dismiss: 'Zavřít',
     notification: 'Oznámení',
