@@ -13,7 +13,8 @@ import { CardPanel, SubagentPanel } from '../../../src/cli/chat/components.js';
 import { openPicker } from '../../../src/cli/chat/picker.js';
 import type { TuiDiagnostics } from '../../../src/cli/chat/tuiDiagnostics.js';
 import { startScreenBox, startScreenInputTop, TOP_RULE_ROWS } from '../../../src/cli/chat/startScreen.js';
-import { TELEMETRY_MIN_COLUMNS } from '../../../src/cli/chat/layoutBudget.js';
+import { TELEMETRY_MAX_COLUMNS, TELEMETRY_MIN_COLUMNS } from '../../../src/cli/chat/layoutBudget.js';
+import { TelemetryPanel } from '../../../src/cli/chat/telemetryPanel.js';
 import { TerminalLifecycle } from '../../../src/cli/chat/terminalLifecycle.js';
 import { terminalPlainText } from '../../../src/cli/ui/text.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
@@ -1699,7 +1700,37 @@ describe('chat application shell ownership', () => {
     composition.stop();
   });
 
-  it('auto-fits the rail to its content on the first visible frame, and a manual drag afterward sticks', async () => {
+  /** The same TelemetryPanel state getter chatComposition.ts feeds its rail, rebuilt from the harness —
+   *  so a test can compute the Context floor the production rail would enforce for the harness state. */
+  const railFloorFor = (h: Harness): number => new TelemetryPanel(() => ({
+    usage: h.rt.usage,
+    cwd: h.resources.cwdLabel,
+    branch: h.resources.branchLabel,
+    mcp: h.rt.mcpList,
+    lspEnabled: h.rt.lspEnabled,
+    processes: h.rt.processes,
+    subagents: [],
+    workflows: [],
+    rateLimits: null,
+    goal: h.rt.goal,
+    floatOffset: 0,
+  })).contextRequiredWidth();
+
+  /** Drag the rail's left edge to the terminal's last column — the narrowest position a user can
+   *  physically reach — and report the width the real input router clamped to. */
+  const dragRailNarrower = async (h: Harness): Promise<number> => {
+    const railOverlay = () => h.tui.overlays.find((overlay) => !overlay.removed && overlay.options?.anchor === 'top-right')!;
+    const edge = h.term.columns - (railOverlay().options!.width as number);
+    const y = TOP_RULE_ROWS + 2;
+    h.tui.emit(`\x1b[<0;${edge};${y}M`);
+    h.tui.emit(`\x1b[<32;${h.term.columns};${y}M`);
+    h.tui.emit(`\x1b[<0;${h.term.columns};${y}m`);
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+    return railOverlay().options!.width as number;
+  };
+
+  it('starts the rail at the Context floor on the first visible frame, and a manual drag afterward sticks', async () => {
     const h = compositionHarness({ columns: 120, rows: 24, turns: 0 });
     const composition = makeComposition(h);
     composition.resume();
@@ -1713,15 +1744,20 @@ describe('chat application shell ownership', () => {
     renderMountedRoot(h);
 
     const railOverlay = () => h.tui.overlays.find((overlay) => !overlay.removed && overlay.options?.anchor === 'top-right')!;
-    const autoFitted = railOverlay();
-    // The harness's cwd ('~/elowen'), branch ('test') and usage (none) are all short/absent, so the
-    // auto-fit result sits well under the old fixed 46-column default, never below the documented minimum.
-    expect(autoFitted.options?.width).toBeGreaterThanOrEqual(36);
-    expect(autoFitted.options?.width).toBeLessThan(46);
+    const startWidth = railOverlay().options?.width as number;
+    // The first visible frame starts the rail at the narrowest width that still shows every Context
+    // number, computed through the same TelemetryPanel state the composition feeds its rail. The
+    // harness's short context state puts that floor at the documented rail minimum.
+    expect(startWidth).toBe(railFloorFor(h));
+    expect(startWidth).toBe(TELEMETRY_MIN_COLUMNS);
 
-    // Drag the left edge to a deliberately different width.
+    // Because the start width IS the floor the drag clamp enforces, a drag towards narrower must not
+    // move the edge at all.
+    expect(await dragRailNarrower(h)).toBe(startWidth);
+
+    // A manual drag to a deliberately different width afterwards sticks.
     const targetWidth = 55;
-    const edge = h.term.columns - (autoFitted.options!.width as number);
+    const edge = h.term.columns - startWidth;
     const targetX = h.term.columns - targetWidth + 1;
     const y = TOP_RULE_ROWS + 2;
     h.tui.emit(`\x1b[<0;${edge};${y}M`);
@@ -1736,6 +1772,42 @@ describe('chat application shell ownership', () => {
     await vi.runOnlyPendingTimersAsync();
     renderMountedRoot(h);
     expect(railOverlay().options?.width).toBe(targetWidth);
+
+    composition.dispose();
+    composition.stop();
+  });
+
+  it('starts at the Context floor even when a long process row would have auto-fit the rail to its cap', async () => {
+    const h = compositionHarness({ columns: 120, rows: 24, turns: 0 });
+    // A background process whose command overflows the rail: the old auto-fit measured the widest
+    // section and opened the rail at the 68-column cap. The Context floor does not care about it.
+    h.rt.processes = [{
+      id: 'regression-process',
+      command: 'npm run dev --workspace some-really-long-package-name-that-overflows-the-rail',
+      cwd: '/tmp',
+      startedAt: new Date(0).toISOString(), running: true, exitCode: null,
+    }] as typeof h.rt.processes;
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:empty-conversation');
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+
+    h.rt.transcript.apply({ type: 'user', text: 'first message' });
+    composition.render('stream:user');
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+
+    const railOverlay = () => h.tui.overlays.find((overlay) => !overlay.removed && overlay.options?.anchor === 'top-right')!;
+    const startWidth = railOverlay().options?.width as number;
+    // Regression: the start width is the Context floor for this state, never the widest section's
+    // measurement. (With the old naturalWidth auto-fit this opened at TELEMETRY_MAX_COLUMNS.)
+    expect(startWidth).toBe(railFloorFor(h));
+    expect(startWidth).toBe(TELEMETRY_MIN_COLUMNS);
+    expect(startWidth).toBeLessThan(TELEMETRY_MAX_COLUMNS);
+
+    // The drag floor still agrees with it: dragging narrower cannot move the edge.
+    expect(await dragRailNarrower(h)).toBe(startWidth);
 
     composition.dispose();
     composition.stop();
