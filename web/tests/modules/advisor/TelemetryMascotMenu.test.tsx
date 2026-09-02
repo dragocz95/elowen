@@ -77,8 +77,10 @@ describe('telemetry mascot command menu', () => {
     expect(within(menu).getByRole('menuitem', { name: /^Rename/ })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: /^New conversation/ })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: /^Model/ })).toBeInTheDocument();
-    // The catalog carries one-line help; the menu shows it as secondary text.
-    expect(within(menu).getByText('Summarize the conversation')).toBeInTheDocument();
+    // One-line help as secondary text: the dictionary's line in the reader's language where it has one,
+    // the catalog's English description otherwise.
+    expect(within(menu).getByText('Summarize the conversation to free up context')).toBeInTheDocument();
+    expect(within(menu).queryByText('Summarize the conversation')).toBeNull();
     // …and a command the daemon withheld for this surface gets no row.
     expect(within(menu).queryByRole('menuitem', { name: /Theme/ })).not.toBeInTheDocument();
   });

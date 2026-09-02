@@ -112,11 +112,13 @@ describe('composer work-mode switch', () => {
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
     const { menu } = await openMenu();
     const group = within(menu).getByRole('group');
-    // Each row's accessible name leads with the mode label; the description rides after it.
+    // Each row's accessible name leads with the mode label; the hint rides after it — the dictionary's
+    // line in the reader's language, not the catalog's English description.
     expect(within(group).getByRole('menuitemradio', { name: /^Build/ })).toBeInTheDocument();
     expect(within(group).getByRole('menuitemradio', { name: /^Plan/ })).toBeInTheDocument();
     expect(within(group).getByRole('menuitemradio', { name: /^Workflow/ })).toBeInTheDocument();
-    expect(within(group).getByText('Plan mode')).toBeInTheDocument();
+    expect(within(group).getByText('Think the approach through before editing')).toBeInTheDocument();
+    expect(within(group).queryByText('Plan mode')).toBeNull();
     // Picker and action commands never become mode rows.
     expect(within(menu).queryByRole('menuitemradio', { name: /^Rename/ })).toBeNull();
     expect(within(menu).queryByRole('menuitemradio', { name: /^Model/ })).toBeNull();
