@@ -235,6 +235,31 @@ describe('ProviderRequestStore', () => {
     expect(requests.debugRequests('missing')).toBeUndefined();
   });
 
+  // The diagnostics panel labels `wireProvider` "Provider", so the internal `elowen-<id>` registry
+  // namespace must not reach it. The stored row is a RECORD and keeps what the request carried; the
+  // translation happens on the way out. Filtering is unaffected — the query matches the configured
+  // provider too, which is the very id the translated value now reads as.
+  // Mutation: return `String(row.wire_provider)` unchanged and this reads `elowen-ollama`.
+  it('reports the wire provider by its public id while the stored row keeps the registry name', () => {
+    const { db, brain, requests } = fixture();
+    const custom = requests.start({
+      sessionId: 's1', turnId: 'turn:1', kind: 'chat', configuredProvider: 'ollama',
+      wireProvider: 'elowen-ollama', api: 'openai-completions', model: 'kimi-k2.7-code', payload: body(), startedAt: 1_000,
+    });
+
+    expect(requests.debugRequests('s1')?.items[0]).toMatchObject({ configuredProvider: 'ollama', wireProvider: 'ollama' });
+    expect(db.prepare('SELECT wire_provider FROM brain_provider_requests WHERE request_id = ?').get(custom.requestId))
+      .toEqual({ wire_provider: 'elowen-ollama' });
+    expect(requests.debugRequests('s1', { provider: 'ollama' })?.items).toHaveLength(1);
+  });
+
+  // A built-in pi provider (an OAuth account) carries no namespace and must survive untouched.
+  it('leaves a built-in wire provider name alone', () => {
+    const { brain, requests } = fixture();
+    finish(brain, start(brain).requestId);
+    expect(requests.debugRequests('s1')?.items[0]).toMatchObject({ wireProvider: 'anthropic' });
+  });
+
   it('loads manifests and payloads lazily, enforces byte limits, and reconstructs the exact body', () => {
     const { db, brain, requests } = fixture();
     const attempt = start(brain);

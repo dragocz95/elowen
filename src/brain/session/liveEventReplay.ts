@@ -42,8 +42,12 @@ export interface BrainStreamSnapshot extends LiveEventSnapshot {
   /** The actual tapped session. It can differ from the query after an idle rollover retargeted this
    * stable client while its previous SSE was down. */
   sessionId?: string;
-  /** Identity of the tapped session, which may use a different model/provider than its parent. */
-  session?: { model: string; provider: string };
+  /** Identity of the tapped session, which may use a different model/provider than its parent.
+   *  `provider` and `providerLabel` are the PUBLIC identity (the operator's config entry id and its
+   *  display name); `usageProvider` is the internal pi provider that keys the subscription-usage map.
+   *  Same split as `BrainStatusView`, and for the same reason: a single field carrying both meanings is
+   *  what put PI's `elowen-<id>` registry namespace in front of the user. */
+  session?: { model: string; provider: string; providerLabel?: string; usageProvider?: string };
   /** Persisted display cards for reconnect/drill-in hydration before live replay events are applied. */
   cards?: BrainCard[];
   /** See {@link BrainStreamControl}. Optional only for rolling compatibility with an older daemon. */

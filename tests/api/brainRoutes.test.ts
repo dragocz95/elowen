@@ -53,7 +53,7 @@ function fakeBrain() {
   const processOutputCalls: { id: number; processId: string; session?: string }[] = [];
   const killProcessCalls: { id: number; processId: string; session?: string }[] = [];
   let owner = true;
-  let activeProvider = ''; // the pi provider of the active model — drives usage-rail selection
+  let activeUsageProvider = ''; // the pi provider of the active model — drives usage-rail selection
   let processes: ProcessInfo[] = [];
   let processOutputText: string | null = 'buffer';
   let unknownSessionError: Error | null = null;
@@ -126,13 +126,18 @@ function fakeBrain() {
     },
     /** Test helper: seed a user's pending mid-turn queue. */
     __enqueue: (id: number, item: { id: string; text: string }) => { queues.set(id, [...(queues.get(id) ?? []), item]); },
-    __setProvider: (p: string) => { activeProvider = p; },
+    /** Test helper: the INTERNAL pi provider of the active model — the subscription-usage key, which is
+     *  deliberately a different field from the public `provider` the clients display. */
+    __setUsageProvider: (p: string) => { activeUsageProvider = p; },
     // Mirrors the real service contract: an explicit session must be the caller's own conversation
     // (`brain-<userId>` here) or the lookup throws, which the routes turn into a 404.
     status: (id: number, session?: string) => {
       if (session !== undefined && session !== `brain-${id}`) throw new Error('unknown session');
       return {
-        running: started.has(id), sessionId: started.has(id) ? `brain-${id}` : null, model: 'm', provider: activeProvider,
+        running: started.has(id), sessionId: started.has(id) ? `brain-${id}` : null, model: 'm',
+        // A custom endpoint, whose PUBLIC identity never matches a pi usage key — so a route that read
+        // `provider` instead of `usageProvider` could not accidentally pass these tests.
+        provider: 'ollama', providerLabel: 'Ollama', usageProvider: activeUsageProvider,
         queued: queues.get(id) ?? [], fast: false, fastAvailable: true,
         project: { cwd: `/work/user-${id}`, branch: `branch-${id}` },
       };
@@ -985,7 +990,7 @@ describe('brain routes', () => {
       await app.request('/brain/start', post(amyTok, {}));
 
       // Active model is Codex OAuth → its usage service is selected and its windows come back.
-      brain.__setProvider('openai-codex');
+      brain.__setUsageProvider('openai-codex');
       const res = await app.request('/brain/rate-limits?session=brain-2', auth(amyTok));
       expect(res.status).toBe(200);
       const body = await res.json() as { provider: string; windows: { usedPercent: number; windowMinutes: number }[] };
@@ -997,7 +1002,7 @@ describe('brain routes', () => {
       expect(fetchSpy).toHaveBeenCalledWith('https://chatgpt.com/backend-api/wham/usage', expect.anything());
 
       // A provider with no registered usage service (e.g. a non-OAuth model) → null, no fetch.
-      brain.__setProvider('some-byok-provider');
+      brain.__setUsageProvider('some-byok-provider');
       expect(await (await app.request('/brain/rate-limits?session=brain-2', auth(amyTok))).json()).toBeNull();
     } finally {
       vi.unstubAllGlobals();
