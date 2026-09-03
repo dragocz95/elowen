@@ -394,6 +394,18 @@ describe('sandbox execution HOME and leases', () => {
       command: `git config --get-all 'credential.https://github.com.helper'`,
     });
     expect(helper.content[0]!.text).toContain('!gh auth git-credential');
+
+    // And inside a namespace, which is where a non-operator account actually runs. bwrap passes its own
+    // environment through, so the injected variables survive the confinement — and `gh` itself has to be
+    // reachable in there, or the helper git resolves would be a command the child cannot run.
+    const confined = await registry.control('sandbox')!.prepareExecution(
+      { command: { type: 'shell', command: `git config --get-all 'credential.https://github.com.helper'; command -v gh` }, cwd: projectPath, leaseKind: 'terminal' },
+      { accountUserId: 1, roots: [projectPath] },
+    );
+    expect(confined.mode).toBe('confined');
+    const inside = await runPrepared(confined);
+    expect(inside.output).toContain('!gh auth git-credential');
+    expect(inside.output).toContain('/gh');
   });
 
   it('leaves the child unauthenticated for an account, an owner and a seam that cannot answer', async () => {
