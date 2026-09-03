@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ChevronRight, ListChecks, EyeOff, Server, ShieldCheck, SlidersHorizontal, Settings2 } from 'lucide-react';
+import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ChevronRight, ListChecks, EyeOff, Server, SlidersHorizontal, Settings2 } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -42,35 +42,17 @@ const OAUTH_ICON: Record<string, string> = {
 };
 const API_TYPES: BrainProviderType[] = ['openai', 'anthropic'];
 
-type HostedSearchStatus = 'supported' | 'unsupported' | 'unverified';
 type HostedSearchStatusResponse = Awaited<ReturnType<typeof elowenClient.brainHostedToolSearchStatus>>;
 /** One hosted-search record per provider the daemon says the native search can apply to. Membership IS
  *  the capability answer — a provider absent from this map gets no switch, because the daemon would never
  *  give it a hosted route to switch off. */
 type HostedSearchEntry = HostedSearchStatusResponse['providers'][number];
-type HostedSearchInfo = Omit<HostedSearchEntry, 'providerId' | 'models'> & { models: Record<string, HostedSearchStatus> };
+type HostedSearchInfo = Omit<HostedSearchEntry, 'providerId'>;
 type HostedSearchMap = Record<string, HostedSearchInfo>;
 
 const toHostedSearchMap = (response: HostedSearchStatusResponse): HostedSearchMap => Object.fromEntries(
-  response.providers.map(({ providerId, models, ...rest }) => [
-    providerId,
-    { ...rest, models: Object.fromEntries(models.map((model) => [model.modelId, model.status])) },
-  ]),
+  response.providers.map(({ providerId, ...rest }) => [providerId, rest]),
 );
-
-function isAzureResponsesProvider(provider: BrainProvider): boolean {
-  if (provider.type !== 'openai' || provider.api !== 'openai-responses') return false;
-  try {
-    const url = new URL(provider.baseUrl);
-    const path = url.pathname.replace(/\/+$/, '') || '/';
-    return url.protocol === 'https:'
-      && url.hostname !== 'openai.azure.com'
-      && url.hostname.endsWith('.openai.azure.com')
-      && path === '/openai/v1';
-  } catch {
-    return false;
-  }
-}
 
 // `temperature` is a string because the field is free text: '' means "send none", which is a distinct,
 // meaningful state rather than a missing value, and 0 is a legitimate setting.
@@ -449,7 +431,7 @@ function ProviderModal({ draft: initial, existingIds, saving, onSave, onClose }:
   );
 }
 
-/** Settings → Brain: provider accounts, API endpoints, and hosted-search verification. */
+/** Settings → Brain: provider accounts, API endpoint entries, and the per-provider hosted-search switch. */
 export function BrainProvidersSection({ config }: { config: ElowenConfig | undefined }) {
   const oauth = useBrainOauthStatus();
   const rateLimits = useBrainRateLimitsAll();
@@ -465,7 +447,6 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
   const [disconnectTarget, setDisconnectTarget] = useState<BrainProviderType | null>(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [hostedSearch, setHostedSearch] = useState<HostedSearchMap>({});
-  const [verifyingProvider, setVerifyingProvider] = useState<string | null>(null);
   const [hostedSearchPending, setHostedSearchPending] = useState<string | null>(null);
   const hostedStatusGeneration = useRef(0);
 
@@ -605,23 +586,6 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
       .then((f) => setFlow(f))
       .catch(() => toast(t.brain.connectError, 'error'));
 
-  const verifyHostedSearch = (provider: BrainProvider) => void (async () => {
-    setVerifyingProvider(provider.id);
-    try {
-      const results = [];
-      for (const modelId of provider.models) {
-        results.push(await elowenClient.brainHostedToolSearchProbe({ providerId: provider.id, modelId }));
-      }
-      await refreshHostedSearchStatus();
-      if (results.length > 0 && results.every((result) => result.status === 'supported')) toast(t.brain.hostedSearchVerified);
-      else toast(t.brain.hostedSearchVerifyFailed, 'error');
-    } catch {
-      toast(t.brain.hostedSearchVerifyFailed, 'error');
-    } finally {
-      setVerifyingProvider(null);
-    }
-  })();
-
   return (
     <>
       {/* OAuth accounts: one row per supported account type, connect/disconnect. Hidden types drop out
@@ -712,49 +676,28 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
         ) : (
           <>
             {apiProviders.map((p) => {
-              const azure = isAzureResponsesProvider(p);
               const hostedInfo = hostedSearch[p.id];
-              const modelStates = p.models.map((modelId) => hostedInfo?.models[modelId] ?? 'unverified');
-              const hostedState: HostedSearchStatus = modelStates.length > 0 && modelStates.every((status) => status === 'supported')
-                ? 'supported'
-                : modelStates.some((status) => status === 'unsupported') ? 'unsupported' : 'unverified';
-              const hostedLabel = hostedState === 'supported' ? t.brain.hostedSearchVerified
-                : hostedState === 'unsupported' ? t.brain.hostedSearchUnsupported
-                  : t.brain.hostedSearchUnverified;
               return (
                 <SettingsRow
                   key={p.id}
                   label={p.label}
-                  // Endpoint, model count, type badge, key badge, an optional hosted-search badge and up
-                  // to three buttons — the same multi-value record as an account above.
+                  className="brain-provider-row"
+                  // Endpoint, model count, type badge, key badge and up to three buttons — the same
+                  // multi-value record as an account above.
                   trailingLayout="stack"
                   iconNode={<DomainFavicon baseUrl={p.baseUrl} fallback={<BrainCircuit size={15} strokeWidth={1.75} />} />}
                   // Badges REPORT — they are not actions, and carrying them in the actions slot put six
-                  // slots in a cell whose ceiling is three. The hosted-search badge is also its own verify
-                  // control: it already states the answer, so a separate button beside it said the same
-                  // thing twice.
+                  // slots in a cell whose ceiling is three. The status block is the record's value column:
+                  // its width is fixed by `.brain-provider-row` in spatial-deck.css, so every row's
+                  // endpoint starts at the same x no matter how long the URL is — the endpoint truncates
+                  // (with its full text in `title`) instead of stretching the column.
                   status={(
-                    <span className="flex flex-col gap-1">
-                      {p.baseUrl ? <span className="truncate font-mono">{p.baseUrl}</span> : null}
+                    <span className="flex min-w-0 flex-col gap-1">
+                      {p.baseUrl ? <span className="truncate font-mono" title={p.baseUrl}>{p.baseUrl}</span> : null}
                       <span>{p.models.length > 0 ? t.brain.modelCount.replace('{n}', String(p.models.length)) : t.brain.modelsAuto}</span>
                       <span className="flex flex-wrap items-center gap-1.5">
                         <Badge>{t.brain.types[p.type]}</Badge>
                         {p.apiKeySet ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
-                        {azure ? (
-                          <button
-                            type="button"
-                            className="rounded-full transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-60"
-                            aria-label={`${t.brain.hostedSearchVerify}: ${p.label}`}
-                            title={t.brain.hostedSearchVerify}
-                            disabled={p.models.length === 0 || verifyingProvider === p.id}
-                            onClick={() => verifyHostedSearch(p)}
-                          >
-                            <Badge tone={hostedState === 'supported' ? 'accent' : hostedState === 'unsupported' ? 'danger' : 'default'}>
-                              <ShieldCheck size={10} className="mr-1" aria-hidden />
-                              {verifyingProvider === p.id ? t.brain.hostedSearchVerifying : hostedLabel}
-                            </Badge>
-                          </button>
-                        ) : null}
                       </span>
                     </span>
                   )}
