@@ -149,6 +149,7 @@ describe('PermissionRulesCard', () => {
     fireEvent.click(retry);
     await waitFor(() => expect(patches).toHaveLength(2));
     expect(patches[1]).toEqual({ bash: { 'git status*': 'allow', 'npm run build*': 'allow' } });
-    expect(await screen.findByText(en.common.saved)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: en.common.retry })).toBeNull());
+    expect(screen.queryByText(en.common.saved)).toBeNull();
   });
 });

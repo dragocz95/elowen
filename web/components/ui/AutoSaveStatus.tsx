@@ -1,5 +1,5 @@
 'use client';
-import { Check, TriangleAlert } from 'lucide-react';
+import { TriangleAlert } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { Spinner } from '../ui/states';
@@ -12,12 +12,12 @@ export interface AutoSaveStatusProps {
   onMerge?: () => void;
 }
 
-/** Subtle, unobtrusive auto-save indicator for a modal footer. Idle renders nothing; error offers a
- * retry. A successful write whose live activation is delayed remains visibly pending instead of being
- * presented as fully active. */
+/** Subtle auto-save indicator. Idle and success are silent; saving, delayed activation and errors stay
+ * visible. Selection controls save as the user chooses, so a green "Saved" after every model, project or
+ * setting change is noise — failure is the state that needs a durable action. */
 export function AutoSaveStatus({ status, onRetry, errorKind, onReload, onMerge }: AutoSaveStatusProps) {
   const { t } = useTranslation();
-  if (status === 'idle') return <span className="text-xs text-muted-foreground" role="status" aria-live="polite" />;
+  if (status === 'idle' || status === 'saved') return <span className="text-xs text-muted-foreground" role="status" aria-live="polite" />;
   if (status === 'saving') return (
     <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-live="polite">
       <Spinner size="sm" tone="" />{t.common.saving}
@@ -26,11 +26,6 @@ export function AutoSaveStatus({ status, onRetry, errorKind, onReload, onMerge }
   if (status === 'pending') return (
     <span className="inline-flex items-center gap-1.5 text-xs text-warning" role="status" aria-live="polite">
       <Spinner size="sm" tone="" />{t.common.activationPending}
-    </span>
-  );
-  if (status === 'saved') return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-success" role="status" aria-live="polite">
-      <Check size={13} aria-hidden />{t.common.saved}
     </span>
   );
   if (errorKind === 'conflict') return (

@@ -106,6 +106,7 @@ describe('SkinsRow', () => {
     mutateAsync.mockResolvedValueOnce({ allowedSkins: ['studio-light', 'studio-oled'] });
     fireEvent.click(screen.getByRole('button', { name: en.common.retry }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText(en.common.saved)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(screen.queryByText(en.common.saved)).toBeNull();
   });
 });
