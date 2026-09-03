@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { useAssignProject, useSavePluginConfig, useTogglePlugin, useResetUsage, useUpdateSessionTask, useWriteProjectFile } from '../../lib/mutations';
+import { useAssignProject, useSavePluginConfig, useTogglePlugin, useResetUsage, useUpdateSessionTask, useUpdateUser, useWriteProjectFile } from '../../lib/mutations';
 
 let lastAssignCall: { method: string; userId: string; projectId?: string } | null = null;
 let lastTaskPatch: unknown = null;
@@ -18,6 +18,7 @@ const server = setupServer(
     lastAssignCall = { method: 'DELETE', userId: String(params.userId), projectId: String(params.projectId) };
     return HttpResponse.json({ ok: true });
   }),
+  http.patch('*/api/users/:id', ({ params }) => HttpResponse.json({ id: Number(params.id) })),
   http.patch('*/api/plugins/:name/config', () => HttpResponse.json({ ok: true })),
   http.patch('*/api/plugins/:name', () => HttpResponse.json({ name: 'dev-commands', enabled: false })),
   http.post('*/api/usage/reset', () => HttpResponse.json({ ok: true })),
@@ -53,6 +54,23 @@ describe('plugin mutations re-pull the slash menu', () => {
     result.current.mutate({ name: 'dev-commands', enabled: false });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(spy).toHaveBeenCalledWith({ queryKey: ['brain-commands'] });
+  });
+});
+
+describe('useUpdateUser tool availability', () => {
+  it.each([
+    ['granting', ['github']],
+    ['revoking', []],
+  ])('%s a plugin invalidates the effective tool list immediately', async (_action, grantedPlugins) => {
+    const client = new QueryClient();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    const { result } = renderHook(() => useUpdateUser(), { wrapper });
+
+    result.current.mutate({ id: 7, patch: { granted_plugins: grantedPlugins } });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['user-tools', 7] });
   });
 });
 
