@@ -11,12 +11,28 @@ import type { ProjectView } from '../../shared/wireContract.js';
 const MAX_MEMBER_SAMPLES = 3;
 const MAX_INDICATORS_PER_PLUGIN = 3;
 const MAX_INDICATORS_PER_PROJECT = 8;
+const PROJECT_PATH_PROJECTION_CONCURRENCY = 8;
 const INDICATOR_TONES = new Set(['muted', 'accent', 'success', 'warning', 'danger']);
 
 /** The one project API projection. Stored metadata stays untouched; current filesystem state is attached
- * at the response boundary for every endpoint that returns a project. */
-function toProjectView(project: StoredProject): ProjectView {
-  return { ...project, pathExists: projectPathExists(project.path) };
+ * asynchronously at the response boundary for every endpoint that returns a project. */
+async function toProjectView(project: StoredProject): Promise<ProjectView> {
+  return { ...project, pathExists: await projectPathExists(project.path) };
+}
+
+/** Bound concurrent filesystem projections so a large registry cannot flood the libuv worker pool. */
+async function toProjectViews(projects: StoredProject[]): Promise<ProjectView[]> {
+  const output = new Array<ProjectView>(projects.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= projects.length) return;
+      output[index] = await toProjectView(projects[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PROJECT_PATH_PROJECTION_CONCURRENCY, projects.length) }, worker));
+  return output;
 }
 
 function boundedText(value: unknown, max: number): string | undefined {
@@ -42,13 +58,13 @@ function sanitizeIndicator(value: PluginProjectIndicator, projectIds: ReadonlySe
  * routes; the core keeps icon validation because the project record persists that metadata. */
 export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
   const { d, canAccessProject, notAdmin } = ctx;
-  app.get('/projects', (c) => {
+  app.get('/projects', async (c) => {
     const all = d.projects ? d.projects.list() : [];
-    if (!d.userProjects || !d.users) return c.json(all.map(toProjectView));
+    if (!d.userProjects || !d.users) return c.json(await toProjectViews(all));
     const u = c.get('user');
-    if (u && d.userProjects.isAdmin(u.id)) return c.json(all.map(toProjectView));
+    if (u && d.userProjects.isAdmin(u.id)) return c.json(await toProjectViews(all));
     const allowed = u ? new Set(d.userProjects.forUser(u.id)) : new Set<number>();
-    return c.json(all.filter((p) => allowed.has(p.id)).map(toProjectView));
+    return c.json(await toProjectViews(all.filter((p) => allowed.has(p.id))));
   });
   // One bounded server-side projection for the Project register. Core owns member tenancy; plugins receive
   // the already-filtered Project batch and contribute display-only capability indicators without browser
@@ -124,6 +140,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch (error) {
       if (error instanceof CreateDirError) {
         if (error.code === 'exists') return c.json({ error: 'directory already exists' }, 409);
+        if (error.code === 'invalid-name') return c.json({ error: 'invalid directory name' }, 400);
         if (error.code === 'invalid-parent') return c.json({ error: 'invalid parent directory' }, 400);
         if (error.code === 'forbidden') return c.json({ error: 'cannot create directory' }, 403);
       }
@@ -135,7 +152,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     // Only the admin may register projects (when multi-user auth is on).
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const { slug, path, notes } = await parseBody(c, createProjectSchema);
-    try { return c.json(toProjectView(d.projects.create({ slug, path, notes })), 201); }
+    try { return c.json(await toProjectView(d.projects.create({ slug, path, notes })), 201); }
     catch { return c.json({ error: 'slug taken' }, 409); }
   });
   // Edit a project's path / notes (slug stays immutable). Admin-only, like registration.
@@ -156,7 +173,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       patch.icon = b.icon;
     }
     if (typeof b.memoryShared === 'boolean') patch.memoryShared = b.memoryShared;
-    return c.json(toProjectView(d.projects.update(id, patch)!));
+    return c.json(await toProjectView(d.projects.update(id, patch)!));
   });
   // The project's shared-memory share list (admin-only). Empty = every project member shares the pool.
   app.get('/projects/:id/memory-members', (c) => {

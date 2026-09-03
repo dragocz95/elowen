@@ -778,6 +778,7 @@ export const en = {
     createFolder: 'Create folder',
     folderExists: 'A folder with this name already exists.',
     folderCreateError: 'The folder could not be created. Check the name and permissions, then try again.',
+    folderCreated: 'Folder "{name}" created.',
     openEditor: 'Open editor',
     viewCommit: 'View this commit\'s changes',
     viewChanges: 'View the uncommitted changes',

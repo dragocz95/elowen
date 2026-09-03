@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isCreatableDirectoryName } from '../../integrations/projectFiles.js';
 
 /** Register a project. slug + path are required; notes is the optional Pilot brief. */
 export const createProjectSchema = z.object({
@@ -20,9 +21,7 @@ export const updateProjectSchema = z.object({
  * filesystem segment; the integration keeps operating-system permission and atomicity decisions. */
 export const createDirectorySchema = z.object({
   parent: z.string().min(1).refine((value) => value.startsWith('/'), 'parent must be an absolute path'),
-  name: z.string().trim().min(1).max(255)
-    .refine((value) => value !== '.' && value !== '..', 'name must be a directory name')
-    .refine((value) => !value.includes('\0') && !value.includes('/') && !value.includes('\\'), 'name must be a single path segment'),
+  name: z.string().trim().refine(isCreatableDirectoryName, 'name must be a creatable directory segment'),
 });
 
 /** Replace a project's shared-memory share list WHOLESALE (admin-only). An empty list means every

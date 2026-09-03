@@ -401,7 +401,9 @@ export function useCreateDirectory() {
   return useMutation({
     mutationFn: (v: { parent: string; name: string; listingPath?: string }) => elowenClient.createDir(v.parent, v.name),
     onSuccess: async (_created, v) => {
-      await qc.invalidateQueries({ queryKey: ['fs-dirs', v.listingPath ?? ''], refetchType: 'active' });
+      const originalKey = v.listingPath ?? '';
+      const keys = originalKey === v.parent ? [originalKey] : [originalKey, v.parent];
+      await Promise.all(keys.map((key) => qc.invalidateQueries({ queryKey: ['fs-dirs', key], exact: true, refetchType: 'active' })));
     },
   });
 }

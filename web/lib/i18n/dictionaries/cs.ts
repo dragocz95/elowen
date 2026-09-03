@@ -755,6 +755,7 @@ export const cs = {
     createFolder: 'Vytvořit složku',
     folderExists: 'Složka s tímto názvem už existuje.',
     folderCreateError: 'Složku se nepodařilo vytvořit. Zkontrolujte název a oprávnění a zkuste to znovu.',
+    folderCreated: 'Složka „{name}“ byla vytvořena.',
     openEditor: 'Otevřít editor',
     viewCommit: 'Zobrazit změny tohoto commitu',
     viewChanges: 'Zobrazit necommitnuté změny',

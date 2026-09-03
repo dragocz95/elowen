@@ -749,6 +749,7 @@ export const sk = {
     createFolder: 'Vytvoriť priečinok',
     folderExists: 'Priečinok s týmto názvom už existuje.',
     folderCreateError: 'Priečinok sa nepodarilo vytvoriť. Skontrolujte názov a oprávnenia a skúste to znova.',
+    folderCreated: 'Priečinok „{name}“ bol vytvorený.',
     openEditor: 'Otvoriť editor',
     viewCommit: 'Zobraziť zmeny tohto commitu',
     viewChanges: 'Zobraziť necommitnuté zmeny',

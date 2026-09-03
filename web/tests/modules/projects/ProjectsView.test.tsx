@@ -210,7 +210,8 @@ describe('ProjectsView', () => {
         return HttpResponse.json({ path: '/workspace/new-app' }, { status: 201 });
       }),
     );
-    const { wrapper: Wrapper } = createWrapper();
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['fs-dirs', '/workspace'], { path: '/workspace', parent: '/', entries: [] });
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
 
     fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
@@ -226,8 +227,55 @@ describe('ProjectsView', () => {
     await waitFor(() => expect(within(picker).getAllByText('/workspace/new-app')).toHaveLength(2));
     expect(createBody).toEqual({ parent: '/workspace', name: 'new-app' });
     expect(parentReads).toBeGreaterThanOrEqual(2);
+    expect(client.getQueryState(['fs-dirs', '/workspace'])?.isInvalidated).toBe(true);
+    expect(within(picker).getByRole('status')).toHaveTextContent('Folder "new-app" created.');
     expect(within(picker).getByRole('button', { name: 'Select this folder' })).toBeEnabled();
     expect(within(editor).queryByDisplayValue('/workspace/new-app')).toBeNull();
+  });
+
+  it('disables navigation while creating and ignores a superseded success', async () => {
+    let resolveCreate!: () => void;
+    let parentReads = 0;
+    const createGate = new Promise<void>((resolve) => { resolveCreate = resolve; });
+    server.use(
+      http.get('*/api/fs/dirs', ({ request }) => {
+        const requested = new URL(request.url).searchParams.get('path');
+        if (requested === '/workspace/child') return HttpResponse.json({ path: '/workspace/child', parent: '/workspace', entries: [] });
+        parentReads += 1;
+        return HttpResponse.json({ path: '/workspace', parent: '/', entries: [{ name: 'child', path: '/workspace/child' }] });
+      }),
+      http.post('*/api/fs/dirs', async () => {
+        await createGate;
+        return HttpResponse.json({ path: '/workspace/new-app' }, { status: 201 });
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
+    const editor = await screen.findByRole('dialog', { name: 'New project' });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Browse' }));
+    const picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
+    const newFolder = within(picker).getByRole('button', { name: 'New folder' });
+    await waitFor(() => expect(newFolder).toBeEnabled());
+    fireEvent.click(newFolder);
+    fireEvent.change(within(picker).getByLabelText('Folder name'), { target: { value: 'new-app' } });
+    fireEvent.click(within(picker).getByRole('button', { name: 'Create folder' }));
+
+    await waitFor(() => {
+      expect(within(picker).getByRole('button', { name: 'Up one level' })).toBeDisabled();
+      expect(within(picker).getByRole('button', { name: 'child' })).toBeDisabled();
+      expect(within(picker).getByRole('button', { name: 'Select this folder' })).toBeDisabled();
+    });
+    const createForm = within(picker).getByLabelText('Folder name').closest('form');
+    if (!createForm) throw new Error('create form missing');
+    fireEvent.click(within(createForm).getByRole('button', { name: 'Cancel' }));
+    resolveCreate();
+
+    await waitFor(() => expect(parentReads).toBeGreaterThanOrEqual(2));
+    expect(within(picker).queryByRole('status')).toBeNull();
+    expect(within(picker).queryByText('/workspace/new-app')).toBeNull();
+    expect(within(picker).getAllByText('/workspace')).toHaveLength(2);
   });
 
   it('shows the typed duplicate-directory message for a 409 response', async () => {

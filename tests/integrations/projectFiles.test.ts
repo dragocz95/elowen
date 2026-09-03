@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { createDir, listDirs, projectRangeLog, isProjectImage } from '../../src/integrations/projectFiles.js';
+import { createDir, listDirs, projectPathExists, projectRangeLog, isProjectImage } from '../../src/integrations/projectFiles.js';
 
 let root: string;
 const w = (rel: string, body: string) => { const p = join(root, rel); mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, body); };
@@ -41,6 +41,15 @@ describe('listDirs', () => {
   });
 });
 
+describe('projectPathExists', () => {
+  it('checks directories asynchronously and resolves failures to false', async () => {
+    const existing = projectPathExists(root);
+    expect(existing).toBeInstanceOf(Promise);
+    await expect(existing).resolves.toBe(true);
+    await expect(projectPathExists(join(root, 'missing'))).resolves.toBe(false);
+  });
+});
+
 describe('createDir', () => {
   it('creates exactly one immediate child and returns its canonical path', () => {
     const created = createDir(root, 'new-app');
@@ -48,8 +57,10 @@ describe('createDir', () => {
     expect(listDirs(root).entries).toContainEqual({ name: 'new-app', path: join(root, 'new-app') });
   });
 
-  it('reports duplicate and missing-parent failures without recursive creation', () => {
+  it('reports invalid, filtered, duplicate and missing-parent failures without recursive creation', () => {
     mkdirSync(join(root, 'taken'));
+    expect(() => createDir(root, '.git')).toThrow(expect.objectContaining({ code: 'invalid-name' }));
+    expect(() => createDir(root, 'é'.repeat(128))).toThrow(expect.objectContaining({ code: 'invalid-name' }));
     expect(() => createDir(root, 'taken')).toThrow(expect.objectContaining({ code: 'exists' }));
     expect(() => createDir(join(root, 'missing'), 'child')).toThrow(expect.objectContaining({ code: 'invalid-parent' }));
   });

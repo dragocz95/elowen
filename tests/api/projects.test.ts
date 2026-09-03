@@ -139,7 +139,7 @@ describe('projects api', () => {
       expect(await created.json()).toEqual({ path: join(root, 'new-app') });
       expect(existsSync(join(root, 'new-app'))).toBe(true);
 
-      for (const name of ['', '.', '..', 'nested/path', 'nested\\path', 'bad\0name', 'x'.repeat(256)]) {
+      for (const name of ['', '.', '..', '.git', 'nested/path', 'nested\\path', 'bad\0name', 'x'.repeat(256), 'é'.repeat(128)]) {
         const invalid = await app.request('/fs/dirs', {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ parent: root, name }),
         });
@@ -157,6 +157,12 @@ describe('projects api', () => {
       });
       expect(missingParent.status).toBe(400);
       expect(await missingParent.json()).toEqual({ error: 'invalid parent directory' });
+
+      const tooLongForOs = await app.request('/fs/dirs', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ parent: `/${'x'.repeat(300)}`, name: 'child' }),
+      });
+      expect(tooLongForOs.status).toBe(400);
+      expect(await tooLongForOs.json()).toEqual({ error: 'invalid directory name' });
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
