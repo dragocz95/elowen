@@ -1062,7 +1062,7 @@ export class ChannelSessionService {
                 scoped: (run) => runWithPolicy(opts.policy, run, {
                   memoryRecallScope: this.d.memoryCategoryStore && writerUserId != null
                     ? globalMemoryRecallScope(writerUserId, this.d.memoryCategoryStore)
-                    : { projectId: null, categoryIds: new Set<number>() },
+                    : { projectId: null, categoryIds: new Set<number>(), sharedCategoryIds: new Set<number>() },
                 }),
                 alreadyInContext: (ch.injectedMemoryIds ??= new Set<number>()),
               });

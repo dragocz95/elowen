@@ -569,7 +569,7 @@ export class LiveSessionSpawner {
               ? (isChannelSession(sessionId)
                 ? globalMemoryRecallScope(userId, memCats)
                 : memoryRecallScope(userId, recallCwd, memCats, memProjects))
-              : { projectId: null, categoryIds: new Set<number>() };
+              : { projectId: null, categoryIds: new Set<number>(), sharedCategoryIds: new Set<number>() };
             const found = await memService.retrieve(userId, query, { maxCount, byteBudget, scope });
             return found.memories.map((m) => ({
               id: m.id, body: m.body, kind: m.kind, importance: m.importance, updatedAt: m.updated_at,

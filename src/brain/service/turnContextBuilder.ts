@@ -347,7 +347,7 @@ export class TurnContextBuilder {
     const recallCwd = clientDir(live.policy, clientCwd ?? storedWorkDir);
     const recallScope = this.d.memoryCategoryStore && this.d.projects
       ? memoryRecallScope(userId, recallCwd, this.d.memoryCategoryStore, this.d.projects)
-      : { projectId: null, categoryIds: new Set<number>() };
+      : { projectId: null, categoryIds: new Set<number>(), sharedCategoryIds: new Set<number>() };
     const baseWorkDir = turnWorkDir(live.policy, clientCwd ?? live.workDir, this.d.projectPath);
     const effective = effectiveTurnWorkDir({
       policy: live.policy,
