@@ -137,6 +137,10 @@ export interface WorkspaceShellProps {
    *  surface already owns the identity block above them. */
   hero?: WorkspaceHeroProps;
   navigation?: WorkspaceShellNavigation;
+  /** Force the section selector to stay above the content at every width. The default keeps deck pages
+   *  responsive (sidebar from tablet upward, tabs on phones); embedded surfaces choose this only when their
+   *  parent contract explicitly owns a top tab bar. */
+  navigationLayout?: 'responsive' | 'tabs';
   /** The page's own toolbar contents. Omit it and the row is still mounted — it carries the portal slot
    *  that panels deeper in the tree claim through `WorkspaceLeadPortal`. */
   toolbar?: PageToolbarProps;
@@ -149,12 +153,14 @@ export interface WorkspaceShellProps {
 
 /** The canonical page shell. Public props and the pre-unification aliases stay stable so core pages and
  *  plugin bundles inherit responsive section navigation without owning a second breakpoint decision. */
-export function WorkspaceShell({ variant = 'register', hero, navigation, toolbar, embedded = false, children, className = '' }: WorkspaceShellProps) {
+export function WorkspaceShell({ variant = 'register', hero, navigation, navigationLayout = 'responsive', toolbar, embedded = false, children, className = '' }: WorkspaceShellProps) {
   const phone = useMobileViewport();
   const sectionLayout: WorkspaceSectionLayout | undefined = navigation
-    ? variant === 'deck'
-      ? phone === undefined ? undefined : phone ? 'tabs' : 'sidebar'
-      : 'tabs'
+    ? navigationLayout === 'tabs'
+      ? 'tabs'
+      : variant === 'deck'
+        ? phone === undefined ? undefined : phone ? 'tabs' : 'sidebar'
+        : 'tabs'
     : undefined;
 
   const content = (

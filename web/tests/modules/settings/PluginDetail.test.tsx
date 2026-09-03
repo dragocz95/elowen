@@ -157,16 +157,16 @@ describe('PluginDetail workspace', () => {
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabAdvanced })).toBeInTheDocument();
   });
 
-  it('uses the shared deck secondary sidebar on tablet and desktop', async () => {
+  it('keeps the plugin section menu above the content on tablet and desktop', async () => {
     setViewport(false);
     usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
     const { container } = renderDetail();
 
-    await waitFor(() => expect(container.querySelector('.plugin-detail-workspace')).toHaveAttribute('data-section-layout', 'sidebar'));
+    await waitFor(() => expect(container.querySelector('.plugin-detail-workspace')).toHaveAttribute('data-section-layout', 'tabs'));
     const nav = screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav });
-    expect(nav).toHaveAttribute('data-variant', 'menu');
-    expect(nav).toHaveAttribute('aria-orientation', 'vertical');
-    expect(nav).not.toHaveAttribute('data-nowrap');
+    expect(nav).toHaveAttribute('data-variant', 'line');
+    expect(nav).toHaveAttribute('aria-orientation', 'horizontal');
+    expect(nav).toHaveAttribute('data-nowrap', 'true');
     expect(screen.queryByRole('combobox', { name: en.pluginDetail.workspaceNav })).toBeNull();
   });
 

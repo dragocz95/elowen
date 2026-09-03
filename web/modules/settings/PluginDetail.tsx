@@ -180,6 +180,7 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
         variant="deck"
         embedded
         className="plugin-detail-workspace"
+        navigationLayout="tabs"
         navigation={{ sections, value: tab, onChange: changeTab, ariaLabel: t.pluginDetail.workspaceNav }}
         toolbar={{ actions: saveStatus }}
       >
