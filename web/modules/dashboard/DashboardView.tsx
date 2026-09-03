@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../components/ui/Button';
 import { MotionReveal } from '../../components/ui/Motion';
 import { HomeComposer } from './HomeComposer';
+import { DashBento } from './DashBento';
 import { ActivityTile } from './ActivityTile';
 import { TeamPulseTile } from './TeamPulseTile';
 import { MetricsTile } from './MetricsTile';
@@ -145,7 +146,10 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
         </span>
       </div>
 
-      <section aria-labelledby="dash-greeting" className="mx-auto w-full max-w-3xl px-4 pt-10 text-center sm:px-0 sm:pt-[clamp(3.5rem,13dvh,9rem)]">
+      {/* `dash-hero` adds nothing to the layout — it is the hook the accent atmosphere hangs off
+          (app/styles/components/dash-bento.css), drawn as a pseudo-element behind the greeting so the
+          light bleeds past the section's own box without the section gaining a background. */}
+      <section aria-labelledby="dash-greeting" className="dash-hero mx-auto w-full max-w-3xl px-4 pt-10 text-center sm:px-0 sm:pt-[clamp(3.5rem,13dvh,9rem)]">
         <MotionReveal>
           {/* The ember period is the page's signature and is drawn HERE, never by the model — the
               agent-written greeting arrives with trailing punctuation already stripped. */}
@@ -181,6 +185,15 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
 
         <MotionReveal delay={0.2}>
           <RecapStrip recap={recap} />
+        </MotionReveal>
+
+        {/* The bento. It sits inside the hero section so it inherits the same measure and gutters, and
+            it is left-aligned inside a centred column — a grid of cards centred as text reads as a
+            poster rather than as a dashboard. */}
+        <MotionReveal delay={0.24}>
+          <div className="mt-12 text-left @sm:mt-14">
+            <DashBento />
+          </div>
         </MotionReveal>
 
         <MotionReveal delay={0.28}>

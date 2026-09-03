@@ -340,7 +340,10 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
    *  the dashboard and the presence hook already read it — so the badge costs no request of its own on
    *  any page that shows figures, and one refresh moves both. Zero is not a badge: a row that
    *  permanently wears a "0" is noise the reader learns to stop seeing. */
-  const runningAgents = usePulse().data?.totals.runningAgents ?? 0;
+  // `totals` is optional in practice even though the type calls it required: a rollup the daemon could
+  // not compute answers without it, and the dashboard already has a regression test for exactly that
+  // payload. A badge is not worth taking the whole navigation column down for.
+  const runningAgents = usePulse().data?.totals?.runningAgents ?? 0;
   const counters = useMemo<Record<string, { count: number; title: string; live?: boolean }>>(
     () => (runningAgents > 0
       ? { chat: { count: runningAgents, title: `${t.nav.runningAgents}: ${runningAgents}`, live: true } }

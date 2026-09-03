@@ -925,20 +925,32 @@
  * the composer and one disclosure panel — so the skin no longer rearranges it and only tempers the
  * composer to this design's language.
  * --------------------------------------------------------------------------------------------------- */
+/* The composer is a GLASS surface: a translucent fill over the hero's accent atmosphere, blurred so the
+   light behind it scatters instead of showing through as a shape. That is the whole reason the mesh is
+   drawn behind the greeting rather than inside a card — the composer sits in front of it and picks it
+   up. `--glass-surface` and `--glass-blur` are declared per design (14px over a 72% white on
+   studio-light, 22px over a 55% card on studio-oled), so this one rule is airy on one and deep on the
+   other with nothing skin-specific here.
+   `backdrop-filter` has a hard requirement: the fill must be translucent. An opaque background makes the
+   blur a no-op that still costs a compositing layer, which is what the old `--color-muted` fill was. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .home-composer {
-  border-color: var(--studio-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-muted);
+  border-color: var(--glass-border);
+  border-radius: var(--radius-xl);
+  background: var(--glass-surface);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
 }
+/* The focused state earns the accent. It is the one control on this page the reader is most likely to be
+   looking at, and this design says "focused" with a ring rather than a wash — so `--glow-accent`, which
+   IS a ring with only as much spill as its design can carry, and not the ember bloom the old rule was
+   right to cancel. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dashboard-view .home-composer:focus-within {
-  border-color: var(--studio-line-strong);
+  border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
 }
-/* The composer's 70px accent bloom does not paint here. A focused input in this design says so with its
-   ring; a second, coloured halo underneath is the ember language leaking through the one control on the
-   page the reader is most likely to be looking at. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .home-composer,
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .home-composer {
+  box-shadow: var(--shadow-card);
+}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .home-composer:focus-within {
-  box-shadow: none;
+  box-shadow: var(--glow-accent);
 }
 
 /* A section heading on the dashboard. `.dash-label` is 10.5px of ember-coloured mono at 0.22em of

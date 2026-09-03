@@ -10,6 +10,11 @@ export const en = {
     // differs between the server render and the client would be a hydration mismatch, and both key names
     // fit in one label.
     collapseShortcut: 'Ctrl / ⌘ + \\',
+    // Section headers over the navigation column's two regions, and the labels its new chrome needs.
+    sectionWork: 'Work',
+    sectionInstance: 'Instance',
+    instanceMenu: 'Instance menu',
+    runningAgents: 'Running agents',
     home: 'Home',
     chat: 'Chat',
     system: 'System',
@@ -351,6 +356,10 @@ export const en = {
     greetingEvening: 'Good evening',
     heroAsk: 'What can I help you with?',
     stripLabel: 'Today at a glance',
+    // The bento overview under the hero.
+    overview: 'Overview',
+    recentChats: 'Recent conversations',
+    openChat: 'Open chat',
     quickActions: 'Quick actions',
     pillSummary: 'Summarize today',
     pillSummaryPrompt: 'Please summarize what happened in the team today.',

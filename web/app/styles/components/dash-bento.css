@@ -1,0 +1,192 @@
+/* The dashboard's hero atmosphere and the bento grid under it (modules/dashboard/DashBento.tsx).
+ *
+ * Every colour here is a token, and the depth tokens the cards read (`--shadow-card`, `--shadow-lift`,
+ * `--glow-accent`, `--mesh-accent`) are declared per design — so the same markup is airy on
+ * studio-light and glows on studio-oled without a single skin-specific rule in this file.
+ *
+ * These are plain CSS classes rather than utilities on purpose: the hover lift composes two shadows and
+ * the mesh composes two radial gradients, and neither survives a Tailwind arbitrary value — the commas
+ * inside them terminate the class. */
+
+/* The accent light behind the greeting. A pseudo-element rather than a background on the section: the
+   hero is inside the page's normal flow and the atmosphere has to bleed past its box, above the fold and
+   out to both gutters, without giving the section a width or a stacking context of its own. It is
+   decoration, so it is inert to the pointer and absent from the accessibility tree by construction. */
+.dash-hero {
+  position: relative;
+}
+.dash-hero::before {
+  position: absolute;
+  z-index: -1;
+  top: -6rem;
+  right: -20vw;
+  left: -20vw;
+  height: 34rem;
+  background-image: var(--mesh-accent);
+  content: '';
+  pointer-events: none;
+}
+
+.dash-bento {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+  width: 100%;
+  margin-inline: auto;
+  max-width: 56rem;
+}
+/* Two columns from the tablet step, and the usage card takes both — that asymmetry is what makes a
+   bento a bento rather than a row of equal boxes. The breakpoints mirror Tailwind's `sm`/`lg`, so the
+   grid changes shape on the same widths as everything else on the page. */
+@media (width >= 40rem) {
+  .dash-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-bento__slot:first-child { grid-column: span 2; }
+}
+@media (width >= 64rem) {
+  .dash-bento { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dash-bento__slot:first-child { grid-column: span 3; }
+}
+
+.dash-bento__slot {
+  display: flex;
+  min-width: 0;
+}
+
+.dash-bento__card {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-card);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--motion-base) var(--ease-out), border-color var(--motion-base) var(--ease-out), translate var(--motion-base) var(--ease-out);
+}
+/* The lift. `translate` and not `transform`: the cards carry an entrance animation that owns `transform`
+   for the length of its run, and a hover that fought it made a card jump back to its start position the
+   moment the pointer arrived mid-animation. */
+.dash-bento__card:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-lift);
+  translate: 0 -2px;
+}
+/* A card reporting something that is happening RIGHT NOW takes the accent edge — it is the one state on
+   this page that is worth interrupting the reader for. */
+.dash-bento__card[data-live] {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  box-shadow: var(--glow-accent);
+}
+
+.dash-bento__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.25rem;
+}
+.dash-bento__title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.dash-bento__title > svg {
+  flex: none;
+  color: var(--color-subtle-foreground);
+}
+.dash-bento__meta {
+  margin-inline-start: auto;
+  color: var(--color-subtle-foreground);
+  font-size: var(--text-caption);
+}
+.dash-bento__more {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  margin-inline-start: auto;
+  color: var(--color-subtle-foreground);
+  font-size: var(--text-caption);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+.dash-bento__more:hover { color: var(--color-foreground); }
+
+/* The headline number. Tabular figures are not a preference here: these values tick while the page is
+   open, and proportional digits make the whole card twitch every time a 1 becomes a 7. */
+.dash-bento__figure {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  color: var(--color-foreground);
+  font-size: clamp(1.75rem, 3.4vw, 2.5rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.dash-bento__unit {
+  color: var(--color-subtle-foreground);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.dash-bento__foot {
+  color: var(--color-subtle-foreground);
+  font-size: 0.8125rem;
+}
+
+.dash-bento__chart {
+  margin-top: auto;
+  width: 100%;
+  height: 4.5rem;
+}
+
+.dash-bento__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dash-bento__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  margin-inline: -0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+  text-align: left;
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.dash-bento__row:hover {
+  background: var(--color-accent);
+  color: var(--color-foreground);
+}
+.dash-bento__row > svg {
+  flex: none;
+  margin-inline-start: auto;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+.dash-bento__row:hover > svg { opacity: 1; }
+.dash-bento__row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-bento__dot {
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--color-primary);
+}

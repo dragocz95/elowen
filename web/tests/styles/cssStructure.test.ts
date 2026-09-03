@@ -88,6 +88,9 @@ const EXTERNALLY_SET: Record<string, string> = {
   // Viewport/composer measurements owned by BrainChatSurface's layout effect, not global design tokens.
   '--chat-visual-bottom-offset': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
   '--chat-composer-height': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
+  // The entrance stagger's index, handed down per element by the component that knows the order
+  // (StudioNavigation rows, DashBento cards). There is no global value it could have.
+  '--stagger': 'components/shell/StudioNavigation.tsx and modules/dashboard/DashBento.tsx, inline style per element',
   '--live-ring': 'per-instance override hook on .live-dot; unset by default, hence the literal fallback',
 };
 
