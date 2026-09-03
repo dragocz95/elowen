@@ -2,48 +2,58 @@
 import Link from 'next/link';
 import { useMemo } from 'react';
 import { Area, AreaChart, XAxis } from 'recharts';
-import { ArrowUpRight, Bot, MessagesSquare, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Bot, Coins, MessagesSquare } from 'lucide-react';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '../../components/ui/shadcn/chart';
 import { Skeleton } from '../../components/ui/shadcn/skeleton';
-import { useBrainSessions, usePulse, useUsageByDay } from '../../lib/queries';
+import { useBrainSessions, usePulse } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
-import { formatTokens } from '../../lib/format';
-import { openBrainComposer } from '../../lib/brainDock';
-import { trailingDays } from './metrics';
+import { formatCost, formatTokens } from '../../lib/format';
+import { HOURS, deltaPct, toLocalHours } from './pulseSeries';
+import type { PulseResponse } from '../../lib/types';
 
 /** The dashboard's bento: four cards under the hero, each answering ONE question the page was previously
- *  making the reader open a panel for — how much did today cost, is anything running, where was I, what
- *  can I do next. The panels below are unchanged and still hold the full tiles; this is the layer that
- *  makes the landing screen worth landing on.
+ *  making the reader open a panel for — what did today look like, is anything running, where was I, what
+ *  did it cost. The disclosure panels below are unchanged and still hold the full tiles; this is the
+ *  layer that makes the landing screen worth landing on.
  *
- *  It reads nothing new. `usePulse`, `useUsageByDay` and `useBrainSessions` are the same react-query keys
- *  the panels and the navigation column already use, so opening /dash costs the requests the page was
- *  going to make anyway and one refresh moves every surface that shows the number.
+ *  THE FIRST-PAINT BUDGET IS THE CONSTRAINT, not an afterthought. `/dash` deliberately keeps the feed,
+ *  the gauges and the day-usage rollup off the landing screen — `tests/modules/dashboard` pins that — so
+ *  three of these four cards are drawn from `usePulse`, the single request the metric strip above them
+ *  already makes. That is also why the usage sparkline is TODAY BY HOUR rather than a seven-day series:
+ *  the hourly basis is in the payload the page already has, and `useUsageByDay` is a panel-only request.
+ *  Only the conversation list adds a call, and it is the cheap listing the chat dock reads anyway.
  *
  *  Every card states its own loading shape with `Skeleton` rather than collapsing to nothing: a bento
- *  whose tiles appear one by one relayouts the page under the pointer, which is the one thing a grid of
- *  cards must not do. */
+ *  whose tiles appear one at a time relayouts the page under the pointer, which is the one thing a grid
+ *  of cards must not do. */
 
-/** The seven-day usage series. Tokens rather than spend: spend is unavailable on an instance whose
- *  rollup cannot price a turn, and a sparkline that is blank on those instances is a worse default than
- *  one that always has a shape. */
-function UsageCard({ days }: { days: number }) {
+/** Turns per LOCAL hour across the whole instance today, folded from the per-person series the pulse
+ *  already carries. Summed rather than drawn per person: this card states one number and the shape under
+ *  it has to be that number's own history, not a stacked comparison the tile below already draws. */
+function turnsByHour(pulse: PulseResponse | undefined): number[] {
+  const utc = Array<number>(HOURS).fill(0);
+  for (const person of pulse?.people ?? []) {
+    for (let hour = 0; hour < HOURS; hour += 1) utc[hour] += person.hoursToday?.[hour] ?? 0;
+  }
+  return toLocalHours(utc);
+}
+
+function UsageCard() {
   const { t, locale } = useTranslation();
-  const usage = useUsageByDay(days);
   const pulse = usePulse().data;
   const totals = pulse?.totals;
 
   const series = useMemo(
-    () => trailingDays(usage.data, Date.now(), days).map((day) => ({ day: day.day, tokens: day.tokens })),
-    [days, usage.data],
+    () => turnsByHour(pulse).map((turns, hour) => ({ hour: `${String(hour).padStart(2, '0')}:00`, turns })),
+    [pulse],
   );
-  const config = { tokens: { label: t.dashboard.pulseColTokens, color: 'var(--color-chart-1)' } } satisfies ChartConfig;
+  const config = { turns: { label: t.dashboard.pulseColTurns, color: 'var(--color-chart-1)' } } satisfies ChartConfig;
 
   return (
     <article className="dash-bento__card dash-bento__card--wide">
       <header className="dash-bento__head">
         <h2 className="dash-bento__title">{t.dashboard.stripLabel}</h2>
-        <span className="dash-bento__meta">{t.dashboard.last30d.replace('30', String(days))}</span>
+        <span className="dash-bento__meta">{t.dashboard.pulseTodayLabel}</span>
       </header>
       {totals ? (
         <p className="dash-bento__figure">
@@ -51,19 +61,19 @@ function UsageCard({ days }: { days: number }) {
           <span className="dash-bento__unit">{t.dashboard.pulseColTokens.toLocaleLowerCase(locale)}</span>
         </p>
       ) : <Skeleton className="h-10 w-40" />}
-      {/* `aria-hidden`: the shape is a restatement of the figure above it, and a screen reader reading
-          seven unlabelled day values is noise, not the summary the card already gave. */}
+      {/* `aria-hidden`: the shape restates the figure above it, and a screen reader reading twenty-four
+          unlabelled hour values is noise rather than the summary the card already gave. */}
       <ChartContainer config={config} className="dash-bento__chart" aria-hidden>
         <AreaChart data={series} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
           <defs>
             <linearGradient id="dash-bento-usage" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--color-tokens)" stopOpacity={0.32} />
-              <stop offset="100%" stopColor="var(--color-tokens)" stopOpacity={0} />
+              <stop offset="0%" stopColor="var(--color-turns)" stopOpacity={0.32} />
+              <stop offset="100%" stopColor="var(--color-turns)" stopOpacity={0} />
             </linearGradient>
           </defs>
-          <XAxis dataKey="day" hide />
+          <XAxis dataKey="hour" hide />
           <ChartTooltip content={<ChartTooltipContent />} />
-          <Area dataKey="tokens" type="monotone" stroke="var(--color-tokens)" strokeWidth={1.5} fill="url(#dash-bento-usage)" />
+          <Area dataKey="turns" type="monotone" stroke="var(--color-turns)" strokeWidth={1.5} fill="url(#dash-bento-usage)" />
         </AreaChart>
       </ChartContainer>
     </article>
@@ -87,6 +97,36 @@ function AgentsCard() {
   );
 }
 
+/** Today's spend, with the one comparison that makes a number mean something. The three states the strip
+ *  above already separates are kept apart here too: no answer yet, a rollup that cannot price the day,
+ *  and a day whose turns carried no price. Collapsing any of them into "0" would state a spend nobody
+ *  measured. */
+function SpendCard() {
+  const { t, locale } = useTranslation();
+  const pulse = usePulse().data;
+  const totals = pulse?.totals;
+  const delta = totals ? deltaPct(totals.turns, pulse?.yesterday?.turns ?? 0) : null;
+  const spend = totals === undefined ? null
+    : pulse?.spendAvailable === false ? t.dashboard.pulseSpendOff
+    : totals.cost === null ? t.dashboard.pulseUnpriced
+    : formatCost(totals.cost, 2);
+  return (
+    <article className="dash-bento__card">
+      <header className="dash-bento__head">
+        <h2 className="dash-bento__title"><Coins size={15} strokeWidth={1.5} aria-hidden />{t.dashboard.metricsTodayCost}</h2>
+      </header>
+      {spend === null ? <Skeleton className="h-10 w-24" /> : <p className="dash-bento__figure">{spend}</p>}
+      <p className="dash-bento__foot">
+        {delta === null
+          ? t.dashboard.pulseNoBaseline
+          : Math.round(delta) === 0
+            ? t.dashboard.pulseFlat
+            : `${delta > 0 ? '+' : ''}${Math.round(delta).toLocaleString(locale)} % ${t.dashboard.pulseVsYesterday}`}
+      </p>
+    </article>
+  );
+}
+
 function ConversationsCard() {
   const { t } = useTranslation();
   const sessions = useBrainSessions();
@@ -95,7 +135,11 @@ function ConversationsCard() {
     <article className="dash-bento__card">
       <header className="dash-bento__head">
         <h2 className="dash-bento__title"><MessagesSquare size={15} strokeWidth={1.5} aria-hidden />{t.dashboard.recentChats}</h2>
-        <Link href="/chat" className="dash-bento__more">{t.dashboard.openChat}<ArrowUpRight size={13} strokeWidth={1.5} aria-hidden /></Link>
+        {/* Icon only, named by its label. At one grid track the card title and a two-word link do not
+            both fit, and truncating the TITLE to keep a link readable is the wrong thing to lose. */}
+        <Link href="/chat" className="dash-bento__more" aria-label={t.dashboard.openChat} title={t.dashboard.openChat}>
+          <ArrowUpRight size={14} strokeWidth={1.5} aria-hidden />
+        </Link>
       </header>
       {sessions.data === undefined ? (
         <ul className="dash-bento__list">
@@ -119,37 +163,14 @@ function ConversationsCard() {
   );
 }
 
-function ActionsCard({ actions }: { actions: { id: string; label: string; prompt: string }[] }) {
+export function DashBento() {
   const { t } = useTranslation();
-  return (
-    <article className="dash-bento__card">
-      <header className="dash-bento__head">
-        <h2 className="dash-bento__title"><Sparkles size={15} strokeWidth={1.5} aria-hidden />{t.dashboard.quickActions}</h2>
-      </header>
-      <ul className="dash-bento__list">
-        {actions.map((action) => (
-          <li key={action.id}>
-            <button type="button" className="dash-bento__row" onClick={() => openBrainComposer(action.prompt)}>
-              <span className="dash-bento__row-title">{action.label}</span>
-              <ArrowUpRight size={13} strokeWidth={1.5} aria-hidden />
-            </button>
-          </li>
-        ))}
-      </ul>
-    </article>
-  );
-}
-
-export function DashBento({ days = 7 }: { days?: number }) {
-  const { t } = useTranslation();
-  const actions = [
-    { id: 'summary', label: t.dashboard.pillSummary, prompt: t.dashboard.pillSummaryPrompt },
-    { id: 'plan', label: t.dashboard.pillPlan, prompt: t.dashboard.pillPlanPrompt },
-    { id: 'agent', label: t.dashboard.pillAgent, prompt: t.dashboard.pillAgentPrompt },
-  ];
   // `--stagger` per card, read by `.animate-rise-in` (app/styles/animations.css) — the same entrance the
   // navigation rows use, so the two surfaces arrive with one rhythm rather than two.
-  const cards = [<UsageCard key="usage" days={days} />, <AgentsCard key="agents" />, <ConversationsCard key="chats" />, <ActionsCard key="actions" actions={actions} />];
+  //
+  // There is deliberately no quick-actions card: the hero already carries that row, and a second set of
+  // the same buttons a screen apart is not a shortcut, it is a question about which one is the real one.
+  const cards = [<UsageCard key="usage" />, <AgentsCard key="agents" />, <ConversationsCard key="chats" />, <SpendCard key="spend" />];
   return (
     <section aria-label={t.dashboard.overview} className="dash-bento">
       {cards.map((card, index) => (
