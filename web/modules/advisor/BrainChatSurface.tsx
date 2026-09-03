@@ -1744,11 +1744,10 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           `.chat-composer-dock` (chat.css) carries the bottom safe-area inset. Without it the composer's
           send button sits UNDER a phone's home indicator: the dock is pinned at `bottom: 0`, which is the
           edge of the viewport, not the edge of the usable screen. */}
+      {/* No hairline and NO fade above the footer: a gradient over the transcript's last lines read as
+          "there is more below" and had readers scrolling for text that was never hidden. The dock's own
+          opaque background is the only edge. */}
       <div ref={composerDockRef} data-testid="chat-composer-dock" className={variant === 'full' ? 'chat-composer-dock sticky z-10 bg-background' : ''}>
-      {/* No hairline above the footer — a soft fade lets the transcript slide under it instead. */}
-      {variant === 'full' ? (
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-gradient-to-t from-background to-transparent" />
-      ) : null}
       {/* One-line server status notice when the daemon sends one. The running state itself is signalled by
           the composer's Stop button (no separate "thinking" spinner). Hidden while a question is pending. */}
       {notice && !ask ? (

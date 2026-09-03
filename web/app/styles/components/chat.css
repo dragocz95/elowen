@@ -75,10 +75,10 @@
   .chat-statusline [data-stat='context'] { display: none; }
 }
 
-/* The sticky composer dock. `position: relative` anchors the transcript fade drawn inside it — with no
-   positioned ancestor of its own the fade resolved against the whole surface and was painted off-screen
-   above it. The safe-area inset is what keeps the composer clear of a phone's home indicator: the dock
-   sits at `bottom: 0`, so with no bottom padding the send button lands underneath it. */
+/* The sticky composer dock. `position: relative` keeps `bottom` (the visual-viewport offset below)
+   meaningful and anchors what is positioned inside it. The safe-area inset is what keeps the composer
+   clear of a phone's home indicator: the dock sits at `bottom: 0`, so with no bottom padding the send
+   button lands underneath it. */
 .chat-composer-dock {
   position: relative;
   bottom: var(--chat-visual-bottom-offset, 0px);
