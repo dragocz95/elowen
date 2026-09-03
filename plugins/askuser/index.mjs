@@ -33,8 +33,8 @@ const optionSchema = Type.Union(
  *  forgiving so the tool never bounces on a minimal, obvious call. `multiSelect` is the legacy alias
  *  of `multiple`, still accepted for backward compatibility. */
 const questionSchema = Type.Object({
-  question: Type.String({ description: 'The complete question. Put the choices in `options`; do NOT number them in the text.' }),
-  options: Type.Array(optionSchema, { minItems: 2, maxItems: 25, description: '2–25 choices — a plain string each (e.g. "Blue"), or {label, description?}. Put the safest/recommended option first. Do not add an "Other" option; free text is offered automatically unless `custom` is false.' }),
+  question: Type.String({ description: 'A clear, specific question ending with "?". Put the choices in `options`; do NOT number them in the text.' }),
+  options: Type.Array(optionSchema, { minItems: 2, maxItems: 25, description: '2–25 distinct choices — a plain string each (e.g. "Blue"), or {label, description?}. For single-select, make them mutually exclusive. Put the safest/recommended option first. Do not add an "Other" option; free text is offered automatically unless `custom` is false.' }),
   header: Type.Optional(Type.String({ description: 'Very short label (max 30 chars), e.g. "Colour". Defaults to the start of the question.' })),
   multiple: Type.Optional(Type.Boolean({ description: 'Optional — true lets the user select multiple choices. Default false (pick one).' })),
   multiSelect: Type.Optional(Type.Boolean({ description: 'Deprecated alias of `multiple`.' })),
