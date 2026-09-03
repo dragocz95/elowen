@@ -228,8 +228,9 @@ describe('workflow DAG modal', () => {
     const es = await renderChat(true);
     // On mobile the rail is a drawer, so the row is reached through it.
     for (const event of dagEvents(NODES)) es.emit(event.type, event);
+    fireEvent.click(await screen.findByRole('button', { name: /More options|Další možnosti/i }));
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i }));
     });
     const section = await screen.findByTestId('telemetry-workflow');
     await act(async () => { fireEvent.click(within(section).getAllByTestId('telemetry-row')[0]!); });

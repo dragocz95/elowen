@@ -70,7 +70,7 @@ describe('conversation bar controls', () => {
     );
 
     const host = await screen.findByTestId('page-top-bar-host');
-    await waitFor(() => expect(host).toContainElement(screen.getByTestId('chat-thoughts-toggle')));
+    await waitFor(() => expect(host).toContainElement(screen.getByRole('button', { name: 'More options' })));
   });
 
   it('never paints the desktop-only controls on a phone, not even for one commit', async () => {
@@ -86,26 +86,23 @@ describe('conversation bar controls', () => {
     expect(sawDesktopControls()).toBe(false);
   });
 
-  it('keeps the reasoning button one tap away on a phone', async () => {
-    // It is the control that gets changed mid-conversation, so it is the one that must not sit behind ⋯.
+  it('folds reasoning, telemetry and new chat into the ⋯ popover on a phone', async () => {
+    // The phone bar is the conversation name and ⋯: three icon buttons beside the name truncated it to
+    // a letter. The actions are still one menu away, as icon rows, and nowhere else on the bar.
     setViewport(true);
     renderSurface();
-
-    expect(await screen.findByTestId('chat-thoughts-toggle')).toBeInTheDocument();
-  });
-
-  it('does not also list reasoning inside the ⋯ popover', async () => {
-    // Two ways to reach one modal is how a bar starts drifting; the inline button is the only one.
-    setViewport(true);
-    renderSurface();
-    fireEvent.click(await screen.findByRole('button', { name: 'More options' }));
+    await screen.findByRole('button', { name: 'More options' });
+    expect(screen.queryByTestId('chat-thoughts-toggle')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New chat' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }));
 
     const popover = await waitFor(() => {
       const el = document.querySelector('[data-chat-popover]');
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
-    expect(popover.textContent).not.toContain('Reasoning');
+    expect(popover).toContainElement(screen.getByTestId('chat-thoughts-toggle'));
+    expect(popover).toContainElement(screen.getByRole('button', { name: 'New chat' }));
   });
 
   it('opens the same Tasks modal as `/tasks` from the phone overflow', async () => {

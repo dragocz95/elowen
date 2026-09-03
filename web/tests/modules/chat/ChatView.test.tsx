@@ -250,6 +250,27 @@ describe('ChatView (/chat page)', () => {
     }
   });
 
+  /** A phone's toolbar is the conversation name and ⋯. Reasoning, telemetry and new chat are still one
+   *  tap away — inside the menu, as icon rows — instead of squeezing the name down to a letter. */
+  it('folds reasoning, telemetry and new chat into the ⋯ menu on a phone', async () => {
+    const original = window.matchMedia;
+    window.matchMedia = (query: string) => ({ ...original(query), matches: /max-width/.test(query) });
+    try {
+      renderChat(<ChatView />);
+      await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
+      expect(screen.queryByRole('button', { name: /^Reasoning$|^Uvažování$/ })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^New chat$|^Nový chat$/ })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /More options|Další možnosti/i }));
+      expect(screen.getByRole('button', { name: /^Reasoning$|^Uvažování$/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^New chat$|^Nový chat$/ })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /^Reasoning$|^Uvažování$/ }));
+      expect(await screen.findByRole('dialog', { name: /Reasoning|Uvažování/ })).toBeInTheDocument();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it('keeps the chat fill height stable when a phone resizes while scrolled', async () => {
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(

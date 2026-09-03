@@ -942,15 +942,33 @@ function WorkModeSwitch({ variant }: { variant: 'full' | 'compact' }) {
  *  enough that burying it behind two taps was the complaint. A transient popover (outside-pointer / Escape
  *  dismiss, same grammar as ModelPicker), never a persistent panel. Desktop keeps every control inline and
  *  never mounts this. */
-function BarOverflowMenu({ onOpenTasks }: { onOpenTasks: () => void }) {
+function BarOverflowMenu({ folded, onOpenTasks, onOpenReasoning, onOpenTelemetry, onNewChat }: {
+  /** A phone: the bar keeps only the conversation name and this menu, so the per-conversation actions
+   *  (reasoning, telemetry, new chat) fold in here as icon rows. Desktop keeps them inline. */
+  folded: boolean;
+  onOpenTasks: () => void;
+  onOpenReasoning: () => void;
+  onOpenTelemetry?: () => void;
+  onNewChat: () => void;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   useDismiss(rootRef, open, () => setOpen(false));
   const rowClass = 'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent';
+  /** A row's action opens a modal or drawer whose focus scope remembers what was focused when it opened.
+   *  The row itself is gone with the menu in that same commit, so focus is handed to the ⋯ trigger FIRST —
+   *  that is where the overlay returns it on close, and a control that survives is the only one it can. */
+  const pick = (action: () => void) => () => {
+    triggerRef.current?.focus();
+    setOpen(false);
+    action();
+  };
   return (
     <div ref={rootRef} className="relative shrink-0">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
@@ -971,8 +989,26 @@ function BarOverflowMenu({ onOpenTasks }: { onOpenTasks: () => void }) {
           {/* Where the agent works belongs beside what it is: the phone folds both away, so both come back
               here rather than leaving the directory reachable only on a desktop. */}
           <div className="px-1 pb-1"><ProjectPicker variant="full" /></div>
+          {folded ? (
+            <>
+              <button type="button" data-testid="chat-thoughts-toggle" onClick={pick(onOpenReasoning)} className={rowClass}>
+                <Brain size={16} className="text-muted-foreground" aria-hidden />
+                <span>{t.reasoning.modalTitle}</span>
+              </button>
+              {onOpenTelemetry ? (
+                <button type="button" onClick={pick(onOpenTelemetry)} className={rowClass}>
+                  <Activity size={16} className="text-muted-foreground" aria-hidden />
+                  <span>{t.telemetry.open}</span>
+                </button>
+              ) : null}
+              <button type="button" onClick={pick(onNewChat)} className={rowClass}>
+                <Plus size={16} className="text-muted-foreground" aria-hidden />
+                <span>{t.brainChat.newChat}</span>
+              </button>
+            </>
+          ) : null}
           {/* The mobile entry opens the same task manager as `/tasks`; there is one modal and one data path. */}
-          <button type="button" onClick={() => { setOpen(false); onOpenTasks(); }} className={rowClass}>
+          <button type="button" onClick={pick(onOpenTasks)} className={rowClass}>
             <ListChecks size={16} className="text-muted-foreground" aria-hidden />
             <span>{t.chat.todos}</span>
           </button>
@@ -1573,12 +1609,13 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               <ModelPicker variant="full" />
             </div>
           ) : null}
-          {/* The reasoning button stays inline at EVERY width. It is the one control here that gets
-              changed mid-conversation rather than set once, and two taps through ⋯ for something that
-              frequent is what made the phone feel worse than the desktop. It is a single 8×8 icon, so
-              the only thing it costs the narrow bar is a little more truncation of the title. */}
+          {/* On a phone the bar is the conversation name and ⋯, nothing else: three icon buttons beside
+              the name left it truncated to a letter, and the name is what the bar is for. Reasoning,
+              telemetry and new chat fold into the ⋯ menu there; desktop keeps them inline. */}
+          {mobile !== true ? (
           <ReasoningButton full onOpen={() => setReasoningOpen(true)} />
-          {onOpenTelemetry ? (
+          ) : null}
+          {onOpenTelemetry && mobile !== true ? (
             <button
               type="button"
               onClick={onOpenTelemetry}
@@ -1593,6 +1630,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               <Activity size={18} aria-hidden />
             </button>
           ) : null}
+          {mobile !== true ? (
           <button
             type="button"
             onClick={newChat}
@@ -1602,11 +1640,16 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           >
             <Plus size={18} aria-hidden />
           </button>
+          ) : null}
           {/* Phones and narrow desktops fold the wide pickers behind ⋯; roomy desktops keep them inline. */}
           {mobile !== undefined ? (
             <div className={mobile ? '' : 'chat-page-toolbar__overflow'}>
               <BarOverflowMenu
+                folded={mobile}
                 onOpenTasks={() => setTasksOpen(true)}
+                onOpenReasoning={() => setReasoningOpen(true)}
+                onOpenTelemetry={onOpenTelemetry}
+                onNewChat={newChat}
               />
             </div>
           ) : null}
