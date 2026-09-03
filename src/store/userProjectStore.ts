@@ -23,8 +23,16 @@ export class UserProjectStore {
     this.db.prepare('INSERT OR IGNORE INTO user_projects (user_id, project_id) VALUES (?, ?)').run(userId, projectId);
   }
 
+  /** Revoke project access. The shared-memory share row MUST go with it: `isSharer` answers true for
+   *  a named member WITHOUT re-checking `user_projects` (deliberately — the pool predicates must be
+   *  cheap and single-source), so a share row left behind would keep the removed member reading and
+   *  writing the pool. PUT /memory-members validates canAccess only at write time; THIS is what keeps
+   *  the "share grant can never exceed project access" invariant true afterwards. */
   unassign(userId: number, projectId: number): void {
-    this.db.prepare('DELETE FROM user_projects WHERE user_id = ? AND project_id = ?').run(userId, projectId);
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM user_projects WHERE user_id = ? AND project_id = ?').run(userId, projectId);
+      this.db.prepare('DELETE FROM project_memory_members WHERE user_id = ? AND project_id = ?').run(userId, projectId);
+    })();
   }
 
   /** True for an admin account (full visibility + may manage assignments). Delegates to the one reader

@@ -47,8 +47,7 @@ function maintenanceError(error: unknown): string | null {
  *  semantic-retrieval debugging surface and a self-service re-embed. Identity is ALWAYS the caller
  *  (`c.get('user')`), never a body/param field, so a user reads/mutates their OWN memories plus the
  *  shared pools they belong to (the store no-ops / 404s on anything else). Provider (embedding)
- *  settings are workspace-level and admin-gated. Provider (embedding) settings are
- *  workspace-level and admin-gated. Degrades to 400 when the store isn't wired. */
+ *  settings are workspace-level and admin-gated. Degrades to 400 when the store isn't wired. */
 export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
   const { d, canAccessProject, notAdmin, notAdminUnlessSetup } = ctx;
   const store = d.memoryStore;

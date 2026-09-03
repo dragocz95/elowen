@@ -227,7 +227,7 @@ describe('shared project memory (store)', () => {
     const merged = mem.merge(11, [a.id, b.id], 'supplier A: terms + pricing', 'user:11', 'dedupe');
     expect(merged.category_id).toBe(pool.id);
     // Mixing a pool row with a personal row lands UNCATEGORIZED — the shared fact must not leak into
-    // anyone's private filing (the classifier re-files it later).
+    // anyone's private filing (a later reclassify pass re-files it).
     const personal = mem.add(11, { body: 'my own note' }, 'user:11', 'add');
     const mixed = mem.merge(11, [a.id, personal.id], 'mixed merge', 'user:11', 'dedupe');
     expect(mixed.category_id).toBeNull();
@@ -254,12 +254,22 @@ describe('shared project memory (store)', () => {
     expect(mem.get(12, other.id)).toBeDefined();
   });
 
+  it('unassigning a member revokes their share-list row, so pool access cannot outlive project access', () => {
+    const project = shareProject('obchod', { members: [10, 11], sharers: [10, 11] });
+    const pool = cats.sharedForProject(10, project)!;
+    expect(canUseCategory(db, 11, pool.id)).toBe(true);
+
+    userProjects.unassign(11, project.id);
+    expect(userProjects.memoryMembers(project.id)).toEqual([10]);
+    expect(isSharer(db, 11, project.id)).toBe(false);
+    expect(canUseCategory(db, 11, pool.id)).toBe(false);
+  });
+
   it('setCategory rejects a foreign category target and an unknown memory as before', () => {
-    const project = shareProject('obchod', { members: [10], sharers: [10] });
+    shareProject('obchod', { members: [10], sharers: [10] });
     const other = cats.create(11, { name: 'Foreign' });
     const memory = mem.add(10, { body: 'x' }, 'user:10', 'add');
     expect(mem.setCategory(10, memory.id, other.id, 'user:10', 'tag')).toBe(false);
     expect(mem.setCategory(10, 99999, null, 'user:10', 'tag')).toBe(false);
-    void project;
   });
 });

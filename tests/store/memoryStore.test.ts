@@ -321,7 +321,7 @@ describe('MemoryStore', () => {
     store.markUsed(1, [mine.id, theirs.id]);
 
     expect(store.usageHistory(mine.id)).toHaveLength(1);
-    expect(store.usageHistory(2, theirs.id)).toHaveLength(0);
+    expect(store.usageHistory(theirs.id)).toHaveLength(0);
     expect(store.get(2, theirs.id)?.use_count).toBe(0);
   });
 

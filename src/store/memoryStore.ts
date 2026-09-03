@@ -312,7 +312,8 @@ export class MemoryStore {
   /** Merge several memories into one new memory carrying `mergedBody`; the sources are soft-deleted.
    *  Sources are access-scoped ({@link getAccessible}) — a foreign non-shared id is skipped, never
    *  merged. When every matched source sits in ONE category the caller may use, the merged row keeps
-   *  that category; otherwise it lands uncategorized exactly as before (the classifier re-files it).
+   *  that category; otherwise it lands uncategorized exactly as before (a later reclassify pass
+   *  re-files it; nothing here triggers classification).
    *  The 'merge' audit's after_json carries the source ids. Atomic. */
   merge(userId: number, ids: number[], mergedBody: string, actor: string, reason: string): MemoryRow {
     return this.db.transaction(() => {
