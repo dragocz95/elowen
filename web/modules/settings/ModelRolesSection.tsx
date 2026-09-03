@@ -199,7 +199,10 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
   );
 
   return (
-    <SettingsGroup title={t.settings.modelRoles.title} description={t.settings.modelRoles.hint} icon={Boxes}>
+    // The roles fold away closed: a one-line summary in the header (`hint` is exactly one sentence in
+    // every dictionary) is all a closed group needs to say, and the rows stay mounted underneath so the
+    // per-row anchors and in-page search still reach them.
+    <SettingsGroup title={t.settings.modelRoles.title} description={t.settings.modelRoles.hint} icon={Boxes} collapsible>
       {/* Read-only on purpose: this answer is DERIVED from provider order, not stored, so a picker here
           would promise a setting that does not exist. The way to change it is to reorder the providers. */}
       <SettingsRow
