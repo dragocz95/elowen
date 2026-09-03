@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useEffect } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { PluginChatArtifactProps, PluginChatPendingInput, PluginUiRegistration } from 'elowen-plugin-ui-kit';
 import { createWrapper } from '../../test-utils';
@@ -67,6 +68,27 @@ describe('InlineArtifact', () => {
 
     await act(async () => resolve({ requiresApiVersion: 13, chatArtifacts: { preview: View } }));
     expect(await screen.findByTestId('artifact-view')).toHaveTextContent('browser:artifact-1:Elowen');
+  });
+
+  it('keeps a mounted artifact alive when the plugin listing is refetched unchanged', async () => {
+    // The listing is refetched on every /events reconnect and every plugin event. A refetch that yields
+    // an equal but NEW entry object used to restart the bundle load — and the artifact rendered null in
+    // between, which unmounted the plugin card. For the browser card that meant a lost takeover lease
+    // and a dropped live stream every time. Identity of the listing row is not a reason to reload.
+    let mounts = 0;
+    const View = () => { useEffect(() => { mounts += 1; }, []); return <div data-testid="artifact-view">live</div>; };
+    mocks.loadPluginUi.mockResolvedValue({ requiresApiVersion: 14, chatArtifacts: { preview: View } });
+    const { wrapper: Wrapper } = createWrapper();
+    const view = render(<Wrapper><InlineArtifact artifact={artifact} /></Wrapper>);
+    expect(await screen.findByTestId('artifact-view')).toBeInTheDocument();
+    expect(mounts).toBe(1);
+
+    mocks.listing.data = [{ ...entry }];
+    view.rerender(<Wrapper><InlineArtifact artifact={artifact} /></Wrapper>);
+    await act(async () => {});
+    expect(screen.getByTestId('artifact-view')).toBeInTheDocument();
+    expect(mocks.loadPluginUi).toHaveBeenCalledTimes(1);
+    expect(mounts).toBe(1);
   });
 
   it('hands the artifact the current assistant narration, and nothing else about the chat', async () => {

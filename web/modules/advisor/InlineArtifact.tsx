@@ -27,15 +27,22 @@ export function InlineArtifact({ artifact, narration, pendingInput }: {
   const compatible = entry !== undefined && entry.apiVersion <= PLUGIN_UI_API_VERSION;
   const [registration, setRegistration] = useState<PluginUiRegistration | null | undefined>(undefined);
 
+  // Keyed on WHAT would be loaded, never on the listing row itself: the listing is refetched on every
+  // /events reconnect and plugin event, and a refetch that yields an equal but new object must not
+  // restart the load. Restarting it rendered null for a moment, which unmounted the plugin's component
+  // — and the browser card lost its takeover lease and its live stream with it.
+  const bundleName = compatible ? entry.name : null;
+  const bundleUrl = compatible ? entry.url : null;
+  const bundleCssUrl = compatible ? entry.cssUrl ?? null : null;
   useEffect(() => {
-    if (!entry || !compatible) return;
+    if (!bundleName || !bundleUrl) return;
     let alive = true;
     setRegistration(undefined);
-    void loadPluginUi(entry.name, entry.url, entry.cssUrl)
+    void loadPluginUi(bundleName, bundleUrl, bundleCssUrl ?? undefined)
       .then((value) => { if (alive) setRegistration(value); })
       .catch(() => { if (alive) setRegistration(null); });
     return () => { alive = false; };
-  }, [compatible, entry]);
+  }, [bundleName, bundleUrl, bundleCssUrl]);
 
   if (listing.isLoading) return null;
   if (!entry || !compatible || registration === null) return <PluginPlaceholder text={artifact.fallback} />;
