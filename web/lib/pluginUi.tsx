@@ -51,6 +51,7 @@ import { RegisterSearch } from '../components/ui/RegisterSearch';
 import { SpatialIdentity } from '../components/ui/SpatialPrimitives';
 import { TimeSeriesChart } from '../components/ui/TimeSeriesChart';
 import { ProjectFilterPills } from '../components/ui/ProjectFilterPills';
+import { ProjectIcon } from '../components/ui/ProjectIcon';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../components/ui/ControlSurface';
 import { ModelIcon } from '../components/ui/ModelIcon';
 import { OutcomeBadge } from '../components/ui/OutcomeBadge';
@@ -125,7 +126,7 @@ import { eventIcon } from './eventMeta';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 15;
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 16;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -297,7 +298,7 @@ export function ensurePluginUiRuntime(): void {
       MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
       // Page chrome a plugin page needs to look like every built-in workspace, not like a bundle that
       // rebuilt the layout for itself.
-      WorkspacePage, CompactWorkspaceHeader, PluginPageHeader, PluginPageFrame, PluginSection, ProjectFilterPills,
+      WorkspacePage, CompactWorkspaceHeader, PluginPageHeader, PluginPageFrame, PluginSection, ProjectFilterPills, ProjectIcon,
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       ConfirmDialog, LiveTail,

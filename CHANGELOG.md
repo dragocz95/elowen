@@ -7,6 +7,8 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ### Added
 
+- Plugin UI API 16 publishes the shared `ProjectIcon` component so browser plugins render project images
+  and the default folder glyph through the host's canonical cached path.
 - Plugin UI API 15: an inline chat artifact also receives `pendingInput` while the app is waiting on an
   answer — the app's own translated line plus a `reveal()` callback that brings the question card back into
   view and focuses it. An artifact whose surface covers the dock covers that card with it, so it can now
