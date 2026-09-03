@@ -92,19 +92,17 @@
    while the footer remains one visual layer rather than contributing its height twice. When iOS shrinks
    only visualViewport, the extra surface tail lives under the keyboard and gives the page enough scroll
    range to keep that reserve above the shifted dock. Chromium's resized layout reports an offset of zero. */
-/* A plugin live view — today the browser monitor — docks above the composer as a floating layer, so it
-   takes up no space in the transcript and the last turns simply ran underneath it: the text did not wrap
-   before the card, it disappeared behind it. Whatever docks there publishes its measured height on this
-   surface, and the transcript reserves exactly that much at its end, so the newest turn is always
-   scrollable clear of the card. Nothing docked means the variable is absent and this is a no-op. */
-.chat-surface-full .chat-transcript {
-  padding-bottom: calc(var(--chat-transcript-pad-bottom) + var(--chat-dock-height, 0px));
-}
+/* A plugin live view — today the browser monitor — docks above the composer as a floating layer. It must
+   not push the transcript around: reserving its height as padding left a tall empty band under a short
+   conversation, which is worse than the overlap it was meant to prevent. Instead the docked card only
+   changes where AUTOSCROLL stops, so the newest turn comes to rest above the card while a short
+   transcript still starts at the top. Nothing docked means the variable is absent and this is a no-op. */
+.chat-surface-full .chat-transcript > :last-child { scroll-margin-bottom: var(--chat-dock-height, 0px); }
 
 @media (width < 48rem) {
   .chat-surface-full { padding-bottom: var(--chat-visual-bottom-offset, 0px); }
   .chat-surface-full .chat-transcript {
-    padding-bottom: calc(var(--chat-transcript-pad-bottom) + var(--chat-composer-height, 0px) + var(--chat-dock-height, 0px) + 0.375rem);
+    padding-bottom: calc(var(--chat-transcript-pad-bottom) + var(--chat-composer-height, 0px) + 0.375rem);
   }
   .chat-surface-full .chat-composer-dock {
     margin-top: calc(-1 * var(--chat-composer-height, 0px));
