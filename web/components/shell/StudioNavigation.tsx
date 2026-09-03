@@ -2,10 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, MoreHorizontal, X } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, ChevronsUpDown, MoreHorizontal, Search, Settings2, UserRound, X } from 'lucide-react';
 import { useBrand } from '../../lib/brand';
-import { useHealth, useMe } from '../../lib/queries';
+import { useHealth, useMe, usePulse } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { Avatar } from '../ui/Avatar';
 import { SkinSwitcher } from '../ui/SkinSwitcher';
@@ -13,7 +13,25 @@ import { useShellNavigation } from './useShellNavigation';
 import { useNavCustomization } from './NavCustomization';
 import { navOrderIndex } from './navOrder';
 import { entryIsActive, type NavEntry } from './navEntry';
+import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
 import { Dialog, DialogContent, DialogOverlay } from '../ui/shadcn/dialog';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/shadcn/collapsible';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/shadcn/dropdown-menu';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+} from '../ui/shadcn/sidebar';
 import { useReturnFocus } from '../ui/overlayStack';
 
 /** The entries Studio presents in its footer region rather than in the scrolling body: the account and
@@ -157,7 +175,7 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
   // Desktop Studio keeps the rail's direct-manipulation contract: hold the primary pointer and move a row.
   // Touch remains scrolling (and uses the context menu's keyboard-equivalent move actions), while the drawer
   // never rearranges underneath a finger that is trying to dismiss or navigate it.
-  const entryRefs = useRef(new Map<string, HTMLDivElement>());
+  const entryRefs = useRef(new Map<string, HTMLElement>());
   const pressRef = useRef<DragPress | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const suppressClick = useRef(false);
@@ -176,7 +194,7 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
       try { press.element.releasePointerCapture(press.pointerId); } catch { /* capture already gone */ }
     }
   };
-  const onEntryPointerDown = (event: React.PointerEvent<HTMLDivElement>, entry: NavEntry, region: DragRegion, slot: number) => {
+  const onEntryPointerDown = (event: React.PointerEvent<HTMLElement>, entry: NavEntry, region: DragRegion, slot: number) => {
     if (drawer || !entry.id || event.pointerType === 'touch' || (event.pointerType === 'mouse' && event.button !== 0)) return;
     suppressClick.current = false;
     const entries = regionEntries(region);
@@ -258,13 +276,17 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
       else if (drag.from < drag.to && slot > drag.from && slot <= drag.to) shift = -drag.span;
       else if (drag.from > drag.to && slot < drag.from && slot >= drag.to) shift = drag.span;
     }
+    // `SidebarMenuItem` is shadcn's row wrapper (an <li> inside `SidebarMenu`'s <ul>), which is also
+    // what gives the column a real list semantic it used to fake with nested divs. The drag contract is
+    // unchanged and still lives here: the shell owns MOVEMENT, the destination inside owns its paint.
+    // `--stagger` is the row's index, read by the entrance animation in app/styles/animations.css.
     return (
-      <div
-        ref={(element) => { if (id && element) entryRefs.current.set(id, element); else if (id) entryRefs.current.delete(id); }}
-        className="studio-nav__entry-shell"
+      <SidebarMenuItem
+        ref={(element: HTMLLIElement | null) => { if (id && element) entryRefs.current.set(id, element); else if (id) entryRefs.current.delete(id); }}
+        className="studio-nav__entry-shell animate-rise-in"
         data-nav-entry-id={id}
         data-dragging={moving || undefined}
-        style={shift ? { transform: `translateY(${shift}px)` } : undefined}
+        style={{ ...(shift ? { transform: `translateY(${shift}px)` } : null), '--stagger': slot } as React.CSSProperties}
         onPointerDown={(event) => onEntryPointerDown(event, entry, region, slot)}
         onLostPointerCapture={() => { if (dragRef.current) releaseDrag(); }}
         onClickCapture={(event) => {
@@ -275,7 +297,7 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
         }}
       >
         {child}
-      </div>
+      </SidebarMenuItem>
     );
   };
 
@@ -314,6 +336,18 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
   const mode = drawer ? 'drawer' : compact ? 'rail' : 'full';
   const user = me.data?.user;
 
+  /** Live counts, keyed by the entry id they annotate. The instance pulse is a SHARED react-query key —
+   *  the dashboard and the presence hook already read it — so the badge costs no request of its own on
+   *  any page that shows figures, and one refresh moves both. Zero is not a badge: a row that
+   *  permanently wears a "0" is noise the reader learns to stop seeing. */
+  const runningAgents = usePulse().data?.totals.runningAgents ?? 0;
+  const counters = useMemo<Record<string, { count: number; title: string; live?: boolean }>>(
+    () => (runningAgents > 0
+      ? { chat: { count: runningAgents, title: `${t.nav.runningAgents}: ${runningAgents}`, live: true } }
+      : {} as Record<string, { count: number; title: string; live?: boolean }>),
+    [runningAgents, t.nav.runningAgents],
+  );
+
   /** One destination row, at either depth.
    *
    *  The label stays mounted so the 150ms opacity/translate collapse can finish, but is aria-hidden in the
@@ -330,24 +364,31 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
     // that replaces its body is named by its attribute — exactly like a folded row whose text is off
     // screen. Otherwise the account row would announce itself as the signed-in person's name twice.
     const named = compact || body !== undefined;
+    // A live count riding on the row it belongs to. It is `aria-hidden` and carries no accessible name
+    // of its own on purpose: the row is addressed by the destination it leads to ("Chat"), and folding a
+    // changing number into that name would rename the menu item every time an agent starts or stops —
+    // for a screen reader, a different destination each minute. The number is stated in the row's
+    // `title` instead, where it is an annotation rather than an identity.
+    const badge = entry.id ? counters[entry.id] : undefined;
     return (
-      <Link
-        href={entry.href ?? '#'}
-        draggable={false}
-        className="studio-nav__item"
-        data-active={active || undefined}
-        aria-current={currentPage ? 'page' : undefined}
-        aria-label={named ? entry.label : undefined}
-        title={entry.label}
-        onContextMenu={onContextMenu}
-      >
-        {body !== undefined ? <span className="studio-nav__item-body" aria-hidden>{body}</span> : (
-          <>
-            <span className="studio-nav__item-icon" aria-hidden><Icon size={18} strokeWidth={1.5} /></span>
-            <span className="studio-nav__item-label" aria-hidden={compact || undefined}>{entry.label}</span>
-          </>
-        )}
-      </Link>
+      <SidebarMenuButton asChild isActive={active} className="studio-nav__item">
+        <Link
+          href={entry.href ?? '#'}
+          draggable={false}
+          aria-current={currentPage ? 'page' : undefined}
+          aria-label={named ? entry.label : undefined}
+          title={badge ? `${entry.label} · ${badge.title}` : entry.label}
+          onContextMenu={onContextMenu}
+        >
+          {body !== undefined ? <span className="studio-nav__item-body" aria-hidden>{body}</span> : (
+            <>
+              <span className="studio-nav__item-icon" aria-hidden><Icon size={18} strokeWidth={1.5} /></span>
+              <span className="studio-nav__item-label" aria-hidden={compact || undefined}>{entry.label}</span>
+            </>
+          )}
+          {badge ? <SidebarMenuBadge aria-hidden className="studio-nav__badge" data-live={badge.live || undefined}>{badge.count}</SidebarMenuBadge> : null}
+        </Link>
+      </SidebarMenuButton>
     );
   };
 
@@ -355,7 +396,16 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
     ? (event: React.MouseEvent) => customization.onEntryContextMenu(event, entry)
     : customization.onSurfaceContextMenu);
 
+  // `SidebarProvider` is CONTROLLED by the shell's own fold state rather than owning one: the shell
+  // measures the workspace and decides between the full column, the icon rail and the sheet, and a
+  // second source of truth for "is it folded" is how the rail and the toggle end up disagreeing. Toggling
+  // from inside the primitive (SidebarRail) is forwarded to the shell's `onToggleCollapse`.
+  //
+  // `Sidebar asChild` hands the state attributes to the <nav> the skin already owns, so the primitive
+  // contributes its contract (`data-state`, `data-collapsible`, `data-side`) without contributing a
+  // second layout. Every part below reads that context.
   const navigation = (
+      <Sidebar asChild side={side} collapsible={drawer ? 'none' : 'icon'}>
       <nav
         className={`studio-nav${drawer ? ' overlay-layer-nav-drawer overlay-nav-drawer' : ''}`}
         data-testid="studio-navigation"
@@ -397,24 +447,70 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
           </button>
         ) : null}
 
-        <header className="studio-nav__header">
-          <div className="studio-nav__brand-lockup">
-            <img className="studio-nav__brand-mark" src={iconSrc} alt="" width={20} height={20} />
-            <span className="studio-nav__brand-name" aria-hidden={compact || undefined}>{appName}</span>
-            {/* The build stays attached to the brand lockup. In rail mode the skin drops the name and the
-                build and centres the mark — the folded column shows a logo, never a sliced word. */}
-            {health.data?.version ? <span className="studio-nav__version" aria-hidden={compact || undefined}>{`v${health.data.version}`}</span> : null}
-          </div>
-        </header>
+        {/* The header is a SWITCHER, not a logo. The mark, the instance name and the build are one
+            control that opens the instance menu — the shape Linear and Vercel both use, and the reason
+            is practical rather than stylistic: the top-left of a sidebar is where a reader looks to
+            answer "which instance am I in", and a passive lockup answers that and then refuses to do
+            anything about it. In rail mode the skin drops the name and the build and centres the mark;
+            the folded column shows a logo, never a sliced word. */}
+        <SidebarHeader className="studio-nav__header">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="studio-nav__switcher" aria-label={t.nav.instanceMenu}>
+                <img className="studio-nav__brand-mark" src={iconSrc} alt="" width={20} height={20} />
+                <span className="studio-nav__brand-lockup" aria-hidden={compact || undefined}>
+                  <span className="studio-nav__brand-name">{appName}</span>
+                  {health.data?.version ? <span className="studio-nav__version">{`v${health.data.version}`}</span> : null}
+                </span>
+                <ChevronsUpDown className="studio-nav__switcher-caret" size={14} aria-hidden />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuLabel className="studio-nav__switcher-title">
+                {appName}
+                {health.data?.version ? <span className="studio-nav__version">{`v${health.data.version}`}</span> : null}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/account"><UserRound size={15} strokeWidth={1.5} aria-hidden />{t.nav.account}</Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/settings"><Settings2 size={15} strokeWidth={1.5} aria-hidden />{t.nav.settings}</Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </SidebarHeader>
 
-        <div className="studio-nav__body">
+        {/* The palette's own affordance, in the place a reader reaches for search. It is the SAME event
+            the TopBar's glyph and the ⌘K binding dispatch, so there is one palette and one way in — this
+            is a second door, not a second search. */}
+        <div className="studio-nav__search">
+          <button
+            type="button"
+            className="studio-nav__search-pill"
+            onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
+            aria-label={t.common.openCommandPalette}
+            title={`${t.common.openCommandPalette} · ⌘K`}
+            aria-keyshortcuts="Control+K Meta+K"
+          >
+            <Search size={15} strokeWidth={1.5} aria-hidden />
+            <span className="studio-nav__search-label" aria-hidden={compact || undefined}>{t.common.searchSite}</span>
+            <kbd className="studio-nav__kbd" aria-hidden>⌘K</kbd>
+          </button>
+        </div>
+
+        <SidebarContent className="studio-nav__body">
+         <SidebarGroup className="studio-nav__section">
+          <SidebarGroupLabel className="studio-nav__section-label" aria-hidden={compact || undefined}>{t.nav.sectionWork}</SidebarGroupLabel>
+          <SidebarGroupContent>
+           <SidebarMenu className="studio-nav__menu">
           {bodyEntries.map((entry, slot) => {
             const pages = groupPages(entry);
             const key = entry.id ?? entry.label;
             const onEntryMenu = entryMenu(entry);
             // Desktop/rail stays primary-only; peer pages move into the shared TopBar. The mobile drawer
             // keeps the nested destinations because that header strip is intentionally hidden there.
-            if (!pages || !drawer) return <div key={key}>{entryShell(entry, 'body', slot, destination(entry, onEntryMenu))}</div>;
+            if (!pages || !drawer) return <Fragment key={key}>{entryShell(entry, 'body', slot, destination(entry, onEntryMenu))}</Fragment>;
 
             const active = entryIsActive(entry, pathname);
             // A page inherits its world's icon when it brings none, so the row is never iconless in the
@@ -427,35 +523,53 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
             const closed = !compact && (closedGroups[key] ?? false);
             const shown = closed ? pages.filter((item) => entryIsActive(page(item), pathname)) : pages;
             const Icon = entry.icon;
+            // Radix `Collapsible` owns the disclosure — `data-state`, `aria-expanded` and the
+            // trigger/content wiring — but NOT the whole list. It unmounts its content when closed, and
+            // the one rule this group has is that the page the reader is standing on survives the fold.
+            // So the pages the fold governs sit in `CollapsibleContent` and the page that must not
+            // disappear is rendered beside it, only while the group is shut. Nothing is drawn twice.
             return (
-              <div key={key}>{entryShell(entry, 'body', slot, (
-                <div className="studio-nav__group" data-closed={closed || undefined} data-active={active || undefined}>
+              <Fragment key={key}>{entryShell(entry, 'body', slot, (
+                <Collapsible
+                  open={!closed}
+                  onOpenChange={() => toggleGroup(key)}
+                  className="studio-nav__group"
+                  data-closed={closed || undefined}
+                  data-active={active || undefined}
+                >
                   {compact ? null : (
-                    <button
-                      type="button"
-                      className="studio-nav__group-toggle"
-                      data-active={active || undefined}
-                      aria-expanded={!closed}
-                      onClick={() => toggleGroup(key)}
-                      onContextMenu={onEntryMenu}
-                    >
-                      <span className="studio-nav__item-icon" aria-hidden><Icon size={18} strokeWidth={1.5} /></span>
-                      <span className="studio-nav__item-label">{entry.label}</span>
-                      <ChevronRight className="studio-nav__chevron" size={14} aria-hidden />
-                    </button>
+                    <CollapsibleTrigger asChild>
+                      <button
+                        type="button"
+                        className="studio-nav__group-toggle"
+                        data-active={active || undefined}
+                        onContextMenu={onEntryMenu}
+                      >
+                        <span className="studio-nav__item-icon" aria-hidden><Icon size={18} strokeWidth={1.5} /></span>
+                        <span className="studio-nav__item-label">{entry.label}</span>
+                        <ChevronRight className="studio-nav__chevron" size={14} aria-hidden />
+                      </button>
+                    </CollapsibleTrigger>
                   )}
                   <div className="studio-nav__group-items">
-                    {shown.map((item) => (
-                      <div key={item.id}>{destination(page(item), onEntryMenu)}</div>
-                    ))}
+                    {closed
+                      ? shown.map((item) => <Fragment key={item.id}>{destination(page(item), onEntryMenu)}</Fragment>)
+                      : (
+                        <CollapsibleContent>
+                          {pages.map((item) => <Fragment key={item.id}>{destination(page(item), onEntryMenu)}</Fragment>)}
+                        </CollapsibleContent>
+                      )}
                   </div>
-                </div>
-              ))}</div>
+                </Collapsible>
+              ))}</Fragment>
             );
           })}
-        </div>
+           </SidebarMenu>
+          </SidebarGroupContent>
+         </SidebarGroup>
+        </SidebarContent>
 
-        <footer className="studio-nav__footer">
+        <SidebarFooter className="studio-nav__footer">
           {/* The light/dark control on a phone. The interface's brightness is a SKIN here
               (`studio-light` / `studio-oled`, see lib/skins.ts) rather than a CSS theme, so the canonical
               control is the same `SkinSwitcher` the TopBar mounts — not a second switch with its own
@@ -463,9 +577,16 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
               control on screen is how they drift out of step. It renders nothing when the instance allows
               fewer than two skins, so an operator who never enabled switching sees no dead affordance. */}
           {drawer ? <SkinSwitcher placement="drawer" /> : null}
-          {adminEntries.map((entry, slot) => (
-            <div key={entry.id ?? entry.label}>{entryShell(entry, 'footer', slot, destination(entry, entryMenu(entry)))}</div>
-          ))}
+          <SidebarGroup className="studio-nav__section">
+            <SidebarGroupLabel className="studio-nav__section-label" aria-hidden={compact || undefined}>{t.nav.sectionInstance}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="studio-nav__menu">
+                {adminEntries.map((entry, slot) => (
+                  <Fragment key={entry.id ?? entry.label}>{entryShell(entry, 'footer', slot, destination(entry, entryMenu(entry)))}</Fragment>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
           {/* The user block, plus the keyboard's way into the menu the right-click opens. That control
               has to exist independently of the entries: hide them all and there is nothing left to open
               a menu ON. */}
@@ -496,21 +617,31 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
               <MoreHorizontal size={18} strokeWidth={1.5} aria-hidden />
             </button>
           </div>
-        </footer>
+        </SidebarFooter>
+        {/* The fold's edge affordance — a hairline target down the column's inner rule, the way Linear
+            and Vercel both offer it. Only where folding is the user's call: `onToggleCollapse` is absent
+            in the sheet and in a window already forced to the icon column, and a control that changes
+            nothing is worse than no control. */}
+        {onToggleCollapse ? <SidebarRail className="studio-nav__rail" /> : null}
         {/* Shadcn menus are intentionally not portalled. In drawer mode they must remain descendants of
             Radix Content so its FocusScope and DismissableLayer treat them as part of the active dialog. */}
         {drawer ? customization.overlays : null}
       </nav>
+      </Sidebar>
   );
 
+  // The provider wraps BOTH branches rather than the column, and that placement is load-bearing: as a
+  // sheet the column is handed to `DialogContent asChild`, which needs a single element it can take a
+  // ref on. `Sidebar asChild` renders exactly the <nav>; a provider inside would have put a wrapper div
+  // between Radix and the surface it is trapping focus in.
   return (
-    <>
+    <SidebarProvider open={!compact} onOpenChange={() => onToggleCollapse?.()}>
       {drawer && drawerOpen ? (
         <StudioNavigationDialog label={t.common.primaryNav} onClose={onDrawerClose} returnFocusTo={drawerReturnFocusRef.current}>
           {navigation}
         </StudioNavigationDialog>
       ) : navigation}
       {drawer ? null : customization.overlays}
-    </>
+    </SidebarProvider>
   );
 }
