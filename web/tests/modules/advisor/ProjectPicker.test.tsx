@@ -104,5 +104,6 @@ describe('ProjectPicker', () => {
 
     await waitFor(() => expect(asked).toEqual({ dir: '/var/www/kolin', session: 'brain-1-a' }));
     await waitFor(() => expect(screen.getByRole('button').textContent).toContain('kolin'));
+    expect(screen.queryByText('Saved')).not.toBeInTheDocument();
   });
 });

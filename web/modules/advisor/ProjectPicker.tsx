@@ -94,7 +94,7 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
     try {
       const { workDir } = await elowenClient.brainSetCwd(project.path, activeSessionId ?? undefined);
       setConfirmed(workDir);
-      setMoveStatus('saved');
+      setMoveStatus('idle');
     } catch (e) {
       // The daemon refuses a directory the caller cannot reach. Surfacing its own words beats a generic
       // failure, because that refusal names a cause the user can act on.
