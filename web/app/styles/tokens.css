@@ -65,6 +65,22 @@
      cannot see, inherits a correct sticky colour without declaring one. */
   --color-sticky: color-mix(in srgb, var(--color-document) 94%, var(--color-foreground) 6%);
 
+  /* The primary navigation column's own surfaces — shadcn's `sidebar` namespace, which the adopted
+     `components/ui/shadcn/sidebar.tsx` compiles its `bg-sidebar` / `bg-sidebar-accent` utilities from.
+     A sidebar is a chrome region rather than a document surface: it sits one step quieter than the
+     content it insets from, its rows take a fill of their own that is not `--color-muted` (a CONTENT
+     step that moves with the cards), and its rules are drawn against its own ground.
+     A design with no opinion inherits the aliases below and looks exactly as it did, so this costs
+     nothing to a skin that does not want the distinction. They live in `@theme` rather than `:root`
+     because Tailwind only emits a `bg-sidebar` utility for a token it can see here; the plugin-ui-kit
+     mirror carries them for that reason alone — a plugin bundle still has no sidebar to paint. */
+  --color-sidebar: var(--color-background);
+  --color-sidebar-foreground: var(--color-muted-foreground);
+  --color-sidebar-accent: var(--color-muted);
+  --color-sidebar-accent-foreground: var(--color-foreground);
+  --color-sidebar-border: var(--color-border);
+  --color-sidebar-ring: var(--color-ring);
+
   --color-border: #242424;
   /* NOT a shadcn token: the heavier rule, for a scrollbar thumb and a focused edge. */
   --color-border-strong: #363636;
@@ -137,6 +153,35 @@
   --glow-soft: 0 0 44px rgb(var(--primary-rgb) / 0.1);
   --hairline: 1px solid rgb(255 255 255 / 0.075);
 
+  /* ---- Depth ----------------------------------------------------------------------------------
+     NOT shadcn tokens. shadcn's depth vocabulary is Tailwind's shadow scale, which is a set of fixed
+     black shadows — on a true-black canvas every one of them is a no-op, and on a near-white one they
+     are all too heavy. These four name the depth EFFECTS the app actually composes, so each design
+     states its own version of them once instead of every card guessing.
+
+     `--shadow-lift` is the hover step above `--shadow-card`: a card that rises under the pointer. It is
+     a peer of `--shadow-card`, not a replacement — a resting card keeps the quieter one.
+
+     `--glow-accent` is the accent halo a FOCUSED or ACTIVE surface takes: the composer under the caret,
+     the navigation row you are standing on. Distinct from `--glow-active`, which is the loud ember ring
+     the spatial design paints on its orbit nodes; this one has to stay usable behind body text.
+
+     `--glass-surface` + `--glass-blur` are the translucent working surface (the composer). The fill is a
+     MIX of a surface token rather than a fixed alpha white, so a design that has no light to scatter can
+     turn the effect off by mixing to 100% and setting the blur to 0 without touching a component. */
+  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.05), 0 24px 60px rgb(0 0 0 / 0.34);
+  --glow-accent: 0 0 0 1px rgb(var(--primary-rgb) / 0.28), 0 0 30px rgb(var(--primary-rgb) / 0.18);
+  --glass-surface: color-mix(in srgb, var(--color-card) 62%, transparent);
+  --glass-border: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+  --glass-blur: 18px;
+
+  /* The accent atmosphere behind a hero. Two off-centre radial stops rather than one centred wash: a
+     single centred glow reads as a vignette bug, two offset ones read as light entering the page. It is
+     an IMAGE, so it composes over whatever canvas the design owns and needs no surface of its own. */
+  --mesh-accent:
+    radial-gradient(62% 78% at 16% -8%, rgb(var(--primary-rgb) / 0.16), transparent 68%),
+    radial-gradient(52% 68% at 86% 4%, rgb(var(--primary-rgb) / 0.1), transparent 70%);
+
   --motion-instant: 80ms;
   --motion-fast: 140ms;
   --motion-base: 240ms;
@@ -188,18 +233,6 @@
 
   /* Minimum hit area for an interactive control on a touch pointer (WCAG 2.5.8 / platform guidance). */
   --touch-target: 44px;
-
-  /* The primary navigation column's own three surfaces. A sidebar is a chrome region rather than a
-     document surface: it sits one step quieter than the content it insets from, its rows take a fill of
-     their own that is not `--color-muted` (which is a CONTENT step and moves with the cards), and its
-     rules are drawn against its own ground rather than the page's.
-     A design with no opinion inherits the defaults below and looks exactly as it did — the ember rail
-     paints on the canvas — so this costs nothing to any skin that does not want the distinction.
-     Deliberately in `:root` and not in `@theme`: the plugin-ui-kit mirror carries the theme block, and a
-     plugin bundle has no sidebar to paint. */
-  --color-sidebar: var(--color-background);
-  --color-sidebar-accent: var(--color-muted);
-  --color-sidebar-border: var(--color-border);
 
   /* The veil an open overlay lays over the page behind it. A scrim has to DARKEN, whatever the canvas
      is: derived from --color-background it disappears on any light design — 70% of near-white over

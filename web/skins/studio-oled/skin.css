@@ -122,6 +122,22 @@
   --glow-soft: none;
   --hairline: 1px solid rgb(252 252 254 / 0.08);
 
+  /* ---- Depth on a true-black canvas ------------------------------------------------------------
+     A black shadow is invisible here, so lift is carried by a brightened EDGE plus a wide, very dark
+     drop that only reads against the card's own fill. The glow is the one place this variant is allowed
+     to be loud: on near-black an ember halo is the only depth cue that survives, which is why the
+     design's signature here is a glow and not a shadow.
+     The mesh runs hotter than the inherited default for the same reason — 16% of ember reads over the
+     built-in #070707 and is nearly nothing over this #03080a. */
+  --shadow-lift: 0 0 0 1px rgb(252 252 254 / 0.09), 0 24px 64px rgb(0 0 0 / 0.72);
+  --glow-accent: 0 0 0 1px rgb(var(--primary-rgb) / 0.42), 0 0 32px rgb(var(--primary-rgb) / 0.24);
+  --glass-surface: color-mix(in srgb, var(--color-card) 55%, transparent);
+  --glass-border: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+  --glass-blur: 22px;
+  --mesh-accent:
+    radial-gradient(58% 74% at 14% -10%, rgb(var(--primary-rgb) / 0.22), transparent 66%),
+    radial-gradient(48% 64% at 88% 2%, rgb(var(--primary-rgb) / 0.13), transparent 68%);
+
   --motion-fast: 75ms;
   --motion-base: 150ms;
   --motion-slow: 200ms;

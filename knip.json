@@ -73,6 +73,12 @@
     ],
     "web/components/ui/shadcn/command.tsx": [
       "exports"
+    ],
+    "web/components/ui/shadcn/sidebar.tsx": [
+      "exports"
+    ],
+    "web/components/ui/shadcn/chart.tsx": [
+      "exports"
     ]
   },
   "ignore": [
