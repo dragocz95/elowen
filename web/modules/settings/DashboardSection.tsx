@@ -15,6 +15,7 @@ import { useUpdateConfig } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 /** Refresh rates offered for the digest. Presets rather than a free number: what matters is the shape
  *  of the day (once, twice, every few hours), and the daemon clamps anything outside 1–24 anyway. */
@@ -115,12 +116,14 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
     <SettingsGroup title={t.settings.dashboardSection.title} icon={LayoutDashboard}>
       <SettingsRow
         label={t.settings.dashboardSection.recap}
+        rowId={rowAnchor('settings.dashboardSection.recap')}
         description={t.settings.dashboardSection.recapDesc}
         icon={LayoutDashboard}
         control={<Toggle checked={recapEnabled} onChange={setRecapEnabled} label={t.settings.dashboardSection.recap} />}
       />
       <SettingsRow
         label={t.settings.dashboardSection.digest}
+        rowId={rowAnchor('settings.dashboardSection.digest')}
         description={t.settings.dashboardSection.digestDesc}
         icon={Sparkles}
         // Three trailing values (state badge, regenerate action, switch) do not share a phone's value
@@ -137,6 +140,7 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
       />
       <SettingsRow
         label={t.settings.dashboardSection.perDay}
+        rowId={rowAnchor('settings.dashboardSection.perDay')}
         description={t.settings.dashboardSection.perDayDesc}
         icon={Repeat}
         control={
@@ -154,18 +158,21 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
       />
       <SettingsRow
         label={t.settings.dashboardSection.greeting}
+        rowId={rowAnchor('settings.dashboardSection.greeting')}
         description={t.settings.dashboardSection.greetingDesc}
         icon={MessageSquareQuote}
         control={<Toggle checked={greetingEnabled} onChange={setGreetingEnabled} label={t.settings.dashboardSection.greeting} disabled={!recapEnabled || !digestEnabled} />}
       />
       <SettingsRow
         label={t.settings.dashboardSection.pills}
+        rowId={rowAnchor('settings.dashboardSection.pills')}
         description={t.settings.dashboardSection.pillsDesc}
         icon={SquareStack}
         control={<Toggle checked={pillsEnabled} onChange={setPillsEnabled} label={t.settings.dashboardSection.pills} disabled={!recapEnabled || !digestEnabled} />}
       />
       <SettingsRow
         label={t.settings.dashboardSection.continue}
+        rowId={rowAnchor('settings.dashboardSection.continue')}
         description={t.settings.dashboardSection.continueDesc}
         icon={Undo2}
         control={<Toggle checked={continueEnabled} onChange={setContinueEnabled} label={t.settings.dashboardSection.continue} disabled={!recapEnabled} />}
@@ -174,6 +181,7 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
           from. Stating the answer here and linking there is what keeps the reader from walking. */}
       <SettingsRow
         label={t.settings.dashboardSection.model}
+        rowId={rowAnchor('settings.dashboardSection.model')}
         description={t.settings.dashboardSection.modelDesc}
         icon={Boxes}
         status={(

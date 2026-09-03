@@ -22,7 +22,7 @@ export function SettingsDocument({ children, className = '' }: { children: React
  *  because each stack has to be its own grid: the records inside one stack share their column tracks
  *  through subgrid, and that is what makes every status and every action line up. CSS multi-column would
  *  reflow the same rows into one box and take that alignment away. */
-export function SettingsGroup({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', columns = 1, children, className = '' }: {
+export function SettingsGroup({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', columns = 1, rowId, children, className = '' }: {
   title?: string;
   description?: string;
   icon?: LucideIcon;
@@ -30,13 +30,17 @@ export function SettingsGroup({ title, description, icon: Icon, actions, tone = 
   tone?: SettingsTone;
   density?: SettingsDensity;
   columns?: 1 | 2;
+  /** The anchor a deep link reveals this card by — see {@link SettingsRow}'s `rowId`. A GROUP carries one
+   *  when the search index knows it by its header rather than by a record inside it: a card whose whole
+   *  content is a viewer behind one button (Logs, Diagnostics) has no row to point at. */
+  rowId?: string;
   /** Optional: a group whose whole story fits in its header (a title, a figure, one action) renders as a
    *  single row. An empty body div would still contribute its own padding and read as a stray gap. */
   children?: ReactNode;
   className?: string;
 }) {
   return (
-    <section data-settings-group data-tone={tone} data-density={density} className={`settings-group ${className}`}>
+    <section data-settings-group data-tone={tone} data-density={density} data-row-id={rowId} className={`settings-group ${className}`}>
       {title || description || actions ? (
         <header className="settings-group__header">
           <div className="settings-group__heading">
@@ -99,7 +103,7 @@ function countSlots(node: ReactNode): number {
  *  Explanatory copy lives behind the shared HelpTip so the row remains scannable on a phone;
  *  `description` gives the short meaning and `hint` adds long-form or cautionary detail in the same
  *  click/hover surface. */
-export function SettingsRow({ label, description, hint, icon: Icon, iconNode, control, status, actions, trailingLayout = 'inline', children, className = '' }: {
+export function SettingsRow({ label, description, hint, icon: Icon, iconNode, control, status, actions, trailingLayout = 'inline', rowId, children, className = '' }: {
   label: string;
   description?: string;
   hint?: string;
@@ -130,6 +134,12 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, co
    *
    *  It changes nothing above the phone breakpoint — a wide card has the room for the inline form. */
   trailingLayout?: 'inline' | 'stack';
+  /** The locale-independent anchor this record can be deep-linked to, emitted as `data-row-id`. The
+   *  command palette links a row as `?cat=<section>&row=<rowId>` and the arriving page scrolls this
+   *  element into view and blinks it once (`lib/useRowAnchor.ts`). Core call sites pass the row's
+   *  dictionary path through `rowAnchor`, which checks it against the tables the palette links FROM; the
+   *  prop itself is a plain string because plugin bundles render this component too. */
+  rowId?: string;
   /** Alias of `control`, kept because `SettingsRow` is published to plugin bundles through
    *  `window.ElowenUiRuntime.components` and every existing bundle passes its control as children. The
    *  rendered DOM is identical either way. */
@@ -142,7 +152,7 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, co
     console.warn(`SettingsRow "${label}" carries more than ${MAX_ROW_ACTIONS} actions; move the extras into the section header.`);
   }
   return (
-    <div className={`settings-row ${className}`} data-trailing={trailingLayout}>
+    <div className={`settings-row ${className}`} data-trailing={trailingLayout} data-row-id={rowId}>
       <div className="settings-row__label">
         {iconNode ? <span className="settings-row__icon" data-icon-kind="brand" aria-hidden>{iconNode}</span>
           : Icon ? <span className="settings-row__icon" data-icon-kind="glyph" aria-hidden><Icon size={15} strokeWidth={1.75} /></span> : null}

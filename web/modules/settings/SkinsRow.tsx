@@ -11,6 +11,7 @@ import { Button } from '../../components/ui/Button';
 import { ROW_TRIGGER_CLASS } from '../../components/ui/RowPicker';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SKINS, skinDisplayName, type SkinName } from '../../lib/skins';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 /** Which designs accounts may switch between, chosen from the two skins THIS build compiled. */
 export function SkinsRow() {
@@ -64,6 +65,7 @@ export function SkinsRow() {
        *  dialog behind this button is for. The count IS the summary. */}
       <SettingsRow
         label={t.settings.skins.label}
+        rowId={rowAnchor('settings.skins.label')}
         description={t.settings.skins.hint}
         icon={Palette}
         status={<AutoSaveStatus status={skinSave.status} onRetry={skinSave.retry} />}

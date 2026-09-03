@@ -102,6 +102,26 @@ describe('CommandPalette', () => {
     expect(push).toHaveBeenCalledWith('/p/work/kanban');
   });
 
+  // A ROW is chosen by its anchor, a SECTION by its section alone. The href is the only channel — the
+  // same one a semantic suggestion, an Ask AI answer and a pasted link travel through — so what is pushed
+  // here is what makes the settings page scroll to that record and blink it.
+  it('pushes the row anchor with a row, and nothing extra for a section', () => {
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    type(en.settings.modelRoles.digest);
+    const row = document.querySelector<HTMLElement>('[cmdk-item][data-value="settings:models:settings.modelRoles.digest"]')!;
+    // The anchor is machinery, not an address: the hint column keeps printing the route a reader knows.
+    expect(row.textContent).toContain('/settings?cat=models');
+    expect(row.textContent).not.toContain('row=');
+    fireEvent.click(row);
+    expect(push).toHaveBeenCalledWith('/settings?cat=models&row=settings.modelRoles.digest');
+
+    openPalette();
+    type(en.settings.models);
+    fireEvent.click(document.querySelector<HTMLElement>('[cmdk-item][data-value="settings:models"]')!);
+    expect(push).toHaveBeenCalledWith('/settings?cat=models');
+  });
+
   // TopBar's visible trigger dispatches exactly this event, and it is the only way a pointer user reaches
   // the palette at all — a design that ships the button must not ship it dead.
   //
@@ -137,7 +157,8 @@ describe('CommandPalette', () => {
   // (no diacritics typed at all) must all reach it; cmdk's own filter is neither diacritics- nor
   // case-aware in the way the app needs, which is why the custom filter in siteSearch owns matching.
   //
-  // THE ROW LIVES IN SETTINGS → {agentName} AI, so Enter deep-links `/settings?cat=brain`. (The deck's
+  // THE ROW LIVES IN SETTINGS → {agentName} AI, so Enter deep-links `/settings?cat=brain` — and names
+  // the row itself in `&row=`, which is what makes the arriving page scroll to it and blink it. (The deck's
   // Memory section hosts the embedding/categorization models; retention is a Brain-runtime record —
   // pointing the row anywhere else would land the user in a section that does not contain it.)
   it('finds the memory-retention row from "retence" in any casing or diacritics, and highlights the match', async () => {
@@ -182,7 +203,7 @@ describe('CommandPalette', () => {
       expect(row).toHaveAttribute('data-selected', 'true');
     });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(push).toHaveBeenCalledWith('/settings?cat=brain');
+    expect(push).toHaveBeenCalledWith('/settings?cat=brain&row=brain.retention.title');
   });
 
   // The palette used to be a bare <input> over a <ul> of <button>s: no combobox, no listbox, no announced
@@ -366,7 +387,7 @@ describe('CommandPalette — assisted search', () => {
 
     // And it navigates like any other row.
     fireEvent.click(suggestion);
-    expect(push).toHaveBeenCalledWith('/settings?cat=brain');
+    expect(push).toHaveBeenCalledWith('/settings?cat=brain&row=brain.maxSteps');
   });
 
   // THE GATE. A query the lexical pass already answered must not cost a request at all — this is the

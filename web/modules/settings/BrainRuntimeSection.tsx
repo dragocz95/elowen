@@ -14,6 +14,7 @@ import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus'
 import { combineSaveFeedback } from '../../lib/saveFeedback';
 import type { BrainLimits, ElowenConfig, RuntimeConfig, RuntimeLimits, MemoryRetentionConfig } from '../../lib/types';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 /** The importance levels the retention block carries a half-life for (mirrors the daemon's clamp keys). */
 const RETENTION_IMPORTANCE_KEYS = [1, 2, 3, 4, 5] as const;
@@ -159,11 +160,13 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
       <SettingsGroup icon={BrainCircuit} columns={2}>
         <SettingsRow
           label={t.brain.agentName}
+          rowId={rowAnchor('brain.agentName')}
           icon={BrainCircuit}
           control={<Input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="Elowen" aria-label={t.brain.agentName} />}
         />
         <SettingsRow
           label={t.brain.maxSteps}
+          rowId={rowAnchor('brain.maxSteps')}
           description={t.brain.maxStepsHint}
           icon={Gauge}
           control={(
@@ -182,6 +185,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
         {limits ? (
           <SettingsRow
             label={t.brain.limits.title}
+            rowId={rowAnchor('brain.limits.title')}
             description={t.brain.limits.hint}
             icon={SlidersHorizontal}
             actions={<Button variant="ghost" size="sm" icon={SlidersHorizontal} onClick={() => setLimitsOpen(true)}>{t.brain.limits.manage}</Button>}
@@ -190,6 +194,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
         {runtime ? (
           <SettingsRow
             label={t.brain.runtime.title}
+            rowId={rowAnchor('brain.runtime.title')}
             description={t.brain.runtime.hint}
             icon={Gauge}
             actions={<Button variant="ghost" size="sm" icon={Gauge} onClick={() => setRuntimeOpen(true)}>{t.brain.runtime.manage}</Button>}
@@ -198,6 +203,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
         {runtime ? (
           <SettingsRow
             label={t.brain.toolLoading.title}
+            rowId={rowAnchor('brain.toolLoading.title')}
             description={t.brain.toolLoading.hint}
             icon={Boxes}
             actions={<Button variant="ghost" size="sm" icon={Boxes} onClick={() => setToolLoadingOpen(true)}>{t.brain.toolLoading.manage}</Button>}
@@ -206,6 +212,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
         {runtime ? (
           <SettingsRow
             label={t.brain.retention.title}
+            rowId={rowAnchor('brain.retention.title')}
             description={t.brain.retention.hint}
             icon={ShieldCheck}
             actions={<Button variant="ghost" size="sm" icon={ShieldCheck} onClick={() => setRetentionOpen(true)}>{t.brain.retention.manage}</Button>}

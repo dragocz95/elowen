@@ -239,6 +239,36 @@ describe('SettingsPage', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
   });
 
+  /** A palette result names a ROW, not just a section: `&row=` opens Models and then marks the digest
+   *  role itself. The anchor is consumed on arrival, so an F5 lands on the section without blinking
+   *  again — and a link to a row that no longer exists still opens its section, quietly. */
+  it('marks the row a deep link names and consumes the anchor', async () => {
+    // The model-role rows wait for both role settings before they render — which is also what makes this
+    // a fair test of the wait: the anchor arrives before the row it names exists.
+    server.use(
+      http.get('*/api/memory/embedding', () => HttpResponse.json({ configured: false, provider: '', model: '', dimensions: 1536 })),
+      http.get('*/api/memory/categorization', () => HttpResponse.json({ configured: false, provider: '', model: '' })),
+    );
+    window.history.replaceState(null, '', '/settings?cat=models&row=settings.modelRoles.digest');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container, unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+
+    const row = await waitFor(() => {
+      const node = container.querySelector<HTMLElement>('[data-row-id="settings.modelRoles.digest"]');
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    await waitFor(() => expect(row).toHaveClass('row-flash'));
+    expect(window.location.search).toBe('?cat=models');
+    unmount();
+
+    window.history.replaceState(null, '', '/settings?cat=models&row=settings.rowThatMoved');
+    const { wrapper: Wrapper2 } = createWrapper();
+    render(<Wrapper2><ToastProvider><SettingsPage /></ToastProvider></Wrapper2>);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+    expect(document.querySelector('.row-flash')).toBeNull();
+  });
+
   /** Both restart buttons must be DIRECT children of the hero's action row. The rule that stops them
    *  alternating right- then left-aligned down a narrow column — `.workspace-hero__actions >
    *  :not(.workspace-hero__status) { flex: 1 1 10rem }` — is a child selector, so wrapping the pair in a

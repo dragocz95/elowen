@@ -12,16 +12,18 @@ import { SettingsGroup, SettingsRow } from './SettingsSurface';
  *  The import points at the settings module deliberately. That file is already the shared home of this
  *  surface — the plugin UI runtime hands those very components to plugin bundles — so lifting the markup
  *  into a third location would recreate the duplication this removed. */
-export function SpatialGroup({ title, description, icon, columns = 1, children, className = '' }: {
+export function SpatialGroup({ title, description, icon, columns = 1, rowId, children, className = '' }: {
   title?: string;
   description?: string;
   icon?: LucideIcon;
   columns?: 1 | 2;
+  /** Deep-link anchor — see {@link SettingsGroup}'s `rowId`. */
+  rowId?: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
-    <SettingsGroup title={title} description={description} icon={icon} columns={columns} className={className}>
+    <SettingsGroup title={title} description={description} icon={icon} columns={columns} rowId={rowId} className={className}>
       {children}
     </SettingsGroup>
   );
@@ -31,7 +33,7 @@ export function SpatialGroup({ title, description, icon, columns = 1, children, 
  *  short status and at most two actions, folding to the same two-line band in a narrow container.
  *  `title` is this surface's word for the row's label and `children` remains an alias of `control`, so
  *  no account call site has to change to reach the canonical anatomy. */
-export function SpatialRow({ title, description, hint, icon, control, status, actions, trailingLayout = 'inline', children, className = '' }: {
+export function SpatialRow({ title, description, hint, icon, control, status, actions, trailingLayout = 'inline', rowId, children, className = '' }: {
   title: string;
   description?: string;
   hint?: string;
@@ -40,6 +42,8 @@ export function SpatialRow({ title, description, hint, icon, control, status, ac
   status?: ReactNode;
   actions?: ReactNode;
   trailingLayout?: 'inline' | 'stack';
+  /** Deep-link anchor — see {@link SettingsRow}'s `rowId`. */
+  rowId?: string;
   /** Alias of `control` — see {@link SettingsRow}. */
   children?: ReactNode;
   className?: string;
@@ -54,6 +58,7 @@ export function SpatialRow({ title, description, hint, icon, control, status, ac
       status={status}
       actions={actions}
       trailingLayout={trailingLayout}
+      rowId={rowId}
       className={className}
     />
   );

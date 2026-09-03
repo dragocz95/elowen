@@ -51,6 +51,8 @@ import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { ModuleShell } from '../../components/shell/ModuleShell';
 import { interpolate, useTranslation } from '../../lib/i18n';
+import { rowAnchor } from '../../lib/rowAnchors';
+import { useRowAnchor } from '../../lib/useRowAnchor';
 
 /** Loaded on demand: the dials pull in the charting library, and Settings is a heavy page where most
  *  visits never scroll to the System section. `ssr: false` because the dials measure their own box,
@@ -187,6 +189,9 @@ export default function SettingsPage() {
     window.addEventListener('popstate', apply);
     return () => window.removeEventListener('popstate', apply);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // …and the row within it, when the link named one: `?row=<anchor>` scrolls that record into view and
+  // blinks it once. It reads the same three sources this section state does and consumes the parameter.
+  useRowAnchor();
   const setCategory = (next: string) => {
     setCategoryState(next);
     // Rewrite the URL directly (the Next router's replace() doesn't reliably update this statically
@@ -745,12 +750,13 @@ export default function SettingsPage() {
                   settings section instead of just this one — a second copy here would be two doors to the
                   same confirmation with no way to tell them apart. */}
               const serviceRows = [
-                { name: t.settings.serviceDaemon, port: ':4400', up: !system.isError },
-                { name: t.settings.serviceWeb, port: ':4500', up: true },
+                { name: t.settings.serviceDaemon, rowId: rowAnchor('settings.serviceDaemon'), port: ':4400', up: !system.isError },
+                { name: t.settings.serviceWeb, rowId: rowAnchor('settings.serviceWeb'), port: ':4500', up: true },
               ].map((service) => (
                 <SettingsRow
                   key={service.port}
                   label={service.name}
+                  rowId={service.rowId}
                   icon={Server}
                   // Port and state are ONE trailing value, not a status beside a control: neither half is
                   // operable, and splitting them put a reading in the cell the record's control belongs in.
@@ -765,6 +771,7 @@ export default function SettingsPage() {
               const rowAutoUpdate = (
                 <SettingsRow
                   label={t.settings.autoUpdate}
+                  rowId={rowAnchor('settings.autoUpdate')}
                   icon={RefreshCw}
                   control={<Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} />}
                 />
@@ -772,6 +779,7 @@ export default function SettingsPage() {
               const rowPushContact = (
                 <SettingsRow
                   label={t.settings.pushContact}
+                  rowId={rowAnchor('settings.pushContact')}
                   description={t.help.pushContact}
                   icon={BellRing}
                   control={<Input value={pushContact} onChange={(e) => setPushContact(e.target.value)} placeholder={t.settings.pushContactPlaceholder} aria-label={t.settings.pushContact} />}
@@ -780,6 +788,7 @@ export default function SettingsPage() {
               const rowTokenTtl = (
                 <SettingsRow
                   label={t.settings.tokenTtl}
+                  rowId={rowAnchor('settings.tokenTtl')}
                   description={t.help.tokenTtl}
                   icon={KeyRound}
                   status={<span className="whitespace-nowrap font-mono tabular-nums">{interpolate(t.settings.daysPolicy.value, { n: String(defTokenTtl) })}</span>}
@@ -793,6 +802,7 @@ export default function SettingsPage() {
               const rowRetention = (
                 <SettingsRow
                   label={t.settings.retention.label}
+                  rowId={rowAnchor('settings.retention.label')}
                   description={t.settings.retention.hint}
                   icon={CalendarClock}
                   control={<Toggle checked={retentionEnabled} onChange={setRetentionEnabled} label={t.settings.retention.label} />}
@@ -861,7 +871,7 @@ export default function SettingsPage() {
                 </Modal>
               ) : null;
               const diagnosticsGroup = (
-                <SettingsGroup title={t.settings.systemDiagnostics} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics">
+                <SettingsGroup title={t.settings.systemDiagnostics} rowId={rowAnchor('settings.systemDiagnostics')} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics">
                   <SystemDiagnostics
                     diagnostics={diagnostics}
                     t={t}
@@ -905,6 +915,7 @@ export default function SettingsPage() {
               belong to the viewer itself, where they have context, not to a settings row nobody reads. */}
           <SettingsGroup
             title={t.settings.conversationDiagnostics.title}
+            rowId={rowAnchor('settings.conversationDiagnostics.title')}
             icon={MessageSquareText}
             actions={<Button icon={MessageSquareText} onClick={() => setConversationDiagnosticsOpen(true)}>{t.settings.conversationDiagnostics.open}</Button>}
           />
@@ -914,6 +925,7 @@ export default function SettingsPage() {
             title={logFiles.data
               ? `${t.settings.logs} · ${formatBytes(logFiles.data.files.reduce((sum, f) => sum + f.bytes, 0))}`
               : t.settings.logs}
+            rowId={rowAnchor('settings.logs')}
             icon={ScrollText}
             actions={<Button icon={ScrollText} onClick={() => setLogsOpen(true)}>{t.settings.logsOpen}</Button>}
           />

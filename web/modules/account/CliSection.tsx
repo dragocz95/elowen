@@ -21,6 +21,7 @@ import { useSaveMyCliSettings, useSaveMyPermissions } from '../../lib/mutations'
 import { isOfferedModel, roleKey, splitRoleKey } from '../../lib/modelRoles';
 import { PermissionRulesCard } from './PermissionRulesCard';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 const NO_REASONING_LEVELS: string[] = [];
 const NO_PROJECT_PINS: Record<string, { provider: string; model: string }> = {};
@@ -285,6 +286,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       <SpatialGroup title={t.settings.modelRoles.title} description={t.cli.modelRolesHint} icon={Boxes}>
       <SpatialRow
         title={t.cli.primaryModelLabel}
+        rowId={rowAnchor('cli.primaryModelLabel')}
         icon={Brain}
         description={t.help.cliPrimaryModel}
         status={primaryUnavailable ? unavailableBadge : primarySelection ? undefined : inheritedBadge}
@@ -305,6 +307,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
 
       <SpatialRow
         title={t.cli.thinkingLabel}
+        rowId={rowAnchor('cli.thinkingLabel')}
         icon={Gauge}
         description={t.help.cliThinking}
         control={(
@@ -322,6 +325,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
 
       <SpatialRow
         title={t.cli.visionModelLabel}
+        rowId={rowAnchor('cli.visionModelLabel')}
         icon={Eye}
         description={t.help.cliVisionModel}
         status={visionStatus}
@@ -342,6 +346,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
 
       <SpatialRow
         title={t.cli.compactModelLabel}
+        rowId={rowAnchor('cli.compactModelLabel')}
         icon={Shrink}
         description={t.help.cliCompactModel}
         status={compactUnavailable ? unavailableBadge : compactSelection ? undefined : inheritedBadge}
@@ -364,6 +369,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           use, so a second writer here would be two hands on the same field. Clearing is the one action. */}
       <SpatialRow
         title={t.cli.projectModelsTitle}
+        rowId={rowAnchor('cli.projectModelsTitle')}
         icon={FolderGit2}
         description={t.help.cliProjectModels}
         status={projectRoots.length > 0
@@ -381,6 +387,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       {me.data?.user.is_admin ? (
         <SpatialRow
           title={t.cli.instanceModelsTitle}
+          rowId={rowAnchor('cli.instanceModelsTitle')}
           icon={Server}
           description={t.help.cliInstanceModels}
           status={<span className="truncate font-mono">{instanceDefault?.model ?? '—'}</span>}
@@ -399,6 +406,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           than crowding the control; the per-model overrides are the row's one action. */}
       <SpatialRow
         title={t.cli.autoCompact}
+        rowId={rowAnchor('cli.autoCompact')}
         icon={SlidersHorizontal}
         description={t.help.cliAutoCompact}
         status={autoCompact ? <span className="font-mono tabular-nums text-foreground">{autoCompactAt}%</span> : undefined}
@@ -414,6 +422,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           and a caveat about the CURRENT model is exactly what a status is for. */}
       <SpatialRow
         title={t.cli.fastModeTitle}
+        rowId={rowAnchor('cli.fastModeTitle')}
         icon={Bolt}
         description={t.help.cliFastMode}
         status={!anyFastRoute
@@ -425,6 +434,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       {/* The warning lives behind the row's help affordance like every other explanation on this surface. */}
       <SpatialRow
         title={t.cli.yoloTitle}
+        rowId={rowAnchor('cli.yoloTitle')}
         icon={Zap}
         description={t.cli.yoloWarning}
         control={<Toggle checked={yolo} onChange={(next) => next ? setConfirmYolo(true) : setYolo(false)} label={t.cli.yoloToggle} />}
@@ -432,6 +442,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
 
       <SpatialRow
         title={t.cli.unattendedTitle}
+        rowId={rowAnchor('cli.unattendedTitle')}
         icon={MoonStar}
         description={t.help.cliUnattendedAsks}
         control={(
