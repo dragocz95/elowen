@@ -50,33 +50,34 @@ export function brainModelId(m: Pick<BrainModelOption, 'exec'>): string {
 }
 
 /**
- * The clean model name to DISPLAY for an exec — taken from the catalog, never by splitting the string:
- * a model id may itself contain slashes (`ai-coresynth-io/deepseek/deepseek-v4-pro`), so blind
- * splitting shows the wrong name. An exec with no catalog entry falls back to the raw value, which
- * keeps a removed/stale pick visible instead of rendering it empty.
+ * The catalog model name to DISPLAY throughout the ordinary UI. Structured identities already carry the
+ * model separately, while stored exec strings are resolved through the catalog, never by splitting `/`:
+ * a model id may itself contain slashes (`deepseek/deepseek-v4-pro`). An unknown raw string stays raw so a
+ * removed/stale pick remains visible without pretending its provider/model boundary is known.
  *
- * Use this inside a list that is already GROUPED BY PROVIDER (pickers, the manage modal): the group
- * header names the provider, so repeating it on every row is noise. It is also what feeds ModelIcon,
- * whose brand lookup expects a model name.
+ * Provider identity remains available in grouped picker headers and badges. Keys, persistence, requests,
+ * diagnostics and ambiguity checks continue to use the full structured identity or exec.
  */
-export function brainModelLabel(exec: string, models: readonly BrainModelOption[] | undefined): string {
-  return models?.find((m) => brainModelId(m) === exec)?.model ?? exec;
+type BrainModelDisplayIdentity = Pick<BrainModelOption, 'model'>
+  & Partial<Pick<BrainModelOption, 'provider' | 'providerLabel' | 'exec'>>;
+
+export function brainModelLabel(
+  identity: string | BrainModelDisplayIdentity,
+  models?: readonly BrainModelOption[],
+): string {
+  if (typeof identity !== 'string') return identity.model;
+  return models?.find((m) => brainModelId(m) === identity)?.model ?? identity;
 }
 
 /**
- * The same name QUALIFIED by its provider — `<provider>/<model>`, composed from the catalog's own
- * fields, never by splitting the exec.
+ * A provider-qualified diagnostic label, composed from structured/catalog fields without splitting the
+ * exec. Ordinary visible model labels use {@link brainModelLabel}; keep this for title text and surfaces
+ * where the full identity is itself the subject.
  *
- * Use this where a model appears on its own, with no group header to say whose it is: selection
- * summaries, the chip for a current pick. The provider is what disambiguates there — the catalog
- * carries `deepseek-v4-pro` from one provider and `deepseek/deepseek-v4-pro` from another, and the
- * bare name leaves the reader guessing.
- *
- * The STRUCTURED form is prose for a human, so it prefers the operator's own name for the provider
- * (`Ollama`) and falls back to the config entry id when no label is known. The STRING form is not: it
- * names an exec the reader may also have to type or match in an allow-list, so it stays spelled exactly
- * as the database stores it since the `elowen:` prefix went away. Neither ever shows PI's internal
- * `elowen-<id>` registry namespace — the daemon strips that at the API boundary.
+ * The STRUCTURED form prefers the operator's provider label (`Ollama`) and falls back to its config id.
+ * The STRING form stays spelled exactly as stored because it may be copied or matched against an allow-list.
+ * Neither ever shows PI's internal `elowen-<id>` registry namespace, which the daemon strips at the API
+ * boundary.
  */
 export function brainModelQualifiedLabel(
   identity: string | (Pick<BrainModelOption, 'provider' | 'model'> & Partial<Pick<BrainModelOption, 'providerLabel'>>),

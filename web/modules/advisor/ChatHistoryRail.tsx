@@ -13,7 +13,7 @@ import { elowenClient } from '../../lib/elowenClient';
 import { formatTaskTime } from '../../lib/format';
 import type { BrainSearchHit } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
-import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 
 /** A search snippet with the first occurrence of the query highlighted. */
@@ -350,7 +350,12 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                   className="flex min-w-0 flex-1 flex-col px-2 py-1.5 text-left"
                 >
                   <span className="truncate text-sm text-foreground">{s.title || t.brainChat.untitled}</span>
-                  <span className="truncate font-mono text-tiny text-muted-foreground">{brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}</span>
+                  <span
+                    className="truncate font-mono text-tiny text-muted-foreground"
+                    title={brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}
+                  >
+                    {brainModelLabel({ model: s.model })}
+                  </span>
                 </button>
                 <div className="mr-1">
                   <ActionMenu

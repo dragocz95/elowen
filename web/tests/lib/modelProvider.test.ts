@@ -49,42 +49,30 @@ describe('modelProvider', () => {
       expect(brainModelLabel('elowen:gone/model', [brainModel({})])).toBe('elowen:gone/model');
       expect(brainModelLabel('sonnet', undefined)).toBe('sonnet');
     });
-    // Outside a provider-grouped list the bare name is ambiguous, so the summary label carries the
-    // provider. It is COMPOSED from the catalog fields: splitting the exec would cut a model id that
-    // contains slashes in the wrong place, which is the bug the plain label already had to avoid.
-    it('qualifies the name with its provider where no group header does it', () => {
-      const a = brainModel({ provider: 'anthropic', exec: 'anthropic/claude-opus-5' });
-      const b = brainModel({ provider: 'relay', providerLabel: 'Relay', exec: 'relay/claude-opus-5' });
-      expect(brainModelQualifiedLabel('anthropic/claude-opus-5', [a, b])).toBe('anthropic/claude-opus-5');
-      expect(brainModelQualifiedLabel('relay/claude-opus-5', [a, b])).toBe('relay/claude-opus-5');
-      // …and the two now READ differently, which is the whole point — plain labels are identical here.
-      expect(brainModelLabel('anthropic/claude-opus-5', [a, b])).toBe(brainModelLabel('relay/claude-opus-5', [a, b]));
+    it('uses the bare catalog name for a structured OAuth identity', () => {
+      expect(brainModelLabel({ provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'gpt-5.6-sol' }))
+        .toBe('gpt-5.6-sol');
     });
-    it('keeps a slashed model id whole when qualifying it, and falls back to the raw exec', () => {
+
+    it('keeps a slashed model id whole in structured and catalog-backed display', () => {
+      const slashy = brainModel({
+        provider: 'ai-coresynth-io',
+        providerLabel: 'CoreSynth',
+        model: 'deepseek/deepseek-v4-pro',
+        exec: 'ai-coresynth-io/deepseek/deepseek-v4-pro',
+      });
+      expect(brainModelLabel(slashy)).toBe('deepseek/deepseek-v4-pro');
+      expect(brainModelLabel(slashy.exec, [slashy])).toBe('deepseek/deepseek-v4-pro');
+    });
+
+    it('keeps qualified labels available for diagnostics without parsing model ids', () => {
       const slashy = brainModel({ provider: 'ai-coresynth-io', model: 'deepseek/deepseek-v4-pro', exec: 'ai-coresynth-io/deepseek/deepseek-v4-pro' });
       expect(brainModelQualifiedLabel('ai-coresynth-io/deepseek/deepseek-v4-pro', [slashy]))
         .toBe('ai-coresynth-io/deepseek/deepseek-v4-pro');
+      expect(brainModelQualifiedLabel({ provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'gpt-5.6-sol' }))
+        .toBe('Účet ChatGPT/gpt-5.6-sol');
       expect(brainModelQualifiedLabel('gone/model', [brainModel({})])).toBe('gone/model');
       expect(brainModelQualifiedLabel('sonnet', undefined)).toBe('sonnet');
-      expect(brainModelQualifiedLabel({ provider: 'alibaba', model: 'deepseek-v4-pro' }))
-        .toBe('alibaba/deepseek-v4-pro');
-    });
-
-    // The structured form is prose for a human, so the operator's own name for the provider wins. The
-    // string form is not: it names an exec the reader may have to type or match in an allow-list, so it
-    // stays spelled as stored. Mutation: use the label in the string branch too and the exec case fails.
-    it('prefers the operator label in the structured form and the stored id in the string form', () => {
-      const custom = brainModel({ provider: 'ollama', providerLabel: 'Ollama', model: 'kimi-k2.7-code', exec: 'ollama/kimi-k2.7-code' });
-      expect(brainModelQualifiedLabel({ provider: 'ollama', providerLabel: 'Ollama', model: 'kimi-k2.7-code' }))
-        .toBe('Ollama/kimi-k2.7-code');
-      expect(brainModelQualifiedLabel('ollama/kimi-k2.7-code', [custom])).toBe('ollama/kimi-k2.7-code');
-    });
-
-    // A provider deleted from Settings leaves no label behind; its config id is the honest fallback, and
-    // it is already the PUBLIC name — PI's internal `elowen-<id>` namespace never reaches a client.
-    it('falls back to the provider id when no label is known', () => {
-      expect(brainModelQualifiedLabel({ provider: 'ollama', providerLabel: '', model: 'kimi-k2.7-code' }))
-        .toBe('ollama/kimi-k2.7-code');
     });
   });
 

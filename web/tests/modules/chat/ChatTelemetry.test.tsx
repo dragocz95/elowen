@@ -28,7 +28,7 @@ class FakeES {
 
 /** The extended /brain/status payload: usage + project + LSP + MCP, all from the one poll. */
 const STATUS = {
-  running: true, sessionId: 'brain-1', model: 'm', provider: 'codex-account', providerLabel: 'Codex', usageProvider: 'openai-codex', statusline: null, cards: [], queued: [],
+  running: true, sessionId: 'brain-1', model: 'gpt-5.6-sol', provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', usageProvider: 'openai-codex', statusline: { showModel: true }, cards: [], queued: [],
   usage: { tokens: 42_000, contextWindow: 200_000, percent: 21, totalTokens: 51_000, cost: 1.2345 },
   project: { cwd: '/var/www/elowen', branch: 'dev' },
   lspEnabled: true,
@@ -97,6 +97,11 @@ describe('chat telemetry panel', () => {
     setViewport(false);
     renderChat(<ChatPage />);
     expect(await screen.findByTestId('telemetry-column')).toBeInTheDocument();
+    const statusModel = (await screen.findByTestId('chat-statusline')).querySelector<HTMLElement>('[data-stat="model"]')!;
+    expect(statusModel).toHaveTextContent('gpt-5.6-sol');
+    expect(statusModel).toHaveAttribute('title', 'Účet ChatGPT/gpt-5.6-sol');
+    expect(statusModel).not.toHaveTextContent('Účet ChatGPT/');
+    expect(screen.getByText('gpt-5.6-sol', { selector: '.chat-hero__metrics span.font-mono' })).toBeInTheDocument();
 
     // The desktop default is the compact instrument strip: every available section remains visible as an
     // icon/micro-meter, and the mascot keeps the command catalog reachable without claiming reading width.

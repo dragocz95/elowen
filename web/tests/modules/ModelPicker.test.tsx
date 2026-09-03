@@ -11,6 +11,7 @@ const ctx = vi.hoisted(() => ({
     models: BrainModelOption[] | null;
     currentModel: string;
     provider: string;
+    providerLabel: string;
     setModel: (m: BrainModelOption) => void;
     loadModels: () => void;
     modelsLoading: boolean;
@@ -28,12 +29,12 @@ const model = (over: Partial<BrainModelOption> & Pick<BrainModelOption, 'provide
 const CATALOG: BrainModelOption[] = [
   model({ provider: 'anthropic-oauth', providerLabel: 'Claude', model: 'claude-opus', source: 'oauth', reasoningLevels: ['low', 'high'], reasoningLabels: { low: 'Low', high: 'High' } }),
   model({ provider: 'anthropic-oauth', providerLabel: 'Claude', model: 'claude-sonnet', source: 'oauth' }),
-  model({ provider: 'openai', providerLabel: 'OpenAI', model: 'gpt-5', source: 'api-key' }),
+  model({ provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'gpt-5.6-sol', source: 'oauth' }),
 ];
 
 function setCtx(over: Partial<typeof ctx.value>): void {
   ctx.value = {
-    models: null, currentModel: '', provider: '', setModel: vi.fn(), loadModels: vi.fn(), modelsLoading: false, modelsError: false,
+    models: null, currentModel: '', provider: '', providerLabel: '', setModel: vi.fn(), loadModels: vi.fn(), modelsLoading: false, modelsError: false,
     ...over,
   };
 }
@@ -60,23 +61,30 @@ describe('ModelPicker', () => {
     expect(loadModels).toHaveBeenCalledTimes(1);
   });
 
-  it('qualifies the standalone trigger, groups rows by provider, and marks the exact active pair', () => {
-    const duplicate = model({ provider: 'openai', providerLabel: 'OpenAI', model: 'claude-sonnet', source: 'api-key' });
-    setCtx({ models: [...CATALOG, duplicate], currentModel: 'claude-sonnet', provider: 'anthropic-oauth' });
+  it('shows a bare OAuth model on the trigger while grouped rows keep provider ambiguity handling', () => {
+    const duplicate = model({ provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'claude-sonnet', source: 'oauth' });
+    setCtx({
+      models: [...CATALOG, duplicate],
+      currentModel: 'gpt-5.6-sol',
+      provider: 'chatgpt-account',
+      providerLabel: 'Účet ChatGPT',
+    });
     renderPicker();
-    expect(screen.getByRole('button', { name: 'anthropic-oauth/claude-sonnet' })).toBeInTheDocument();
+    const trigger = screen.getByRole('button', { name: 'gpt-5.6-sol' });
+    expect(trigger).toHaveAttribute('title', 'Účet ChatGPT/gpt-5.6-sol');
+    expect(trigger).not.toHaveTextContent('Účet ChatGPT/');
     openPopover();
 
     // Provider grouping + source badges.
     expect(screen.getByText('Claude')).toBeInTheDocument();
-    expect(screen.getByText('OpenAI')).toBeInTheDocument();
-    expect(screen.getByText('OAuth')).toBeInTheDocument();
-    expect(screen.getByText('API')).toBeInTheDocument();
+    expect(screen.getByText('Účet ChatGPT')).toBeInTheDocument();
+    expect(screen.getAllByText('OAuth').length).toBeGreaterThan(0);
 
-    // Active model is the selected option; the others are not.
+    // The provider/model pair, not the visible label, decides which same-named row is active.
     const duplicateRows = screen.getAllByRole('menuitemradio', { name: /claude-sonnet/ });
-    expect(duplicateRows.filter((row) => row.getAttribute('aria-checked') === 'true')).toHaveLength(1);
-    expect(screen.getByRole('menuitemradio', { name: /claude-opus/ })).toHaveAttribute('aria-checked', 'false');
+    expect(duplicateRows).toHaveLength(2);
+    expect(duplicateRows.every((row) => row.getAttribute('aria-checked') === 'false')).toBe(true);
+    expect(screen.getByRole('menuitemradio', { name: /gpt-5\.6-sol/ })).toHaveAttribute('aria-checked', 'true');
 
     // Reasoning chips render for the model that supports them (labelled), from its reasoningLabels.
     expect(screen.getByText('Low')).toBeInTheDocument();
@@ -88,8 +96,8 @@ describe('ModelPicker', () => {
     setCtx({ models: CATALOG, currentModel: 'claude-opus', setModel });
     renderPicker();
     openPopover();
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /gpt-5/ }));
-    expect(setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: 'openai', model: 'gpt-5' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /gpt-5\.6-sol/ }));
+    expect(setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: 'chatgpt-account', model: 'gpt-5.6-sol' }));
     expect(screen.queryByRole('menu')).toBeNull(); // closed after a pick
   });
 
@@ -105,12 +113,12 @@ describe('ModelPicker', () => {
     await waitFor(() => expect(first).toHaveFocus());
 
     fireEvent.keyDown(first, { key: 'g' });
-    const target = screen.getByRole('menuitemradio', { name: /gpt-5/ });
+    const target = screen.getByRole('menuitemradio', { name: /gpt-5\.6-sol/ });
     await waitFor(() => expect(target).toHaveFocus());
     fireEvent.keyDown(target, { key: 'Enter' });
 
     await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
-    expect(setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: 'openai', model: 'gpt-5' }));
+    expect(setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: 'chatgpt-account', model: 'gpt-5.6-sol' }));
     expect(trigger).toHaveFocus();
   });
 

@@ -83,6 +83,19 @@ describe('UserDetailPane', () => {
     expect(rows.every((r) => r.textContent?.includes('elowen:'))).toBe(false);
   });
 
+  it('shows the bare catalog name in the Users selection summary', async () => {
+    const exec = 'chatgpt-account/openai/gpt-5.6-sol';
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec, legacyExec: `elowen:${exec}`, program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
+    );
+    mount(user({ allowed_execs: [exec] }), [], [exec]);
+    expect(await screen.findByText('openai/gpt-5.6-sol')).toBeTruthy();
+    expect(screen.queryByText('Účet ChatGPT/openai/gpt-5.6-sol')).toBeNull();
+  });
+
   // The reported bug: deleting the `alibaba` provider left its models behind in the global `allowedExecs`
   // list, and this pane built its rows straight from that list — so `alibaba/…` stayed listed and stayed
   // selectable long after the provider was gone. A brain row must come from the LIVE catalog, which is

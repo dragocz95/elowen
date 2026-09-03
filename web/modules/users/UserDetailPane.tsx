@@ -5,7 +5,7 @@ import { useBrainModels, usePlugins, useUserProjects } from '../../lib/queries';
 import { useAssignProject, useUpdateUser } from '../../lib/mutations';
 import type { Project, User as ElowenUser } from '../../lib/types';
 import { allModels } from '../../lib/execPresets';
-import { brainModelId, brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
+import { brainModelId, brainModelLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
 import { PROVIDERS, ProviderIcon, providerMeta } from '../settings/providers';
 import { useToast } from '../../components/ui/Toast';
 import { ElowenApiError } from '../../lib/elowenClient';
@@ -106,12 +106,16 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   // from splitting the exec at its first slash: a brain model id may itself contain slashes
   // (`elowen:relay/ollama/kimi-k2.7-code`), which that split would truncate into the wrong name. The row
   // id below stays the full exec, so the same model offered by two providers remains two entries.
-  const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
-    ?? brainModelLabel(exec, brainModels.data);
+  const workerModels = allModels(custom);
+  const catalogModelOf = (exec: string) => brainModels.data?.find((m) => brainModelId(m) === exec);
+  const labelOf = (exec: string) => {
+    const catalogModel = catalogModelOf(exec);
+    return catalogModel ? brainModelLabel(catalogModel) : workerModels.find((m) => m.exec === exec)?.label ?? exec;
+  };
   const iconNameOf = (exec: string) => brainModelLabel(exec, brainModels.data);
-  // The summary lists picks outside their provider groups, so there the provider belongs in the label.
-  const qualifiedLabelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
-    ?? brainModelQualifiedLabel(exec, brainModels.data);
+  // The compact summary uses the same catalog model name as the grouped rows. Full execs remain the
+  // selection keys, so same-named models from different providers are still distinct grants.
+  const summaryLabelOf = labelOf;
 
   // What may be OFFERED is derived, never read straight out of stored config — the same rule the daemon's
   // isOfferableExec applies, so this modal cannot advertise something the PATCH would refuse. Worker execs
@@ -173,7 +177,7 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
     <>
       <SelectionSummary
         countText={countText}
-        samples={summarySource.slice(0, 3).map((exec) => ({ label: qualifiedLabelOf(exec), icon: <ModelIcon name={iconNameOf(exec)} size={13} /> }))}
+        samples={summarySource.slice(0, 3).map((exec) => ({ label: summaryLabelOf(exec), icon: <ModelIcon name={iconNameOf(exec)} size={13} /> }))}
         moreCount={Math.max(0, summarySource.length - 3)}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}

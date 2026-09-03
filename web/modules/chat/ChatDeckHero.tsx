@@ -3,7 +3,7 @@ import { MessagesSquare } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useBrainChat } from '../advisor/BrainChatProvider';
 import { formatTokens, formatCost } from '../../lib/format';
-import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { brainModelLabel } from '../../lib/modelProvider';
 import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
 
 /** The identity hero for /chat: the section icon + the page's <h1>, then a row of live stats about the
@@ -21,18 +21,12 @@ import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
  *  (see chat.css), so the answer holds from the first paint instead of waiting for a measurement. */
 export function ChatDeckHero() {
   const { t } = useTranslation();
-  const { sessions, currentModel, provider, providerLabel, usage } = useBrainChat();
+  const { sessions, currentModel, usage } = useBrainChat();
 
   const count = sessions.data?.length ?? 0;
   const active = sessions.data?.find((s) => s.active);
   const modelName = currentModel || active?.model;
-  // A label exists only for the LIVE identity; a session-list row carries the config id alone, which is
-  // already the public name and reads fine on its own.
-  const modelProvider = currentModel ? provider : active?.provider;
-  const modelProviderLabel = currentModel ? providerLabel : '';
-  const model = modelName
-    ? brainModelQualifiedLabel({ provider: modelProvider ?? '', providerLabel: modelProviderLabel, model: modelName })
-    : undefined;
+  const model = modelName ? brainModelLabel({ model: modelName }) : undefined;
 
   const stats: { label: string; value: string; mono?: boolean }[] = [
     { label: t.chat.heroConversations, value: String(count) },
