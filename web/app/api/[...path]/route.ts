@@ -35,19 +35,35 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   // sends — the daemon receives a truncated path missing both the id's tail and the route after it, and
   // answers 404. `?` would swallow the rest into the query the same way. safeSegments() has already
   // rejected anything carrying a slash, so re-encoding cannot smuggle in a traversal.
-  const upstream = await fetch(`${daemonUrl()}/${path.map(encodeURIComponent).join('/')}${search}`, {
-    method: req.method,
-    headers,
-    // STREAM the body through rather than reading it into memory. It must not be req.text() — decoding
-    // a binary upload as UTF-8 mangles it — but it must not be arrayBuffer() either: that holds the
-    // whole request in this process's heap, which is fine for a JSON patch and ruinous for a file
-    // upload, whose entire point is that it is not bounded by what fits in a message. Passing the body
-    // stream keeps both cases binary-exact at constant memory.
-    body: MUTATING.has(req.method) ? req.body : undefined,
-    // Required by undici whenever the body is a stream: we are not reading the response before we
-    // finish sending the request, which is the "half duplex" case.
-    duplex: 'half',
-  } as RequestInit & { duplex: 'half' });
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${daemonUrl()}/${path.map(encodeURIComponent).join('/')}${search}`, {
+      method: req.method,
+      headers,
+      // STREAM the body through rather than reading it into memory. It must not be req.text() — decoding
+      // a binary upload as UTF-8 mangles it — but it must not be arrayBuffer() either: that holds the
+      // whole request in this process's heap, which is fine for a JSON patch and ruinous for a file
+      // upload, whose entire point is that it is not bounded by what fits in a message. Passing the body
+      // stream keeps both cases binary-exact at constant memory.
+      body: MUTATING.has(req.method) ? req.body : undefined,
+      // Carry the client's disconnect UPSTREAM. Without it the daemon never learns the browser went
+      // away: its SSE handler waits on a signal that now only fires when the socket closes, and this
+      // proxy is what holds that socket open. Every abandoned live view then leaks three things at
+      // once — a browser→web socket, a web→daemon socket, and the streaming generator inside the
+      // daemon — and none of them is reclaimed. That is what turns "one stuck browser card" into a
+      // dead UI: the browser runs out of connections to this origin, and the web process climbs
+      // toward its file-descriptor limit, long before anything logs an error.
+      signal: req.signal,
+      // Required by undici whenever the body is a stream: we are not reading the response before we
+      // finish sending the request, which is the "half duplex" case.
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+  } catch (error) {
+    // The client hung up while we were waiting. There is nobody left to answer and nothing went wrong
+    // server-side, so this must not surface as a 500 — that would log an error for every closed tab.
+    if (req.signal.aborted) return new Response(null, { status: 499 });
+    throw error;
+  }
   const resHeaders = new Headers(upstream.headers);
   // Never relay a daemon-set cookie to the browser; the proxy is the sole owner of the session cookie.
   resHeaders.delete('set-cookie');

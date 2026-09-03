@@ -31,9 +31,10 @@ server {
     # Generous body size for file uploads (avatars, project files).
     client_max_body_size 25m;
 
-    # Server-Sent Events (live activity bus + session pane streams) must not be buffered,
-    # or the dashboard's live updates arrive in laggy bursts. Match the SSE routes first.
-    location ~ ^/api/(events|sessions/[^/]+/stream) {
+    # Server-Sent Events (live activity bus, session pane streams, the chat token stream, and any
+    # plugin live view such as the browser screencast) must not be buffered, or updates arrive in
+    # laggy bursts and the default 60s read timeout kills an idle-but-healthy stream. Match first.
+    location ~ ^/api/(events|sessions/[^/]+/stream|brain/stream|plugins/[^/]+/api/stream) {
         proxy_pass http://127.0.0.1:4500;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
