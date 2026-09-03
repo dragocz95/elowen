@@ -408,6 +408,27 @@ describe('sandbox execution HOME and leases', () => {
     expect(inside.output).toContain('/gh');
   });
 
+  it('confines an operator whose cwd is an active workspace and authenticates GitHub there', async () => {
+    const { registry, projectPath } = await setup(['sandbox', 'terminal'], true);
+    const created = await runAs(registry, projectPath, 1, 'brain-github-owner-workspace', 'SandboxCreateWorkspace', {
+      projectId: 1, label: 'Owner GitHub', baseRef: 'main',
+    });
+    const workspace = created.details.workspace;
+    connectGitHub(registry, ({ accountUserId }) => accountUserId === 1 ? { token: GITHUB_TOKEN, login: 'octocat' } : null);
+
+    const prepared = await runWithPolicy(adminPolicy, () => registry.control('sandbox')!.prepareExecution({
+      command: { type: 'shell', command: 'true' }, cwd: workspace.path, leaseKind: 'terminal',
+    }), {
+      identity: operator(1), contributionUserId: 1, sessionId: 'brain-github-owner-workspace', workDir: workspace.path,
+    });
+
+    expect(prepared.mode).toBe('confined');
+    expect(prepared.workspace?.workspaceId).toBe(workspace.id);
+    expect(prepared.launch.env.GH_TOKEN).toBe(GITHUB_TOKEN);
+    expect(JSON.stringify(prepared.launch)).not.toContain(GITHUB_TOKEN);
+    await prepared.lease.release();
+  });
+
   it('leaves the child unauthenticated for an account, an owner and a seam that cannot answer', async () => {
     const { registry, projectPath } = await setup();
     const prepare = (userId: number) => runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({

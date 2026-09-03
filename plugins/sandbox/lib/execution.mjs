@@ -321,6 +321,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
       throw new Error('execution cwd is outside the current account’s accessible project and workspace roots');
     }
     const workspace = explicitWorkspace ?? workspaceForCwd(listWorkspaces(), accountUserId, cwd);
+    const confinedWorkspace = explicitWorkspace ?? (input.leaseKind === 'terminal' ? workspace : null);
 
     let home = process.env.HOME || '/';
     let generation = null;
@@ -338,17 +339,17 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
     let launch;
     let displayCwd = cwd;
     let sanitizeOutput = (text) => String(text);
-    // An explicit workspace is the strongest claim there is — it pins the child into one worktree and
-    // hides the host path behind a guest root, so it is decided before either shortcut into direct
-    // execution is even considered.
-    if (explicitWorkspace) {
+    // A terminal launched from a Sandbox workspace is pinned into that worktree even for an operator. The
+    // dedicated GitHub/Sandbox controls keep their existing constrained Git seams; only an interactive shell
+    // needs this implicit workspace confinement when the host did not supply an explicit workspace ref.
+    if (confinedWorkspace) {
       const probe = bubblewrapProbe();
       if (!probe.available) throw new Error(`confined execution is unavailable: ${probe.reason || 'bubblewrap probe failed'}`);
-      const prepared = buildWorkspaceBubblewrap(input.command, cwd, explicitWorkspace, home, workspaceGitStub(dataDir, explicitWorkspace));
+      const prepared = buildWorkspaceBubblewrap(input.command, cwd, confinedWorkspace, home, workspaceGitStub(dataDir, confinedWorkspace));
       mode = 'confined';
       launch = prepared.launch;
       displayCwd = prepared.guestCwd;
-      const prefixes = [realpathSync(explicitWorkspace.path), resolve(explicitWorkspace.path)];
+      const prefixes = [realpathSync(confinedWorkspace.path), resolve(confinedWorkspace.path)];
       sanitizeOutput = (text) => prefixes.reduce((value, prefix) => value.split(prefix).join(WORKSPACE_GUEST_ROOT), String(text));
     // `forceConfined` is what a plugin's background work asks for, and it overrides BOTH shortcuts into
     // direct execution — the operator turn it may happen to run inside, and the instance-wide
