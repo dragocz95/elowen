@@ -62,6 +62,25 @@ describe('Account → Models — Model roles', () => {
     expect(rowsOf(groups[1]!)).toContain(en.cli.yoloTitle);
   });
 
+  /** The role records are INLINE records like every other row of the surfaces: the trailing side is ONE
+   *  line (a short status badge, at most one compact action) and the picker trigger is the part inside it
+   *  that shrinks. These rows never declared `trailingLayout="stack"` — this pins that contract so a
+   *  stacked band cannot creep back in. */
+  it('keeps every model-role record on the single trailing line, with the picker trigger inside', () => {
+    const { container } = renderSection();
+    const group = container.querySelectorAll('[data-settings-group]')[0]!;
+    const rows = Array.from(group.querySelectorAll('.settings-row')) as HTMLElement[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row).toHaveAttribute('data-trailing', 'inline');
+    // …and each picker row carries its trigger in the trailing container, so the one line holds the value.
+    const trailingPicker = (label: string) => rows
+      .find((n) => n.querySelector('.settings-row__title')?.textContent?.startsWith(label))!
+      .querySelector('.settings-row__trailing [data-row-picker]');
+    expect(trailingPicker(en.cli.primaryModelLabel)).not.toBeNull();
+    expect(trailingPicker(en.cli.visionModelLabel)).not.toBeNull();
+    expect(trailingPicker(en.cli.compactModelLabel)).not.toBeNull();
+  });
+
   /** MOVED here from Account → Account, where the personal default sat two rail entries away from the
    *  vision and compaction models it decides. Unset it now NAMES the instance default it inherits. */
   it('seeds the primary model on the instance default it inherits and patches only the pair', async () => {
