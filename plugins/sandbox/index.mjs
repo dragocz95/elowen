@@ -167,10 +167,10 @@ export async function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'SandboxCreateWorkspace',
     label: 'Create workspace',
-    description: 'Create a real Git worktree for one accessible Project. The label is display text only; Sandbox generates a safe unique branch under elowen/u<account>/ and binds the new workspace to this conversation.',
+    description: 'Create a real Git worktree for one accessible Project. The label names the worktree directory and the branch under elowen/u<account>/ (slugified, suffixed only when that name is taken), so choose it as you would a branch name; the workspace is bound to this conversation.',
     parameters: Type.Object({
       projectId: Type.Integer({ minimum: 1, description: 'Accessible Project id whose Git repository owns the worktree.' }),
-      label: Type.String({ minLength: 1, maxLength: 80, description: 'Human-readable workspace label, not a Git ref.' }),
+      label: Type.String({ minLength: 1, maxLength: 80, description: 'Workspace name; also becomes the directory and branch name after slugification.' }),
       baseRef: Type.String({ minLength: 1, maxLength: 200, description: 'Existing branch, tag or commit to start from, for example main.' }),
     }),
     execute: async (_id, input) => {

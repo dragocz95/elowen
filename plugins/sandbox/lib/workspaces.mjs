@@ -113,7 +113,10 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     const allowed = accessibleProjectIds === 'all' ? null : new Set((accessibleProjectIds ?? []).map(Number));
     if (allowed && !allowed.has(row.projectId)) throw coded('workspace project is outside the delegated scope', 'project_forbidden', 403);
     const root = userWorkspacesRoot(dataDir, userId);
-    const expected = resolve(root, row.id);
+    // The directory is named after the label (older rows: after the id), so the stored path is the
+    // identity — what must hold is that it sits DIRECTLY under this account's workspace root.
+    const expected = resolve(row.path);
+    if (dirname(expected) !== resolve(root)) throw coded('workspace path no longer matches its Sandbox identity', 'workspace_path_mismatch', 409);
     let actual;
     let canonicalRoot;
     try {
@@ -123,7 +126,7 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     } catch {
       throw coded('workspace path is missing or unsafe', 'workspace_path_missing', 409);
     }
-    if (resolve(row.path) !== expected || dirname(actual) !== canonicalRoot || !actual.startsWith(`${canonicalRoot}${sep}`)) {
+    if (dirname(actual) !== canonicalRoot || !actual.startsWith(`${canonicalRoot}${sep}`)) {
       throw coded('workspace path no longer matches its Sandbox identity', 'workspace_path_mismatch', 409);
     }
     return { workspaceId: row.id, projectId: row.projectId, accountUserId: userId, path: actual };
@@ -195,15 +198,25 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     const common = await commonDir(project.path, roots, { accountUserId: userId });
 
     return withRepoLease(db, common, async () => {
+      // The directory and the branch carry the LABEL, not the id: `ws_<uuid>` in a path or a `git
+      // worktree list` says nothing about what is being worked on, and the caller already named it. The
+      // id stays the opaque database key. A name that is taken — by a live workspace, a leftover
+      // directory or a branch that outlived its worktree — gets a numeric suffix rather than a random one.
+      const name = slug(label);
       let id;
       let branch;
       let path;
-      for (let attempt = 0; attempt < 5; attempt += 1) {
+      for (let attempt = 0; attempt < 20 && !path; attempt += 1) {
+        const candidate = attempt === 0 ? name : `${name}-${attempt + 1}`;
+        const candidateBranch = `elowen/u${userId}/${candidate}`;
+        const candidatePath = resolve(workspaceRoot, candidate);
+        const exists = db.prepare('SELECT 1 FROM p_sandbox_workspaces WHERE user_id = ? AND project_id = ? AND branch = ?').get(userId, projectId, candidateBranch);
+        if (exists || existsSync(candidatePath)) continue;
+        const taken = await gitText(project.path, ['-C', project.path, 'branch', '--list', candidateBranch], roots, { accountUserId: userId });
+        if (taken) continue;
         id = `ws_${randomUUID()}`;
-        branch = `elowen/u${userId}/${slug(label)}-${randomUUID().slice(0, 8)}`;
-        path = resolve(workspaceRoot, id);
-        const exists = db.prepare('SELECT 1 FROM p_sandbox_workspaces WHERE user_id = ? AND project_id = ? AND branch = ?').get(userId, projectId, branch);
-        if (!exists && !existsSync(path)) break;
+        branch = candidateBranch;
+        path = candidatePath;
       }
       if (!id || !branch || !path) throw coded('could not allocate a unique workspace', 'workspace_collision', 409);
       await safeGit(project.path, ['-C', project.path, 'worktree', 'add', '-b', branch, path, baseRef], roots, { accountUserId: userId });

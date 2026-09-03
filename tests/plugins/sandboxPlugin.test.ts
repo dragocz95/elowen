@@ -123,11 +123,28 @@ const waitUntil = async (check: () => boolean, timeoutMs = 5_000) => {
 };
 
 describe('sandbox plugin workspaces', () => {
+  /** The directory and branch are the caller's label, so `git worktree list` and a path in a task brief
+   *  read as what is being worked on — never `ws_<uuid>`. A name already in use (a second workspace
+   *  with the same label, or a branch that outlived its removed worktree) steps to `-2`, `-3`, … */
+  it('names the worktree and branch after the label and steps past taken names', async () => {
+    const { registry, projectPath } = await setup();
+    execFileSync('git', ['-C', projectPath, 'branch', 'elowen/u1/same-name-2']);
+    const first = (await runAs(registry, projectPath, 1, 'brain-n1', 'SandboxCreateWorkspace', { projectId: 1, label: 'Same name', baseRef: 'main' })).details.workspace;
+    const second = (await runAs(registry, projectPath, 1, 'brain-n2', 'SandboxCreateWorkspace', { projectId: 1, label: 'Same name', baseRef: 'main' })).details.workspace;
+    expect(first.branch).toBe('elowen/u1/same-name');
+    expect(first.path.endsWith('/same-name')).toBe(true);
+    expect(second.branch).toBe('elowen/u1/same-name-3');
+    expect(second.path.endsWith('/same-name-3')).toBe(true);
+    expect(first.id).toMatch(/^ws_/);
+    expect(existsSync(second.path)).toBe(true);
+  });
+
   it('creates, binds and exposes a workspace root only for currently accessible Projects', async () => {
     const { registry, projectPath } = await setup();
     const created = await runAs(registry, projectPath, 1, 'brain-amy', 'SandboxCreateWorkspace', { projectId: 1, label: 'Feature Alpha', baseRef: 'main' });
     const workspace = created.details.workspace;
-    expect(workspace.branch).toMatch(/^elowen\/u1\/feature-alpha-/);
+    expect(workspace.branch).toBe('elowen/u1/feature-alpha');
+    expect(workspace.path.endsWith('/feature-alpha')).toBe(true);
     expect(existsSync(workspace.path)).toBe(true);
     const control = registry.control('sandbox')!;
     const asAccount = <T>(userId: number, run: () => T) => runWithPolicy(policy(projectPath), run, {
