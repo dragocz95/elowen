@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
-import { resetCapabilitiesCache, setCapabilities } from '@earendil-works/pi-tui';
+import { resetCapabilitiesCache, setCapabilities, TuiMainScreen } from '@earendil-works/pi-tui';
 import type { BrainEvent, BrainInlineArtifact, BrainInlineArtifactClosed } from '../../../src/brain/events.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import { BrainClient } from '../../../src/cli/chat/brainClient.js';
@@ -19,6 +19,7 @@ import type { Flows } from '../../../src/cli/chat/flows.js';
 import type { ChatApplicationActions } from '../../../src/cli/chat/chatCapabilities.js';
 import { TurnRenderer } from '../../../src/cli/chat/turnRenderer.js';
 import { ChatViewport } from '../../../src/cli/chat/chatViewport.js';
+import { resolveCliTerminalCapabilities } from '../../../src/cli/chat/terminalCapabilities.js';
 import type { ChatTurn } from '../../../src/brain/transcript.js';
 
 beforeAll(() => { initTheme(); });
@@ -29,7 +30,38 @@ afterEach(() => {
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6nxoAAAAASUVORK5CYII=';
 const JPEG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8Bf//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEABj8Cf//Z';
+const LARGE_PNG = (() => {
+  const data = Buffer.from(PNG, 'base64');
+  data.writeUInt32BE(800, 16);
+  data.writeUInt32BE(600, 20);
+  return data.toString('base64');
+})();
 const isImageLine = (line: string): boolean => line.includes('\x1b_G') || line.includes('\x1b]1337;File=');
+
+function renderMainScreen(component: { render: (width: number) => string[]; invalidate: () => void }): string {
+  let output = '';
+  const terminal = {
+    columns: 80,
+    rows: 24,
+    kittyProtocolActive: false,
+    start: () => {},
+    stop: () => {},
+    drainInput: async () => {},
+    write: (data: string) => { output += data; },
+    moveBy: () => {},
+    hideCursor: () => {},
+    showCursor: () => {},
+    clearLine: () => {},
+    clearFromCursor: () => {},
+    clearScreen: () => {},
+    setTitle: () => {},
+    setProgress: () => {},
+  } as unknown as ConstructorParameters<typeof TuiMainScreen>[0];
+  const tui = new TuiMainScreen(terminal);
+  tui.addChild(component);
+  tui.renderNow();
+  return output;
+}
 
 const openArtifact = (patch: Partial<BrainInlineArtifact> = {}): BrainInlineArtifact => ({
   id: 'preview',
@@ -215,6 +247,57 @@ describe('artifact terminal rendering', () => {
     thumbnail.update({ data: PNG, mimeType: 'image/png' }, 'iterm2', bounds);
     thumbnail.render(40, 'iterm2', bounds);
     expect(thumbnail.getImageId()).toBeUndefined();
+  });
+
+  it('renders VS Code iTerm image rows plus fallback through the main-screen renderer, while off stays text-only', () => {
+    const detected = { images: null, trueColor: true, hyperlinks: true } as const;
+    setCapabilities(resolveCliTerminalCapabilities(detected, {
+      TERM: 'xterm-256color',
+      TERM_PROGRAM: 'vscode',
+      COLORTERM: 'truecolor',
+      ELOWEN_CLI_IMAGES: 'auto',
+    }));
+    let emit!: (frame: InlineArtifactFrame) => void;
+    const stream = vi.fn((_path: string, onFrame: (frame: InlineArtifactFrame) => void, signal: AbortSignal) => {
+      emit = onFrame;
+      return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+    });
+    const presenter = new InlineArtifactPresenter({
+      collection: new InlineArtifactCollection([openArtifact()]),
+      stream,
+      maxHeightCells: () => 8,
+      onInvalidate: () => {},
+    });
+    emit({ data: LARGE_PNG, mimeType: 'image/png' });
+    const imageOutput = renderMainScreen({
+      render: (width) => presenter.render('call-browser', width),
+      invalidate: () => {},
+    });
+    expect(imageOutput).toContain('Opening page');
+    expect(imageOutput).toContain('\x1b]1337;File=');
+    expect(imageOutput).toMatch(/\x1b\[\d+A\x1b]1337;File=/);
+    presenter.stop();
+
+    setCapabilities(resolveCliTerminalCapabilities(detected, {
+      TERM: 'xterm-256color',
+      TERM_PROGRAM: 'vscode',
+      ELOWEN_CLI_IMAGES: 'off',
+    }));
+    const disabledStream = vi.fn(async () => {});
+    const disabled = new InlineArtifactPresenter({
+      collection: new InlineArtifactCollection([openArtifact()]),
+      stream: disabledStream,
+      maxHeightCells: () => 8,
+      onInvalidate: () => {},
+    });
+    const fallbackOutput = renderMainScreen({
+      render: (width) => disabled.render('call-browser', width),
+      invalidate: () => {},
+    });
+    expect(fallbackOutput).toContain('Opening page');
+    expect(fallbackOutput).not.toContain('\x1b]1337;File=');
+    expect(disabledStream).not.toHaveBeenCalled();
+    disabled.stop();
   });
 
   it('shows the changing artifact fallback and does not open media SSE without an image protocol', () => {

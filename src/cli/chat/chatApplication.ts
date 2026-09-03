@@ -34,6 +34,7 @@ import { StreamCoordinator } from './streamCoordinator.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
 import { RATE_LIMIT_RUNNING_INTERVAL_MS, shouldRefreshRateLimits } from './rateLimitRefresh.js';
 import { TerminalLifecycle, createShutdownCoordinator, installExitGuards } from './terminalLifecycle.js';
+import { configureCliTerminalCapabilities } from './terminalCapabilities.js';
 import { color, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
 import { createTuiDiagnostics } from './tuiDiagnostics.js';
 import type { TuiDiagnostics } from './tuiDiagnostics.js';
@@ -209,6 +210,7 @@ export class ChatApplication {
     if (typeof termSettings?.showThoughtsCli === 'boolean') showThoughts = termSettings.showThoughtsCli;
     const commandDefs = serverCommands.length ? serverCommands : offlineCommands();
 
+    configureCliTerminalCapabilities();
     const term = new ProcessTerminal();
     const tui = new TuiMainScreen(term);
     tui.setClearOnShrink(true);
