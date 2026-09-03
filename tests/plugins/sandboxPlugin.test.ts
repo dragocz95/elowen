@@ -12,7 +12,7 @@ import { realPathWithin } from '../../src/plugins/pathGuard.js';
 import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
-import { bubblewrapProbe, migrateLegacyHomes } from '../../plugins/sandbox/lib/execution.mjs';
+import { bubblewrapProbe, migrateLegacyHomes, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
 import { processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 
@@ -90,6 +90,18 @@ async function setup(enabled = ['sandbox'], confineNonOperators = false) {
     delegatedTurnsOutOfProcess: () => false,
   });
   return { registry, db, dataRoot, projectPath, users };
+}
+
+/** Stand-in for the GitHub plugin, which lives in the plugin registry rather than this repo. Installed
+ *  straight into the merged registry because that is exactly what `ctx.control('github')` resolves
+ *  against — Sandbox asks for it at launch time, so an owner that appears later is the normal case. */
+const GITHUB_TOKEN = 'gho_sandbox_test_token_0123456789';
+function connectGitHub(
+  registry: Awaited<ReturnType<typeof loadPlugins>>,
+  sessionCredential: (input: { accountUserId: number }) => { token: string; login: string } | null,
+) {
+  registry.controls.set('github', { sessionCredential } as never);
+  registry.controlOwner.set('github', 'github');
 }
 
 function tool(registry: Awaited<ReturnType<typeof loadPlugins>>, name: string) {
@@ -355,6 +367,116 @@ describe('sandbox execution HOME and leases', () => {
     expect(amy.content[0]!.text).toContain('/sandbox/users/1/home');
     expect(bob.content[0]!.text).toContain('/sandbox/users/2/home');
     expect(admin.content[0]!.text).toContain('/sandbox/users/1/home');
+  });
+
+  /** The account HOME deliberately holds NO GitHub state — no hosts.yml, no credential helper in a
+   *  .gitconfig. Everything that signs the child in travels in its environment for that one launch, which
+   *  is what makes disconnecting take effect on the next command with nothing left to clean up. */
+  it('starts a child already signed in to GitHub for an account that connected an identity', async () => {
+    const { registry, projectPath } = await setup(['sandbox', 'terminal']);
+    connectGitHub(registry, ({ accountUserId }) => accountUserId === 1 ? { token: GITHUB_TOKEN, login: 'octocat' } : null);
+    const prepared = await runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({
+      command: { type: 'shell', command: 'true' }, cwd: projectPath, leaseKind: 'terminal',
+    }), { identity: nonOperator(1), contributionUserId: 1, sessionId: 'brain-github', workDir: projectPath });
+    expect(prepared.launch.env).toMatchObject({
+      GH_TOKEN: GITHUB_TOKEN,
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'credential.https://github.com.helper',
+      GIT_CONFIG_VALUE_0: '',
+      GIT_CONFIG_KEY_1: 'credential.https://github.com.helper',
+      GIT_CONFIG_VALUE_1: '!gh auth git-credential',
+    });
+    await prepared.lease.release();
+
+    // Real git, reading the real launch environment: the pairs above are only worth anything if git
+    // resolves them into the helper it will actually run, so the child is asked rather than the shape.
+    const helper = await runAs(registry, projectPath, 1, 'brain-github', 'Bash', {
+      command: `git config --get-all 'credential.https://github.com.helper'`,
+    });
+    expect(helper.content[0]!.text).toContain('!gh auth git-credential');
+
+    // And inside a namespace, which is where a non-operator account actually runs. bwrap passes its own
+    // environment through, so the injected variables survive the confinement — and `gh` itself has to be
+    // reachable in there, or the helper git resolves would be a command the child cannot run.
+    const confined = await registry.control('sandbox')!.prepareExecution(
+      { command: { type: 'shell', command: `git config --get-all 'credential.https://github.com.helper'; command -v gh` }, cwd: projectPath, leaseKind: 'terminal' },
+      { accountUserId: 1, roots: [projectPath] },
+    );
+    expect(confined.mode).toBe('confined');
+    const inside = await runPrepared(confined);
+    expect(inside.output).toContain('!gh auth git-credential');
+    expect(inside.output).toContain('/gh');
+  });
+
+  it('leaves the child unauthenticated for an account, an owner and a seam that cannot answer', async () => {
+    const { registry, projectPath } = await setup();
+    const prepare = (userId: number) => runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({
+      command: { type: 'shell', command: 'true' }, cwd: projectPath, leaseKind: 'terminal',
+    }), { identity: nonOperator(userId), contributionUserId: userId, sessionId: `brain-github-${userId}`, workDir: projectPath });
+
+    // No GitHub plugin at all — the ordinary state on an instance that never installed it.
+    const withoutOwner = await prepare(1);
+    expect(withoutOwner.launch.env).not.toHaveProperty('GH_TOKEN');
+    expect(withoutOwner.launch.env).not.toHaveProperty('GIT_CONFIG_COUNT');
+    await withoutOwner.lease.release();
+
+    // Present, but this account has not connected: nothing is injected, and the launch is otherwise
+    // identical — no half-configured credential helper pointing at a token that is not there.
+    connectGitHub(registry, ({ accountUserId }) => accountUserId === 1 ? { token: GITHUB_TOKEN, login: 'octocat' } : null);
+    const unconnected = await prepare(2);
+    expect(unconnected.launch.env).not.toHaveProperty('GH_TOKEN');
+    expect(unconnected.launch.env).not.toHaveProperty('GIT_CONFIG_COUNT');
+    await unconnected.lease.release();
+
+    // A broken owner must not turn every shell command into an error: the command runs, unauthenticated.
+    connectGitHub(registry, () => { throw new Error('credential seam is down'); });
+    const broken = await prepare(1);
+    expect(broken.launch.env).not.toHaveProperty('GH_TOKEN');
+    await broken.lease.release();
+
+    // An instance/owner-less run has no account to ask about, so the seam is never consulted for one.
+    let asked = 0;
+    connectGitHub(registry, () => { asked += 1; return { token: GITHUB_TOKEN, login: 'octocat' }; });
+    const owned = temp('github-service-root');
+    const service = await registry.control('sandbox')!.prepareExecution(
+      { command: { type: 'shell', command: 'true' }, cwd: owned, leaseKind: 'sites' },
+      { accountUserId: null, roots: [owned] },
+    );
+    expect(asked).toBe(0);
+    expect(service.launch.env).not.toHaveProperty('GH_TOKEN');
+    await service.lease.release();
+  });
+
+  it('keeps the injected GitHub token out of everything a caller can read back', async () => {
+    const { registry, projectPath } = await setup(['sandbox', 'terminal']);
+    connectGitHub(registry, () => ({ token: GITHUB_TOKEN, login: 'octocat' }));
+    const prepared = await runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({
+      command: { type: 'shell', command: 'true' }, cwd: projectPath, leaseKind: 'terminal',
+    }), { identity: nonOperator(1), contributionUserId: 1, sessionId: 'brain-github-redact', workDir: projectPath });
+    // The redaction lives on the launch value itself, so a diagnostic that serialises a prepared launch —
+    // this one, or one added later — cannot forget to apply it, while `spawn` still receives the real
+    // token because `toJSON` is not part of the environment it reads.
+    expect(JSON.stringify(prepared.launch)).not.toContain(GITHUB_TOKEN);
+    expect(JSON.stringify(prepared.launch)).toContain('[redacted]');
+    expect(JSON.stringify(prepared)).not.toContain(GITHUB_TOKEN);
+    expect(prepared.launch.env.GH_TOKEN).toBe(GITHUB_TOKEN);
+    expect(prepared.sanitizeOutput(`leaked ${GITHUB_TOKEN} here`)).toBe('leaked [redacted] here');
+    await prepared.lease.release();
+
+    // The other escape route: a command that simply prints its own environment.
+    const echoed = await runAs(registry, projectPath, 1, 'brain-github-redact', 'Bash', { command: 'printf %s "$GH_TOKEN"' });
+    expect(echoed.content[0]!.text).not.toContain(GITHUB_TOKEN);
+    expect(echoed.content[0]!.text).toContain('[redacted]');
+
+    // The shared runner is the third route. Its callers — the workspace git plumbing and the account
+    // gitconfig route — hand the result straight to an API response, so it sanitises there rather than
+    // trusting each of them to remember.
+    const echoing = await runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({
+      command: { type: 'shell', command: 'printf %s "$GH_TOKEN"' }, cwd: projectPath, leaseKind: 'terminal',
+    }), { identity: nonOperator(1), contributionUserId: 1, sessionId: 'brain-github-redact', workDir: projectPath });
+    const ran = await runPrepared(echoing);
+    expect(ran.output).not.toContain(GITHUB_TOKEN);
+    expect(ran.output).toBe('[redacted]');
   });
 
   it('keeps a lease through background execution and releases it only after kill exits', async () => {

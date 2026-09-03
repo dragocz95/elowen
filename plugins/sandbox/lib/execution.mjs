@@ -14,6 +14,28 @@ const WORKSPACE_GUEST_ROOT = '/workspace';
 const WORKSPACE_GUEST_HOME = '/home/elowen';
 const GENERATION_FILE = '.home-generation';
 const ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'];
+// A connected GitHub identity reaches the child through its ENVIRONMENT and nothing else.
+//
+// `gh` resolves GH_TOKEN before any on-disk credential, and `!gh auth git-credential` is the same helper
+// `gh auth setup-git` would otherwise write into a config file. Injecting both per launch is what keeps
+// the account HOME free of GitHub state: there is no hosts.yml and no .gitconfig to go stale, so removing
+// the connection stops the very next launch and leaves nothing to clean up.
+//
+// The token is deliberately NOT part of ENV_ALLOWLIST: that list lifts variables out of the daemon's own
+// process environment, and this one belongs to the account driving the turn, not to the daemon.
+const GITHUB_TOKEN_VAR = 'GH_TOKEN';
+// Git reads these numbered pairs exactly as if they were config entries, at higher precedence than any
+// file — which is why no file is needed. Two pairs for ONE key on purpose: the empty value RESETS whatever
+// helper /etc/gitconfig (bound read-only into the child) already installs, and the second one installs
+// gh's. That is the pair `gh auth setup-git` writes, in the same order.
+const GITHUB_GIT_ENV = Object.freeze({
+  GIT_CONFIG_COUNT: '2',
+  GIT_CONFIG_KEY_0: 'credential.https://github.com.helper',
+  GIT_CONFIG_VALUE_0: '',
+  GIT_CONFIG_KEY_1: 'credential.https://github.com.helper',
+  GIT_CONFIG_VALUE_1: '!gh auth git-credential',
+});
+const REDACTED = '[redacted]';
 const ETC_ALLOWLIST = [
   'hosts', 'host.conf', 'nsswitch.conf', 'gai.conf', 'passwd', 'group',
   'ssl', 'pki', 'ca-certificates', 'ca-certificates.conf', 'localtime', 'timezone',
@@ -176,6 +198,57 @@ function buildBubblewrap(command, cwd, roots, home, network = 'shared') {
   return { type: 'argv', file: BWRAP, args: [...args, command.file, ...command.args], env };
 }
 
+/** A launch descriptor safe to serialise: the injected credential is replaced by a marker.
+ *
+ *  Installed as the launch object's own `toJSON`, non-enumerable so it never reaches `spawn`. Everything
+ *  that logs, reports or diagnoses a prepared launch reaches it through JSON, so the redaction lives on
+ *  the value itself instead of in each caller — a diagnostic added later cannot forget to apply it. */
+function redactLaunch(launch) {
+  Object.defineProperty(launch, 'toJSON', {
+    value: () => ({
+      ...launch,
+      env: Object.fromEntries(Object.entries(launch.env)
+        .map(([key, value]) => [key, key === GITHUB_TOKEN_VAR ? REDACTED : value])),
+    }),
+    enumerable: false,
+    configurable: true,
+  });
+  return launch;
+}
+
+/** Put the account's GitHub credential into ONE launch, and keep it out of everything the model can read.
+ *  The token lands only in `launch.env`: putting it in a bwrap `--setenv` argument would write it into the
+ *  shell command line the process registry reports back verbatim. */
+function authenticateLaunchToGitHub(launch, credential) {
+  Object.assign(launch.env, GITHUB_GIT_ENV, { [GITHUB_TOKEN_VAR]: credential.token });
+  return redactLaunch(launch);
+}
+
+/** The connected GitHub identity for one account, or null.
+ *
+ *  Fails closed on every axis: no account, no connection, an absent or disabled owner plugin, and a
+ *  refusing or throwing owner all read the same way — the child simply starts unauthenticated. A command
+ *  must not fail because a credential seam is unavailable, so a broken owner is reported once and then
+ *  ignored for the life of this service generation rather than on every launch. */
+function githubCredential(ctx, accountUserId, state) {
+  if (accountUserId === null) return null;
+  let credential;
+  try {
+    credential = ctx.control?.('github')?.sessionCredential({ accountUserId }) ?? null;
+  } catch (error) {
+    if (!state.warned) {
+      state.warned = true;
+      ctx.logger?.warn?.(`GitHub credential seam unavailable; commands run unauthenticated: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return null;
+  }
+  const token = typeof credential?.token === 'string' ? credential.token.trim() : '';
+  // A token with whitespace in it would break both the environment variable and the credential protocol,
+  // and is not something the owner should ever produce — treat it as no connection rather than pass it on.
+  if (!token || /\s/u.test(token)) return null;
+  return { token, login: typeof credential.login === 'string' ? credential.login : '' };
+}
+
 function workspaceGitStub(dataDir, workspace) {
   const dir = ensurePrivateDir(join(userRoot(dataDir, workspace.userId), 'git-stubs'));
   const file = join(dir, `${workspace.id}.git`);
@@ -226,6 +299,7 @@ function workspaceForCwd(workspaces, accountUserId, cwd) {
 }
 
 export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
+  const githubSeam = { warned: false };
   const prepare = async (input, options = {}) => {
     const access = ctx.currentAccess();
     const explicitWorkspace = options.workspace ?? null;
@@ -291,6 +365,17 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
       launch = buildBubblewrap(input.command, cwd, roots, accountUserId === null ? null : home, input.network);
     }
 
+    // Every mode, because "am I signed in to GitHub?" is a property of the ACCOUNT, not of how its child
+    // happens to be isolated. An instance/owner-less run has no account to ask about and gets nothing.
+    const credential = githubCredential(ctx, accountUserId, githubSeam);
+    if (credential) {
+      authenticateLaunchToGitHub(launch, credential);
+      // Output is the other way a token escapes: a command that echoes its environment, or a tool that
+      // prints a failing request, would otherwise put it straight into the transcript.
+      const upstream = sanitizeOutput;
+      sanitizeOutput = (text) => upstream(text).split(credential.token).join(REDACTED);
+    }
+
     const mintLease = () => createExecutionLease(db, {
       accountUserId,
       workspaceId: workspace?.id ?? null,
@@ -345,7 +430,10 @@ export async function runPrepared(prepared, opts = {}) {
     child.stderr.on('data', append);
     const result = await new Promise((resolveResult, reject) => {
       child.once('error', reject);
-      child.once('close', (code, signal) => resolveResult({ code: code ?? -1, signal, output }));
+      // Sanitised HERE rather than at each call site: the same transform hides workspace host paths and
+      // an injected credential, and a caller that forgets it would put a token into an API response or an
+      // error message. It is idempotent, so a caller that sanitises again on its own is unaffected.
+      child.once('close', (code, signal) => resolveResult({ code: code ?? -1, signal, output: prepared.sanitizeOutput(output) }));
     });
     settled = true;
     if (result.code !== 0 && opts.allowFailure !== true) {
