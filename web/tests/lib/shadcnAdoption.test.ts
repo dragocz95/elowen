@@ -17,7 +17,6 @@ const primitives = {
   'badge.tsx': { radix: '@radix-ui/react-slot', cva: true },
   'button.tsx': { radix: '@radix-ui/react-slot', cva: true },
   // recharts, not Radix: the chart primitive is a themed wrapper around the charting library.
-  'chart.tsx': { radix: null, cva: false },
   'checkbox.tsx': { radix: '@radix-ui/react-checkbox', cva: true },
   'collapsible.tsx': { radix: '@radix-ui/react-collapsible', cva: false },
   // cmdk, not Radix: the palette's listbox/combobox plumbing is cmdk's, the overlay stays the app's.

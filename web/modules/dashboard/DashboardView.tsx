@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../components/ui/Button';
 import { MotionReveal } from '../../components/ui/Motion';
 import { HomeComposer } from './HomeComposer';
-import { DashBento } from './DashBento';
 import { ActivityTile } from './ActivityTile';
 import { TeamPulseTile } from './TeamPulseTile';
 import { MetricsTile } from './MetricsTile';
@@ -185,15 +184,6 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
 
         <MotionReveal delay={0.2}>
           <RecapStrip recap={recap} />
-        </MotionReveal>
-
-        {/* The bento. It sits inside the hero section so it inherits the same measure and gutters, and
-            it is left-aligned inside a centred column — a grid of cards centred as text reads as a
-            poster rather than as a dashboard. */}
-        <MotionReveal delay={0.24}>
-          <div className="mt-12 text-left @sm:mt-14">
-            <DashBento />
-          </div>
         </MotionReveal>
 
         <MotionReveal delay={0.28}>
