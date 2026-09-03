@@ -12,7 +12,7 @@ import { realPathWithin } from '../../src/plugins/pathGuard.js';
 import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
-import { bubblewrapProbe, migrateLegacyHomes } from '../../plugins/sandbox/lib/execution.mjs';
+import { bubblewrapProbe, migrateLegacyHomes, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
 import { processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 
@@ -455,6 +455,16 @@ describe('sandbox execution HOME and leases', () => {
     const echoed = await runAs(registry, projectPath, 1, 'brain-github-redact', 'Bash', { command: 'printf %s "$GH_TOKEN"' });
     expect(echoed.content[0]!.text).not.toContain(GITHUB_TOKEN);
     expect(echoed.content[0]!.text).toContain('[redacted]');
+
+    // The shared runner is the third route. Its callers — the workspace git plumbing and the account
+    // gitconfig route — hand the result straight to an API response, so it sanitises there rather than
+    // trusting each of them to remember.
+    const echoing = await runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({
+      command: { type: 'shell', command: 'printf %s "$GH_TOKEN"' }, cwd: projectPath, leaseKind: 'terminal',
+    }), { identity: nonOperator(1), contributionUserId: 1, sessionId: 'brain-github-redact', workDir: projectPath });
+    const ran = await runPrepared(echoing);
+    expect(ran.output).not.toContain(GITHUB_TOKEN);
+    expect(ran.output).toBe('[redacted]');
   });
 
   it('keeps a lease through background execution and releases it only after kill exits', async () => {

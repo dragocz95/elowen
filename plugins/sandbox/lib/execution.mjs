@@ -430,7 +430,10 @@ export async function runPrepared(prepared, opts = {}) {
     child.stderr.on('data', append);
     const result = await new Promise((resolveResult, reject) => {
       child.once('error', reject);
-      child.once('close', (code, signal) => resolveResult({ code: code ?? -1, signal, output }));
+      // Sanitised HERE rather than at each call site: the same transform hides workspace host paths and
+      // an injected credential, and a caller that forgets it would put a token into an API response or an
+      // error message. It is idempotent, so a caller that sanitises again on its own is unaffected.
+      child.once('close', (code, signal) => resolveResult({ code: code ?? -1, signal, output: prepared.sanitizeOutput(output) }));
     });
     settled = true;
     if (result.code !== 0 && opts.allowFailure !== true) {
