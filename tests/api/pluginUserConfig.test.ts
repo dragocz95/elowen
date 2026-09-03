@@ -21,13 +21,18 @@ afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true
 /** A plugin that keeps per-ACCOUNT credentials: one secret, one plain field, and a route that echoes back
  *  whatever `ctx.userConfig()` resolves for whoever is calling. It declares NO `reads` capability — reading
  *  its own per-account slice must not require the database grant. */
-function crmPluginDir(opts: { userGrantable?: boolean } = {}): string {
+function crmPluginDir(opts: { userGrantable?: boolean; userConfigLabel?: string; i18n?: Record<string, unknown> } = {}): string {
   const root = tmpDir('usercfg-plugins');
   const dir = join(root, 'crmdemo');
   mkdirSync(dir, { recursive: true });
+  if (opts.i18n) {
+    mkdirSync(join(dir, 'i18n'), { recursive: true });
+    for (const [lang, body] of Object.entries(opts.i18n)) writeFileSync(join(dir, 'i18n', `${lang}.json`), JSON.stringify(body));
+  }
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name: 'crmdemo', version: '1.0.0', apiVersion: '1', description: 'crm demo', entry: 'index.mjs',
     ...(opts.userGrantable ? { userGrantable: true } : {}),
+    ...(opts.userConfigLabel ? { userConfigLabel: opts.userConfigLabel } : {}),
     provides: { apiRoutes: ['/crmdemo'] },
     userConfigSchema: [
       { key: 'apiKey', label: 'API key', type: 'secret' },
@@ -47,7 +52,7 @@ export function register(ctx) {
   return root;
 }
 
-function setup(opts: { userGrantable?: boolean } = {}) {
+function setup(opts: { userGrantable?: boolean; userConfigLabel?: string; i18n?: Record<string, unknown> } = {}) {
   const pluginsDir = crmPluginDir(opts);
   const dataRoot = tmpDir('usercfg-data');
   const db = openPluginTablesDb(':memory:');
@@ -220,6 +225,38 @@ describe('per-user plugin config', () => {
     users.setGrantedPlugins(amy.id, ['crmdemo']);
     expect(((await (await app.request('/plugins/user-config', auth(amyTok))).json()) as View[]).map((p) => p.name)).toEqual(['crmdemo']);
     expect((await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { region: 'cz' } }))).status).toBe(200);
+  });
+
+  // The Account rail shows a NAME and the panel a sentence, so the listing has to carry them as two
+  // separate strings. It used to send only `description`, the UI titled the rail entry with it, and a
+  // plugin whose description is a full sentence took the rail over.
+  it('carries the short per-account label beside the description, never folded into it', async () => {
+    const { app, amyTok } = setup({ userConfigLabel: 'CRM Demo' });
+    const listing = await (await app.request('/plugins/user-config', auth(amyTok))).json() as { name: string; label?: string; description?: string }[];
+    expect(listing[0]).toMatchObject({ name: 'crmdemo', label: 'CRM Demo', description: 'crm demo' });
+  });
+
+  // A plugin that declares no label must fall back to something short. The description is never it.
+  it('omits the label for a plugin that declares none, leaving the client its own short fallback', async () => {
+    const { app, amyTok } = setup();
+    const listing = await (await app.request('/plugins/user-config', auth(amyTok))).json() as { label?: string; description?: string }[];
+    expect(listing[0]!.label).toBeUndefined();
+    expect(listing[0]!.description).toBe('crm demo');
+  });
+
+  // Localization travels through the plugin's own i18n files — the same machinery every other manifest
+  // string uses — so a Czech account gets a Czech menu entry without the host learning any plugin names.
+  it('serves the plugin\'s localized label and description through its own i18n files', async () => {
+    const { app, amyTok } = setup({
+      userConfigLabel: 'CRM Demo',
+      i18n: { cs: { userConfigLabel: 'CRM demo', description: 'Osobní přístup k CRM demo.' } },
+    });
+    const listing = await (await app.request('/plugins/user-config', auth(amyTok))).json() as {
+      label?: string; description?: string; i18n?: Record<string, { userConfigLabel?: string; description?: string }>;
+    }[];
+    expect(listing[0]!.i18n?.cs).toMatchObject({ userConfigLabel: 'CRM demo', description: 'Osobní přístup k CRM demo.' });
+    // English stays on the record itself as the fallback for a locale the plugin does not translate.
+    expect(listing[0]).toMatchObject({ label: 'CRM Demo', description: 'crm demo' });
   });
 
   it('answers nothing for a plugin that declares no per-account fields', async () => {

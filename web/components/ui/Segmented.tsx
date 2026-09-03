@@ -31,11 +31,14 @@ const segmentedIconVariants = cva('shrink-0', {
   },
 });
 
+/** Every presentation of the label is bounded and truncating. A section list is not always written by this
+ *  repository — a plugin contributes Account and Settings entries — so an over-long label must cost a
+ *  clipped word and a tooltip, never a rail stretched past its column or a tab row that scrolls forever. */
 const segmentedLabelVariants = cva('', {
   variants: {
     variant: {
-      default: '',
-      line: '',
+      default: 'min-w-0 max-w-[14rem] truncate',
+      line: 'min-w-0 max-w-[14rem] truncate',
       menu: 'min-w-0 flex-1 truncate text-left',
     },
   },
@@ -187,7 +190,9 @@ export function Segmented({ options, value, onChange, size = 'md', variant = 'de
             style={{ transitionDuration: 'var(--motion-fast)' }}
           >
             {Icon ? <Icon aria-hidden className={segmentedIconVariants({ variant })} /> : null}
-            <span className={segmentedLabelVariants({ variant })}>{option.label}</span>
+            {/* The native tooltip is what makes the truncation lossless: whatever is clipped stays
+                readable on hover, and the accessible name above already carries the full text. */}
+            <span title={option.label} className={segmentedLabelVariants({ variant })}>{option.label}</span>
             {option.count === undefined ? null : (
               <span className={segmentedCountVariants({ variant })} aria-hidden>{option.count}</span>
             )}

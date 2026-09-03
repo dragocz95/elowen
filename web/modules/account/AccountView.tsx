@@ -43,6 +43,7 @@ import { AccountMemorySection } from './AccountMemorySection';
 import { PluginAccountSection } from './PluginAccountSection';
 import { parsePluginAccountSectionId, parsePluginUserConfigSectionId, pluginAccountSectionId, pluginUserConfigSectionId } from './pluginSections';
 import { UserPluginConfigSection } from './UserPluginConfigSection';
+import { userPluginConfigDescription, userPluginConfigLabel } from './userPluginConfigStrings';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { rowAnchor } from '../../lib/rowAnchors';
 import { useRowAnchor } from '../../lib/useRowAnchor';
@@ -136,13 +137,16 @@ export function AccountView() {
   // host splits on the manifest field alone and never on which plugin sent it.
   const deckPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement !== 'linkedAccount'), [pluginAccountSections]);
   const connectorPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement === 'linkedAccount'), [pluginAccountSections]);
+  // The rail gets the plugin's NAME and the hero its sentence — two different strings from the manifest,
+  // resolved through the plugin's own i18n. Feeding the description to both is what put a paragraph in the
+  // rail and left the hero repeating it.
   const userConfigSections = useMemo(() => (userPluginConfigs.data ?? []).map((detail) => ({
     id: pluginUserConfigSectionId(detail.name),
     detail,
     icon: Settings2,
-    label: detail.description ?? detail.name,
-    description: t.account.personalPluginConfig,
-  })), [t.account.personalPluginConfig, userPluginConfigs.data]);
+    label: userPluginConfigLabel(detail, locale),
+    description: userPluginConfigDescription(detail, locale) ?? t.account.personalPluginConfig,
+  })), [locale, t.account.personalPluginConfig, userPluginConfigs.data]);
   useEffect(() => {
     const accountId = parsePluginAccountSectionId(section);
     if (accountId) {

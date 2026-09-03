@@ -338,6 +338,10 @@ export interface ProfilePatch { name?: string; email?: string; default_exec?: st
 export interface CliSettings extends Partial<Record<PlatformLinkKey, string>> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; projectModelPreferences?: Record<string, { provider: string; model: string }>; advisorStyle: string; userInstructions?: string; personalityBody?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; fastMode?: boolean; serverDefault?: string; serverDefaultRoute?: { provider: string; providerLabel: string; model: string }; availableLinks?: PlatformLinkKey[]; revision?: number; pending?: boolean }
 export interface UserPluginConfigDetail {
   name: string;
+  /** Short English name for this plugin's per-account settings entry (manifest `userConfigLabel`), what
+   *  the Account rail calls it. Absent for a plugin that declares none — the rail then falls back to the
+   *  plugin name, never to `description`, which is a sentence and belongs in the panel. */
+  label?: string;
   description?: string;
   userConfigSchema: PluginConfigField[];
   config: Record<string, unknown>;
@@ -464,6 +468,8 @@ export interface PluginInfo {
 /** Localized overrides for a plugin's manifest strings, keyed by config-field key. */
 interface PluginI18n {
   description?: string;
+  /** Localized short name for the plugin's per-account settings entry (manifest `userConfigLabel`). */
+  userConfigLabel?: string;
   fields?: Record<string, { label?: string; hint?: string; options?: Record<string, string> }>;
 }
 
