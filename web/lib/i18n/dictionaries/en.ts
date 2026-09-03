@@ -10,6 +10,11 @@ export const en = {
     // differs between the server render and the client would be a hydration mismatch, and both key names
     // fit in one label.
     collapseShortcut: 'Ctrl / ⌘ + \\',
+    // Section headers over the navigation column's two regions, and the labels its new chrome needs.
+    sectionWork: 'Work',
+    sectionInstance: 'Instance',
+    instanceMenu: 'Instance menu',
+    runningAgents: 'Running agents',
     home: 'Home',
     chat: 'Chat',
     system: 'System',
@@ -1360,12 +1365,8 @@ export const en = {
     modelCount: '{n} model(s)',
     modelsAuto: 'Models listed automatically',
     keySet: 'Key set',
-    hostedSearchVerify: 'Verify tool search',
-    hostedSearchVerifying: 'Verifying…',
-    hostedSearchVerified: 'Tool search verified',
     hostedSearchUnsupported: 'Tool search unsupported',
     hostedSearchUnverified: 'Tool search not verified',
-    hostedSearchVerifyFailed: 'Tool search verification failed',
     hostedSearchSettings: 'Tool search settings',
     hostedSearchTitle: 'Native tool search',
     hostedSearchHelp: 'The provider searches the tool catalogue on its own server, so the full catalogue never travels in the prompt. Turned off, this provider falls back to the local ToolSearch, which finds the same tools but spends one extra model round on every lookup. Native search also requires “Defer external tools” to be on.',

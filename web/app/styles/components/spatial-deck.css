@@ -248,6 +248,24 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 .settings-row.plugin-config-risk-row .settings-row__trailing { flex-wrap: wrap; }
 .settings-row.plugin-config-risk-row .settings-row__control { flex: 1 1 100%; width: 100%; }
 .settings-row.plugin-config-risk-row .settings-row__status { white-space: normal; }
+/* PROVIDER RECORDS ALIGN ON A SHARED STATUS COLUMN. A provider row is a stacked record whose status
+   block was sized by its own content, so a long Azure endpoint pulled its URL left while a short relay
+   hugged the actions — every row started its value column at a different x and the card read as loose
+   rows instead of a table. `.brain-provider-row` (set by the provider call site, the same pattern as
+   `.plugin-config-risk-row` above) pins the block to one fixed width that holds the longest expected
+   endpoint URL, and the auto end margin absorbs the line's leftover space: the actions stay pinned
+   right on every row regardless of how many it carries, so the status column starts at the same x
+   everywhere. A longer URL truncates (its full text lives in the endpoint span's `title`) instead of
+   stretching, and `max-width` releases the width where the card itself is narrower. The rule lives
+   here rather than as an inline Tailwind class because the width belongs on the `.settings-row__status`
+   CELL, which SettingsRow renders — the cascade is the one source of truth for it. */
+.settings-row.brain-provider-row .settings-row__trailing .settings-row__status {
+  flex: none;
+  width: 26rem;
+  max-width: 100%;
+  min-width: 0;
+  margin-right: auto;
+}
 /* Legacy direct slots retain their tracks for plugin bundles compiled against the earlier anatomy. The
    descendant specificity intentionally matches the phone reset below, whose later rule must release it. */
 .settings-row__control { min-width: 0; grid-column: 2; }
@@ -359,6 +377,10 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
   .settings-row[data-trailing='stack'] .settings-row__actions { width: 100%; flex: 1 1 100%; }
   .settings-row[data-trailing='stack'] .settings-row__status { white-space: normal; }
   .settings-row[data-trailing='stack'] .settings-row__actions { justify-content: flex-start; }
+  /* Provider rows join the fold: the shared 26rem status column is a wide-card alignment device, and at
+     phone width every stacked status is the row's whole width again — the fixed width and the auto end
+     margin release. Same selector as the rule above so it wins the tie on sheet order. */
+  .settings-row.brain-provider-row .settings-row__trailing .settings-row__status { width: 100%; flex: 1 1 100%; margin-right: 0; }
   .spatial-identity { align-items: flex-start; flex-wrap: wrap; }
   .settings-model-row { padding-inline: 1rem; }
 }

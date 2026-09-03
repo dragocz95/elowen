@@ -70,8 +70,6 @@ const hostedMocks = vi.hoisted(() => ({
     models: { modelId: string; status: 'supported' | 'unsupported' | 'unverified'; checkedAt: number | null }[];
   }[] }>>()
     .mockResolvedValue({ providers: [] }),
-  probe: vi.fn<() => Promise<{ providerId: string; modelId: string; status: 'supported' | 'unsupported' | 'error'; reason: string; checkedAt: number }>>()
-    .mockResolvedValue({ providerId: 'azure', modelId: 'deployment', status: 'supported', reason: 'server_search_and_replay_ok', checkedAt: 1 }),
 }));
 
 /** One provider record of GET /brain/providers/hosted-tool-search/status, defaulted to the shape the
@@ -117,7 +115,6 @@ vi.mock('../../../lib/elowenClient', async (importOriginal) => {
       brainOauthFlow: oauthFlowMocks.flow,
       brainProviderProbe: probeMock.probe,
       brainHostedToolSearchStatus: hostedMocks.status,
-      brainHostedToolSearchProbe: hostedMocks.probe,
     },
   };
 });
@@ -136,7 +133,6 @@ beforeEach(() => {
   oauthFlowMocks.start.mockClear(); oauthFlowMocks.flow.mockClear(); oauthFlowMocks.pending.resolve = null;
   probeMock.probe.mockClear(); probeMock.pending.length = 0;
   hostedMocks.status.mockReset(); hostedMocks.status.mockResolvedValue({ providers: [] });
-  hostedMocks.probe.mockClear();
   (CONFIG.brain.providers as unknown[]).length = 0;
   CONFIG.brain.hiddenOauth.length = 0;
 });
@@ -179,39 +175,57 @@ describe('BrainSection — OAuth account model picker', () => {
     expect(icon?.querySelector('img')).toHaveAttribute('src', 'https://coresynth.io/favicon.ico');
   });
 
-  it('shows persisted Azure verification status and probes the exact configured deployment', async () => {
+  it('does not let an older hosted-status answer overwrite a newer one', async () => {
+    // Regression: the status effect and the post-save refresh share one generation counter, so a slow
+    // answer for an earlier request must never settle the hosted map after a newer one already did.
+    // (The row's hosted state is only visible inside the switch's popover, so the assertions read it there.)
     (CONFIG.brain.providers as unknown[]).push({
-      id: 'azure', label: 'Azure production', type: 'openai', api: 'openai-responses',
-      baseUrl: 'https://resource.openai.azure.com/openai/v1', models: ['deployment'], apiKeySet: true,
-    });
-    hostedMocks.status
-      .mockResolvedValueOnce({ providers: [hostedProvider('azure', { verifiable: true, effective: 'unverified', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] })] })
-      .mockResolvedValue({ providers: [hostedProvider('azure', { verifiable: true, models: [{ modelId: 'deployment', status: 'supported', checkedAt: 1 }] })] });
-
-    renderSection();
-    expect(await screen.findByText(en.brain.hostedSearchUnverified)).toBeInTheDocument();
-    // The status badge IS the verify control now, so it names the provider it would check rather than
-    // sitting beside a second button that said the same thing.
-    fireEvent.click(screen.getByRole('button', { name: `${en.brain.hostedSearchVerify}: Azure production` }));
-    await waitFor(() => expect(hostedMocks.probe).toHaveBeenCalledWith({ providerId: 'azure', modelId: 'deployment' }));
-    await waitFor(() => expect(screen.getAllByText(en.brain.hostedSearchVerified).length).toBeGreaterThan(0));
-  });
-
-  it('does not let an older status request overwrite a completed verification', async () => {
-    (CONFIG.brain.providers as unknown[]).push({
-      id: 'azure', label: 'Azure production', type: 'openai', api: 'openai-responses',
-      baseUrl: 'https://resource.openai.azure.com/openai/v1', models: ['deployment'], apiKeySet: true,
+      id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5'], apiKeySet: true,
     });
     let resolveInitial!: (value: { providers: HostedStatusProvider[] }) => void;
     hostedMocks.status
       .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
-      .mockResolvedValue({ providers: [hostedProvider('azure', { verifiable: true, models: [{ modelId: 'deployment', status: 'supported', checkedAt: 1 }] })] });
+      .mockResolvedValue({ providers: [hostedProvider('openai')] });
 
+    const { rerender } = render(<ToastProvider><BrainProvidersSection config={CONFIG as unknown as ElowenConfig} /></ToastProvider>, { wrapper: createWrapper().wrapper });
+    // A config save re-runs the status effect; its answer is the newer generation and must win.
+    rerender(<ToastProvider><BrainProvidersSection config={{ ...CONFIG, brain: { ...CONFIG.brain, providers: [...(CONFIG.brain.providers as unknown[])] } } as unknown as ElowenConfig} /></ToastProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: OpenAI` }));
+    const dialog = await screen.findByRole('dialog', { name: en.brain.hostedSearchTitle });
+    expect(within(dialog).getByText(en.brain.hostedSearchActive)).toBeInTheDocument();
+
+    await act(async () => resolveInitial({ providers: [hostedProvider('openai', { effective: 'unverified' })] }));
+    expect(within(dialog).getByText(en.brain.hostedSearchActive)).toBeInTheDocument();
+    expect(within(dialog).queryByText(en.brain.hostedSearchUnverified)).toBeNull();
+  });
+
+  it('aligns provider rows on a shared fixed-width status column', () => {
+    // Regression: the status block used to be sized by its own content, so a long Azure endpoint pushed
+    // its URL left while a short relay's hugged the actions — every row started its value column at a
+    // different x. The column is now a fixed width (`spatial-deck.css` → `.brain-provider-row`) that
+    // holds the longest expected URL; jsdom cannot measure the CSS layout, so this pins the hook the
+    // rule keys on — the same row class, hence the same column, on every provider — plus the endpoint's
+    // truncation and full-text title that let a longer URL clip instead of stretching the column.
+    (CONFIG.brain.providers as unknown[]).push(
+      { id: 'azure', label: 'Azure production', type: 'openai', api: 'openai-responses', baseUrl: 'https://resource.openai.azure.com/openai/v1', models: ['deployment'], apiKeySet: true },
+      { id: 'short', label: 'Short relay', type: 'openai', baseUrl: 'https://r.io/v1', models: ['m1'], apiKeySet: true },
+    );
     renderSection();
-    fireEvent.click(screen.getByRole('button', { name: `${en.brain.hostedSearchVerify}: Azure production` }));
-    await waitFor(() => expect(screen.getAllByText(en.brain.hostedSearchVerified).length).toBeGreaterThan(0));
-    await act(async () => resolveInitial({ providers: [hostedProvider('azure', { verifiable: true, effective: 'unverified', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] })] }));
-    expect(screen.queryByText(en.brain.hostedSearchUnverified)).not.toBeInTheDocument();
+    const azureRow = screen.getByText('Azure production').closest('.settings-row') as HTMLElement;
+    const shortRow = screen.getByText('Short relay').closest('.settings-row') as HTMLElement;
+    expect(azureRow).toHaveClass('brain-provider-row');
+    expect(shortRow).toHaveClass('brain-provider-row');
+    expect(azureRow.className).toBe(shortRow.className);
+    // Both status cells are the cells the fixed-width rule targets.
+    expect(azureRow.querySelectorAll('.settings-row__status')).toHaveLength(1);
+    expect(shortRow.querySelectorAll('.settings-row__status')).toHaveLength(1);
+    const azureUrl = within(azureRow).getByText('https://resource.openai.azure.com/openai/v1');
+    const shortUrl = within(shortRow).getByText('https://r.io/v1');
+    for (const span of [azureUrl, shortUrl]) {
+      expect(span).toHaveClass('truncate');
+      expect(span).toHaveAttribute('title', span.textContent);
+    }
   });
 
   it('offers the native tool search switch only where the daemon reports a hosted route', async () => {

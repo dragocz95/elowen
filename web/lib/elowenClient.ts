@@ -354,10 +354,9 @@ export const elowenClient = {
   brainOauthCatalog: (type: string) => req<{ models: string[] }>(`/brain/oauth/${encodeURIComponent(type)}/catalog`),
   brainProviderProbe: (body: { baseUrl: string; apiKey?: string; id?: string }) => req<{ models: string[] }>('/brain/providers/probe', { method: 'POST', body: JSON.stringify(body) }),
   /** Every provider the native (hosted) tool search can apply to, connected OAuth accounts included.
-   *  `enabled` is the operator switch, `verifiable` marks the Azure deployments a probe still has to prove,
-   *  and `effective` is what a session spawned right now would actually get. */
+   *  `enabled` is the operator switch, `verifiable` marks the Azure deployments whose native search the
+   *  daemon has not proven yet, and `effective` is what a session spawned right now would actually get. */
   brainHostedToolSearchStatus: () => req<{ providers: { providerId: string; enabled: boolean; verifiable: boolean; effective: 'active' | 'off' | 'unsupported' | 'unverified'; models: { modelId: string; status: 'supported' | 'unsupported' | 'unverified'; checkedAt: number | null }[] }[] }>('/brain/providers/hosted-tool-search/status'),
-  brainHostedToolSearchProbe: (body: { providerId: string; modelId: string }) => req<{ providerId: string; modelId: string; status: 'supported' | 'unsupported' | 'error'; reason: string; checkedAt: number }>('/brain/providers/hosted-tool-search/probe', { method: 'POST', body: JSON.stringify(body) }),
   brainOauthStart: (type: string) => req<OAuthFlowState>(`/brain/oauth/${encodeURIComponent(type)}/start`, { method: 'POST' }),
   brainOauthFlow: (id: string) => req<OAuthFlowState>(`/brain/oauth/flow/${encodeURIComponent(id)}`),
   brainOauthInput: (id: string, value: string) => req<{ ok: boolean }>(`/brain/oauth/flow/${encodeURIComponent(id)}/input`, json({ value })),
