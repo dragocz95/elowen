@@ -1,17 +1,10 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
-import { resetCapabilitiesCache, setCapabilities, TuiMainScreen } from '@earendil-works/pi-tui';
 import type { BrainEvent, BrainInlineArtifact, BrainInlineArtifactClosed } from '../../../src/brain/events.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import { BrainClient } from '../../../src/cli/chat/brainClient.js';
 import { ChatState } from '../../../src/cli/chat/chatState.js';
-import {
-  ArtifactThumbnail,
-  InlineArtifactCollection,
-  InlineArtifactFrameController,
-  InlineArtifactPresenter,
-  type InlineArtifactFrame,
-} from '../../../src/cli/chat/inlineArtifacts.js';
+import { InlineArtifactCollection } from '../../../src/cli/chat/inlineArtifacts.js';
 import { StreamCoordinator } from '../../../src/cli/chat/streamCoordinator.js';
 import { SnapshotHydrator } from '../../../src/cli/chat/snapshotHydrator.js';
 import { HydrationNoticeOwner } from '../../../src/cli/chat/hydrationNoticeOwner.js';
@@ -19,49 +12,9 @@ import type { Flows } from '../../../src/cli/chat/flows.js';
 import type { ChatApplicationActions } from '../../../src/cli/chat/chatCapabilities.js';
 import { TurnRenderer } from '../../../src/cli/chat/turnRenderer.js';
 import { ChatViewport } from '../../../src/cli/chat/chatViewport.js';
-import { resolveCliTerminalCapabilities } from '../../../src/cli/chat/terminalCapabilities.js';
 import type { ChatTurn } from '../../../src/brain/transcript.js';
 
 beforeAll(() => { initTheme(); });
-afterEach(() => {
-  vi.useRealTimers();
-  resetCapabilitiesCache();
-});
-
-const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6nxoAAAAASUVORK5CYII=';
-const JPEG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8Bf//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEABj8Cf//Z';
-const LARGE_PNG = (() => {
-  const data = Buffer.from(PNG, 'base64');
-  data.writeUInt32BE(800, 16);
-  data.writeUInt32BE(600, 20);
-  return data.toString('base64');
-})();
-const isImageLine = (line: string): boolean => line.includes('\x1b_G') || line.includes('\x1b]1337;File=');
-
-function renderMainScreen(component: { render: (width: number) => string[]; invalidate: () => void }): string {
-  let output = '';
-  const terminal = {
-    columns: 80,
-    rows: 24,
-    kittyProtocolActive: false,
-    start: () => {},
-    stop: () => {},
-    drainInput: async () => {},
-    write: (data: string) => { output += data; },
-    moveBy: () => {},
-    hideCursor: () => {},
-    showCursor: () => {},
-    clearLine: () => {},
-    clearFromCursor: () => {},
-    clearScreen: () => {},
-    setTitle: () => {},
-    setProgress: () => {},
-  } as unknown as ConstructorParameters<typeof TuiMainScreen>[0];
-  const tui = new TuiMainScreen(terminal);
-  tui.addChild(component);
-  tui.renderNow();
-  return output;
-}
 
 const openArtifact = (patch: Partial<BrainInlineArtifact> = {}): BrainInlineArtifact => ({
   id: 'preview',
@@ -87,6 +40,11 @@ const actions = (): ChatApplicationActions => ({
   render: () => {}, renderForced: () => {}, refreshRateLimits: async () => {},
   onTurnSettled: () => {}, onTurnActive: () => {}, refreshMeta: async () => {},
   invalidateAsyncState: () => {}, quit: () => {}, suspendTerminal: () => {}, resumeTerminal: () => {},
+});
+
+const toolTurn = (...ids: string[]): ChatTurn => ({
+  role: 'elowen', streaming: false,
+  segments: [{ kind: 'tools', items: ids.map((id, index) => ({ name: `Tool${index}`, id })) }],
 });
 
 describe('inline artifact state and hydration', () => {
@@ -132,7 +90,6 @@ describe('inline artifact state and hydration', () => {
   });
 
   it('repaints one anchored old turn without walking its long settled suffix', () => {
-    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
     const history = [
       { role: 'assistant' as const, text: '', segments: [{ kind: 'tool' as const, id: 'call-browser', name: 'Browser' }] },
       ...Array.from({ length: 1_999 }, (_, index) => ({ role: 'assistant' as const, text: `settled ${index}` })),
@@ -141,7 +98,6 @@ describe('inline artifact state and hydration', () => {
     const collection = new InlineArtifactCollection([openArtifact()]);
     const viewport = new ChatViewport({
       transcript, inlineArtifacts: collection,
-      renderInlineArtifacts: (toolCallId) => collection.forToolCall(toolCallId).map((artifact) => artifact.fallback),
       notice: '', modelName: '', thinkingSeconds: 0,
     }, getMarkdownTheme(), () => 18, () => 1, () => 80);
     viewport.render(80);
@@ -158,305 +114,76 @@ describe('inline artifact state and hydration', () => {
   });
 });
 
-describe('artifact media stream and latest-frame controller', () => {
-  it('uses the bearer token, accepts only frame JPEG/PNG events, and reconnects after backoff', async () => {
-    vi.useFakeTimers();
-    let attempts = 0;
-    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
-      attempts++;
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          if (attempts === 1) {
-            controller.enqueue(new TextEncoder().encode(
-              'event: status\ndata: {"fallback":"loading"}\n\n'
-              + `event: frame\ndata: {"data":"${PNG}","mimeType":"image/png"}\n\n`,
-            ));
-          }
-          controller.close();
-        },
-      });
-      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer secret');
-      return new Response(body, { status: 200 });
-    }) as unknown as typeof fetch;
-    const client = new BrainClient({ base: 'http://daemon', token: 'secret', fetchImpl });
-    const ac = new AbortController();
-    const frames: InlineArtifactFrame[] = [];
-    const streaming = client.streamArtifactMedia('/plugins/browser/api/live', (frame) => frames.push(frame), ac.signal, 1_000);
-
-    await vi.advanceTimersByTimeAsync(0);
-    expect(frames).toEqual([{ data: PNG, mimeType: 'image/png' }]);
-    expect(attempts).toBe(1);
-    await vi.advanceTimersByTimeAsync(999);
-    expect(attempts).toBe(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(attempts).toBe(2);
-    ac.abort();
-    await streaming;
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it('waits far longer before knocking again on a stream the plugin refused', async () => {
-    // A refused viewer that reconnects at the normal cadence takes the slot the moment another viewer
-    // blinks, and the two then trade it back and forth: neither ever sees a frame.
-    vi.useFakeTimers();
-    let attempts = 0;
-    const fetchImpl = vi.fn(async () => {
-      attempts++;
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(
-            'event: session\ndata: {"state":"agent"}\n\n'
-            + 'event: rejected\ndata: {"reason":"viewer_limit","message":"Browser viewer limit reached."}\n\n',
-          ));
-          controller.close();
-        },
-      });
-      return new Response(body, { status: 200 });
-    }) as unknown as typeof fetch;
-    const client = new BrainClient({ base: 'http://daemon', token: 'secret', fetchImpl });
-    const ac = new AbortController();
-    const frames: InlineArtifactFrame[] = [];
-    const streaming = client.streamArtifactMedia('/plugins/browser/api/live', (frame) => frames.push(frame), ac.signal, 1_000);
-
-    await vi.advanceTimersByTimeAsync(0);
-    expect(attempts).toBe(1);
-    expect(frames).toEqual([]);
-    await vi.advanceTimersByTimeAsync(14_999);
-    expect(attempts).toBe(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(attempts).toBe(2);
-    ac.abort();
-    await streaming;
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it('keeps a one-frame queue, publishes at most 2 FPS, and aborts/clears on stop', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    let emit!: (frame: InlineArtifactFrame) => void;
-    let signal!: AbortSignal;
-    const stream = vi.fn((_path: string, onFrame: (frame: InlineArtifactFrame) => void, streamSignal: AbortSignal) => {
-      emit = onFrame;
-      signal = streamSignal;
-      return new Promise<void>((resolve) => streamSignal.addEventListener('abort', () => resolve(), { once: true }));
-    });
-    const published: InlineArtifactFrame[] = [];
-    const controller = new InlineArtifactFrameController('/live', stream, (frame) => published.push(frame));
-    const first = { data: PNG, mimeType: 'image/png' as const };
-    const second = { data: JPEG, mimeType: 'image/jpeg' as const };
-    const latest = { data: `${PNG}latest`, mimeType: 'image/png' as const };
-
-    emit(first);
-    emit(second);
-    emit(latest);
-    expect(published).toEqual([first]);
-    await vi.advanceTimersByTimeAsync(499);
-    expect(published).toEqual([first]);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(published).toEqual([first, latest]);
-
-    emit(second);
-    controller.stop();
-    expect(signal.aborted).toBe(true);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(published).toEqual([first, latest]);
-    expect(vi.getTimerCount()).toBe(0);
-  });
-});
-
-describe('artifact terminal rendering', () => {
-  it('reuses the Kitty image id across new Image instances, but never assigns one for iTerm2', () => {
-    setCapabilities({ images: 'kitty', trueColor: true, hyperlinks: true });
-    const thumbnail = new ArtifactThumbnail();
-    const bounds = { maxWidthCells: 30, maxHeightCells: 8 };
-    thumbnail.update({ data: PNG, mimeType: 'image/png' }, 'kitty', bounds);
-    thumbnail.render(40, 'kitty', bounds);
-    const kittyId = thumbnail.getImageId();
-    expect(kittyId).toBeTypeOf('number');
-
-    thumbnail.update({ data: JPEG, mimeType: 'image/jpeg' }, 'kitty', bounds);
-    thumbnail.render(40, 'kitty', bounds);
-    expect(thumbnail.getImageId()).toBe(kittyId);
-
-    setCapabilities({ images: 'iterm2', trueColor: true, hyperlinks: true });
-    thumbnail.update({ data: PNG, mimeType: 'image/png' }, 'iterm2', bounds);
-    thumbnail.render(40, 'iterm2', bounds);
-    expect(thumbnail.getImageId()).toBeUndefined();
-  });
-
-  it('renders VS Code iTerm image rows plus fallback through the main-screen renderer, while off stays text-only', () => {
-    const detected = { images: null, trueColor: true, hyperlinks: true } as const;
-    setCapabilities(resolveCliTerminalCapabilities(detected, {
-      TERM: 'xterm-256color',
-      TERM_PROGRAM: 'vscode',
-      COLORTERM: 'truecolor',
-      ELOWEN_CLI_IMAGES: 'auto',
-    }));
-    let emit!: (frame: InlineArtifactFrame) => void;
-    const stream = vi.fn((_path: string, onFrame: (frame: InlineArtifactFrame) => void, signal: AbortSignal) => {
-      emit = onFrame;
-      return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
-    });
-    const presenter = new InlineArtifactPresenter({
-      collection: new InlineArtifactCollection([openArtifact()]),
-      stream,
-      maxHeightCells: () => 8,
-      onInvalidate: () => {},
-    });
-    emit({ data: LARGE_PNG, mimeType: 'image/png' });
-    const imageOutput = renderMainScreen({
-      render: (width) => presenter.render('call-browser', width),
-      invalidate: () => {},
-    });
-    expect(imageOutput).toContain('Opening page');
-    expect(imageOutput).toContain('\x1b]1337;File=');
-    expect(imageOutput).toMatch(/\x1b\[\d+A\x1b]1337;File=/);
-    presenter.stop();
-
-    setCapabilities(resolveCliTerminalCapabilities(detected, {
-      TERM: 'xterm-256color',
-      TERM_PROGRAM: 'vscode',
-      ELOWEN_CLI_IMAGES: 'off',
-    }));
-    const disabledStream = vi.fn(async () => {});
-    const disabled = new InlineArtifactPresenter({
-      collection: new InlineArtifactCollection([openArtifact()]),
-      stream: disabledStream,
-      maxHeightCells: () => 8,
-      onInvalidate: () => {},
-    });
-    const fallbackOutput = renderMainScreen({
-      render: (width) => disabled.render('call-browser', width),
-      invalidate: () => {},
-    });
-    expect(fallbackOutput).toContain('Opening page');
-    expect(fallbackOutput).not.toContain('\x1b]1337;File=');
-    expect(disabledStream).not.toHaveBeenCalled();
-    disabled.stop();
-  });
-
-  it('shows the changing artifact fallback and does not open media SSE without an image protocol', () => {
-    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+describe('artifact transcript rows', () => {
+  it('shows the changing artifact fallback under its tool call and drops the row when it closes', () => {
     const collection = new InlineArtifactCollection([openArtifact()]);
-    const stream = vi.fn(async () => {});
-    const presenter = new InlineArtifactPresenter({
-      collection, stream, maxHeightCells: () => 8, onInvalidate: () => {},
-    });
-    expect(presenter.render('call-browser', 60).join('\n')).toContain('Opening page');
-    expect(stream).not.toHaveBeenCalled();
-
-    collection.apply(openArtifact({ fallback: 'Clicking Sign in…' }));
-    expect(presenter.render('call-browser', 60).join('\n')).toContain('Clicking Sign in');
-    collection.apply(closeArtifact());
-    expect(presenter.render('call-browser', 60)).toEqual([]);
-    presenter.stop();
-  });
-
-  it('requests an iTerm2 full redraw and leaves image protocol rows untouched by viewport chrome', () => {
-    let emit!: (frame: InlineArtifactFrame) => void;
-    const stream = vi.fn((_path: string, onFrame: (frame: InlineArtifactFrame) => void, signal: AbortSignal) => {
-      emit = onFrame;
-      return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
-    });
-    const collection = new InlineArtifactCollection([openArtifact()]);
-    setCapabilities({ images: 'iterm2', trueColor: true, hyperlinks: true });
-    const invalidate = vi.fn();
-    const iterm = new InlineArtifactPresenter({
-      collection, stream, maxHeightCells: () => 8,
-      onInvalidate: (toolCallId, fullRedraw) => invalidate(toolCallId, fullRedraw),
-    });
-    emit({ data: PNG, mimeType: 'image/png' });
-    expect(invalidate).toHaveBeenLastCalledWith('call-browser', true);
-    iterm.stop();
-
-    setCapabilities({ images: 'kitty', trueColor: true, hyperlinks: true });
-    let kittyEmit!: (frame: InlineArtifactFrame) => void;
-    const kittyStream = vi.fn((_path: string, onFrame: (frame: InlineArtifactFrame) => void, signal: AbortSignal) => {
-      kittyEmit = onFrame;
-      return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
-    });
-    const transcript = new TranscriptModel([
-      { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, id: 'call-browser', name: 'Browser' }] },
-    ]);
-    let viewport!: ChatViewport;
-    const kitty = new InlineArtifactPresenter({
-      collection, stream: kittyStream, maxHeightCells: () => 8,
-      onInvalidate: (toolCallId) => viewport?.invalidateToolCall(toolCallId),
-    });
-    viewport = new ChatViewport({
-      transcript, inlineArtifacts: collection,
-      renderInlineArtifacts: (toolCallId, width) => kitty.render(toolCallId, width),
-      notice: '', modelName: '', thinkingSeconds: 0,
-    }, getMarkdownTheme(), () => 18, () => 1, () => 80);
-    viewport.render(80);
-    kittyEmit({ data: PNG, mimeType: 'image/png' });
-    const imageLine = viewport.render(80).find((line) => isImageLine(line));
-    expect(imageLine).toBeDefined();
-    expect(imageLine).not.toMatch(/│$/);
-    kitty.stop();
-  });
-
-  it('leaves the rows an iTerm2 image paints over free of padding and scrollbar', () => {
-    // Seen in VS Code: the thumbnail painted once and vanished. pi-tui draws a multi-row iTerm2 image
-    // UP over the empty lines before it, and the viewport padded those lines and hung the scrollbar on
-    // them. The moment the transcript grew, the scrollbar thumb moved, the rows changed, and the
-    // differential renderer erased them — image cells included. A static page never paints it back.
-    setCapabilities({ images: 'iterm2', trueColor: true, hyperlinks: true });
-    const collection = new InlineArtifactCollection([openArtifact()]);
-    let emit!: (frame: InlineArtifactFrame) => void;
-    const stream = vi.fn((_path: string, onFrame: (frame: InlineArtifactFrame) => void, signal: AbortSignal) => {
-      emit = onFrame;
-      return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
-    });
-    const transcript = new TranscriptModel([
-      { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, id: 'call-browser', name: 'Browser' }] },
-    ]);
-    let viewport!: ChatViewport;
-    const presenter = new InlineArtifactPresenter({
-      collection, stream, maxHeightCells: () => 8,
-      onInvalidate: (toolCallId) => viewport?.invalidateToolCall(toolCallId),
-    });
-    viewport = new ChatViewport({
-      transcript, inlineArtifacts: collection,
-      renderInlineArtifacts: (toolCallId, width) => presenter.render(toolCallId, width),
-      notice: '', modelName: '', thinkingSeconds: 0,
-    }, getMarkdownTheme(), () => 18, () => 1, () => 80);
-    viewport.render(80);
-    emit({ data: PNG, mimeType: 'image/png' });
-    const lines = viewport.render(80);
-    const imageIndex = lines.findIndex((line) => isImageLine(line));
-    expect(imageIndex).toBeGreaterThan(0);
-    const rowsAbove = Number(/^\x1b\[(\d+)A/.exec(lines[imageIndex])![1]);
-    expect(rowsAbove).toBeGreaterThan(0);
-    for (let row = imageIndex - rowsAbove; row < imageIndex; row++) expect(lines[row]).toBe('');
-    // A row outside the image still carries the viewport chrome, so this is not a blanket exemption.
-    expect(lines[imageIndex - rowsAbove - 1]).not.toBe('');
-    presenter.stop();
-  });
-
-  it('places each artifact immediately after its anchored tool call', () => {
-    const turn: ChatTurn = {
-      role: 'elowen', streaming: false,
-      segments: [{ kind: 'tools', items: [
-        { name: 'FirstTool', id: 'call-1' },
-        { name: 'SecondTool', id: 'call-2' },
-      ] }],
-    };
-    const rows = new TurnRenderer(getMarkdownTheme()).render(turn, 0, 80, {
+    const renderer = new TurnRenderer(getMarkdownTheme());
+    const rows = (): string => renderer.render(toolTurn('call-browser'), 0, 80, {
       showThoughts: true,
       thinkingSeconds: 0,
       composingMarkerReady: false,
       spinnerFrame: 0,
       expandedThoughts: new Set(),
       expandedTools: new Set(),
-      renderInlineArtifacts: (toolCallId) => [`artifact:${toolCallId}`],
+      inlineArtifacts: collection,
+    }).map((row) => row.line).join('\n');
+
+    expect(rows()).toContain('Opening page');
+    collection.apply(openArtifact({ fallback: 'Clicking Sign in…' }));
+    expect(rows()).toContain('Clicking Sign in');
+    collection.apply(closeArtifact());
+    expect(rows()).not.toContain('Clicking Sign in');
+  });
+
+  it('falls back to the view name when the plugin sends an empty fallback', () => {
+    const collection = new InlineArtifactCollection([openArtifact({ fallback: '   ' })]);
+    const rows = new TurnRenderer(getMarkdownTheme()).render(toolTurn('call-browser'), 0, 80, {
+      showThoughts: true,
+      thinkingSeconds: 0,
+      composingMarkerReady: false,
+      spinnerFrame: 0,
+      expandedThoughts: new Set(),
+      expandedTools: new Set(),
+      inlineArtifacts: collection,
+    }).map((row) => row.line).join('\n');
+    expect(rows).toContain('browser.preview');
+  });
+
+  it('places each artifact immediately after its anchored tool call', () => {
+    const collection = new InlineArtifactCollection([
+      openArtifact({ id: 'first', toolCallId: 'call-1', fallback: 'first artifact' }),
+      openArtifact({ id: 'second', toolCallId: 'call-2', fallback: 'second artifact' }),
+    ]);
+    const rows = new TurnRenderer(getMarkdownTheme()).render(toolTurn('call-1', 'call-2'), 0, 80, {
+      showThoughts: true,
+      thinkingSeconds: 0,
+      composingMarkerReady: false,
+      spinnerFrame: 0,
+      expandedThoughts: new Set(),
+      expandedTools: new Set(),
+      inlineArtifacts: collection,
     }).map((row) => row.line);
-    const firstTool = rows.findIndex((row) => row.includes('FirstTool'));
-    const firstArtifact = rows.indexOf('artifact:call-1');
-    const secondTool = rows.findIndex((row) => row.includes('SecondTool'));
-    const secondArtifact = rows.indexOf('artifact:call-2');
+    const firstTool = rows.findIndex((row) => row.includes('Tool0'));
+    const firstArtifact = rows.findIndex((row) => row.includes('first artifact'));
+    const secondTool = rows.findIndex((row) => row.includes('Tool1'));
+    const secondArtifact = rows.findIndex((row) => row.includes('second artifact'));
     expect(firstTool).toBeLessThan(firstArtifact);
     expect(firstArtifact).toBeLessThan(secondTool);
     expect(secondTool).toBeLessThan(secondArtifact);
+  });
+
+  it('never emits a terminal image protocol sequence for an artifact carrying live media', () => {
+    const collection = new InlineArtifactCollection([openArtifact()]);
+    const transcript = new TranscriptModel([
+      { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, id: 'call-browser', name: 'Browser' }] },
+    ]);
+    const viewport = new ChatViewport({
+      transcript, inlineArtifacts: collection,
+      notice: '', modelName: '', thinkingSeconds: 0,
+    }, getMarkdownTheme(), () => 18, () => 1, () => 80);
+    const lines = viewport.render(80).join('\n');
+    expect(lines).toContain('Opening page');
+    expect(lines).not.toContain('\x1b]1337;File=');
+    expect(lines).not.toContain('\x1b_G');
   });
 });

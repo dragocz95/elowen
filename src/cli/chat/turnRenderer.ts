@@ -11,6 +11,7 @@ import { prettyCwd } from './projectDir.js';
 import { activeKeymap } from './keys.js';
 import { composingLabel, type ComposeLocale } from './composeLabels.js';
 import { settledTurnMeta } from './composeLines.js';
+import type { InlineArtifactCollection } from './inlineArtifacts.js';
 
 export const TOOL_INDENT = '    ';
 const TOOL_OUTPUT_INDENT = '      ';
@@ -49,8 +50,8 @@ export interface TurnRenderOptions {
   spinnerFrame: number;
   /** Locale for the localized composing-tool action label. Defaults to English when omitted. */
   locale?: ComposeLocale;
-  /** Generic transcript sidecar rows anchored to an exact durable tool call id. */
-  renderInlineArtifacts?: (toolCallId: string, width: number) => string[];
+  /** Durable plugin artifacts, rendered as one textual row under the tool call each is anchored to. */
+  inlineArtifacts?: InlineArtifactCollection;
   expandedThoughts: ReadonlySet<string>;
   expandedTools: ReadonlySet<string>;
 }
@@ -266,7 +267,10 @@ export class TurnRenderer {
           }
           for (const member of group.members ?? [item]) {
             if (!member.id) continue;
-            for (const line of options.renderInlineArtifacts?.(member.id, width) ?? []) add(line);
+            for (const artifact of options.inlineArtifacts?.forToolCall(member.id) ?? []) {
+              const fallback = terminalInlineText(artifact.fallback).trim() || artifact.view;
+              add(`${TOOL_OUTPUT_INDENT}${color.dim(truncateToWidth(fallback, Math.max(1, width - 6), '…'))}`);
+            }
           }
         }
         continue;

@@ -20,6 +20,13 @@ All notable changes to Elowen are documented here. The format loosely follows
   projection of the host's own visible text — newest assistant turn, latest text segment, whitespace-collapsed
   and capped at 240 characters — and carries no tool payloads, hidden reasoning, system content or history.
 
+### Removed
+
+- The CLI no longer paints inline artifact media in the terminal, so the live view is a web-only surface.
+  The transcript still shows each artifact as its textual fallback row under the tool call it is anchored
+  to. Removed with the thumbnail: the Kitty/iTerm2 image renderer, the artifact media SSE client, the
+  viewport's image-row exceptions, and the `ELOWEN_CLI_IMAGES` opt-in.
+
 ## [0.28.25] - 2026-09-02
 
 ### Added

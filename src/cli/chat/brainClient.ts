@@ -14,7 +14,6 @@ import {
 } from '../../brain/session/liveEventReplay.js';
 
 export type BrainStreamFrame = BrainEvent | BrainStreamSnapshot;
-export interface ArtifactMediaFrame { data: string; mimeType: 'image/jpeg' | 'image/png' }
 
 /** The daemon writes SSE keep-alive bytes every 30 s. Two missed keep-alives plus headroom means the
  * connection is half-open: abort only this fetch so the stable bound stream can reconnect and hydrate. */
@@ -157,9 +156,6 @@ export function parseSse(buffer: string): { frames: { event?: string; id?: strin
 
 /** Abort-aware reconnect delay. The listener and timer are disposed regardless of which side wins, so
  * stopping a TUI never waits for (or leaks) a backoff timer. */
-/** How long a viewer the plugin turned away waits before asking again. */
-const REFUSED_STREAM_BACKOFF_MS = 15_000;
-
 function reconnectDelay(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise<void>((resolve) => {
@@ -798,59 +794,6 @@ export class BrainClient {
     });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/subagent/send`);
-  }
-
-  /** Stream transient media from a host-validated artifact path. The bearer token is reused only for a
-   * root-relative path on this daemon, so an artifact payload can never redirect credentials elsewhere.
-   * Only `event: frame` JPEG/PNG payloads reach the renderer; status/action events stay on the ordinary
-   * inline_artifact channel where they update the durable textual fallback. */
-  async streamArtifactMedia(
-    path: string,
-    onFrame: (frame: ArtifactMediaFrame) => void,
-    signal: AbortSignal,
-    backoffMs = 1000,
-  ): Promise<void> {
-    if (!path.startsWith('/') || path.startsWith('//')) throw new Error('artifact media path must be root-relative');
-    while (!signal.aborted) {
-      const attempt = new AbortController();
-      const abortAttempt = (): void => attempt.abort(signal.reason);
-      signal.addEventListener('abort', abortAttempt, { once: true });
-      if (signal.aborted) abortAttempt();
-      // A stream the plugin refused (the session already has its full count of viewers) ends right after
-      // its opening snapshot. Reconnecting at the normal cadence would knock on that door every second and,
-      // whenever another viewer blinked, take its place — the two then trade the slot back and forth.
-      let refused = false;
-      try {
-        const res = await this.f(`${this.o.base}${path}`, { headers: this.headers(), signal: attempt.signal });
-        if (res.status === 401) throw new Unauthorized();
-        if (!res.ok || !res.body) throw new Error(`elowen artifact ${res.status} on ${path}`);
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const parsed = parseSse(buffer);
-          buffer = parsed.rest;
-          for (const frame of parsed.frames) {
-            if (frame.event === 'rejected') { refused = true; continue; }
-            if (frame.event !== 'frame') continue;
-            try {
-              const payload = JSON.parse(frame.data) as { data?: unknown; mimeType?: unknown };
-              if (typeof payload.data !== 'string' || !payload.data) continue;
-              if (payload.mimeType !== 'image/jpeg' && payload.mimeType !== 'image/png') continue;
-              onFrame({ data: payload.data, mimeType: payload.mimeType });
-            } catch { /* malformed plugin frame */ }
-          }
-        }
-      } catch (error) {
-        if (error instanceof Unauthorized || signal.aborted) throw error;
-      } finally {
-        signal.removeEventListener('abort', abortAttempt);
-      }
-      if (!signal.aborted) await reconnectDelay(refused ? Math.max(backoffMs, REFUSED_STREAM_BACKOFF_MS) : backoffMs, signal);
-    }
   }
 
   /** Open the SSE stream and deliver each BrainEvent to `onEvent` until `signal` aborts. Follows the
