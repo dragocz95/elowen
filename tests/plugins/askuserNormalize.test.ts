@@ -4,10 +4,34 @@ import { join } from 'node:path';
 const repoRoot = join(__dirname, '..', '..');
 
 interface Normalized { question: string; header: string; multiSelect: boolean; custom: boolean; options: { label: string; description?: string; preview?: string }[] }
+interface RegisteredTool {
+  parameters: { properties: { questions: { items: { properties: { question: { description?: string }; options: { description?: string } } } } } };
+}
 type NormalizeFn = (q: unknown) => Normalized;
 type FormatFn = (questions: { question: string }[], answers: unknown) => string;
+type RegisterFn = (ctx: unknown) => void;
 
-const load = async () => await import(join(repoRoot, 'plugins/askuser/index.mjs')) as { normalizeQuestion: NormalizeFn; formatAnswers: FormatFn };
+const load = async () => await import(join(repoRoot, 'plugins/askuser/index.mjs')) as {
+  normalizeQuestion: NormalizeFn;
+  formatAnswers: FormatFn;
+  register: RegisterFn;
+};
+
+describe('AskUserQuestion — schema guidance', () => {
+  it('asks for a specific question and distinct single-select choices', async () => {
+    const tools: RegisteredTool[] = [];
+    const { register } = await load();
+    register({
+      registerTool: (tool: RegisteredTool) => tools.push(tool),
+      registerSystemPromptFragment: () => undefined,
+      logger: { info: () => undefined },
+    });
+    const properties = tools[0]!.parameters.properties.questions.items.properties;
+    expect(properties.question.description).toContain('ending with "?"');
+    expect(properties.options.description).toContain('distinct choices');
+    expect(properties.options.description).toContain('mutually exclusive');
+  });
+});
 
 describe('AskUserQuestion — forgiving question normalization', () => {
   it('accepts the minimal form (bare string options, no header/multiple)', async () => {
