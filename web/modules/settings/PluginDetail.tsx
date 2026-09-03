@@ -1,10 +1,10 @@
 'use client';
-import { Activity as ReactActivity, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Activity as ReactActivity, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft, Check, Circle, Settings2, SlidersHorizontal, Sparkles, Activity, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { LoadingState, ErrorState } from '../../components/ui/states';
-import { Segmented } from '../../components/ui/Segmented';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
+import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { MotionReveal } from '../../components/ui/Motion';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePluginUi } from '../../lib/queries';
@@ -21,7 +21,7 @@ import { PluginPermissionsPanel } from './PluginPermissionsPanel';
 import { PluginDataPanel } from './PluginDataPanel';
 import { PluginLogsPanel } from './PluginLogsPanel';
 import { usePluginConfigDraft } from '../../lib/usePluginConfigDraft';
-import { SettingsGroup, SettingsState, SettingsToolbar } from '../../components/ui/SettingsSurface';
+import { SettingsGroup, SettingsState } from '../../components/ui/SettingsSurface';
 
 const CORE_TABS = ['setup', 'behavior', 'capabilities', 'activity', 'advanced'] as const;
 /** The workspace's own tabs, plus one per plugin-contributed section placed here. A contributed id is
@@ -45,7 +45,7 @@ function WorkspacePanel({ id, active, visited, children }: {
   );
 }
 
-function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, uiEntry, onBack }: {
+function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, uiEntry, uiListingLoaded, onBack }: {
   name: string;
   detail: PluginDetailData;
   contributions: PluginContributions | undefined;
@@ -53,6 +53,8 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
   hookExecutions: PluginHookExecutions | undefined;
   /** This plugin's row of the /plugins/ui listing, when it ships a browser bundle. */
   uiEntry: PluginUiListing | undefined;
+  /** Distinguishes a loaded listing with no matching section from the listing still being pending. */
+  uiListingLoaded: boolean;
   onBack: () => void;
 }) {
   const { t, locale } = useTranslation();
@@ -78,7 +80,8 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
     () => (uiEntry?.settings ?? []).filter((s) => s.placement === 'pluginDetail'),
     [uiEntry],
   );
-  const [tab, setTab] = useState<WorkspaceTab>(missingRequired.length ? 'setup' : 'behavior');
+  const fallbackTab: WorkspaceTab = missingRequired.length ? 'setup' : 'behavior';
+  const [tab, setTab] = useState<WorkspaceTab>(fallbackTab);
   const [visitedTabs, setVisitedTabs] = useState<Set<WorkspaceTab>>(() => new Set([tab]));
   useEffect(() => {
     setVisitedTabs((current) => current.has(tab) ? current : new Set(current).add(tab));
@@ -95,34 +98,74 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
   ])), [detailSections]);
   const activeSectionSave = tab.startsWith('section:') ? sectionSave[tab.slice('section:'.length)] : undefined;
 
-  // `#plugin-activity` etc. makes a workspace tab shareable without changing the existing settings URL.
-  // The listing arrives after mount, so a contributed section is matched once it is actually known —
-  // a link to a section tab must survive the round trip that tells the workspace the section exists.
+  const replaceTabHash = useCallback((value: WorkspaceTab) => {
+    const url = new URL(window.location.href);
+    url.hash = `plugin-${value}`;
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+  // `#plugin-activity` etc. makes a workspace tab shareable. Core tabs can be validated immediately, but
+  // contributed sections exist only after /plugins/ui resolves: preserving that pending hash is what lets
+  // a reload of `#plugin-section:runtime` land on Runtime instead of being canonicalized to Behavior first.
   useEffect(() => {
-    const hash = window.location.hash.replace('#plugin-', '');
-    if ((CORE_TABS as readonly string[]).includes(hash)) setTab(hash as WorkspaceTab);
-    else if (detailSections.some((s) => sectionTabId(s.id) === hash)) setTab(hash as WorkspaceTab);
-  }, [detailSections]);
+    const applyHash = () => {
+      // Parent history navigation can remove `plugin=` before React unmounts this workspace. Ignore that
+      // popstate so the outgoing detail cannot stamp its fallback hash onto the plugin list entry.
+      if (window.location.pathname === '/settings' && new URLSearchParams(window.location.search).get('plugin') !== name) return;
+      const rawHash = window.location.hash;
+      const value = rawHash.startsWith('#plugin-') ? rawHash.slice('#plugin-'.length) : '';
+      if ((CORE_TABS as readonly string[]).includes(value)) {
+        setTab(value as WorkspaceTab);
+        return;
+      }
+      if (value.startsWith('section:')) {
+        if (!uiListingLoaded) return;
+        if (detailSections.some((section) => sectionTabId(section.id) === value)) {
+          setTab(value as WorkspaceTab);
+          return;
+        }
+      }
+      setTab(fallbackTab);
+      if (value !== fallbackTab) replaceTabHash(fallbackTab);
+    };
+    applyHash();
+    window.addEventListener('popstate', applyHash);
+    window.addEventListener('hashchange', applyHash);
+    return () => {
+      window.removeEventListener('popstate', applyHash);
+      window.removeEventListener('hashchange', applyHash);
+    };
+  }, [detailSections, fallbackTab, name, replaceTabHash, uiListingLoaded]);
   const changeTab = (next: string) => {
     const value = next as WorkspaceTab;
     setTab(value);
-    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#plugin-${value}`);
+    replaceTabHash(value);
   };
 
   const pluginDescription = tr?.description ?? detail.description;
   const toolCount = detail.provides.tools?.length ?? 0;
   const platformCount = detail.provides.platforms?.length ?? 0;
-  const tabs = [
-    { value: 'setup', label: t.pluginDetail.tabSetup, icon: Settings2 },
+  const sections = [
+    { id: 'setup', label: t.pluginDetail.tabSetup, icon: Settings2 },
     // Right after Setup, ahead of the workspace's own tuning tabs: a contributed section reports what the
     // plugin is DOING — whether it can run at all — which is the second question an operator asks after
     // "is it configured", not something to find past Advanced.
-    ...detailSections.map((s) => ({ value: sectionTabId(s.id), label: s.label, icon: pluginLucideIcon(s.icon) })),
-    { value: 'behavior', label: t.pluginDetail.tabBehavior, icon: SlidersHorizontal },
-    { value: 'capabilities', label: t.pluginDetail.tabCapabilities, icon: ShieldCheck },
-    { value: 'activity', label: t.pluginDetail.tabActivity, icon: Activity },
-    { value: 'advanced', label: t.pluginDetail.tabAdvanced, icon: Sparkles },
+    ...detailSections.map((s) => ({ id: sectionTabId(s.id), label: s.label, icon: pluginLucideIcon(s.icon) })),
+    { id: 'behavior', label: t.pluginDetail.tabBehavior, icon: SlidersHorizontal },
+    { id: 'capabilities', label: t.pluginDetail.tabCapabilities, icon: ShieldCheck },
+    { id: 'activity', label: t.pluginDetail.tabActivity, icon: Activity },
+    { id: 'advanced', label: t.pluginDetail.tabAdvanced, icon: Sparkles },
   ];
+  const saveStatus = tab.startsWith('section:') ? (
+    <AutoSaveStatus status={activeSectionSave?.status ?? 'idle'} onRetry={activeSectionSave?.retry} />
+  ) : (
+    <AutoSaveStatus
+      status={draft.status}
+      errorKind={draft.errorKind ?? undefined}
+      onRetry={draft.errorKind === 'transport' ? draft.retry : undefined}
+      onReload={draft.errorKind === 'conflict' ? () => draft.resolveConflict('reload') : undefined}
+      onMerge={draft.errorKind === 'conflict' ? () => draft.resolveConflict('merge') : undefined}
+    />
+  );
   const editorProps = { name, detail, fieldLabel, fieldHint, fieldOptions, riskText, draft };
 
   return (
@@ -133,31 +176,14 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
           <PluginHero name={name} detail={detail} description={pluginDescription} toolCount={toolCount} />
         </div>
       </SettingsGroup>
-      <SettingsGroup>
-        <SettingsToolbar>
-          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            {/* `flex`, not `overflow-x-auto`: the Segmented track wraps on its own, so it never needs a
-                scroll axis — and declaring `overflow-x: auto` promotes the Y axis out of `visible`, so a
-                sub-pixel row height (routine once the shell zoom scales the layout) overflows by a fraction
-                and draws a stray vertical scrollbar beside the tabs at some widths. Same fix as PluginsSection. */}
-            <div className="flex min-w-0"><Segmented variant="line" value={tab} onChange={changeTab} options={tabs} aria-label={t.pluginDetail.workspaceNav} /></div>
-            {/* One indicator, whichever tab owns the last save: the config draft on the workspace's own
-                tabs, the contributed section on its own. Showing the draft's "saved" beside a section
-                that just failed would report on the wrong surface. */}
-            {tab.startsWith('section:') ? (
-              <AutoSaveStatus status={activeSectionSave?.status ?? 'idle'} onRetry={activeSectionSave?.retry} />
-            ) : (
-              <AutoSaveStatus
-                status={draft.status}
-                errorKind={draft.errorKind ?? undefined}
-                onRetry={draft.errorKind === 'transport' ? draft.retry : undefined}
-                onReload={draft.errorKind === 'conflict' ? () => draft.resolveConflict('reload') : undefined}
-                onMerge={draft.errorKind === 'conflict' ? () => draft.resolveConflict('merge') : undefined}
-              />
-            )}
-          </div>
-        </SettingsToolbar>
-        <div className="p-5 sm:p-6">
+      <WorkspaceShell
+        variant="deck"
+        embedded
+        className="plugin-detail-workspace"
+        navigation={{ sections, value: tab, onChange: changeTab, ariaLabel: t.pluginDetail.workspaceNav }}
+        toolbar={{ actions: saveStatus }}
+      >
+        <div>
           <WorkspacePanel id="setup" active={tab} visited={visitedTabs}>
             <div className="flex min-w-0 flex-col gap-4">
               {/* Above the checklist: the checklist answers "did I fill the fields in", this answers
@@ -207,7 +233,7 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
             </WorkspacePanel>
           ))}
         </div>
-      </SettingsGroup>
+      </WorkspaceShell>
     </>
   );
 }
@@ -225,5 +251,5 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
   const { data: pluginUi } = usePluginUi(locale);
   if (isError) return <SettingsGroup><SettingsState tone="danger"><ErrorState message={t.common.daemonUnreachable} onRetry={() => refetch()} /></SettingsState></SettingsGroup>;
   if (isLoading || !data) return <SettingsGroup><SettingsState><LoadingState /></SettingsState></SettingsGroup>;
-  return <PluginWorkspace key={name} name={name} detail={data} contributions={contributions} logs={logs} hookExecutions={hookExecutions} uiEntry={pluginUi?.find((p) => p.name === name)} onBack={onBack} />;
+  return <PluginWorkspace key={name} name={name} detail={data} contributions={contributions} logs={logs} hookExecutions={hookExecutions} uiEntry={pluginUi?.find((p) => p.name === name)} uiListingLoaded={pluginUi !== undefined} onBack={onBack} />;
 }

@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Package, User as UserIcon, Wrench, GraduationCap, MessageSquare,
   Search, LayoutGrid, Database, Clock, Sparkles, ShieldCheck, Code2, Download, Trash2,
@@ -191,6 +191,18 @@ function RemovedCard({ p, onRestore, busy }: { p: PluginInfo; onRestore: () => v
   );
 }
 
+const pluginFromLocation = () => new URLSearchParams(window.location.search).get('plugin');
+
+/** Build the same-page plugin address without discarding unrelated Settings query parameters. Opening a
+ *  detail starts with a clean section hash; PluginDetail then canonicalizes its real initial section. */
+function pluginLocation(name: string | null): string {
+  const url = new URL(window.location.href);
+  if (name) url.searchParams.set('plugin', name);
+  else url.searchParams.delete('plugin');
+  url.hash = '';
+  return `${url.pathname}${url.search}`;
+}
+
 /** Settings → Plugins: a marketplace with two views. **Installed** lists every plugin on disk (bundled +
  *  downloaded), each toggling enable live and opening a rich detail view; user plugins can be updated (when
  *  the registry has a newer version) or uninstalled. **Available** browses the curated GitHub registry for
@@ -216,6 +228,8 @@ export function PluginsSection() {
   const { toast } = useToast();
   const { t } = useTranslation();
   const [detail, setDetail] = useState<string | null>(null);
+  const [detailFromUrl, setDetailFromUrl] = useState(false);
+  const [urlReady, setUrlReady] = useState(false);
   const [view, setView] = useState<'installed' | 'available'>('installed');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category | 'all'>('all');
@@ -223,11 +237,44 @@ export function PluginsSection() {
   const [pending, setPending] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
+  // The query string is the durable selection: first load/F5 and browser Back/Forward all enter through the
+  // same reader. `urlReady` keeps the list from flashing before a reload deep link has been applied.
+  useEffect(() => {
+    const applyLocation = () => {
+      setDetail(pluginFromLocation());
+      setDetailFromUrl(true);
+      setUrlReady(true);
+    };
+    applyLocation();
+    window.addEventListener('popstate', applyLocation);
+    return () => window.removeEventListener('popstate', applyLocation);
+  }, []);
+
   const plugins = useMemo(() => data ?? [], [data]);
   // Soft-removed bundled plugins are hidden from the Installed list and offered for restore at the top
   // of the Available view; everything else is a normal installed plugin.
   const installed = useMemo(() => plugins.filter((p) => !p.removed), [plugins]);
   const removedBundled = useMemo(() => plugins.filter((p) => p.removed), [plugins]);
+  const urlDetailIsValid = !detailFromUrl || !detail || data === undefined
+    || installed.some((plugin) => plugin.name === detail && plugin.enabled);
+  useEffect(() => {
+    if (!urlReady || isLoading || urlDetailIsValid) return;
+    // A stale bookmark must settle once: replace (rather than push) prevents a Back loop through the same
+    // invalid address, while clearing the section hash that belonged to the missing/disabled plugin.
+    window.history.replaceState(null, '', pluginLocation(null));
+    setDetail(null);
+    setDetailFromUrl(false);
+  }, [isLoading, urlDetailIsValid, urlReady]);
+  const openDetail = (name: string) => {
+    window.history.pushState(null, '', pluginLocation(name));
+    setDetailFromUrl(false);
+    setDetail(name);
+  };
+  const closeDetail = () => {
+    window.history.pushState(null, '', pluginLocation(null));
+    setDetailFromUrl(false);
+    setDetail(null);
+  };
   // The catalog powers the Available view and, cross-referenced by name, the "update available" hint on
   // installed cards. Names with a newer version in the registry.
   const updatable = useMemo(
@@ -268,8 +315,8 @@ export function PluginsSection() {
     });
   }, [available, query, category]);
 
-  if (detail) return <PluginDetail name={detail} onBack={() => setDetail(null)} />;
-  if (isLoading) return <SettingsGroup density="compact"><SettingsState><LoadingState variant="list" /></SettingsState></SettingsGroup>;
+  if (!urlReady || isLoading || !urlDetailIsValid) return <SettingsGroup density="compact"><SettingsState><LoadingState variant="list" /></SettingsState></SettingsGroup>;
+  if (detail) return <PluginDetail name={detail} onBack={closeDetail} />;
 
   const flip = (p: PluginInfo, enabled: boolean) => consent.setEnabled(p.name, enabled);
   // Installing goes through the consent hook too: the daemon lands the plugin inert and refuses to switch
@@ -306,7 +353,7 @@ export function PluginsSection() {
   const openMenu = (e: React.MouseEvent, p: PluginInfo) => {
     e.preventDefault();
     const items: MenuEntry[] = [
-      { label: t.plugins.detail, icon: Eye, onClick: () => setDetail(p.name) },
+      { label: t.plugins.detail, icon: Eye, onClick: () => openDetail(p.name) },
       { label: p.enabled ? t.plugins.disable : t.plugins.enable, icon: Power, onClick: () => flip(p, !p.enabled) },
     ];
     if (updatable.has(p.name)) items.push({ label: t.plugins.update, icon: ArrowUpCircle, onClick: () => doUpdate(p.name) });
@@ -353,7 +400,7 @@ export function PluginsSection() {
             <PluginCard
               p={p} updatable={updatable.has(p.name)}
               busy={pending === p.name || consent.isBusy(p.name)}
-              onFlip={(enabled) => flip(p, enabled)} onDetail={() => setDetail(p.name)}
+              onFlip={(enabled) => flip(p, enabled)} onDetail={() => openDetail(p.name)}
               onUpdate={() => doUpdate(p.name)} onUninstall={() => setConfirmRemove(p.name)}
               onContextMenu={(e) => openMenu(e, p)}
             />

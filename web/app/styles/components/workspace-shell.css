@@ -20,6 +20,15 @@
   padding-block-end: calc(3rem + var(--safe-bottom));
 }
 
+/* A sub-workspace inherits the parent document's measure and gutters. It still uses the exact deck grid,
+   responsive sidebar/tab switch and toolbar anatomy; only the full-page outer frame is already owned. */
+.workspace-shell--embedded {
+  max-width: none;
+  margin-inline: 0;
+  padding-inline: 0;
+  padding-block-end: 0;
+}
+
 /* BREATHING ROOM below the shell top bar. The page used to begin on the rule under the bar, so the title
    read as part of the window chrome rather than as the first thing the page says.
 

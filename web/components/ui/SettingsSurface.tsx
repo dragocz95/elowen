@@ -3,7 +3,6 @@ import { Children, Fragment, isValidElement, useId, useState, type ReactNode } f
 import { ChevronRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { HelpTip } from './HelpTip';
-import { WorkspaceLeadPortal } from './WorkspaceShell';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './shadcn/collapsible';
 
 type SettingsTone = 'default' | 'danger';
@@ -239,11 +238,6 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, co
       ) : null}
     </div>
   );
-}
-
-export function SettingsToolbar({ children, promote = true }: { children: ReactNode; promote?: boolean }) {
-  const toolbar = <div className="control-surface-toolbar settings-toolbar">{children}</div>;
-  return promote ? <WorkspaceLeadPortal>{toolbar}</WorkspaceLeadPortal> : toolbar;
 }
 
 export function SettingsState({ children, tone = 'default' }: { children: ReactNode; tone?: SettingsTone }) {

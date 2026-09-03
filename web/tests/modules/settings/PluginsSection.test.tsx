@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
@@ -24,6 +24,13 @@ vi.mock('../../../lib/mutations', () => ({
   useRestorePlugin: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
+vi.mock('../../../modules/settings/PluginDetail', () => ({
+  PluginDetail: ({ name, onBack }: { name: string; onBack: () => void }) => (
+    <div data-testid="plugin-detail" data-plugin={name}>
+      <button type="button" onClick={onBack}>Plugins</button>
+    </div>
+  ),
+}));
 
 import { PluginsSection } from '../../../modules/settings/PluginsSection';
 import { ElowenApiError } from '../../../lib/elowenClient';
@@ -37,6 +44,74 @@ const entry = (over: Partial<MarketplaceEntry>): MarketplaceEntry => ({
 });
 
 const renderSection = () => render(<EffectsProvider><LanguageProvider><SettingsDocument><PluginsSection /></SettingsDocument></LanguageProvider></EffectsProvider>);
+
+afterEach(() => {
+  window.history.replaceState(null, '', '/settings?cat=plugins');
+  vi.restoreAllMocks();
+});
+
+describe('PluginsSection URL state', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/settings?cat=plugins');
+    usePlugins.mockReset(); useMarketplace.mockReset();
+    useMarketplace.mockReturnValue({ data: { plugins: [] }, isLoading: false });
+  });
+
+  it('pushes the selected plugin into the URL and removes it through the Plugins back action', async () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'browser' })], isLoading: false });
+    renderSection();
+
+    fireEvent.click(screen.getByText('browser').closest('button')!);
+    expect(await screen.findByTestId('plugin-detail')).toHaveAttribute('data-plugin', 'browser');
+    expect(window.location.search).toBe('?cat=plugins&plugin=browser');
+    expect(window.location.hash).toBe('');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Plugins' }));
+    await waitFor(() => expect(screen.queryByTestId('plugin-detail')).toBeNull());
+    expect(window.location.search).toBe('?cat=plugins');
+    expect(window.location.hash).toBe('');
+  });
+
+  it('restores a plugin and its section from a reload-style deep link', async () => {
+    window.history.replaceState(null, '', '/settings?cat=plugins&plugin=browser#plugin-section:runtime');
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'browser' })], isLoading: false });
+    renderSection();
+
+    expect(await screen.findByTestId('plugin-detail')).toHaveAttribute('data-plugin', 'browser');
+    expect(window.location.search).toBe('?cat=plugins&plugin=browser');
+    expect(window.location.hash).toBe('#plugin-section:runtime');
+  });
+
+  it('follows browser history popstate between the list and the same plugin section', async () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'browser' })], isLoading: false });
+    renderSection();
+    fireEvent.click(screen.getByText('browser').closest('button')!);
+    await screen.findByTestId('plugin-detail');
+
+    window.history.replaceState(null, '', '/settings?cat=plugins');
+    fireEvent(window, new PopStateEvent('popstate'));
+    await waitFor(() => expect(screen.queryByTestId('plugin-detail')).toBeNull());
+
+    window.history.replaceState(null, '', '/settings?cat=plugins&plugin=browser#plugin-section:runtime');
+    fireEvent(window, new PopStateEvent('popstate'));
+    expect(await screen.findByTestId('plugin-detail')).toHaveAttribute('data-plugin', 'browser');
+    expect(window.location.hash).toBe('#plugin-section:runtime');
+  });
+
+  it.each([
+    ['missing', [plugin({ name: 'browser' })]],
+    ['disabled', [plugin({ name: 'disabled', enabled: false })]],
+  ])('cleans an invalid %s plugin deep link without leaving the list', async (name, plugins) => {
+    window.history.replaceState(null, '', `/settings?cat=plugins&plugin=${name}#plugin-section:runtime`);
+    usePlugins.mockReturnValue({ data: plugins, isLoading: false });
+    renderSection();
+
+    await waitFor(() => expect(window.location.search).toBe('?cat=plugins'));
+    expect(window.location.hash).toBe('');
+    expect(screen.queryByTestId('plugin-detail')).toBeNull();
+    expect(screen.getByTestId('installed-plugins-list')).toBeInTheDocument();
+  });
+});
 
 describe('PluginsSection catalog', () => {
   beforeEach(() => {

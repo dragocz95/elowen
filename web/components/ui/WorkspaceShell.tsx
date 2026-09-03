@@ -9,8 +9,8 @@ import { PageToolbar, PageToolbarPortal, PageToolbarProvider, PageToolbarScope, 
 import { WorkspaceHero, type WorkspaceHeroProps } from './WorkspaceHero';
 
 /** The page toolbar's portal under its pre-move names. The slot itself left the hero for the canonical
- *  toolbar row below the section navigation; `ControlSurfaceToolbar`, `SettingsToolbar`, `/settings` and
- *  `/account` reach it by THESE names, and a rename they can all see is not what this change is about. */
+ *  toolbar row below the section navigation; `ControlSurfaceToolbar`, `/settings` and `/account` reach it
+ *  by THESE names, and a rename they can all see is not what this change is about. */
 export { PageToolbarPortal as WorkspaceLeadPortal, PageToolbarScope as WorkspaceLeadScope };
 
 export interface SpatialDeckSection {
@@ -133,18 +133,23 @@ interface WorkspaceShellNavigation {
 
 export interface WorkspaceShellProps {
   variant?: WorkspaceShellVariant;
-  hero: WorkspaceHeroProps;
+  /** Full pages supply the canonical hero. Embedded configuration decks can omit it when their parent
+   *  surface already owns the identity block above them. */
+  hero?: WorkspaceHeroProps;
   navigation?: WorkspaceShellNavigation;
   /** The page's own toolbar contents. Omit it and the row is still mounted — it carries the portal slot
    *  that panels deeper in the tree claim through `WorkspaceLeadPortal`. */
   toolbar?: PageToolbarProps;
+  /** Remove full-page width, gutter and bottom-padding ownership when the shell is nested in a parent
+   *  document. Navigation, toolbar and responsive breakpoint behavior remain identical. */
+  embedded?: boolean;
   children: ReactNode;
   className?: string;
 }
 
 /** The canonical page shell. Public props and the pre-unification aliases stay stable so core pages and
  *  plugin bundles inherit responsive section navigation without owning a second breakpoint decision. */
-export function WorkspaceShell({ variant = 'register', hero, navigation, toolbar, children, className = '' }: WorkspaceShellProps) {
+export function WorkspaceShell({ variant = 'register', hero, navigation, toolbar, embedded = false, children, className = '' }: WorkspaceShellProps) {
   const phone = useMobileViewport();
   const sectionLayout: WorkspaceSectionLayout | undefined = navigation
     ? variant === 'deck'
@@ -164,11 +169,11 @@ export function WorkspaceShell({ variant = 'register', hero, navigation, toolbar
   return (
     <PageToolbarProvider>
       <div
-        className={`workspace-shell ${className}`.trim()}
+        className={`workspace-shell ${embedded ? 'workspace-shell--embedded' : ''} ${className}`.trim()}
         data-variant={variant}
         data-section-layout={sectionLayout}
       >
-        <WorkspaceHero {...hero} />
+        {hero ? <WorkspaceHero {...hero} /> : null}
         {navigation && sectionLayout ? <SectionNavigation {...navigation} layout={sectionLayout} /> : null}
         <PageToolbar {...toolbar} />
         {content}

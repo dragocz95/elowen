@@ -4,6 +4,7 @@ import { LanguageProvider } from '../../../lib/i18n';
 import { ThemeProvider } from '../../../lib/useTheme';
 import { EffectsProvider } from '../../../lib/useEffects';
 import { SettingsDocument } from '../../../components/ui/SettingsSurface';
+import { setViewport } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { PluginDetail as PluginDetailData, PluginConfigField } from '../../../lib/types';
 
@@ -129,7 +130,8 @@ describe('PluginDetail workspace', () => {
     const { container } = renderDetail();
     expect(container.querySelectorAll('[data-settings-document]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-settings-group]').length).toBeGreaterThan(0);
-    expect(container.querySelector('.settings-toolbar')).toBeInTheDocument();
+    expect(container.querySelector('.plugin-detail-workspace > .page-toolbar')).toBeInTheDocument();
+    expect(container.querySelector('.settings-toolbar')).not.toBeInTheDocument();
   });
 
   it('shows the capability panels inline as settings-group cards (no accordion to expand)', () => {
@@ -153,6 +155,32 @@ describe('PluginDetail workspace', () => {
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabCapabilities })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabActivity })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabAdvanced })).toBeInTheDocument();
+  });
+
+  it('uses the shared deck secondary sidebar on tablet and desktop', async () => {
+    setViewport(false);
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    const { container } = renderDetail();
+
+    await waitFor(() => expect(container.querySelector('.plugin-detail-workspace')).toHaveAttribute('data-section-layout', 'sidebar'));
+    const nav = screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav });
+    expect(nav).toHaveAttribute('data-variant', 'menu');
+    expect(nav).toHaveAttribute('aria-orientation', 'vertical');
+    expect(nav).not.toHaveAttribute('data-nowrap');
+    expect(screen.queryByRole('combobox', { name: en.pluginDetail.workspaceNav })).toBeNull();
+  });
+
+  it('uses one no-wrap horizontal Radix strip on phones', async () => {
+    setViewport(true);
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    const { container } = renderDetail();
+
+    await waitFor(() => expect(container.querySelector('.plugin-detail-workspace')).toHaveAttribute('data-section-layout', 'tabs'));
+    const nav = screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav });
+    expect(nav).toHaveAttribute('data-variant', 'line');
+    expect(nav).toHaveAttribute('aria-orientation', 'horizontal');
+    expect(nav).toHaveAttribute('data-nowrap', 'true');
+    expect(screen.queryByRole('combobox', { name: en.pluginDetail.workspaceNav })).toBeNull();
   });
 
   it('gives the config document the whole width — no live-preview rail beside it', () => {
@@ -568,6 +596,32 @@ describe('PluginDetail plugin-contributed sections', () => {
     expect(loadPluginUi).toHaveBeenCalledWith('testy', '/plugins/testy/web/abc.js', undefined);
     // Mounted as a deck section: the tab above already names it, so it must not head itself again.
     expect(screen.getByTestId('plugin-section-runtime')).toHaveAttribute('data-surface', 'deck');
+  });
+
+  it('preserves a pending contributed-section hash until the UI listing can validate it', async () => {
+    window.history.replaceState(null, '', '/settings?cat=plugins&plugin=testy#plugin-section:runtime');
+    usePluginUi.mockReturnValue({ data: undefined, isLoading: true });
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    const view = renderDetail();
+
+    expect(window.location.hash).toBe('#plugin-section:runtime');
+    expect(screen.getByRole('radio', { name: en.pluginDetail.tabBehavior })).toHaveAttribute('aria-checked', 'true');
+
+    usePluginUi.mockReturnValue({ data: listing('pluginDetail'), isLoading: false });
+    view.rerender(<EffectsProvider><ThemeProvider><LanguageProvider><SettingsDocument><PluginDetail name="testy" onBack={() => {}} /></SettingsDocument></LanguageProvider></ThemeProvider></EffectsProvider>);
+
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Runtime' })).toHaveAttribute('aria-checked', 'true'));
+    expect(window.location.hash).toBe('#plugin-section:runtime');
+  });
+
+  it('does not leak a fallback hash onto the list while browser Back unmounts the detail', () => {
+    window.history.replaceState(null, '', '/settings?cat=plugins&plugin=testy#plugin-advanced');
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    renderDetail();
+
+    window.history.replaceState(null, '', '/settings?cat=plugins');
+    fireEvent(window, new PopStateEvent('popstate'));
+    expect(window.location.href.endsWith('/settings?cat=plugins')).toBe(true);
   });
 
   it('leaves a section placed on a page — the default — out of the workspace entirely', () => {

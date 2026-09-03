@@ -15,7 +15,7 @@ import { PageFilterChips, PageFilters, type PageFilterField } from './PageFilter
  *  The row holds, in order: the page's search field, its filter control, and its actions. Everything a
  *  panel deeper in the tree wants up here arrives through {@link PageToolbarPortal}, which claims the
  *  single slot in the middle of the row — that portal is the old `WorkspaceLeadPortal` under its new
- *  name, unchanged in behaviour, so `ControlSurfaceToolbar` and `SettingsToolbar` keep working untouched.
+ *  name, unchanged in behaviour, so retained control surfaces keep working untouched.
  *
  *  Active filter chips are NOT in the row. They are a line of their own directly under it, because their
  *  number changes as the page is used and a row that reflows every time a filter is set moves the
