@@ -157,6 +157,9 @@ export function parseSse(buffer: string): { frames: { event?: string; id?: strin
 
 /** Abort-aware reconnect delay. The listener and timer are disposed regardless of which side wins, so
  * stopping a TUI never waits for (or leaks) a backoff timer. */
+/** How long a viewer the plugin turned away waits before asking again. */
+const REFUSED_STREAM_BACKOFF_MS = 15_000;
+
 function reconnectDelay(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise<void>((resolve) => {
@@ -813,6 +816,10 @@ export class BrainClient {
       const abortAttempt = (): void => attempt.abort(signal.reason);
       signal.addEventListener('abort', abortAttempt, { once: true });
       if (signal.aborted) abortAttempt();
+      // A stream the plugin refused (the session already has its full count of viewers) ends right after
+      // its opening snapshot. Reconnecting at the normal cadence would knock on that door every second and,
+      // whenever another viewer blinked, take its place — the two then trade the slot back and forth.
+      let refused = false;
       try {
         const res = await this.f(`${this.o.base}${path}`, { headers: this.headers(), signal: attempt.signal });
         if (res.status === 401) throw new Unauthorized();
@@ -827,6 +834,7 @@ export class BrainClient {
           const parsed = parseSse(buffer);
           buffer = parsed.rest;
           for (const frame of parsed.frames) {
+            if (frame.event === 'rejected') { refused = true; continue; }
             if (frame.event !== 'frame') continue;
             try {
               const payload = JSON.parse(frame.data) as { data?: unknown; mimeType?: unknown };
@@ -841,7 +849,7 @@ export class BrainClient {
       } finally {
         signal.removeEventListener('abort', abortAttempt);
       }
-      if (!signal.aborted) await reconnectDelay(backoffMs, signal);
+      if (!signal.aborted) await reconnectDelay(refused ? Math.max(backoffMs, REFUSED_STREAM_BACKOFF_MS) : backoffMs, signal);
     }
   }
 

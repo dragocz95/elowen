@@ -195,6 +195,41 @@ describe('artifact media stream and latest-frame controller', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('waits far longer before knocking again on a stream the plugin refused', async () => {
+    // A refused viewer that reconnects at the normal cadence takes the slot the moment another viewer
+    // blinks, and the two then trade it back and forth: neither ever sees a frame.
+    vi.useFakeTimers();
+    let attempts = 0;
+    const fetchImpl = vi.fn(async () => {
+      attempts++;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            'event: session\ndata: {"state":"agent"}\n\n'
+            + 'event: rejected\ndata: {"reason":"viewer_limit","message":"Browser viewer limit reached."}\n\n',
+          ));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new BrainClient({ base: 'http://daemon', token: 'secret', fetchImpl });
+    const ac = new AbortController();
+    const frames: InlineArtifactFrame[] = [];
+    const streaming = client.streamArtifactMedia('/plugins/browser/api/live', (frame) => frames.push(frame), ac.signal, 1_000);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toBe(1);
+    expect(frames).toEqual([]);
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(attempts).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(attempts).toBe(2);
+    ac.abort();
+    await streaming;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('keeps a one-frame queue, publishes at most 2 FPS, and aborts/clears on stop', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
