@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import type { ComponentType } from 'react';
-import type { PluginChatArtifactProps, PluginUiRegistration } from 'elowen-plugin-ui-kit';
+import { PLUGIN_UI_API_VERSION as KIT_PLUGIN_UI_API_VERSION, type PluginChatArtifactProps, type PluginUiRegistration } from 'elowen-plugin-ui-kit';
 import { ensurePluginUiRuntime, loadPluginUi, matchPluginPage, PLUGIN_UI_API_VERSION, type PluginPageProps } from '../../lib/pluginUi';
 import { pluginNavEntries } from '../../lib/pluginNav';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
+import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { Puzzle, Sparkles } from 'lucide-react';
 import type { PluginUiListing } from '../../lib/types';
 
@@ -35,9 +36,11 @@ describe('plugin UI runtime', () => {
     // an artifact whose own surface covers the transcript — no new runtime primitive, one bounded string.
     // 15 adds `pendingInput` beside it: the same idea for the question card an expanded artifact also
     // covers, and deliberately contentless — the app's own translated line plus a callback that brings the
-    // real card back, so nothing about the question crosses into a bundle.
-    expect(PLUGIN_UI_API_VERSION).toBe(15);
-    expect(window.ElowenUiRuntime?.apiVersion).toBe(15);
+    // real card back, so nothing about the question crosses into a bundle. 16 publishes the canonical
+    // ProjectIcon so plugins render project identity through the same cached image and fallback path.
+    expect(PLUGIN_UI_API_VERSION).toBe(16);
+    expect(PLUGIN_UI_API_VERSION).toBe(KIT_PLUGIN_UI_API_VERSION);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(KIT_PLUGIN_UI_API_VERSION);
     expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({
       WorkspaceShell: expect.any(Function),
       WorkspaceHero: expect.any(Function),
@@ -49,6 +52,7 @@ describe('plugin UI runtime', () => {
       PageFilters: expect.any(Function),
       Slider: expect.any(Function),
       DirectoryPicker: expect.any(Function),
+      ProjectIcon,
     }));
     expect(window.ElowenUiRuntime?.components).toHaveProperty('LinkedAccountRow');
     expect(window.ElowenUiRuntime?.components).toHaveProperty('SummaryChip');
@@ -152,7 +156,7 @@ const FROZEN_COMPONENTS = [
   'ModelIcon', 'ModuleHeader', 'MotionLayout', 'MotionLayoutItem', 'MotionPresence', 'OutcomeBadge',
   'PageFilters', 'PageToolbar', 'Pager', 'PatchView', 'PluginConfigEditor', 'PluginPageFrame',
   'PluginPageHeader', 'PluginSection',
-  'ProgressRibbon', 'ProjectFilterPills', 'ProjectPill', 'ProviderLogo', 'ProviderPicker',
+  'ProgressRibbon', 'ProjectFilterPills', 'ProjectIcon', 'ProjectPill', 'ProviderLogo', 'ProviderPicker',
   'RegisterSearch', 'Segmented', 'SelectMenu', 'SelectionSummary', 'SettingsDocument', 'SettingsGroup',
   'SettingsRow', 'Slider', 'SpatialIdentity', 'SpatialWorkspaceLayout', 'Spinner', 'SummaryChip', 'TimeSeriesChart',
   'Toggle', 'WorkspaceDetailRail', 'WorkspaceHero', 'WorkspaceMetric', 'WorkspacePage', 'WorkspaceShell',

@@ -7,10 +7,11 @@ import type * as ReactDom from 'react-dom';
 import type * as JsxRuntime from 'react/jsx-runtime';
 import type { ComponentType } from 'react';
 
-/** See index.js — bump on incompatible changes to `ElowenUiRuntime`. Deliberately a LITERAL type:
- *  the web app re-declares the value and annotates it with `typeof PLUGIN_UI_API_VERSION`, so a kit
- *  bump that forgets the host fails the web typecheck instead of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 15;
+/** See index.js — bump whenever a released bundle requires a newly published runtime contract.
+ *  Deliberately a LITERAL type: the web app re-declares the value and annotates it with
+ *  `typeof PLUGIN_UI_API_VERSION`, so a kit bump that forgets the host fails the web typecheck instead
+ *  of drifting silently. */
+export declare const PLUGIN_UI_API_VERSION: 16;
 
 /** Public props of `ElowenUiRuntime.components.Slider`. */
 export interface SliderProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'type'> {
@@ -27,6 +28,13 @@ export interface DirectoryPickerProps {
   initialPath?: string;
   onSelect: (path: string) => void;
   onClose: () => void;
+}
+
+/** Public props of the API 16 `ElowenUiRuntime.components.ProjectIcon`. */
+export interface ProjectIconProps {
+  project: { id: number; icon?: string };
+  size?: number;
+  className?: string;
 }
 
 export interface PluginConfigField {
@@ -298,6 +306,7 @@ export interface ElowenUiRuntime {
   jsxRuntime: typeof JsxRuntime;
   components: Record<string, ComponentType<never>> & {
     AutoSaveStatus: ComponentType<AutoSaveStatusProps>;
+    ProjectIcon: ComponentType<ProjectIconProps>;
   };
   /** Curated React hooks (i18n, toasts, the app's react-query data hooks). Safe across the boundary:
    *  the bundle runs on the HOST's React instance, so the rules of hooks hold. A bundle narrows each
