@@ -117,10 +117,11 @@ describe('project access gating', () => {
     expect(adminOnlyIndicatorRequests).toEqual([[1]]);
   });
 
-  it('a non-admin cannot manage assignments or create projects (no privilege escalation)', async () => {
+  it('a non-admin cannot manage assignments, projects or server directories (no privilege escalation)', async () => {
     const { app, bobTok, bob } = setup();
     expect((await app.request(`/users/${bob.id}/projects`, post(bobTok, { projectId: 1 }))).status).toBe(403);
     expect((await app.request('/projects', post(bobTok, { slug: 'x', path: '/x' }))).status).toBe(403);
+    expect((await app.request('/fs/dirs', post(bobTok, { parent: process.cwd(), name: 'blocked' }))).status).toBe(403);
   });
 
   it('also gates the activity log and the live event stream (no cross-tenant leak)', async () => {

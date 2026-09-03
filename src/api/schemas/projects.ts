@@ -16,6 +16,15 @@ export const updateProjectSchema = z.object({
   memoryShared: z.boolean().optional(),
 });
 
+/** Create exactly one child directory under an existing absolute server path. Names are one portable
+ * filesystem segment; the integration keeps operating-system permission and atomicity decisions. */
+export const createDirectorySchema = z.object({
+  parent: z.string().min(1).refine((value) => value.startsWith('/'), 'parent must be an absolute path'),
+  name: z.string().trim().min(1).max(255)
+    .refine((value) => value !== '.' && value !== '..', 'name must be a directory name')
+    .refine((value) => !value.includes('\0') && !value.includes('/') && !value.includes('\\'), 'name must be a single path segment'),
+});
+
 /** Replace a project's shared-memory share list WHOLESALE (admin-only). An empty list means every
  *  project member shares the pool — the "nobody picked = everyone" default of the feature contract. */
 export const memoryMembersSchema = z.object({

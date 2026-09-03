@@ -50,6 +50,22 @@ describe('ProjectsView', () => {
     expect(within(rail).getAllByRole('heading', { name: 'elowen' })).toHaveLength(1);
   });
 
+  it('shows a missing-directory pill in both wide and compact path presentations only for explicit false', async () => {
+    server.use(http.get('*/api/projects', () => HttpResponse.json([
+      { id: 1, slug: 'elowen', path: '/var/www/elowen', pathExists: false, notes: '', icon: '' },
+      { id: 2, slug: 'legacy', path: '/var/www/legacy', notes: '', icon: '' },
+    ])));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    await screen.findByText('legacy');
+    const warnings = screen.getAllByText('Directory missing');
+    expect(warnings).toHaveLength(2);
+    expect(warnings.some((warning) => warning.closest('[data-priority="wide"]'))).toBe(true);
+    expect(warnings.some((warning) => warning.closest('[data-project-compact-path]'))).toBe(true);
+    expect(screen.getByRole('button', { name: 'Open project legacy' }).closest('[role="row"]')).not.toHaveTextContent('Directory missing');
+  });
+
   it('manages member access from the selected Project', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
@@ -156,6 +172,83 @@ describe('ProjectsView', () => {
     expect(screen.getByTestId('spatial-workspace-layout')).toBeInTheDocument();
     expect(screen.getAllByTestId('workspace-hero-metrics')).toHaveLength(1);
     expect(screen.getByTestId('projects-register').closest('[data-control-surface]')).toBeInTheDocument();
+  });
+
+  it('offers directory creation only from the New project picker', async () => {
+    server.use(http.get('*/api/fs/dirs', () => HttpResponse.json({ path: '/workspace', parent: '/', entries: [] })));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
+    let editor = await screen.findByRole('dialog', { name: 'New project' });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Browse' }));
+    let picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
+    expect(within(picker).getByRole('button', { name: 'New folder' })).toBeInTheDocument();
+    fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(within(editor).getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'elowen: Actions' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Edit project' }));
+    editor = await screen.findByRole('dialog', { name: 'Edit project' });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Browse' }));
+    picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
+    expect(within(picker).queryByRole('button', { name: 'New folder' })).toBeNull();
+  });
+
+  it('creates a child directory, refreshes its parent and navigates into the new folder', async () => {
+    let parentReads = 0;
+    let createBody: unknown;
+    server.use(
+      http.get('*/api/fs/dirs', ({ request }) => {
+        const requested = new URL(request.url).searchParams.get('path');
+        if (requested === '/workspace/new-app') return HttpResponse.json({ path: '/workspace/new-app', parent: '/workspace', entries: [] });
+        parentReads += 1;
+        return HttpResponse.json({ path: '/workspace', parent: '/', entries: [] });
+      }),
+      http.post('*/api/fs/dirs', async ({ request }) => {
+        createBody = await request.json();
+        return HttpResponse.json({ path: '/workspace/new-app' }, { status: 201 });
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
+    const editor = await screen.findByRole('dialog', { name: 'New project' });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Browse' }));
+    const picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
+    const newFolder = within(picker).getByRole('button', { name: 'New folder' });
+    await waitFor(() => expect(newFolder).toBeEnabled());
+    fireEvent.click(newFolder);
+    fireEvent.change(within(picker).getByLabelText('Folder name'), { target: { value: 'new-app' } });
+    fireEvent.click(within(picker).getByRole('button', { name: 'Create folder' }));
+
+    await waitFor(() => expect(within(picker).getAllByText('/workspace/new-app')).toHaveLength(2));
+    expect(createBody).toEqual({ parent: '/workspace', name: 'new-app' });
+    expect(parentReads).toBeGreaterThanOrEqual(2);
+    expect(within(picker).getByRole('button', { name: 'Select this folder' })).toBeEnabled();
+    expect(within(editor).queryByDisplayValue('/workspace/new-app')).toBeNull();
+  });
+
+  it('shows the typed duplicate-directory message for a 409 response', async () => {
+    server.use(
+      http.get('*/api/fs/dirs', () => HttpResponse.json({ path: '/workspace', parent: '/', entries: [] })),
+      http.post('*/api/fs/dirs', () => HttpResponse.json({ error: 'directory already exists' }, { status: 409 })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
+    const editor = await screen.findByRole('dialog', { name: 'New project' });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Browse' }));
+    const picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
+    const newFolder = within(picker).getByRole('button', { name: 'New folder' });
+    await waitFor(() => expect(newFolder).toBeEnabled());
+    fireEvent.click(newFolder);
+    fireEvent.change(within(picker).getByLabelText('Folder name'), { target: { value: 'taken' } });
+    fireEvent.click(within(picker).getByRole('button', { name: 'Create folder' }));
+
+    expect(await within(picker).findByText('A folder with this name already exists.')).toBeInTheDocument();
   });
 
   it('browses from the edit form and cancelling removal preserves the draft without deleting', async () => {

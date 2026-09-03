@@ -394,6 +394,8 @@ export const elowenClient = {
   projectFiles: (id: number) => req<FileNode[]>(`/projects/${id}/files`),
   /** Browse the server's directory tree to pick a new project's path. Admin-only on the daemon. */
   browseDirs: (path?: string) => req<DirListing>(`/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  /** Create one immediate child directory under a browsed server path. Admin-only on the daemon. */
+  createDir: (parent: string, name: string) => req<{ path: string }>('/fs/dirs', json({ parent, name })),
   projectFile: (id: number, path: string) => req<{ content: string; truncated: boolean }>(`/projects/${id}/file?path=${encodeURIComponent(path)}`),
   writeProjectFile: (id: number, path: string, content: string) => req<{ ok: boolean }>(`/projects/${id}/file`, json({ path, content }, 'PUT')),
   projectFileAtHead: (id: number, path: string) => req<{ content: string }>(`/projects/${id}/head?path=${encodeURIComponent(path)}`),

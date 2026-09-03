@@ -284,6 +284,18 @@ export interface BrainStreamControl {
  *  mirror test caught it (see web/tests/lib/dtoMirror.test.ts). */
 export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; disabled_tools: string[]; allowed_tools: string[]; granted_plugins: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean }
 
+/** A registered project as served by GET/POST/PATCH /projects. `pathExists` is current server state, not
+ * persisted metadata. Clients only warn on explicit false so responses from older daemons remain valid. */
+export interface ProjectView {
+  id: number;
+  slug: string;
+  path: string;
+  notes: string;
+  icon: string;
+  memoryShared?: boolean;
+  pathExists?: boolean;
+}
+
 /** A durable RAW memory row (v1: user-scoped; `GET /memory`). Deletes are SOFT (`status='deleted'`).
  *  `status` is a closed set because the daemon's own API schema enums exactly these three
  *  (api/schemas/memory.ts) and the web switches over them. */

@@ -31,6 +31,10 @@ import { Avatar } from '../../components/ui/Avatar';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import type { ProjectSummary } from '../../lib/types';
 
+function MissingProjectPathBadge({ label }: { label: string }) {
+  return <Badge tone="danger"><AlertTriangle size={11} className="mr-1" aria-hidden />{label}</Badge>;
+}
+
 function ProjectSummaryCell({ summary, membersLabel }: { summary?: ProjectSummary; membersLabel: string }) {
   const members = summary?.members;
   const indicators = summary?.indicators ?? [];
@@ -293,16 +297,29 @@ export function ProjectsView() {
                               if (event.key === 'End') { event.preventDefault(); navigateProject(project, 'end'); }
                             }}
                           >
-                            {/* The path is the cell's title rather than a second stacked line: a register
-                                whose rows measure one height is what makes it scannable, and the path has
-                                its own column plus the detail rail one tap away. */}
-                            <DataTableCell lines={1} title={project.path} className="flex items-center gap-3">
+                            {/* Wide layouts keep the path in its own column. Compact layouts surface the
+                                same path under the slug so a missing-directory warning never disappears
+                                with the wide-only column. The existing icon height preserves row rhythm. */}
+                            <DataTableCell lines="auto" title={project.path} className="flex items-center gap-3">
                               <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/60">
                                 <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-muted-foreground" />
                               </span>
-                              <span className="min-w-0 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
+                              <span className="flex min-w-0 flex-1 flex-col">
+                                <span className="truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
+                                <span data-project-compact-path className="flex min-w-0 items-center gap-1.5 @min-[56rem]:hidden">
+                                  <Folder size={10} className="shrink-0 text-muted-foreground" aria-hidden />
+                                  <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">{project.path}</span>
+                                  {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
+                                </span>
+                              </span>
                             </DataTableCell>
-                            <DataTableCell priority="wide" lines={1} title={project.path} className="font-mono text-xs text-muted-foreground"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
+                            <DataTableCell priority="wide" lines="auto" title={project.path} className="font-mono text-xs text-muted-foreground">
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <Folder size={11} className="shrink-0" aria-hidden />
+                                <span className="min-w-0 flex-1 truncate">{project.path}</span>
+                                {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
+                              </span>
+                            </DataTableCell>
                             <DataTableCell priority="wide" lines="auto"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
                             <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()}>
                               <ActionMenu
@@ -415,6 +432,7 @@ export function ProjectsView() {
           {browseTarget === 'create' ? (
             <DirectoryPicker
               initialPath={path}
+              allowCreateDirectory
               onSelect={(selectedPath) => { setPath(selectedPath); setBrowseTarget(null); }}
               onClose={() => setBrowseTarget(null)}
             />

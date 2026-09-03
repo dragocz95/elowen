@@ -1,4 +1,4 @@
-import { statSync, readdirSync, realpathSync, existsSync } from 'node:fs';
+import { statSync, readdirSync, realpathSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, join, relative, sep, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -57,6 +57,47 @@ export function isProjectImage(root: string, rel: string): boolean {
 }
 
 export interface DirListing { path: string; parent: string | null; entries: { name: string; path: string }[] }
+
+export type CreateDirErrorCode = 'invalid-parent' | 'exists' | 'forbidden' | 'failed';
+
+/** Typed filesystem failure for the directory-registration route. The route maps codes to HTTP status
+ * without parsing operating-system error text, while the original error stays available as the cause. */
+export class CreateDirError extends Error {
+  constructor(public readonly code: CreateDirErrorCode, cause?: unknown) {
+    super(code, { cause });
+    this.name = 'CreateDirError';
+  }
+}
+
+function filesystemErrorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+}
+
+/** Whether a configured project path currently resolves to a directory. Missing paths, files and paths
+ * the daemon cannot inspect are all unavailable to project consumers and therefore return false. */
+export function projectPathExists(input: string): boolean {
+  try { return statSync(resolve(input)).isDirectory(); }
+  catch { return false; }
+}
+
+/** Create one immediate child directory beneath a canonical existing parent. `mkdirSync` is intentionally
+ * non-recursive: the create itself is atomic and EEXIST cannot race a separate preflight check. */
+export function createDir(parent: string, name: string): { path: string } {
+  try {
+    const canonicalParent = realpathSync(resolve(parent));
+    if (!statSync(canonicalParent).isDirectory()) throw new CreateDirError('invalid-parent');
+    const path = join(canonicalParent, name);
+    mkdirSync(path);
+    return { path };
+  } catch (error) {
+    if (error instanceof CreateDirError) throw error;
+    const code = filesystemErrorCode(error);
+    if (code === 'EEXIST') throw new CreateDirError('exists', error);
+    if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') throw new CreateDirError('forbidden', error);
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP' || code === 'EINVAL') throw new CreateDirError('invalid-parent', error);
+    throw new CreateDirError('failed', error);
+  }
+}
 
 /** Shallow-list the sub-directories of an absolute server path — backs the new-project directory picker
  *  (you can't list a project's files before the project exists). Returns the resolved path, its parent

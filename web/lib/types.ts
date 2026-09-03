@@ -129,7 +129,7 @@ import type {
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
   BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
-  CommitFileChange, CommitLogEntry, PlatformLinkKey, PlatformSurface,
+  CommitFileChange, CommitLogEntry, PlatformLinkKey, PlatformSurface, ProjectView,
 } from '../../src/shared/wireContract.js';
 export type { PlatformLinkKey, PlatformSurface };
 // `BrainStreamControl` is only referenced by the snapshot frame below, so it is imported but not re-exported.
@@ -863,7 +863,7 @@ export interface ActivityEvent {
    *  the daemon has no transcript to read them from. */
   tools?: { name: string; count: number }[];
 }
-export interface Project { id: number; slug: string; path: string; notes: string; icon: string; memoryShared?: boolean }
+export type Project = ProjectView;
 /** The sentinel owner of a project's SHARED memory category (mirrors the daemon's
  *  SHARED_CATEGORY_USER_ID — a memory_categories row with user_id = 0 is a shared pool). */
 export const SHARED_CATEGORY_USER_ID = 0;
