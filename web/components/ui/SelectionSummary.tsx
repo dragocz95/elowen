@@ -5,8 +5,9 @@ import { Eye, Settings2 } from 'lucide-react';
 interface SelectionSummaryProps {
   /** Count line, e.g. "14 models · 5 providers". Empty hides the line (chip-only summaries). */
   countText: string;
-  /** A few representative chips (the caller slices, typically first 3). */
-  samples: { label: string; icon?: ReactNode }[];
+  /** A few representative chips (the caller slices, typically first 3). `id` keeps equal visible labels
+   * distinct when two providers expose the same model; older callers may omit it. */
+  samples: { id?: string; label: string; icon?: ReactNode }[];
   /** How many more items exist beyond the samples — renders a "+N" chip when > 0. */
   moreCount: number;
   onManage: () => void;
@@ -52,7 +53,7 @@ export function SelectionSummary({ countText, samples, moreCount, onManage, mana
         {(samples.length > 0 || moreCount > 0 || extraSamples) && (
           <div className="flex flex-wrap items-center gap-1.5">
             {samples.map((s) => (
-              <SummaryChip key={s.label} icon={s.icon} label={s.label} variant={variant} />
+              <SummaryChip key={s.id ?? s.label} icon={s.icon} label={s.label} variant={variant} />
             ))}
             {extraSamples}
             {moreCount > 0 && (
