@@ -1135,6 +1135,32 @@ export interface MicrosoftIdentityControl {
   driveGraphFor(elowenUserId: number): Promise<MicrosoftDriveGraph | null>;
 }
 
+/** The connected GitHub identity's live credential, handed to ONE calling plugin inside the daemon. */
+export interface GitHubSessionCredential {
+  /** Opaque OAuth token. Never persist it, never log it, never put it on a command line. */
+  token: string;
+  /** The GitHub login the token belongs to, for reporting who a child process acts as. */
+  login: string;
+}
+
+/** Live GitHub identity seam, owned by whichever plugin holds the account's connection.
+ *
+ *  It exists so a confined child process can be launched ALREADY authenticated as the person driving the
+ *  turn, without the agent pasting a token or re-running a device login. The token is handed to the calling
+ *  plugin in-process and belongs in a per-launch environment, never on disk and never in a command line:
+ *  nothing is written into the account's HOME, so removing the connection stops working on the next launch
+ *  with no cleanup step to forget.
+ *
+ *  `accountUserId` is named EXPLICITLY because the caller (Sandbox) has already resolved whose HOME and
+ *  roots the child gets and must ask about that same account. The owner still decides whether it may
+ *  answer: the secret vault is bound to the account currently driving the turn, so an account that is not
+ *  that one reads as "not connected" rather than as an error. */
+export interface GitHubIdentityControl {
+  /** The connected account's credential, or null when it has no connection, the connection needs to be
+   *  re-established, or the caller is not acting as that account. Never throws for those ordinary states. */
+  sessionCredential(input: { accountUserId: number }): GitHubSessionCredential | null;
+}
+
 export interface PublishedSitesGatewayStatus {
   available: boolean;
   active: boolean;
@@ -1189,6 +1215,7 @@ export interface KnownControls {
   lsp: LspStateControl;
   sandbox: SandboxControl;
   microsoftIdentity: MicrosoftIdentityControl;
+  github: GitHubIdentityControl;
   publishedSitesGateway: PublishedSitesGatewayControl;
   skillCatalog: SkillCatalogControl;
 }

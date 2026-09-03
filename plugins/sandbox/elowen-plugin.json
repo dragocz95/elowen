@@ -63,7 +63,8 @@
       "db",
       "stores",
       "git",
-      "project-files"
+      "project-files",
+      "controls"
     ]
   },
   "web": {

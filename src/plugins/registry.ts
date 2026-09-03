@@ -120,6 +120,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   lsp: ['diagnosticsEnabled'],
   sandbox: ['workspaceRoots', 'resolveWorkspace', 'acquireDelegationLease', 'workspacesFor', 'activeWorkspace', 'prepareExecution'],
   microsoftIdentity: ['identityFor', 'driveGraphFor'],
+  github: ['sessionCredential'],
   publishedSitesGateway: [
     'hostnameBase', 'syncSites', 'ensureSite', 'removeSite', 'deny', 'status',
     'prepareRuntimeSocket', 'sealRuntimeSocket', 'removeRuntimeSocket',
