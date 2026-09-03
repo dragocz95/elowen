@@ -17,6 +17,8 @@ describe('PromptService.render', () => {
     const template = rawTemplate('elowen');
     const requiredSections = [
       'identity',
+      'verification',
+      'harness',
       'relationship_and_communication',
       'session_guidance',
       'control_plane',
@@ -26,7 +28,6 @@ describe('PromptService.render', () => {
       'software_engineering',
       'recovery_and_persistence',
       'authority_and_safety',
-      'verification',
       'corrections',
       'working_with_the_user',
     ];
@@ -49,6 +50,10 @@ describe('PromptService.render', () => {
     expect(template).toContain('root cause');
     expect(template).toContain('maintained, stable, secure');
     expect(template).toContain('AGENTS.md');
+    expect(template).toMatch(/say so in the first\s+sentence of your report/);
+    expect(template).toContain('One idea per sentence, about 20 words, with a verb');
+    expect(template).toContain('When a tool schema offers an optional `_reason`');
+    expect(template).not.toContain('Every tool call accepts an optional `_reason`');
     expect(template).not.toContain('Do exactly what was asked — no more, no less');
 
     const rendered = prompts.render('elowen', {
