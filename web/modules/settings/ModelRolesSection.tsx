@@ -218,7 +218,6 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
         label={t.settings.modelRoles.utility}
         description={interpolate(t.settings.modelRoles.utilityHelp, { agentName })}
         icon={Tags}
-        trailingLayout="stack"
         status={utilityBadge}
         control={(
           <BrainModelField
@@ -238,7 +237,6 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
         label={t.settings.modelRoles.digest}
         description={t.settings.modelRoles.digestHelp}
         icon={Sparkles}
-        trailingLayout="stack"
         status={digestRoute.inherited ? inheritedBadge : undefined}
         actions={(
           <Button variant="ghost" size="sm" icon={LayoutDashboard} onClick={() => onOpenSection?.('dashboard')}>
@@ -259,14 +257,15 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
         )}
       />
 
-      {/* A many-provider Segmented strip grows far too tall for a record's trailing cell — the pick opens
-          a picker instead, and the badge and Test action share the stacked trailing side. */}
+      {/* The pick opens a picker rather than growing a Segmented strip, so the trailing side is three
+          compact parts and fits the record's ONE line: a one-word badge (`Configured`/`Nastaveno`), the
+          ghost sm Test action (icon + one short word) and a truncating RowPicker trigger that absorbs the
+          slack — nothing here needs the stacked band any more. */}
       <SettingsRow
         label={t.memory.embeddingProvider}
         description={t.help.embeddingProvider}
         hint={t.settings.modelRoles.embeddingConstraint}
         icon={Server}
-        trailingLayout="stack"
         status={embBadge}
         actions={testButton}
         control={embeddingProviders.length > 0

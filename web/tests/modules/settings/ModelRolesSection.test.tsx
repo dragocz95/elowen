@@ -99,6 +99,25 @@ describe('Settings → Models — moved memory forms', () => {
 });
 
 describe('Settings → Models — Model roles', () => {
+  /** The role records are INLINE records like every other row in Settings: the trailing side is ONE line
+   *  (a short status badge, at most one compact action) and the picker trigger is the part inside it that
+   *  shrinks. `trailingLayout="stack"` here used to give the utility, digest and embedding rows a
+   *  full-width band; nothing in their trailing sides needs it any more. */
+  it('keeps every record of the group on the single trailing line, with the picker trigger inside', () => {
+    const { container } = renderSection();
+    const group = container.querySelector('[data-settings-group]')!;
+    const rows = Array.from(group.querySelectorAll('.settings-row')) as HTMLElement[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row).toHaveAttribute('data-trailing', 'inline');
+    // …and each picker row carries its trigger in the trailing container, so the one line holds the value.
+    const trailingPicker = (label: string) => rows
+      .find((n) => n.querySelector('.settings-row__title')?.textContent?.startsWith(label))!
+      .querySelector('.settings-row__trailing [data-row-picker]');
+    expect(trailingPicker(en.settings.modelRoles.utility)).not.toBeNull();
+    expect(trailingPicker(en.settings.modelRoles.digest)).not.toBeNull();
+    expect(trailingPicker(en.memory.embeddingProvider)).not.toBeNull();
+  });
+
   it('answers "which model does what" in one group, above the catalog', () => {
     const { container } = renderSection();
     const rows = Array.from(container.querySelectorAll('.settings-row__title > span:first-child')).map((n) => n.textContent);
