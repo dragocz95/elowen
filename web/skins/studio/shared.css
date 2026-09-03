@@ -269,25 +269,108 @@
   padding-inline: 0.25rem;
   border-bottom: 1px solid var(--color-sidebar-border);
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-lockup {
+/* The switcher is one control, so it takes the whole header row and paints like a row rather than like a
+   button parked in one: a ghost surface, a neutral fill under the pointer, and the caret only appearing
+   once there is somewhere to go. Nothing here is an accent — the identity is the mark. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__switcher {
   display: flex;
   min-width: 0;
   width: 100%;
   align-items: center;
   gap: 0.5rem;
+  height: 2.25rem;
   padding-inline: 0.5rem;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  text-align: left;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__switcher:hover {
+  background: var(--color-sidebar-accent);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__switcher-caret {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--color-subtle-foreground);
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__switcher:is(:hover, :focus-visible, [data-state='open']) .studio-nav__switcher-caret {
+  opacity: 1;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__switcher-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__brand-lockup {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.5rem;
   white-space: nowrap;
   transition: translate var(--motion-base) var(--ease-out);
+}
+
+/* The palette's pill. It is a FIELD to look at and a button to use — a real input here would be a second
+   place text can be typed into and the palette would have to reconcile two of them. The key hint is part
+   of the affordance rather than a hover reward: the whole point is to teach the shortcut. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__search {
+  flex: none;
+  padding: 0.5rem 0.5rem 0.25rem;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__search-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  height: 2rem;
+  padding-inline: 0.5rem;
+  border: 1px solid var(--color-sidebar-border);
+  border-radius: var(--radius);
+  background: var(--color-sidebar-accent);
+  color: var(--color-subtle-foreground);
+  font-size: 0.8125rem;
+  transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__search-pill:hover {
+  border-color: var(--studio-line-strong);
+  color: var(--color-foreground);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__search-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--glow-accent);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__search-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__kbd {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--color-subtle-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+/* Folded, the pill becomes the glyph it already carries — a bordered box with a sliced word in it is
+   what an unfolded control looks like when nobody folded it. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__search-pill {
+  justify-content: center;
+  padding-inline: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] :is(.studio-nav__search-label, .studio-nav__kbd) {
+  display: none;
 }
 /* Folded, the column carries the MARK and nothing else. It used to keep the lockup at full width and let
    the 57px edge slice through it, which left a truncated "Elo" sitting where a logo should be — a clip is
    only a treatment when what remains still reads as a word. The mark alone always does. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__brand-lockup {
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__switcher {
   justify-content: center;
   padding-inline: 0;
   gap: 0;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] :is(.studio-nav__brand-name, .studio-nav__version) {
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] :is(.studio-nav__brand-lockup, .studio-nav__switcher-caret) {
   display: none;
 }
 /* Only the sheet carries a close control, and it is absolutely positioned into this header's trailing
@@ -403,6 +486,7 @@
    and it was drawn on the column's inner edge, which meant every nested row needed a correction rule to
    line its own marker up with the others. A fill needs no such correction because it is the row. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -448,10 +532,106 @@
   background: var(--color-sidebar-accent);
   color: var(--color-foreground);
 }
+/* Active is the fill, one weight step, AND a marker on the leading edge. The marker went away once
+   because it was drawn on the column's inner edge, where every nested row then needed a correction rule
+   to line its own up with the others. Drawn on the ROW instead it needs no correction: it is inside the
+   row's own box, so a page nested under a group carries it at the group's indent, exactly where the row
+   starts. The glow is what keeps it from reading as a stray hairline on a dark canvas — and it is
+   `--glow-accent`, the readable halo, not the loud ring the spatial design uses on its orbit nodes. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active] {
+  position: relative;
   background: var(--color-sidebar-accent);
   color: var(--color-foreground);
   font-weight: 500;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active]::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 2px;
+  height: 1rem;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-primary);
+  box-shadow: var(--glow-accent);
+  content: '';
+  translate: 0 -50%;
+}
+/* Folded, there is no leading edge to mark — the row IS the glyph — so the accent moves onto the icon
+   and the bar would just clip the mark it is meant to point at. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item[data-active]::before {
+  display: none;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__item[data-active] .studio-nav__item-icon {
+  color: var(--color-primary);
+}
+
+/* A section header. Small, quiet and set in the metadata face — it names a REGION and must never compete
+   with the destinations under it, which is the failure mode of every uppercase mono label ever put over
+   a menu. Semibold at 11px carries the hierarchy without shouting. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__section-label {
+  height: 1.75rem;
+  padding-inline: 0.5rem;
+  color: var(--color-subtle-foreground);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+/* The folded column has no room for a word, and a section header sliced to two letters is noise. The
+   region rules already separate the two regions there. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__section-label {
+  height: 0.5rem;
+  opacity: 0;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  list-style: none;
+}
+
+/* A count riding on its row. It is metadata, so it is monospaced and tabular like every other number in
+   the app; `data-live` is the one that is currently true of the instance and takes the accent. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__badge {
+  flex: none;
+  margin-inline-start: auto;
+  min-width: 1.25rem;
+  padding-inline: 0.3125rem;
+  border-radius: var(--studio-radius-pill);
+  background: var(--studio-fill-active);
+  color: var(--color-subtle-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: 1.25rem;
+  text-align: center;
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__badge[data-live] {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+/* Folded there is no room beside an 18px glyph, so the count becomes a dot on the row's corner: the
+   statement "something is running here" survives, the exact number waits for the column to open. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav[data-mode='rail'] .studio-nav__badge {
+  position: absolute;
+  top: 0.125rem;
+  right: 0.125rem;
+  min-width: 0;
+  width: 0.375rem;
+  height: 0.375rem;
+  padding: 0;
+  overflow: hidden;
+  text-indent: 100%;
+  white-space: nowrap;
+}
+
+/* The fold's edge target. Invisible until the pointer is on it — an always-drawn 2px line down the inner
+   edge would read as a second border beside the one that is already there. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__rail::after {
+  background: transparent;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__rail:hover::after {
+  background: var(--color-primary);
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .studio-nav__item[data-active] .studio-nav__item-icon {
   color: var(--color-foreground);

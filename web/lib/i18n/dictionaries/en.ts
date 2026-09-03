@@ -356,6 +356,10 @@ export const en = {
     greetingEvening: 'Good evening',
     heroAsk: 'What can I help you with?',
     stripLabel: 'Today at a glance',
+    // The bento overview under the hero.
+    overview: 'Overview',
+    recentChats: 'Recent conversations',
+    openChat: 'Open chat',
     quickActions: 'Quick actions',
     pillSummary: 'Summarize today',
     pillSummaryPrompt: 'Please summarize what happened in the team today.',

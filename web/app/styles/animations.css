@@ -20,6 +20,23 @@
 
 @keyframes route-fade { from { opacity: 0; } to { opacity: 1; } }
 
+/* The entrance a stack of rows or cards plays once, each one a beat behind the one above it. The offset
+   is the element's own index, handed down as `--stagger` by the component that knows the order, so a
+   list of any length needs no per-item rule and no JS timer.
+   The delay is CAPPED at eight steps: a long menu would otherwise leave its last rows arriving nearly a
+   second late, which reads as the page still loading rather than as it arriving.
+   `both` matters — without the backwards fill, every element is painted at full opacity for the length
+   of its own delay and the stagger is invisible. */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-rise-in {
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+  animation-delay: calc(min(var(--stagger, 0), 8) * 26ms);
+}
+
 @keyframes skeleton-drift {
   from { background-position: 100% 0; }
   to { background-position: -100% 0; }
@@ -97,7 +114,18 @@ html:is([data-effects='reduced'], [data-effects='off']) {
 
 html:is([data-effects='reduced'], [data-effects='off']) .animate-fade-up,
 html:is([data-effects='reduced'], [data-effects='off']) .animate-pop-in,
+html:is([data-effects='reduced'], [data-effects='off']) .animate-rise-in,
 html:is([data-effects='reduced'], [data-effects='off']) .animate-drawer-in { animation-name: route-fade; }
+
+/* A stagger is motion FOR ITS OWN SAKE — the rows carry no information in the order they arrive — so
+   quiet effects drop the cascade entirely and every element fades in together. The animation itself
+   becomes a plain opacity fade through the rule above; only the delay has to be cancelled here, or a
+   reader who asked for less motion would still watch the list assemble itself row by row. */
+html:is([data-effects='reduced'], [data-effects='off']) .animate-rise-in { animation-delay: 0ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-effects-mode='auto'] .animate-rise-in { animation-delay: 0ms; }
+}
 
 html:is([data-effects='reduced'], [data-effects='off']) .skeleton,
 html:is([data-effects='reduced'], [data-effects='off']) .live-dot::after,

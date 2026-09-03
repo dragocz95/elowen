@@ -16,6 +16,8 @@ const primitives = {
   'avatar.tsx': { radix: '@radix-ui/react-avatar', cva: false },
   'badge.tsx': { radix: '@radix-ui/react-slot', cva: true },
   'button.tsx': { radix: '@radix-ui/react-slot', cva: true },
+  // recharts, not Radix: the chart primitive is a themed wrapper around the charting library.
+  'chart.tsx': { radix: null, cva: false },
   'checkbox.tsx': { radix: '@radix-ui/react-checkbox', cva: true },
   'collapsible.tsx': { radix: '@radix-ui/react-collapsible', cva: false },
   // cmdk, not Radix: the palette's listbox/combobox plumbing is cmdk's, the overlay stays the app's.
@@ -33,6 +35,9 @@ const primitives = {
   'scroll-area.tsx': { radix: '@radix-ui/react-scroll-area', cva: false },
   'select.tsx': { radix: '@radix-ui/react-select', cva: true },
   'separator.tsx': { radix: '@radix-ui/react-separator', cva: false },
+  // The column primitive. `Sheet` is deliberately absent (see the file header) — the app's drawer is
+  // dialog.tsx's `presentation="sheet"` — so the only Radix package left in it is Slot.
+  'sidebar.tsx': { radix: '@radix-ui/react-slot', cva: true },
   'skeleton.tsx': { radix: null, cva: false },
   'slider.tsx': { radix: '@radix-ui/react-slider', cva: true },
   'switch.tsx': { radix: '@radix-ui/react-switch', cva: true },
