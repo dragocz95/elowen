@@ -372,8 +372,8 @@ describe('sandbox execution HOME and leases', () => {
   /** The account HOME deliberately holds NO GitHub state — no hosts.yml, no credential helper in a
    *  .gitconfig. Everything that signs the child in travels in its environment for that one launch, which
    *  is what makes disconnecting take effect on the next command with nothing left to clean up. */
-  it('starts a child already signed in to GitHub for an account that connected an identity', async () => {
-    const { registry, projectPath } = await setup(['sandbox', 'terminal']);
+  it('starts a confined child already signed in to GitHub for an account that connected an identity', async () => {
+    const { registry, projectPath } = await setup(['sandbox', 'terminal'], true);
     connectGitHub(registry, ({ accountUserId }) => accountUserId === 1 ? { token: GITHUB_TOKEN, login: 'octocat' } : null);
     const prepared = await runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({
       command: { type: 'shell', command: 'true' }, cwd: projectPath, leaseKind: 'terminal',
@@ -447,8 +447,30 @@ describe('sandbox execution HOME and leases', () => {
     await service.lease.release();
   });
 
+  it('never gives a direct process a daemon or account GitHub credential', async () => {
+    const { registry, projectPath } = await setup();
+    connectGitHub(registry, () => ({ token: GITHUB_TOKEN, login: 'octocat' }));
+    const previousGh = process.env.GH_TOKEN;
+    const previousGithub = process.env.GITHUB_TOKEN;
+    process.env.GH_TOKEN = 'daemon-gh-token';
+    process.env.GITHUB_TOKEN = 'daemon-github-token';
+    try {
+      const prepared = await runWithPolicy(adminPolicy, () => registry.control('sandbox')!.prepareExecution({
+        command: { type: 'shell', command: 'true' }, cwd: projectPath, leaseKind: 'terminal',
+      }), { identity: operator(1), contributionUserId: 1, sessionId: 'brain-github-direct', workDir: projectPath });
+      expect(prepared.mode).toBe('direct');
+      expect(prepared.launch.env).not.toHaveProperty('GH_TOKEN');
+      expect(prepared.launch.env).not.toHaveProperty('GITHUB_TOKEN');
+      expect(prepared.launch.env).not.toHaveProperty('GIT_CONFIG_COUNT');
+      await prepared.lease.release();
+    } finally {
+      if (previousGh === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = previousGh;
+      if (previousGithub === undefined) delete process.env.GITHUB_TOKEN; else process.env.GITHUB_TOKEN = previousGithub;
+    }
+  });
+
   it('keeps the injected GitHub token out of everything a caller can read back', async () => {
-    const { registry, projectPath } = await setup(['sandbox', 'terminal']);
+    const { registry, projectPath } = await setup(['sandbox', 'terminal'], true);
     connectGitHub(registry, () => ({ token: GITHUB_TOKEN, login: 'octocat' }));
     const prepared = await runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({
       command: { type: 'shell', command: 'true' }, cwd: projectPath, leaseKind: 'terminal',

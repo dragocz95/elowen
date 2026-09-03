@@ -8,6 +8,7 @@ import type { KnownControls, PluginCapabilities, PluginControl } from '../../src
 
 const noopLog = { info() {}, warn() {}, error() {} };
 const fakeLsp = (): KnownControls['lsp'] => ({ diagnosticsEnabled: () => true });
+const fakeGitHub = (): KnownControls['github'] => ({ sessionCredential: () => ({ token: 'secret', login: 'octocat' }) });
 const fakeSandbox = (): KnownControls['sandbox'] => ({
   workspaceRoots: () => [],
   resolveWorkspace: () => ({}) as never,
@@ -25,11 +26,11 @@ const fakeWorkflow = (): KnownControls['workflow'] => ({
   resumeInterrupted: async () => ({ status: 'done', nodes: [] }) as never,
 } as unknown as KnownControls['workflow']);
 
-function contextOver(merged: PluginRegistry, caps?: PluginCapabilities, warn?: (message: string) => void) {
+function contextOver(merged: PluginRegistry, caps?: PluginCapabilities, warn?: (message: string) => void, consumer = 'consumer') {
   const staging = new PluginRegistry();
   const logger = warn ? { info() {}, warn, error() {} } : noopLog;
   return staging.contextFor(
-    'consumer', {}, logger, undefined, undefined, undefined, undefined, caps, undefined, undefined,
+    consumer, {}, logger, undefined, undefined, undefined, undefined, caps, undefined, undefined,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     (name) => merged.control(name),
@@ -61,6 +62,19 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     expect(ctx.control('lsp')).toBe(control);
   });
 
+  it('restricts credential and process controls to loader-identified internal consumers', () => {
+    const merged = new PluginRegistry();
+    ownerMerges(merged, 'github', 'github', fakeGitHub());
+    ownerMerges(merged, 'sandbox', 'sandbox', fakeSandbox());
+    const warnings: string[] = [];
+    const untrusted = contextOver(merged, { reads: ['controls'] }, (message) => warnings.push(message));
+    expect(untrusted.control('github')).toBeUndefined();
+    expect(untrusted.control('sandbox')).toBeUndefined();
+    expect(warnings.join('\n')).toContain('not an approved consumer');
+    expect(contextOver(merged, { reads: ['controls'] }, undefined, 'sandbox').control('github')).toBeDefined();
+    expect(contextOver(merged, { reads: ['controls'] }, undefined, 'terminal').control('sandbox')).toBeDefined();
+  });
+
   it('refuses an incomplete known control', () => {
     const merged = new PluginRegistry();
     ownerMerges(merged, 'workflow', 'workflow', { activeCount: () => 0 } as unknown as PluginControl);
@@ -71,7 +85,7 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
 
   it('resolves the complete Sandbox contract live', () => {
     const merged = new PluginRegistry();
-    const ctx = contextOver(merged, { reads: ['controls'] });
+    const ctx = contextOver(merged, { reads: ['controls'] }, undefined, 'terminal');
     const first = fakeSandbox();
     ownerMerges(merged, 'sandbox-a', 'sandbox', first);
     expect(ctx.control('sandbox')).toBe(first);

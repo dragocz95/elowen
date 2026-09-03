@@ -151,6 +151,11 @@ function etcBinds() {
 
 function cleanHostEnv(home) {
   const env = Object.fromEntries(Object.entries(process.env).filter((entry) => typeof entry[1] === 'string'));
+  // A direct child must never inherit the daemon/service account's GitHub identity. Account credentials
+  // are deliberately confined below; leaving either conventional variable here silently signs an
+  // unconnected account in as whoever started the daemon.
+  delete env.GH_TOKEN;
+  delete env.GITHUB_TOKEN;
   if (home) env.HOME = home;
   return env;
 }
@@ -365,9 +370,12 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
       launch = buildBubblewrap(input.command, cwd, roots, accountUserId === null ? null : home, input.network);
     }
 
-    // Every mode, because "am I signed in to GitHub?" is a property of the ACCOUNT, not of how its child
-    // happens to be isolated. An instance/owner-less run has no account to ask about and gets nothing.
-    const credential = githubCredential(ctx, accountUserId, githubSeam);
+    // Only Bash in a namespace receives the account token. A direct child shares the daemon UID and may
+    // read another direct process's /proc/<pid>/environ; no redaction can repair that isolation failure.
+    // Other plugins may use Sandbox for their own background work, but they do not need an interactive
+    // GitHub identity and must not receive one in the prepared launch object.
+    const mayUseGitHubCredential = mode === 'confined' && input.leaseKind === 'terminal';
+    const credential = mayUseGitHubCredential ? githubCredential(ctx, accountUserId, githubSeam) : null;
     if (credential) {
       authenticateLaunchToGitHub(launch, credential);
       // Output is the other way a token escapes: a command that echoes its environment, or a tool that

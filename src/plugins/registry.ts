@@ -128,6 +128,14 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   skillCatalog: ['visibleSkills', 'canonicalBaseDir'],
 };
 
+/** Controls that carry credentials or process-launch authority are NOT discoverable merely by declaring
+ * `reads:['controls']`. The caller name is assigned by the loader, not by request data, so an installed
+ * sibling cannot self-grant the seam by adding a manifest capability. Keep this list narrow and explicit. */
+const CONTROL_CONSUMERS: Partial<Record<keyof KnownControls, readonly string[]>> = {
+  github: ['sandbox'],
+  sandbox: ['files', 'terminal', 'github', 'onedrive', 'sites'],
+};
+
 /** A missing account is not plugin-access open mode: shared channels and unlinked callers
  *  must not learn grant-gated skills. The predicate remains the single owner of the grant decision. */
 const UNGRANTED_PLUGIN_USER: PluginAccessUser = { is_admin: false, granted_plugins: [] };
@@ -958,6 +966,11 @@ export class PluginRegistry {
       control<K extends keyof KnownControls>(key: K): KnownControls[K] | undefined {
         if (!capabilities.reads?.includes('controls')) {
           scoped.warn(`control('${key}') denied: no 'controls' read capability declared`);
+          return undefined;
+        }
+        const consumers = CONTROL_CONSUMERS[key];
+        if (consumers && !consumers.includes(name)) {
+          scoped.warn(`control('${key}') denied: plugin '${name}' is not an approved consumer`);
           return undefined;
         }
         return resolveControl?.(key);
