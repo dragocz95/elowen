@@ -9,6 +9,7 @@ vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(w
 
 import { useRowAnchor } from '../../lib/useRowAnchor';
 import { ROW_FLASH_CLASS } from '../../lib/rowAnchors';
+import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 
 const ROW = 'settings.modelRoles.digest';
 
@@ -40,7 +41,28 @@ afterEach(() => {
   navigate('/settings');
 });
 
+/** A page whose anchored row sits inside a folded group — the shape Settings → Models has. */
+function FoldedPage() {
+  useRowAnchor();
+  return (
+    <SettingsGroup title="Model roles" collapsible>
+      <SettingsRow label="Digest model" rowId={ROW} />
+    </SettingsGroup>
+  );
+}
+
 describe('useRowAnchor', () => {
+  it('opens the folded group the row lives in before revealing it', () => {
+    navigate(`/settings?cat=models&row=${ROW}`);
+    const { container } = render(<FoldedPage />);
+
+    const trigger = container.querySelector('.settings-group__trigger')!;
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('.settings-group__body')).not.toHaveAttribute('hidden');
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' });
+    expect(rowNode()).toHaveClass(ROW_FLASH_CLASS);
+  });
+
   it('reveals the row the URL names and consumes the anchor', () => {
     navigate(`/settings?cat=models&row=${ROW}`);
     render(<Page />);

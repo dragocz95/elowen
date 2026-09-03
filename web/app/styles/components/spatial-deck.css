@@ -110,6 +110,17 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .settings-group__icon { display: grid; flex: none; place-items: center; color: var(--color-primary); }
 .settings-group__heading h2 { color: var(--color-foreground); font-size: 0.95rem; font-weight: 600; letter-spacing: -0.015em; }
 .settings-group__heading p { margin-top: 0.15rem; color: var(--color-muted-foreground); font-size: 0.72rem; line-height: 1.45; }
+/* A collapsible group's heading is ONE trigger button. It carries the static heading's flex geometry, so
+   opening or closing the body never shifts or rewraps the header line, and the typography above is
+   unchanged. The actions stay a sibling OUTSIDE the button — an action click must never toggle the
+   group. Hover and focus reuse the surface tokens; the chevron's fold is a TRANSFORM-ONLY transition
+   (quiet effects damp it via the motion tokens without touching layout), and no height animation: the
+   fold is instant, the state change itself is the feedback. */
+.settings-group__trigger { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 0.65rem; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.settings-group__trigger:focus-visible { outline: 2px solid var(--color-foreground); outline-offset: 4px; }
+.settings-group__trigger:hover .settings-group__chevron { color: var(--color-foreground); }
+.settings-group__chevron { flex: none; color: var(--color-muted-foreground); transition: transform var(--motion-base) var(--ease-out); }
+.settings-group__trigger[data-state='open'] .settings-group__chevron { transform: rotate(90deg); }
 .settings-group__actions, .settings-row__actions { display: flex; min-width: 0; flex: none; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .settings-group__body { min-width: 0; }
 

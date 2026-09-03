@@ -1,8 +1,10 @@
 'use client';
-import { Children, Fragment, isValidElement, type ReactNode } from 'react';
+import { Children, Fragment, isValidElement, useId, useState, type ReactNode } from 'react';
+import { ChevronRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { HelpTip } from './HelpTip';
 import { WorkspaceLeadPortal } from './WorkspaceShell';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './shadcn/collapsible';
 
 type SettingsTone = 'default' | 'danger';
 type SettingsDensity = 'comfortable' | 'compact';
@@ -21,8 +23,14 @@ export function SettingsDocument({ children, className = '' }: { children: React
  *  one screen instead of a column with half of it empty. The split happens HERE rather than in CSS
  *  because each stack has to be its own grid: the records inside one stack share their column tracks
  *  through subgrid, and that is what makes every status and every action line up. CSS multi-column would
- *  reflow the same rows into one box and take that alignment away. */
-export function SettingsGroup({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', columns = 1, rowId, children, className = '' }: {
+ *  reflow the same rows into one box and take that alignment away.
+ *
+ *  `collapsible` folds the body under the header: the heading becomes ONE trigger button (the actions
+ *  stay a sibling OUTSIDE it, so an action click can never toggle the group) and the chevron at its
+ *  trailing edge states the fold. The body stays MOUNTED while closed — `hidden` on an always-rendered
+ *  `CollapsibleContent forceMount` — so deep links and in-page search still find rows that are folded
+ *  away, and a caller can force the group open through `open`/`onOpenChange`. */
+export function SettingsGroup({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', columns = 1, rowId, collapsible = false, defaultOpen, open, onOpenChange, children, className = '' }: {
   title?: string;
   description?: string;
   icon?: LucideIcon;
@@ -34,27 +42,81 @@ export function SettingsGroup({ title, description, icon: Icon, actions, tone = 
    *  when the search index knows it by its header rather than by a record inside it: a card whose whole
    *  content is a viewer behind one button (Logs, Diagnostics) has no row to point at. */
   rowId?: string;
+  /** Fold the body under the header. Closed by default (`defaultOpen`), or fully controlled through
+   *  `open` + `onOpenChange` for callers that want to expand a group on the program's say-so. */
+  collapsible?: boolean;
+  /** Initial state of an uncontrolled collapsible group. Ignored (and defaults to closed) without
+   *  `collapsible`. */
+  defaultOpen?: boolean;
+  /** Controlled fold state. Passing it disables the internal state, exactly like a controlled input. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   /** Optional: a group whose whole story fits in its header (a title, a figure, one action) renders as a
    *  single row. An empty body div would still contribute its own padding and read as a stray gap. */
   children?: ReactNode;
   className?: string;
 }) {
-  return (
-    <section data-settings-group data-tone={tone} data-density={density} data-row-id={rowId} className={`settings-group ${className}`}>
-      {title || description || actions ? (
-        <header className="settings-group__header">
-          <div className="settings-group__heading">
-            {Icon ? <span className="settings-group__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span> : null}
-            <div className="min-w-0">
-              {title ? <h2>{title}</h2> : null}
-              {description ? <p>{description}</p> : null}
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen ?? false);
+  const isOpen = open ?? uncontrolledOpen;
+  // Radix's trigger drops `aria-controls` while closed (its content is unmounted); ours is force-mounted
+  // and merely `hidden`, so the pair must hold in BOTH states — hand in an id of our own.
+  const contentId = useId();
+  const setOpen = (next: boolean) => {
+    if (open === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
+
+  if (!collapsible) {
+    return (
+      <section data-settings-group data-tone={tone} data-density={density} data-row-id={rowId} className={`settings-group ${className}`}>
+        {title || description || actions ? (
+          <header className="settings-group__header">
+            <div className="settings-group__heading">
+              {Icon ? <span className="settings-group__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span> : null}
+              <div className="min-w-0">
+                {title ? <h2>{title}</h2> : null}
+                {description ? <p>{description}</p> : null}
+              </div>
             </div>
-          </div>
+            {actions ? <div className="settings-group__actions">{actions}</div> : null}
+          </header>
+        ) : null}
+        {children ? <div className="settings-group__body" data-columns={columns}>{splitIntoColumns(children, columns)}</div> : null}
+      </section>
+    );
+  }
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setOpen} asChild>
+      <section data-settings-group data-tone={tone} data-density={density} data-row-id={rowId} className={`settings-group ${className}`}>
+        <header className="settings-group__header">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              aria-controls={contentId}
+              className="settings-group__trigger"
+            >
+              <div className="settings-group__heading">
+                {Icon ? <span className="settings-group__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span> : null}
+                <div className="min-w-0">
+                  {title ? <h2>{title}</h2> : null}
+                  {description ? <p>{description}</p> : null}
+                </div>
+              </div>
+              <ChevronRight className="settings-group__chevron" size={16} strokeWidth={1.75} aria-hidden />
+            </button>
+          </CollapsibleTrigger>
           {actions ? <div className="settings-group__actions">{actions}</div> : null}
         </header>
-      ) : null}
-      {children ? <div className="settings-group__body" data-columns={columns}>{splitIntoColumns(children, columns)}</div> : null}
-    </section>
+        {/* Mounted even when closed: the body is what deep links and anchors point at, and search has
+            to find text inside a folded group. Visibility (not existence) is the only thing that folds. */}
+        {children ? (
+          <CollapsibleContent forceMount id={contentId} hidden={!isOpen} className="settings-group__body" data-columns={columns}>
+            {splitIntoColumns(children, columns)}
+          </CollapsibleContent>
+        ) : null}
+      </section>
+    </Collapsible>
   );
 }
 

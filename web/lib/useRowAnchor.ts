@@ -31,6 +31,21 @@ const ROW_WAIT_MS = 2000;
  *  than the 1.6 s keyframes in `app/styles/animations.css`. */
 const ROW_FLASH_MS = 1800;
 
+/** A row inside a folded `SettingsGroup` is in the DOM (the body is force-mounted) but hidden, so scrolling
+ *  to it would land nowhere. Every closed fold above the row is opened through its own trigger — a click
+ *  on the button `aria-controls` names — so the group's state (uncontrolled or controlled) moves exactly
+ *  as if the reader had opened it, and nothing here knows how the fold is implemented beyond that pair
+ *  of attributes. React flushes a discrete click synchronously, so the row is visible when this returns. */
+function unfoldAround(row: HTMLElement): void {
+  let fold = row.parentElement?.closest<HTMLElement>('[data-slot="collapsible-content"][data-state="closed"]') ?? null;
+  while (fold) {
+    const trigger = fold.id ? document.querySelector<HTMLButtonElement>(`[aria-controls="${fold.id}"][aria-expanded="false"]`) : null;
+    if (!trigger) break;
+    trigger.click();
+    fold = fold.parentElement?.closest<HTMLElement>('[data-slot="collapsible-content"][data-state="closed"]') ?? null;
+  }
+}
+
 export function useRowAnchor(): void {
   const searchParams = useSearchParams();
   const urlRow = searchParams.get(ROW_ANCHOR_PARAM);
@@ -43,6 +58,7 @@ export function useRowAnchor(): void {
     // A second arrival while the first is still blinking: clear the old class before adding it again,
     // otherwise the animation would never restart.
     endFlash.current?.();
+    unfoldAround(row);
     row.scrollIntoView({ block: 'center' });
     // Focus is deliberately NOT moved. The palette hands focus back to whatever opened it, and a row
     // that happens to contain a switch would otherwise swallow the next keystroke. A blink is not a

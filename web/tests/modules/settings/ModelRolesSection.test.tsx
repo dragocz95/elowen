@@ -49,6 +49,15 @@ import { ModelRolesSection } from '../../../modules/settings/ModelRolesSection';
 const renderSection = (onOpenSection?: (id: string) => void) =>
   render(<ToastProvider><ModelRolesSection onOpenSection={onOpenSection} /></ToastProvider>, { wrapper: createWrapper().wrapper });
 
+/** The group folds closed by default, and `getByRole` does not see into `hidden` content (it leaves the
+ *  accessibility tree). Tests that drive the rows therefore OPEN the group first — that is the query
+ *  being aligned with the new default, not a workaround for a regression: the rows themselves are always
+ *  in the DOM (pinned by the "still in the DOM" test below). */
+const openModelRolesGroup = (container: HTMLElement) => {
+  fireEvent.click(container.querySelector('.settings-group__trigger')!);
+  expect(container.querySelector('.settings-group__trigger')).toHaveAttribute('aria-expanded', 'true');
+};
+
 const pick = (rowLabel: string) => screen.getByRole('button', { name: `${en.managePicker.manage}: ${rowLabel}` });
 
 beforeEach(() => {
@@ -79,7 +88,8 @@ describe('Settings → Models — moved memory forms', () => {
   });
 
   it('gives the custom model and optional dimensions inputs explicit translated names', () => {
-    renderSection();
+    const view = renderSection();
+    openModelRolesGroup(view.container);
     expect(screen.getByRole('textbox', { name: en.memory.embeddingModelCustom })).toBeInTheDocument();
     expect(screen.getByRole('spinbutton', { name: en.memory.embeddingDimensions })).toHaveValue(1536);
   });
@@ -87,7 +97,8 @@ describe('Settings → Models — moved memory forms', () => {
   /** The pinned empty row used to read "None"; it now says what an empty pair MEANS for this role — the
    *  titles, the memory curator and the categorizer simply stop running. */
   it('clears the utility route back to the empty pair through its pinned off row', async () => {
-    renderSection();
+    const view = renderSection();
+    openModelRolesGroup(view.container);
     fireEvent.click(pick(en.settings.modelRoles.utility));
     const dialog = screen.getByRole('dialog', { name: en.settings.modelRoles.utility });
     fireEvent.click(within(dialog).getByRole('button', { name: en.settings.modelRoles.utilityOff }));
@@ -105,6 +116,7 @@ describe('Settings → Models — Model roles', () => {
    *  full-width band; nothing in their trailing sides needs it any more. */
   it('keeps every record of the group on the single trailing line, with the picker trigger inside', () => {
     const { container } = renderSection();
+    openModelRolesGroup(container);
     const group = container.querySelector('[data-settings-group]')!;
     const rows = Array.from(group.querySelectorAll('.settings-row')) as HTMLElement[];
     expect(rows.length).toBeGreaterThan(0);
@@ -120,6 +132,7 @@ describe('Settings → Models — Model roles', () => {
 
   it('answers "which model does what" in one group, above the catalog', () => {
     const { container } = renderSection();
+    openModelRolesGroup(container);
     const rows = Array.from(container.querySelectorAll('.settings-row__title > span:first-child')).map((n) => n.textContent);
     expect(rows).toEqual([
       en.settings.modelRoles.instanceDefault,
@@ -152,7 +165,8 @@ describe('Settings → Models — Model roles', () => {
   });
 
   it('shows the digest inheriting the utility model, and drops the badge on an explicit pick', async () => {
-    renderSection();
+    const view = renderSection();
+    openModelRolesGroup(view.container);
     const trigger = pick(en.settings.modelRoles.digest);
     // Without opening anything, the trigger already names the model the digest actually runs on.
     expect(trigger).toHaveTextContent(interpolate(en.settings.modelRoles.inherit, { model: 'claude-haiku' }));
@@ -171,7 +185,8 @@ describe('Settings → Models — Model roles', () => {
    *  route the daemon cannot resolve, and leaving the old value in place would silently ignore the click. */
   it('persists a clear back to inherit as the empty pair', async () => {
     state.digest = { providerId: 'anthropic', model: 'claude-opus' };
-    renderSection();
+    const view = renderSection();
+    openModelRolesGroup(view.container);
     const trigger = pick(en.settings.modelRoles.digest);
     expect(trigger).toHaveTextContent('claude-opus');
     expect(screen.queryByText(en.settings.modelRoles.inherited)).toBeNull();
@@ -186,7 +201,8 @@ describe('Settings → Models — Model roles', () => {
   });
 
   it('writes the utility route as one provider+model pair', async () => {
-    renderSection();
+    const view = renderSection();
+    openModelRolesGroup(view.container);
     fireEvent.click(pick(en.settings.modelRoles.utility));
     const dialog = screen.getByRole('dialog', { name: en.settings.modelRoles.utility });
     fireEvent.click(within(dialog).getByRole('button', { name: 'claude-opus' }));
@@ -197,7 +213,8 @@ describe('Settings → Models — Model roles', () => {
   });
 
   it('keeps every OAuth account out of the embedding picker and states why', () => {
-    renderSection();
+    const view = renderSection();
+    openModelRolesGroup(view.container);
     fireEvent.click(screen.getByRole('button', { name: en.memory.embeddingProvider }));
     const dialog = screen.getByRole('dialog', { name: en.memory.embeddingProvider });
     // Anthropic is a connected OAuth account: it exposes no embedding endpoint, so it is not offered.
@@ -207,11 +224,43 @@ describe('Settings → Models — Model roles', () => {
 
   it('sends the reader to the account roles and to the providers that decide what exists', () => {
     const onOpenSection = vi.fn();
-    renderSection(onOpenSection);
+    const view = renderSection(onOpenSection);
+    openModelRolesGroup(view.container);
     fireEvent.click(screen.getByRole('button', { name: en.settings.modelRoles.providersLink }));
     expect(onOpenSection).toHaveBeenCalledWith('brain');
     fireEvent.click(screen.getByRole('button', { name: en.settings.modelRoles.recapLink }));
     expect(onOpenSection).toHaveBeenCalledWith('dashboard');
     expect(screen.getByRole('link', { name: en.settings.modelRoles.openAccount })).toHaveAttribute('href', '/account?cat=cli');
+  });
+});
+
+/** The fold itself. The group ships CLOSED so the deck reads as one-line summaries, and the rows stay
+ *  MOUNTED under `hidden` — the sibling deep-link task anchors `data-row-id`s into this body and opens
+ *  the group programmatically through the controlled props, which only works while the rows exist. */
+describe('Settings → Models — the collapsed group', () => {
+  /** EIGHT rows: instance default, utility, digest, embedding provider/model/custom/dimensions, personal. */
+  it('starts collapsed with every row still in the DOM', () => {
+    const { container } = renderSection();
+    const group = container.querySelector('[data-settings-group]')!;
+    const trigger = container.querySelector('.settings-group__trigger')!;
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveAttribute('type', 'button');
+    const body = group.querySelector('.settings-group__body')!;
+    expect(body).toHaveAttribute('hidden');
+    // Closed yet present: all eight records, with the summary carrying what the fold hides.
+    expect(group.querySelectorAll('.settings-row')).toHaveLength(8);
+    expect(group.querySelector('.settings-group__heading p')!.textContent).toBe(en.settings.modelRoles.hint);
+  });
+
+  it('opens on the header trigger and hands the rows back to the accessibility tree', () => {
+    const { container } = renderSection();
+    const trigger = container.querySelector('.settings-group__trigger') as HTMLElement;
+    fireEvent.click(trigger);
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('.settings-group__body')).not.toHaveAttribute('hidden');
+    expect(screen.getByRole('textbox', { name: en.memory.embeddingModelCustom })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: en.memory.embeddingTest })).toBeInTheDocument();
   });
 });
