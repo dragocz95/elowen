@@ -28,6 +28,7 @@ import { SettingsGroup, SettingsRow, SettingsState } from '../../components/ui/S
 import { DEFAULT_PROVIDER_COMPATIBILITY, ProviderCompatibilityModal, providerCompatibilityCustomCount } from './ProviderCompatibilityModal';
 import { OptionalTemperatureControl } from './OptionalTemperatureControl';
 import { DomainFavicon } from './providers';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 // UI-only icon slug per OAuth type. The daemon exposes the SUPPORTED type set (the keys of
 // /brain/oauth/status), never icons — so the enumeration is derived from that runtime data (a newly
@@ -627,6 +628,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
           and return via the "+" menu. */}
       <SettingsGroup
         title={t.brain.accounts}
+        rowId={rowAnchor('brain.accounts')}
         density="compact"
         actions={restorableOauth.length > 0 ? (
           <ActionMenu
@@ -691,6 +693,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
       {/* Provider entries the picker exposes. */}
       <SettingsGroup
         title={t.brain.providers}
+        rowId={rowAnchor('brain.providers')}
         density="compact"
         actions={(
           <button

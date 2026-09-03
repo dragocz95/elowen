@@ -44,6 +44,8 @@ import { PluginAccountSection } from './PluginAccountSection';
 import { parsePluginAccountSectionId, parsePluginUserConfigSectionId, pluginAccountSectionId, pluginUserConfigSectionId } from './pluginSections';
 import { UserPluginConfigSection } from './UserPluginConfigSection';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
+import { rowAnchor } from '../../lib/rowAnchors';
+import { useRowAnchor } from '../../lib/useRowAnchor';
 
 const CORE_ACCOUNT_SECTIONS = ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'] as const;
 type CoreAccountSection = typeof CORE_ACCOUNT_SECTIONS[number];
@@ -108,6 +110,9 @@ export function AccountView() {
     window.addEventListener('popstate', apply);
     return () => window.removeEventListener('popstate', apply);
   }, [setSection]);
+  // …and `?row=<anchor>` beside it: the record the palette named is scrolled into view and blinked once
+  // as soon as its section is on screen.
+  useRowAnchor();
   const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<AccountSection, SaveFeedback>>>({});
   const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
     if (!isAccountSection(id)) return;
@@ -395,6 +400,7 @@ export function AccountView() {
         const rowName = (
           <SpatialRow
             title={t.account.name}
+            rowId={rowAnchor('account.name')}
             icon={UserIcon}
             control={<Input value={name} onChange={(e) => setName(e.target.value)} aria-label={t.account.name} />}
           />
@@ -402,6 +408,7 @@ export function AccountView() {
         const rowEmail = (
           <SpatialRow
             title={t.account.email}
+            rowId={rowAnchor('account.email')}
             icon={Mail}
             control={<Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} aria-label={t.account.email} />}
           />
@@ -412,6 +419,7 @@ export function AccountView() {
         const rowUiScale = (
           <SpatialRow
             title={t.account.uiScale}
+            rowId={rowAnchor('account.uiScale')}
             icon={ZoomIn}
             description={t.help.accountUiScale}
             status={<span className="font-mono tabular-nums text-foreground">{prefPct}%</span>}
@@ -424,6 +432,7 @@ export function AccountView() {
         const rowEffects = (
           <SpatialRow
             title={t.account.effectsTitle}
+            rowId={rowAnchor('account.effectsTitle')}
             icon={Sparkles}
             description={t.account.effectsHint}
             control={(
@@ -563,6 +572,7 @@ export function AccountView() {
             <SpatialGroup>
               <SpatialRow
                 title={t.account.password}
+                rowId={rowAnchor('account.password')}
                 icon={KeyRound}
                 description={t.account.passwordHint}
                 status={<span className="font-mono tracking-widest" aria-hidden>••••••••</span>}
@@ -603,6 +613,7 @@ export function AccountView() {
           <SpatialGroup>
             <SpatialRow
               title={t.push.title}
+              rowId={rowAnchor('push.title')}
               icon={Bell}
               description={t.help.pushEnable}
               control={<Toggle checked={pushOn} onChange={togglePush} disabled={pushBusy} label={t.push.deviceToggle} />}

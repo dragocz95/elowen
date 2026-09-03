@@ -258,6 +258,29 @@ describe('AccountView', () => {
     expect(screen.queryByRole('button', { name: 'Manage: Default worker' })).toBeNull();
   });
 
+  /** The account half of the palette's row anchors: `?cat=cli&row=<anchor>` opens Models and marks the
+   *  record itself. The anchor is consumed on arrival so a reload does not blink it again. */
+  it('marks the row an account deep link names and consumes the anchor', async () => {
+    window.history.replaceState(null, '', '/account?cat=cli&row=cli.visionModelLabel');
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', visionModel: '', compactModel: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {} })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    const row = await waitFor(() => {
+      const node = container.querySelector<HTMLElement>('[data-row-id="cli.visionModelLabel"]');
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    await waitFor(() => expect(row).toHaveClass('row-flash'));
+    expect(window.location.search).toBe('?cat=cli');
+    window.history.replaceState(null, '', '/account');
+  });
+
   it('falls back to the profile section when a removed section id is persisted', async () => {
     localStorage.setItem('elowen.account.section', 'plugins'); // the Plugins tab no longer exists
     server.use(

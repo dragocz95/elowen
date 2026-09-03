@@ -14,6 +14,7 @@ import { ChoiceField } from '../../components/ui/ChoiceField';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { Button } from '../../components/ui/Button';
 import { LoadingState, ErrorState } from '../../components/ui/states';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 const EDIT_OPTIONS = {
   fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true,
@@ -73,6 +74,7 @@ export function PersonalitySection({ onSaveState }: { onSaveState?: (section: st
             shows the current style and picks in the shared searchable picker. */}
         <SpatialRow
           title={t.personality.styleLabel}
+          rowId={rowAnchor('personality.styleLabel')}
           icon={Sparkles}
           control={<ChoiceField title={t.personality.styleLabel} options={styleOptions} value={advisorStyle} onChange={setAdvisorStyle} />}
         />
@@ -80,6 +82,7 @@ export function PersonalitySection({ onSaveState }: { onSaveState?: (section: st
             row ellipses — and the button that opens the Monaco editor is its one control. */}
         <SpatialRow
           title={t.personality.bodyLabel}
+          rowId={rowAnchor('personality.bodyLabel')}
           description={t.personality.bodyHint}
           icon={Pencil}
           status={hasInstructions ? <span title={userInstructions.trim()}>{userInstructions.trim().slice(0, 42)}</span> : undefined}

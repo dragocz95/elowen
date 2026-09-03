@@ -18,6 +18,7 @@ import { useSaveMyTerminalSettings } from '../../lib/mutations';
 import { TerminalPreview } from '../../components/terminal/TerminalPreview';
 import { PALETTE_PRESETS, PALETTE_KEYS, TERMINAL_DEFAULTS } from '../../components/terminal/palettes';
 import type { TerminalSettings, TerminalPalette, TerminalFontFamily, TerminalCursorStyle, TerminalThemeMode } from '../../lib/types';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 const MILLISECONDS_PER_SECOND = 1_000;
 
@@ -124,7 +125,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
   // value it reads in the record's status slot.
   return (
     <div className="flex flex-col gap-4">
-      <SpatialGroup title={t.terminal.colorsTitle} description={t.terminal.colorsHelp} icon={Palette}>
+      <SpatialGroup title={t.terminal.colorsTitle} rowId={rowAnchor('terminal.colorsTitle')} description={t.terminal.colorsHelp} icon={Palette}>
         <SpatialRow
           title={t.terminal.themeMode}
           icon={Palette}
@@ -144,7 +145,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.fontTitle} icon={Type} columns={2}>
+      <SpatialGroup title={t.terminal.fontTitle} rowId={rowAnchor('terminal.fontTitle')} icon={Type} columns={2}>
         <SpatialRow
           title={t.terminal.fontSize}
           icon={ALargeSmall}
@@ -160,7 +161,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.cursorTitle} icon={TextCursorInput} columns={2}>
+      <SpatialGroup title={t.terminal.cursorTitle} rowId={rowAnchor('terminal.cursorTitle')} icon={TextCursorInput} columns={2}>
         <SpatialRow
           title={t.terminal.cursorStyle}
           icon={TextCursorInput}
@@ -173,7 +174,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.historyTitle} description={t.terminal.scrollbackHelp} icon={ScrollText}>
+      <SpatialGroup title={t.terminal.historyTitle} rowId={rowAnchor('terminal.historyTitle')} description={t.terminal.scrollbackHelp} icon={ScrollText}>
         <SpatialRow
           title={t.terminal.scrollback}
           icon={ScrollText}

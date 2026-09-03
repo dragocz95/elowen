@@ -7,7 +7,7 @@ import { useTranslation } from '../../lib/i18n';
 import { usePluginUi } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
 import {
-  askCandidates, buildSearchIndex, filterEntries, findNormalizedRange, rankCandidates,
+  askCandidates, buildSearchIndex, displayHref, filterEntries, findNormalizedRange, rankCandidates,
   SEARCH_GROUP_ORDER, SEARCH_MAX_QUERY_CHARS, type SearchEntry, type SearchGroup,
 } from './siteSearch';
 import { focusOverlaySurface, useOverlayIsolation } from '../ui/overlayStack';
@@ -71,8 +71,9 @@ function EntryRow({ entry, q, onRun }: { entry: SearchEntry; q?: string; onRun: 
           <span className="block truncate text-xs text-muted-foreground">{q ? <Highlight text={entry.subtitle} q={q} /> : entry.subtitle}</span>
         ) : null}
       </span>
-      {/* The route / deep-link is today's hint column, mono as it always was. */}
-      <CommandShortcut className="font-mono text-[11px] tracking-normal">{entry.href}</CommandShortcut>
+      {/* The route / deep-link is today's hint column, mono as it always was — without the row anchor
+          the href also carries, which is machinery rather than an address a reader recognizes. */}
+      <CommandShortcut className="font-mono text-[11px] tracking-normal">{displayHref(entry.href)}</CommandShortcut>
       <CornerDownLeft size={13} className="shrink-0 text-muted-foreground opacity-0 group-data-[selected=true]:opacity-100" aria-hidden />
     </CommandItem>
   );

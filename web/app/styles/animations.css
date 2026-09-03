@@ -53,6 +53,24 @@
   50% { transform: scale(1.12); }
 }
 
+/* Arriving on a row from the command palette: a halo of the primary token around the record, with a
+   barely-there wash of the accent behind it, both fading out over 1.6 s. Box-shadow and background only —
+   nothing here changes the row's size, so a card full of records does not jump as the blink plays. The
+   class is added for the length of the animation by `lib/useRowAnchor.ts` and removed on `animationend`;
+   it is written literally there (a plain CSS class, not a Tailwind utility), so the purge keeps it. */
+@keyframes row-flash {
+  0% {
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary) 55%, transparent);
+    background-color: color-mix(in oklab, var(--color-accent) 70%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+    background-color: transparent;
+  }
+}
+
+.row-flash { animation: row-flash 1.6s ease-out 1; }
+
 .animate-stop-pulse { animation: stop-pulse 1.6s ease-out infinite; }
 .animate-stop-pulse > svg { animation: stop-pulse-icon 1.6s ease-in-out infinite; }
 
@@ -91,6 +109,18 @@ html:is([data-effects='reduced'], [data-effects='off']) .ambient-pulse { animati
 html:is([data-effects='reduced'], [data-effects='off']) .animate-stop-pulse,
 html:is([data-effects='reduced'], [data-effects='off']) .animate-stop-pulse > svg { animation: none !important; }
 
+/* The row blink is not decoration — it is the ANSWER to "which row did I just ask for?" — so quiet
+   effects keep the statement and drop the motion: a static outline that the hook's own timer clears a
+   moment later. `off` asks for nothing at all and gets nothing (the rule below it removes the outline
+   again); the class still comes and goes, so no state is left behind either way. */
+html:is([data-effects='reduced'], [data-effects='off']) .row-flash {
+  animation: none !important;
+  outline: 2px solid color-mix(in oklab, var(--color-primary) 55%, transparent);
+  outline-offset: 2px;
+}
+
+html[data-effects='off'] .row-flash { outline: none; }
+
 /* Slowed rather than stopped: a spinner is the only thing telling the user that work is still running, so
    freezing it would read as "hung". Quiet effects ask for less motion, not for less information. */
 html:is([data-effects='reduced'], [data-effects='off']) .animate-spin { animation-duration: 2.4s !important; }
@@ -98,6 +128,12 @@ html:is([data-effects='reduced'], [data-effects='off']) .animate-spin { animatio
 @media (prefers-reduced-motion: reduce) {
   html[data-effects-mode='auto'] .ambient-pulse,
   html[data-effects-mode='auto'] .animate-stop-pulse { animation: none !important; }
+  /* Following the OS: the blanket rule at the bottom of this file already stops the animation, so this
+     only has to restore the statement it was making — the same static outline as quiet effects. */
+  html[data-effects-mode='auto'] .row-flash {
+    outline: 2px solid color-mix(in oklab, var(--color-primary) 55%, transparent);
+    outline-offset: 2px;
+  }
 }
 
 html[data-effects='off'] {

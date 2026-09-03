@@ -21,6 +21,7 @@ import { elowenClient, ElowenApiError } from '../../lib/elowenClient';
 import type { BrainModelOption } from '../../lib/types';
 import { resolveDigestRoute, roleKey, splitRoleKey } from '../../lib/modelRoles';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 /** Deduped model ids from the brain catalog, scoped to the chosen provider (or all when none picked).
  *  The catalog only ever holds real API/chat/embedding models from configured brain providers — CLI
@@ -204,6 +205,7 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
           would promise a setting that does not exist. The way to change it is to reorder the providers. */}
       <SettingsRow
         label={t.settings.modelRoles.instanceDefault}
+        rowId={rowAnchor('settings.modelRoles.instanceDefault')}
         description={t.settings.modelRoles.instanceDefaultHelp}
         icon={Brain}
         status={<span className="truncate font-mono">{runtimeDefault?.model ?? '—'}</span>}
@@ -216,6 +218,7 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
 
       <SettingsRow
         label={t.settings.modelRoles.utility}
+        rowId={rowAnchor('settings.modelRoles.utility')}
         description={interpolate(t.settings.modelRoles.utilityHelp, { agentName })}
         icon={Tags}
         status={utilityBadge}
@@ -235,6 +238,7 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
 
       <SettingsRow
         label={t.settings.modelRoles.digest}
+        rowId={rowAnchor('settings.modelRoles.digest')}
         description={t.settings.modelRoles.digestHelp}
         icon={Sparkles}
         status={digestRoute.inherited ? inheritedBadge : undefined}
@@ -263,6 +267,7 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
           slack — nothing here needs the stacked band any more. */}
       <SettingsRow
         label={t.memory.embeddingProvider}
+        rowId={rowAnchor('memory.embeddingProvider')}
         description={t.help.embeddingProvider}
         hint={t.settings.modelRoles.embeddingConstraint}
         icon={Server}
@@ -276,18 +281,21 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
           free-text row below writes this same field. */}
       <SettingsRow
         label={t.memory.embeddingModel}
+        rowId={rowAnchor('memory.embeddingModel')}
         description={t.help.embeddingIntro}
         icon={Boxes}
         control={<ModelCatalogField value={embModel} onChange={setEmbModel} catalog={embCatalog} title={t.memory.embeddingModel} subtitle={t.help.embeddingIntro} />}
       />
       <SettingsRow
         label={t.memory.embeddingModelCustom}
+        rowId={rowAnchor('memory.embeddingModelCustom')}
         description={t.help.embeddingModelCustom}
         icon={PenLine}
         control={<Input aria-label={t.memory.embeddingModelCustom} value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" />}
       />
       <SettingsRow
         label={t.memory.embeddingDimensions}
+        rowId={rowAnchor('memory.embeddingDimensions')}
         description={t.help.embeddingDimensions}
         icon={Hash}
         control={(
@@ -307,6 +315,7 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
           switch: the account roles live on another route. */}
       <SettingsRow
         label={t.settings.modelRoles.personal}
+        rowId={rowAnchor('settings.modelRoles.personal')}
         description={t.settings.modelRoles.personalHelp}
         icon={UserCog}
         status={<span className="truncate font-mono">{personalPrimary || '—'}</span>}

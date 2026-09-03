@@ -9,6 +9,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useMyCliSettings } from '../../lib/queries';
 import { useSaveMyCliSettings } from '../../lib/mutations';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 /** Account → Memory: per-user memory automation for the embedded brain across web chat, `elowen chat`,
  *  and the user's own verified Discord messages. autoRecall injects the user's most relevant durable
@@ -47,21 +48,21 @@ export function AccountMemorySection({ onSaveState }: { onSaveState?: (section: 
 
   return (
     <SpatialGroup columns={2}>
-      <SpatialRow title={t.accountMemory.recallTitle} icon={Search} description={t.help.memoryRecall}>
+      <SpatialRow title={t.accountMemory.recallTitle} rowId={rowAnchor('accountMemory.recallTitle')} icon={Search} description={t.help.memoryRecall}>
         <label className="flex items-center gap-3 text-sm text-foreground">
           <Toggle checked={autoRecall} onChange={setAutoRecall} label={t.accountMemory.recallToggle} />
           <span>{t.accountMemory.recallToggle}</span>
         </label>
       </SpatialRow>
 
-      <SpatialRow title={t.accountMemory.liveRecallTitle} icon={Search} description={t.help.memoryLiveRecall}>
+      <SpatialRow title={t.accountMemory.liveRecallTitle} rowId={rowAnchor('accountMemory.liveRecallTitle')} icon={Search} description={t.help.memoryLiveRecall}>
         <label className="flex items-center gap-3 text-sm text-foreground">
           <Toggle checked={autoLiveRecall} onChange={setAutoLiveRecall} label={t.accountMemory.liveRecallToggle} />
           <span>{t.accountMemory.liveRecallToggle}</span>
         </label>
       </SpatialRow>
 
-      <SpatialRow title={t.accountMemory.saveTitle} icon={Save} description={t.help.memorySave}>
+      <SpatialRow title={t.accountMemory.saveTitle} rowId={rowAnchor('accountMemory.saveTitle')} icon={Save} description={t.help.memorySave}>
         <label className="flex items-center gap-3 text-sm text-foreground">
           <Toggle checked={autoSave} onChange={setAutoSave} label={t.accountMemory.saveToggle} />
           <span>{t.accountMemory.saveToggle}</span>

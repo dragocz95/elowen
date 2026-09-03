@@ -9,6 +9,7 @@ import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { useTranslation } from '../../lib/i18n';
 import type { PlatformLinkKey, PlatformSurface } from '../../lib/types';
+import { rowAnchor } from '../../lib/rowAnchors';
 
 /** How each platform link presents itself. A `Record` over the daemon's link keys, so it is EXHAUSTIVE
  *  by type: a platform added to the identity descriptors fails this build until it has an entry here.
@@ -77,6 +78,7 @@ export function PlatformLinksCard({ available, values, onChange, connectors = []
           linked. */}
       <SpatialRow
         title={t.account.linkedAccounts}
+        rowId={rowAnchor('account.linkedAccounts')}
         icon={Link2}
         description={t.help.accountPlatformLinks}
         status={(
