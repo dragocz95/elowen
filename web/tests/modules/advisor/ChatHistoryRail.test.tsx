@@ -14,7 +14,7 @@ const ctrl = vi.hoisted(() => {
     deleteSession,
     value: {
       sessions: { data: [
-        { id: 's1', title: 'First', model: 'gpt', active: true },
+        { id: 's1', title: 'First', provider: 'chatgpt-account', model: 'openai/gpt-5.6-sol', active: true },
         { id: 's2', title: 'Second', model: 'sonnet', active: false },
       ] },
       switchSession,
@@ -45,10 +45,13 @@ const openRowMenu = (rowIndex: number) => {
 beforeEach(() => { ctrl.switchSession.mockClear(); ctrl.deleteSession.mockClear(); client.brainSearch.mockClear(); client.brainRenameSession.mockClear(); client.brainExportSession.mockClear(); client.brainForkSession.mockClear(); });
 
 describe('ChatHistoryRail', () => {
-  it('lists the conversations off the shared controller', () => {
+  it('lists conversations with the bare structured model name', () => {
     renderRail('rail');
     expect(screen.getByText('First')).toBeInTheDocument();
     expect(screen.getByText('Second')).toBeInTheDocument();
+    const model = screen.getByText('openai/gpt-5.6-sol');
+    expect(model).toHaveAttribute('title', 'chatgpt-account/openai/gpt-5.6-sol');
+    expect(screen.queryByText('chatgpt-account/openai/gpt-5.6-sol')).toBeNull();
   });
 
   it('mounts from the same component in all three variants', () => {

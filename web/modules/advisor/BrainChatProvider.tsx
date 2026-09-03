@@ -15,7 +15,7 @@ import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/bra
 import { subscribeRevive } from '../../lib/useRevive';
 import { resolveStreamSilence } from '../../lib/streamWatchdog';
 import { Spinner } from '../../components/ui/states';
-import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { brainModelLabel } from '../../lib/modelProvider';
 import { isBackgroundProcessCardId } from '../../lib/processScope';
 import { todoCard } from '../../lib/todoCard';
 import {
@@ -986,7 +986,7 @@ function useBrainChatController(): BrainChatValue {
         // ids coincide, or matches nothing and hides, never another account's windows.
         applyProviderIdentity({ provider: m.provider, providerLabel: m.providerLabel });
         setModelStatus('saved');
-        toast(`${t.brainChat.modelSwitched} ${brainModelQualifiedLabel({ provider: m.provider, providerLabel: m.providerLabel, model })}`, 'ok');
+        toast(`${t.brainChat.modelSwitched} ${brainModelLabel({ model })}`, 'ok');
       } catch (e) {
         if (latestModelRef.current === m) {
           setModelStatus('error');

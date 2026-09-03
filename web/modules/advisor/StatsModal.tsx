@@ -10,7 +10,7 @@ import { buildUsageSummary, cacheHitPct } from '../../lib/usageBars';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { Modal, ModalBody } from '../../components/ui/Modal';
-import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
 
 const SECTIONS = ['conversation', 'models', 'context'] as const;
 type Section = (typeof SECTIONS)[number];
@@ -102,7 +102,12 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
             {/* Model row */}
             <div className="flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2">
               <span className="text-xs text-muted-foreground">{t.stats.model}</span>
-              <span className="text-sm font-mono text-foreground">{currentModel ? brainModelQualifiedLabel({ provider, providerLabel, model: currentModel }) : '—'}</span>
+              <span
+                className="text-sm font-mono text-foreground"
+                title={currentModel ? brainModelQualifiedLabel({ provider, providerLabel, model: currentModel }) : undefined}
+              >
+                {currentModel ? brainModelLabel({ model: currentModel }) : '—'}
+              </span>
             </div>
 
             {/* Metrics grid */}

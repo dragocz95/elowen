@@ -11,7 +11,7 @@ import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
 import { useToast } from '../../components/ui/Toast';
-import type { BrainCard, BrainInlineArtifact, BrainMessageFile, BrainMessageImage, BrainWorkMode, SlashCommandDef } from '../../lib/types';
+import type { BrainCard, BrainInlineArtifact, BrainMessageFile, BrainMessageImage, BrainModelOption, BrainWorkMode, SlashCommandDef } from '../../lib/types';
 import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } from '../../lib/transcript';
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
@@ -38,7 +38,7 @@ import { ProjectPicker } from './ProjectPicker';
 import { useBrainChat } from './BrainChatProvider';
 import { formatBytes, formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
-import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { isBackgroundProcessCardId } from '../../lib/processScope';
 import { PageTopBarPortal } from '../../lib/pageHeader';
 import { uiZoom } from '../../lib/uiZoom';
@@ -729,17 +729,21 @@ function SharedFile({ file, caption, full }: { file: BrainMessageFile; caption?:
  *
  *  A user message is a turn of its own, so it is stamped from its own `createdAt` whenever history
  *  carries one. */
-function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen' }> }) {
+function MessageMeta({ turn, models }: {
+  turn: Extract<ChatTurn, { role: 'you' | 'elowen' }>;
+  models?: readonly BrainModelOption[];
+}) {
   const { locale, t } = useTranslation();
   const settled = turn.role === 'elowen' ? turn.durationMs != null : Boolean(turn.createdAt);
   if (!settled) return null;
+  const modelLabel = turn.role === 'elowen' && turn.model ? brainModelLabel(turn.model, models) : '';
   return (
     <div data-testid="chat-turn-meta" data-role={turn.role === 'you' ? 'user' : 'assistant'} className={`chat-turn-meta ${turn.role === 'you' ? 'mt-1.5' : 'mt-1'} flex items-center gap-2 text-caption leading-none text-muted-foreground`}>
       {turn.createdAt ? <time dateTime={turn.createdAt}>{localDateTime(turn.createdAt, locale, false)}</time> : null}
       {turn.role === 'elowen' && turn.model ? (
         <span data-testid="chat-turn-model" className="inline-flex min-w-0 items-center gap-1" title={turn.model}>
-          <ModelIcon name={turn.model} size={10} />
-          <span className="max-w-48 truncate">{brainModelQualifiedLabel(turn.model)}</span>
+          <ModelIcon name={modelLabel} size={10} />
+          <span className="max-w-48 truncate">{modelLabel}</span>
         </span>
       ) : null}
       {turn.role === 'elowen' && turn.durationMs != null ? (
@@ -783,7 +787,7 @@ function ToolAuthoringHint({ turn, locale }: {
   );
 }
 
-export function Message({ turn, artifacts, narration, pendingInput, full, showRole, showThoughts, tk }: { turn: ChatTurn; artifacts: BrainInlineArtifact[]; narration?: string; pendingInput?: PluginChatPendingInput | null; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
+export function Message({ turn, artifacts, narration, pendingInput, models, full, showRole, showThoughts, tk }: { turn: ChatTurn; artifacts: BrainInlineArtifact[]; narration?: string; pendingInput?: PluginChatPendingInput | null; models?: readonly BrainModelOption[]; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
   const { t, locale } = useTranslation();
   const { agentName } = useBrand();
   if (turn.role === 'divider') return <ContextDivider full={full} />;
@@ -795,7 +799,7 @@ export function Message({ turn, artifacts, narration, pendingInput, full, showRo
     ? <div data-testid="chat-user-bubble" className="chat-user-message">
         {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground ${full ? '' : 'my-1.5'}`}>{turn.text}</div> : null}
         {turn.images?.length ? <Attachments images={turn.images} full={full} /> : null}
-        <MessageMeta turn={turn} />
+        <MessageMeta turn={turn} models={models} />
       </div>
     : <>{turn.segments.map((seg, i) => (seg.kind === 'text'
         ? <TextSegment key={i} text={seg.text} className={full ? 'my-1.5' : ''} />
@@ -823,7 +827,7 @@ export function Message({ turn, artifacts, narration, pendingInput, full, showRo
         <div className="chat-turn__column min-w-0">
           {showRole ? <div className={`chat-turn__role mb-0.5 text-xs font-semibold ${you ? 'text-primary' : 'text-muted-foreground'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
           <div data-testid={you ? undefined : 'chat-assistant-body'} className="chat-turn__body flex min-w-0 flex-col">{body}</div>
-          {you ? null : <MessageMeta turn={turn} />}
+          {you ? null : <MessageMeta turn={turn} models={models} />}
         </div>
       </div>
     );
@@ -835,12 +839,12 @@ export function Message({ turn, artifacts, narration, pendingInput, full, showRo
         <div data-testid="chat-user-bubble" className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
           {turn.role === 'you' ? turn.text : null}
           {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
-          <MessageMeta turn={turn} />
+          <MessageMeta turn={turn} models={models} />
         </div>
       </div>
     );
   }
-  return <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="mr-4 flex flex-col gap-1.5 self-start"><div data-testid="chat-assistant-body" className="flex flex-col gap-1.5">{body}</div><MessageMeta turn={turn} /></div>;
+  return <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="mr-4 flex flex-col gap-1.5 self-start"><div data-testid="chat-assistant-body" className="flex flex-col gap-1.5">{body}</div><MessageMeta turn={turn} models={models} /></div>;
 }
 
 /** Opens the conversation's reasoning controls. The historic test id stays stable for browser helpers,
@@ -1692,6 +1696,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               artifacts={artifacts}
               narration={narration}
               pendingInput={pendingInput}
+              models={c.models ?? undefined}
               full={variant === 'full'}
               showRole={i === 0 || turns[i - 1].role !== turn.role}
               showThoughts={showThoughts}
@@ -1824,11 +1829,16 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             <>
               {lineCfg.showModel && (currentModel || active?.model) ? (() => {
                 const model = currentModel || active?.model || '';
-                // See ChatDeckHero: only the live identity carries the operator's label; a session-list
-                // row falls back to its config id, which is already the public name.
-                const modelProvider = currentModel ? provider : (active?.provider ?? '');
-                const label = brainModelQualifiedLabel({ provider: modelProvider, providerLabel: currentModel ? providerLabel : '', model });
-                return <span data-stat="model" className="min-w-0 truncate" title={label}>{label}</span>;
+                const identity = {
+                  provider: currentModel ? provider : (active?.provider ?? ''),
+                  providerLabel: currentModel ? providerLabel : '',
+                  model,
+                };
+                return (
+                  <span data-stat="model" className="min-w-0 truncate" title={brainModelQualifiedLabel(identity)}>
+                    {brainModelLabel(identity)}
+                  </span>
+                );
               })() : null}
               {lineCfg.showContext && usage && usage.percent != null ? (
                 <span data-stat="context" className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>

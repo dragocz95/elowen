@@ -27,7 +27,7 @@ type HistoryPage = { items: { id: string; role: string; text: string }[]; hasMor
 const brainMessagesPage = vi.fn(async (): Promise<HistoryPage> => ({ items: [], hasMore: false, nextBefore: null }));
 const brainMessages = vi.fn(async () => []);
 const brainStatus = vi.fn(async () => ({ running: true, sessionId: 'brain-1', model: 'model-a', usage: null, statusline: null }));
-const brainSetModel = vi.fn(async () => ({ model: 'model-b' }));
+const brainSetModel = vi.fn(async () => ({ model: 'gpt-5.6-sol' }));
 vi.mock('../../lib/elowenClient', () => ({
   BASE: '/api',
   elowenClient: {
@@ -46,7 +46,7 @@ vi.mock('../../lib/elowenClient', () => ({
 import { BrainChatProvider, useBrainChat } from '../../modules/advisor/BrainChatProvider';
 
 const FIX_MODEL: BrainModelOption = {
-  provider: 'p', providerLabel: 'P', model: 'model-b', exec: 'elowen:p/model-b',
+  provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'gpt-5.6-sol', exec: 'chatgpt-account/gpt-5.6-sol',
   source: 'oauth', contextWindow: 200_000, contextWindowSet: true,
 };
 
@@ -87,6 +87,8 @@ describe('BrainChatProvider model-switch reconcile', () => {
     // (the reconcile arrives over the still-open stream).
     await act(async () => { fireEvent.click(screen.getByText('switch')); });
     await waitFor(() => expect(brainSetModel).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/Switched to gpt-5\.6-sol|Přepnuto na gpt-5\.6-sol/)).toBeInTheDocument();
+    expect(screen.queryByText(/Účet ChatGPT\/gpt-5\.6-sol/)).toBeNull();
     expect(FakeEventSource.instances).toHaveLength(1); // no SSE teardown/reopen — invariant 1
     expect(brainMessagesPage).not.toHaveBeenCalled(); // runModel never reloads history
 

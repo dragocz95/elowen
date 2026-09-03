@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,7 +32,10 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
     if (models === null && !modelsLoading) loadModels();
   };
 
-  const label = currentModel ? brainModelQualifiedLabel({ provider, providerLabel, model: currentModel }) : t.brainChat.modelPicker;
+  const label = currentModel ? brainModelLabel({ model: currentModel }) : t.brainChat.modelPicker;
+  const qualifiedLabel = currentModel
+    ? brainModelQualifiedLabel({ provider, providerLabel, model: currentModel })
+    : t.brainChat.modelPicker;
 
   return (
     <div data-testid="chat-model-picker" className="relative shrink-0">
@@ -40,10 +43,10 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            title={label}
-            // Deliberately NOT aria-labelled: the trigger is named by its qualified model so a user with
-            // several chat panes open can tell which model each one is on. Radix supplies
-            // aria-haspopup/aria-expanded here, and tests/modules/ModelPicker.test.tsx pins the name.
+            title={qualifiedLabel}
+            // Deliberately not aria-labelled: the visible catalog model name is the trigger's accessible
+            // name. The title keeps the provider-qualified identity available for diagnostics, while Radix
+            // supplies aria-haspopup/aria-expanded.
             className={`flex items-center gap-1.5 rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
               variant === 'compact' ? 'h-7 max-w-[130px] px-2 text-tiny' : 'h-8 max-w-[220px] px-2.5 text-xs'
             }`}

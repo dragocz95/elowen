@@ -5,8 +5,9 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { BrainChatSurface } from '../../../modules/advisor/BrainChatSurface';
+import { BrainChatSurface, Message } from '../../../modules/advisor/BrainChatSurface';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import type { BrainModelOption } from '../../../lib/types';
 
 /** One visible reply is MANY stored assistant rows — one per tool round — and every row carries its own
  *  `createdAt`. Stamping each of them printed the same date+time above every single tool row. The daemon
@@ -95,6 +96,40 @@ describe('settled turn metadata', () => {
     const model = screen.getByTestId('chat-turn-model');
     expect(model).toHaveTextContent('claude-opus-5');
     expect(model.querySelector('img, svg')).not.toBeNull();
+  });
+
+  it('resolves a slash-containing exec through the catalog without showing its provider prefix', () => {
+    const catalogModel: BrainModelOption = {
+      provider: 'chatgpt-account',
+      providerLabel: 'Účet ChatGPT',
+      model: 'openai/gpt-5.6-sol',
+      exec: 'chatgpt-account/openai/gpt-5.6-sol',
+      source: 'oauth',
+      contextWindow: 200_000,
+      contextWindowSet: false,
+    };
+    const { wrapper: Wrapper } = createWrapper();
+    render(
+      <Wrapper>
+        <Message
+          turn={{
+            role: 'elowen',
+            segments: [{ kind: 'text', text: 'done' }],
+            streaming: false,
+            createdAt: '2026-08-22T09:15:12.000Z',
+            durationMs: 1_000,
+            model: catalogModel.exec,
+          }}
+          artifacts={[]}
+          models={[catalogModel]}
+          showThoughts
+        />
+      </Wrapper>,
+    );
+    const model = screen.getByTestId('chat-turn-model');
+    expect(model).toHaveTextContent('openai/gpt-5.6-sol');
+    expect(model).not.toHaveTextContent('chatgpt-account/openai/gpt-5.6-sol');
+    expect(model).toHaveAttribute('title', catalogModel.exec);
   });
 
   it('leaves the intermediate tool rounds unstamped', async () => {
