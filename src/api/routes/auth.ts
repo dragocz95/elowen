@@ -500,8 +500,9 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       return c.json({ error: active ? 'account processes are still active' : 'account plugin cleanup failed' }, active ? 409 : 500);
     }
     d.userSettings?.removeForUser(id); // drop the user's CLI/brain settings (incl. personalityBody) so no orphan rows linger
-    d.memoryStore?.removeForUser(id); // hard-delete the user's memories (+cascade embeddings) and audit events
+    d.memoryStore?.removeForUser(id); // hard-delete the user's memories (+cascade embeddings) and audit events; shared-pool rows are re-attributed, not deleted
     d.memoryCategoryStore?.removeForUser(id); // drop the user's memory categories so no orphan rows linger
+    d.memoryCategoryStore?.removeShareMembership(id); // drop the user's shared-memory share-list rows (the pools survive)
     d.brainStore?.removeForUser(id);
     d.pushSubscriptions?.removeAllForUser(id);
     users.delete(id);

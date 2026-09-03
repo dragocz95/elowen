@@ -150,6 +150,9 @@ export function createRouteContext(d: ServerDeps): RouteContext {
         embeddings: d.embeddings,
         embeddingConfig: () => toEmbeddingConfig(d.config.embeddingConfig()),
         retention: () => d.config.get().runtime.memoryRetention,
+        // Shared pools for the web-side browsing surface; the resolver only ever answers pools the
+        // caller belongs to (see MemoryCategoryStore.listShared).
+        sharedCategoriesOf: (userId) => d.memoryCategoryStore?.listSharedIds(userId) ?? [],
       })
     : undefined;
   const memoryMaintenance = d.memoryStore

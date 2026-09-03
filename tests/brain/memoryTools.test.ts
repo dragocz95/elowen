@@ -203,6 +203,7 @@ describe('buildMemoryTools', () => {
     const list = await run(OWNER, () => byName('MemoryListRecent').execute('l', { limit: 2 }), {
       projectId: current.id,
       categoryIds: new Set([global.id, currentCategory.id]),
+      sharedCategoryIds: new Set(),
     });
 
     expect(txt(list)).toContain('visible global memory');
@@ -268,7 +269,7 @@ describe('MemoryAdd project-scoped defaulting', () => {
     const project = projects.create({ slug: 'kolin', path: '/var/www/kolin' });
 
     await run(OWNER, () => byName('MemoryAdd').execute('c1', { body: 'The kolin project deploys via systemd.' }),
-      { projectId: project.id, categoryIds: new Set() });
+      { projectId: project.id, categoryIds: new Set(), sharedCategoryIds: new Set() });
 
     const memory = store.list(1)[0];
     expect(memory).toBeDefined();
@@ -288,7 +289,7 @@ describe('MemoryAdd project-scoped defaulting', () => {
     const infra = categories.create(1, { name: 'Infra', description: 'servers, ports' });
 
     await run(OWNER, () => byName('MemoryAdd').execute('c1', { body: 'The daemon listens on port 4400.' }),
-      { projectId: project.id, categoryIds: new Set() });
+      { projectId: project.id, categoryIds: new Set(), sharedCategoryIds: new Set() });
 
     const memory = store.list(1)[0];
     expect(memory).toBeDefined();

@@ -301,6 +301,11 @@ export interface MemoryRow {
   last_used_at: string | null;
   use_count: number;
   category_id: number | null;
+  /** Present ONLY on shared-pool rows served to a member: the project slug the pool belongs to (the
+   *  web list badges these "shared · <slug>") and the author's display name (null when the authoring
+   *  account was deleted — the row is then re-attributed to the instance). */
+  sharedProjectSlug?: string;
+  authorName?: string | null;
 }
 
 export type MemoryMaintenanceOperation = 'reindex' | 'recategorize';

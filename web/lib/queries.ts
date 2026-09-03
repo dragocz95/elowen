@@ -177,6 +177,10 @@ export const useProjectGit = (id: number | null) =>
 export const useProjectUsers = (id: number | null, enabled = true) =>
   useQuery({ queryKey: ['project-users', id], queryFn: () => elowenClient.projectUsers(id as number), enabled: !!id && enabled });
 
+/** The project's shared-memory share list (admin-only). Empty = every project member shares the pool. */
+export const useProjectMemoryMembers = (id: number | null, enabled = true) =>
+  useQuery({ queryKey: ['project-memory-members', id], queryFn: () => elowenClient.projectMemoryMembers(id as number), enabled: !!id && enabled });
+
 export const useProjectFiles = (id: number | null) =>
   useQuery({ queryKey: ['project-files', id], queryFn: () => elowenClient.projectFiles(id as number), enabled: !!id });
 

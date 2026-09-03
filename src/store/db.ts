@@ -133,6 +133,11 @@ function applyAdditiveMigrations(db: Db): void {
   // Project icon: a project-relative path to an image file already in the repo (e.g. assets/logo.png).
   // Empty = the default folder glyph. Never an uploaded copy — it references a file in the project.
   addColumn(db, 'projects', 'icon', "TEXT NOT NULL DEFAULT ''");
+  // Shared project memory toggle. When on, the project's shared memory pool (a memory_categories row
+  // with user_id = 0) is recallable/writable by the share list (project_memory_members), or by every
+  // project member when that list is empty. No index on purpose: a boolean column is never worth one,
+  // and the hot paths ride on project_memory_members' PK and the memory_categories partial unique.
+  addColumn(db, 'projects', 'memory_shared', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'allowed_execs', "TEXT NOT NULL DEFAULT ''");
   // Per-user tool deny-list (CSV of plugin tool names disabled for this user's own brain sessions).

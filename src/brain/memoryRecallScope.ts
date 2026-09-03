@@ -4,7 +4,13 @@ import type { MemoryCategoryRow } from '../shared/wireContract.js';
 
 export interface MemoryRecallScope {
   projectId: number | null;
+  /** Every category eligible for recall in this scope: the user's own eligible categories plus (when
+   *  they share the resolved project) that project's shared pool. Recall filters on THIS set. */
   categoryIds: ReadonlySet<number>;
+  /** The subset of `categoryIds` that are SHARED pool categories. The store needs the split to widen
+   *  its user-keyed candidate queries (`user_id = ? OR category_id IN (…)`); recall filtering itself
+   *  only ever consults `categoryIds`. */
+  sharedCategoryIds: ReadonlySet<number>;
 }
 
 interface RecallProject {
@@ -14,6 +20,8 @@ interface RecallProject {
 
 interface RecallCategories {
   list(userId: number): MemoryCategoryRow[];
+  /** Shared pool categories the user may touch across every project they share (may be empty). */
+  listShared(userId: number): MemoryCategoryRow[];
 }
 
 interface RecallProjects {
@@ -45,12 +53,19 @@ export function memoryRecallScope(
     }
   }
 
-  const categoryIds = new Set(
-    categories.list(userId)
-      .filter((category) => category.projectId === null || category.projectId === projectId)
-      .map((category) => category.id),
-  );
-  return { projectId, categoryIds };
+  const own = categories.list(userId)
+    .filter((category) => category.projectId === null || category.projectId === projectId);
+  // Shared pools enter the scope through the project binding they already carry: a shared category is
+  // bound to its project, so outside that project (and in the global channel scope) it drops out by the
+  // same predicate — no special-casing. listShared only returns pools the user actually shares.
+  const shared = categories.listShared(userId)
+    .filter((category) => category.projectId === projectId);
+  const categoryIds = new Set([...own, ...shared].map((category) => category.id));
+  return {
+    projectId,
+    categoryIds,
+    sharedCategoryIds: new Set(shared.map((category) => category.id)),
+  };
 }
 
 function canonicalDirectory(path: string | undefined): string | undefined {

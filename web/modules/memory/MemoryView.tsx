@@ -646,6 +646,16 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
       <DataTableCell lines={1} title={memory.body} className="flex items-center gap-2">
         <span className="truncate text-sm text-foreground">{memory.body}</span>
         {memory.status !== 'active' ? <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge> : null}
+        {memory.sharedProjectSlug ? (
+          <span
+            className="shrink-0"
+            title={`${t.memory.sharedBadge.replace('{project}', memory.sharedProjectSlug)}${memory.authorName ? ` · ${t.memory.sharedBy.replace('{author}', memory.authorName)}` : ''}`}
+          >
+            <Badge tone="accent">
+              {t.memory.sharedBadge.replace('{project}', memory.sharedProjectSlug)}{memory.authorName ? ` · ${memory.authorName}` : ''}
+            </Badge>
+          </span>
+        ) : null}
       </DataTableCell>
       <DataTableCell priority="wide" lines={1} className="truncate text-xs text-muted-foreground">
         {category ? (

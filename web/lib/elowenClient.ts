@@ -384,10 +384,13 @@ export const elowenClient = {
   projects: () => req<Project[]>('/projects'),
   projectSummaries: () => req<ProjectSummary[]>('/projects/summary'),
   createProject: (v: { slug: string; path: string; notes?: string }) => req<Project>('/projects', json(v)),
-  updateProject: (id: number, patch: { path?: string; notes?: string; icon?: string }) => req<Project>(`/projects/${id}`, json(patch, 'PATCH')),
+  updateProject: (id: number, patch: { path?: string; notes?: string; icon?: string; memoryShared?: boolean }) => req<Project>(`/projects/${id}`, json(patch, 'PATCH')),
   removeProject: (id: number) => req<{ ok: boolean }>(`/projects/${id}`, { method: 'DELETE' }),
   projectGit: (id: number) => req<ProjectGit>(`/projects/${id}/git`),
   projectUsers: (id: number) => req<number[]>(`/projects/${id}/users`),
+  /** The project's shared-memory share list (admin-only). Empty = every project member shares. */
+  projectMemoryMembers: (id: number) => req<number[]>(`/projects/${id}/memory-members`),
+  setProjectMemoryMembers: (id: number, userIds: number[]) => req<number[]>(`/projects/${id}/memory-members`, json({ userIds }, 'PUT')),
   projectFiles: (id: number) => req<FileNode[]>(`/projects/${id}/files`),
   /** Browse the server's directory tree to pick a new project's path. Admin-only on the daemon. */
   browseDirs: (path?: string) => req<DirListing>(`/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`),

@@ -23,8 +23,16 @@ export class UserProjectStore {
     this.db.prepare('INSERT OR IGNORE INTO user_projects (user_id, project_id) VALUES (?, ?)').run(userId, projectId);
   }
 
+  /** Revoke project access. The shared-memory share row MUST go with it: `isSharer` answers true for
+   *  a named member WITHOUT re-checking `user_projects` (deliberately — the pool predicates must be
+   *  cheap and single-source), so a share row left behind would keep the removed member reading and
+   *  writing the pool. PUT /memory-members validates canAccess only at write time; THIS is what keeps
+   *  the "share grant can never exceed project access" invariant true afterwards. */
   unassign(userId: number, projectId: number): void {
-    this.db.prepare('DELETE FROM user_projects WHERE user_id = ? AND project_id = ?').run(userId, projectId);
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM user_projects WHERE user_id = ? AND project_id = ?').run(userId, projectId);
+      this.db.prepare('DELETE FROM project_memory_members WHERE user_id = ? AND project_id = ?').run(userId, projectId);
+    })();
   }
 
   /** True for an admin account (full visibility + may manage assignments). Delegates to the one reader
@@ -39,5 +47,25 @@ export class UserProjectStore {
     if (this.isAdmin(userId)) return true;
     const r = this.db.prepare('SELECT 1 FROM user_projects WHERE user_id = ? AND project_id = ?').get(userId, projectId);
     return !!r;
+  }
+
+  // --- Shared-memory share list (project_memory_members). An EMPTY list means every project member
+  // shares the pool; a non-empty list names exactly the sharers. Kept here because it is project
+  // tenancy, not memory content — and because this store already owns the user↔project join. ---
+
+  /** The explicit share list of one project (admin-managed). */
+  memoryMembers(projectId: number): number[] {
+    return (this.db.prepare('SELECT user_id FROM project_memory_members WHERE project_id = ? ORDER BY user_id').all(projectId) as { user_id: number }[])
+      .map((r) => r.user_id);
+  }
+
+  /** Replace the share list WHOLESALE, atomically. Callers validate the users first (existing accounts,
+   *  project members); the store just persists the list. */
+  setMemoryMembers(projectId: number, userIds: number[]): void {
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM project_memory_members WHERE project_id = ?').run(projectId);
+      const insert = this.db.prepare('INSERT OR IGNORE INTO project_memory_members (project_id, user_id) VALUES (?, ?)');
+      for (const userId of new Set(userIds)) insert.run(projectId, userId);
+    })();
   }
 }

@@ -454,6 +454,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     // A recall moves usage and vitality with no user action behind it, so the open memory view would sit
     // on stale numbers until it remounted (queries are SSE-driven, refetchOnWindowFocus is off).
     onRecalled: (userId) => bus.publish({ type: 'memory', userId }),
+    // Shared project memory pools the user belongs to (one category per shared project) — widens the
+    // browsing surfaces (web list, semantic search, inspector) past the per-user filter.
+    sharedCategoriesOf: (userId) => memoryCategoryStore.listSharedIds(userId),
   });
   // Background embedder: fills in missing/stale memory vectors so writes never block on the provider.
   // Driven off a startLoops tick below; no-ops until an embedding provider/model is configured.
@@ -606,7 +609,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         stores: {
           projects,
           homeProject: () => projects.get(homeProject.id) ?? {
-            id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '',
+            id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '', memoryShared: false,
           },
           userProjects: { canAccess: (userId, projectId) => userProjects.canAccess(userId, projectId) },
           usersRead: {

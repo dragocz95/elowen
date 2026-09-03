@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Db } from './db.js';
 import type { MemoryRow, MemoryEventRow, MemoryCategoryRow } from '../shared/wireContract.js';
 import { memoryCategoryFingerprint } from './memoryCategoryStore.js';
+import { sharedCategoryIds, canUseCategory, isSharer, SHARED_CATEGORY_USER_ID } from './sharedMemoryAccess.js';
 
 // The memory row shapes are the daemon↔web wire contract (served over /memory) — defined once in
 // src/shared and re-exported here, so a field added on the daemon can never be missing on the web.
@@ -51,6 +52,9 @@ export interface ListMemoriesOpts {
   status?: string; // default 'active'; pass '' or 'all' to include every status
   kind?: string;
   categoryId?: number | null; // undefined = no filter; null = uncategorized; a number = that category
+  /** Shared pool category ids this reader may see. When set, the user filter widens to
+   *  `(user_id = ? OR category_id IN (…))` so other authors' shared rows are returned too. */
+  sharedCategoryIds?: number[];
   limit?: number;
   offset?: number;
 }
@@ -84,6 +88,45 @@ function packVector(vector: Float32Array | Buffer): Buffer {
 export class MemoryStore {
   constructor(private db: Db) {}
 
+  /** The shared pool categories this reader may touch, resolved fresh per call (sharing config can
+   *  change at any moment; nothing here may be cached across requests). */
+  private sharedIds(userId: number): number[] {
+    return sharedCategoryIds(this.db, userId);
+  }
+
+  /** Ids of EVERY instance-owned shared pool category (user_id = 0, project-bound). Who may touch which
+   *  pool is resolved elsewhere; this raw exclusion set feeds the passes that must never touch shared
+   *  rows at all (the personal reclassify pass). */
+  sharedPoolCategoryIds(): number[] {
+    const rows = this.db.prepare(
+      'SELECT id FROM memory_categories WHERE user_id = 0 AND project_id IS NOT NULL',
+    ).all() as { id: number }[];
+    return rows.map((r) => r.id);
+  }
+
+  /** The reader-widening WHERE fragment for the user-keyed read queries: the user's own rows plus,
+   *  when pools are supplied, every other author's row sitting in one of those pools. ONE source of
+   *  truth — callers thread `params` straight after their own leading binds, so the clause and the
+   *  bind list can never drift apart. `col` prefixes the columns for aliased queries. */
+  private readerScope(userId: number, sharedCategoryIds: number[], col = ''): { clause: string; params: (string | number)[] } {
+    if (sharedCategoryIds.length === 0) return { clause: `${col}user_id = ?`, params: [userId] };
+    return {
+      clause: `(${col}user_id = ? OR ${col}category_id IN (${sharedCategoryIds.map(() => '?').join(', ')}))`,
+      params: [userId, ...sharedCategoryIds],
+    };
+  }
+
+  /** One memory the user may READ/WRITE: their own row, or ANOTHER author's row sitting in a shared
+   *  pool they share. This is the row-side access boundary — every cross-user-capable mutation and
+   *  read routes through it instead of the owner-scoped {@link get}. Pass `shared` to reuse one
+   *  resolved pool set across many calls (merge does). */
+  getAccessible(userId: number, id: number, shared?: number[]): MemoryRow | undefined {
+    const scope = this.readerScope(userId, shared ?? this.sharedIds(userId));
+    return this.db.prepare(
+      `SELECT * FROM memories WHERE id = ? AND ${scope.clause}`,
+    ).get(id, ...scope.params) as MemoryRow | undefined;
+  }
+
   /** Insert a memory and audit the 'add' (after_json = the new row). `model` names the inference model
    *  behind the write (curator) — null for human/API adds. Atomic. Returns the full row. */
   add(userId: number, input: MemoryInput, actor: string, reason: string, model?: string | null): MemoryRow {
@@ -112,11 +155,13 @@ export class MemoryStore {
   }
 
   /** List memories, newest-updated first. Default excludes soft-deleted (status='active'). Pass
-   *  status '' or 'all' to include every status. */
+   *  status '' or 'all' to include every status. With `sharedCategoryIds` the result also carries other
+   *  authors' rows sitting in those shared pools. */
   list(userId: number, opts: ListMemoriesOpts = {}): MemoryRow[] {
     const status = opts.status === undefined ? 'active' : opts.status;
-    const clauses = ['user_id = ?'];
-    const params: (string | number)[] = [userId];
+    const scope = this.readerScope(userId, opts.sharedCategoryIds ?? []);
+    const clauses = [scope.clause];
+    const params: (string | number)[] = [...scope.params];
     if (status !== '' && status !== 'all') { clauses.push('status = ?'); params.push(status); }
     if (opts.kind !== undefined) { clauses.push('kind = ?'); params.push(opts.kind); }
     if (opts.categoryId !== undefined) {
@@ -145,56 +190,64 @@ export class MemoryStore {
     return r.n;
   }
 
-  /** Active memories, most-recently created first. */
-  listRecent(userId: number, limit: number): MemoryRow[] {
+  listRecent(userId: number, limit: number, sharedCategoryIds: number[] = []): MemoryRow[] {
+    const scope = this.readerScope(userId, sharedCategoryIds);
     return this.db.prepare(
-      `SELECT * FROM memories WHERE user_id = ? AND status = 'active'
+      `SELECT * FROM memories WHERE ${scope.clause} AND status = 'active'
        ORDER BY created_at DESC, id DESC LIMIT ?`
-    ).all(userId, limit) as MemoryRow[];
+    ).all(...scope.params, limit) as MemoryRow[];
   }
 
   /** Active memories in the supplied categories, most-recently created first. The category filter lives
-   * in SQL so excluded recent rows cannot crowd eligible rows out of a limited result. */
-  listRecentInCategories(userId: number, categoryIds: ReadonlySet<number>, limit: number): MemoryRow[] {
+   * in SQL so excluded recent rows cannot crowd eligible rows out of a limited result. With
+   * `sharedCategoryIds` the reader widening applies BEFORE the category filter, so the scope's shared
+   * category can actually surface other authors' rows. */
+  listRecentInCategories(
+    userId: number, categoryIds: ReadonlySet<number>, limit: number, sharedCategoryIds: number[] = [],
+  ): MemoryRow[] {
     const ids = [...categoryIds];
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
+    const scope = this.readerScope(userId, sharedCategoryIds);
     return this.db.prepare(
-      `SELECT * FROM memories WHERE user_id = ? AND status = 'active' AND category_id IN (${placeholders})
+      `SELECT * FROM memories WHERE ${scope.clause} AND status = 'active' AND category_id IN (${placeholders})
        ORDER BY created_at DESC, id DESC LIMIT ?`
-    ).all(userId, ...ids, limit) as MemoryRow[];
+    ).all(...scope.params, ...ids, limit) as MemoryRow[];
   }
 
   /** v1 keyword fallback: case-insensitive LIKE scan over body, active only, newest-updated first.
-   *  (Vector search lives in Phase 4 — not here.) */
-  search(userId: number, query: string, limit: number): MemoryRow[] {
+   *  (Vector search lives in Phase 4 — not here.) With `sharedCategoryIds`, other authors' rows in
+   *  those pools match too. */
+  search(userId: number, query: string, limit: number, sharedCategoryIds: number[] = []): MemoryRow[] {
     const q = query.trim();
     if (q.length < 2) return [];
     const like = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+    const scope = this.readerScope(userId, sharedCategoryIds);
     return this.db.prepare(
-      `SELECT * FROM memories WHERE user_id = ? AND status = 'active' AND body LIKE ? ESCAPE '\\'
+      `SELECT * FROM memories WHERE ${scope.clause} AND status = 'active' AND body LIKE ? ESCAPE '\\'
        ORDER BY updated_at DESC, id DESC LIMIT ?`
-    ).all(userId, like, limit) as MemoryRow[];
+    ).all(...scope.params, like, limit) as MemoryRow[];
   }
 
-  /** Patch a memory (owned by user), bump updated_at, audit 'update' with before/after. A body change
-   *  is NOT re-embedded here — the caller re-embeds (needsEmbedding will report it stale). Returns the
-   *  updated row, or undefined if the memory doesn't exist for this user. */
+  /** Patch a memory (own row, or another author's shared-pool row via {@link getAccessible}), bump
+   *  updated_at, audit 'update' with before/after. A body change is NOT re-embedded here — the caller
+   *  re-embeds (needsEmbedding will report it stale). Returns the updated row, or undefined if the
+   *  memory doesn't exist for this user. */
   update(userId: number, id: number, patch: MemoryPatch, actor: string, reason: string, model?: string | null): MemoryRow | undefined {
     return this.db.transaction(() => {
-      const before = this.get(userId, id);
+      const before = this.getAccessible(userId, id);
       if (!before) return undefined;
       const sets: string[] = [];
-      const params: Record<string, string | number> = { id, user_id: userId };
+      const params: Record<string, string | number> = { id };
       if (patch.body !== undefined) { sets.push('body = @body'); params.body = patch.body; }
       if (patch.kind !== undefined) { sets.push('kind = @kind'); params.kind = patch.kind; }
       if (patch.importance !== undefined) { sets.push('importance = @importance'); params.importance = patch.importance; }
       if (patch.confidence !== undefined) { sets.push('confidence = @confidence'); params.confidence = patch.confidence; }
       if (patch.status !== undefined) { sets.push('status = @status'); params.status = patch.status; }
       sets.push("updated_at = datetime('now')");
-      this.db.prepare(`UPDATE memories SET ${sets.join(', ')} WHERE id = @id AND user_id = @user_id`).run(params);
-      const after = this.get(userId, id)!;
-      this.audit(userId, id, 'update', before, after, actor, reason, model);
+      this.db.prepare(`UPDATE memories SET ${sets.join(', ')} WHERE id = @id`).run(params);
+      const after = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as MemoryRow;
+      this.audit(before.user_id, id, 'update', before, after, actor, reason, model);
       return after;
     })();
   }
@@ -209,21 +262,21 @@ export class MemoryStore {
     return this.setStatus(userId, id, 'active', 'restore', actor, reason);
   }
 
-  /** HARD-delete one owned memory of ANY status (not a soft status flip) — the row is physically removed
-   *  and its embedding cascades away (memory_embeddings FK ON DELETE CASCADE). A 'purge' audit is written
-   *  first (memory_id nullable) so the trail survives the gone row. Owner-scoped: a foreign/missing id is
-   *  a no-op → false. Atomic. */
+  /** HARD-delete one memory of ANY status the caller can access (not a soft status flip) — the row is
+   *  physically removed and its embedding cascades away (memory_embeddings FK ON DELETE CASCADE). A
+   *  'purge' audit is written first (memory_id nullable) so the trail survives the gone row.
+   *  Access-scoped via {@link getAccessible}: a foreign/missing id is a no-op → false. Atomic. */
   purge(userId: number, id: number, actor: string, reason: string): boolean {
     return this.db.transaction(() => {
-      const before = this.get(userId, id);
+      const before = this.getAccessible(userId, id);
       if (!before) return false;
       // Audit BEFORE the delete: the before_json snapshots the vanishing row; memory_id points at the
       // id that is about to disappear (kept for the trail — the memories row is gone after this).
-      this.audit(userId, id, 'purge', before, null, actor, reason);
-      this.db.prepare('DELETE FROM memories WHERE id = ? AND user_id = ?').run(id, userId);
+      this.audit(before.user_id, id, 'purge', before, null, actor, reason);
+      this.db.prepare('DELETE FROM memories WHERE id = ?').run(id);
       // Usage events go with the row (they are analytics, not audit). SQLite may hand this rowid to the
       // next memory, which would otherwise inherit a stranger's recall history.
-      this.db.prepare('DELETE FROM memory_usage_events WHERE memory_id = ? AND user_id = ?').run(id, userId);
+      this.db.prepare('DELETE FROM memory_usage_events WHERE memory_id = ?').run(id);
       return true;
     })();
   }
@@ -256,8 +309,12 @@ export class MemoryStore {
     })();
   }
 
-  /** Merge several source memories into one new memory carrying `mergedBody`; the sources are
-   *  soft-deleted. The 'merge' audit's after_json carries the source ids. Atomic. */
+  /** Merge several memories into one new memory carrying `mergedBody`; the sources are soft-deleted.
+   *  Sources are access-scoped ({@link getAccessible}) — a foreign non-shared id is skipped, never
+   *  merged. When every matched source sits in ONE category the caller may use, the merged row keeps
+   *  that category; otherwise it lands uncategorized exactly as before (a later reclassify pass
+   *  re-files it; nothing here triggers classification).
+   *  The 'merge' audit's after_json carries the source ids. Atomic. */
   merge(userId: number, ids: number[], mergedBody: string, actor: string, reason: string): MemoryRow {
     return this.db.transaction(() => {
       const info = this.db.prepare(
@@ -266,28 +323,54 @@ export class MemoryStore {
       const merged = this.db.prepare('SELECT * FROM memories WHERE id = ?')
         .get(Number(info.lastInsertRowid)) as MemoryRow;
       const sourceIds: number[] = [];
+      const sourceCategories = new Set<number>();
+      let sawUncategorized = false;
+      // One shared-set resolution for the whole batch — getAccessible would otherwise re-run the
+      // sharer predicate per source id.
+      const shared = this.sharedIds(userId);
       for (const id of ids) {
-        const before = this.get(userId, id);
-        if (!before) continue; // ownership enforced: skip rows not owned by this user
-        this.db.prepare("UPDATE memories SET status = 'deleted', updated_at = datetime('now') WHERE id = ? AND user_id = ?")
-          .run(id, userId);
+        const before = this.getAccessible(userId, id, shared);
+        if (!before) continue; // access enforced: skip rows this caller cannot touch
+        this.db.prepare("UPDATE memories SET status = 'deleted', updated_at = datetime('now') WHERE id = ?")
+          .run(id);
         sourceIds.push(id);
+        if (before.category_id === null) sawUncategorized = true;
+        else sourceCategories.add(before.category_id);
+      }
+      // Keep the merged row in its category only when the sources agree on ONE (an uncategorized
+      // source is a disagreement — the merged content is mixed, and filing it into the pool would
+      // publish the private half to the team) and the caller may use it. A shared pool must not be
+      // exited by a merge; a personal re-filing stays with the reclassify pass as before.
+      if (!sawUncategorized && sourceCategories.size === 1) {
+        const carried = [...sourceCategories][0]!;
+        if (canUseCategory(this.db, userId, carried)) {
+          this.db.prepare("UPDATE memories SET category_id = ?, updated_at = datetime('now') WHERE id = ?")
+            .run(carried, merged.id);
+          merged.category_id = carried;
+        }
       }
       this.audit(userId, merged.id, 'merge', null, { mergedId: merged.id, sourceIds }, actor, reason);
       return merged;
     })();
   }
 
-  /** Bump use_count and set last_used_at for each of the user's own memories, and log one usage event
+  /** Bump use_count and set last_used_at for each memory the READER may access, and log one usage event
    *  per id. The counter update and the event share ONE transaction on purpose: the vitality chart
    *  reconstructs `use_count(t)` and `last_used_at(t)` by replaying the log, so a counter that could
    *  move without its event (or the reverse) would make the curve disagree with the number shown next
    *  to it. The event is written only for rows the UPDATE actually matched, so a foreign or missing id
-   *  logs nothing. */
+   *  logs nothing.
+   *
+   *  The bump is deliberately NOT reader-keyed: a memory must count recalls by anyone who may see it,
+   *  or another member's daily recalls would never raise its vitality and the retention sweep would
+   *  soft-delete a live shared memory as if it were dead. The `memory_usage_events.user_id` therefore
+   *  records the READER (that is what recallActivityToday/recallCountsSince group on), while the
+   *  counter rides on the memory row itself. */
   markUsed(userId: number, ids: number[], context?: MemoryUsageContext): void {
     if (ids.length === 0) return;
+    const scope = this.readerScope(userId, this.sharedIds(userId));
     const bump = this.db.prepare(
-      "UPDATE memories SET use_count = use_count + 1, last_used_at = datetime('now') WHERE id = ? AND user_id = ?"
+      `UPDATE memories SET use_count = use_count + 1, last_used_at = datetime('now') WHERE id = ? AND ${scope.clause}`
     );
     const logUse = this.db.prepare(
       `INSERT INTO memory_usage_events
@@ -296,7 +379,7 @@ export class MemoryStore {
     );
     this.db.transaction(() => {
       for (const id of ids) {
-        if (bump.run(id, userId).changes > 0) {
+        if (bump.run(id, ...scope.params).changes > 0) {
           logUse.run(id, userId, context?.sessionId ?? null, context?.turnId ?? null, context?.searchIndex ?? null);
         }
       }
@@ -305,11 +388,12 @@ export class MemoryStore {
 
   /** A memory's recall timestamps, oldest first — the raw series the vitality history is rebuilt from.
    *  Unlike {@link eventsForMemory} this needs no created_at bound: usage events are deleted with their
-   *  memory, so a reused rowid cannot inherit them. */
-  usageHistory(userId: number, memoryId: number): string[] {
+   *  memory, so a reused rowid cannot inherit them. NOT reader-keyed: every member's recall of a shared
+   *  memory is part of its history. */
+  usageHistory(memoryId: number): string[] {
     const rows = this.db.prepare(
-      'SELECT used_at FROM memory_usage_events WHERE memory_id = ? AND user_id = ? ORDER BY used_at ASC, id ASC'
-    ).all(memoryId, userId) as { used_at: string }[];
+      'SELECT used_at FROM memory_usage_events WHERE memory_id = ? ORDER BY used_at ASC, id ASC'
+    ).all(memoryId) as { used_at: string }[];
     return rows.map((row) => row.used_at);
   }
 
@@ -369,36 +453,46 @@ export class MemoryStore {
       .run().changes;
   }
 
-  /** Monotonic owner-scoped mutation token. Every supported memory mutation appends an audit event, so
-   * this catches ABA changes that return body/category/status to their original values during inference. */
-  revision(userId: number, memoryId: number): number {
-    const row = this.db.prepare(
+  /** Monotonic mutation token for ONE memory, keyed to its AUTHOR (memory_events.user_id is the row's
+   *  author, not whoever mutated it). Every supported memory mutation appends an audit event, so this
+   *  catches ABA changes that return body/category/status to their original values during inference.
+   *  Author-derived rather than caller-keyed so a member's CAS on a shared row compares against the
+   *  same event stream the author's writes produced. */
+  revision(memoryId: number): number {
+    const row = this.db.prepare('SELECT user_id FROM memories WHERE id = ?').get(memoryId) as
+      { user_id: number } | undefined;
+    if (!row) return 0;
+    const events = this.db.prepare(
       'SELECT COALESCE(MAX(id), 0) AS revision FROM memory_events WHERE user_id = ? AND memory_id = ?',
-    ).get(userId, memoryId) as { revision: number };
-    return row.revision;
+    ).get(row.user_id, memoryId) as { revision: number };
+    return events.revision;
   }
 
-  /** Assign (or clear with null) a memory's category. Owner-scoped; a non-null categoryId must be one
-   *  of this user's own categories (else no-op → false). Bumps updated_at, audits 'categorize'. */
+  /** Assign (or clear with null) a memory's category. Access-scoped via {@link getAccessible}; a
+   *  non-null categoryId must be usable by the CALLER (their own category, or a shared pool they
+   *  share — see canUseCategory). On a FOREIGN row (another author's shared memory) the ONLY permitted
+   *  target is the pool the row already sits in: a member must not pull someone else's shared memory
+   *  into a personal category (theft from the pool) nor re-file it elsewhere. Bumps updated_at, audits
+   *  'categorize' against the ROW's author. */
   setCategory(userId: number, id: number, categoryId: number | null, actor: string, reason: string, model?: string | null): boolean {
     return this.db.transaction(() => {
-      const before = this.get(userId, id);
+      const before = this.getAccessible(userId, id);
       if (!before) return false;
-      if (categoryId !== null) {
-        const owned = this.db.prepare('SELECT 1 FROM memory_categories WHERE id = ? AND user_id = ?').get(categoryId, userId);
-        if (!owned) return false; // foreign/unknown category → reject, never write a dangling id
-      }
-      this.db.prepare("UPDATE memories SET category_id = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
-        .run(categoryId, id, userId);
-      const after = this.get(userId, id)!;
-      this.audit(userId, id, 'categorize', before, after, actor, reason, model);
+      if (categoryId !== null && !canUseCategory(this.db, userId, categoryId)) return false;
+      if (before.user_id !== userId && categoryId !== before.category_id) return false; // asymmetry rule
+      this.db.prepare("UPDATE memories SET category_id = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(categoryId, id);
+      const after = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as MemoryRow;
+      this.audit(before.user_id, id, 'categorize', before, after, actor, reason, model);
       return true;
     })();
   }
 
   /** Assign a category only while the memory still matches the snapshot that was classified. This is the
-   * background-maintenance CAS: a body edit, status transition or manual category choice made during the
-   * model round-trip wins. A non-null target category must still belong to the same owner. */
+   *  background-maintenance CAS: a body edit, status transition or manual category choice made during the
+   *  model round-trip wins. A non-null target category must be usable by the caller (canUseCategory); on
+   *  a foreign shared row the same asymmetry rule as {@link setCategory} applies. The revision compare is
+   *  keyed to the ROW's author (see {@link revision}). */
   setCategoryIfUnchanged(
     userId: number,
     id: number,
@@ -414,25 +508,31 @@ export class MemoryStore {
     model?: string | null,
   ): boolean {
     return this.db.transaction(() => {
-      const before = this.get(userId, id);
+      const before = this.getAccessible(userId, id);
       if (!before || before.status !== 'active') return false;
       if (hashBody(before.body) !== expected.bodyHash || before.category_id !== expected.categoryId) return false;
-      if (expected.revision !== undefined && this.revision(userId, id) !== expected.revision) return false;
+      if (expected.revision !== undefined && this.revision(id) !== expected.revision) return false;
       if (categoryId !== null) {
-        const owned = this.db.prepare(
+        const target = this.db.prepare(
           `SELECT id, user_id, name, description, color, icon, is_builtin,
                   project_id AS projectId, created_at
-             FROM memory_categories WHERE id = ? AND user_id = ?`,
-        ).get(categoryId, userId) as MemoryCategoryRow | undefined;
-        if (!owned) return false;
+             FROM memory_categories WHERE id = ?`,
+        ).get(categoryId) as MemoryCategoryRow | undefined;
+        // The SELECT above already holds the row canUseCategory would re-read — derive the same
+        // predicate from it: the caller's own category, or a shared pool of a project they share.
+        const usable = !!target && (target.user_id === userId
+          || (target.user_id === SHARED_CATEGORY_USER_ID && target.projectId != null
+            && isSharer(this.db, userId, target.projectId)));
+        if (!usable) return false;
+        if (before.user_id !== userId && categoryId !== before.category_id) return false; // asymmetry rule
         if (expected.targetCategoryFingerprint !== undefined
-          && memoryCategoryFingerprint(owned) !== expected.targetCategoryFingerprint) return false;
+          && memoryCategoryFingerprint(target) !== expected.targetCategoryFingerprint) return false;
       }
       if (categoryId === before.category_id) return true;
-      this.db.prepare("UPDATE memories SET category_id = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
-        .run(categoryId, id, userId);
-      const after = this.get(userId, id)!;
-      this.audit(userId, id, 'categorize', before, after, actor, reason, model);
+      this.db.prepare("UPDATE memories SET category_id = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(categoryId, id);
+      const after = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as MemoryRow;
+      this.audit(before.user_id, id, 'categorize', before, after, actor, reason, model);
       return true;
     })();
   }
@@ -446,18 +546,20 @@ export class MemoryStore {
   }
 
   /** Active memories that already carry a FRESH embedding, paired with their vector unpacked back to a
-   *  Float32Array. User-scoped (the join keys on this user's memories). Powers vector retrieval —
+   *  Float32Array. User-scoped (the join keys on this user's memories) — with `sharedCategoryIds`,
+   *  other authors' rows in those pools join the candidate set. Powers vector retrieval —
    *  MemoryService cosine-scans this set. Rows without an embedding are excluded (INNER JOIN); rows whose
    *  stored vector is STALE (the body was edited since it was embedded, so content_hash no longer matches
    *  the current body) are also excluded, so retrieval never ranks against an out-of-date vector — the
    *  memory falls back to keyword search until the embed queue re-vectorizes it. */
-  listActiveWithEmbeddings(userId: number): { memory: MemoryRow; vector: Float32Array }[] {
+  listActiveWithEmbeddings(userId: number, sharedCategoryIds: number[] = []): { memory: MemoryRow; vector: Float32Array }[] {
+    const scope = this.readerScope(userId, sharedCategoryIds, 'm.');
     const rows = this.db.prepare(
       `SELECT m.*, e.vector AS vector, e.content_hash AS embedded_hash
          FROM memories m JOIN memory_embeddings e ON e.memory_id = m.id
-        WHERE m.user_id = ? AND m.status = 'active'
+        WHERE ${scope.clause} AND m.status = 'active'
         ORDER BY m.updated_at DESC, m.id DESC`
-    ).all(userId) as (MemoryRow & { vector: Buffer; embedded_hash: string })[];
+    ).all(...scope.params) as (MemoryRow & { vector: Buffer; embedded_hash: string })[];
     return rows
       .filter((r) => r.embedded_hash === hashBody(r.body)) // drop stale vectors — body edited since embed
       .map(({ vector, embedded_hash, ...memory }) => ({
@@ -533,35 +635,55 @@ export class MemoryStore {
    *  rowid, so after a hard purge SQLite may REUSE that id for a new memory — and purged memories' events
    *  are retained for audit. Filtering by memory_id alone would then surface the PRIOR occupant's events
    *  (a "VPS RAM" memory showing a purged "sarah_hair" memory's history). Bounding to events at/after this
-   *  memory's created_at keeps the trail to this memory only. */
-  eventsForMemory(userId: number, memoryId: number): MemoryEventRow[] {
+   *  memory's created_at keeps the trail to this memory only. Keyed to the ROW's author (events carry the
+   *  author's user_id, whoever mutated the memory), so a member sees the shared memory's full trail. */
+  eventsForMemory(memoryId: number): MemoryEventRow[] {
     return this.db.prepare(
       `SELECT e.* FROM memory_events e
-        WHERE e.memory_id = ? AND e.user_id = ?
-          AND e.created_at >= (SELECT created_at FROM memories WHERE id = ? AND user_id = ?)
+        WHERE e.memory_id = ?
+          AND e.user_id = (SELECT user_id FROM memories WHERE id = ?)
+          AND e.created_at >= (SELECT created_at FROM memories WHERE id = ?)
         ORDER BY e.id DESC`
-    ).all(memoryId, userId, memoryId, userId) as MemoryEventRow[];
+    ).all(memoryId, memoryId, memoryId) as MemoryEventRow[];
   }
 
-  /** Hard-delete everything for a user (memories cascade to embeddings) plus their audit events.
-   *  Used only by user-delete cleanup — normal deletes are soft. */
+  /** Hard-delete everything a user OWNS (memories cascade to embeddings) plus their audit events.
+   *  Used only by user-delete cleanup — normal deletes are soft.
+   *
+   *  Shared-pool rows authored by the deleted user are NOT deleted: the pool belongs to the team, so
+   *  they are re-attributed to the instance sentinel (user_id = 0) together with their audit events,
+   *  keeping `eventsForMemory`'s author-derivation consistent. Their own recall events as a READER are
+   *  deleted with the account (they are the deleted account's analytics). */
   removeForUser(userId: number): void {
     this.db.transaction(() => {
+      // Shared-pool rows authored by the deleted user stay with the pool — re-attributed to the
+      // instance sentinel together with their audit events. Both statements are set-based: the
+      // memories UPDATE runs first so the events UPDATE can select the re-attributed ids through the
+      // same pool predicate. An event of a PRIOR, purged row occupant whose id a pool row now reuses
+      // is swept along — it is inert (eventsForMemory bounds by the row's created_at) and audit rows
+      // are retained forever by design, so no data escapes.
+      const poolPredicate = 'category_id IN (SELECT id FROM memory_categories WHERE user_id = 0 AND project_id IS NOT NULL)';
+      this.db.prepare(`UPDATE memories SET user_id = 0 WHERE user_id = ? AND ${poolPredicate}`).run(userId);
+      this.db.prepare(
+        `UPDATE memory_events SET user_id = 0 WHERE user_id = ?
+          AND memory_id IN (SELECT id FROM memories WHERE user_id = 0 AND ${poolPredicate})`
+      ).run(userId);
       this.db.prepare('DELETE FROM memories WHERE user_id = ?').run(userId);
       this.db.prepare('DELETE FROM memory_events WHERE user_id = ?').run(userId);
       this.db.prepare('DELETE FROM memory_usage_events WHERE user_id = ?').run(userId);
     })();
   }
 
-  /** Set a memory's status (owned by user) and audit the transition. Returns false if not found. */
+  /** Set a memory's status (own row, or another author's shared-pool row) and audit the transition.
+   *  Returns false if not accessible. */
   private setStatus(userId: number, id: number, status: string, action: string, actor: string, reason: string): boolean {
     return this.db.transaction(() => {
-      const before = this.get(userId, id);
+      const before = this.getAccessible(userId, id);
       if (!before) return false;
-      this.db.prepare("UPDATE memories SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
-        .run(status, id, userId);
-      const after = this.get(userId, id)!;
-      this.audit(userId, id, action, before, after, actor, reason);
+      this.db.prepare("UPDATE memories SET status = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(status, id);
+      const after = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as MemoryRow;
+      this.audit(before.user_id, id, action, before, after, actor, reason);
       return true;
     })();
   }
