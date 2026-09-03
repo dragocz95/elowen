@@ -130,8 +130,8 @@ describe('PluginDetail workspace', () => {
     const { container } = renderDetail();
     expect(container.querySelectorAll('[data-settings-document]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-settings-group]').length).toBeGreaterThan(0);
-    expect(container.querySelector('.plugin-detail-workspace > .page-toolbar')).toBeInTheDocument();
-    expect(container.querySelector('.settings-toolbar')).not.toBeInTheDocument();
+    expect(container.querySelector('.plugin-detail-workspace')).not.toBeInTheDocument();
+    expect(container.querySelector('.settings-toolbar')).toBeInTheDocument();
   });
 
   it('shows the capability panels inline as settings-group cards (no accordion to expand)', () => {
@@ -157,26 +157,26 @@ describe('PluginDetail workspace', () => {
     expect(screen.getByRole('radio', { name: en.pluginDetail.tabAdvanced })).toBeInTheDocument();
   });
 
-  it('keeps the plugin section menu above the content on tablet and desktop', async () => {
+  it('uses the same top settings toolbar as the Chetty plugin detail', () => {
     setViewport(false);
     usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
-    const { container } = renderDetail();
+    renderDetail();
 
-    await waitFor(() => expect(container.querySelector('.plugin-detail-workspace')).toHaveAttribute('data-section-layout', 'tabs'));
     const nav = screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav });
+    expect(nav.closest('.settings-toolbar')).toBeInTheDocument();
     expect(nav).toHaveAttribute('data-variant', 'line');
     expect(nav).toHaveAttribute('aria-orientation', 'horizontal');
     expect(nav).toHaveAttribute('data-nowrap', 'true');
     expect(screen.queryByRole('combobox', { name: en.pluginDetail.workspaceNav })).toBeNull();
   });
 
-  it('uses one no-wrap horizontal Radix strip on phones', async () => {
+  it('keeps that top toolbar as one no-wrap horizontal Radix strip on phones', () => {
     setViewport(true);
     usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
-    const { container } = renderDetail();
+    renderDetail();
 
-    await waitFor(() => expect(container.querySelector('.plugin-detail-workspace')).toHaveAttribute('data-section-layout', 'tabs'));
     const nav = screen.getByRole('radiogroup', { name: en.pluginDetail.workspaceNav });
+    expect(nav.closest('.settings-toolbar')).toBeInTheDocument();
     expect(nav).toHaveAttribute('data-variant', 'line');
     expect(nav).toHaveAttribute('aria-orientation', 'horizontal');
     expect(nav).toHaveAttribute('data-nowrap', 'true');

@@ -4,7 +4,7 @@ import { ArrowLeft, Check, Circle, Settings2, SlidersHorizontal, Sparkles, Activ
 import { Button } from '../../components/ui/Button';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
-import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
+import { Segmented } from '../../components/ui/Segmented';
 import { MotionReveal } from '../../components/ui/Motion';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePluginUi } from '../../lib/queries';
@@ -21,7 +21,7 @@ import { PluginPermissionsPanel } from './PluginPermissionsPanel';
 import { PluginDataPanel } from './PluginDataPanel';
 import { PluginLogsPanel } from './PluginLogsPanel';
 import { usePluginConfigDraft } from '../../lib/usePluginConfigDraft';
-import { SettingsGroup, SettingsState } from '../../components/ui/SettingsSurface';
+import { SettingsGroup, SettingsState, SettingsToolbar } from '../../components/ui/SettingsSurface';
 
 const CORE_TABS = ['setup', 'behavior', 'capabilities', 'activity', 'advanced'] as const;
 /** The workspace's own tabs, plus one per plugin-contributed section placed here. A contributed id is
@@ -176,15 +176,23 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
           <PluginHero name={name} detail={detail} description={pluginDescription} toolCount={toolCount} />
         </div>
       </SettingsGroup>
-      <WorkspaceShell
-        variant="deck"
-        embedded
-        className="plugin-detail-workspace"
-        navigationLayout="tabs"
-        navigation={{ sections, value: tab, onChange: changeTab, ariaLabel: t.pluginDetail.workspaceNav }}
-        toolbar={{ actions: saveStatus }}
-      >
-        <div>
+      <SettingsGroup>
+        <SettingsToolbar>
+          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 flex-1 overflow-hidden">
+              <Segmented
+                variant="line"
+                nowrap
+                value={tab}
+                onChange={changeTab}
+                options={sections.map(({ id, ...section }) => ({ value: id, ...section }))}
+                aria-label={t.pluginDetail.workspaceNav}
+              />
+            </div>
+            {saveStatus}
+          </div>
+        </SettingsToolbar>
+        <div className="p-5 sm:p-6">
           <WorkspacePanel id="setup" active={tab} visited={visitedTabs}>
             <div className="flex min-w-0 flex-col gap-4">
               {/* Above the checklist: the checklist answers "did I fill the fields in", this answers
@@ -234,7 +242,7 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
             </WorkspacePanel>
           ))}
         </div>
-      </WorkspaceShell>
+      </SettingsGroup>
     </>
   );
 }
