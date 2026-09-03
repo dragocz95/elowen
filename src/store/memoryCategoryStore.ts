@@ -1,5 +1,6 @@
 import type { Db } from './db.js';
 import type { MemoryCategoryRow } from '../shared/wireContract.js';
+import { SHARED_CATEGORY_USER_ID, isSharer } from './sharedMemoryAccess.js';
 
 // The category row shape is the daemon↔web wire contract (served over /memory/categories) — defined
 // once in src/shared and re-exported here, so a field added on the daemon can never be missing on the web.
@@ -129,5 +130,94 @@ export class MemoryCategoryStore {
   /** Hard-delete all of this user's categories (user-delete cleanup; mirrors MemoryStore.removeForUser). */
   removeForUser(userId: number): void {
     this.db.prepare('DELETE FROM memory_categories WHERE user_id = ?').run(userId);
+  }
+
+  // --- Shared project memory pools. A shared category is a row with user_id = SHARED_CATEGORY_USER_ID
+  // (0) and a project binding; memories inside it keep their author's real user_id. Members READ and
+  // WRITE these rows through the dedicated methods below — the owner-scoped CRUD above never sees them. ---
+
+  /** The shared category of `project`, for a user who shares it — created on first use, named
+   *  `<slug> (shared)`. NULL when the user is not a sharer or the project has sharing off: callers use
+   *  this both as the access gate and as the lazy factory (a non-sharer must never see, let alone create,
+   *  the pool). One row per project is guaranteed by the existing partial unique index on
+   *  (user_id, project_id) WHERE project_id IS NOT NULL — user_id is pinned to the shared sentinel. */
+  sharedForProject(userId: number, project: { id: number; slug: string }): MemoryCategoryRow | null {
+    if (!isSharer(this.db, userId, project.id)) return null;
+    const existing = this.db.prepare(
+      'SELECT * FROM memory_categories WHERE user_id = ? AND project_id = ?',
+    ).get(SHARED_CATEGORY_USER_ID, project.id) as MemoryCategoryDbRow | undefined;
+    if (existing) return toCategory(existing);
+    try {
+      return this.create(SHARED_CATEGORY_USER_ID, { name: `${project.slug} (shared)`, projectId: project.id });
+    } catch {
+      // A concurrent first shared write lost the UNIQUE(user_id, project_id) race — re-read the winner.
+      const concurrent = this.db.prepare(
+        'SELECT * FROM memory_categories WHERE user_id = ? AND project_id = ?',
+      ).get(SHARED_CATEGORY_USER_ID, project.id) as MemoryCategoryDbRow | undefined;
+      if (!concurrent) throw new Error('shared memory category missing after create');
+      return toCategory(concurrent);
+    }
+  }
+
+  /** Every shared category this user may touch (their own share lists, one per shared project). */
+  listShared(userId: number): MemoryCategoryRow[] {
+    const rows = this.db.prepare(
+      `SELECT c.* FROM memory_categories c
+        WHERE c.user_id = ? AND c.project_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id AND p.memory_shared = 1)
+          AND (
+            EXISTS (SELECT 1 FROM project_memory_members m WHERE m.project_id = c.project_id AND m.user_id = ?)
+            OR (
+              NOT EXISTS (SELECT 1 FROM project_memory_members m2 WHERE m2.project_id = c.project_id)
+              AND EXISTS (SELECT 1 FROM user_projects up WHERE up.user_id = ? AND up.project_id = c.project_id)
+            )
+          )
+        ORDER BY name COLLATE NOCASE ASC`,
+    ).all(SHARED_CATEGORY_USER_ID, userId, userId) as MemoryCategoryDbRow[];
+    return rows.map(toCategory);
+  }
+
+  /** Read one shared category by id, regardless of who asks (route-level gating decides WHO may act). */
+  getShared(id: number): MemoryCategoryRow | undefined {
+    const row = this.db.prepare('SELECT * FROM memory_categories WHERE id = ? AND user_id = ?')
+      .get(id, SHARED_CATEGORY_USER_ID) as MemoryCategoryDbRow | undefined;
+    return row ? toCategory(row) : undefined;
+  }
+
+  /** Admin-side patch of a shared category's display/classification fields. The project binding is
+   *  deliberately NOT patchable — a pool belongs to its project for its whole life. */
+  updateShared(id: number, patch: { name?: string; description?: string; color?: string; icon?: string }): MemoryCategoryRow | undefined {
+    const before = this.getShared(id);
+    if (!before) return undefined;
+    const sets: string[] = [];
+    const params: Record<string, string | number> = { id };
+    if (patch.name !== undefined) { sets.push('name = @name'); params.name = patch.name; }
+    if (patch.description !== undefined) { sets.push('description = @description'); params.description = patch.description; }
+    if (patch.color !== undefined) { sets.push('color = @color'); params.color = patch.color; }
+    if (patch.icon !== undefined) { sets.push('icon = @icon'); params.icon = clampIcon(patch.icon); }
+    if (sets.length > 0) {
+      this.db.prepare(`UPDATE memory_categories SET ${sets.join(', ')} WHERE id = @id AND user_id = ${SHARED_CATEGORY_USER_ID}`).run(params);
+    }
+    return this.getShared(id);
+  }
+
+  /** Delete a shared category and clear it off EVERY author's memories referencing it. The owner-scoped
+   *  {@link delete} nulls `WHERE user_id = ? AND category_id = ?` — run with the admin's id it would
+   *  clear nothing (the category carries user_id = 0) and leave dangling references on other authors'
+   *  rows, so shared pools get this dedicated path instead. */
+  deleteShared(id: number): boolean {
+    return this.db.transaction(() => {
+      if (!this.getShared(id)) return false;
+      this.db.prepare(
+        "UPDATE memories SET category_id = NULL, updated_at = datetime('now') WHERE category_id = ?",
+      ).run(id);
+      this.db.prepare('DELETE FROM memory_categories WHERE id = ? AND user_id = ?').run(id, SHARED_CATEGORY_USER_ID);
+      return true;
+    })();
+  }
+
+  /** Drop a user's rows from every share list (user-delete cleanup). The pools themselves survive. */
+  removeShareMembership(userId: number): void {
+    this.db.prepare('DELETE FROM project_memory_members WHERE user_id = ?').run(userId);
   }
 }

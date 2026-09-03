@@ -49,10 +49,38 @@ function maintenanceError(error: unknown): string | null {
  *  (the store is user_id-scoped and no-ops / 404s on a foreign id). Provider (embedding) settings are
  *  workspace-level and admin-gated. Degrades to 400 when the store isn't wired. */
 export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
-  const { d, canAccessProject, notAdminUnlessSetup } = ctx;
+  const { d, canAccessProject, notAdmin, notAdminUnlessSetup } = ctx;
   const store = d.memoryStore;
   const withCurrentVitality = (row: MemoryRow): MemoryWithVitality =>
     withVitality(row, ctx.memoryService, () => d.config.get().runtime.memoryRetention);
+
+  /** Enrich shared-pool rows with what the web list needs to badge them: the project slug behind the
+   *  shared category and the author's display name (NULL for re-attributed rows, user_id = 0). Own rows
+   *  pass through untouched. */
+  const decorateShared = (userId: number, rows: MemoryRow[]): MemoryRow[] => {
+    if (!store) return rows;
+    const sharedCats = d.memoryCategoryStore?.listShared(userId) ?? [];
+    if (sharedCats.length === 0) return rows;
+    const poolToSlug = new Map<number, string>();
+    for (const cat of sharedCats) {
+      const slug = cat.projectId != null ? (d.projects?.get(cat.projectId)?.slug ?? null) : null;
+      if (slug) poolToSlug.set(cat.id, slug);
+    }
+    if (poolToSlug.size === 0) return rows;
+    return rows.map((row) => {
+      if (row.category_id === null || !poolToSlug.has(row.category_id)) return row;
+      const author = row.user_id > 0 ? d.users?.get(row.user_id) ?? null : null;
+      return {
+        ...row,
+        sharedProjectSlug: poolToSlug.get(row.category_id),
+        authorName: author ? (author.name || author.username) : null,
+      };
+    });
+  };
+
+  /** The shared pool category ids the caller belongs to — the widening set for the list/search reads. */
+  const sharedPoolIds = (userId: number): number[] =>
+    (d.memoryCategoryStore?.listShared(userId) ?? []).map((c) => c.id);
 
   // --- Literal sub-paths registered before `/memory/:id` so they can never be captured as an id. ---
 
@@ -193,11 +221,13 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
   // --- Memory categories (owner-scoped) + the workspace categorization model. All literal `/memory/*`
   //     sub-paths, so they MUST stay above `/memory/:id` or the id route would swallow them. ---
 
-  // The caller's categories, name-sorted. Own categories only.
+  // The caller's categories, name-sorted — their OWN plus every shared pool they belong to (read-only
+  // for members; the admin edits a pool's description through the same PATCH route below).
   app.get('/memory/categories', (c) => {
     const cats = d.memoryCategoryStore;
     if (!cats) return c.json({ error: 'memory unavailable' }, 400);
-    return c.json(cats.list(c.get('user').id));
+    const userId = c.get('user').id;
+    return c.json([...cats.list(userId), ...cats.listShared(userId)]);
   });
 
   // Model-suggest one allowlist icon for a category name (fail-soft 'Folder'). Literal sub-path — kept
@@ -230,11 +260,19 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     }
   });
 
-  // Partial update (owner-scoped → 404 on a foreign/missing id). A name collision → 409.
+  // Partial update (owner-scoped → 404 on a foreign/missing id). A name collision → 409. A SHARED pool
+  // category is admin-only (its description steers the classifier for the whole team) and its project
+  // binding is immutable, so the patch routes through the dedicated shared path instead.
   app.patch('/memory/categories/:cid', async (c) => {
     const cats = d.memoryCategoryStore;
     if (!cats) return c.json({ error: 'memory unavailable' }, 400);
     const b = await parseBody(c, memoryCategoryPatchSchema);
+    if (cats.getShared(Number(c.req.param('cid')))) {
+      if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+      const updated = cats.updateShared(Number(c.req.param('cid')), b);
+      if (!updated) return c.json({ error: 'not found' }, 404);
+      return c.json(updated);
+    }
     if (b.projectId != null) {
       const projectExists = b.projectId === d.project.id || !!d.projects?.get(b.projectId);
       if (!projectExists) return c.json({ error: 'project not found' }, 404);
@@ -251,11 +289,18 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   // Delete a category (idempotent). The store atomically clears the category off referencing memories
-  // before removing it, so no memory is left pointing at a dangling id.
+  // before removing it, so no memory is left pointing at a dangling id. A shared pool is admin-only and
+  // clears EVERY author's rows (the dedicated shared path nulls without a user filter).
   app.delete('/memory/categories/:cid', (c) => {
     const cats = d.memoryCategoryStore;
     if (!cats) return c.json({ error: 'memory unavailable' }, 400);
-    cats.delete(c.get('user').id, Number(c.req.param('cid')));
+    const cid = Number(c.req.param('cid'));
+    if (cats.getShared(cid)) {
+      if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+      cats.deleteShared(cid);
+      return c.json({ ok: true });
+    }
+    cats.delete(c.get('user').id, cid);
     return c.json({ ok: true });
   });
 
@@ -286,31 +331,34 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   // --- Collection + id-addressed CRUD (owner-scoped). ---
 
-  // List the caller's memories, optionally narrowed (?status=&kind=&categoryId=&limit=&offset=). A `?q=`
-  // runs a semantic (embedding) search — ranked by relevance to the query, on-topic only — degrading to
-  // the store's keyword LIKE search when embeddings aren't configured. `categoryId` empty/`null` =
-  // uncategorized, a number = that category, absent = no category filter. Own memories only.
+  // List the caller's memories — OWN plus the shared pools they belong to (shared rows carry
+  // `sharedProjectSlug` + `authorName`) — optionally narrowed (?status=&kind=&categoryId=&limit=&offset=).
+  // A `?q=` runs a semantic (embedding) search — ranked by relevance to the query, on-topic only —
+  // degrading to the store's keyword LIKE search when embeddings aren't configured. `categoryId`
+  // empty/`null` = uncategorized, a number = that category, absent = no category filter.
   app.get('/memory', async (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
+    const shared = sharedPoolIds(userId);
     const q = c.req.query('q');
     const limit = c.req.query('limit');
     if (q && q.trim() !== '') {
       const lim = queryInt(limit, { min: 1, max: 500, fallback: 50 }); // guard NaN → LIMIT bind → 500
       const rows = ctx.memoryService
         ? await ctx.memoryService.searchSemantic(userId, q, lim)
-        : store.search(userId, q, lim);
-      return c.json(rows.map(withCurrentVitality));
+        : store.search(userId, q, lim, shared);
+      return c.json(rows.map(withCurrentVitality).map((row) => decorateShared(userId, [row])[0]!));
     }
     const cat = c.req.query('categoryId');
     const rows = store.list(userId, {
       status: c.req.query('status'),
       kind: c.req.query('kind'),
       categoryId: cat === undefined ? undefined : (cat === '' || cat === 'null' ? null : Number(cat)),
+      sharedCategoryIds: shared,
       limit: queryInt(limit, { min: 1, max: 500, fallback: undefined }),
       offset: queryInt(c.req.query('offset'), { min: 0, fallback: undefined }),
     });
-    return c.json(rows.map(withCurrentVitality));
+    return c.json(rows.map(withCurrentVitality).map((row) => decorateShared(userId, [row])[0]!));
   });
 
   // Create a memory for the caller (source='user', actor='user:<id>').
@@ -325,12 +373,13 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(withCurrentVitality(row), 201);
   });
 
-  // Read one of the caller's memories. Owner-scoped → a foreign id is 404.
+  // Read one memory the caller can access (own, or a shared pool row they share). A foreign id is 404.
   app.get('/memory/:id', (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
-    const row = store.get(c.get('user').id, Number(c.req.param('id')));
+    const userId = c.get('user').id;
+    const row = store.getAccessible(userId, Number(c.req.param('id')));
     if (!row) return c.json({ error: 'not found' }, 404);
-    return c.json(withCurrentVitality(row));
+    return c.json(withCurrentVitality(decorateShared(userId, [row])[0]!));
   });
 
   // Partial update. The store scopes to the owner, so a patch aimed at a foreign id matches nothing and
@@ -372,8 +421,10 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   // Assign (or clear with null) a memory's category — a separately-audited 'categorize' write, not a
-  // field on PATCH. Owner-scoped: the store rejects a foreign/missing memory AND a categoryId not owned
-  // by the caller, so a bad id can't plant a dangling/foreign category → both surface as 404.
+  // field on PATCH. Access-scoped: the store rejects a memory the caller can't touch AND a categoryId
+  // the caller can't use (own category, or a shared pool they share). On a FOREIGN shared row only the
+  // pool it already sits in is a legal target — a member cannot pull the memory out of the pool.
+  // Either rejection surfaces as 404.
   app.put('/memory/:id/category', async (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
@@ -381,33 +432,34 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     const b = await parseBody(c, memoryCategorySetSchema);
     const ok = store.setCategory(userId, id, b.categoryId, `user:${userId}`, 'categorized via API');
     if (!ok) return c.json({ error: 'not found' }, 404);
-    const row = store.get(userId, id);
+    const row = store.getAccessible(userId, id);
     if (!row) return c.json({ error: 'not found' }, 404);
-    return c.json(withCurrentVitality(row));
+    return c.json(withCurrentVitality(decorateShared(userId, [row])[0]!));
   });
 
-  // That one memory's audit trail (owner-scoped): verify ownership, then read events scoped to THIS
-  // memory's lifetime (a reused rowid must not surface the prior, purged memory's history).
+  // That one memory's audit trail (access-scoped): verify access, then read events scoped to THIS
+  // memory's lifetime (a reused rowid must not surface the prior, purged memory's history). The events
+  // are keyed to the ROW's author, so a member sees the shared memory's full trail.
   app.get('/memory/:id/events', (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
     const id = Number(c.req.param('id'));
-    if (!store.get(userId, id)) return c.json({ error: 'not found' }, 404);
-    return c.json(store.eventsForMemory(userId, id));
+    if (!store.getAccessible(userId, id)) return c.json({ error: 'not found' }, 404);
+    return c.json(store.eventsForMemory(id));
   });
 
-  // That memory's vitality over time (owner-scoped). Reconstructed server-side because the half-life
+  // That memory's vitality over time (access-scoped). Reconstructed server-side because the half-life
   // table is a daemon-side config the web deliberately does not know — same division as `vitality`
-  // itself, which the web only ever displays.
+  // itself, which the web only ever displays. The history spans every member's recalls of the memory.
   app.get('/memory/:id/vitality-history', (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
     const id = Number(c.req.param('id'));
-    const row = store.get(userId, id);
+    const row = store.getAccessible(userId, id);
     if (!row) return c.json({ error: 'not found' }, 404);
     return c.json(buildVitalityHistory({
       memory: row,
-      recalls: store.usageHistory(userId, id),
+      recalls: store.usageHistory(id),
       retention: d.config.get().runtime.memoryRetention,
       now: Date.now(),
       pastDays: queryInt(c.req.query('days'), { min: 1, max: 365, fallback: 30 }),

@@ -1,4 +1,11 @@
-CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', memory_shared INTEGER NOT NULL DEFAULT 0);
+-- Explicit share list behind a project's `memory_shared` toggle. When the toggle is on and this table
+-- has NO rows for the project, EVERY project member (user_projects) shares its memory pool; with rows
+-- present, exactly those users share it (an empty selection means everyone, per the feature contract).
+CREATE TABLE IF NOT EXISTS project_memory_members (
+  project_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+  PRIMARY KEY (project_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0);
 -- `id` is AUTOINCREMENT, not a bare rowid: durable account-owned rows reference it, and a plain rowid
 -- is reused after the highest-numbered user is deleted. AUTOINCREMENT keeps the counter monotonic in

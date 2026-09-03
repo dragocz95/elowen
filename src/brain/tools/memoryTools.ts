@@ -62,9 +62,9 @@ function memorySearch(d: MemoryToolDeps) {
       + 'the set is additionally trimmed to a character budget, so a vague query can legitimately return '
       + 'nothing even though the fact is stored. Matches are returned as `#id [kind imp:N] body` lines and '
       + 'are counted as recalled; those ids are what MemoryUpdate, MemoryMerge and MemoryDelete take. '
-      + 'Memory is per-user and private: this reads only the acting user\'s own memories, from their own '
-      + 'Elowen chat or their linked platform account, and it is refused outright for an unlinked sender '
-      + 'or a task worker.',
+      + 'Memory is per-user: this reads the acting user\'s own memories plus the shared project pools '
+      + 'they belong to, from their own Elowen chat or their linked platform account, and it is refused '
+      + 'outright for an unlinked sender or a task worker.',
     parameters: Type.Object({
       query: Type.String({ description: 'What to look up' }),
       limit: Type.Optional(Type.Number({ description: 'Max memories to return (default 6)' })),
@@ -93,9 +93,10 @@ function memoryAdd(d: MemoryToolDeps) {
       + 'already exists the result names its id as well, so you can merge or delete afterwards when it '
       + 'really was the same fact. `body` must be self-contained (it is read without this conversation), `kind` '
       + 'labels the fact and `importance` (1..5) biases later recall. The memory is filed into a category '
-      + 'in the background — inside a project conversation it falls back to that project\'s own category — '
-      + 'because an uncategorized memory is never recalled. Memory is per-user and private, so this is '
-      + 'refused for an unlinked platform sender or a task worker.',
+      + 'in the background — inside a project conversation it falls back to the project\'s shared pool '
+      + 'when the user shares it, otherwise to the project\'s own category — because an uncategorized '
+      + 'memory is never recalled. Memory is per-user, so this '
+      + 'is refused for an unlinked platform sender or a task worker.',
     parameters: Type.Object({
       body: Type.String({ description: 'The fact, self-contained — it will be read without this conversation for context. Empty text is rejected.' }),
       kind: Type.Optional(Type.String({ description: "What sort of fact this is: e.g. 'fact', 'preference', 'decision', 'feedback' (default 'fact')" })),
@@ -106,6 +107,11 @@ function memoryAdd(d: MemoryToolDeps) {
       if (userId === null) return text(LOCKED);
       const body = p.body.trim();
       if (body === '') return text('Cannot add an empty memory.');
+      // The scope is read at EXECUTE time: the cwd can change between turns (/cd), so the project is
+      // whatever THIS turn resolves to, never what the session spawned with. Read BEFORE the similarity
+      // scan so the scan also covers the shared pool of this project — a neighbour another member stored
+      // must be named, not silently duplicated.
+      const scope = currentMemoryRecallScope();
       // The similarity check REPORTS, it does not veto. It used to return here without writing, which made
       // a false positive cost the whole memory: the fact was never stored, and the model — told only that
       // something similar exists — had no reason to try again. Measurement (24 Aug 2026, see
@@ -113,7 +119,7 @@ function memoryAdd(d: MemoryToolDeps) {
       // voice a high cosine marks a shared topic rather than a restatement. Storing and naming the neighbour
       // points the failure the recoverable way: a redundant memory can still be folded in with MemoryMerge,
       // a memory that was never written is simply gone.
-      const near = await d.service.findSimilar(userId, body);
+      const near = await d.service.findSimilar(userId, body, { sharedCategoryIds: scope?.sharedCategoryIds });
       const row = d.store.add(
         userId,
         { body, kind: p.kind, importance: p.importance, source: 'user' },
@@ -122,11 +128,9 @@ function memoryAdd(d: MemoryToolDeps) {
       // Categorization used to hang off the post-turn curator alone, so a memory the agent stored through
       // this tool stayed uncategorized forever. Same fire-and-forget the curator has always done.
       // A PROJECT turn resolves the category itself instead: the memory must land in the project's bound
-      // category (or the classifier's pick) now, because an uncategorized memory is never recalled —
-      // fail-closed — and the background pass would race this default and could clear it. The scope is
-      // read at EXECUTE time: the cwd can change between turns (/cd), so the project is whatever THIS
-      // turn resolves to, never what the session spawned with.
-      const scope = currentMemoryRecallScope();
+      // category — or, when the user shares the project's pool, in the SHARED pool — now, because an
+      // uncategorized memory is never recalled — fail-closed — and the background pass would race this
+      // default and could clear it.
       const project = scope && scope.projectId !== null ? d.projects.get(scope.projectId) : undefined;
       if (project) {
         void categorizeNewMemoryForProject(d, userId, row, project).catch(() => {
@@ -169,9 +173,11 @@ function ensureProjectCategory(
   }
 }
 
-/** File a just-stored memory inside a project conversation. The classifier decides first and its pick
- *  wins; when it is silent (no match, no model wired, or a relay error) the memory falls back to the
- *  project's own bound category — created here on first use — so a project memory is never left
+/** File a just-stored memory inside a project conversation. When the user SHARES the project's memory
+ *  pool, the pool is the fallback (and among the classifier's options) — the fact lands where the whole
+ *  team can recall it. Otherwise the personal project category applies. The classifier decides first and
+ *  its pick wins; when it is silent (no match, no model wired, or a relay error) the memory falls back to
+ *  the pool/project category — created here on first use — so a project memory is never left
  *  uncategorized (uncategorized memories are never recalled — fail-closed). Fire-and-forget from the
  *  caller, but the fallback can only be applied once the classifier's verdict is known, so this must
  *  run inline instead of via the usual background classifyNewMemory. */
@@ -181,6 +187,19 @@ async function categorizeNewMemoryForProject(
   row: MemoryRow,
   project: { id: number; slug: string },
 ): Promise<void> {
+  // Resolved (and lazily created) BEFORE the classifier runs so the shared pool is among its options.
+  // NULL when the user does not share the pool — then the personal project category applies unchanged.
+  const sharedCategory = d.categories.sharedForProject(userId, project);
+  if (sharedCategory) {
+    let classified: number | null = null;
+    try {
+      classified = await d.categorizer.classify(userId, row.body, [sharedCategory]);
+    } catch {
+      // Relay error → treat as silent and fall through to the pool default (never fail the add).
+    }
+    d.store.setCategory(userId, row.id, classified ?? sharedCategory.id, `user:${userId}`, 'MemoryAdd: shared project pool');
+    return;
+  }
   // Created BEFORE the classifier runs so the project's own category is among its options.
   const projectCategory = ensureProjectCategory(d, userId, project);
   let classified: number | null = null;

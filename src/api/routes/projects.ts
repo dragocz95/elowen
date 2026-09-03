@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { listDirs, isProjectImage } from '../../integrations/projectFiles.js';
 import { parseBody } from '../validation.js';
-import { createProjectSchema, updateProjectSchema } from '../schemas/projects.js';
+import { createProjectSchema, updateProjectSchema, memoryMembersSchema } from '../schemas/projects.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginProjectIndicator } from '../../plugins/api.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
@@ -125,7 +125,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     const cur = d.projects.get(id);
     if (!cur) return c.json({ error: 'project not found' }, 404);
     const b = await parseBody(c, updateProjectSchema);
-    const patch: { path?: string; notes?: string; icon?: string } = {};
+    const patch: { path?: string; notes?: string; icon?: string; memoryShared?: boolean } = {};
     if (typeof b.path === 'string' && b.path.trim()) patch.path = b.path.trim();
     if (typeof b.notes === 'string') patch.notes = b.notes;
     // Icon is a project-relative image path. '' clears it; anything else must resolve to a real image
@@ -134,7 +134,31 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (b.icon !== '' && !isProjectImage(cur.path, b.icon)) return c.json({ error: 'invalid icon path' }, 400);
       patch.icon = b.icon;
     }
+    if (typeof b.memoryShared === 'boolean') patch.memoryShared = b.memoryShared;
     return c.json(d.projects.update(id, patch));
+  });
+  // The project's shared-memory share list (admin-only). Empty = every project member shares the pool.
+  app.get('/projects/:id/memory-members', (c) => {
+    if (!d.projects || !d.userProjects) return c.json({ error: 'projects unavailable' }, 400);
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const id = Number(c.req.param('id'));
+    if (!d.projects.get(id)) return c.json({ error: 'project not found' }, 404);
+    return c.json(d.userProjects.memoryMembers(id));
+  });
+  // Replace the share list WHOLESALE (admin-only). Every userId must be an existing account AND an
+  // assigned project member — a share grant can never exceed project access.
+  app.put('/projects/:id/memory-members', async (c) => {
+    if (!d.projects || !d.userProjects) return c.json({ error: 'projects unavailable' }, 400);
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const id = Number(c.req.param('id'));
+    if (!d.projects.get(id)) return c.json({ error: 'project not found' }, 404);
+    const { userIds } = await parseBody(c, memoryMembersSchema);
+    for (const userId of [...new Set(userIds)]) {
+      if (!d.users?.get(userId)) return c.json({ error: `user ${userId} not found` }, 404);
+      if (!d.userProjects.canAccess(userId, id)) return c.json({ error: `user ${userId} is not a project member` }, 400);
+    }
+    d.userProjects.setMemoryMembers(id, userIds);
+    return c.json(d.userProjects.memoryMembers(id));
   });
   // Remove a project from Elowen's core registry and access grants, but never touch files on disk.
   // Loaded plugins receive the lifecycle callback before the row disappears; plugins disabled at deletion

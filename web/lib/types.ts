@@ -857,7 +857,7 @@ export interface ActivityEvent {
    *  the daemon has no transcript to read them from. */
   tools?: { name: string; count: number }[];
 }
-export interface Project { id: number; slug: string; path: string; notes: string; icon: string }
+export interface Project { id: number; slug: string; path: string; notes: string; icon: string; memoryShared?: boolean }
 export interface ProjectSummary {
   projectId: number;
   /** Present only for administrators; ordinary users never receive other accounts' assignments. */

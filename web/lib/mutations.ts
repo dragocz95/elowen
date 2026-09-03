@@ -379,7 +379,21 @@ export function useCreateProject() {
 }
 export function useUpdateProject() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { id: number; path?: string; notes?: string }) => elowenClient.updateProject(v.id, { path: v.path, notes: v.notes }), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
+  return useMutation({ mutationFn: (v: { id: number; path?: string; notes?: string; memoryShared?: boolean }) => elowenClient.updateProject(v.id, { path: v.path, notes: v.notes, memoryShared: v.memoryShared }), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
+}
+/** Replace a project's shared-memory share list wholesale (admin-only). */
+export function useSetProjectMemoryMembers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { projectId: number; userIds: number[] }) => elowenClient.setProjectMemoryMembers(v.projectId, v.userIds),
+    onSuccess: async (_r, v) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['project-memory-members', v.projectId] }),
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.memoryCategories }),
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }),
+      ]);
+    },
+  });
 }
 export function useRemoveProject() {
   const qc = useQueryClient();

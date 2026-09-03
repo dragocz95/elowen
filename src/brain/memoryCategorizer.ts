@@ -62,9 +62,13 @@ export class MemoryCategorizer {
   }
 
   /** Pure decision bound to the exact category snapshot and inference model that produced it. The semantic
-   * fingerprint prevents a deleted category whose numeric id is later reused from validating stale output. */
-  async classifyDecision(userId: number, body: string): Promise<MemoryCategoryDecision> {
-    const cats = this.categories.list(userId);
+   * fingerprint prevents a deleted category whose numeric id is later reused from validating stale output.
+   * `extraCategories` widens the option set (the shared pool of the current project) — the classifier may
+   * file into it just like into a personal category; it still never invents one. */
+  async classifyDecision(userId: number, body: string, extraCategories: MemoryCategoryRow[] = []): Promise<MemoryCategoryDecision> {
+    const own = this.categories.list(userId);
+    const known = new Set(own.map((c) => c.id));
+    const cats = [...own, ...extraCategories.filter((c) => !known.has(c.id))];
     const inf = this.inference();
     if (cats.length === 0 || !inf) return { categoryId: null, categoryFingerprint: null, model: inf?.model ?? null };
     const { text } = await inf.decide(buildClassifyPrompt(body.slice(0, MAX_BODY_CHARS), cats));
@@ -78,8 +82,8 @@ export class MemoryCategorizer {
   }
 
   /** Compatibility convenience for callers that only need the selected category id. */
-  async classify(userId: number, body: string): Promise<number | null> {
-    return (await this.classifyDecision(userId, body)).categoryId;
+  async classify(userId: number, body: string, extraCategories: MemoryCategoryRow[] = []): Promise<number | null> {
+    return (await this.classifyDecision(userId, body, extraCategories)).categoryId;
   }
 
   /** Load one memory, classify it, and persist via memories.setCategory ONLY if the category id changed.
@@ -89,7 +93,7 @@ export class MemoryCategorizer {
     try {
       const mem = this.memories.get(userId, memoryId);
       if (!mem || mem.status !== 'active') return;
-      const revision = this.memories.revision(userId, memoryId);
+      const revision = this.memories.revision(memoryId);
       const decision = await this.classifyDecision(userId, mem.body);
       this.memories.setCategoryIfUnchanged(
         userId,
@@ -120,21 +124,27 @@ export class MemoryCategorizer {
   }
 
   /** Batch (re)classify the user's active memories, capped at MAX_RECLASSIFY. By default only touches
-   *  uncategorized rows (categoryId:null filter); `includeCategorized` re-tags everything. Each memory is
-   *  best-effort — one failure is logged and skipped, never aborting the pass. Returns { scanned,
-   *  classified } where `classified` counts rows that landed on a non-null category. */
+   *  uncategorized rows (categoryId:null filter); `includeCategorized` re-tags everything. Rows sitting
+   *  in a SHARED pool are always excluded — the pool belongs to the team, and a personal reclassify pass
+   *  must never quietly pull another member's shared memories out of it (nor push private ones in). Each
+   *  memory is best-effort — one failure is logged and skipped, never aborting the pass. Returns {
+   *  scanned, classified } where `classified` counts rows that landed on a non-null category. */
   async reclassify(userId: number, opts?: { limit?: number; includeCategorized?: boolean }): Promise<{ scanned: number; classified: number }> {
     const inf = this.inference();
     if (!inf) return { scanned: 0, classified: 0 };
     if (this.categories.list(userId).length === 0) return { scanned: 0, classified: 0 };
     const limit = Math.min(opts?.limit ?? MAX_RECLASSIFY, MAX_RECLASSIFY);
-    const rows = this.memories.list(userId, opts?.includeCategorized
+    let rows = this.memories.list(userId, opts?.includeCategorized
       ? { status: 'active', limit }
       : { status: 'active', categoryId: null, limit });
+    if (opts?.includeCategorized) {
+      const poolIds = new Set(this.memories.sharedPoolCategoryIds());
+      rows = rows.filter((m) => m.category_id === null || !poolIds.has(m.category_id));
+    }
     let classified = 0;
     for (const m of rows) {
       try {
-        const revision = this.memories.revision(userId, m.id);
+        const revision = this.memories.revision(m.id);
         const decision = await this.classifyDecision(userId, m.body);
         const written = this.memories.setCategoryIfUnchanged(
           userId,

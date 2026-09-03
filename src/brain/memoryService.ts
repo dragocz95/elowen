@@ -108,6 +108,8 @@ export interface RetrieveResult {
 export interface FindSimilarOpts {
   threshold?: number;
   limit?: number;
+  /** Shared pool category ids to scan in addition to the user's own memories. */
+  sharedCategoryIds?: ReadonlySet<number>;
 }
 
 export interface SimilarMemory {
@@ -176,6 +178,11 @@ export class MemoryService {
   private readonly retention?: () => MemoryRetentionConfig;
   /** Nudged after a delivered recall so live views can refresh. Absent → nobody is listening. */
   private readonly onRecalled?: (userId: number) => void;
+  /** Shared pool category ids the user may touch across every project they share. Injected by the
+   *  bootstrap so the browsing surfaces (web list, semantic search, retrieval inspector) can widen
+   *  their candidate queries past the user_id filter; turn recall gets its shared set from the scope
+   *  instead. Absent → no shared pools are considered. */
+  private readonly sharedCategoriesOf?: (userId: number) => number[];
 
   constructor(deps: {
     store: MemoryStore;
@@ -190,6 +197,7 @@ export class MemoryService {
     /** Called after a delivered recall bumped the counters, so live views can refresh themselves. A
      *  recall changes memory state without any user action, and nothing else would tell the UI. */
     onRecalled?: (userId: number) => void;
+    sharedCategoriesOf?: (userId: number) => number[];
   }) {
     this.store = deps.store;
     this.categories = deps.categories;
@@ -201,6 +209,7 @@ export class MemoryService {
     this.dedupePerMille = deps.dedupePerMille;
     this.retention = deps.retention;
     this.onRecalled = deps.onRecalled;
+    this.sharedCategoriesOf = deps.sharedCategoriesOf;
   }
 
   /** The relevance floor on the cosine scale the scorers work in. */
@@ -300,7 +309,9 @@ export class MemoryService {
   /** Find active memories whose body is a near-duplicate of `body` (cosine ≥ threshold), sorted most
    *  similar first. Powers the curator + MemoryAdd tool's "prefer update over near-duplicate". When
    *  embeddings are not configured — or the embed throws — this degrades to an empty result, i.e. "no
-   *  near-duplicate detected", so the caller simply falls back to inserting a fresh memory. */
+   *  near-duplicate detected", so the caller simply falls back to inserting a fresh memory.
+   *  `sharedCategoryIds` widens the scan over a shared pool, so a member's add reports a neighbour
+   *  another member already stored instead of silently duplicating it. */
   async findSimilar(userId: number, body: string, opts: FindSimilarOpts = {}): Promise<SimilarMemory[]> {
     const text = body.trim();
     if (text === '') return [];
@@ -308,6 +319,7 @@ export class MemoryService {
     if (!cfg) return [];
     const threshold = opts.threshold ?? this.threshold('duplicate', DEFAULT_SIMILAR_THRESHOLD);
     const limit = opts.limit ?? DEFAULT_SIMILAR_LIMIT;
+    const shared = opts.sharedCategoryIds ? [...opts.sharedCategoryIds] : [];
 
     let vec: Float32Array;
     try {
@@ -316,7 +328,7 @@ export class MemoryService {
       return [];
     }
 
-    return this.store.listActiveWithEmbeddings(userId)
+    return this.store.listActiveWithEmbeddings(userId, shared)
       .map((row) => ({ memory: row.memory, similarity: cosine(vec, row.vector) }))
       .filter((r) => r.similarity >= threshold)
       .sort((a, b) => b.similarity - a.similarity)
@@ -327,23 +339,26 @@ export class MemoryService {
    * so excluded rows cannot hide eligible results later in the list. */
   listRecent(userId: number, limit: number, opts: Pick<RetrieveOpts, 'scope'> = {}): MemoryRow[] {
     const scope = this.recallScope(userId, opts.scope);
-    return scope ? this.store.listRecentInCategories(userId, scope.categoryIds, limit) : [];
+    if (!scope) return [];
+    return this.store.listRecentInCategories(userId, scope.categoryIds, limit, [...scope.sharedCategoryIds]);
   }
 
   /** Semantic search for the manual memory browser (Settings → Memory search box): embed the query and
    *  return the caller's active memories ranked by cosine (most similar first), keeping only those above
    *  the relevance floor. Browsing isn't recall, so nothing here is ever marked as used, and it returns
-   *  raw rows for the list UI. Degrades to the store's keyword LIKE search when embeddings aren't
-   *  configured or the embed call throws, so the search box always returns something. */
+   *  raw rows for the list UI. Shared pools the user belongs to are searched alongside their own rows —
+   *  the browser shows the team memory too. Degrades to the store's keyword LIKE search when embeddings
+   *  aren't configured or the embed call throws, so the search box always returns something. */
   async searchSemantic(userId: number, query: string, limit: number): Promise<MemoryRow[]> {
     const q = query.trim();
     if (q === '') return [];
+    const shared = this.sharedCategoriesOf?.(userId) ?? [];
     const cfg = this.activeConfig();
     if (cfg) {
       try {
         const floor = this.minSemantic();
         const queryVec = await this.embeddings.embed(cfg, q);
-        const hits = this.store.listActiveWithEmbeddings(userId)
+        const hits = this.store.listActiveWithEmbeddings(userId, shared)
           .map(({ memory, vector }) => ({ memory, similarity: cosine(queryVec, vector) }))
           .filter((r) => r.similarity >= floor)
           .sort((a, b) => b.similarity - a.similarity)
@@ -355,7 +370,7 @@ export class MemoryService {
         if (hits.length > 0) return hits;
       } catch { /* embed failed → keyword fallback below */ }
     }
-    return this.store.search(userId, q, limit);
+    return this.store.search(userId, q, limit, shared);
   }
 
   /** Vector path: score every embedded memory, sort, dedupe, pack, optionally mark as used. */
@@ -373,7 +388,10 @@ export class MemoryService {
     const now = Date.now();
     const retention = this.retention?.() ?? DEFAULT_MEMORY_RETENTION;
     const w = this.weights();
-    const ranked: Candidate[] = this.recallable(this.store.listActiveWithEmbeddings(userId), ({ memory }) => memory, scope)
+    const ranked: Candidate[] = this.recallable(
+      this.store.listActiveWithEmbeddings(userId, scope ? [...scope.sharedCategoryIds] : []),
+      ({ memory }) => memory, scope,
+    )
       .map(({ memory, vector }) => {
         const semantic = cosine(queryVec, vector);
         const importanceWeight = importanceWeightOf(memory);
@@ -410,14 +428,15 @@ export class MemoryService {
     keywordOnly = false,
   ): RetrieveResult {
     const now = Date.now();
-    const keywordHits = this.recallable(this.store.search(userId, query, maxCount * 3), (memory) => memory, scope);
+    const sharedIds = scope ? [...scope.sharedCategoryIds] : [];
+    const keywordHits = this.recallable(this.store.search(userId, query, maxCount * 3, sharedIds), (memory) => memory, scope);
     const keywordIds = new Set(keywordHits.map((m) => m.id));
     // Recency is a sane last resort while we have NO relevance signal at all — embeddings unconfigured,
     // or the endpoint down. It is the wrong answer after a vector pass that simply cleared nothing:
     // there the cosine scores already established these memories are off-topic, so padding the result
     // with whatever was written most recently would inject unrelated facts — exactly what the floor is
     // there to prevent.
-    const recent = keywordOnly ? [] : this.recallable(this.store.listRecent(userId, maxCount * 3), (memory) => memory, scope);
+    const recent = keywordOnly ? [] : this.recallable(this.store.listRecent(userId, maxCount * 3, sharedIds), (memory) => memory, scope);
 
     const byId = new Map<number, MemoryRow>();
     for (const m of [...keywordHits, ...recent]) byId.set(m.id, m);
@@ -495,16 +514,29 @@ export class MemoryService {
       categoryIds: new Set(this.categories.list(userId)
         .filter((category) => category.projectId === null)
         .map((category) => category.id)),
+      // A global scope (channels, detached work) never carries a shared pool: shared categories are
+      // project-bound and only ever recall inside their project.
+      sharedCategoryIds: new Set<number>(),
     };
   }
 
-  /** Every category the caller owns, ignoring project boundaries. The retrieval-debugging inspector uses
-   *  this: it runs from a web request with no turn/project context, so scoping it like a real recall would
-   *  collapse to globals and hide the caller's project memories. Uncategorized are still excluded, since
-   *  recall never surfaces them. This is an INSPECTION scope only — turn and live recall stay project-scoped. */
+  /** Every category the caller owns plus every shared pool they belong to, ignoring project boundaries.
+   *  The retrieval-debugging inspector uses this: it runs from a web request with no turn/project
+   *  context, so scoping it like a real recall would collapse to globals and hide the caller's project
+   *  memories. Uncategorized are still excluded, since recall never surfaces them. The shared side is
+   *  already narrowed to pools the CALLER belongs to (the injected resolver answers only those) — it is
+   *  an INSPECTION scope only, never a recall path, and never widens to someone else's pool. */
   allCategoriesScope(userId: number): MemoryRecallScope | undefined {
     if (!this.categories) return undefined;
-    return { projectId: null, categoryIds: new Set(this.categories.list(userId).map((category) => category.id)) };
+    const shared = this.sharedCategoriesOf?.(userId) ?? [];
+    return {
+      projectId: null,
+      categoryIds: new Set([
+        ...this.categories.list(userId).map((category) => category.id),
+        ...shared,
+      ]),
+      sharedCategoryIds: new Set(shared),
+    };
   }
 
   /** The active embedding config, or null when embeddings are disabled (no config, empty model, or

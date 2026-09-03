@@ -65,7 +65,7 @@ describe('memory recall scope', () => {
     const global = categories.create(1, { name: 'Global' });
     const current = categories.create(1, { name: 'Current', projectId: 1 });
     const other = categories.create(1, { name: 'Other', projectId: 2 });
-    const scope = { projectId: 1, categoryIds: new Set([global.id, current.id]) };
+    const scope = { projectId: 1, categoryIds: new Set([global.id, current.id]), sharedCategoryIds: new Set<number>() };
     const add = (body: string, categoryId: number | null, vector: Float32Array): void => {
       const memory = store.add(1, { body }, 'test', '');
       store.setCategory(1, memory.id, categoryId, 'test', '');
@@ -145,8 +145,8 @@ describe('memory recall scope', () => {
     store.setCategory(1, elowenMemory.id, elowen.id, 'test', '');
     store.setCategory(1, kolinMemory.id, kolin.id, 'test', '');
     const service = new MemoryService({ store, embeddings: new Embeddings() as EmbeddingService, embeddingConfig: () => null });
-    const elowenScope: MemoryRecallScope = { projectId: 1, categoryIds: new Set([elowen.id]) };
-    const kolinScope: MemoryRecallScope = { projectId: 9, categoryIds: new Set([kolin.id]) };
+    const elowenScope: MemoryRecallScope = { projectId: 1, categoryIds: new Set([elowen.id]), sharedCategoryIds: new Set() };
+    const kolinScope: MemoryRecallScope = { projectId: 9, categoryIds: new Set([kolin.id]), sharedCategoryIds: new Set() };
     const opts: RetrieveOpts = { scope: elowenScope };
 
     const result = await scoped(kolinScope, () => service.retrieve(1, 'shared', opts));

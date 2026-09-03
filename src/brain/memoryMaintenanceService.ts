@@ -67,9 +67,15 @@ export class MemoryMaintenanceService {
     if (!categorizer.configured()) throw new MemoryMaintenanceUnavailableError('categorization not configured');
     if (!categorizer.hasCategories(userId)) throw new MemoryMaintenanceUnavailableError('memory categories unavailable');
 
+    const sharedPoolIds = new Set(this.deps.memories.sharedPoolCategoryIds());
+
     const snapshot = this.deps.memories.list(userId, mode === 'all'
       ? { status: 'active' }
-      : { status: 'active', categoryId: null });
+      : { status: 'active', categoryId: null })
+      // Shared pool rows never enter a personal recategorize pass — the pool belongs to the team, and
+      // re-tagging them from a caller's pass would pull them out of it (same rule as the categorizer).
+      .filter((m) => m.category_id === null
+        || !sharedPoolIds.has(m.category_id));
     const job = this.createJob(userId, 'recategorize', mode, snapshot.length);
     void this.runRecategorize(userId, job, snapshot, categorizer);
     return { ...job };
@@ -125,7 +131,7 @@ export class MemoryMaintenanceService {
     try {
       for (const memory of snapshot) {
         try {
-          const revision = this.deps.memories.revision(userId, memory.id);
+          const revision = this.deps.memories.revision(memory.id);
           const decision = await categorizer.classifyDecision(userId, memory.body);
           const written = this.deps.memories.setCategoryIfUnchanged(
             userId,

@@ -5,8 +5,8 @@ import type { PluginProjectPanelProps, PluginUiRegistration } from 'elowen-plugi
 import { Info, UsersRound } from 'lucide-react';
 import type { Project } from '../../lib/types';
 import type { PluginUiListing } from '../../lib/types';
-import { usePluginUi, useProjectUsers, useUsers } from '../../lib/queries';
-import { useAssignProject } from '../../lib/mutations';
+import { usePluginUi, useProjectMemoryMembers, useProjectUsers, useUsers } from '../../lib/queries';
+import { useAssignProject, useSetProjectMemoryMembers, useUpdateProject } from '../../lib/mutations';
 import { useTranslation } from '../../lib/i18n';
 import { PLUGIN_UI_API_VERSION, loadPluginUi } from '../../lib/pluginUi';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
@@ -14,6 +14,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
+import { Toggle } from '../../components/ui/Toggle';
 import { Avatar } from '../../components/ui/Avatar';
 import { useToast } from '../../components/ui/Toast';
 
@@ -111,6 +112,100 @@ function ProjectAccessPanel({ project }: { project: Project }) {
   );
 }
 
+/** Admin control for the project's SHARED MEMORY: a toggle plus, when on, the share list. An empty
+ *  share list means every project member shares the pool — the picker exists to narrow it. */
+function SharedMemoryPanel({ project }: { project: Project }) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const users = useUsers();
+  const members = useProjectUsers(project.id);
+  const shareList = useProjectMemoryMembers(project.id);
+  const updateProject = useUpdateProject();
+  const setMembers = useSetProjectMemoryMembers();
+  const [open, setOpen] = useState(false);
+  const on = project.memoryShared === true;
+
+  if (users.isError || members.isError || shareList.isError) {
+    return <ErrorState message={t.users.loadError} onRetry={() => { void users.refetch(); void members.refetch(); void shareList.refetch(); }} />;
+  }
+  if (users.isLoading || members.isLoading || shareList.isLoading) return <LoadingState variant="list" />;
+
+  const userById = new Map((users.data ?? []).map((user) => [user.id, user]));
+  const explicit = shareList.data ?? [];
+  // What the picker manages: the explicit share list. With it empty, every project member shares —
+  // shown as the effective state so the summary never lies about who the pool is visible to.
+  const sharers = explicit.length > 0
+    ? explicit.flatMap((id) => (userById.has(id) ? [userById.get(id)!] : []))
+    : (members.data ?? []).flatMap((id) => (userById.has(id) ? [userById.get(id)!] : []));
+  const items: ManageSelectionItem[] = (members.data ?? []).flatMap((id) => {
+    const user = userById.get(id);
+    if (!user) return [];
+    return [{
+      id: String(user.id),
+      label: user.name || user.username,
+      badges: [{ text: `@${user.username}`, tone: 'muted' }],
+      group: 'sharers',
+      groupLabel: t.projects.memorySharersGroup,
+      icon: <Avatar user={user} size={18} />,
+    }];
+  });
+
+  const toggle = async (next: boolean) => {
+    try {
+      await updateProject.mutateAsync({ id: project.id, memoryShared: next });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : t.users.updateError, 'error');
+    }
+  };
+  const save = async (next: Set<string>) => {
+    try {
+      await setMembers.mutateAsync({ projectId: project.id, userIds: [...next].map(Number).filter(Number.isSafeInteger) });
+      toast(t.projects.memorySaved);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : t.users.updateError, 'error');
+      throw error;
+    }
+  };
+
+  return (
+    <div className="border-t border-border/60 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{t.projects.memorySharedTitle}</p>
+          <p className="text-xs text-muted-foreground">{t.projects.memorySharedDesc}</p>
+        </div>
+        <Toggle checked={on} onChange={(next) => { void toggle(next); }} label={t.projects.memorySharedTitle} disabled={updateProject.isPending} />
+      </div>
+      {on ? (
+        explicit.length === 0 ? (
+          <p className="mt-2 text-xs text-muted-foreground">{t.projects.memoryEveryone}</p>
+        ) : (
+          <div className="mt-2">
+            <SelectionSummary
+              countText={t.projects.memorySharersCount.replace('{n}', String(sharers.length))}
+              samples={sharers.slice(0, 3).map((user) => ({ label: user.name || user.username, icon: <Avatar user={user} size={16} /> }))}
+              moreCount={Math.max(0, sharers.length - 3)}
+              onManage={() => setOpen(true)}
+              manageLabel={t.managePicker.manage}
+            />
+          </div>
+        )
+      ) : null}
+      <ManageSelectionModal
+        title={t.projects.memoryPickTitle}
+        subtitle={t.projects.memoryPickHint}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        selected={new Set(explicit.map(String))}
+        onSave={save}
+        saving={setMembers.isPending}
+        countLabel={(count) => t.projects.memorySharersCount.replace('{n}', String(count))}
+      />
+    </div>
+  );
+}
+
 export function ProjectDetailTabs({ project, isAdmin, overview }: {
   project: Project;
   isAdmin: boolean;
@@ -146,7 +241,12 @@ export function ProjectDetailTabs({ project, isAdmin, overview }: {
         <Segmented value={active} onChange={setActive} options={options} variant="line" nowrap aria-label={t.projects.detailSections} className="w-full" />
       </div>
       {active === 'overview' ? overview
-        : active === 'access' && isAdmin ? <ProjectAccessPanel project={project} />
+        : active === 'access' && isAdmin ? (
+          <div>
+            <ProjectAccessPanel project={project} />
+            <SharedMemoryPanel project={project} />
+          </div>
+        )
           : selectedPanel ? <PluginProjectPanel panel={selectedPanel} project={project} />
             : null}
     </div>

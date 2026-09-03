@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Pencil, Trash2, Tags, Globe } from 'lucide-react';
+import { Plus, Pencil, Trash2, Tags, Globe, UsersRound } from 'lucide-react';
 import type { Memory, MemoryCategory } from '../../lib/types';
-import { useMemoryCategories, useProjects } from '../../lib/queries';
+import { useMe, useMemoryCategories, useProjects } from '../../lib/queries';
 import { useCreateMemoryCategory, useUpdateMemoryCategory, useDeleteMemoryCategory } from '../../lib/mutations';
 import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { CategoryIcon, ICON_NAMES } from '../../lib/categoryIcons';
@@ -25,6 +25,7 @@ import { categorySwatch, countByCategory, CATEGORY_COLORS } from './memoryMeta';
 export function CategoryManager({ memories }: { memories: Memory[] }) {
   const { t } = useTranslation();
   const categories = useMemoryCategories();
+  const isAdmin = useMe().data?.user?.is_admin ?? false;
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<MemoryCategory | null>(null);
 
@@ -44,24 +45,38 @@ export function CategoryManager({ memories }: { memories: Memory[] }) {
         <p className="text-xs italic text-muted-foreground">{t.memory.categoriesEmpty}</p>
       ) : (
         <ul className="flex flex-wrap gap-2">
-          {rows.map((c) => (
-            <li
-              key={c.id}
-              className="group inline-flex min-w-0 max-w-full items-center gap-2 rounded-full border border-border bg-muted py-1 pl-2.5 pr-1.5"
-            >
-              <span className="shrink-0" style={{ color: categorySwatch(c.color) }}>
-                <CategoryIcon name={c.icon} size={14} />
-              </span>
-              <span className="min-w-0 truncate text-sm text-foreground">{c.name}</span>
-              <span className="shrink-0 font-mono text-[11px] text-muted-foreground" title={c.description || undefined}>
-                {t.memory.memoryCount.replace('{n}', String(counts.byId.get(c.id) ?? 0))}
-              </span>
-              <span className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
-                <IconButton icon={Pencil} label={t.memory.categoryEdit} onClick={() => setEditing(c)} />
-                <DeleteCategory category={c} />
-              </span>
-            </li>
-          ))}
+          {rows.map((c) => {
+            // A shared pool category carries the instance sentinel owner (user_id = 0). Members see it
+            // read-only (it steers the classifier for the whole team); the admin may still edit it.
+            const shared = c.user_id === 0;
+            return (
+              <li
+                key={c.id}
+                className="group inline-flex min-w-0 max-w-full items-center gap-2 rounded-full border border-border bg-muted py-1 pl-2.5 pr-1.5"
+              >
+                <span className="shrink-0" style={{ color: categorySwatch(c.color) }}>
+                  <CategoryIcon name={c.icon} size={14} />
+                </span>
+                <span className="min-w-0 truncate text-sm text-foreground">{c.name}</span>
+                {shared ? (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary" title={t.memory.categorySharedHint}>
+                    <UsersRound size={10} aria-hidden />{t.memory.categoryShared}
+                  </span>
+                ) : null}
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground" title={c.description || undefined}>
+                  {t.memory.memoryCount.replace('{n}', String(counts.byId.get(c.id) ?? 0))}
+                </span>
+                <span className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+                  {(isAdmin || !shared) ? (
+                    <>
+                      <IconButton icon={Pencil} label={t.memory.categoryEdit} onClick={() => setEditing(c)} />
+                      <DeleteCategory category={c} />
+                    </>
+                  ) : null}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -118,6 +133,9 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
   const pending = create.isPending || update.isPending;
   // The project bound to this category, resolved from the loaded list — drives the scope glyph.
   const selectedProject = projectId == null ? null : (projects.data ?? []).find((p) => p.id === projectId) ?? null;
+  // A shared pool's project binding is immutable (the pool belongs to its project for life), so the
+  // scope picker is hidden while editing one; the admin edits only its display/classification fields.
+  const sharedEdit = isEdit && category.user_id === 0;
 
   // A missing name is a property of the name field, not of the whole dialog, so it is stated there
   // instead of as a toast the reader has to connect back to a control. Latched on the first blocked
@@ -150,32 +168,36 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
             className="w-full resize-y rounded-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
           />
         </Field>
-        <Field label={t.memory.categoryProject}>
-          {projects.isLoading ? <LoadingLine label={t.memory.categoryProjectsLoading} /> : projects.isError ? (
-            <ErrorState message={t.memory.categoryProjectsError} onRetry={() => { void projects.refetch(); }} />
-          ) : (
-            <div className="flex items-center gap-2">
-              {/* Show the bound project's own glyph (or a globe for a global category) so the scope is
-                  readable at a glance, not only after opening the picker. */}
-              {selectedProject
-                ? <ProjectIcon project={selectedProject} size={18} className="text-muted-foreground" />
-                : <Globe size={18} aria-hidden className="shrink-0 text-muted-foreground" />}
-              <div className="min-w-0 flex-1">
-                <ChoiceField
-                  title={t.memory.categoryProject}
-                  options={[
-                    { value: '', label: t.memory.categoryProjectGlobal, icon: <Globe size={16} aria-hidden className="shrink-0 text-muted-foreground" /> },
-                    ...(projects.data ?? []).map((project) => ({ value: String(project.id), label: project.slug, icon: <ProjectIcon project={project} size={16} className="text-muted-foreground" /> })),
-                  ]}
-                  value={projectId == null ? '' : String(projectId)}
-                  onChange={(value) => setProjectId(value ? Number(value) : null)}
-                  picker="always"
-                  manageAriaLabel={t.memory.categoryProject}
-                />
+        {sharedEdit ? (
+          <p className="text-xs text-muted-foreground">{t.memory.categorySharedHint}</p>
+        ) : (
+          <Field label={t.memory.categoryProject}>
+            {projects.isLoading ? <LoadingLine label={t.memory.categoryProjectsLoading} /> : projects.isError ? (
+              <ErrorState message={t.memory.categoryProjectsError} onRetry={() => { void projects.refetch(); }} />
+            ) : (
+              <div className="flex items-center gap-2">
+                {/* Show the bound project's own glyph (or a globe for a global category) so the scope is
+                    readable at a glance, not only after opening the picker. */}
+                {selectedProject
+                  ? <ProjectIcon project={selectedProject} size={18} className="text-muted-foreground" />
+                  : <Globe size={18} aria-hidden className="shrink-0 text-muted-foreground" />}
+                <div className="min-w-0 flex-1">
+                  <ChoiceField
+                    title={t.memory.categoryProject}
+                    options={[
+                      { value: '', label: t.memory.categoryProjectGlobal, icon: <Globe size={16} aria-hidden className="shrink-0 text-muted-foreground" /> },
+                      ...(projects.data ?? []).map((project) => ({ value: String(project.id), label: project.slug, icon: <ProjectIcon project={project} size={16} className="text-muted-foreground" /> })),
+                    ]}
+                    value={projectId == null ? '' : String(projectId)}
+                    onChange={(value) => setProjectId(value ? Number(value) : null)}
+                    picker="always"
+                    manageAriaLabel={t.memory.categoryProject}
+                  />
+                </div>
               </div>
-            </div>
-          )}
-        </Field>
+            )}
+          </Field>
+        )}
         <Field label={t.memory.categoryColor}>
           <div className="flex flex-wrap gap-2">
             {CATEGORY_COLORS.map((c) => (
