@@ -177,7 +177,7 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
     <>
       <SelectionSummary
         countText={countText}
-        samples={summarySource.slice(0, 3).map((exec) => ({ label: summaryLabelOf(exec), icon: <ModelIcon name={iconNameOf(exec)} size={13} /> }))}
+        samples={summarySource.slice(0, 3).map((exec) => ({ id: exec, label: summaryLabelOf(exec), icon: <ModelIcon name={iconNameOf(exec)} size={13} /> }))}
         moreCount={Math.max(0, summarySource.length - 3)}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
