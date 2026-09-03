@@ -80,8 +80,20 @@ export function useUpdateUser() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { id: number; patch: UserPatch }) => elowenClient.updateUser(v.id, v.patch),
-    // Refresh identity plus Project summaries: names and role changes affect member samples/counts.
-    onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['users'] }), qc.invalidateQueries({ queryKey: ['me'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); },
+    onSuccess: async (_user, { id, patch }) => {
+      const invalidations = [
+        qc.invalidateQueries({ queryKey: ['users'] }),
+        qc.invalidateQueries({ queryKey: ['me'] }),
+        // Names and role changes affect Project member samples and counts.
+        qc.invalidateQueries({ queryKey: ['project-summaries'] }),
+      ];
+      // The effective tool list is derived from the plugin grant as well as the per-tool grant. Refresh
+      // its one user-scoped cache whenever either input changes so the Users drawer never needs an F5.
+      if (patch.granted_plugins || patch.allowed_tools || patch.disabled_tools) {
+        invalidations.push(qc.invalidateQueries({ queryKey: ['user-tools', id] }));
+      }
+      await Promise.all(invalidations);
+    },
   });
 }
 export function useUpdateMe() {
