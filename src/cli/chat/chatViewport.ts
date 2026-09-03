@@ -28,17 +28,6 @@ const DIRECT_SCROLL_JUMP_LINES = 1_024;
 /** Soft bound: one exceptionally tall visible turn may exceed it, but off-screen rows are evicted. */
 export const CHAT_VIEWPORT_ROW_CACHE_LIMIT = 2_048;
 
-const isTerminalImageLine = (line: string): boolean => line.includes('\x1b_G') || line.includes('\x1b]1337;File=');
-/** How many rows ABOVE an iTerm2 image line the image paints over. pi-tui renders a multi-row iTerm2
- *  image as `rows-1` empty lines followed by `CSI <rows-1> A` + the image sequence, so the picture
- *  lands on those empty lines. They belong to the image: writing anything into them — padding, the
- *  scrollbar glyph, the differ's erase when the glyph moves — wipes the image cells in xterm-based
- *  terminals, and a static page sends no new frame to paint it back. */
-const imageRowsAbove = (line: string): number => {
-  const match = /^\x1b\[(\d+)A\x1b\]1337;File=/.exec(line);
-  return match ? Number(match[1]) : 0;
-};
-
 export interface ChatViewportState {
   transcript: TranscriptRead;
   /** Stable semantic identity of the conversation represented by `transcript`. Full history refreshes
@@ -59,10 +48,9 @@ export interface ChatViewportState {
   showThoughts?: boolean;
   /** Locale for the localized composing-tool action label. Defaults to English. */
   locale?: ComposeLocale;
-  /** Durable artifact sidecar plus its terminal projection. Kept outside TranscriptModel so media frames do
-   * not enter the conversation history or its long-history change journal. */
+  /** Durable artifact sidecar, kept outside TranscriptModel so plugin updates never enter the conversation
+   * history or its long-history change journal. */
   inlineArtifacts?: InlineArtifactCollection;
-  renderInlineArtifacts?: (toolCallId: string, width: number) => string[];
 }
 
 export interface ChatViewportMetrics {
@@ -167,15 +155,6 @@ export class ChatViewport implements Component {
   }
 
   invalidate(): void { /* computed from current state */ }
-
-  /** A media frame changes only the turn containing its anchored tool call. Re-render that exact cached turn
-   * instead of resetting or scanning the history; a cold/off-screen turn will naturally pick the frame up
-   * when it is first materialized. */
-  invalidateToolCall(toolCallId: string): void {
-    const index = this.state.transcript.toolTurnIndex(toolCallId);
-    if (index === undefined) return;
-    this.invalidateExternalTurn(index);
-  }
 
   /** True only when totalLines is exact for every turn at the current layout context. */
   private isHistoryIndexComplete(): boolean {
@@ -402,28 +381,18 @@ export class ChatViewport implements Component {
     const visible = this.collectWindow(start, start + height);
     while (visible.length < height) visible.push({ line: '' });
     this.lastRows = visible.map((r) => r.line);
-    this.lastPlainRows = this.lastRows.map((line) => isTerminalImageLine(line) ? '' : terminalPlainText(line));
+    this.lastPlainRows = this.lastRows.map((line) => terminalPlainText(line));
     this.lastTotal = totalRows;
     const scrollMetrics = this.visualScrollMetrics(height);
-    const imageReserved = new Set<number>();
-    visible.forEach((entry, i) => {
-      for (let above = imageRowsAbove(entry.line); above > 0; above -= 1) if (i - above >= 0) imageReserved.add(i - above);
-    });
     const rendered = visible.map((entry, i) => {
       if ((entry.kind === 'thought' || entry.kind === 'expandable') && entry.key && entry.turnIndex != null) {
         this.expandableRows.set(i + 1, { key: entry.key, turnIndex: entry.turnIndex });
       }
       if (entry.kind === 'subagent' && entry.key) this.subagentRows.set(i + 1, entry.key);
       if (entry.kind === 'workflow' && entry.key) this.workflowRows.set(i + 1, entry.key);
-      const content = i === 0 && this.scrollOffset > 0 && !isTerminalImageLine(entry.line)
+      const content = i === 0 && this.scrollOffset > 0
         ? this.historyChip(entry.line, chatWidth - 2)
         : entry.line;
-      // Image protocol rows are cursor-control payloads, not printable text. Padding or appending the
-      // scrollbar would write characters at the image placement and can corrupt/overpaint it — and the
-      // same goes for the empty rows the image paints over, which stay byte-identical frame to frame so
-      // the differential renderer never touches them.
-      if (isTerminalImageLine(content)) return content;
-      if (imageReserved.has(i) && visibleWidth(content) === 0) return '';
       let cell = padAnsi(content, chatWidth - 2);
       // Drag-to-copy highlight: reverse-video the selected rows; re-arm after every SGR reset inside
       // the line, otherwise the first themed span would cancel the inversion mid-row.
@@ -848,7 +817,7 @@ export class ChatViewport implements Component {
       composingMarkerReady: this.state.composingMarkerReady === true,
       spinnerFrame: this.state.spinnerFrame ?? 0,
       locale: this.state.locale ?? 'en',
-      renderInlineArtifacts: this.state.renderInlineArtifacts,
+      inlineArtifacts: this.state.inlineArtifacts,
       expandedThoughts: this.expandedThoughts,
       expandedTools: this.expandedTools,
     });
