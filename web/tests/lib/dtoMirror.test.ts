@@ -12,6 +12,7 @@ import type {
   BrainGoalState as WireBrainGoalState,
   CommitFileChange as WireCommitFileChange,
   CommitLogEntry as WireCommitLogEntry,
+  ProjectView as WireProjectView,
 } from '../../../src/shared/wireContract.js';
 import type {
   User as WebUser,
@@ -23,6 +24,7 @@ import type {
   BrainGoal as WebBrainGoal,
   CommitFileChange as WebCommitFileChange,
   CommitLogEntry as WebCommitLogEntry,
+  Project as WebProject,
 } from '../../lib/types';
 
 /** The web cannot import daemon types (src/ is off-limits to the web toolchain by design), so the
@@ -201,5 +203,6 @@ describe('web types ARE the shared wire contract', () => {
     expectTypeOf<WebBrainGoal>().toEqualTypeOf<WireBrainGoalState>();
     expectTypeOf<WebCommitFileChange>().toEqualTypeOf<WireCommitFileChange>();
     expectTypeOf<WebCommitLogEntry>().toEqualTypeOf<WireCommitLogEntry>();
+    expectTypeOf<WebProject>().toEqualTypeOf<WireProjectView>();
   });
 });

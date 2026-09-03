@@ -1,4 +1,5 @@
-import { statSync, readdirSync, realpathSync, existsSync } from 'node:fs';
+import { statSync, readdirSync, realpathSync, existsSync, mkdirSync } from 'node:fs';
+import { stat as statAsync } from 'node:fs/promises';
 import { resolve, join, relative, sep, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -11,8 +12,10 @@ export type { CommitFileChange, CommitLogEntry };
 
 const run = promisify(execFile);
 
-// Directories never worth showing in a project file tree.
-const IGNORE = new Set(['.git', 'node_modules', '.next', 'dist', '.turbo', 'coverage', '.cache']);
+// Directories never worth showing in a project file tree or creating from its picker.
+export const DIRECTORY_PICKER_IGNORED_NAMES = new Set(['.git', 'node_modules', '.next', 'dist', '.turbo', 'coverage', '.cache']);
+export const MAX_DIRECTORY_NAME_BYTES = 255;
+export const PROJECT_PATH_EXISTS_TIMEOUT_MS = 250;
 /** realpath of the nearest existing ancestor of `p` — lets us validate a not-yet-created file by
  *  resolving the deepest directory that does exist. */
 function realOfNearest(p: string): string {
@@ -58,6 +61,73 @@ export function isProjectImage(root: string, rel: string): boolean {
 
 export interface DirListing { path: string; parent: string | null; entries: { name: string; path: string }[] }
 
+export type CreateDirErrorCode = 'invalid-name' | 'invalid-parent' | 'exists' | 'forbidden' | 'failed';
+
+/** Typed filesystem failure for the directory-registration route. The route maps codes to HTTP status
+ * without parsing operating-system error text, while the original error stays available as the cause. */
+export class CreateDirError extends Error {
+  constructor(public readonly code: CreateDirErrorCode, cause?: unknown) {
+    super(code, { cause });
+    this.name = 'CreateDirError';
+  }
+}
+
+function filesystemErrorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+}
+
+/** The shared directory-name boundary for both request validation and the filesystem integration. */
+export function isCreatableDirectoryName(name: string): boolean {
+  return name.length > 0
+    && name !== '.'
+    && name !== '..'
+    && !name.includes('\0')
+    && !name.includes('/')
+    && !name.includes('\\')
+    && Buffer.byteLength(name, 'utf8') <= MAX_DIRECTORY_NAME_BYTES
+    && !DIRECTORY_PICKER_IGNORED_NAMES.has(name);
+}
+
+/** Whether a configured project path currently resolves to a directory. The promise-based stat keeps the
+ * daemon event loop free. A slow mount resolves false after a bounded wait; the underlying OS request is
+ * not cancelled and may finish later, with its result deliberately ignored. */
+export async function projectPathExists(input: string): Promise<boolean> {
+  const path = resolve(input);
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<boolean>((resolveTimeout) => {
+    timer = setTimeout(() => resolveTimeout(false), PROJECT_PATH_EXISTS_TIMEOUT_MS);
+    timer.unref();
+  });
+  const check = statAsync(path).then((stat) => stat.isDirectory(), () => false);
+  try { return await Promise.race([check, timeout]); }
+  finally { if (timer) clearTimeout(timer); }
+}
+
+/** Create one immediate child directory beneath a canonical existing parent. `mkdirSync` is intentionally
+ * non-recursive: the create itself is atomic and EEXIST cannot race a separate preflight check.
+ *
+ * Residual OS limitation: the canonical parent can be replaced through a symlink race between realpath and
+ * mkdir. Node currently exposes no descriptor-relative mkdir primitive here, so OS permissions remain the
+ * final boundary rather than adding a shell helper or privilege expansion. */
+export function createDir(parent: string, name: string): { path: string } {
+  if (!isCreatableDirectoryName(name)) throw new CreateDirError('invalid-name');
+  try {
+    const canonicalParent = realpathSync(resolve(parent));
+    if (!statSync(canonicalParent).isDirectory()) throw new CreateDirError('invalid-parent');
+    const path = join(canonicalParent, name);
+    mkdirSync(path);
+    return { path };
+  } catch (error) {
+    if (error instanceof CreateDirError) throw error;
+    const code = filesystemErrorCode(error);
+    if (code === 'EEXIST') throw new CreateDirError('exists', error);
+    if (code === 'ENAMETOOLONG') throw new CreateDirError('invalid-name', error);
+    if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') throw new CreateDirError('forbidden', error);
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP' || code === 'EINVAL') throw new CreateDirError('invalid-parent', error);
+    throw new CreateDirError('failed', error);
+  }
+}
+
 /** Shallow-list the sub-directories of an absolute server path — backs the new-project directory picker
  *  (you can't list a project's files before the project exists). Returns the resolved path, its parent
  *  (null at the filesystem root) and the immediate child directories, sorted, with the usual build noise
@@ -66,7 +136,7 @@ export interface DirListing { path: string; parent: string | null; entries: { na
 export function listDirs(input: string): DirListing {
   const path = realpathSync(resolve(input || '/'));
   const entries = readdirSync(path, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && !IGNORE.has(d.name))
+    .filter((d) => d.isDirectory() && !DIRECTORY_PICKER_IGNORED_NAMES.has(d.name))
     .map((d) => ({ name: d.name, path: join(path, d.name) }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const parent = dirname(path);

@@ -393,6 +393,20 @@ export function useUpdateProject() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (v: { id: number; path?: string; notes?: string; memoryShared?: boolean }) => elowenClient.updateProject(v.id, { path: v.path, notes: v.notes, memoryShared: v.memoryShared }), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
 }
+
+/** Create a child under the open directory. `listingPath` is the actual query key that produced the
+ * canonical parent, which can differ when the picker started at the server's default home directory. */
+export function useCreateDirectory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { parent: string; name: string; listingPath?: string }) => elowenClient.createDir(v.parent, v.name),
+    onSuccess: async (_created, v) => {
+      const originalKey = v.listingPath ?? '';
+      const keys = originalKey === v.parent ? [originalKey] : [originalKey, v.parent];
+      await Promise.all(keys.map((key) => qc.invalidateQueries({ queryKey: ['fs-dirs', key], exact: true, refetchType: 'active' })));
+    },
+  });
+}
 /** Replace a project's shared-memory share list wholesale (admin-only). */
 export function useSetProjectMemoryMembers() {
   const qc = useQueryClient();

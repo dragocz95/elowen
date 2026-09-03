@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectStore } from '../../src/store/projectStore.js';
@@ -32,22 +32,35 @@ function makeApp(extra: { engine?: unknown; missionGit?: unknown; tmux?: unknown
 }
 
 describe('projects api', () => {
-  it('GET /projects lists, POST creates, duplicate slug 409', async () => {
+  it('GET, POST and PATCH expose server-computed project path state without blocking missing paths', async () => {
     const { app } = makeApp();
-    expect((await (await app.request('/projects')).json()).length).toBeGreaterThanOrEqual(1);
-    const created = await app.request('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'web', path: '/w', notes: 'fe' }) });
-    expect(created.status).toBe(201);
-    const dup = await app.request('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'web', path: '/x' }) });
-    expect(dup.status).toBe(409);
-  });
-  it('PATCH /projects/:id updates path and notes; slug stays immutable; 404 unknown', async () => {
-    const { app } = makeApp();
-    const patched = await app.request('/projects/1', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: '/moved', notes: 'pilot ctx', slug: 'hacked' }) });
-    expect(patched.status).toBe(200);
-    const body = await patched.json();
-    expect(body).toMatchObject({ id: 1, slug: 'elowen', path: '/moved', notes: 'pilot ctx' });
-    const missing = await app.request('/projects/999', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ notes: 'x' }) });
-    expect(missing.status).toBe(404);
+    const root = mkdtempSync(join(tmpdir(), 'elowen-project-path-'));
+    const missingPath = join(root, 'missing');
+    try {
+      const listed = await (await app.request('/projects')).json() as { slug: string; pathExists: boolean }[];
+      expect(listed.find((project) => project.slug === 'elowen')).toMatchObject({ pathExists: false });
+
+      const existing = await app.request('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'web', path: root, notes: 'fe' }) });
+      expect(existing.status).toBe(201);
+      expect(await existing.json()).toMatchObject({ slug: 'web', path: root, pathExists: true });
+
+      const missing = await app.request('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'missing', path: missingPath }) });
+      expect(missing.status).toBe(201);
+      expect(await missing.json()).toMatchObject({ slug: 'missing', path: missingPath, pathExists: false });
+
+      const dup = await app.request('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'web', path: '/x' }) });
+      expect(dup.status).toBe(409);
+
+      const patched = await app.request('/projects/1', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: root, notes: 'pilot ctx', slug: 'hacked' }) });
+      expect(patched.status).toBe(200);
+      expect(await patched.json()).toMatchObject({ id: 1, slug: 'elowen', path: root, notes: 'pilot ctx', pathExists: true });
+      const patchedMissing = await app.request('/projects/1', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: missingPath }) });
+      expect(patchedMissing.status).toBe(200);
+      expect(await patchedMissing.json()).toMatchObject({ path: missingPath, pathExists: false });
+
+      const unknown = await app.request('/projects/999', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ notes: 'x' }) });
+      expect(unknown.status).toBe(404);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
   it('PATCH /projects/:id sets an icon from a real repo image and rejects an escaping path', async () => {
     const { app } = makeApp();
@@ -115,6 +128,44 @@ describe('projects api', () => {
       expect(bad.status).toBe(400);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+  it('POST /fs/dirs creates one child atomically and maps invalid, duplicate and missing-parent requests', async () => {
+    const { app } = makeApp();
+    const root = mkdtempSync(join(tmpdir(), 'elowen-fsdirs-create-'));
+    try {
+      const created = await app.request('/fs/dirs', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ parent: root, name: 'new-app' }),
+      });
+      expect(created.status).toBe(201);
+      expect(await created.json()).toEqual({ path: join(root, 'new-app') });
+      expect(existsSync(join(root, 'new-app'))).toBe(true);
+
+      for (const name of ['', '.', '..', '.git', 'nested/path', 'nested\\path', 'bad\0name', 'x'.repeat(256), 'é'.repeat(128)]) {
+        const invalid = await app.request('/fs/dirs', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ parent: root, name }),
+        });
+        expect(invalid.status, name).toBe(400);
+      }
+
+      const duplicate = await app.request('/fs/dirs', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ parent: root, name: 'new-app' }),
+      });
+      expect(duplicate.status).toBe(409);
+      expect(await duplicate.json()).toEqual({ error: 'directory already exists' });
+
+      const missingParent = await app.request('/fs/dirs', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ parent: join(root, 'missing'), name: 'child' }),
+      });
+      expect(missingParent.status).toBe(400);
+      expect(await missingParent.json()).toEqual({ error: 'invalid parent directory' });
+
+      const tooLongForOs = await app.request('/fs/dirs', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ parent: `/${'x'.repeat(300)}`, name: 'child' }),
+      });
+      expect(tooLongForOs.status).toBe(400);
+      expect(await tooLongForOs.json()).toEqual({ error: 'invalid directory name' });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('GET /projects/:id/git returns the reader result; 404 unknown', async () => {
     const { app } = makeApp();
     expect((await app.request('/projects/999/git')).status).toBe(404);
