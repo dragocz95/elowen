@@ -77,7 +77,7 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     const prepared = await execution.prepare({
       command: { type: 'argv', file: 'git', args: [...GIT_BASE_ARGS, ...args] },
       cwd,
-      leaseKind: options.leaseKind ?? 'terminal',
+      leaseKind: options.leaseKind ?? 'github',
     }, { roots, accountUserId: options.accountUserId, owner: options.owner, skipHomeLock: options.skipHomeLock });
     Object.assign(prepared.launch.env, {
       GIT_CONFIG_NOSYSTEM: '1',
