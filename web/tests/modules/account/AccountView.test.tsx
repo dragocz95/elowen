@@ -77,6 +77,42 @@ describe('AccountView', () => {
     ]);
   });
 
+  // A per-account plugin config contributes a rail entry too, and the rail has room for a NAME. Before the
+  // manifest carried one, the entry was titled with the plugin's description — a full English sentence that
+  // widened the rail and truncated mid-word, while the hero repeated the very same sentence.
+  it('titles a per-account plugin config entry with its short label and keeps the sentence in the hero', async () => {
+    server.use(
+      http.get('*/api/plugins/user-config', () => HttpResponse.json([{
+        name: 'github',
+        label: 'GitHub',
+        description: 'Account-scoped GitHub CLI device authentication for this user.',
+        userConfigSchema: [{ key: 'mergeMethod', label: 'Default merge method', type: 'string' }],
+        config: {}, secretsSet: [], revision: 0,
+      }])),
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '' })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    const rail = await screen.findByRole('radiogroup', { name: 'Account sections' });
+    await waitFor(() => expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
+      'Account', 'GitHub', 'Models', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
+    ]));
+    // Whatever the rail clips stays readable: the label carries its own tooltip and full accessible name.
+    const entry = screen.getByRole('radio', { name: 'GitHub' });
+    expect(entry.querySelector('[title="GitHub"]')).not.toBeNull();
+
+    // The sentence belongs to the selected panel/hero, where it can wrap — never to the rail.
+    fireEvent.click(entry);
+    const sentence = 'Account-scoped GitHub CLI device authentication for this user.';
+    await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: 'GitHub' })).toBeInTheDocument());
+    expect(document.querySelector('.workspace-hero__description')).toHaveTextContent(sentence);
+    expect(rail).not.toHaveTextContent(sentence);
+  });
+
   // An account panel that IS an identity belongs beside the other identities, not as a top-level menu of
   // its own next to the drawer that holds them. The host must place it on the manifest field alone — it
   // never learns the name of a plugin — and the panel has to survive the trip: mounting it in the rail and

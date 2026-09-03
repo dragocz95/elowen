@@ -19,6 +19,8 @@ import type { WorkflowExpansionRpc } from '../subagent/hostRpc.js';
  *  own English strings stay the source/fallback; a `<lang>.json` supplies translations for other locales. */
 interface PluginI18n {
   description?: string;
+  /** Localized short name for the plugin's per-account settings entry (manifest `userConfigLabel`). */
+  userConfigLabel?: string;
   fields?: Record<string, { label?: string; hint?: string; options?: Record<string, string> }>;
   /** Localized browser-UI labels + view strings: nav keyed by route (`''` = the root page),
    *  account/user/project/settings by id, strings by the manifest `web.strings` keys. */

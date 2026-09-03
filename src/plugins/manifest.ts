@@ -162,6 +162,12 @@ export interface PluginManifest {
    *  Same field vocabulary as `configSchema` — the difference is only whose values they are. A `secret`
    *  here never leaves the daemon, not even for an admin. */
   userConfigSchema?: PluginConfigField[];
+  /** SHORT name for the per-account settings entry: what the Account rail and the panel header call it
+   *  ("GitHub", "Raynet CRM"). The manifest `description` is a sentence about the plugin and reads as a
+   *  paragraph when a menu uses it as a title, so the entry carries this instead. Localized through
+   *  `i18n/<lang>.json` → `userConfigLabel`; absent, the host falls back to the plugin name rather than
+   *  guessing a title from the slug. */
+  userConfigLabel?: string;
   // @platform-keep plugin-user-config :: userGrantable?: boolean && user_plugin_config
   /** Generic per-user plugin platform for future github/sandblox consumers; zero in-repo callers is expected.
    *
@@ -317,6 +323,8 @@ const ManifestSchema = Type.Object({
   /** Per-ACCOUNT settings — each person's own values for this plugin, stored by the host and read
    *  through `ctx.userConfig()`. Same field vocabulary as `configSchema`. */
   userConfigSchema: Type.Optional(Type.Array(ConfigFieldSchema)),
+  /** Short menu name for those per-account settings; the description stays the sentence. */
+  userConfigLabel: Type.Optional(Type.String({ minLength: 1 })),
   userGrantable: Type.Optional(Type.Boolean()),
   capabilities: Type.Optional(Type.Object({
     mutates: Type.Optional(Type.Array(Type.Union([

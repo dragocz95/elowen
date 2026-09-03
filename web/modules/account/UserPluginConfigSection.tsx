@@ -10,6 +10,7 @@ import type { UserPluginConfigDetail } from '../../lib/types';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { usePluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { PluginConfigEditor } from '../settings/PluginConfigEditor';
+import { userPluginConfigDescription, userPluginConfigLabel } from './userPluginConfigStrings';
 
 export function UserPluginConfigSection({ sectionId, detail, onSaveStateAction }: {
   sectionId: string;
@@ -35,8 +36,8 @@ export function UserPluginConfigSection({ sectionId, detail, onSaveStateAction }
   return (
     <>
       <SettingsGroup
-        title={detail.description ?? detail.name}
-        description={t.account.personalPluginConfig}
+        title={userPluginConfigLabel(detail, locale)}
+        description={userPluginConfigDescription(detail, locale) ?? t.account.personalPluginConfig}
         icon={Settings2}
         actions={(
           <AutoSaveStatus

@@ -438,6 +438,10 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!user || !store) return c.json([]);
     return c.json(userConfigurablePlugins(user).map((p) => ({
       ...(() => { const snapshot = store.snapshot(user.id, p.manifest.name); return userConfigView(p.manifest.name, p.manifest.userConfigSchema ?? [], snapshot.config, snapshot.revision); })(),
+      // Two distinct strings, deliberately: `label` is the short name the Account rail shows, `description`
+      // the sentence the selected panel carries. Collapsing them is what put a whole English paragraph in
+      // the rail. Both are English here; `i18n` holds the per-locale overrides the client resolves.
+      label: p.manifest.userConfigLabel,
       description: p.manifest.description,
       i18n: p.i18n,
     })));
