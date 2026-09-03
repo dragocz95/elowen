@@ -29,6 +29,15 @@ const DIRECT_SCROLL_JUMP_LINES = 1_024;
 export const CHAT_VIEWPORT_ROW_CACHE_LIMIT = 2_048;
 
 const isTerminalImageLine = (line: string): boolean => line.includes('\x1b_G') || line.includes('\x1b]1337;File=');
+/** How many rows ABOVE an iTerm2 image line the image paints over. pi-tui renders a multi-row iTerm2
+ *  image as `rows-1` empty lines followed by `CSI <rows-1> A` + the image sequence, so the picture
+ *  lands on those empty lines. They belong to the image: writing anything into them — padding, the
+ *  scrollbar glyph, the differ's erase when the glyph moves — wipes the image cells in xterm-based
+ *  terminals, and a static page sends no new frame to paint it back. */
+const imageRowsAbove = (line: string): number => {
+  const match = /^\x1b\[(\d+)A\x1b\]1337;File=/.exec(line);
+  return match ? Number(match[1]) : 0;
+};
 
 export interface ChatViewportState {
   transcript: TranscriptRead;
@@ -396,6 +405,10 @@ export class ChatViewport implements Component {
     this.lastPlainRows = this.lastRows.map((line) => isTerminalImageLine(line) ? '' : terminalPlainText(line));
     this.lastTotal = totalRows;
     const scrollMetrics = this.visualScrollMetrics(height);
+    const imageReserved = new Set<number>();
+    visible.forEach((entry, i) => {
+      for (let above = imageRowsAbove(entry.line); above > 0; above -= 1) if (i - above >= 0) imageReserved.add(i - above);
+    });
     const rendered = visible.map((entry, i) => {
       if ((entry.kind === 'thought' || entry.kind === 'expandable') && entry.key && entry.turnIndex != null) {
         this.expandableRows.set(i + 1, { key: entry.key, turnIndex: entry.turnIndex });
@@ -406,8 +419,11 @@ export class ChatViewport implements Component {
         ? this.historyChip(entry.line, chatWidth - 2)
         : entry.line;
       // Image protocol rows are cursor-control payloads, not printable text. Padding or appending the
-      // scrollbar would write characters at the image placement and can corrupt/overpaint it.
+      // scrollbar would write characters at the image placement and can corrupt/overpaint it — and the
+      // same goes for the empty rows the image paints over, which stay byte-identical frame to frame so
+      // the differential renderer never touches them.
       if (isTerminalImageLine(content)) return content;
+      if (imageReserved.has(i) && visibleWidth(content) === 0) return '';
       let cell = padAnsi(content, chatWidth - 2);
       // Drag-to-copy highlight: reverse-video the selected rows; re-arm after every SGR reset inside
       // the line, otherwise the first themed span would cancel the inversion mid-row.

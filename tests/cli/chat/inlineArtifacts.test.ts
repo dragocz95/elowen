@@ -396,6 +396,44 @@ describe('artifact terminal rendering', () => {
     kitty.stop();
   });
 
+  it('leaves the rows an iTerm2 image paints over free of padding and scrollbar', () => {
+    // Seen in VS Code: the thumbnail painted once and vanished. pi-tui draws a multi-row iTerm2 image
+    // UP over the empty lines before it, and the viewport padded those lines and hung the scrollbar on
+    // them. The moment the transcript grew, the scrollbar thumb moved, the rows changed, and the
+    // differential renderer erased them — image cells included. A static page never paints it back.
+    setCapabilities({ images: 'iterm2', trueColor: true, hyperlinks: true });
+    const collection = new InlineArtifactCollection([openArtifact()]);
+    let emit!: (frame: InlineArtifactFrame) => void;
+    const stream = vi.fn((_path: string, onFrame: (frame: InlineArtifactFrame) => void, signal: AbortSignal) => {
+      emit = onFrame;
+      return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+    });
+    const transcript = new TranscriptModel([
+      { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, id: 'call-browser', name: 'Browser' }] },
+    ]);
+    let viewport!: ChatViewport;
+    const presenter = new InlineArtifactPresenter({
+      collection, stream, maxHeightCells: () => 8,
+      onInvalidate: (toolCallId) => viewport?.invalidateToolCall(toolCallId),
+    });
+    viewport = new ChatViewport({
+      transcript, inlineArtifacts: collection,
+      renderInlineArtifacts: (toolCallId, width) => presenter.render(toolCallId, width),
+      notice: '', modelName: '', thinkingSeconds: 0,
+    }, getMarkdownTheme(), () => 18, () => 1, () => 80);
+    viewport.render(80);
+    emit({ data: PNG, mimeType: 'image/png' });
+    const lines = viewport.render(80);
+    const imageIndex = lines.findIndex((line) => isImageLine(line));
+    expect(imageIndex).toBeGreaterThan(0);
+    const rowsAbove = Number(/^\x1b\[(\d+)A/.exec(lines[imageIndex])![1]);
+    expect(rowsAbove).toBeGreaterThan(0);
+    for (let row = imageIndex - rowsAbove; row < imageIndex; row++) expect(lines[row]).toBe('');
+    // A row outside the image still carries the viewport chrome, so this is not a blanket exemption.
+    expect(lines[imageIndex - rowsAbove - 1]).not.toBe('');
+    presenter.stop();
+  });
+
   it('places each artifact immediately after its anchored tool call', () => {
     const turn: ChatTurn = {
       role: 'elowen', streaming: false,
